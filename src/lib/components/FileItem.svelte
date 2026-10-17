@@ -22,6 +22,10 @@
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { usesPointerDrag, usesHtml5Drag } from "$lib/domain/platform";
 
+  import { getPaneIdContext } from "$lib/state/pane-context";
+  import PeekGuides from "./PeekGuides.svelte";
+  import type { PeekGroup } from "$lib/domain/folder-peek";
+
   interface Props {
     entry: FileEntry;
     index: number;
@@ -29,9 +33,17 @@
     ondblclick: () => void;
     selected?: boolean;
     explorer: ExplorerInstance;
+    depth?: number;
+    parentPath?: string;
+    expanded?: boolean;
+    canPeek?: boolean;
+    groups?: readonly PeekGroup[];
+    rowIndex?: number;
   }
 
-  let { entry, index, onclick, ondblclick, selected = false, explorer }: Props = $props();
+  let { entry, index, onclick, ondblclick, selected = false, explorer, depth = 0, parentPath = explorer.currentPath, expanded = false, canPeek = false, groups = [], rowIndex = 0 }: Props = $props();
+
+  const paneId = getPaneIdContext();
 
   // Get pane context for cross-pane operations
 
@@ -51,7 +63,7 @@
   const entryInClipboard = $derived(checkInClipboard(entry));
   const isCut = $derived(isClipboardCut(entry));
 
-  const isManuallyHidden = $derived(manualHiddenStore.isHidden(explorer.currentPath, entry.name));
+  const isManuallyHidden = $derived(manualHiddenStore.isHidden(parentPath, entry.name));
 
   // Emptiness is resolved lazily now that listings no longer carry it (#129).
   // Re-request when hidden-file visibility changes so the resolver reprobes
@@ -79,7 +91,9 @@
   });
   const lengthText = $derived(formatMediaDuration(mediaDurationResolver.duration(entry)));
 
+  const isPeekControl = (event: Event) => event.target instanceof Element && !!event.target.closest(".peek-caret");
   function handleClick(event: MouseEvent) {
+    if (isPeekControl(event)) return;
     if (isRenaming) {
       event.stopPropagation();
       return;
@@ -88,6 +102,7 @@
   }
 
   function handleDoubleClick(event: MouseEvent) {
+    if (isPeekControl(event)) return;
     // Double-click inside the rename input selects a word — don't open/navigate
     if (isRenaming) {
       event.stopPropagation();
@@ -106,6 +121,7 @@
   class="file-item entry-item"
   data-path={entry.path}
   data-index={index}
+  style:--peek-indent={`${depth * 22}px`}
   aria-colindex={1}
   class:directory={entry.kind === "directory"}
   class:hidden-entry={entry.name.startsWith(".") || isManuallyHidden}
@@ -119,7 +135,7 @@
     // Native keyboard entry can reveal trailing columns and clip the file
     // identity. Pointer selection and cursor moves within the grid must retain
     // the user's horizontal position and FileList's preventScroll choice.
-    const grid = event.currentTarget.closest('[role="grid"]');
+    const grid = event.currentTarget.closest(':is([role="grid"], [role="treegrid"])');
     // A virtual jump can remove the old row before focus, leaving a null
     // relatedTarget. That is still FileList-owned focus, not native Tab entry.
     const fromOutsideGrid = event.relatedTarget instanceof Node && !grid?.contains(event.relatedTarget);
@@ -132,20 +148,36 @@
   oncontextmenu={(e) => interactions.handleContextMenu(e, entry)}
   use:interactions.trackDragSource
   draggable={usesHtml5Drag}
-  ondragstart={usesHtml5Drag ? (e) => interactions.handleDragStart(e, entry, selected) : undefined}
+  ondragstart={usesHtml5Drag ? (e) => { if (isPeekControl(e)) e.preventDefault(); else interactions.handleDragStart(e, entry, selected); } : undefined}
   ondragend={usesHtml5Drag ? interactions.handleDragEnd : undefined}
   ondragover={(e) => interactions.handleDragOver(e, entry)}
   ondragleave={(e) => interactions.handleDragLeave(e, entry)}
   ondrop={(e) => interactions.handleDrop(e, entry)}
-  onmousedown={usesPointerDrag ? (e) => { e.stopPropagation(); pointerDrag!.handlePointerDown(e, entry, selected); } : undefined}
+  onmousedown={usesPointerDrag ? (e) => { if (isPeekControl(e)) return; e.stopPropagation(); pointerDrag!.handlePointerDown(e, entry, selected); } : undefined}
 >
   <!-- Name column -->
-  <div class="name-cell">
+  <PeekGuides {groups} row={rowIndex} />
+  <div class="name-cell" style:padding-left={`${depth * 22}px`}>
+    <span class="peek-caret-slot">
+      {#if canPeek}
+        <button class="peek-caret" type="button" draggable={false}
+          tabindex={explorer.focusedEntry?.path === entry.path ? 0 : -1}
+          aria-expanded={expanded} aria-label={`${expanded ? "Collapse" : "Expand"} ${entry.name}`}
+          onclick={() => {
+            if (paneId) windowTabsManager.setActivePane(paneId);
+            explorer.togglePeek(entry.path);
+          }}>
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+            <path d={expanded ? "M2 3.5 5 6.5 8 3.5" : "M3.5 2 6.5 5 3.5 8"} stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+      {/if}
+    </span>
     <div class="icon" data-drag-icon style:--file-icon-color={entry.kind !== "directory" ? getFileIconColor(entry) : undefined} aria-hidden="true">
       <FileIcon {entry} size="small" />
     </div>
-    <span class="name-text" data-drag-name><EntryName {entry} {explorer} variant="details" /></span>
-    <GitStatusBadge entryName={entry.name} hideOnRename={isRenaming} />
+    <span class="name-text" data-drag-name><EntryName {entry} {explorer} variant="details" bold={expanded} /></span>
+    <GitStatusBadge directory={parentPath} entryName={entry.name} hideOnRename={isRenaming} />
     {#if entry.is_symlink && !isRenaming && entry.kind !== "directory"}
       <div class="symlink-badge" title={entry.symlink_target ? `Link to ${entry.symlink_target}` : "Symbolic link"}>
         <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
@@ -205,6 +237,12 @@
 </div>
 
 <style>
+  .peek-caret-slot { width: 22px; flex: 0 0 22px; margin-right: -10px; display: flex; align-items: center; }
+  .peek-caret { display: flex; align-items: center; justify-content: center; width: 22px; height: 24px; padding: 0; border: 0; background: transparent; color: var(--text-secondary); cursor: pointer; border-radius: var(--radius-sm); }
+  .peek-caret:hover { background: var(--subtle-fill-tertiary); color: var(--text-primary); }
+  .peek-caret:focus-visible { outline: 2px solid var(--focus-stroke-outer); outline-offset: -2px; }
+  .file-item.selected::after { content: ""; position: absolute; left: calc(16px + var(--peek-indent)); top: 0; bottom: 0; width: 3px; background: var(--accent); pointer-events: none; }
+
   .file-item {
     display: grid;
     grid-template-columns: var(--details-grid-columns, var(--col-name, 300px) var(--col-date, 180px) var(--col-type, 120px) var(--col-size, 90px) var(--col-length, 90px) var(--col-resolution, 160px));
@@ -241,7 +279,7 @@
   .file-item.selected {
     background: color-mix(in srgb, var(--accent) 8%, transparent);
     border-color: transparent;
-    border-left-color: var(--accent);
+
     border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   }
 
@@ -282,6 +320,7 @@
     gap: 10px;
     min-width: 0;
     overflow: hidden;
+    box-sizing: border-box;
   }
 
   /* While renaming, let the (content-width) rename box extend past the name

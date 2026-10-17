@@ -5,6 +5,9 @@
  * Issue: fix/view-component-duplication, refactor/extract-drop-target
  */
 
+import { isWindows } from "$lib/domain/platform";
+import { operationDrag } from "$lib/domain/file-operation-selection";
+import { toastStore } from "$lib/state/toast.svelte";
 import type { FileEntry } from "$lib/domain/file";
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";
 import { clipboardStore } from "$lib/state/clipboard.svelte";
@@ -41,8 +44,11 @@ export function useItemInteractions(deps: ItemInteractionsDeps) {
     if (!transfer) return;
     const explorer = getExplorer();
     const selectedEntries = explorer.getSelectedEntries();
-    const isMulti = selectedEntries.length > 1 && isSelected;
-    const paths = isMulti ? selectedEntries.map((e) => e.path) : [entry.path];
+    const reduced = operationDrag(isSelected ? selectedEntries : [entry], entry, isWindows);
+    if (!reduced.ok) { event.preventDefault(); toastStore.error(reduced.error); return; }
+    entry = reduced.primary;
+    const paths = reduced.entries.map(e => e.path);
+    const isMulti = paths.length > 1;
 
     sourceDrag.start(event, { path: entry.path, name: entry.name, kind: entry.kind, paths: isMulti ? paths : undefined }, () => {
       // Custom drag ghost (#258, #269): the engine's default drag image is an

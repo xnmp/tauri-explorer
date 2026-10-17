@@ -1,0 +1,141 @@
+/** Session-only folder expansion policies and fixed-height tree row geometry. */
+import type { FileEntry, ViewMode } from "./file";
+import { pathComparison } from "./path";
+
+export type PeekCapability = "none" | "tree" | "top-level";
+export const peekCapability = (mode: ViewMode): PeekCapability => mode === "details" ? "tree" : "none";
+export type ExpandedPaths = ReadonlyMap<string, number>;
+export interface PeekMeta { depth: number; parentPath: string }
+export interface PeekListing {
+  status: "loading" | "loaded" | "error";
+  entries: readonly FileEntry[];
+  error?: string;
+  showLoading?: boolean;
+}
+
+export function toggleExpanded(expanded: ExpandedPaths, path: string, ordinal: number, cap = 500): Map<string, number> {
+  const next = new Map(expanded);
+  if (next.delete(path)) return next;
+  next.set(path, ordinal);
+  if (next.size > cap) {
+    const oldest = [...next].reduce((a, b) => a[1] < b[1] ? a : b);
+    next.delete(oldest[0]);
+  }
+  return next;
+}
+
+export function collapseSubtree(expanded: ExpandedPaths, root: string, windows: boolean): Map<string, number> {
+  const paths = pathComparison(windows);
+  return new Map([...expanded].filter(([path]) => !paths.contains(path, root)));
+}
+
+/** Only a complete raw snapshot can establish that a branch disappeared. */
+export function pruneExpanded(expanded: ExpandedPaths, parent: string, entries: readonly FileEntry[], windows: boolean): Map<string, number> {
+  const paths = pathComparison(windows);
+  const directories = new Set(entries.filter(e => e.kind === "directory" && paths.sameParent(e.path, parent)).map(e => paths.key(e.path)));
+  return new Map([...expanded].filter(([path]) => {
+    if (paths.same(path, parent) || !paths.contains(path, parent)) return true;
+    let child = paths.key(path)!;
+    while (!paths.sameParent(child, parent)) {
+      const above = paths.parent(child);
+      if (!above || above === child) return false;
+      child = above;
+    }
+    return directories.has(paths.key(child));
+  }));
+}
+
+export function choosePeekWatches(reachable: readonly string[], expanded: ExpandedPaths, cap = 16): string[] {
+  return [...reachable].sort((a, b) => (expanded.get(b) ?? -1) - (expanded.get(a) ?? -1)).slice(0, cap);
+}
+
+export interface PeekTree {
+  entries: readonly FileEntry[];
+  meta: ReadonlyMap<string, PeekMeta>;
+  indices: ReadonlyMap<string, number>;
+  expanded: readonly string[];
+}
+
+export function flattenPeekEntries(options: {
+  root: string;
+  entries: readonly FileEntry[];
+  expanded: ExpandedPaths;
+  listing: (path: string) => readonly FileEntry[] | undefined;
+  project: (entries: readonly FileEntry[], parent: string) => readonly FileEntry[];
+  capability: PeekCapability;
+  windows: boolean;
+}): PeekTree {
+  const paths = pathComparison(options.windows);
+  const entries: FileEntry[] = [];
+  const meta = new Map<string, PeekMeta>();
+  const indices = new Map<string, number>();
+  const expanded: string[] = [];
+  const seen = new Set<string>();
+  const stack = [{ items: options.entries, offset: 0, parent: options.root, depth: 0 }];
+  while (stack.length) {
+    const frame = stack[stack.length - 1];
+    if (frame.offset === frame.items.length) { stack.pop(); continue; }
+    const entry = frame.items[frame.offset++];
+    const key = paths.key(entry.path);
+    // Flat virtual/provider roots are still valid listings; tree admission is
+    // stricter, rejecting malformed and cross-parent backend data.
+    if (seen.has(key ?? entry.path) || (options.capability !== "none" && (!key || !paths.sameParent(entry.path, frame.parent)))) continue;
+    seen.add(key ?? entry.path);
+    indices.set(entry.path, entries.length);
+    entries.push(entry);
+    meta.set(entry.path, { depth: frame.depth, parentPath: frame.parent });
+    if (entry.kind !== "directory" || options.capability === "none" || (options.capability === "top-level" && frame.depth > 0) || !options.expanded.has(entry.path)) continue;
+    expanded.push(entry.path);
+    const children = options.listing(entry.path);
+    if (children) stack.push({ items: options.project(children, entry.path), offset: 0, parent: entry.path, depth: frame.depth + 1 });
+  }
+  return { entries: options.capability === "none" ? options.entries : entries, meta, indices, expanded };
+}
+
+export function resolvePeekCommandTarget(entry: FileEntry | null | undefined, meta: ReadonlyMap<string, PeekMeta>): string | null {
+  if (!entry) return null;
+  if (entry.kind === "directory") return entry.path;
+  const placement = meta.get(entry.path);
+  return placement && placement.depth > 0 ? placement.parentPath : null;
+}
+export function resolvePeekEscape(entry: FileEntry | null | undefined, meta: ReadonlyMap<string, PeekMeta>): string | null {
+  const placement = entry && meta.get(entry.path);
+  return placement && placement.depth > 0 ? placement.parentPath : null;
+}
+
+export type PeekRow = ({ kind: "entry"; key: string; entry: FileEntry; entryIndex: number; expanded: boolean } & PeekMeta)
+  | { kind: "peek-state"; key: string; parentPath: string; depth: number; message: string }
+  | { kind: "create"; key: string };
+export interface PeekGroup { path: string; depth: number; startRow: number; endRow: number }
+export interface PeekRows { rows: PeekRow[]; entryToRow: number[]; rowToEntry: (number | null)[]; groups: PeekGroup[] }
+
+export function buildPeekRows(tree: PeekTree, listing: (path: string) => PeekListing | undefined, creating = false): PeekRows {
+  const rows: PeekRow[] = creating ? [{ kind: "create", key: "create" }] : [];
+  const groups: PeekGroup[] = [];
+  const active: PeekGroup[] = [];
+  const entryToRow: number[] = [];
+  const expanded = new Set(tree.expanded);
+  tree.entries.forEach((entry, entryIndex) => {
+    const placement = tree.meta.get(entry.path)!;
+    while (active.length && active.at(-1)!.depth >= placement.depth) active.pop()!.endRow = rows.length;
+    entryToRow.push(rows.length);
+    rows.push({ kind: "entry", key: `entry:${entry.path}`, entry, entryIndex, ...placement, expanded: expanded.has(entry.path) });
+    if (!expanded.has(entry.path)) return;
+    const group = { path: entry.path, depth: placement.depth, startRow: rows.length, endRow: rows.length };
+    groups.push(group);
+    active.push(group);
+    const state = listing(entry.path);
+    const next = tree.entries[entryIndex + 1];
+    const hasChildren = next && tree.meta.get(next.path)!.depth > placement.depth;
+    const message = state?.status === "error" ? `Can't open folder: ${state.error}`
+      : state?.status === "loading" ? state.showLoading ? "Loading…" : null
+      : state?.status === "loaded" && !hasChildren ? "Empty folder" : null;
+    if (message) rows.push({ kind: "peek-state", key: `state:${entry.path}`, parentPath: entry.path, depth: placement.depth + 1, message });
+  });
+  for (const group of active) group.endRow = rows.length;
+  return { rows, entryToRow, rowToEntry: rows.map(row => row.kind === "entry" ? row.entryIndex : null), groups };
+}
+
+export function entryIndicesForRows(layout: PeekRows, rows: readonly number[]): number[] {
+  return rows.flatMap(row => layout.rowToEntry[row] == null ? [] : [layout.rowToEntry[row]!]);
+}

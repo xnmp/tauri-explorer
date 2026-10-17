@@ -53,7 +53,7 @@
     const base = isFile ? "New File" : "New folder";
     const kind = isFile ? "file" : "directory";
     const existingNames = new Set(
-      explorer.displayEntries
+      explorer.ownDisplayEntries
         .filter((e) => e.kind === kind)
         .map((e) => e.name.toLowerCase())
     );

@@ -11,6 +11,8 @@
  */
 
 import { onDestroy } from "svelte";
+import { operationDrag } from "$lib/domain/file-operation-selection";
+import { toastStore } from "$lib/state/toast.svelte";
 import type { FileEntry } from "$lib/domain/file";
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";
 import { basename, pathComparison } from "$lib/domain/path";
@@ -78,8 +80,11 @@ export function usePointerDrag(deps: PointerDragDeps) {
 
     const explorer = deps.getExplorer();
     const selectedEntries = explorer.getSelectedEntries();
-    const isMulti = selectedEntries.length > 1 && isSelected;
-    dragPaths = isMulti ? selectedEntries.map((e) => e.path) : [entry.path];
+    const reduced = operationDrag(isSelected ? selectedEntries : [entry], entry, isWindows);
+    if (!reduced.ok) { toastStore.error(reduced.error); return; }
+    entry = reduced.primary;
+    dragPaths = reduced.entries.map(e => e.path);
+    const isMulti = dragPaths.length > 1;
     sourceEl = (event.currentTarget as HTMLElement) || null;
 
     startX = event.clientX;

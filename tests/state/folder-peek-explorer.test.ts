@@ -1,0 +1,84 @@
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import * as client from "svelte/internal/client";
+import { compileModule } from "svelte/compiler";
+import ts from "typescript";
+import { readFileSync } from "node:fs";
+const flushSync = () => client.flush();
+import type { FileEntry } from "$lib/domain/file";
+import type { DirectoryListingResult } from "$lib/state/directory-listing";
+const { source, loads } = vi.hoisted(() => ({ source: { current: async (_path: string): Promise<DirectoryListingResult> => ({ ok: false, error: "unset" }) }, loads: [] as string[] }));
+vi.mock("$lib/state/directory-listing", () => ({ createDirectoryListing: () => ({ load: (path: string) => { loads.push(path); return source.current(path); }, cleanup: async () => {} }) }));
+vi.mock("$lib/api/files", async original => ({ ...await original<typeof import("$lib/api/files")>(), watchDirectory: async (path: string) => ({ id: crypto.randomUUID(), path }), unwatchDirectory: async () => {} }));
+import { type ExplorerInstance } from "$lib/state/explorer.svelte";
+import { cancelPendingRefreshes } from "$lib/state/refresh-manager";
+import { settingsStore } from "$lib/state/settings.svelte";
+
+const entry = (path: string, kind: FileEntry["kind"] = "directory"): FileEntry => ({ path, name: path.split("/").at(-1)!, kind, size: 1, modified: "" });
+const a = entry("/r/a"), b = entry("/r/b"), child = entry("/r/a/child", "file"), nested = entry("/r/a/nested");
+const trees: Record<string, FileEntry[]> = { "/r": [a, b], [a.path]: [child, nested], [nested.path]: [entry("/r/a/nested/deep", "file")], [b.path]: [] };
+let createExplorerState: typeof import("$lib/state/explorer.svelte").createExplorerState;
+const panes: ExplorerInstance[] = [];
+const effects: (() => void)[] = [];
+async function compileClient(modulePath: string, overrides: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+  const filename = new URL("../../src/lib/state/" + modulePath + ".ts", import.meta.url);
+  const javascript = ts.transpileModule(readFileSync(filename, "utf8"), { compilerOptions: { target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext } }).outputText;
+  const imports: Record<string, unknown> = {};
+  for (const [, specifier] of javascript.matchAll(/import[^;]+from ["']([^"']+)["'];/g)) {
+    const target = specifier.startsWith("$lib/") ? new URL("../../src/lib/" + specifier.slice(5), import.meta.url).pathname
+      : specifier.startsWith(".") ? new URL(specifier, filename).pathname : specifier;
+    imports[specifier] = overrides[specifier] ?? (specifier === "svelte" ? { untrack: client.untrack } : await import(/* @vite-ignore */ target));
+  }
+  const compiled = compileModule(javascript, { generate: "client" }).js.code
+    .replace("import * as $ from 'svelte/internal/client';", "")
+    .replace(/import (\{[^}]+\}|\* as \w+) from ["']([^"']+)["'];/g, (_, names, specifier) => names.startsWith("{") ? `const ${names.replaceAll(" as ", ": ")} = imports[${JSON.stringify(specifier)}];` : `const ${names.slice(5)} = imports[${JSON.stringify(specifier)}];`)
+    .replace(/export\s+\{[^}]*\}[^;]*;/g, "").replaceAll("export ", "");
+  return new Function("$", "imports", compiled + `\nreturn { ${modulePath === "folder-peek.svelte" ? "createFolderPeekState" : "createExplorerState"} };`)(client, imports);
+}
+
+const create = () => { let pane!: ExplorerInstance; effects.push(client.effect_root(() => { pane = createExplorerState({ currentPath: "/r", entries: [a, b], sortBy: "name", sortAscending: true, viewMode: "details" }); client.render_effect(() => { pane.displayEntries; pane.detailRows; }); })); panes.push(pane); return pane; };
+async function settle(ms = 200) { flushSync(); await vi.advanceTimersByTimeAsync(ms); flushSync(); }
+beforeEach(async () => {
+  const peek = await compileClient("folder-peek.svelte");
+  createExplorerState = (await compileClient("explorer.svelte", { "./folder-peek.svelte": peek })).createExplorerState as typeof createExplorerState;
+  vi.useFakeTimers(); loads.length = 0; settingsStore.reset(); source.current = async path => ({ ok: true, path, entries: trees[path] ?? [] }); });
+afterEach(async () => { await Promise.all(panes.splice(0).map(p => p.destroy())); cancelPendingRefreshes(); vi.useRealTimers(); settingsStore.reset(); effects.splice(0).forEach(dispose => dispose()); });
+it("persists membership through navigation/back/view switches, stays pane-local, and drops invisible selection", async () => {
+  const pane = create(); pane.togglePeek(a.path); await settle();
+  expect(pane.displayEntries).toContain(child);
+  pane.selectEntry(child); pane.setViewMode("list");
+  expect([...pane.selectedPaths]).toEqual([]); expect(pane.focusedEntry?.path).toBe(a.path);
+  expect(pane.displayEntries).toEqual([a, b]); expect(pane.peekWatchSnapshot()).toEqual([]);
+  pane.setViewMode("details"); await settle(2200); expect(pane.displayEntries).toContain(child);
+  expect(create().expandedPaths.size).toBe(0);
+  await pane.navigateTo("/r"); await pane.navigateTo(a.path); await pane.goBack(); await settle(2200);
+  expect(pane.currentPath).toBe("/r"); expect(pane.expandedPaths.has(a.path)).toBe(true); expect(pane.displayEntries).toContain(child);
+});
+it("repairs hidden anchors without selecting the folder and keeps other selection levels through refresh", async () => {
+  const pane = create(); pane.togglePeek(a.path); await settle(); pane.selectEntry(child); pane.focusEntry(b);
+  pane.togglePeek(a.path); expect(pane.focusedEntry?.path).toBe(a.path); expect([...pane.selectedPaths]).toEqual([]); expect(pane.state.selectionAnchorPath).toBeNull();
+  pane.togglePeek(a.path); await settle(2200); pane.selectPaths([child.path, b.path], child.path);
+  await pane.refresh({ silent: true }); flushSync(); expect([...pane.selectedPaths]).toEqual([child.path, b.path]);
+  pane.collapseAllPeeks(); expect([...pane.selectedPaths]).toEqual([b.path]); expect(pane.state.selectionAnchorPath).toBeNull();
+});
+it("rejects late success/error responses from collapsed and replaced resources", async () => {
+  const pane = create(); let release!: (value: DirectoryListingResult) => void;
+  source.current = path => path === a.path ? new Promise(resolve => { release = resolve; }) : Promise.resolve({ ok: true, path, entries: [] });
+  pane.togglePeek(a.path); await settle();
+  pane.togglePeek(a.path); source.current = async path => ({ ok: true, path, entries: [entry(path + "/new", "file")] });
+  pane.togglePeek(a.path); await settle();
+  release({ ok: true, path: a.path, entries: [child] }); await settle(2200);
+  expect(pane.displayEntries.map(e => e.path)).toContain("/r/a/new"); expect(pane.displayEntries).not.toContain(child);
+});
+it("prunes deleted remembered branches and their selected descendants after a raw parent refresh", async () => {
+  const pane = create(); pane.togglePeek(a.path); await settle(); pane.selectEntry(child);
+  source.current = async path => ({ ok: true, path, entries: path === "/r" ? [b] : [] });
+  await pane.refresh({ silent: true }); await settle();
+  expect(pane.expandedPaths.has(a.path)).toBe(false); expect([...pane.selectedPaths]).toEqual([]); expect(pane.peekWatchSnapshot()).toEqual([]);
+});
+it("keeps root-only name filtering and rejects invisible requested paths", async () => {
+  const pane = create(); pane.togglePeek(a.path); await settle();
+  pane.setFilter("a"); await settle(); expect(pane.displayEntries).toContain(child); expect(pane.ownDisplayEntries).toEqual([a]);
+  pane.selectAll(); expect([...pane.selectedPaths]).toEqual([a.path]);
+  pane.selectPaths(["/not-visible"]); expect([...pane.selectedPaths]).toEqual([]);
+  pane.setFilter("b"); await settle(); expect(pane.displayEntries).toEqual([b]); expect(pane.expandedPaths.has(a.path)).toBe(true); expect(pane.peekWatchSnapshot()).toEqual([]);
+});

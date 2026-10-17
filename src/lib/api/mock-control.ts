@@ -66,6 +66,8 @@ export interface MockGitCommit {
 }
 
 export interface MockControl {
+  /** Controllable complete listings for browser race/loading contracts. */
+  directoryEntries?: (path: string) => import("$lib/domain/file").FileEntry[] | Promise<import("$lib/domain/file").FileEntry[]>;
   /** Private native-receipt fixtures; no provider execution or durable custody simulation. */
   nativeAiPresentation?: MockAiPresentation;
   // ----- Preview / thumbnails: fixture overrides + action hooks -----

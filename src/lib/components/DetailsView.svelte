@@ -14,7 +14,8 @@
   import { fixedMenuPosition, getZoomFactor, probeSingleScaleFixedOffset } from "$lib/domain/zoom";
   import FileItem from "./FileItem.svelte";
   import VirtualList from "./VirtualList.svelte";
-  import InlineNewFolder, { NEW_FOLDER_SENTINEL, isNewFolderSentinel } from "./InlineNewFolder.svelte";
+  import PeekGuides from "./PeekGuides.svelte";
+  import InlineNewFolder from "./InlineNewFolder.svelte";
 
   import type { FileEntry } from "$lib/domain/file";
   import { isTrashPath } from "$lib/domain/virtual-path";
@@ -33,9 +34,9 @@
   let { explorer, onitemclick, onitemdblclick, scrollToIndex = $bindable(), containsIndex = $bindable(), fallbackTabStop, onviewportscroll, onlayoutchange }: Props = $props();
 
   let rowScrollToIndex = $state<((index: number) => void) | undefined>();
-  scrollToIndex = (index) => rowScrollToIndex?.(index + (explorer.isCreatingFolder ? 1 : 0));
+  scrollToIndex = (index) => rowScrollToIndex?.(explorer.detailRows.entryToRow[index] ?? -1);
   let rowContainsIndex = $state<((index: number) => boolean) | undefined>();
-  containsIndex = (index) => rowContainsIndex?.(index + (explorer.isCreatingFolder ? 1 : 0)) ?? false;
+  containsIndex = (index) => rowContainsIndex?.(explorer.detailRows.entryToRow[index] ?? -1) ?? false;
 
   const viewId = $props.id();
   const inTrash = $derived(isTrashPath(explorer.currentPath));
@@ -45,9 +46,7 @@
 
   // The new-folder editor rides INSIDE the virtual list as a sentinel first
   // item (#257) — not as a band above the scroller.
-  const listItems = $derived(
-    explorer.isCreatingFolder ? [NEW_FOLDER_SENTINEL, ...explorer.displayEntries] : explorer.displayEntries,
-  );
+  const listItems = $derived(explorer.detailRows.rows);
 
   // Column header context menu state
   let columnMenuPos = $state<{ x: number; y: number } | null>(null);
@@ -209,29 +208,36 @@
   {/if}
 
   <VirtualList class="file-rows"
-    role="grid" aria-label="Files" aria-multiselectable={true}
+    role="treegrid" aria-label="Files" aria-multiselectable={true}
     aria-rowcount={listItems.length} aria-colcount={1}
     tabindex={fallbackTabStop ? 0 : -1}
     bind:containsIndex={rowContainsIndex}
     items={listItems}
     itemHeight={32}
-    getKey={(entry) => entry.path}
+    getKey={(row) => row.key}
     {onviewportscroll}
     {onlayoutchange}
     bind:scrollToIndex={rowScrollToIndex}
   >
-    {#snippet children(entry, index)}
-      <div role="row" aria-rowindex={index + 1}>
-      {#if isNewFolderSentinel(entry)}
+    {#snippet children(row, index)}
+      <div role="row" aria-rowindex={index + 1}
+        aria-level={row.kind === "entry" ? row.depth + 1 : undefined}
+        aria-expanded={row.kind === "entry" && explorer.peekEnabled && row.entry.kind === "directory" ? row.expanded : undefined}
+        aria-selected={row.kind === "entry" ? explorer.isSelected(row.entry) : undefined}>
+      {#if row.kind === "create"}
         <div role="gridcell"><InlineNewFolder {explorer} variant="details" /></div>
+      {:else if row.kind === "peek-state"}
+        <div role="gridcell" class="peek-state" style:padding-left={`${41 + row.depth * 22}px`}>
+          <PeekGuides groups={explorer.detailRows.groups} row={index} />
+          <span role="status">{row.message}</span>
+        </div>
       {:else}
-        <FileItem index={index - (explorer.isCreatingFolder ? 1 : 0)}
-          {entry}
-          {explorer}
-          onclick={(event) => onitemclick(entry, event)}
-          ondblclick={() => onitemdblclick(entry)}
-          selected={explorer.isSelected(entry)}
-        />
+        <FileItem index={row.entryIndex} entry={row.entry} {explorer}
+          depth={row.depth} parentPath={row.parentPath} expanded={row.expanded}
+          canPeek={explorer.peekEnabled && row.entry.kind === "directory"}
+          groups={explorer.detailRows.groups} rowIndex={index}
+          onclick={(event) => onitemclick(row.entry, event)}
+          ondblclick={() => onitemdblclick(row.entry)} selected={explorer.isSelected(row.entry)} />
       {/if}
       </div>
     {/snippet}
@@ -239,6 +245,7 @@
 </div>
 
 <style>
+  .peek-state { position: relative; height: 32px; display: flex; align-items: center; color: var(--text-tertiary); font-size: 13px; box-sizing: border-box; }
   .details-view {
     display: flex;
     flex-direction: column;

@@ -44,6 +44,14 @@ function createGitStatusStore() {
    * displayable, but watcher refreshes skip them until a pane returns. */
   const staleDirectories = new Set<string>();
   const pendingByDir = new Map<string, number>();
+  const dirtyDirectories = new Set<string>();
+  function refreshDirectory(path: string): Promise<void> {
+    if (inFlight.has(path)) dirtyDirectories.add(path);
+    return doFetch(path);
+  }
+  function invalidateDirectories(paths: readonly string[]): void {
+    for (const path of paths) if (trackedDirectories.has(path)) void refreshDirectory(path);
+  }
 
   async function fetchForDirectory(path: string): Promise<void> {
     currentPath = path;
@@ -69,7 +77,10 @@ function createGitStatusStore() {
     const taskId = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
     const flight = { taskId, promise: Promise.resolve(), abandoned: false };
     flight.promise = performFetch(path, flight).finally(() => {
-      if (inFlight.get(path) === flight) inFlight.delete(path);
+      if (inFlight.get(path) === flight) {
+        inFlight.delete(path);
+        if (dirtyDirectories.delete(path) && trackedDirectories.has(path)) void doFetch(path);
+      }
     });
     inFlight.set(path, flight);
     return flight.promise;
@@ -144,6 +155,7 @@ function createGitStatusStore() {
         return;
       }
       trackedDirectories.delete(path);
+      dirtyDirectories.delete(path);
       // Preserve settled badges for instant back-navigation, but exclude this
       // directory from watcher-driven work until a pane tracks it again.
       if (byDir[path]) staleDirectories.add(path);
@@ -173,7 +185,7 @@ function createGitStatusStore() {
       return;
     }
     console.info(`[git-status] refresh: refetching ${dirs.length} dirs: ${dirs.join(", ")}`);
-    await Promise.all(dirs.map(doFetch));
+    await Promise.all(dirs.map(refreshDirectory));
   }
 
   /** Status of an entry, looked up by the directory it lives in. */
@@ -207,6 +219,8 @@ function createGitStatusStore() {
     isDirLoading(directory: string): boolean { return loadingDirs[directory] ?? false; },
     trackDirectory,
     fetchForDirectory,
+    refreshDirectory,
+    invalidateDirectories,
     refresh,
     getStatus,
     clear,

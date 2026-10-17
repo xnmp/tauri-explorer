@@ -1,0 +1,37 @@
+import { afterEach, expect, it, vi } from "vitest";
+import { createFolderPeekState } from "$lib/state/folder-peek.svelte";
+vi.mock("$lib/state/git-status.svelte", () => ({ gitStatusStore: { trackDirectory: () => () => {}, fetchForDirectory: vi.fn() } }));
+const stores: ReturnType<typeof createFolderPeekState>[] = [];
+const create = () => { const state = createFolderPeekState(false); stores.push(state); return state; };
+afterEach(async () => { await Promise.all(stores.splice(0).map(s => s.dispose())); vi.useRealTimers(); });
+it("keeps per-pane membership independent of reachable resources and releases stale identities", async () => {
+  const a = create(), b = create();
+  a.toggle("/r/a"); a.toggle("/r/a/n");
+  a.reconcile(["/r/a"]);
+  const first = a.target("/r/a")!;
+  expect(b.expanded.size).toBe(0);
+  a.reconcile([]);
+  expect(first.current()).toBe(false);
+  expect(a.expanded.size).toBe(2);
+  a.reconcile(["/r/a"]);
+  expect(a.target("/r/a")).not.toBe(first);
+  expect(first.current()).toBe(false);
+  expect(a.listing("/r/a")?.entries).toEqual([]);
+});
+it("delays loading, rejects retired responses, and clears delayed timers on dispose", async () => {
+  vi.useFakeTimers();
+  const state = create(); state.toggle("/r/a"); state.reconcile(["/r/a"]);
+  const target = state.target("/r/a")!;
+  expect(state.listing("/r/a")?.showLoading).toBe(false);
+  await vi.advanceTimersByTimeAsync(149);
+  expect(state.listing("/r/a")?.showLoading).toBe(false);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(state.listing("/r/a")?.showLoading).toBe(true);
+  state.reconcile([]); state.reconcile(["/r/a"]);
+  target.fail("old response");
+  expect(state.listing("/r/a")?.status).toBe("loading");
+  state.target("/r/a")!.fail("permission denied");
+  expect(state.listing("/r/a")?.error).toBe("permission denied");
+  await state.dispose();
+  expect(vi.getTimerCount()).toBe(0);
+});

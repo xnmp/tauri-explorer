@@ -24,7 +24,13 @@ import { clampNumericSetting } from "$lib/domain/settings-numbers";
 import { SvelteSet } from "svelte/reactivity";
 import { untrack } from "svelte";
 import { toastStore } from "./toast.svelte";
-import { basename, toNativeSeparators } from "$lib/domain/path";
+import { gitStatusStore } from "./git-status.svelte";
+import { operationRoots } from "$lib/domain/file-operation-selection";
+import { createFolderPeekState } from "./folder-peek.svelte";
+import { flattenPeekEntries, buildPeekRows, peekCapability, resolvePeekCommandTarget, resolvePeekEscape } from "$lib/domain/folder-peek";
+import { isVirtualPath } from "$lib/domain/virtual-path";
+import { providerFor } from "$lib/plugins/fs-providers";
+import { basename, toNativeSeparators, pathComparison } from "$lib/domain/path";
 import { isWindows } from "$lib/domain/platform";
 import { clipboardImageStatus, clipboardPasteImage } from "$lib/api/clipboard-image";
 import { withClipboardImageProgress } from "$lib/state/clipboard-image-progress.svelte";
@@ -60,7 +66,7 @@ import type { PreviewTarget } from "$lib/plugins/preview-registry.svelte";
 // Distinguishes concurrent panes in slow-load diagnostics (#1022).
 let explorerSerial = 0;
 
-function createExplorerState(seed?: ExplorerSeed) {
+function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => boolean = () => true) {
   const pane = ++explorerSerial;
   // Listings are immutable revisions. Deep proxies would create per-entry
   // signals during whole-directory filtering, sorting and status aggregation.
@@ -148,7 +154,9 @@ function createExplorerState(seed?: ExplorerSeed) {
   let onRevealCallback: (() => void) | null = null;
 
   // Filesystem observation ownership
-  const watch = createPaneWatch({ refresh: (options) => refresh(options) });
+  const peek = createFolderPeekState(isWindows);
+  const paths = pathComparison(isWindows);
+  const watch = createPaneWatch({ refresh: (options) => refresh(options), currentPath: () => coreState.currentPath, refreshPath: (path, options) => refresh(options, path) });
 
   // Read-only state accessor for components that need the raw state bag.
   // Exposes the $state proxy itself (typed read-only) — a spread copy here
@@ -160,12 +168,8 @@ function createExplorerState(seed?: ExplorerSeed) {
   // Derived State
   // ===================
 
-  const displayEntries = $derived.by(() => {
-    let filtered = filterHidden(coreState.entries, settingsStore.showHidden);
-    const manualHiddenNames = manualHiddenStore.namesIn(coreState.currentPath);
-    if (manualHiddenNames.size > 0 && !settingsStore.showManuallyHidden) {
-      filtered = filtered.filter((e) => !manualHiddenNames.has(e.name));
-    }
+  const ownDisplayEntries = $derived.by(() => {
+    let filtered = visibleEntriesFor(coreState.entries, coreState.currentPath);
     if (filterQuery) {
       const q = filterQuery.toLowerCase();
       filtered = filtered.filter((e) => e.name.toLowerCase().includes(q));
@@ -181,6 +185,64 @@ function createExplorerState(seed?: ExplorerSeed) {
       return sortEntries(filtered, coreState.sortBy, coreState.sortAscending);
     }
     return sortEntries(filtered, "name", true);
+  });
+
+  const capability = $derived(isFileListingSurface() && fileViewPresentation.resolution.kind === "builtin"
+    && !isVirtualPath(coreState.currentPath) && !providerFor(coreState.currentPath) ? peekCapability(coreState.viewMode) : "none");
+  const peekTree = $derived(flattenPeekEntries({
+    root: coreState.currentPath, entries: ownDisplayEntries, expanded: peek.expanded,
+    listing: path => peek.listing(path)?.entries,
+    project: (entries, parent) => sortEntries(visibleEntriesFor(entries, parent), coreState.sortBy, coreState.sortAscending),
+    capability: peek.expanded.size ? capability : "none", windows: isWindows,
+  }));
+  const displayEntries = $derived(peekTree.entries as FileEntry[]);
+  const detailRows = $derived(buildPeekRows(peekTree, peek.listing, creationSession !== null));
+
+  function pruneHiddenChildren(before: typeof peekTree, after: readonly FileEntry[]) {
+    const visible = new Set(after.map(e => e.path));
+    const hidden = new Set(before.entries.filter(e => (before.meta.get(e.path)?.depth ?? 0) > 0 && !visible.has(e.path)).map(e => e.path));
+    if (!hidden.size) return;
+    setSelection([...coreState.selectedPaths].filter(path => !hidden.has(path)));
+    const cursorHidden = coreState.cursorPath && hidden.has(coreState.cursorPath);
+    const anchorHidden = coreState.selectionAnchorPath && hidden.has(coreState.selectionAnchorPath);
+    if (cursorHidden || anchorHidden) {
+      let path = cursorHidden ? coreState.cursorPath : coreState.selectionAnchorPath;
+      while (path && !visible.has(path)) path = before.meta.get(path)?.parentPath ?? null;
+      coreState.cursorPath = path; coreState.selectionAnchorPath = null;
+    }
+  }
+  function togglePeek(path: string) {
+    const entry = displayEntries.find(e => e.path === path);
+    if (capability === "none" || entry?.kind !== "directory" || isVirtualPath(path) || providerFor(path)) return;
+    const before = peekTree;
+    peek.toggle(path);
+    pruneHiddenChildren(before, displayEntries);
+    reconcilePeekResources();
+  }
+  function collapseAllPeeks() {
+    const before = peekTree;
+    peek.collapseAll(coreState.currentPath);
+    pruneHiddenChildren(before, displayEntries);
+    reconcilePeekResources();
+  }
+  function reconcilePeekResources() {
+    const reachable = coreState.loading ? [] : peekTree.expanded;
+    peek.reconcile(reachable);
+    watch.reconcilePeeks(reachable, peek.expanded);
+  }
+  const disposePeekEffects = $effect.root(() => {
+    let previous: { root: string; tree: typeof peekTree } | undefined;
+    $effect(() => {
+      const tree = peekTree;
+      const root = coreState.currentPath;
+      const reachable = coreState.loading ? [] : peekTree.expanded;
+      const expanded = peek.expanded;
+      untrack(() => {
+        if (previous?.root === root) pruneHiddenChildren(previous.tree, tree.entries);
+        previous = { root, tree };
+        peek.reconcile(reachable); watch.reconcilePeeks(reachable, expanded);
+      });
+    });
   });
 
   const breadcrumbs = $derived(navigation.parseBreadcrumbs(coreState.currentPath));
@@ -249,6 +311,8 @@ function createExplorerState(seed?: ExplorerSeed) {
     presentationDirectory = path;
     creationSession = null;
     const gen = ++navGeneration;
+    peek.reconcile([]);
+    watch.invalidatePeeks();
     // A caller's trace is used only while it is still the pane's newest;
     // anything else starts this navigation's own trace.
     const load = trace && trace === activeLoad ? trace : traceLoad(path, reason);
@@ -279,6 +343,7 @@ function createExplorerState(seed?: ExplorerSeed) {
         presentationDirectory = result.path;
         coreState.currentPath = result.path;
         coreState.entries = result.entries;
+        peek.prune(result.path, result.entries);
         observation.commit();
 
         const savedSort = getSortPref(result.path);
@@ -497,7 +562,29 @@ function createExplorerState(seed?: ExplorerSeed) {
     setSelection,
     requestReconcile: (path) => watch.changed({ path }),
     navigateToParent,
+    targetFor: peek.target,
+    ownsPath: (path, directory) => paths.sameParent(path, directory),
+    published: (path, entries, needsRefresh) => {
+      if (!needsRefresh) peek.prune(path, entries);
+      if (peek.target(path)) void gitStatusStore.refreshDirectory(path);
+    },
+    fanOut: watch.refreshPeeks,
   });
+
+  function captureDirectory(parent: string) {
+    const root = paths.same(parent, coreState.currentPath);
+    const origin = captureMutation();
+    const target = root ? undefined : peek.target(parent);
+    return {
+      publish(transform: (entries: readonly FileEntry[]) => readonly FileEntry[]) {
+        if (!origin.current() || (!root && !target?.current())) { watch.requestPath(parent); return; }
+        const next = transform(root ? coreState.entries : target!.entries);
+        if (root) coreState.entries = next;
+        else target!.entries = next;
+        peek.prune(parent, next);
+      },
+    };
+  }
 
   const mutations = createPaneMutations({
     coreState,
@@ -506,6 +593,13 @@ function createExplorerState(seed?: ExplorerSeed) {
     alive: () => !destroyed,
     navigateTo,
     refreshSilent: () => { void refresh({ silent: true }); },
+    captureDirectory,
+    requestReconcile: watch.requestPath,
+    removed: (path) => {
+      peek.collapseAll(path);
+      setSelection([...coreState.selectedPaths].filter(p => !paths.contains(p, path)));
+      reconcilePeekResources();
+    },
   });
 
   // ===================
@@ -530,7 +624,10 @@ function createExplorerState(seed?: ExplorerSeed) {
   // new panes) changes solely via the explicit "Set Current View Mode as
   // Default" command, never as a side effect of switching one pane's view.
   function setViewMode(mode: ViewMode) {
+    const before = peekTree;
     coreState.viewMode = mode;
+    pruneHiddenChildren(before, displayEntries);
+    reconcilePeekResources();
   }
 
   // ===================
@@ -601,15 +698,15 @@ function createExplorerState(seed?: ExplorerSeed) {
 
   /** Replace listed paths, optionally retaining the marquee's anchor/cursor semantics. */
   function selectPaths(paths: readonly string[], focus: string | null = null, options: { keepAnchor?: boolean } = {}) {
-    const result = selection.selectPaths(coreState.entries, paths, coreState.selectionAnchorPath, coreState.cursorPath, focus, options);
+    const result = selection.selectPaths(displayEntries, paths, coreState.selectionAnchorPath, coreState.cursorPath, focus, options);
     setSelection(result.selectedPaths);
     coreState.selectionAnchorPath = result.anchorPath;
     coreState.cursorPath = result.cursorPath;
   }
 
   function selectAll() {
-    setSelection(displayEntries.map((e) => e.path));
-    coreState.selectionAnchorPath = displayEntries[0]?.path ?? null;
+    setSelection(ownDisplayEntries.map((e) => e.path));
+    coreState.selectionAnchorPath = ownDisplayEntries[0]?.path ?? null;
   }
 
   // ===================
@@ -617,7 +714,9 @@ function createExplorerState(seed?: ExplorerSeed) {
   // ===================
 
   async function startDelete(entries: FileEntry | FileEntry[]) {
-    const arr = Array.isArray(entries) ? entries : [entries];
+    const reduced = operationRoots(Array.isArray(entries) ? entries : [entries], isWindows);
+    if (!reduced.ok) { toastStore.error(reduced.error); return; }
+    const arr = reduced.entries;
     if (arr.length === 0) return;
 
     if (arr.some((entry) => entry.trash)) {
@@ -636,7 +735,9 @@ function createExplorerState(seed?: ExplorerSeed) {
 
   /** Start permanent delete — always shows confirmation dialog. */
   function startPermanentDelete(entries: FileEntry | FileEntry[]) {
-    const arr = Array.isArray(entries) ? entries : [entries];
+    const reduced = operationRoots(Array.isArray(entries) ? entries : [entries], isWindows);
+    if (!reduced.ok) { toastStore.error(reduced.error); return; }
+    const arr = reduced.entries;
     if (arr.length === 0) return;
     dialogStore.startDelete(arr, true);
   }
@@ -701,12 +802,18 @@ function createExplorerState(seed?: ExplorerSeed) {
   // ===================
 
   async function copyToClipboard(entries: FileEntry[]) {
+    const result = operationRoots(entries, isWindows);
+    if (!result.ok) { toastStore.error(result.error); return; }
+    entries = result.entries;
     if (!await clipboardStore.copy(entries)) return;
     const label = entries.length === 1 ? entries[0].name : `${entries.length} items`;
     toastStore.clipboard(`Copied: ${label}`, false);
   }
 
   async function cutToClipboard(entries: FileEntry[]) {
+    const result = operationRoots(entries, isWindows);
+    if (!result.ok) { toastStore.error(result.error); return; }
+    entries = result.entries;
     if (!await clipboardStore.cut(entries)) return;
     const label = entries.length === 1 ? entries[0].name : `${entries.length} items`;
     toastStore.clipboard(`Cut: ${label}`, true);
@@ -861,6 +968,25 @@ function createExplorerState(seed?: ExplorerSeed) {
 
     // Top-level state getters (preferred over state.*)
     fileViewPresentation,
+    get ownEntries() { return coreState.entries; },
+    get ownDisplayEntries() { return ownDisplayEntries; },
+    get entryMeta() { return peekTree.meta; },
+    get detailRows() { return detailRows; },
+    get peekEnabled() { return capability !== "none"; },
+    get expandedPaths() { return new Set(peek.expanded.keys()); },
+    peekWatchSnapshot: watch.peekSnapshot,
+    togglePeek,
+    collapseAllPeeks,
+    get peekCommandTarget() { return capability !== "none" ? resolvePeekCommandTarget(focusedEntry, peekTree.meta) : null; },
+    get canEscapePeek() { return capability !== "none" && resolvePeekEscape(focusedEntry, peekTree.meta) !== null; },
+    escapeSelectionOrPeek() {
+      if (coreState.selectedPaths.size) { clearSelection(); return; }
+      const parent = resolvePeekEscape(focusedEntry, peekTree.meta);
+      if (!parent) return;
+      togglePeek(parent);
+      coreState.cursorPath = parent; coreState.selectionAnchorPath = null;
+      onRevealCallback?.();
+    },
     get currentPath() {
       return coreState.currentPath;
     },
@@ -1057,11 +1183,12 @@ function createExplorerState(seed?: ExplorerSeed) {
       // Seal pending listings and release late observation leases,
       // so a closed tab cannot retain a late native observation lease.
       destroyed = true;
+      disposePeekEffects();
       fileViewPresentation.dispose();
       creationSession = null;
       navGeneration += 1;
       activeLoad?.finish("destroyed");
-      const results = await Promise.allSettled([watch.destroy(), dirListing.cleanup()]);
+      const results = await Promise.allSettled([watch.destroy(), dirListing.cleanup(), peek.dispose()]);
       const failure = results.find((result) => result.status === "rejected");
       if (failure?.status === "rejected") throw failure.reason;
     },

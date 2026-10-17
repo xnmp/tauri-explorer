@@ -4,11 +4,21 @@ import { isTauri } from "$lib/api/common";
 import { getNativeResourceSession } from "$lib/api/native-resource-session";
 import { isVirtualPath } from "$lib/domain/virtual-path";
 import { directoryEvents, type DirectoryChange, type DirectorySubscription } from "./directory-events";
-import { requestRefresh } from "./refresh-manager";
+import { pathComparison } from "$lib/domain/path";
+import { isWindows } from "$lib/domain/platform";
+import { createGitRepoWatch } from "./git-repo-watch";
+import { repoRootCache } from "./repo-root-cache.svelte";
+import { ensureGitWatcherListener } from "./git-refresh";
+import { createDirectoryWatch } from "./directory-watch";
+import { choosePeekWatches } from "$lib/domain/folder-peek";
+import { cancelRefreshSubscriber, requestRefresh } from "./refresh-manager";
 
 type Refresh = (options: { silent: boolean }) => void | Promise<void>;
 interface PaneWatchDependencies {
   refresh: Refresh;
+  currentPath?: () => string;
+  refreshPath?: (path: string, options: { silent: boolean }) => void | Promise<void>;
+  createWatch?: typeof createDirectoryWatch;
   subscribe?: (callback: (change: DirectoryChange) => void) => DirectorySubscription;
   release?: (lease: DirectoryWatchLease) => Promise<void>;
   prepare?: (path: string, subscription: DirectorySubscription) => Promise<void>;
@@ -39,7 +49,94 @@ function mergeChange(previous: DirectoryChange | undefined, change: DirectoryCha
 export function createPaneWatch(deps: PaneWatchDependencies) {
   const releaseCommand = deps.release ?? unwatchDirectory;
   const schedule = deps.schedule ?? requestRefresh;
-  const key = {};
+  let key = {};
+  type PeekSlot = { path: string; key: object; ready: boolean; watch: ReturnType<typeof createDirectoryWatch> | null };
+  const peeks = new Map<string, PeekSlot>();
+  const retiredPeeks = new Set<ReturnType<typeof createDirectoryWatch>>();
+  let watchTail = Promise.resolve();
+  let desiredWatches = new Set<string>();
+  const unmatchedPeeks = new Map<string, DirectoryChange>();
+  const gitWatches = new Map<string, ReturnType<typeof createGitRepoWatch>>();
+
+  function requestPeek(slot: PeekSlot, change: DirectoryChange = { path: slot.path }): void {
+    if (!slot.ready) { remember({ ...change, path: slot.path }); return; }
+    schedule(options => {
+      if (destroyed || pending || peeks.get(slot.path) !== slot || !slot.ready) return false;
+      return deps.refreshPath?.(slot.path, options);
+    }, slot.path, true, slot.key, change.observedAt, change.origin);
+  }
+  function releasePeek(path: string): void {
+    const slot = peeks.get(path);
+    if (!slot) return;
+    peeks.delete(path);
+    dirty.delete(path);
+    cancelRefreshSubscriber(path, slot.key);
+    if (slot.watch) retiredPeeks.add(slot.watch);
+  }
+  function reconcilePeeks(paths: readonly string[], order: ReadonlyMap<string, number>): void {
+    const wanted = new Set(destroyed || pending ? [] : paths);
+    for (const path of peeks.keys()) if (!wanted.has(path)) releasePeek(path);
+    for (const path of wanted) if (!peeks.has(path)) peeks.set(path, { path, key: {}, ready: false, watch: null });
+    desiredWatches = new Set(choosePeekWatches([...wanted], order));
+    watchTail = watchTail.then(async () => {
+      for (const slot of peeks.values()) {
+        if (slot.watch && !desiredWatches.has(slot.path)) {
+          retiredPeeks.add(slot.watch); slot.watch = null;
+        }
+      }
+      let drained = true;
+      for (const owner of retiredPeeks) {
+        try { await owner.destroy(); retiredPeeks.delete(owner); }
+        catch { drained = false; }
+      }
+      for (const slot of peeks.values()) {
+        if (destroyed || pending) break;
+        if (drained && desiredWatches.has(slot.path) && !slot.watch?.held) {
+          slot.ready = false;
+          cancelRefreshSubscriber(slot.path, slot.key);
+          const owner = slot.watch ?? (deps.createWatch ?? createDirectoryWatch)();
+          slot.watch = owner;
+          try { await prepare(slot.path, subscription); await owner.update(slot.path); }
+          catch (error) { console.error("Peek observation failed:", error); }
+          if (peeks.get(slot.path) !== slot) { retiredPeeks.add(owner); continue; }
+        }
+        if (!slot.ready) {
+          slot.ready = true;
+          const resolved = slot.watch?.held?.lease.path;
+          const aliasChange = resolved ? unmatchedPeeks.get(resolved) : undefined;
+          const change = aliasChange ? mergeChange(dirty.get(slot.path), { ...aliasChange, path: slot.path }) : dirty.get(slot.path);
+          dirty.delete(slot.path);
+          if (resolved) unmatchedPeeks.delete(resolved);
+          requestPeek(slot, change);
+        }
+      }
+      if (isTauri()) {
+        const roots = new Set<string>();
+        for (const slot of peeks.values()) {
+          if (!slot.watch?.held || !desiredWatches.has(slot.path)) continue;
+          await repoRootCache.ensure(slot.path);
+          if (peeks.get(slot.path) !== slot || !desiredWatches.has(slot.path)) continue;
+          const root = repoRootCache.get(slot.path);
+          if (root) roots.add(root);
+        }
+        for (const [root, owner] of gitWatches) {
+          if (!roots.has(root)) { await owner.destroy(); gitWatches.delete(root); }
+        }
+        if (roots.size && await ensureGitWatcherListener()) {
+          for (const root of roots) {
+            if (destroyed || pending || gitWatches.has(root)) continue;
+            const owner = createGitRepoWatch(); gitWatches.set(root, owner);
+            try { await owner.update(root); } catch (error) { console.error("Peek Git observation failed:", error); }
+          }
+        }
+      }
+      if ([...peeks.values()].every(slot => slot.ready)) unmatchedPeeks.clear();
+      // A collapse may have happened while acquisition was pending.
+      for (const owner of retiredPeeks) {
+        try { await owner.destroy(); retiredPeeks.delete(owner); } catch { /* retained for retry */ }
+      }
+    }).catch(error => console.error("Peek observation reconciliation failed:", error));
+  }
   let committed: { path: string; lease: DirectoryWatchLease | null } | null = null;
   let pending: Navigation | null = null;
   const navigations = new Set<Navigation>();
@@ -65,8 +162,9 @@ export function createPaneWatch(deps: PaneWatchDependencies) {
     dirty.set(change.path, mergeChange(dirty.get(change.path), change));
   }
   function request(change: DirectoryChange): void {
+    const identity = key;
     schedule((options) => {
-      if (destroyed || committed?.path !== change.path) return false;
+      if (destroyed || identity !== key || (committed?.path ?? deps.currentPath?.()) !== change.path) return false;
       if (pending) {
         remember(change);
         return false;
@@ -76,11 +174,17 @@ export function createPaneWatch(deps: PaneWatchDependencies) {
   }
   function flush(path: string | undefined): void {
     const change = path ? dirty.get(path) : undefined;
-    dirty.clear();
+    if (path) dirty.delete(path);
     if (change && !destroyed) request(change);
   }
   function changed(change: DirectoryChange): void {
     if (destroyed) return;
+    const peek = [...peeks.values()].find(slot => slot.path === change.path || slot.watch?.held?.lease.path === change.path);
+    if (peek) { requestPeek(peek, change); return; }
+    if (!pending && committed?.path !== change.path && [...peeks.values()].some(slot => !slot.ready)
+      && (unmatchedPeeks.has(change.path) || unmatchedPeeks.size < MAX_PENDING_UNMATCHED_CHANGES)) {
+      unmatchedPeeks.set(change.path, mergeChange(unmatchedPeeks.get(change.path), change));
+    }
     if (pending) {
       // Observation starts before the listing returns its resolved lease path.
       // Retain unmatched events during that handoff; accept() rekeys the one
@@ -107,6 +211,10 @@ export function createPaneWatch(deps: PaneWatchDependencies) {
   });
 
   function begin(path: string) {
+    for (const peekPath of peeks.keys()) releasePeek(peekPath);
+    reconcilePeeks([], new Map());
+    if (committed) cancelRefreshSubscriber(committed.path, key);
+    key = {};
     if (pending?.staged) release(pending.staged);
     if (pending) pending.staged = undefined;
     for (const oldPath of dirty.keys()) {
@@ -180,6 +288,20 @@ export function createPaneWatch(deps: PaneWatchDependencies) {
   return {
     begin,
     changed,
+    reconcilePeeks,
+    invalidatePeeks() { for (const path of peeks.keys()) releasePeek(path); reconcilePeeks([], new Map()); },
+    requestPath(path: string) {
+      const slot = [...peeks.values()].find(slot => pathComparison(isWindows).same(slot.path, path));
+      const root = committed?.path ?? deps.currentPath?.();
+      if (slot) requestPeek(slot);
+      else if (root && pathComparison(isWindows).same(root, path)) request({ path: root });
+    },
+    refreshPeeks(explicit: boolean) {
+      for (const slot of peeks.values()) if (explicit || !slot.watch?.held) requestPeek(slot);
+    },
+    peekSnapshot() {
+      return [...peeks.values()].map(slot => ({ path: slot.path, ready: slot.ready, lease: slot.watch?.held?.lease ?? null }));
+    },
     allowRefresh(path: string): boolean {
       if (destroyed) return false;
       if (!pending) return true;
@@ -189,6 +311,9 @@ export function createPaneWatch(deps: PaneWatchDependencies) {
     destroy(): Promise<void> {
       if (disposal) return disposal;
       destroyed = true;
+      for (const path of peeks.keys()) releasePeek(path);
+      if (committed) cancelRefreshSubscriber(committed.path, key);
+      reconcilePeeks([], new Map());
       subscription.stop();
       dirty.clear();
       if (committed?.lease) release(committed.lease);
@@ -200,6 +325,9 @@ export function createPaneWatch(deps: PaneWatchDependencies) {
       const attempt = (async () => {
         // An in-flight observed reply still owns a possible lease. Its caller
         // always closes the ticket, including rejected/stale results.
+        await watchTail;
+        for (const [root, owner] of gitWatches) { await owner.destroy(); gitWatches.delete(root); }
+        for (const owner of retiredPeeks) { await owner.destroy(); retiredPeeks.delete(owner); }
         await Promise.all([...navigations].map((navigation) => navigation.done));
         while (releases.size) await Promise.all([...releases]);
         for (const lease of retired.values()) attemptRelease(lease);

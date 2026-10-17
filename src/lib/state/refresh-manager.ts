@@ -211,6 +211,16 @@ export function requestRefresh(
   if (!inFlightRefreshes.has(dirPath)) schedule(dirPath, pending);
 }
 
+/** Retiring one pane/path must not cancel another subscriber's demand. */
+export function cancelRefreshSubscriber(path: string, key: unknown): void {
+  const pending = pendingRefreshes.get(path);
+  if (!pending) return;
+  pending.callbacks.delete(key);
+  if (pending.callbacks.size) return;
+  if (pending.timer) clearTimeout(pending.timer);
+  pendingRefreshes.delete(path);
+}
+
 export function cancelPendingRefreshes(): void {
   refreshGeneration += 1;
   for (const pending of pendingRefreshes.values()) {

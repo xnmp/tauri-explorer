@@ -290,7 +290,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     // File navigation belongs to the collection. Ordinary controls, Miller
     // columns and sidebar widgets retain their own arrow keys. A pane-switch
     // command changes active-pane state before the old collection loses focus.
-    if (!target.matches('.file-list .entry-item, .file-list .virtual-viewport[role="grid"], .explorer-pane, body')) return;
+    if (!target.matches('.file-list .entry-item, .file-list .virtual-viewport:is([role="grid"], [role="treegrid"]), .explorer-pane, body')) return;
     const entries = paneExplorer.displayEntries;
     const cursor = paneExplorer.focusedEntry;
     const move = resolveFileListMove(event, {

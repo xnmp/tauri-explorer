@@ -575,3 +575,40 @@ test.describe("list: spring cards keep the hovered row in place", () => {
     });
   }
 });
+
+test("tiles: a stacked temporary panel is reachable through the channel around its ribbon, and the ribbon takes a drop", async ({ page }) => {
+  await page.setViewportSize({ width: 520, height: 700 });
+  await page.goto(`/?path=${root}&viewMode=tiles`);
+  await expect(page.locator(views.tiles.folder(P("Empty")))).toBeVisible();
+  // Archive's panel takes the band below the row and Bulk's the band above, so
+  // Empty springs into a stacked panel whose ribbon runs beside Archive's.
+  for (const folder of ["Archive", "Bulk"]) {
+    await explorer(page, "return explorer.togglePeek(value)", P(folder));
+    await expect(page.locator(views.tiles.surface(P(folder)))).toBeVisible();
+  }
+  await expect.poll(() => explorer(page, "return Object.fromEntries(explorer.tilePanelSides)"))
+    .toEqual({ [P("Archive")]: "below", [P("Bulk")]: "above" });
+  await expect(page.locator(`${shown} [data-motion-key][style*="transform"]`)).toHaveCount(0);
+  await startDrag(page);
+  await dragTo(page, views.tiles.folder(P("Empty")));
+  await opened(page, [P("Empty")]);
+  const ribbon = `${shown} .outline-ribbon-hit[data-spring-bridge="${P("Empty")}"]`;
+  await expect(page.locator(ribbon)).toHaveCount(1);
+  await expect(page.locator(views.tiles.surface(P("Empty")))).toBeVisible();
+  // Down from the tile to the label 20px either side of the ribbon: never outside the peek.
+  const tile = (await page.locator(views.tiles.folder(P("Empty"))).boundingBox())!;
+  const line = (await page.locator(ribbon).boundingBox())!;
+  for (const offset of [-20, 20]) {
+    for (let y = tile.y + tile.height - 4; y < line.y + line.height; y += 12) {
+      expect(await dragTo(page, { x: line.x + line.width / 2 + offset, y })).toMatch(new RegExp(`^(bridge:)?${P("Empty")}$`));
+      expect(await springPeeks(page)).toEqual([P("Empty")]);
+    }
+  }
+  await holdsOpen(page, { x: line.x + line.width / 2 + 20, y: line.y + line.height / 2 }, [P("Empty")]);
+  // A drop on the ribbon lands in the stacked panel's folder.
+  expect(await dropOn(page, { x: line.x + line.width / 2, y: line.y + line.height / 2 })).toBe(`bridge:${P("Empty")}`);
+  await expect.poll(() => listing(page, P("Empty"))).toEqual(["drag-me.txt"]);
+  expect(await listing(page, root)).not.toContain("drag-me.txt");
+  await endDrag(page);
+  await opened(page, []);
+});

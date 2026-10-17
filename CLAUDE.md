@@ -315,6 +315,12 @@ For Windows native transfer waits, use one renderer-side observer through
 Retain failure JSON and screenshots under `e2e-tauri/logs/`, capturing the
 failing window before inspecting unrelated windows.
 
+Native Git-watch readiness probes read `e2eGitWatches` by `directoryKey`, the
+same key published by `api/git.ts`, not by a native `path.join` result. Normalize
+on the runner side before `browser.execute`: its serialized callback cannot
+reference imported helpers. Windows backslashes otherwise reject a successfully
+acknowledged lease (#1254).
+
 `createWindowTabsManager().dispose()` is asynchronous: await it in test teardown so
 explorer directory-listener cleanup settles before Vitest closes the worker (#611).
 

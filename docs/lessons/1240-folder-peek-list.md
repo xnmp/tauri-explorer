@@ -64,12 +64,31 @@ card's rows arrive after the toggle. Refreshes, navigation, restores, R changes,
 reduced motion and grip commits are instant; the grip's preview has already
 shown the new height, so animating its commit would snap back first.
 
+Reveal is decoupled from the motion arm (`stepMotionArm`, pure and unit
+tested): a card that wraps to the next column only once a listing slower than
+the arm settles is still scrolled into view, and an open whose motion a
+refresh interrupts carries its owed reveal through `finish(false)`.
+
+Closing a card animates only a ghost of its body: the live header never takes
+`visibility: hidden`, which would drop a focused header's focus to `BODY`
+(caret, carets-off click and Escape all close with focus on the header).
+
 ## Card scroll state
 
 A card scroll changes which rows are mounted just as a sideways scroll does, so
 `setCardScrollTop` notifies FileList (`onviewportscroll`: tab-stop fallback,
 marquee) and drop hover once per frame. A grip preview whose card closes before
 its cancel arrives is dropped with the card's other per-card state.
+
+The grip's drag session also lives in `useListColumns` (`beginGrip`,
+`gripKey`, `gripMax`), ended by window-level `pointerup`/`pointercancel`/`blur`
+listeners. Grip-local state was stranded when a sideways wheel unmounted the
+card's column mid-drag (a covered slot, a `.dragging` grip and a stale preview
+survived the release). The preview, keys and `aria-valuemax` stop at the rows
+left below the header in its column: a resize that no longer fit pushed the
+card into the next column, out of view. `ListCard`'s surface drop feedback is
+the importable `composables/surface-drop-feedback.ts` for the same reason
+(#444).
 
 `useListColumns` owns card offsets. Reveal writes the offset synchronously
 (`cardRevealTop`), so the row is in the card's mounted window when FileList
@@ -96,9 +115,33 @@ excluded from row clicks, double clicks and drags (`EntryCell`'s
 the press, so `EntryCell` notes at `pointerdown` (capture) whether the press
 began on a control; checking `dragstart.target` alone never matches.
 
+The header owns its card's group with `aria-owns` (ids from `$props.id()` and
+the entry index; ghosts strip ids) and is named by `aria-label` alone, since
+name-from-content would include the owned rows. The card's scroll area is
+`tabindex="-1"`: Chromium otherwise makes it a keyboard-focusable scroller, a
+second Tab stop per card. The grip stays a Tab stop (WAI-ARIA window splitter;
+the only keyboard path to a card's height). axe's
+`scrollable-region-focusable` cannot see roving rows (`tabindex="-1"`) as
+focusable content, so it stays disabled for the List scan.
+
 The idle `.list-motion-layer` (absolute, full canvas) must be `display: none`
 while empty: axe reports every row's text as "overlapped by another element"
 otherwise, although it has `pointer-events: none`.
+
+## No open card, no card cost
+
+With nothing expanded, tree positions are arithmetic
+(`peekTreePositionLookup`), the pinned-editor lookup runs only while an editor
+is pinned, and the caret's chevron is its button's masked `::before` (one
+element per folder row instead of button, svg and path). The model is split
+into an R-independent structure (`buildListStructure`) and sizing
+(`sizeListModel`), so a row-count change re-flows without rebuilding 10,000
+items. A build with every per-row card-aware binding removed measured the
+same as the real one: what remains over phase 2 is the caret element (about
+half the scroll-back delta) and the tree/row-model rendering. Measure List perf
+against the previous phase with concurrent A/B runs (both dev servers under
+the same load); sequential runs on a shared host drift by more than the
+differences being measured.
 
 ## Tests
 
@@ -108,6 +151,9 @@ otherwise, although it has `pointer-events: none`.
 - `folder-peek-details`' old "List stays flat" check passed vacuously: List
   loads lazily, so `toHaveCount(0)` was true before it mounted. Assert the
   positive outcome (the card and its child) instead.
+- Motion tests must check both scrollport edges with exact boxes (a column wholly
+  off the left edge as well as the right), and pair "instant" assertions with a
+  positive control (a user toggle seen animating by the same probe).
 - `tests/test-cache.test.ts` treats a string literal naming a repository file
   (`AGENTS.md`) in a unit test as a read of that file; fixture names in unit
   tests must not collide with repository files.

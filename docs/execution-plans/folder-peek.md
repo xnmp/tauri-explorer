@@ -566,12 +566,19 @@ Screenshots:
     only in Details. A Details sort (for example size) reordering a List card was
     rejected as surprising in a name-ordered view.
   - A grip drag previews only the card's scroll area (items it would cover are hidden)
-    and commits on release without motion; pointercancel or lost capture aborts the
-    preview. Heights are remembered per pane for the session, capped at 500 paths like
-    the expanded set.
+    and commits on release without motion; pointercancel or window blur aborts the
+    preview. The session is window-level state in `useListColumns`, so a column that
+    unmounts mid-drag still commits. The height is clamped to the rows left in the
+    card's column; revealing the card after a commit that moved it was rejected,
+    since a resize should never relocate what is being resized. Heights are
+    remembered per pane for the session, capped at 500 paths like the expanded set.
+  - The grip is the card's one Tab stop (the separator's only keyboard path); the
+    scroll area is `tabindex="-1"` because the tree's cursor reaches every card row.
+    The header owns the group via `aria-owns`.
   - Motion is driven by an explicit user-toggle signal (`peekChange`), armed until the
     opened folder's listing settles (at most 1.5s). Inferring "user change" from layout
-    diffs was rejected: refreshes and restores would animate.
+    diffs was rejected: refreshes and restores would animate. Revealing a wrapped card
+    is not bound to that arm: it waits for the listing however long it takes.
   - Loading (after 150ms), Empty and Error rows take one content row like Details; a
     card is header-only while its listing has produced no row.
   - Card heights come only from the model (CSS variables); measuring rendered heights

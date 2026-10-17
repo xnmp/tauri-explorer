@@ -14,7 +14,7 @@ type Refresh = (options: { silent: boolean }) => void | Promise<void>;
 interface PaneWatchDependencies {
   refresh: Refresh;
   currentPath?: () => string;
-  refreshPath?: (path: string, options: { silent: boolean }) => void | Promise<void>;
+  refreshPath?: (path: string, options: { silent: boolean; observedAt?: number }) => void | Promise<void>;
   createWatch?: typeof createDirectoryWatch;
   subscribe?: (callback: (change: DirectoryChange) => void) => DirectorySubscription;
   release?: (lease: DirectoryWatchLease) => Promise<void>;

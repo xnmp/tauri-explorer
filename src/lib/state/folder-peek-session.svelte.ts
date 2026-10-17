@@ -17,6 +17,17 @@ export function createFolderPeekSession(windows: boolean) {
   const resources = new Map<string, { target: RefreshTarget; retire(): Promise<void> }>();
   const retiring = new Set<Promise<void>>();
   const retired = new Set<{ retire(): Promise<void> }>();
+  /** Git badge ownership, held only while badges are shown. */
+  const gitOwners = new Map<string, () => void>();
+  function reconcileGit(paths: Iterable<string>) {
+    const desired = new Set(paths);
+    for (const [path, release] of gitOwners) if (!desired.has(path)) { gitOwners.delete(path); release(); }
+    for (const path of desired) {
+      if (gitOwners.has(path)) continue;
+      gitOwners.set(path, gitStatusStore.trackDirectory(path));
+      void gitStatusStore.fetchForDirectory(path);
+    }
+  }
 
   function publish(path: string, listing: PeekListing) {
     snapshots = new Map(snapshots).set(path, listing);
@@ -32,14 +43,13 @@ export function createFolderPeekSession(windows: boolean) {
     }).finally(() => retiring.delete(task));
     retiring.add(task);
   }
-  function reconcile(paths: readonly string[]) {
+  function reconcile(paths: readonly string[], git = false) {
     const desired = new Set(disposed ? [] : paths);
+    reconcileGit(git ? desired : []);
     for (const path of resources.keys()) if (!desired.has(path)) retire(path);
     for (const path of desired) {
       if (resources.has(path)) continue;
       const owner = createDirectoryListing();
-      const releaseGit = gitStatusStore.trackDirectory(path);
-      void gitStatusStore.fetchForDirectory(path);
       let timer: ReturnType<typeof setTimeout> | undefined;
       const current = () => !disposed && resources.get(path)?.target === target;
       const settle = () => { clearTimeout(timer); timer = undefined; };
@@ -47,6 +57,7 @@ export function createFolderPeekSession(windows: boolean) {
         dirListing: owner,
         current,
         get entries() { return snapshots.get(path)?.entries ?? []; },
+        get initial() { return snapshots.get(path)?.status === "loading"; },
         set entries(entries: readonly FileEntry[]) {
           if (!current()) return;
           settle(); publish(path, { status: "loaded", entries });
@@ -56,7 +67,7 @@ export function createFolderPeekSession(windows: boolean) {
           settle(); publish(path, { status: "error", entries: [], error });
         },
       };
-      resources.set(path, { target, retire: () => { settle(); releaseGit(); return owner.cleanup(); } });
+      resources.set(path, { target, retire: () => { settle(); return owner.cleanup(); } });
       publish(path, { status: "loading", entries: [], showLoading: false });
       timer = setTimeout(() => {
         if (current() && snapshots.get(path)?.status === "loading") publish(path, { status: "loading", entries: [], showLoading: true });

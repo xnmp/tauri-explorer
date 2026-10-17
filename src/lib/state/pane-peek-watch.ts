@@ -20,7 +20,7 @@ import type { DirectoryChange } from "./directory-events";
 interface PeekWatchDependencies {
   blocked(): boolean;
   prepare(path: string): Promise<void>;
-  refreshPath?: (path: string, options: { silent: boolean }) => void | Promise<void>;
+  refreshPath?: (path: string, options: { silent: boolean; observedAt?: number }) => void | Promise<void>;
   createWatch?: typeof createDirectoryWatch;
   schedule: typeof requestRefresh;
   mergeChange(previous: DirectoryChange | undefined, change: DirectoryChange): DirectoryChange;
@@ -51,7 +51,9 @@ export function createPeekWatch(deps: PeekWatchDependencies) {
     schedule(options => {
       if (deps.blocked() || peeks.get(slot.path) !== slot || slot.key !== identity) return false;
       if (!slot.ready) { remember({ ...change, path: slot.path }); return false; }
-      return deps.refreshPath?.(slot.path, options);
+      // The observation time lets listing-derived owners (Git badges) skip
+      // work a window-level subscriber already started for this change.
+      return deps.refreshPath?.(slot.path, { ...options, observedAt: change.observedAt });
     }, slot.path, true, slot.key, change.observedAt, change.origin);
   }
   function releasePeek(path: string): void {

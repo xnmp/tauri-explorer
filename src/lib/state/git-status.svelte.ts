@@ -45,12 +45,21 @@ function createGitStatusStore() {
   const staleDirectories = new Set<string>();
   const pendingByDir = new Map<string, number>();
   const dirtyDirectories = new Set<string>();
-  function refreshDirectory(path: string): Promise<void> {
-    if (inFlight.has(path)) dirtyDirectories.add(path);
+  /** When each directory's latest scan started, or was queued to start. A
+   * change observed no later than that is already covered by the scan, so a
+   * second trigger for one notification (window watcher and pane) is free. */
+  const requestedAt = new Map<string, number>();
+  function refreshDirectory(path: string, observedAt?: number): Promise<void> {
+    if (observedAt !== undefined && (requestedAt.get(path) ?? -Infinity) >= observedAt) {
+      return inFlight.get(path)?.promise ?? Promise.resolve();
+    }
+    if (inFlight.has(path)) { dirtyDirectories.add(path); requestedAt.set(path, Date.now()); }
     return doFetch(path);
   }
-  function invalidateDirectories(paths: readonly string[]): void {
-    for (const path of paths) if (trackedDirectories.has(path)) void refreshDirectory(path);
+  /** Refresh the tracked directories among `paths`. `observedAt` is when the
+   * underlying change was observed; omit it when unknown (always refetch). */
+  function invalidateDirectories(paths: readonly string[], observedAt?: number): void {
+    for (const path of paths) if (trackedDirectories.has(path)) void refreshDirectory(path, observedAt);
   }
 
   async function fetchForDirectory(path: string): Promise<void> {
@@ -76,6 +85,7 @@ function createGitStatusStore() {
     }
     const taskId = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
     const flight = { taskId, promise: Promise.resolve(), abandoned: false };
+    requestedAt.set(path, Date.now());
     flight.promise = performFetch(path, flight).finally(() => {
       if (inFlight.get(path) === flight) {
         inFlight.delete(path);
@@ -156,6 +166,7 @@ function createGitStatusStore() {
       }
       trackedDirectories.delete(path);
       dirtyDirectories.delete(path);
+      requestedAt.delete(path);
       // Preserve settled badges for instant back-navigation, but exclude this
       // directory from watcher-driven work until a pane tracks it again.
       if (byDir[path]) staleDirectories.add(path);
@@ -185,7 +196,7 @@ function createGitStatusStore() {
       return;
     }
     console.info(`[git-status] refresh: refetching ${dirs.length} dirs: ${dirs.join(", ")}`);
-    await Promise.all(dirs.map(refreshDirectory));
+    await Promise.all(dirs.map(path => refreshDirectory(path)));
   }
 
   /** Status of an entry, looked up by the directory it lives in. */
@@ -198,6 +209,7 @@ function createGitStatusStore() {
     byDir = {};
     staleDirectories.clear();
     trackedDirectories.clear();
+    requestedAt.clear();
   }
 
   async function initWatcherListener(): Promise<void> {

@@ -268,7 +268,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   }
   function reconcilePeekResources() {
     const reachable = coreState.loading ? [] : peekTree.expanded;
-    peek.reconcile(reachable);
+    peek.reconcile(reachable, settingsStore.showGitStatus);
     return watch.reconcilePeeks(reachable, peek.expanded);
   }
   const disposePeekEffects = $effect.root(() => {
@@ -278,10 +278,11 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
       const root = coreState.currentPath;
       const reachable = coreState.loading ? [] : peekTree.expanded;
       const expanded = peek.expanded;
+      const git = settingsStore.showGitStatus;
       untrack(() => {
         if (previous?.root === root) pruneHiddenChildren(previous.tree, tree.entries);
         previous = { root, tree };
-        peek.reconcile(reachable); watch.reconcilePeeks(reachable, expanded);
+        peek.reconcile(reachable, git); watch.reconcilePeeks(reachable, expanded);
       });
     });
   });
@@ -635,9 +636,12 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     navigateToParent,
     targetFor: peek.target,
     ownsPath: (path, directory) => paths.sameParent(path, directory),
-    published: (path, entries, needsRefresh) => {
+    published: (path, entries, { needsRefresh, changed, initial, observedAt }) => {
       if (!needsRefresh) peek.prune(path, entries);
-      if (peek.target(path)) void gitStatusStore.refreshDirectory(path);
+      // A peek's first listing had its badges loaded with the resource; after
+      // that only a changed listing does. A notification the window watcher
+      // already invalidated is covered by its observation time.
+      if (changed && !initial && peek.target(path)) gitStatusStore.invalidateDirectories([path], observedAt);
     },
     fanOut: watch.refreshPeeks,
   });

@@ -29,6 +29,7 @@ const gitStatusStore = {
   },
   fetchForDirectory: async () => {},
   refreshDirectory: async () => {},
+  invalidateDirectories: () => {},
 };
 
 let createExplorerState: typeof import("$lib/state/explorer.svelte").createExplorerState;
@@ -52,6 +53,8 @@ beforeEach(async () => {
   settingsStore = await compileSettings();
   createExplorerState = await compileExplorer({ "./git-status.svelte": { gitStatusStore }, "./settings.svelte": { settingsStore } });
   vi.useFakeTimers(); loads.length = 0; tracked.clear(); settingsStore.reset();
+  // Badges on, so "no Git ownership while off" is attributable to Folder Peek.
+  settingsStore.update({ showGitStatus: true });
   source.current = async path => ({ ok: true, path, entries: trees[path] ?? [] });
 });
 afterEach(async () => {

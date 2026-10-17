@@ -19,7 +19,23 @@ export interface RefreshTarget {
   dirListing: ReturnType<typeof createDirectoryListing>;
   current(): boolean;
   fail(error: string): void | Promise<void>;
+  /** True until the target's first listing publishes. */
+  readonly initial?: boolean;
 }
+
+/** What one publication changed, for owners of listing-derived state. */
+export interface RefreshPublication {
+  /** A complete snapshot could not establish removals; another read follows. */
+  needsRefresh: boolean;
+  /** The published entries differ from the ones they replace. */
+  changed: boolean;
+  /** The target's first listing (its owner loaded derived state already). */
+  initial: boolean;
+  /** When the change that caused this read was observed, if it was. */
+  observedAt?: number;
+}
+
+export interface RefreshOptions { silent?: boolean; explicit?: boolean; observedAt?: number }
 
 export interface PaneRefreshContext {
   coreState: ExplorerCoreState;
@@ -32,7 +48,7 @@ export interface PaneRefreshContext {
   navigateToParent: () => Promise<void>;
   targetFor?: (path: string) => RefreshTarget | undefined;
   ownsPath?: (entryPath: string, directory: string) => boolean;
-  published?: (path: string, entries: readonly import("$lib/domain/file").FileEntry[], needsRefresh: boolean) => void;
+  published?: (path: string, entries: readonly import("$lib/domain/file").FileEntry[], publication: RefreshPublication) => void;
   fanOut?: (explicit: boolean) => void;
 }
 
@@ -41,7 +57,7 @@ export function createPaneRefresh(ctx: PaneRefreshContext) {
 
   const pending = new Map<string, { promise: Promise<void> }>();
 
-  async function refreshOnce(refreshPath: string, options?: { silent?: boolean; explicit?: boolean }): Promise<void> {
+  async function refreshOnce(refreshPath: string, options?: RefreshOptions): Promise<void> {
     const silent = options?.silent ?? false;
     const root = coreState.currentPath;
     const target = refreshPath === root ? undefined : ctx.targetFor?.(refreshPath);
@@ -74,6 +90,7 @@ export function createPaneRefresh(ctx: PaneRefreshContext) {
     if (!target) coreState.loading = false;
 
     const current = target?.entries ?? coreState.entries;
+    const initial = target?.initial ?? false;
     const listing = reconcileDirectoryEntries(oldEntries, current, result.entries);
     // Reconcile only identities owned by this directory; selected children in
     // other live peeks survive a parent refresh.
@@ -96,7 +113,7 @@ export function createPaneRefresh(ctx: PaneRefreshContext) {
     ctx.setSelection(selectedPaths);
     if (!coreState.cursorPath || owns(coreState.cursorPath)) coreState.cursorPath = selection.cursorPath;
     if (!coreState.selectionAnchorPath || owns(coreState.selectionAnchorPath)) coreState.selectionAnchorPath = selection.anchorPath;
-    ctx.published?.(refreshPath, listing.entries, listing.needsRefresh);
+    ctx.published?.(refreshPath, listing.entries, { needsRefresh: listing.needsRefresh, changed: listing.entries !== current, initial, observedAt: options?.observedAt });
     if (!target) ctx.fanOut?.(options?.explicit ?? false);
     if (listing.needsRefresh || selection.needsRefresh) ctx.requestReconcile(refreshPath);
 
@@ -105,7 +122,7 @@ export function createPaneRefresh(ctx: PaneRefreshContext) {
     }
   }
 
-  return async function refresh(options?: { silent?: boolean; explicit?: boolean }, path = coreState.currentPath): Promise<void> {
+  return async function refresh(options?: RefreshOptions, path = coreState.currentPath): Promise<void> {
     const target = path === coreState.currentPath ? undefined : ctx.targetFor?.(path);
     const request = { promise: refreshOnce(path, options) };
     pending.set(path, request);

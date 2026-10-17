@@ -23,7 +23,7 @@ export function createFolderPeekState(windows: boolean) {
     prune(parent: string, entries: readonly FileEntry[]) { session?.prune(parent, entries); },
     listing(path: string) { return session?.listing(path); },
     target(path: string) { return session?.target(path); },
-    reconcile(paths: readonly string[]) { session?.reconcile(paths); },
+    reconcile(paths: readonly string[], git = false) { session?.reconcile(paths, git); },
     async dispose() {
       disposed = true;
       await loading;

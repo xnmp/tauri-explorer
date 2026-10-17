@@ -31,3 +31,17 @@ stylesheets can arrive after FileList's shared focus chrome. Pointer-focus reset
 must exclude `:focus-visible`, and selected keyboard-focus rules must outrank
 renderer selection borders regardless of stylesheet order. Verify theme contrast
 as well as outline existence.
+
+## Folder Peek toggle
+
+Column flow is part of Folder Peek (`settingsStore.folderPeek`, default on). Off,
+List must be the origin/dev row-major `ListView.svelte` with `listViewColumns`/
+`listColumnMaxWidth`, the List Columns submenu, `view.setListColumns` (gated by
+`when`) and the old keyboard rules (+/-1 horizontally, yazi in a single column).
+FileList chooses `ListColumnsView` or `ListView` and swaps them live. Keyboard
+dispatch takes an explicit `listLayout: "rows" | "columns"` in
+`resolveFileListMove`; do not infer it from the snapshot. Both List renderers
+use `.list-scroller`, so e2e code that must tell them apart keys on
+`.list-canvas` (column flow only). E2E loops cover both through
+`VIEW_VARIANTS`/`ALL_VIEW_VARIANTS` in `e2e/helpers.ts`; `folder-peek-setting.spec.ts`
+asserts the live switch.

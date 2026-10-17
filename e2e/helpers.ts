@@ -18,6 +18,19 @@ export const VIEW_MODES: readonly ViewMode[] = allModes
   ? ALL_VIEW_MODES
   : ["details"];
 
+/**
+ * A view mode plus the Folder Peek setting that selects its List renderer.
+ * `classic` = Folder Peek off (row-major List); only meaningful for "list".
+ * ALL_VIEW_MODES runs add the classic List so both renderers stay covered.
+ */
+export interface ViewVariant { readonly name: string; readonly viewMode: ViewMode; readonly classic: boolean }
+export const variantsFor = (modes: readonly ViewMode[]): readonly ViewVariant[] => [
+  ...modes.map((viewMode) => ({ name: viewMode, viewMode, classic: false })),
+  ...(modes.includes("list") ? [{ name: "list-classic", viewMode: "list" as const, classic: true }] : []),
+];
+export const VIEW_VARIANTS: readonly ViewVariant[] = variantsFor(VIEW_MODES);
+export const ALL_VIEW_VARIANTS: readonly ViewVariant[] = variantsFor(ALL_VIEW_MODES);
+
 // Print once at import time so it's visible in test output
 if (!allModes) {
   console.log(
@@ -98,7 +111,7 @@ export async function switchViewMode(page: Page, mode: ViewMode) {
   }
   // Height-filled List columns can reach below a short final column. Use the
   // slot gap after the first row, rather than the last column's tail at x=10.
-  if (box && await content.locator(".list-view").isVisible()) {
+  if (box && await content.locator(".list-canvas").isVisible()) {
     const first = await content.locator(".list-item").first().boundingBox();
     if (first) clickY = Math.round(first.y + first.height - box.y) + 2;
   }
@@ -120,7 +133,7 @@ export async function switchViewMode(page: Page, mode: ViewMode) {
   };
   await page.locator(`${viewSelector[mode]}:visible`).waitFor({ timeout: 3000 });
   await page.locator(".entry-item:visible").first().waitFor({ timeout: 3000 });
-  if (mode === "list") {
+  if (mode === "list" && await content.locator(".list-canvas").count() > 0) {
     // The initial column window follows the first geometry delivery. A mounted
     // option can precede it, so counting entries at that point samples setup.
     await content.locator(".list-scroller").evaluate(element => new Promise<void>(resolve => {

@@ -390,7 +390,7 @@ for (const previous of ['details','tiles']) test(`cold List import retires ${pre
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
   let requested = false;
-  await page.route('**/src/lib/components/ListView.svelte*',async route => { requested = true; await gate; await route.continue(); });
+  await page.route('**/src/lib/components/ListColumnsView.svelte*',async route => { requested = true; await gate; await route.continue(); });
   await page.goto(`/?path=/perf/huge-1000&viewMode=${previous}`);
   await expect(page.locator(`.${previous}-view .entry-item`).first()).toBeVisible();
   await page.evaluate(async () => {

@@ -16,7 +16,7 @@
  * Run across all three views with ALL_VIEW_MODES=1.
  */
 import { test, expect, type Page } from "./fixtures";
-import { VIEW_MODES, waitForEntries, switchViewMode, pressShortcut } from "./helpers";
+import { VIEW_MODES, VIEW_VARIANTS, waitForEntries, switchViewMode, pressShortcut, seedSettings } from "./helpers";
 
 const HOME = "/?path=/home/user";
 
@@ -34,9 +34,11 @@ function entryByName(page: Page, name: string) {
 // ---------------------------------------------------------------------------
 // Per-view invariants: selection highlight + keyboard navigation.
 // ---------------------------------------------------------------------------
-for (const viewMode of VIEW_MODES) {
-  test.describe(`FileList invariants [${viewMode}]`, () => {
+for (const { name, viewMode, classic } of VIEW_VARIANTS) {
+  test.describe(`FileList invariants [${name}]`, () => {
     test.beforeEach(async ({ page }) => {
+      // Classic List = Folder Peek off (row-major grid).
+      if (classic) await seedSettings(page, { folderPeek: false });
       await page.goto(HOME);
       await waitForEntries(page);
       if (viewMode !== "details") {
@@ -58,10 +60,13 @@ for (const viewMode of VIEW_MODES) {
     });
 
     test("arrow keys move the selection between entries", async ({ page }) => {
-      // List fills vertically; Tiles steps horizontally. Pick an entry with a neighbor.
-      const forwardKey = viewMode === "tiles" ? "ArrowRight" : "ArrowDown";
-      const backKey = viewMode === "tiles" ? "ArrowLeft" : "ArrowUp";
-      const anchor = viewMode === "list" ? page.locator(".entry-item").first() : page.locator(".entry-item:not(.directory)").first();
+      // Details steps by row; column-flow List fills vertically; Tiles and the
+      // classic row-major List step horizontally. Anchor on a file where the
+      // yazi-style "ArrowRight enters the folder" branch could trigger.
+      const horizontal = viewMode === "tiles" || classic;
+      const forwardKey = horizontal ? "ArrowRight" : "ArrowDown";
+      const backKey = horizontal ? "ArrowLeft" : "ArrowUp";
+      const anchor = viewMode === "list" && !classic ? page.locator(".entry-item").first() : page.locator(".entry-item:not(.directory)").first();
 
       await anchor.click();
       await expect(anchor).toHaveClass(/selected/);

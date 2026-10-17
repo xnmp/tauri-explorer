@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "./fixtures";
+import { ALL_VIEW_VARIANTS } from "./helpers";
 import { installLayoutInspector } from "./layout-inspector";
 import { sampleFramesFromStartup, startFrameSampler, stopFrameSampler } from "./frame-sampler";
 
@@ -64,19 +65,21 @@ for (const viewMode of ["details", "list", "tiles"] as const) {
   }
 }
 
-for (const viewMode of ["details", "list", "tiles"] as const) {
-  test(`${viewMode} overflowing files still reveal their final entry at fractional zoom`, async ({ page }, info) => {
+for (const { name, viewMode, classic } of ALL_VIEW_VARIANTS) {
+  // Column-flow List scrolls sideways; the classic (Folder Peek off) List scrolls vertically.
+  const sideways = viewMode === "list" && !classic;
+  test(`${name} overflowing files still reveal their final entry at fractional zoom`, async ({ page }, info) => {
     await page.setViewportSize({ width: 817, height: 600 });
-    await page.addInitScript(() => localStorage.setItem("explorer-settings", JSON.stringify({
-      showSidebar: false, showStatusBar: false, zoomLevel: 130, thumbnailSize: "small",
-    })));
+    await page.addInitScript((folderPeek) => localStorage.setItem("explorer-settings", JSON.stringify({
+      showSidebar: false, showStatusBar: false, zoomLevel: 130, thumbnailSize: "small", folderPeek,
+    })), !classic);
     await page.goto(`/?path=/perf/huge-500&viewMode=${viewMode}`);
     await installLayoutInspector(page);
     await page.locator(".entry-item").first().click();
     const viewport = page.locator(`.${viewMode}-view .virtual-viewport`);
-    const position = () => viewport.evaluate((element, mode) => mode === "list" ? element.scrollLeft : element.scrollTop, viewMode);
-    await expect.poll(() => viewport.evaluate((element, mode) => mode === "list"
-      ? element.scrollWidth - element.clientWidth : element.scrollHeight - element.clientHeight, viewMode)).toBeGreaterThan(100);
+    const position = () => viewport.evaluate((element, sideways) => sideways ? element.scrollLeft : element.scrollTop, sideways);
+    await expect.poll(() => viewport.evaluate((element, sideways) => sideways
+      ? element.scrollWidth - element.clientWidth : element.scrollHeight - element.clientHeight, sideways)).toBeGreaterThan(100);
     const box = (await viewport.boundingBox())!;
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.wheel(0, 600);
@@ -233,18 +236,19 @@ test("workspace scroll cancels a queued divider frame before it can change a sav
   expect(ratio).toBe(0.5);
 });
 
-for (const viewMode of ["details", "list", "tiles"] as const) {
-  test(`${viewMode} resizing preserves a cursor intentionally scrolled out of view`, async ({ page }) => {
+for (const { name, viewMode, classic } of ALL_VIEW_VARIANTS) {
+  const sideways = viewMode === "list" && !classic;
+  test(`${name} resizing preserves a cursor intentionally scrolled out of view`, async ({ page }) => {
     await page.setViewportSize({ width: 817, height: 600 });
-    await page.addInitScript(() => localStorage.setItem("explorer-settings", JSON.stringify({
-      showSidebar: false, showStatusBar: false, zoomLevel: 130, thumbnailSize: "small",
-    })));
+    await page.addInitScript((folderPeek) => localStorage.setItem("explorer-settings", JSON.stringify({
+      showSidebar: false, showStatusBar: false, zoomLevel: 130, thumbnailSize: "small", folderPeek,
+    })), !classic);
     await page.goto(`/?path=/perf/images-500&viewMode=${viewMode}`);
     await installLayoutInspector(page);
     await page.locator('.entry-item[data-index="1"]').click();
     await expect(page.getByRole("complementary", { name: "File inspector" })).toBeVisible();
     const viewport = page.locator(`.${viewMode}-view .virtual-viewport`);
-    const position = () => viewport.evaluate((element, mode) => mode === "list" ? element.scrollLeft : element.scrollTop, viewMode);
+    const position = () => viewport.evaluate((element, sideways) => sideways ? element.scrollLeft : element.scrollTop, sideways);
     const box = (await viewport.boundingBox())!;
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.wheel(0, 1400);

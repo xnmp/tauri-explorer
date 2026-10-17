@@ -10,6 +10,7 @@
   import { createDeferredFocusRequest, type DeferredFocusRequest } from "$lib/state/deferred-focus";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { dropIntoDirectory } from "$lib/composables/use-dom-directory-drop";
+  import { isSpringClaimed } from "$lib/composables/use-native-drop-target.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
   import { frecencyStore } from "$lib/state/frecency.svelte";
@@ -436,8 +437,9 @@
     if (!dragState.acceptsFileDrag(event.dataTransfer)) return;
 
     const target = event.target as HTMLElement;
-    // Entries and List card surfaces (their folder) own their drops.
-    if (target.closest(".entry-item, .peek-drop-target")) return;
+    // Entries and List card surfaces (their folder) own their drops, and so
+    // does a drag's spring-loaded peek for the rows inside it (#1242).
+    if (target.closest(".entry-item, .peek-drop-target") || isSpringClaimed(event)) return;
 
     // Suppress highlight when all sources are already in this directory
     const dragData = dragState.current ?? crossWindow;

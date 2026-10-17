@@ -10,24 +10,25 @@
  * resolution) has read the row under the pointer. A hold (a DOM drop deferred
  * behind a pending native start) keeps the peeks as they are until released.
  */
-import { createSpringLoadController, type SpringObservation, type SpringPaths, type SpringTarget, type SpringTimer } from "$lib/domain/spring-load";
+import { createSpringLoadController, defaultSpringTimer, type SpringObservation, type SpringPaths, type SpringTarget, type SpringTimer } from "$lib/domain/spring-load";
+import type { SpringHitElement, SpringRow } from "$lib/domain/spring-rows";
 import type { PeekCapability } from "$lib/domain/folder-peek-flat";
 
-/** The DOM surface observation reads, so it is testable without a DOM. */
-export interface SpringHitElement {
-  closest(selector: string): SpringHitElement | null;
-  getAttribute(name: string): string | null;
-}
+export type { SpringHitElement } from "$lib/domain/spring-rows";
 
 /** What a pane tells observation about one of its folder rows. */
 export interface SpringPaneView {
   readonly peekCapability: PeekCapability;
   readonly entryMeta: ReadonlyMap<string, { readonly depth: number }>;
   isPeekExpanded(path: string): boolean;
+  /** The pane's last spring request (`setSpringPeeks`), by identity. */
+  readonly springRequest: readonly string[];
 }
 
 export interface SpringHitDeps {
   pane(id: string): SpringPaneView | undefined;
+  /** The row under the element (`springRowOf`, shared with the drop redirect). */
+  row(element: SpringHitElement): SpringRow | null;
   /** A plain filesystem location (not virtual or provider-owned). */
   plain(path: string): boolean;
   /** A modal or dialog owns the surface under the point. */
@@ -41,11 +42,11 @@ const MOTION_ENTRY = "entry:";
 /**
  * The observation for the element under a drag. The point belongs to a pane
  * only inside that pane's file listing (`.file-list .content`). Its anchors are
- * the identities containing it there: the nearest `[data-path]` (a row, a mini
- * tile, a List card's scroll area or peek-state row, a Tiles panel), a Details
- * peek-state row's folder, the nearest `[data-panel-owner]` (a Tiles panel,
- * ribbon or band bridge) and the nearest List slot (a card's header, scroll
- * area, grip and ring together).
+ * the identities containing it there: its row (`springRowOf`: a row or row
+ * wrapper, a peek-state row's folder, a bridge's folder), the nearest
+ * `[data-path]` (a List card's scroll area, a Tiles panel), the nearest
+ * `[data-panel-owner]` (a Tiles panel, ribbon or band bridge) and the nearest
+ * List slot (a card's header, scroll area, grip and ring together).
  * Identity, not geometry, so no coordinate spaces are compared.
  */
 export function observeSpringHit(element: SpringHitElement | null, deps: SpringHitDeps): SpringObservation {
@@ -56,15 +57,14 @@ export function observeSpringHit(element: SpringHitElement | null, deps: SpringH
   if (!element || !content || !paneId || !view || deps.blocked(element)) return { pane: null, anchors: [], folder: null, dragged };
   const within = (node: SpringHitElement | null) => node && node.closest(".content") === content ? node : null;
   const anchors: string[] = [];
-  const add = (value: string | null | undefined) => { if (value) anchors.push(value); };
+  const add = (value: string | null | undefined) => { if (value && !anchors.includes(value)) anchors.push(value); };
+  const row = deps.row(element);
+  add(row?.path);
   add(within(element.closest("[data-path]"))?.getAttribute("data-path"));
-  add(within(element.closest("[data-peek-state]"))?.getAttribute("data-peek-state"));
-  // A Details row wrapper: hit at a row's pixel-snapped edge.
-  add(within(element.closest("[data-row-path]"))?.getAttribute("data-row-path"));
   add(within(element.closest("[data-panel-owner]"))?.getAttribute("data-panel-owner"));
   const key = within(element.closest(".list-slot[data-motion-key]"))?.getAttribute("data-motion-key");
   if (key?.startsWith(MOTION_ENTRY)) add(key.slice(MOTION_ENTRY.length));
-  const path = within(element.closest(".entry-item.directory[data-path]"))?.getAttribute("data-path");
+  const path = row?.kind === "directory" ? row.path : null;
   const meta = path ? view.entryMeta.get(path) : undefined;
   const folder = path && meta
     ? { path, depth: meta.depth, capability: view.peekCapability, expanded: view.isPeekExpanded(path), plain: deps.plain(path) }
@@ -77,10 +77,17 @@ export interface SpringLoadDriverDeps<E> {
   observe(element: E | null): SpringObservation;
   /** Set a pane's temporary peeks, outer first ([] closes them). */
   apply(pane: string, paths: readonly string[]): void;
+  /** A pane's current request: anything but the list last applied there means
+   * the pane dropped its peeks itself (navigation) or is gone. */
+  requested(pane: string): readonly string[] | undefined;
   timer?: SpringTimer;
   /** Runs an apply one macrotask later (see the module comment). */
   defer?: (run: () => void) => void;
 }
+
+/** A hold outlives a native start that never settles by at most this long. */
+export const SPRING_HOLD_LIMIT_MS = 2000;
+
 
 export interface SpringLoadDriver<E = Element> {
   hover(element: E | null): void;
@@ -120,17 +127,33 @@ export function createSpringLoadDriver<E>(deps: SpringLoadDriverDeps<E>): Spring
     apply: open => { wanted = open; schedule(); },
   });
 
+  const timer = deps.timer ?? defaultSpringTimer;
+
   return {
-    hover(element) { controller.hover(deps.observe(element)); },
+    hover(element) {
+      // A pane that replaced its request dropped the peeks applied there
+      // (navigation, or the pane closed): forget them, so the folder can
+      // spring again instead of counting as open but invisible.
+      for (const [pane, paths] of applied) {
+        if (deps.requested(pane) === paths) continue;
+        applied.delete(pane);
+        controller.reset(pane);
+      }
+      controller.hover(deps.observe(element));
+    },
     end() { controller.end(); },
     hold() {
       holds++;
       let released = false;
-      return () => {
+      const release = () => {
         if (released) return;
         released = true;
+        timer.clear(limit);
         if (--holds === 0) schedule();
       };
+      // A native start that never settles cannot freeze every pane's peeks.
+      const limit = timer.set(release, SPRING_HOLD_LIMIT_MS);
+      return release;
     },
   };
 }
@@ -148,5 +171,6 @@ export function createDomSpringLoadDriver(deps: SpringDomDeps): SpringLoadDriver
     paths: deps.paths,
     observe: element => observeSpringHit(element as unknown as SpringHitElement | null, deps),
     apply: deps.apply,
+    requested: pane => deps.pane(pane)?.springRequest,
   });
 }

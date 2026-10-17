@@ -16,6 +16,7 @@ import { isWindows } from "$lib/domain/platform";
 import { isVirtualPath } from "$lib/domain/virtual-path";
 import { internalDragPaths } from "$lib/domain/file-drop";
 import { providerFor } from "$lib/plugins/fs-providers";
+import { springRowOf } from "$lib/domain/spring-rows";
 import { resolveDropTargetFromElement } from "./use-native-drop-target.svelte";
 import type { SpringDomDeps, SpringLoadDriver } from "./spring-load-driver";
 
@@ -24,6 +25,7 @@ import type { SpringDomDeps, SpringLoadDriver } from "./spring-load-driver";
 const domDeps: SpringDomDeps = {
   paths: pathComparison(isWindows),
   pane: id => windowTabsManager.getExplorer(id),
+  row: springRowOf,
   plain: path => !isVirtualPath(path) && !providerFor(path),
   blocked: element => resolveDropTargetFromElement(element as unknown as Element)?.type === "blocked",
   dragged: () => internalDragPaths(dragState.latestSource(), isWindows) ?? [],

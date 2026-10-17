@@ -226,9 +226,11 @@
     bind:scrollToIndex={rowScrollToIndex}
   >
     {#snippet children(row, index)}
-      <!-- data-row-path: the row's identity for a drag's spring-load hit test
-           (#1242), which can land on this wrapper at a row's pixel-snapped edge. -->
+      <!-- data-row-path/-kind: the row's identity for a drag's spring-loaded
+           peek (#1242), whose hit test can land on this wrapper at a row's
+           pixel-snapped edge; hover and drop resolve it like the row (spring-rows.ts). -->
       <div role="row" aria-rowindex={index + 1} data-row-path={row.kind === "entry" ? row.entry.path : row.kind === "peek-state" ? row.parentPath : undefined}
+        data-row-kind={row.kind === "entry" ? (row.entry.kind === "directory" ? "directory" : "file") : row.kind === "peek-state" ? "state" : undefined}
         aria-level={row.kind === "entry" && explorer.peekEnabled ? row.depth + 1 : undefined}
         aria-expanded={row.kind === "entry" && explorer.peekEnabled && row.entry.kind === "directory" ? row.expanded : undefined}
         aria-selected={row.kind === "entry" && explorer.peekEnabled ? explorer.isSelected(row.entry) : undefined}>

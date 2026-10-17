@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("$lib/state/settings.svelte", () => ({ settingsStore: { zoomLevel: 100, folderPeek: true } }));
-import { createSpringLoadDriver, observeSpringHit, type SpringHitDeps, type SpringHitElement, type SpringPaneView } from "$lib/composables/spring-load-driver";
+import { createSpringLoadDriver, observeSpringHit, SPRING_HOLD_LIMIT_MS, type SpringHitDeps, type SpringHitElement, type SpringPaneView } from "$lib/composables/spring-load-driver";
 import { SPRING_LOAD_DELAY_MS, type SpringObservation } from "$lib/domain/spring-load";
+import { springRowOf } from "$lib/domain/spring-rows";
 import { pathComparison } from "$lib/domain/path";
 import { dropElement } from "../helpers/drop-element";
 
@@ -11,10 +12,12 @@ const pane = (patch: Partial<SpringPaneView> = {}): SpringPaneView => ({
   peekCapability: "tree",
   entryMeta: new Map([["/r/Inbox", { depth: 0 }], ["/r/Inbox/Nested", { depth: 1 }], ["/r/notes.txt", { depth: 0 }]]),
   isPeekExpanded: () => false,
+  springRequest: [],
   ...patch,
 });
 const hitDeps = (patch: Partial<SpringHitDeps> = {}): SpringHitDeps => ({
   pane: id => id === "p1" ? pane() : undefined,
+  row: springRowOf,
   plain: path => !path.startsWith("trash://"),
   blocked: () => false,
   dragged: () => ["/r/drag.txt"],
@@ -71,7 +74,7 @@ describe("observeSpringHit", () => {
     const grip = el("list-card-grip", {}, slot);
     const scroll = el("list-card-scroll peek-drop-target", { "data-path": "/r/Inbox" }, slot);
     expect(hit(grip).anchors).toEqual(["/r/Inbox"]);
-    expect(hit(scroll).anchors).toEqual(["/r/Inbox", "/r/Inbox"]);
+    expect(hit(scroll).anchors).toEqual(["/r/Inbox"]);
     // A creation row's slot is no folder.
     const create = el("list-slot", { "data-motion-key": "create" }, content);
     expect(hit(create).anchors).toEqual([]);
@@ -80,11 +83,21 @@ describe("observeSpringHit", () => {
   it("a Tiles panel, its ribbon and its band bridge anchor at the panel's folder", () => {
     const { content } = listing();
     const panel = el("tile-panel peek-drop-target", { "data-path": "/r/Inbox", "data-panel-owner": "/r/Inbox" }, content);
-    expect(hit(panel).anchors).toEqual(["/r/Inbox", "/r/Inbox"]);
+    expect(hit(panel).anchors).toEqual(["/r/Inbox"]);
     const svg = el("tile-outlines", {}, content);
     const group = el("tile-outline", { "data-panel-owner": "/r/Inbox" }, svg);
     const bridge = el("outline-bridge-hit", { "data-spring-bridge": "/r/Inbox" }, group);
     expect(hit(bridge).anchors).toEqual(["/r/Inbox"]);
+  });
+
+  it("a Details row wrapper (a row's pixel-snapped edge) reads like the row it wraps", () => {
+    const { content } = listing();
+    const folder = el("", { "data-row-path": "/r/Inbox", "data-row-kind": "directory" }, content);
+    expect(hit(folder)).toMatchObject({ anchors: ["/r/Inbox"], folder: { path: "/r/Inbox", depth: 0 } });
+    const file = el("", { "data-row-path": "/r/Inbox/a.txt", "data-row-kind": "file" }, content);
+    expect(hit(file)).toMatchObject({ anchors: ["/r/Inbox/a.txt"], folder: null });
+    const state = el("", { "data-row-path": "/r/Inbox", "data-row-kind": "state" }, content);
+    expect(hit(state)).toMatchObject({ anchors: ["/r/Inbox"], folder: null });
   });
 
   it("identities outside the pane's listing are not anchors", () => {
@@ -124,11 +137,18 @@ describe("spring-load driver (fake timers)", () => {
     folder: folder ? { path: folder, depth: folder.split("/").length - 3, capability: "tree", expanded: false, plain: true } : null,
   });
   let applied: [string, readonly string[]][];
+  /** Each pane keeps the request it was last given, as `setSpringPeeks` does. */
+  let requests: Map<string, readonly string[]>;
   let driver: ReturnType<typeof createSpringLoadDriver<SpringObservation>>;
   beforeEach(() => {
     vi.useFakeTimers();
     applied = [];
-    driver = createSpringLoadDriver<SpringObservation>({ paths, observe: observation => observation ?? over(null, null), apply: (pane, open) => applied.push([pane, open]) });
+    requests = new Map();
+    driver = createSpringLoadDriver<SpringObservation>({
+      paths, observe: observation => observation ?? over(null, null),
+      apply: (pane, open) => { applied.push([pane, open]); requests.set(pane, open); },
+      requested: pane => requests.get(pane),
+    });
   });
   afterEach(() => vi.useRealTimers());
   /** Run the deferred apply (a 0ms timeout set inside a timer callback is due 1ms later). */
@@ -192,6 +212,38 @@ describe("spring-load driver (fake timers)", () => {
     other();
     await nextTask();
     expect(applied).toEqual([["p1", []]]);
+  });
+
+  it("a hold a native start never settles is released after its limit", async () => {
+    driver.hover(over("p1", "/r/Inbox"));
+    await springDelay();
+    applied.length = 0;
+    driver.hold();
+    driver.end();
+    await vi.advanceTimersByTimeAsync(SPRING_HOLD_LIMIT_MS - 10);
+    expect(applied).toEqual([]);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(applied).toEqual([["p1", []]]);
+  });
+
+  it("a pane that dropped its peeks itself (navigation) lets the folder spring again", async () => {
+    driver.hover(over("p1", "/r/Inbox"));
+    await springDelay();
+    expect(applied.at(-1)).toEqual(["p1", ["/r/Inbox"]]);
+    // Back and forward again: the pane replaced its request; the folder is closed.
+    requests.set("p1", []);
+    applied.length = 0;
+    driver.hover(over("p1", "/r/Inbox"));
+    await springDelay();
+    expect(applied).toEqual([["p1", ["/r/Inbox"]]]);
+    // A closed pane (no request at all) is forgotten too, without an apply to it.
+    requests.delete("p1");
+    applied.length = 0;
+    driver.hover(over("p2", "/r/Inbox"));
+    await nextTask();
+    expect(applied).toEqual([]);
+    await springDelay();
+    expect(applied).toEqual([["p2", ["/r/Inbox"]]]);
   });
 
   it("coalesces changes within one task and skips panes whose peeks did not change", async () => {

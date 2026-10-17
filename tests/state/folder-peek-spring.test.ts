@@ -91,13 +91,17 @@ it("opening and closing temporary peeks leaves the selection, the anchor and the
   expect(pane.focusedEntry?.path).toBe(cursor);
 });
 
-it("never stores a card height or panel height for a temporary peek", async () => {
+it("never stores a card height, panel height or panel side for a temporary peek", async () => {
   const pane = create("list");
   pane.setSpringPeeks([a.path]); await settle();
   pane.setListCardRows(a.path, 3);
   pane.setTilePanelHeight(a.path, 240);
   expect(pane.listCardRows(a.path)).toBeUndefined();
   expect(pane.tilePanelHeight(a.path)).toBeUndefined();
+  const tiles = create("tiles");
+  tiles.setSpringPeeks([a.path]); await settle();
+  tiles.rememberTilePanelSides(new Map([[a.path, "above" as const]]));
+  expect(tiles.tilePanelSides.has(a.path)).toBe(false);
   pane.setSpringPeeks([]); await settle();
   // An ordinary card still remembers its height.
   await pane.togglePeek(a.path); await settle();
@@ -131,8 +135,12 @@ it("Folder Peek off gives no temporary peeks", async () => {
 it("navigating away drops temporary peeks; coming back shows the folder closed", async () => {
   const pane = create();
   pane.setSpringPeeks([a.path]); await settle();
+  const request = pane.springRequest;
   await pane.navigateTo("/other", { autoEnterSingleSubdir: false }); await settle();
   expect(pane.springPeeks).toEqual([]);
+  // A new request identity: the spring driver forgets what it had applied here.
+  expect(pane.springRequest).not.toBe(request);
+  expect(pane.springRequest).toEqual([]);
   await pane.navigateTo("/r", { autoEnterSingleSubdir: false }); await settle();
   expect(rows(pane)).toEqual(["0:a", "0:b", "0:note.txt"]);
 });
@@ -148,17 +156,21 @@ it("a request made before the lazy peek session loads applies once it has, and o
 
 it("rows inside a temporary peek drop into their own folder; rows outside keep their ordinary behaviour", async () => {
   const pane = create();
-  expect(pane.springDropFolder(child.path, "entry")).toBeNull();
+  expect(pane.springDropFolder(child.path, "file")).toBeNull();
   pane.setSpringPeeks([a.path]); await settle();
-  expect(pane.springDropFolder(child.path, "entry")).toBe(a.path);
-  expect(pane.springDropFolder(note.path, "entry")).toBeNull();
-  expect(pane.springDropFolder("/r/a/missing.txt", "entry")).toBeNull();
+  expect(pane.springDropFolder(child.path, "file")).toBe(a.path);
+  expect(pane.springDropFolder(note.path, "file")).toBeNull();
+  expect(pane.springDropFolder("/r/a/missing.txt", "file")).toBeNull();
   // A user-expanded folder nested in the temporary peek: its rows go to it.
   await pane.togglePeek(nested.path); await settle();
-  expect(pane.springDropFolder(deep.path, "entry")).toBe(nested.path);
+  expect(pane.springDropFolder(deep.path, "file")).toBe(nested.path);
   expect(pane.springDropFolder(nested.path, "state")).toBe(nested.path);
+  // A directory row's wrapper (its pixel-snapped edge) drops into that directory.
+  expect(pane.springDropFolder(nested.path, "directory")).toBe(nested.path);
+  expect(pane.springDropFolder(a.path, "directory")).toBe(a.path);
+  expect(pane.springDropFolder(b.path, "directory")).toBeNull();
   // An ordinary peek's file rows stay non-targets.
   pane.setSpringPeeks([]); await settle();
   await pane.togglePeek(a.path); await settle();
-  expect(pane.springDropFolder(child.path, "entry")).toBeNull();
+  expect(pane.springDropFolder(child.path, "file")).toBeNull();
 });

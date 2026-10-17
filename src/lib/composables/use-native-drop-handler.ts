@@ -7,8 +7,9 @@
 
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";
 import { useExternalDrop } from "$lib/composables/use-external-drop.svelte";
-import { resolveDropTarget, resolveDropTargetFromElement, captureDropDestination, highlightTarget, highlightTargetAtPoint, highlightTargetElement, elementAtNativePosition, clearHighlights, captureHighlightCleanup, type DropTargetResult } from "$lib/composables/use-native-drop-target.svelte";
+import { resolveDropTarget, resolveDropTargetFromElement, captureDropDestination, highlightTarget, highlightTargetAtPoint, highlightTargetElement, elementAtNativePosition, clearHighlights, captureHighlightCleanup, claimSpringEvent, type DropTargetResult } from "$lib/composables/use-native-drop-target.svelte";
 import { dropIntoDirectory } from "$lib/composables/use-dom-directory-drop";
+import { retireDropFeedback } from "$lib/composables/use-drop-target.svelte";
 import { springEnd, springHold, springHover } from "$lib/composables/spring-load";
 import { dropHover } from "$lib/state/drop-hover";
 import { shouldRetireOnDragEnd } from "$lib/domain/drop-feedback";
@@ -79,6 +80,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
   async function handleNativeDrop(rawPaths: string[], position: { x: number; y: number }, source?: DragData | null, copyModifier?: boolean | null, observedAt?: number, completedGestureSequence?: number, observationClock?: string, externalSource?: boolean): Promise<void> {
     // Spring peeks close a macrotask later: the target below resolves first.
     springEnd();
+    retireDropFeedback();
     dropHover.clear(refreshHover);
     hoverPosition = null;
     if (externalSource) nativeDomSession = undefined;
@@ -222,7 +224,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     onDrop: handleNativeDrop,
     onEnter: handleNativeEnter,
     onOver: handleNativeOver,
-    onLeave: () => { springHover(() => null); dropHover.clear(refreshHover); hoverPosition = null; nativeGesture = null; clearNativeHighlights?.(); clearNativeHighlights = null; },
+    onLeave: () => { springHover(() => null); retireDropFeedback(); dropHover.clear(refreshHover); hoverPosition = null; nativeGesture = null; clearNativeHighlights?.(); clearNativeHighlights = null; },
   });
 
   function trackModifierDown(e: KeyboardEvent) { copyModifierHeld = isCopyMod(e); }
@@ -230,10 +232,12 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
   function trackDragModifiers(event: DragEvent): void { copyModifierHeld = isCopyMod(event); }
 
   // ---- Spring-loaded peeks (#1242) -------------------------------------------
-  // A file row, peek-state row or band bridge inside a drag's temporary peek
-  // drops into that peek's folder. No component owns those rows as targets,
-  // so the window capture phase accepts them (dragenter too: WebKit delivers
-  // a drop only to a target whose dragenter was accepted).
+  // A row, row wrapper, peek-state row or bridge inside a drag's temporary
+  // peek drops into that peek's folder. No component owns those rows as
+  // targets, so the window capture phase accepts them (dragenter too: WebKit
+  // delivers a drop only to a target whose dragenter was accepted). Hover
+  // events still bubble, claimed, so the card or panel surface under them
+  // retires its own folder feedback; only the drop is taken exclusively.
   let clearSpringHighlight: (() => void) | null = null;
   let enteredThisTask = false;
   function acceptSpringTarget(event: DragEvent, target: DropTargetResult): boolean {
@@ -242,11 +246,19 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
       return false;
     }
     event.preventDefault();
-    event.stopImmediatePropagation();
+    claimSpringEvent(event);
     if (event.dataTransfer) event.dataTransfer.dropEffect = isCopyMod(event) ? "copy" : "move";
     highlightTargetElement(event.target as Element | null);
     clearSpringHighlight = captureHighlightCleanup();
     return true;
+  }
+
+  /** The element under a DOM drag event, for the spring hover. While the native
+   * receiver reports this drag (Linux), its position is the one authority:
+   * the native Drop resolves its target from it, and DOM and native points can
+   * disagree by a fraction of a pixel at a row's edge. */
+  function domSpringHover(element: Element | null): void {
+    if (!hoverPosition) springHover(() => element);
   }
 
   function handleDomDragEnter(event: DragEvent): void {
@@ -254,13 +266,15 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     // on the old one, in the same task; leaving the window fires no dragenter.
     if (!enteredThisTask) { enteredThisTask = true; setTimeout(() => { enteredThisTask = false; }, 0); }
     if (!dragState.acceptsFileDrag(event.dataTransfer)) return;
-    springHover(() => event.target as Element | null);
+    domSpringHover(event.target as Element | null);
     acceptSpringTarget(event, resolveDropTargetFromElement(event.target as Element | null));
   }
 
   function handleDomDragLeave(event: DragEvent): void {
     if (event.relatedTarget || enteredThisTask) return;
-    springHover(() => null);
+    // The drag left the window (or was cancelled outside every element).
+    domSpringHover(null);
+    retireDropFeedback();
     clearSpringHighlight?.(); clearSpringHighlight = null;
   }
 
@@ -268,7 +282,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     if (!dragState.acceptsFileDrag(event.dataTransfer)) return;
     trackDragModifiers(event);
     event.preventDefault();
-    springHover(() => event.target as Element | null);
+    domSpringHover(event.target as Element | null);
     const target = resolveDropTargetFromElement(event.target as Element | null);
     if (target?.type === "plugin" || target?.type === "blocked") {
       event.stopImmediatePropagation();
@@ -279,6 +293,9 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
   }
 
   function handleDomDrop(event: DragEvent): void {
+    // Any drop ends the gesture: no folder keeps drop feedback, including one
+    // whose surface unmounted (a closing spring peek) before a leave reached it.
+    retireDropFeedback();
     if (!dragState.acceptsFileDrop(event.dataTransfer)) return;
     const bound = event.dataTransfer ? dragState.domSource(event.dataTransfer) : null;
     if (dragState.expiredDomSource(bound, event.dataTransfer)) {
@@ -370,6 +387,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     // Retire feedback only. Native Drop may still need its captured provenance,
     // and a delayed old DOM event cannot retire a successor's hover.
     if (!shouldRetireOnDragEnd({ endedSession: endedSession || undefined, liveSession: live?.sessionId, hoverSession, hovering: !!hoverPosition })) return;
+    retireDropFeedback();
     // On Linux a DOM dragend can precede the native Drop, which resolves its
     // target by position: the native Drop or Leave ends spring peeks instead.
     if (!nativeGesture && !hoverPosition) springEnd();

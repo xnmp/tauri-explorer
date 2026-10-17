@@ -12,6 +12,7 @@ import { fileDropTargets, type RegisteredDropTarget } from "$lib/state/file-drop
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";
 import { dialogStore } from "$lib/state/dialogs.svelte";
 import { modalOwnership } from "$lib/state/modal-ownership.svelte";
+import { springRowOf } from "$lib/domain/spring-rows";
 
 export type DropTargetResult =
   | RegisteredDropTarget
@@ -69,27 +70,27 @@ function peekDropSurface(el: Element): HTMLElement | null {
   return (el as HTMLElement).closest?.(".peek-drop-target[data-path]") ?? null;
 }
 
-/** Rows the spring redirect can retarget: file rows, peek-state rows and the
- * Tiles band bridge of a temporary peek. */
-const SPRING_ROWS = ".entry-item[data-path], [data-peek-state], [data-spring-bridge]";
-
-/** A file row, peek-state row or bridge inside a drag's temporary peek
- * targets that peek's folder (#1242); elsewhere such rows keep their
- * ordinary behaviour. */
+/** A row, row wrapper, peek-state row or bridge inside a drag's temporary
+ * peek targets that peek's folder (a directory row's wrapper: that directory)
+ * (#1242); elsewhere such rows keep their ordinary behaviour. The row is read
+ * by the same resolver as the spring hover (`springRowOf`). */
 function springDropTarget(el: Element): DropTargetResult {
-  const row = (el as HTMLElement).closest?.(SPRING_ROWS);
+  const row = typeof (el as HTMLElement).closest === "function" ? springRowOf(el) : null;
   if (!row) return null;
-  const paneId = (el as HTMLElement).closest?.("[data-pane-id]")?.getAttribute("data-pane-id");
+  const paneId = (el as HTMLElement).closest("[data-pane-id]")?.getAttribute("data-pane-id");
   const explorer = paneId ? windowTabsManager.getExplorer(paneId) : undefined;
   if (!explorer?.springPeeks.length) return null;
-  const bridge = row.getAttribute("data-spring-bridge");
-  const state = row.getAttribute("data-peek-state");
-  const path = bridge ?? state ?? row.getAttribute("data-path");
-  if (!path) return null;
-  const folder = bridge !== null ? (explorer.isSpringPeek(bridge) ? bridge : null)
-    : explorer.springDropFolder(path, state !== null ? "state" : "entry");
+  const folder = row.kind === "bridge" ? (explorer.isSpringPeek(row.path) ? row.path : null)
+    : explorer.springDropFolder(row.path, row.kind);
   return folder ? { type: "folder", path: folder, spring: true } : null;
 }
+
+/** DOM drag events whose spring redirect the window capture accepted. They
+ * still bubble, so a card or panel surface under them retires its own folder
+ * feedback; the pane background, which would claim them, leaves them alone. */
+const springClaims = new WeakSet<Event>();
+export function claimSpringEvent(event: Event): void { springClaims.add(event); }
+export function isSpringClaimed(event: Event): boolean { return springClaims.has(event); }
 
 export function resolveDropTargetFromElement(el: Element | null): DropTargetResult {
   if (isDropOwnerBlocked(el)) return { type: "blocked" };

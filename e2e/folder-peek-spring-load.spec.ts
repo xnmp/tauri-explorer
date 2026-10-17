@@ -43,28 +43,39 @@ const startDrag = (page: Page, name = "drag-me.txt") => page.evaluate(async ([pa
 }, [P(name), name] as const);
 
 /** Moves the drag to the element at a point of `selector`'s box (fractions of
- * its width/height, or an offset in px below its bottom edge), dispatching
- * dragenter/dragleave on a change of element and a dragover, as an engine
- * does. Returns the hit element's identifying attributes. */
-async function dragTo(page: Page, selector: string, at: { fx?: number; fy?: number; below?: number } = {}, types: string[] = ["dragover"]) {
+ * its width/height, an offset in px below its bottom edge, or an offset in px
+ * from its centre), dispatching dragenter/dragleave on a change of element and
+ * a dragover, as an engine does. `related: false` leaves the dragleave's
+ * relatedTarget null, as WebKit does. Returns the hit element's identifying
+ * attributes (`row:` a Details row wrapper, `bridge:` a spring bridge). */
+type At = { fx?: number; fy?: number; below?: number; dx?: number; dy?: number; related?: boolean };
+async function dragTo(page: Page, selector: string, at: At = {}, types: string[] = ["dragover"]) {
   return page.evaluate(([target, point, events]) => {
     const w = window as unknown as { __spring: { transfer: DataTransfer; last: Element | null } };
     const box = document.querySelector(target)!.getBoundingClientRect();
-    const x = box.left + box.width * (point.fx ?? 0.5);
-    const y = point.below !== undefined ? box.bottom + point.below : box.top + box.height * (point.fy ?? 0.5);
+    const x = box.left + box.width * (point.fx ?? 0.5) + (point.dx ?? 0);
+    const y = (point.below !== undefined ? box.bottom + point.below : box.top + box.height * (point.fy ?? 0.5)) + (point.dy ?? 0);
     const hit = document.elementFromPoint(x, y)!;
     const init = { bubbles: true, cancelable: true, dataTransfer: w.__spring.transfer, clientX: x, clientY: y };
     if (hit !== w.__spring.last) {
       hit.dispatchEvent(new DragEvent("dragenter", init));
-      w.__spring.last?.dispatchEvent(new DragEvent("dragleave", { ...init, relatedTarget: hit }));
+      w.__spring.last?.dispatchEvent(new DragEvent("dragleave", { ...init, relatedTarget: point.related === false ? null : hit }));
       w.__spring.last = hit;
     }
     for (const type of events) hit.dispatchEvent(new DragEvent(type, init));
-    const owner = hit.closest("[data-spring-bridge], [data-peek-state], [data-path]");
-    return owner?.getAttribute("data-spring-bridge") !== null && owner ? `bridge:${owner.getAttribute("data-spring-bridge")}`
-      : owner?.getAttribute("data-peek-state") ?? owner?.getAttribute("data-path") ?? hit.tagName;
+    const owner = hit.closest("[data-spring-bridge], [data-peek-state], [data-path], [data-row-path]");
+    if (!owner) return hit.tagName;
+    if (owner.hasAttribute("data-spring-bridge")) return `bridge:${owner.getAttribute("data-spring-bridge")}`;
+    if (owner.hasAttribute("data-row-path") && !owner.hasAttribute("data-path")) return `row:${owner.getAttribute("data-row-path")}`;
+    return owner.getAttribute("data-peek-state") ?? owner.getAttribute("data-path")!;
   }, [selector, at, types] as const);
 }
+/** The drag leaves the window: a dragleave with no relatedTarget and no dragenter. */
+const leaveWindow = (page: Page) => page.evaluate(() => {
+  const w = window as unknown as { __spring: { transfer: DataTransfer; last: Element | null } };
+  w.__spring.last?.dispatchEvent(new DragEvent("dragleave", { bubbles: true, cancelable: true, dataTransfer: w.__spring.transfer, relatedTarget: null }));
+  w.__spring.last = null;
+});
 const dropOn = (page: Page, selector: string, at = {}) => dragTo(page, selector, at, ["dragover", "drop"]);
 /** The source's dragend (a drop's, or Escape/cancel's: dropEffect none). */
 const endDrag = (page: Page) => page.evaluate(() => {
@@ -132,14 +143,20 @@ for (const view of ["details", "list", "tiles"] as const) {
       expect(await explorer(page, "return [...explorer.expandedPaths]")).toEqual([]);
     });
 
-    test("a drop on a file row inside the peek moves the file into the folder, and the peek closes", async ({ page }) => {
+    test("a drop on a file row inside the peek moves the file into the folder, and no folder keeps drop feedback", async ({ page }) => {
       await startDrag(page);
       await dragTo(page, v.folder(P("Inbox")));
       await opened(page, [P("Inbox")]);
+      // Cross the peek's own surface first (List: the gap between card rows;
+      // Tiles: the panel's padding), which shows the folder's own feedback,
+      // then a row's edge.
+      if (view === "list") expect(await dragTo(page, v.child(P("Inbox/Nested")), { below: 1 })).toBe(P("Inbox"));
+      if (view === "tiles") expect(await dragTo(page, v.surface(P("Inbox")), { fy: 0.97 })).toBe(P("Inbox"));
+      await dragTo(page, v.child(P("Inbox/alpha.txt")), { fy: 0.02 });
       expect(await dragTo(page, v.child(P("Inbox/alpha.txt")))).toBe(P("Inbox/alpha.txt"));
       await page.waitForTimeout(60); // dragover repeats while a drag rests
       await dragTo(page, v.child(P("Inbox/alpha.txt")));
-      // Feedback is on the folder (its row, card or panel), not the file row.
+      // Feedback is on the folder once (its row, card or panel), not the file row.
       await expect(page.locator(`${v.child(P("Inbox/alpha.txt"))}.drop-target`)).toHaveCount(0);
       await expect(page.locator(`${shown} .drop-target[data-path="${P("Inbox")}"]`)).toHaveCount(1);
       await dropOn(page, v.child(P("Inbox/alpha.txt")));
@@ -148,6 +165,27 @@ for (const view of ["details", "list", "tiles"] as const) {
       await endDrag(page);
       await opened(page, []);
       await expect(page.locator(`${shown} .drop-target`)).toHaveCount(0);
+      // The next drag over other items shows no stale feedback either.
+      await startDrag(page, "other.txt");
+      await dragTo(page, v.folder(P("zeta.txt")));
+      await page.waitForTimeout(100);
+      await dragTo(page, v.folder(P("zeta.txt")));
+      await expect(page.locator(`${shown} .drop-target`)).toHaveCount(0);
+      await endDrag(page);
+    });
+
+    test("WebKit-style leaves (no relatedTarget) inside the window keep the peek; leaving the window closes it", async ({ page }) => {
+      await startDrag(page);
+      await dragTo(page, v.folder(P("Inbox")));
+      await opened(page, [P("Inbox")]);
+      for (const child of ["Inbox/alpha.txt", "Inbox/beta.txt"]) await dragTo(page, v.child(P(child)), { related: false });
+      await dragTo(page, v.folder(P("Inbox")), { related: false });
+      await page.waitForTimeout(100);
+      expect(await springPeeks(page)).toEqual([P("Inbox")]);
+      await leaveWindow(page);
+      await opened(page, []);
+      await expect(page.locator(`${shown} .drop-target`)).toHaveCount(0);
+      await endDrag(page);
     });
 
     test("a drop on the peek's own surface moves the file into the folder", async ({ page }) => {
@@ -279,6 +317,34 @@ test("carets off changes nothing, and the pane background still drops into the c
   expect(await dropOn(page, views.details.folder(P("zeta.txt")), { below: 60 })).not.toContain(root);
   await expect.poll(() => listing(page, root)).toContain("alpha.txt");
   await endDrag(page);
+});
+
+test("details: a drop on a row's pixel-snapped edge (its row wrapper) inside the peek lands in the peeked folder", async ({ page }) => {
+  await open(page, "details");
+  await startDrag(page);
+  await dragTo(page, views.details.folder(P("Inbox")));
+  await opened(page, [P("Inbox")]);
+  // Hit-test the wrapper's edge band where the engine exposes it; otherwise
+  // dispatch on the wrapper, which is where such a hit lands (#1242 review).
+  await page.evaluate(path => {
+    const w = window as unknown as { __spring: { transfer: DataTransfer; last: Element | null } };
+    const wrapper = document.querySelector(`.pane-tree:not(.retained) [data-row-path="${path}"]`)!;
+    const box = wrapper.getBoundingClientRect();
+    const x = box.left + 160;
+    let y = box.top + box.height / 2, target: Element = wrapper;
+    for (let dy = -1; dy <= 1; dy += 0.125) {
+      if (document.elementFromPoint(x, box.top + dy) === wrapper) { y = box.top + dy; break; }
+    }
+    const init = { bubbles: true, cancelable: true, dataTransfer: w.__spring.transfer, clientX: x, clientY: y };
+    target.dispatchEvent(new DragEvent("dragenter", init));
+    w.__spring.last?.dispatchEvent(new DragEvent("dragleave", { ...init, relatedTarget: target }));
+    w.__spring.last = target;
+    for (const type of ["dragover", "drop"]) target.dispatchEvent(new DragEvent(type, init));
+  }, P("Inbox/alpha.txt"));
+  await expect.poll(() => listing(page, P("Inbox"))).toContain("drag-me.txt");
+  expect(await listing(page, root)).not.toContain("drag-me.txt");
+  await endDrag(page);
+  await opened(page, []);
 });
 
 test("an HTML5 drag whose source row leaves the virtual window under a big spring peek still drops", async ({ page }) => {

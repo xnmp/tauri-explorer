@@ -1149,14 +1149,17 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     get springPeeks() { return peek.temporary; },
     isSpringPeek(path: string) { return peek.temporary.includes(path); },
     setSpringPeeks,
-    /** The folder a drop on a file row (`entry`) or a peek-state row (`state`,
-     * named by its folder) targets while it lies inside a temporary peek: the
-     * row's own folder. Null outside temporary peeks, where such rows keep
-     * their ordinary (non-)target behaviour. */
-    springDropFolder(path: string, row: "entry" | "state"): string | null {
+    /** The drag's last request (`setSpringPeeks`), by identity: navigation
+     * replaces it, so the spring driver can tell its peeks were dropped. */
+    get springRequest() { return springRequest; },
+    /** The folder a drop on a row targets while it lies inside a temporary peek:
+     * a file row's folder, or the directory itself (a directory row's wrapper;
+     * a peek-state row, named by its folder). Null outside temporary peeks,
+     * where such rows keep their ordinary (non-)target behaviour. */
+    springDropFolder(path: string, kind: "directory" | "file" | "state"): string | null {
       const temporary = peek.temporary;
       if (!temporary.length || capability === "none") return null;
-      const folder = row === "entry" ? peekTree.meta.get(path)?.parentPath : path;
+      const folder = kind === "file" ? peekTree.meta.get(path)?.parentPath : path;
       for (let at = folder; at && at !== coreState.currentPath; at = peekTree.meta.get(at)?.parentPath) {
         if (temporary.includes(at)) return folder!;
       }

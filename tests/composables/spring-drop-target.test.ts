@@ -37,7 +37,21 @@ describe("spring redirect in resolveDropTargetFromElement", () => {
     const row = dropElement("entry-item file-item", { "data-path": "/r/Inbox/a.txt" }, content);
     const name = dropElement("name", {}, row);
     expect(resolveDropTargetFromElement(name)).toEqual({ type: "folder", path: "/r/Inbox", spring: true });
-    expect(spring.calls).toEqual([["/r/Inbox/a.txt", "entry"]]);
+    expect(spring.calls).toEqual([["/r/Inbox/a.txt", "file"]]);
+  });
+
+  it("a Details row wrapper (hit at a row's pixel-snapped edge) resolves like its row", () => {
+    panes.set("p1", explorer(["/r/Inbox"]));
+    const { content } = listing();
+    const file = dropElement("", { "data-row-path": "/r/Inbox/a.txt", "data-row-kind": "file" }, content);
+    expect(resolveDropTargetFromElement(file)).toEqual({ type: "folder", path: "/r/Inbox", spring: true });
+    spring.folder = "/r/Inbox/Nested";
+    const folder = dropElement("", { "data-row-path": "/r/Inbox/Nested", "data-row-kind": "directory" }, content);
+    expect(resolveDropTargetFromElement(folder)).toEqual({ type: "folder", path: "/r/Inbox/Nested", spring: true });
+    expect(spring.calls).toEqual([["/r/Inbox/a.txt", "file"], ["/r/Inbox/Nested", "directory"]]);
+    // Outside temporary peeks a wrapper stays the pane background, as before.
+    panes.set("p1", explorer([]));
+    expect(resolveDropTargetFromElement(file)).toEqual({ type: "background", path: "/r" });
   });
 
   it("a Details peek-state row asks for its folder as a state row", () => {

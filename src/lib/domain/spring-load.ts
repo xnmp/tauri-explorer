@@ -45,6 +45,8 @@ export interface SpringState {
 export type SpringEvent =
   | { readonly type: "hover"; readonly observation: SpringObservation }
   | { readonly type: "elapsed"; readonly target: SpringTarget }
+  /** A pane dropped its temporary peeks itself (navigation) or closed. */
+  | { readonly type: "reset"; readonly pane: string }
   | { readonly type: "end" };
 
 /** `pathComparison`: `key` is null for a path the platform cannot name;
@@ -78,6 +80,11 @@ export function springCandidate(paths: SpringPaths, open: readonly SpringTarget[
 
 export function stepSpringLoad(state: SpringState, event: SpringEvent, paths: SpringPaths): SpringState {
   if (event.type === "end") return state.open.length || state.pending ? springIdle : state;
+  if (event.type === "reset") {
+    const open = state.open.filter(target => target.pane !== event.pane);
+    const pending = state.pending?.pane === event.pane ? null : state.pending;
+    return open.length === state.open.length && pending === state.pending ? state : { open, pending };
+  }
   if (event.type === "elapsed") {
     if (!sameTarget(paths, state.pending, event.target)) return state;
     return { open: [...state.open, state.pending!], pending: null };
@@ -106,14 +113,14 @@ export interface SpringLoadControllerOptions {
   readonly timer?: SpringTimer;
 }
 
-const defaultTimer: SpringTimer = {
+export const defaultSpringTimer: SpringTimer = {
   set: (callback, ms) => setTimeout(callback, ms),
   clear: handle => clearTimeout(handle as ReturnType<typeof setTimeout>),
 };
 
 /** Owns the one spring timer around `stepSpringLoad`. */
 export function createSpringLoadController(options: SpringLoadControllerOptions) {
-  const { paths, apply, delay = SPRING_LOAD_DELAY_MS, timer = defaultTimer } = options;
+  const { paths, apply, delay = SPRING_LOAD_DELAY_MS, timer = defaultSpringTimer } = options;
   let state = springIdle;
   let handle: unknown = null;
   let armed: SpringTarget | null = null;
@@ -135,6 +142,7 @@ export function createSpringLoadController(options: SpringLoadControllerOptions)
 
   return {
     hover(observation: SpringObservation): void { dispatch({ type: "hover", observation }); },
+    reset(pane: string): void { dispatch({ type: "reset", pane }); },
     end(): void { dispatch({ type: "end" }); },
     get state(): SpringState { return state; },
   };

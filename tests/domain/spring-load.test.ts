@@ -163,6 +163,28 @@ describe("spring-load controller (fake timers)", () => {
     expect(openPaths()).toEqual([]);
   });
 
+  it("a reset forgets one pane's open peeks and running delay, so its folders can spring again", () => {
+    controller.hover(over("/r/Inbox"));
+    vi.advanceTimersByTime(SPRING_LOAD_DELAY_MS);
+    expect(openPaths()).toEqual(["p1:/r/Inbox"]);
+    controller.reset("p1");
+    expect(openPaths()).toEqual([]);
+    // Still over the folder: it springs again after a full delay.
+    controller.hover(over("/r/Inbox"));
+    vi.advanceTimersByTime(SPRING_LOAD_DELAY_MS - 1);
+    expect(openPaths()).toEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(openPaths()).toEqual(["p1:/r/Inbox"]);
+    // A pending delay in the reset pane is cancelled.
+    controller.hover(over("/r/Archive"));
+    controller.reset("p1");
+    vi.advanceTimersByTime(SPRING_LOAD_DELAY_MS);
+    expect(openPaths()).toEqual([]);
+    const state = controller.state;
+    controller.reset("p9");
+    expect(controller.state).toBe(state);
+  });
+
   it("panes are independent: the same folder in another pane is another target", () => {
     controller.hover(over("/r/Inbox"));
     vi.advanceTimersByTime(600);

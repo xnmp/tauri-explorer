@@ -48,33 +48,47 @@ export function createPeekWatch(deps: PeekWatchDependencies) {
     cancelRefreshSubscriber(path, slot.key);
     if (slot.watch) retiredPeeks.add(slot.watch);
   }
+  async function drainObsoleteWatches(): Promise<boolean> {
+    for (const slot of peeks.values()) {
+      if (slot.watch && !desiredWatches.has(slot.path)) {
+        retiredPeeks.add(slot.watch); slot.watch = null;
+      }
+    }
+    let drained = true;
+    for (const owner of retiredPeeks) {
+      try { await owner.destroy(); retiredPeeks.delete(owner); }
+      catch { drained = false; }
+    }
+    return drained;
+  }
   function reconcile(paths: readonly string[], order: ReadonlyMap<string, number>): void {
     const wanted = new Set(deps.blocked() ? [] : paths);
     for (const path of peeks.keys()) if (!wanted.has(path)) releasePeek(path);
     for (const path of wanted) if (!peeks.has(path)) peeks.set(path, { path, key: {}, ready: false, initialized: false, watch: null });
     desiredWatches = new Set(choosePeekWatches([...wanted], order));
     watchTail = watchTail.then(async () => {
+      await drainObsoleteWatches();
       for (const slot of peeks.values()) {
-        if (slot.watch && !desiredWatches.has(slot.path)) {
-          retiredPeeks.add(slot.watch); slot.watch = null;
-        }
-      }
-      let drained = true;
-      for (const owner of retiredPeeks) {
-        try { await owner.destroy(); retiredPeeks.delete(owner); }
-        catch { drained = false; }
-      }
-      for (const slot of peeks.values()) {
+        const drained = await drainObsoleteWatches();
         if (deps.blocked()) break;
+        if (peeks.get(slot.path) !== slot) continue;
         let needsScan = !slot.initialized;
         if (drained && desiredWatches.has(slot.path) && !slot.watch?.held) {
           slot.ready = false;
           const owner = slot.watch ?? (deps.createWatch ?? createDirectoryWatch)();
           slot.watch = owner;
-          try { await deps.prepare(slot.path); await owner.update(slot.path); }
-          catch (error) { console.error("Peek observation failed:", error); }
-          if (peeks.get(slot.path) !== slot) { retiredPeeks.add(owner); continue; }
-          if (owner.held) {
+          try {
+            await deps.prepare(slot.path);
+            if (await drainObsoleteWatches() && !deps.blocked() && peeks.get(slot.path) === slot
+              && desiredWatches.has(slot.path)) await owner.update(slot.path);
+          } catch (error) { console.error("Peek observation failed:", error); }
+          const acquired = !!owner.held;
+          if (peeks.get(slot.path) !== slot) retiredPeeks.add(owner);
+          // The desired set can change during acquisition. Retire the returned
+          // lease before admitting its replacement, including failed releases.
+          await drainObsoleteWatches();
+          if (peeks.get(slot.path) !== slot) continue;
+          if (acquired) {
             cancelRefreshSubscriber(slot.path, slot.key);
             slot.key = {};
             needsScan = true;

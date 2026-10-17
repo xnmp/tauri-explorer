@@ -103,3 +103,63 @@ it("promotion retains a post-acquisition scan despite an older event and in-flig
     expect(refreshPath.mock.calls.filter(([path]) => path === "/r/0")).toHaveLength(2);
   } finally { releaseScan?.(); await watch.destroy(); cancelPendingRefreshes(); vi.useRealTimers(); }
 });
+it.each(["evicted", "collapsed"] as const)("never exceeds 16 held leases when a pending acquisition is %s", async mode => {
+  const collapsed = mode === "collapsed";
+  const held = new Set<string>(); let peak = 0;
+  let acquire!: (lease: DirectoryWatchLease) => void;
+  const watch = createPaneWatch({ refresh: async () => {}, refreshPath: async () => {},
+    subscribe: () => ({ ready: async () => {}, stop: () => {} }), prepare: async () => {}, schedule: () => {},
+    createWatch: () => createPathWatch({
+      watch: async path => {
+        const lease = path === "/r/pending" ? await new Promise<DirectoryWatchLease>(resolve => { acquire = resolve; }) : { id: path, path };
+        held.add(lease.id); peak = Math.max(peak, held.size); return lease;
+      },
+      unwatch: async lease => { held.delete(lease.id); },
+    }),
+  });
+  const paths = Array.from({ length: 15 }, (_, i) => `/r/${i}`);
+  const order = new Map([["/r/pending", 0], ...paths.map((path, i) => [path, i + 1] as const), ["/r/new", 16]]);
+  try {
+    watch.reconcilePeeks(paths, order);
+    await vi.waitFor(() => expect(held.size).toBe(15));
+    watch.reconcilePeeks([...paths, "/r/pending"], order);
+    await vi.waitFor(() => expect(acquire).toBeTypeOf("function"));
+    watch.reconcilePeeks([...paths, ...(collapsed ? [] : ["/r/pending"]), "/r/new"], order);
+    acquire({ id: "/r/pending", path: "/r/pending" });
+    await vi.waitFor(() => expect(held.has("/r/new")).toBe(true));
+    expect(peak).toBe(16); expect(held.size).toBe(16); expect(held.has("/r/pending")).toBe(false);
+  } finally { await watch.destroy(); }
+  expect(held.size).toBe(0);
+});
+it("keeps replacement admission blocked when retiring a late lease fails", async () => {
+  let acquire!: (lease: DirectoryWatchLease) => void;
+  let releaseAllowed = false, peak = 0;
+  const held = new Set<string>();
+  const scheduled: string[] = [];
+  const watch = createPaneWatch({ refresh: async () => {}, refreshPath: async () => {},
+    subscribe: () => ({ ready: async () => {}, stop: () => {} }), prepare: async () => {}, schedule: (_callback, path) => { scheduled.push(path); },
+    createWatch: () => createPathWatch({
+      watch: async path => {
+        const lease = path === "/r/pending" ? await new Promise<DirectoryWatchLease>(resolve => { acquire = resolve; }) : { id: path, path };
+        held.add(lease.id); peak = Math.max(peak, held.size); return lease;
+      },
+      unwatch: async lease => {
+        if (lease.path === "/r/pending" && !releaseAllowed) throw new Error("release unavailable");
+        held.delete(lease.id);
+      },
+    }),
+  });
+  const paths = Array.from({ length: 15 }, (_, i) => `/r/${i}`);
+  const order = new Map([["/r/pending", 0], ...paths.map((path, i) => [path, i + 1] as const), ["/r/new", 16]]);
+  try {
+    watch.reconcilePeeks(paths, order); await vi.waitFor(() => expect(held.size).toBe(15));
+    watch.reconcilePeeks([...paths, "/r/pending"], order); await vi.waitFor(() => expect(acquire).toBeTypeOf("function"));
+    watch.reconcilePeeks([...paths, "/r/pending", "/r/new"], order);
+    acquire({ id: "/r/pending", path: "/r/pending" });
+    await vi.waitFor(() => expect(scheduled).toContain("/r/new"));
+    expect(held.has("/r/new")).toBe(false); expect(held.size).toBe(16); expect(peak).toBe(16);
+    releaseAllowed = true; watch.reconcilePeeks([...paths, "/r/pending", "/r/new"], order);
+    await vi.waitFor(() => expect(held.has("/r/new")).toBe(true));
+    expect(held.has("/r/pending")).toBe(false); expect(peak).toBe(16);
+  } finally { releaseAllowed = true; await watch.destroy(); }
+});

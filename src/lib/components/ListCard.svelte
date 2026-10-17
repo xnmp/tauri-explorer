@@ -86,7 +86,7 @@
 
 <div class="list-card-body">
   <div class="list-card-scroll peek-drop-target" data-card-scroll data-marquee-clip data-path={entry.path}
-    role="group" aria-label={`${entry.name} contents`}
+    role="group" aria-label={`${entry.name} contents`} tabindex="-1"
     style:--card-visible-rows={visible}
     style:--fade-top={`${fades.top ? LIST_CARD_FADE : 0}px`}
     style:--fade-bottom={`${fades.bottom ? LIST_CARD_FADE : 0}px`}

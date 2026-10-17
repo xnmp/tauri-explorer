@@ -145,9 +145,9 @@ test("nested folders open inside the card with guide lines, the close caret and 
 test("assistive technology reads the List as a tree, with sibling positions, inside open cards", async ({ page }) => {
   // Carets, the card group, its grip (inside the folder's treeitem) and pseudo-rows
   // are all valid tree content. Contrast has its own per-theme scan. A card's
-  // scroll area holds no tab stop of its own by design: the tree's roving cursor
-  // reaches and scrolls every card row (the Up/Down test), which axe cannot see
-  // from tabindex alone.
+  // scroll area is deliberately not a tab stop (tabindex -1): the tree's roving
+  // cursor reaches and scrolls every card row (the Up/Down test), which axe's
+  // scrollable-region-focusable cannot see, since roving rows carry tabindex -1.
   const violations = async () => (await new AxeBuilder({ page }).include(`${shown} .list-view`)
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).disableRules(["color-contrast", "scrollable-region-focusable"]).analyze())
     .violations.map(v => `${v.id}: ${v.nodes.map(n => `${n.target.join(" ")} (${n.failureSummary})`).join(", ")}`);
@@ -171,6 +171,13 @@ test("assistive technology reads the List as a tree, with sibling positions, ins
   await expect(globex).toHaveAttribute("aria-setsize", "5");
   await expect(row(page, `${root}/Career/Applications/follow-ups.md`)).not.toHaveAttribute("aria-expanded");
   expect(await violations()).toEqual([]);
+  // An open card adds one Tab stop, its grip (the separator's only keyboard
+  // path); its scroll area is not one, since the tree's cursor reaches every row.
+  await row(page, `${root}/Career`).click();
+  await page.keyboard.press("Tab");
+  await expect(slot(page, `${root}/Career`).getByRole("separator", { name: "Resize Career" })).toBeFocused();
+  await page.keyboard.press("Tab");
+  expect(await page.evaluate(() => !!document.activeElement?.closest(".list-slot"))).toBe(false);
 });
 
 test("a rename inside a card commits in place and the card keeps its rows", async ({ page }) => {

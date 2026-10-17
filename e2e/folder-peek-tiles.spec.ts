@@ -575,6 +575,46 @@ test("interrupted toggles leave no ghost, faded panel or hidden tile", async ({ 
   expect(drawn).toEqual(expanded);
 });
 
+/** Grid counts and indices that contradict each other: an aria-rowcount whose
+ * rows are not all indexed, or an index beyond its count. */
+const gridAriaProblems = (page: Page) => page.evaluate(selector => {
+  const grid = document.querySelector(`${selector} .tiles-view [role="grid"]`)!;
+  const rowCount = grid.getAttribute("aria-rowcount"), colCount = grid.getAttribute("aria-colcount");
+  const problems: string[] = [];
+  const rows = [...grid.querySelectorAll('[role="row"]')];
+  if (rowCount !== null) {
+    for (const row of rows) {
+      const index = row.getAttribute("aria-rowindex");
+      if (index === null) problems.push(`row without aria-rowindex: ${row.className}`);
+      else if (Number(index) > Number(rowCount)) problems.push(`aria-rowindex ${index} > ${rowCount}`);
+    }
+  }
+  for (const cell of grid.querySelectorAll('[role="gridcell"][aria-colindex]')) {
+    const index = Number(cell.getAttribute("aria-colindex"));
+    if (colCount !== null && index > Number(colCount)) problems.push(`aria-colindex ${index} > ${colCount}: ${cell.getAttribute("data-path")}`);
+    if (cell.closest(".tile-panel")) problems.push(`mini tile with aria-colindex: ${cell.getAttribute("data-path")}`);
+  }
+  return { problems, rowCount, colCount, indexedRows: rows.filter(row => row.hasAttribute("aria-rowindex")).length };
+}, shown);
+
+test("grid counts and indices stay consistent with and without panels", async ({ page }) => {
+  expect(await open(page)).toBe(7);
+  // No panel: the same grid semantics as classic Tiles.
+  const plain = await gridAriaProblems(page);
+  expect(plain.problems).toEqual([]);
+  expect(plain.colCount).toBe("7");
+  expect(Number(plain.rowCount)).toBeGreaterThan(1);
+  expect(plain.indexedRows).toBeGreaterThan(1);
+  // Panels make the grid non-uniform (labels, mini rows, grips, side-by-side
+  // panels): only consistent attributes remain.
+  for (const name of ["Career", "Personal", "Inbox", "Codex"]) await toggle(page, P(name));
+  const banded = await gridAriaProblems(page);
+  expect(banded.problems).toEqual([]);
+  expect([banded.rowCount, banded.colCount, banded.indexedRows]).toEqual([null, null, 0]);
+  for (const name of ["Career", "Personal", "Inbox", "Codex"]) await toggle(page, P(name));
+  expect(await gridAriaProblems(page)).toEqual(plain);
+});
+
 test("panels pass the structural accessibility rules", async ({ page }) => {
   await open(page);
   for (const name of ["Career", "Personal", "Inbox", "AI Draft Archive", "Codex"]) await toggle(page, P(name));

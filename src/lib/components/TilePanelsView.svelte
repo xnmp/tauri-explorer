@@ -78,6 +78,11 @@
   const model = $derived(tiles.model);
   const surface = $derived(miniSurfaceLayout(layout, model.mini));
   const banded = $derived(model.panels.size > 0);
+  // Grid counts and row indices hold only while the grid is uniform rows of
+  // tiles, as in classic Tiles. Panels add label, mini and grip rows, and
+  // side-by-side panels interleave theirs, so no row numbering is consistent:
+  // the counts and indices are then omitted (mini tiles never take a colindex).
+  const uniform = $derived(!banded && tiles.ghosts.size === 0);
 
   const thumbs = useUnavailableThumbs(() => explorer.currentPath);
   useTilesScrollJank(() => rootEl, () => ({ entries: explorer.displayEntries.length, thumbnailSize: effectiveThumbnailSize }));
@@ -125,7 +130,7 @@
 {/snippet}
 
 {#snippet tile(entry: FileEntry, index: number, column: number, mini: boolean)}
-  <EntryCell {column} class={mini ? "tile-item tile-mini" : "tile-item"} {index} {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
+  <EntryCell column={mini ? undefined : column} class={mini ? "tile-item tile-mini" : "tile-item"} {index} {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
     <TileVisual {entry} layout={mini ? surface : layout} videoUnavailable={thumbs.has(entry.path)} onvideounavailable={() => thumbs.mark(entry.path)}>
       {#snippet name()}<EntryName {entry} {explorer} variant="tiles" bold={!mini && model.panels.has(entry.path)} />{/snippet}
       {#snippet badge()}{#if !mini && entry.kind === "directory" && explorer.peekCaretsShown}{@render caret(entry)}{/if}{/snippet}
@@ -160,7 +165,7 @@
   <VirtualList
     class="tiles-scroller file-rows{banded ? ' banded' : ''}"
     role="grid" aria-label="Files" aria-multiselectable={true}
-    aria-rowcount={model.groups.length} aria-colcount={columns}
+    aria-rowcount={uniform ? model.groups.length : undefined} aria-colcount={uniform ? columns : undefined}
     tabindex={fallbackTabStop ? 0 : -1}
     bind:containsIndex={tiles.rowContainsIndex}
     items={model.groups as TileGroup[]}
@@ -181,7 +186,7 @@
             <TilePanelOutlines {geometry} metrics={model.metrics} compact={tiles.compact} hot={tiles.hot} live={model.panels} />
           {/if}
           {#each above(geometry.boxes) as box (box.path)}{@render panel(box)}{/each}
-          <div role="row" aria-rowindex={g + 1} class="tile-row" style:top="{geometry.rowTop}px"
+          <div role="row" aria-rowindex={uniform ? g + 1 : undefined} class="tile-row" style:top="{geometry.rowTop}px"
             style:grid-template-columns="repeat({columns}, minmax(0, 1fr))" style:gap="var(--tile-gap)">
             {#each tiles.cells(group) as cell, col (cell.key)}
               {#if cell.entry === null || cell.index === null}

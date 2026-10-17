@@ -605,6 +605,12 @@ Screenshots:
     `tabindex="-1"`, because Chrome otherwise makes scrollers Tab stops, and a focusable
     element in a grid needs a role of its own. The stacked label and the grip are rows
     holding a gridcell. The whole panel stays the folder's drop and context-menu surface.
+  - With no panel open the grid keeps classic Tiles' `aria-rowcount`/`aria-rowindex`
+    and `aria-colcount`. Once panels are open these are omitted: label, mini and grip
+    rows, and the interleaved rows of side-by-side panels, have no consistent numbering.
+    Mini tiles never take an `aria-colindex`, since a panel's columns are not the grid's.
+    Indexing every row was rejected: two panels sharing a band would need one sequence
+    for rows that sit side by side.
   - The column count comes from the classic content-width rule, so turning peek on never
     changes C; panel widths use the probe's inner width, committed in the
     ResizeObserver delivery (#1061).

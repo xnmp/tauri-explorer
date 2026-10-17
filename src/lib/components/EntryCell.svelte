@@ -27,7 +27,8 @@
     /** Global index in displayEntries — exposed as data-index so marquee
      *  selection maps a rendered (virtualized) tile/row back to its entry. */
     index?: number;
-    column: number;
+    /** A grid cell's aria-colindex; omitted where the grid's columns do not apply (a Tiles panel's mini tiles). */
+    column?: number;
     /** "treeitem" inside a peek tree (List cards, #1240), whose rows carry
      *  level/expanded state that an "option" may not. */
     role?: "gridcell" | "option" | "treeitem";

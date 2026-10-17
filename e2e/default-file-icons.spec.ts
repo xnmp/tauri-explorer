@@ -35,7 +35,7 @@ test('TS lettering remains opaque white against a dark selected tile', async ({p
   await row.click();
   await expect(row).toHaveClass(/selected/);
   await expect.poll(async()=>{
-    const pixels=decodePng(await row.locator('svg').first().screenshot());
+    const pixels=decodePng(await row.locator('svg').first().screenshot({scale:'css'}));
     let white=0;for(let y=0;y<pixels.height;y++)for(let x=0;x<pixels.width;x++)if(pixels.pixel(x,y).every(c=>c>235))white++;
     return white;
   },{message:'TS must paint white lettering, not cut holes through the blue badge'}).toBeGreaterThan(80);
@@ -99,9 +99,9 @@ test('icon picker previews without persisting, reverts, commits and survives rel
 });
 
 for(const theme of ['light','dark']) {
-  test(`${theme}: all four packs switch in Details, List and Tiles with distinct rendered results`,async({page})=>{
-    await openIcons(page,theme,'material');
-    for(const mode of ALL_VIEW_MODES) {
+  for(const mode of ALL_VIEW_MODES) {
+    test(`${theme} ${mode}: all four packs switch with distinct rendered results`,async({page})=>{
+      await openIcons(page,theme,'material');
       await chooseView(page,mode);
       const drawings=new Set<string>();
       for(const pack of ['material','classic','minimal','catppuccin']) {
@@ -123,8 +123,8 @@ for(const theme of ['light','dark']) {
         await capture(page,`${theme}-${pack}-${mode}`);
       }
       expect(drawings.size).toBe(4);
-    }
-  });
+    });
+  }
 }
 
 test('Material distinguishes neighboring file types, rounds TS/JS and obeys custom theme tint',async({page})=>{
@@ -135,14 +135,14 @@ test('Material distinguishes neighboring file types, rounds TS/JS and obeys cust
   await chooseView(page,'tiles');
   for(const name of ['playwright.config.ts','main.js']) {
     await expect.poll(async()=>{
-      const pixels=decodePng(await row(page,name).locator('svg').first().screenshot());
+      const pixels=decodePng(await row(page,name).locator('svg').first().screenshot({scale:'css'}));
       return colorDistance(pixels.pixel(5,5),pixels.pixel(5,32));
     },{message:`${name} corner must be rounded`}).toBeGreaterThan(30);
   }
   await page.evaluate(()=>document.documentElement.style.setProperty('--icon-file-tint','#a24cde'));
   for(const name of ['playwright.config.ts','budget.xlsx']) {
     await expect.poll(async()=>{
-      const pixels=decodePng(await row(page,name).locator('svg').first().screenshot());
+      const pixels=decodePng(await row(page,name).locator('svg').first().screenshot({scale:'css'}));
       let count=0;for(let y=0;y<pixels.height;y++)for(let x=0;x<pixels.width;x++)if(colorDistance(pixels.pixel(x,y),[162,76,222])<20)count++;
       return count;
     },{message:`${name} must use file tint`}).toBeGreaterThan(20);
@@ -160,7 +160,7 @@ test('every registered file symbol actually paints in both colorful packs',async
       boxes.push({name,box:(await icon.boundingBox())!});
     }
     await expect.poll(async()=>{
-      const pixels=decodePng(await page.screenshot());
+      const pixels=decodePng(await page.screenshot({scale:'css'}));
       return boxes.filter(({box})=>{
         let colored=0;
         for(let y=Math.ceil(box.y);y<Math.floor(box.y+box.height);y++)for(let x=Math.ceil(box.x);x<Math.floor(box.x+box.width);x++) {
@@ -201,7 +201,8 @@ test('Follow Color Theme reacts to color previews and same-ID CSS reloads; expli
 
 test('all aliases follow their identity category in both colorful packs',async({page})=>{
   await openIcons(page,'dark','material');
-  await chooseView(page,'details');
+  // Tile-sized glyphs retain solid interior pixels after Retina screenshots normalize to CSS pixels.
+  await chooseView(page,'tiles');
   await page.evaluate(()=>{
     document.documentElement.style.setProperty('--icon-code','#ef1234');
     document.documentElement.style.setProperty('--icon-document','#12ef34');
@@ -212,7 +213,7 @@ test('all aliases follow their identity category in both colorful packs',async({
     for(const [name,color] of [['playwright.config.ts','rgb(239, 18, 52)'],['main.mts','rgb(239, 18, 52)'],['data.jsonc','rgb(239, 18, 52)'],['files.bz2','rgb(18, 52, 239)']]) {
       const target=color==='rgb(239, 18, 52)' ? [239,18,52] as [number,number,number] : [18,52,239] as [number,number,number];
       await expect.poll(async()=>{
-        const pixels=decodePng(await row(page,name).locator(`[data-icon-theme="${pack}"]`).screenshot());
+        const pixels=decodePng(await row(page,name).locator(`[data-icon-theme="${pack}"]`).screenshot({scale:'css'}));
         let matching=0;
         for(let y=0;y<pixels.height;y++)for(let x=0;x<pixels.width;x++)if(colorDistance(pixels.pixel(x,y),target)<20)matching++;
         return matching;

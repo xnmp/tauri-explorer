@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { createNativeFixtureDirectory } from "../native-qualification";
-import { navigateTo, entryPathSelector } from "./helpers";
+import { navigateTo, entryPathSelector, waitForGitWatch } from "./helpers";
 import { exactApplicationPid } from "../native-process";
 import { inotifyWatchesForPath, nativeProcessIdentity } from "../native-resources";
 
@@ -105,7 +105,7 @@ describe("folder peek native observation", () => {
     }
     // Staging changes only .git; unchanged directory entries still need a
     // repository observer to revalidate the child's badge.
-    await browser.waitUntil(() => browser.execute(target => (JSON.parse(document.documentElement.dataset.e2eGitWatches ?? "{}")[target] ?? 0) > 0, nested), { timeout: 15_000, timeoutMsg: "nested Git lease was never acknowledged" });
+    await waitForGitWatch(nested);
     execFileSync("git", ["-C", nested, "add", "initial.txt"]);
     await browser.waitUntil(() => $(entryPathSelector(path.join(nested, "initial.txt")) + " .git-added").isExisting(), { timeout: 15_000, timeoutMsg: "nested Git badge did not follow an index-only change" });
     const created = path.join(nested, "created.txt");

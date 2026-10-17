@@ -28,8 +28,9 @@ import { toastStore } from "./toast.svelte";
 import { gitStatusStore } from "./git-status.svelte";
 import { archiveRoots, operationRoots } from "$lib/domain/file-operation-selection";
 import { createFolderPeekState } from "./folder-peek.svelte";
-import { flatPeekEntries, flatPeekRows, peekCapability, resolvePeekCommandTarget, resolvePeekEscape } from "$lib/domain/folder-peek-flat";
+import { flatPeekEntries, flatPeekRows, peekCapability, shouldToggleOnRowClick, resolvePeekCommandTarget, resolvePeekEscape } from "$lib/domain/folder-peek-flat";
 import type { PeekLevelCache } from "$lib/domain/folder-peek";
+import type { RowClickInput } from "$lib/domain/folder-peek-flat";
 import { isVirtualPath } from "$lib/domain/virtual-path";
 import { providerFor } from "$lib/plugins/fs-providers";
 import { basename, toNativeSeparators, pathComparison, coverageOf } from "$lib/domain/path";
@@ -258,6 +259,18 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     peek.toggle(path);
     pruneHiddenChildren(before, displayEntries);
     reconcilePeekResources();
+  }
+  /** Carets are drawn only while peeking is available and the option is on. */
+  const caretsShown = () => capability !== "none" && settingsStore.folderPeekCarets;
+  /** Caret-less peek: called after a row click's ordinary selection. */
+  async function toggleOnRowClick(entry: FileEntry, modifiers: RowClickInput["modifiers"], wasDrag: boolean) {
+    if (!shouldToggleOnRowClick({
+      caretsShown: capability === "none" || settingsStore.folderPeekCarets,
+      isDirectory: entry.kind === "directory",
+      eligible: capability !== "none" && !isVirtualPath(entry.path) && !providerFor(entry.path),
+      modifiers, wasDrag,
+    })) return;
+    await togglePeek(entry.path);
   }
   function collapseAllPeeks() {
     peekIntent++;
@@ -1077,6 +1090,8 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     get expandedPaths() { return new Set(peek.expanded.keys()); },
     peekWatchSnapshot: watch.peekSnapshot,
     togglePeek,
+    toggleOnRowClick,
+    get peekCaretsShown() { return caretsShown(); },
     collapseAllPeeks,
     get peekCommandTarget() { return capability !== "none" ? resolvePeekCommandTarget(focusedEntry, peekTree.meta) : null; },
     get canEscapePeek() { return capability !== "none" && resolvePeekEscape(focusedEntry, peekTree.meta) !== null; },

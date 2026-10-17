@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { HOME_URL, waitForEntries, runPaletteCommand, pressShortcut } from "./helpers";
+import { HOME_URL, waitForEntries, pressShortcut } from "./helpers";
 
 // The Folder Peek setting (#1238): off is the classic flat Details view, and
 // on again restores the expansions the pane remembered meanwhile.
@@ -23,6 +23,15 @@ test.beforeEach(async ({ page }) => {
   await caret(page, "Alpha/Nested").click();
   await expect(row(page, `${root}/Alpha/Nested/deep.txt`)).toBeVisible();
 });
+
+/** "Toggle Folder Peek" is a prefix of "Toggle Folder Peek Carets": match the former only. */
+async function runPaletteCommand(page: Page, label: string) {
+  await page.keyboard.press("ControlOrMeta+Shift+P");
+  const palette = page.locator(".command-palette-dialog");
+  await palette.locator(".search-input").fill(label);
+  await palette.locator(".command-item").filter({ hasText: new RegExp(`${label}(?! Carets)`) }).click();
+  await expect(palette).toBeHidden();
+}
 
 /** Classic Details geometry: the name cell starts at the row's content edge
  * (selection border + 16px padding) and its first child is the icon. */

@@ -39,11 +39,13 @@
     /** The pane renders a peek tree; false is the classic flat Details row. */
     peek?: boolean;
     canPeek?: boolean;
+    /** Draw the caret (and its slot); false = a click on the folder toggles it (#1248). */
+    carets?: boolean;
     groups?: readonly PeekGroup[];
     rowIndex?: number;
   }
 
-  let { entry, index, onclick, ondblclick, selected = false, explorer, depth = 0, parentPath = explorer.currentPath, expanded = false, peek = false, canPeek = false, groups = [], rowIndex = 0 }: Props = $props();
+  let { entry, index, onclick, ondblclick, selected = false, explorer, depth = 0, parentPath = explorer.currentPath, expanded = false, peek = false, canPeek = false, carets = true, groups = [], rowIndex = 0 }: Props = $props();
 
   const paneId = getPaneIdContext();
 
@@ -160,9 +162,9 @@
   onmousedown={usesPointerDrag ? (e) => { if (isPeekControl(e)) return; e.stopPropagation(); pointerDrag!.handlePointerDown(e, entry, selected); } : undefined}
 >
   <!-- Name column -->
-  {#if peek}<PeekGuides {groups} row={rowIndex} />{/if}
+  {#if peek}<PeekGuides {groups} row={rowIndex} {carets} />{/if}
   <div class="name-cell" style:padding-left={peek ? `${depth * 22}px` : undefined}>
-    {#if peek}
+    {#if peek && carets}
     <span class="peek-caret-slot">
       {#if canPeek}
         <!-- A pointer affordance only: never a tab stop, and its mousedown keeps

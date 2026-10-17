@@ -26,11 +26,19 @@ Outgoing views clear reveal/membership bindings by identity: a cold lazy import
 can otherwise call a disposed view after navigation. Keep callback reads out of
 the parent's reactive dependencies to avoid subscribing to a child being removed.
 
-List and Tiles load on demand to preserve the existing startup budget. Their
+Every built-in renderer (Details, column List, classic List, Tiles) loads on
+demand through one seam, `components/view-loaders.svelte.ts`, to preserve the
+startup budget; do not add inline `{#await import(...)}` blocks beside it. A
+settled renderer is published reactively and rendered directly. An `{#await}` on
+the memoised, already-resolved promise mounted every new pane's view from a
+promise reaction (Svelte's await block calls `flushSync` there); a Playwright
+`page.evaluate` that split a pane then failed with "Execution context was
+destroyed" (CDP: "Promise was collected"), failing 24 `pane-dialogs` cases. Their
 stylesheets can arrive after FileList's shared focus chrome. Pointer-focus resets
-must exclude `:focus-visible`, and selected keyboard-focus rules must outrank
-renderer selection borders regardless of stylesheet order. Verify theme contrast
-as well as outline existence.
+must exclude `:focus-visible`, renderer chrome uses `:where(...)` so it stays
+below the shared ring, and selected keyboard-focus rules must outrank renderer
+selection borders regardless of stylesheet order. Verify theme contrast as well
+as outline existence.
 
 ## Folder Peek toggle
 
@@ -50,5 +58,5 @@ asserts the live switch.
 
 - `$derived` compares by identity: a derived `{start,end}` object from `listColumnRange` re-created every mounted wrapper on each scroll frame. Derive primitives (`rangeStart`/`rangeEnd`) so scrolling inside the mounted window does no per-item work (`tests/composables/use-list-columns.test.ts`).
 - Wheel to scrollLeft needs a sub-pixel carry (`listWheelStep`); browsers round `scrollLeft +=` per direction, so fractional deltas stalled one way. Horizontal-dominant gestures, Ctrl-wheel and range ends must not `preventDefault`.
-- Start optional-view chunks (`components/view-loaders.ts`) when the view is known, not after the listing settles.
+- Start renderer chunks (`components/view-loaders.svelte.ts`) when the view is known, not after the listing settles. A navigation that settles while the chunk is pending keeps its cursor reveal; the mounted view's first `onlayoutchange` focuses it only if focus is still on the body or the listing (`e2e/folder-peek-renderer.spec.ts`).
 - A DOM `dragend` retires drop feedback unless it is positively a stale echo (`domain/drop-feedback.ts`); a sessionless native hover no longer blocks it.

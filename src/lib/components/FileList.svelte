@@ -3,7 +3,7 @@
   Issue: tauri-explorer-iw0, tauri-explorer-x25, tauri-explorer-as45, tauri-explorer-1k9k, tauri-explorer-im3m, tauri-explorer-9djf.5
 -->
 <script lang="ts">
-  import { loadView, optionalViewFor } from "./view-loaders";
+  import { loadView, loadedView, viewLoadFailed, viewRendererFor } from "./view-loaders.svelte";
   import { flushSync, tick, onDestroy, untrack } from "svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { setFileListFocusReturn } from "$lib/state/file-list-focus-context";
@@ -48,10 +48,9 @@
 
   const paneId = getPaneIdContext();
   // Start the renderer chunk as soon as the view is known, in parallel with the
-  // directory listing; the {#await} blocks below join the same promise.
+  // directory listing; the view branches below render it once it is published.
   $effect.pre(() => {
-    const view = optionalViewFor(explorer.viewMode, settingsStore.folderPeek);
-    if (view) void loadView(view).catch(() => {});
+    void loadView(viewRendererFor(explorer.viewMode, settingsStore.folderPeek));
   });
   // A plugin view replaces the listing only where it applies; elsewhere the
   // pane shows its built-in view while retaining the preference.
@@ -545,21 +544,25 @@
         <InlineNewFolder {explorer} variant="details" />
       </div>
     {:else if explorer.viewMode === "details"}
-      {#await import("./DetailsView.svelte") then { default: DetailsView }}
-      <DetailsView
-        {explorer}
-        onitemclick={handleClick}
-        onitemdblclick={handleDoubleClick}
-        onviewportscroll={handleViewportScroll}
-        onlayoutchange={() => { updateMarqueeSelection(); handleViewLayoutChange(); }}
-        {fallbackTabStop}
-        bind:containsIndex={viewContainsIndex}
-        bind:scrollToIndex={viewScrollToIndex}
-      />
-      {/await}
+      <!-- Every renderer loads on demand (view-loaders) to keep the startup graph bounded. -->
+      {@const DetailsView = loadedView("details")}
+      {#if DetailsView}
+        <DetailsView
+          {explorer}
+          onitemclick={handleClick}
+          onitemdblclick={handleDoubleClick}
+          onviewportscroll={handleViewportScroll}
+          onlayoutchange={() => { updateMarqueeSelection(); handleViewLayoutChange(); }}
+          {fallbackTabStop}
+          bind:containsIndex={viewContainsIndex}
+          bind:scrollToIndex={viewScrollToIndex}
+        />
+      {:else if viewLoadFailed("details")}
+        <div class="status error-state">Unable to load Details view</div>
+      {/if}
     {:else if explorer.viewMode === "list" && settingsStore.folderPeek}
-      <!-- Optional renderers load on demand to keep the Details startup graph bounded. -->
-      {#await loadView("list-columns") then { default: ListColumnsView }}
+      {@const ListColumnsView = loadedView("list-columns")}
+      {#if ListColumnsView}
         <ListColumnsView
           {explorer}
           bind:getNavigation={viewNavigation}
@@ -571,12 +574,13 @@
           bind:containsIndex={viewContainsIndex}
           bind:scrollToIndex={viewScrollToIndex}
         />
-      {:catch}
+      {:else if viewLoadFailed("list-columns")}
         <div class="status error-state">Unable to load List view</div>
-      {/await}
+      {/if}
     {:else if explorer.viewMode === "list"}
       <!-- Classic row-major List (Folder Peek off). -->
-      {#await loadView("list") then { default: ListView }}
+      {@const ListView = loadedView("list")}
+      {#if ListView}
         <ListView
           {explorer}
           {contentWidth}
@@ -588,11 +592,12 @@
           bind:containsIndex={viewContainsIndex}
           bind:scrollToIndex={viewScrollToIndex}
         />
-      {:catch}
+      {:else if viewLoadFailed("list")}
         <div class="status error-state">Unable to load List view</div>
-      {/await}
+      {/if}
     {:else}
-      {#await loadView("tiles") then { default: TilesView }}
+      {@const TilesView = loadedView("tiles")}
+      {#if TilesView}
         <TilesView
           {explorer}
           {contentWidth}
@@ -604,9 +609,9 @@
           bind:containsIndex={viewContainsIndex}
           bind:scrollToIndex={viewScrollToIndex}
         />
-      {:catch}
+      {:else if viewLoadFailed("tiles")}
         <div class="status error-state">Unable to load Tiles view</div>
-      {/await}
+      {/if}
     {/if}
 
     <!-- Marquee selection rectangle. Five fixed-size layers moved and scaled

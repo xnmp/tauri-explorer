@@ -15,7 +15,7 @@ backend for E2E/browser).
 
 ## View modes & virtualization
 
-- `components/FileList.svelte` — dispatches to Details/List/Tiles (List/Tiles load on demand to keep startup bounded); owns deferred cursor focus and explicit reveal ownership across settled virtual layout changes; manual scroll intent releases reveal ownership
+- `components/FileList.svelte` — dispatches to Details/List/Tiles (every renderer, Details included, loads on demand through `components/view-loaders.svelte.ts`, started in parallel with the listing and rendered directly once settled); owns deferred cursor focus and explicit reveal ownership across settled virtual layout changes; manual scroll intent releases reveal ownership
 - `components/EntryCell.svelte` — shared List option / Tiles gridcell interaction and roving focus attributes
 - Resolution column: `components/ImageResolutionCell.svelte` → `state/image-resolution-service.ts` / `state/image-resolution.ts` → `api/image-resolution.ts` → `src-tauri/src/files/image_resolution.rs`; formatting/filtering in `domain/image-resolution.ts`. Shares directory-change observation; no pixel decoding or retained dimension cache.
 - `components/DetailsView.svelte` — virtual-scrolled table (columns, sort headers); `domain/detail-columns.ts` + `composables/use-column-resize.svelte.ts` project session-local widths through one keyed scalar resize owner
@@ -66,7 +66,7 @@ backend for E2E/browser).
 - `components/DetailsView.svelte`, `FileItem.svelte`, `PeekGuides.svelte` — virtualized treegrid, 22px Name-only indentation, native caret buttons and continuous unboxed guides. Selection and keyboard movement use visible entries; Ctrl+A/typeahead/status totals use root entries. Collapsing prunes hidden child selections.
 - `state/pane-watch.ts`, `pane-refresh.ts`, `refresh-manager.ts` — shared per-path WHEN/WHETHER/HOW refresh split, newest-16 native directory/Git watches, fallback refresh for overflow, identity-guarded publication and subscriber retirement.
 - `domain/file-operation-selection.ts`, `state/pane-mutations.ts` — recursive batch roots and captured owning-directory publication for child mutations; native copy/session contracts remain unchanged.
-- `state/pane-peek-watch.ts` remains part of pane-watch’s WHETHER owner and loads with the first peek. The file-list dispatcher loads each built-in view renderer on demand, keeping the treegrid renderer out of the static startup graph.
+- `state/pane-peek-watch.ts` remains part of pane-watch’s WHETHER owner and loads with the first peek. The file-list dispatcher loads each built-in view renderer on demand (`components/view-loaders.svelte.ts`), keeping the treegrid renderer out of the static startup graph.
 - Coverage: `tests/domain/folder-peek*.test.ts`, `file-operation-selection.test.ts`, `tests/state/folder-peek*.test.ts`, `e2e/folder-peek-*.spec.ts`, `e2e-tauri/specs/folder-peek-watch.spec.ts`. E2E-only `e2e-folder-peek` DOM RPC in `src/test-support/e2e-hooks.ts` publishes live lease ownership.
 
 ## Directory listing & refresh/watcher events

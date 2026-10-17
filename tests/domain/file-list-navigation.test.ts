@@ -291,5 +291,15 @@ describe("resolveFileListMove", () => {
     it("yields no move without a settled layout snapshot", () => {
       expect(resolveFileListMove(key("ArrowDown"), columns({ list: null }))).toBeNull();
     });
+
+    it("leaves Details walking its flattened visible entries (peeked children included)", () => {
+      // 6 root entries plus 6 peeked children: Details counts all 12 visible entries.
+      const details = (o: Partial<Layout> = {}) => columns({ viewMode: "details", count: 12, cursorIndex: 9, ...o });
+      expect(resolveFileListMove(key("ArrowDown"), details())).toEqual({ kind: "focus", index: 10, selection: "replace" });
+      expect(resolveFileListMove(key("End", { ctrlKey: true }), details())).toEqual({ kind: "focus", index: 11, selection: "replace" });
+      expect(resolveFileListMove(key("ArrowRight"), details())).toBeNull();
+      expect(resolveFileListMove(key("ArrowLeft"), details({ yazi: true }))).toEqual({ kind: "parent" });
+      expect(resolveFileListMove(key("ArrowDown"), details({ list: null, cursorIndex: 11 }))).toBeNull();
+    });
   });
 });

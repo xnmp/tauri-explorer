@@ -22,6 +22,8 @@ export function createFolderPeekState(windows: boolean) {
     collapseAll(roots: readonly string[]) { session?.collapseAll(roots); },
     prune(parent: string, entries: readonly FileEntry[]) { session?.prune(parent, entries); },
     listing(path: string) { return session?.listing(path); },
+    cardRows(path: string) { return session?.cardRows(path); },
+    setCardRows(path: string, rows: number) { session?.setCardRows(path, rows); },
     target(path: string) { return session?.target(path); },
     reconcile(paths: readonly string[], git = false) { session?.reconcile(paths, git); },
     async dispose() {

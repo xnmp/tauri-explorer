@@ -63,6 +63,11 @@ function isDropOwnerBlocked(element: Element | null, paneId = resolveDropOwner(e
     && (!element || !modalOwnership.ownsInput(element, dialogStore.hasModalOpen ? null : undefined));
 }
 
+function peekDropSurface(el: Element): HTMLElement | null {
+  if ((el as HTMLElement).closest?.(".entry-item")) return null;
+  return (el as HTMLElement).closest?.(".peek-drop-target[data-path]") ?? null;
+}
+
 export function resolveDropTargetFromElement(el: Element | null): DropTargetResult {
   if (isDropOwnerBlocked(el)) return { type: "blocked" };
   if (!el) return null;
@@ -76,6 +81,14 @@ export function resolveDropTargetFromElement(el: Element | null): DropTargetResu
   const folderEntry = (el as HTMLElement).closest?.(".entry-item.directory[data-path]");
   if (folderEntry) {
     const path = folderEntry.getAttribute("data-path");
+    if (path) return { type: "folder", path };
+  }
+
+  // A List card's own surface or a peek pseudo-row is its folder (#1240);
+  // file rows inside a card stay non-targets, as everywhere else.
+  const peekSurface = peekDropSurface(el);
+  if (peekSurface) {
+    const path = peekSurface.getAttribute("data-path");
     if (path) return { type: "folder", path };
   }
 
@@ -213,7 +226,8 @@ function highlightAtCoords(cx: number, cy: number): void {
   const bookmarkEl = (el as HTMLElement).closest?.(".bookmark-drop-target[data-path]") as HTMLElement | null;
   const sidebarEl = (el as HTMLElement).closest?.(".quick-access") as HTMLElement | null;
   const terminalEl = (el as HTMLElement).closest?.(".terminal-panel") as HTMLElement | null;
-  const targetEl = terminalEl || folderEntry || millerEntry || tabEl || crumbEl || bookmarkEl || millerCol || (!sidebarEl ? (el as HTMLElement).closest?.(".content") as HTMLElement | null : null);
+  const peekSurface = peekDropSurface(el);
+  const targetEl = terminalEl || folderEntry || peekSurface || millerEntry || tabEl || crumbEl || bookmarkEl || millerCol || (!sidebarEl ? (el as HTMLElement).closest?.(".content") as HTMLElement | null : null);
 
   if (sidebarEl) {
     setHighlightedElement(targetEl);

@@ -71,6 +71,13 @@ export function useDropTarget(deps: DropTargetDeps) {
     await dropIntoDirectory(event, entry.path, "folder", { onRefresh: deps.onRefresh });
   }
 
+  /** Retire one folder's feedback without a leave event: the pointer moved onto
+   * a nested element that is its own target or none (a List card's rows). */
+  function releaseDropTarget(path: string): void {
+    if (dropTargets[path]) dropTargets[path] = false;
+    if (copyDropTargets[path]) copyDropTargets[path] = false;
+  }
+
   function isDropTarget(path: string): boolean {
     return dropTargets[path] ?? false;
   }
@@ -84,6 +91,7 @@ export function useDropTarget(deps: DropTargetDeps) {
     handleDragEnter,
     handleDragLeave,
     handleDrop,
+    releaseDropTarget,
     isDropTarget,
     isCopyDrop,
   };

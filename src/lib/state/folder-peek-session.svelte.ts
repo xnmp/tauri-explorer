@@ -5,6 +5,7 @@ import { pathComparison } from "$lib/domain/path";
 import type { FileEntry } from "$lib/domain/file";
 import * as policies from "$lib/domain/folder-peek";
 import { toggleExpanded, collapseSubtree, pruneExpanded, type PeekListing } from "$lib/domain/folder-peek";
+import { rememberCardRows } from "$lib/domain/list-cards";
 import { createDirectoryListing } from "./directory-listing";
 import { gitStatusStore } from "./git-status.svelte";
 import type { RefreshTarget } from "./pane-refresh";
@@ -12,6 +13,8 @@ import type { RefreshTarget } from "./pane-refresh";
 export function createFolderPeekSession(windows: boolean) {
   let expanded = $state.raw<ReadonlyMap<string, number>>(new Map());
   let snapshots = $state.raw<ReadonlyMap<string, PeekListing>>(new Map());
+  /** List card heights (visible rows) per top-level path, for the session. */
+  let cardRows = $state.raw<ReadonlyMap<string, number>>(new Map());
   let ordinal = 0;
   let disposed = false;
   const resources = new Map<string, { target: RefreshTarget; retire(): Promise<void> }>();
@@ -88,6 +91,8 @@ export function createFolderPeekSession(windows: boolean) {
       if (next.size !== expanded.size) expanded = next;
     },
     listing(path: string) { return snapshots.get(path); },
+    cardRows(path: string) { return cardRows.get(path); },
+    setCardRows(path: string, rows: number) { if (!disposed) cardRows = rememberCardRows(cardRows, path, rows); },
     target(path: string) { return [...resources].find(([key]) => pathComparison(windows).same(key, path))?.[1].target; },
     reconcile,
     async dispose() {

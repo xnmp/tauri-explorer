@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { columnFlow } from "$lib/domain/list-column-flow";
+import { buildListModel } from "$lib/domain/list-cards";
+import { flatPeekEntries, flatPeekRows } from "$lib/domain/folder-peek-flat";
 import type { FileEntry, ViewMode } from "$lib/domain/file";
 import {
   resolveFileCursor,
@@ -272,8 +273,8 @@ describe("resolveFileListMove", () => {
 
   describe("column-flow List (Folder Peek on)", () => {
     const list = {
-      entries: [], directory: "/files", sentinelOffset: 0, usableWidth: 500,
-      layout: columnFlow(Array.from({ length: 10 }), 4, () => ({ slots: 1, card: false })),
+      entries: [], directory: "/files", usableWidth: 500, cardScrollTop: () => 0,
+      model: buildListModel(flatPeekRows(flatPeekEntries("/files", Array.from({ length: 10 }, (_, i) => ({ name: `f${i}`, path: `/files/f${i}`, kind: "file" as const, size: 1, modified: "" }))), false), 4, () => undefined),
     };
     const columns = (o: Partial<Layout> = {}) => layout({ viewMode: "list", listLayout: "columns", count: 10, cursorIndex: 5, list, ...o });
 

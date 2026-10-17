@@ -3,20 +3,27 @@
   import { onDestroy } from "svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { useListColumns } from "$lib/composables/use-list-columns.svelte";
+  import { useListMotion } from "$lib/composables/use-list-motion.svelte";
   import { useItemInteractions } from "$lib/composables/use-item-interactions.svelte";
   import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
   import { usesPointerDrag } from "$lib/domain/platform";
   import { dialogStore } from "$lib/state/dialogs.svelte";
-  import type { ListNavigationSnapshot } from "$lib/domain/list-column-flow";
+  import type { ListCardSpec, ListNavigationSnapshot } from "$lib/domain/list-column-flow";
   import { LIST_COLUMN_STRIDE, LIST_PADDING_X, LIST_SLOT_HEIGHT } from "$lib/domain/list-column-flow";
+  import { peekTreePositionLookup, type PeekRow } from "$lib/domain/folder-peek";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
+  import { getPaneIdContext } from "$lib/state/pane-context";
   import { getFileIconColor } from "$lib/domain/file-types";
   import EntryName from "./EntryName.svelte";
   import FileIcon from "./FileIcon.svelte";
   import GitStatusBadge from "./GitStatusBadge.svelte";
-  import InlineNewFolder, { NEW_FOLDER_SENTINEL, isNewFolderSentinel } from "./InlineNewFolder.svelte";
+  import InlineNewFolder from "./InlineNewFolder.svelte";
   import EntryCell from "./EntryCell.svelte";
+  import ListCard from "./ListCard.svelte";
+  import ListCardGrip from "./ListCardGrip.svelte";
   import type { FileEntry } from "$lib/domain/file";
+
+  type EntryRow = Extract<PeekRow, { kind: "entry" }>;
 
   interface Props {
     explorer: ExplorerInstance;
@@ -30,19 +37,38 @@
     onlayoutchange?: () => void;
   }
   let { explorer, onitemclick, onitemdblclick, scrollToIndex = $bindable(), containsIndex = $bindable(), getNavigation = $bindable(), fallbackTabStop, onviewportscroll, onlayoutchange }: Props = $props();
+  const paneId = getPaneIdContext();
   const interactions = useItemInteractions({ getExplorer: () => explorer, refreshPanes: () => windowTabsManager.refreshAllPanes(), selectOnContextMenu: true });
   const pointerDrag = usesPointerDrag ? usePointerDrag({ getExplorer: () => explorer, refreshPanes: () => windowTabsManager.refreshAllPanes() }) : null;
-  const sentinelOffset = $derived(explorer.isCreatingFolder ? 1 : 0);
-  const items = $derived(explorer.isCreatingFolder ? [NEW_FOLDER_SENTINEL, ...explorer.displayEntries] : explorer.displayEntries);
+  // A card's group is a sibling of its header treeitem, which owns it.
+  const uid = $props.id();
+  const cardGroupId = (entryIndex: number) => `${uid}-card-${entryIndex}`;
   const columns = useListColumns({
-    getItems: () => items,
-    getPinnedPaths: () => [explorer.isCreatingFolder ? NEW_FOLDER_SENTINEL.path : "", dialogStore.renamingEntry?.path ?? ""],
+    getRows: () => explorer.detailRows,
+    getPreferredRows: path => explorer.listCardRows(path),
+    getPinnedPaths: () => dialogStore.renamingEntry ? [dialogStore.renamingEntry.path] : [],
+    commitCardRows: (path, rows) => explorer.setListCardRows(path, rows),
     onviewportscroll: () => onviewportscroll?.(),
     onlayoutchange: () => onlayoutchange?.(),
   });
-  const revealIndex = (index: number) => columns.reveal(index + sentinelOffset);
-  const contains = (index: number) => columns.containsIndex(index + sentinelOffset);
-  const navigation = () => ({ entries: explorer.displayEntries, directory: explorer.currentPath, layout: columns.layout, sentinelOffset, usableWidth: columns.usableWidth });
+  let canvas = $state<HTMLElement | null>(null);
+  let layer = $state<HTMLElement | null>(null);
+  useListMotion({
+    getModel: () => columns.model,
+    getChange: () => explorer.peekChange,
+    getStatus: path => explorer.peekStatus(path),
+    columnVisible: column => columns.columnVisible(column),
+    getCanvas: () => canvas,
+    getLayer: () => layer,
+    revealCard: (path, smooth) => columns.revealCard(path, smooth),
+  });
+  const carets = $derived(explorer.peekCaretsShown);
+  // With peek on, rows are a tree: levels, expanded folders and caret buttons
+  // are not allowed on listbox options (axe aria-allowed-attr, nested-interactive).
+  const tree = $derived(explorer.peekEnabled ? peekTreePositionLookup(explorer.detailRows) : null);
+  const revealIndex = (index: number) => columns.revealEntry(index);
+  const contains = (index: number) => columns.containsEntry(index);
+  const navigation = () => ({ entries: explorer.displayEntries, directory: explorer.currentPath, model: columns.model, usableWidth: columns.usableWidth, cardScrollTop: columns.cardScrollTop });
   scrollToIndex = revealIndex;
   containsIndex = contains;
   getNavigation = navigation;
@@ -52,28 +78,68 @@
     if (containsIndex === contains) containsIndex = undefined;
     if (scrollToIndex === revealIndex) scrollToIndex = undefined;
   });
-  $effect(() => { if (explorer.isCreatingFolder) columns.reveal(0); });
+  $effect(() => { if (explorer.isCreatingFolder) columns.revealItem(0); });
 </script>
 
-<div class="list-view" data-rows={columns.rows}>
+{#snippet entryRow(row: EntryRow, card?: ListCardSpec | null)}
+  <EntryCell role={tree ? "treeitem" : "option"} setSize={tree ? tree.setsize(row.entryIndex) : explorer.displayEntries.length} posInSet={tree?.posinset(row.entryIndex)}
+    column={1} class="list-item list-entry" index={row.entryIndex} entry={row.entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}
+    level={tree ? row.depth + 1 : undefined} owns={card && tree ? cardGroupId(row.entryIndex) : undefined}
+    expanded={tree && row.entry.kind === "directory" ? row.expanded : undefined}>
+    {#if carets && row.entry.kind === "directory"}
+      <!-- A pointer affordance only (as in Details): never a tab stop, and its
+           mousedown keeps focus where it was. Positioned in the row's caret
+           gutter, so file rows need no blank slot element. -->
+      <!-- The chevron is the button's ::before (one element per folder row). -->
+      <button class="peek-caret" type="button" draggable={false} tabindex="-1"
+        aria-expanded={row.expanded} aria-label={`${row.expanded ? "Collapse" : "Expand"} ${row.entry.name}`}
+        onmousedown={(event) => event.preventDefault()}
+        onclick={() => {
+          if (paneId) windowTabsManager.setActivePane(paneId);
+          void explorer.togglePeek(row.entry.path);
+        }}></button>
+    {/if}
+    <span class="list-icon" data-drag-icon style:color={row.entry.kind !== "directory" ? getFileIconColor(row.entry) : undefined}><FileIcon entry={row.entry} size="small" /></span>
+    <span data-drag-name><EntryName entry={row.entry} {explorer} variant="list" bold={row.expanded} /></span>
+    <GitStatusBadge directory={row.parentPath} entryName={row.entry.name} />
+    {#if card && card.end > card.start}
+      <!-- Inside the folder's treeitem (a tree owns only groups and treeitems),
+           positioned on the card's bottom edge against the slot. -->
+      <ListCardGrip name={row.entry.name} rows={columns.previewRows(card.path) ?? card.visibleRows} max={columns.gripMax(card.path)}
+        dragging={columns.previewRows(card.path) !== null}
+        onstart={(pointer, y) => columns.beginGrip(card.path, pointer, y)} onkey={(key) => columns.gripKey(card.path, key)} />
+    {/if}
+  </EntryCell>
+{/snippet}
+
+<div class="list-view" class:carets data-rows={columns.rows}>
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex -- tree and listbox are both interactive composites; the check cannot resolve a dynamic role. -->
   <div class="virtual-viewport list-scroller file-rows" class:short={columns.short}
-    role="listbox" aria-label="Files" aria-multiselectable="true" tabindex={fallbackTabStop ? 0 : -1}
+    role={tree ? "tree" : "listbox"} aria-label="Files" aria-multiselectable="true" tabindex={fallbackTabStop ? 0 : -1}
     use:columns.attach>
     <div class="list-measure" aria-hidden="true"></div>
-    <div class="list-canvas" style:width="{columns.extent - LIST_PADDING_X * 2}px" style:height="{columns.rows * LIST_SLOT_HEIGHT}px">
-      {#each columns.visibleItems as { entry, placement } (entry.path)}
-        <div class="list-slot" data-column={placement.column} style:left="{placement.column * LIST_COLUMN_STRIDE}px" style:top="{placement.row * LIST_SLOT_HEIGHT}px">
-          {#if isNewFolderSentinel(entry)}
+    <div class="list-canvas" bind:this={canvas} style:width="{columns.extent - LIST_PADDING_X * 2}px" style:height="{columns.rows * LIST_SLOT_HEIGHT}px">
+      <!-- Plain each items, not {@const}/destructured deriveds: a rename input's
+           blur can read its row after a commit has destroyed the slot. -->
+      {#each columns.visibleItems as slot (slot.item.key)}
+        <div class="list-slot list-place" class:list-card-box={!!slot.item.card} class:covered={columns.isCovered(slot.item.key)}
+          data-motion-key={slot.item.key} data-column={slot.placement.column}
+          style:left="{slot.placement.column * LIST_COLUMN_STRIDE}px" style:top="{slot.placement.row * LIST_SLOT_HEIGHT}px"
+          style:--card-fade={slot.item.card ? `${Math.min(64, 0.6 * (1 + (columns.previewRows(slot.item.card.path) ?? slot.item.card.visibleRows)) * LIST_SLOT_HEIGHT)}px` : undefined}>
+          {#if !slot.header}
             <InlineNewFolder {explorer} variant="list" columns />
           {:else}
-            <EntryCell role="option" setSize={explorer.displayEntries.length} column={placement.column + 1} class="list-item" index={placement.index - sentinelOffset} {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
-              <span class="list-icon" data-drag-icon style:color={entry.kind !== "directory" ? getFileIconColor(entry) : undefined}><FileIcon {entry} size="small" /></span>
-              <span data-drag-name><EntryName {entry} {explorer} variant="list" /></span>
-              <GitStatusBadge entryName={entry.name} />
-            </EntryCell>
+            {@render entryRow(slot.header, slot.item.card)}
+            {#if slot.item.card}
+              <ListCard entry={slot.header.entry} id={cardGroupId(slot.header.entryIndex)} card={slot.item.card} rows={explorer.detailRows.rows} groups={explorer.detailRows.groups} {carets}
+                offsets={columns.cardOffsets(slot.item.card)} scrollTop={columns.cardScrollTop(slot.item.card.path)} previewRows={columns.previewRows(slot.item.card.path)}
+                {interactions} row={entryRow}
+                onscrolltop={(top) => columns.setCardScrollTop(slot.item.card!.path, top)} />
+            {/if}
           {/if}
         </div>
       {/each}
+      <div class="list-motion-layer" bind:this={layer} aria-hidden="true" inert></div>
     </div>
   </div>
 </div>
@@ -99,16 +165,55 @@
   .list-scroller.short { overflow-y: auto; }
   .list-measure { width: 100%; height: 0; pointer-events: none; }
   .list-canvas { position: relative; }
-  .list-slot { position: absolute; width: 260px; height: 30px; }
+  /* Look classes only (list-place, list-card-box, list-entry): motion ghosts
+     keep these but lose every identity class, so they look the same while no
+     live query can reach them. */
+  .list-place { position: absolute; width: 260px; height: 30px; }
+  .list-place.covered { visibility: hidden; }
+  .list-motion-layer { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
+  /* Idle, the layer must not exist for hit testing: axe reads an empty
+     full-canvas overlay as covering every row's text. */
+  .list-motion-layer:empty { display: none; }
 
-  .list-view :global(.list-item) {
+  /* An open top-level folder: panel tint, hairline, radius 8 and a 1.5px accent
+     border fading into the hairline, inset 2px inside its slots. Content-sized,
+     so the box follows its scroll area while that animates. */
+  .list-place.list-card-box { height: auto; isolation: isolate; }
+  .list-card-box::after {
+    content: "";
+    position: absolute;
+    inset: 2px 0;
+    z-index: -1;
+    border-radius: 8px;
+    background: var(--subtle-fill-tertiary);
+    box-shadow: inset 0 0 0 1px var(--surface-stroke);
+    pointer-events: none;
+  }
+  .list-card-box::before {
+    content: "";
+    position: absolute;
+    inset: 2px 0;
+    z-index: 1;
+    border-radius: 8px;
+    border: 1.5px solid var(--accent);
+    pointer-events: none;
+    mask-image: linear-gradient(to bottom, #000, transparent var(--card-fade, 64px));
+    -webkit-mask-image: linear-gradient(to bottom, #000, transparent var(--card-fade, 64px));
+  }
+
+  /* Not positioned: absolute row controls (caret, card grip) resolve against
+     the row's slot (.list-place, or a card's .list-row), so a header's grip
+     can sit on its card's bottom edge. */
+  .list-view :global(.list-entry) {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 4px 8px;
+    padding: 4px 8px 4px calc(8px + var(--depth, 0) * 16px);
     width: 100%;
     box-sizing: border-box;
     height: 26px;
+    /* Centred in its 30px slot (a slot is a BFC, so nothing collapses). */
+    margin: 2px 0;
     background: transparent;
     border: 1px solid transparent;
     border-left-width: var(--selection-indicator-width);
@@ -123,15 +228,15 @@
   /* View chrome must stay below FileList’s keyboard ring even when this
      renderer’s styles arrive after the shared surface; pointer-focus resets
      never match :focus-visible. */
-  .list-view :global(.list-item:where(:focus:not(:focus-visible))) {
+  .list-view :global(.list-entry:where(:focus:not(:focus-visible))) {
     outline: none;
   }
 
-  .list-view :global(.list-item:where(:hover)) {
+  .list-view :global(.list-entry:where(:hover:not(:has(.list-card-grip:hover)))) {
     background: var(--subtle-fill-secondary);
   }
 
-  .list-view :global(.list-item:where(.selected)) {
+  .list-view :global(.list-entry:where(.selected)) {
     background: color-mix(in srgb, var(--accent) 8%, transparent);
     border-color: transparent;
     border-left-color: var(--accent);
@@ -141,35 +246,85 @@
      their label to --text-secondary. Dimming the whole row pulled the name
      below WCAG AA contrast in every theme (#785); Windows Explorer ghosts
      the icon for the same states. */
-  .list-view :global(.list-item:is(.hidden-entry, .empty-folder, .cut)) {
+  .list-view :global(.list-entry:is(.hidden-entry, .empty-folder, .cut)) {
     color: var(--text-secondary);
   }
 
-  .list-view :global(.list-item:is(.hidden-entry, .empty-folder) [data-drag-icon]) {
+  .list-view :global(.list-entry:is(.hidden-entry, .empty-folder) [data-drag-icon]) {
     opacity: 0.55;
   }
 
-  .list-view :global(.list-item:is(.hidden-entry, .empty-folder):is(:hover, .selected) [data-drag-icon]) {
+  .list-view :global(.list-entry:is(.hidden-entry, .empty-folder):is(:hover, .selected) [data-drag-icon]) {
     opacity: 0.8;
   }
 
-  .list-view :global(.list-item.cut [data-drag-icon]) {
+  .list-view :global(.list-entry.cut [data-drag-icon]) {
     opacity: 0.5;
   }
 
-  .list-view :global(.list-item:where(.in-clipboard:not(.cut))) {
+  .list-view :global(.list-entry:where(.in-clipboard:not(.cut))) {
     outline: 1px dashed var(--accent);
     outline-offset: -1px;
   }
 
-  .list-view :global(.list-item.drop-target) {
+  .list-view :global(.list-entry.drop-target) {
     background: color-mix(in srgb, var(--accent) 15%, transparent);
     box-shadow: inset 0 0 0 1px var(--accent);
   }
 
-  .list-view :global(.list-item.drop-target.copy-drop) {
+  .list-view :global(.list-entry.drop-target.copy-drop) {
     background: color-mix(in srgb, var(--system-success) 15%, transparent);
     box-shadow: inset 0 0 0 1px var(--system-success);
+  }
+
+  /* A native drag over a card's own surface (or a pseudo-row) highlights it. */
+  .list-view :global(.peek-drop-target.drop-target) {
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+  }
+
+  /* The List "close" caret (spec §8.3): a 14px gutter with a 10px chevron about
+     4px from the icon; every row keeps the gutter so names align, and the 16px
+     indent puts a child's caret under its parent's icon. */
+  .list-view.carets :global(.list-entry) {
+    padding-left: calc(24px + var(--depth, 0) * 16px);
+  }
+
+  .list-view :global(.list-entry .peek-caret) {
+    position: absolute;
+    /* Against the slot: past the row's 2px margin, 1px border and indicator edge. */
+    top: 5px;
+    left: calc(var(--selection-indicator-width, 3px) + 8px + var(--depth, 0) * 16px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 20px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+
+  /* Details' 10px chevron (stroke 1.3, round caps), drawn as a mask so a
+     folder row adds one element, not three; open rotates it to point down. */
+  .list-view :global(.list-entry .peek-caret::before) {
+    content: "";
+    width: 10px;
+    height: 10px;
+    background: currentColor;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M3.5 2 6.5 5 3.5 8' fill='none' stroke='black' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 10px 10px no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M3.5 2 6.5 5 3.5 8' fill='none' stroke='black' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 10px 10px no-repeat;
+  }
+
+  .list-view :global(.list-entry .peek-caret[aria-expanded="true"]::before) {
+    transform: rotate(90deg);
+  }
+
+  .list-view :global(.list-entry .peek-caret:hover) {
+    background: var(--subtle-fill-tertiary);
+    color: var(--text-primary);
   }
 
   .list-view :global(.list-icon) {
@@ -185,7 +340,7 @@
 
   /* Let the name fill (and truncate within) its share of the row; min-width:0
      is what actually allows it to shrink below the text's intrinsic width. */
-  .list-view :global(.list-item > [data-drag-name]) {
+  .list-view :global(.list-entry > [data-drag-name]) {
     flex: 1;
     min-width: 0;
   }
@@ -193,8 +348,11 @@
   /* While renaming, let the content-width rename box extend past the item over
      neighbouring columns instead of being clipped to its grid cell. The parent
      grid cell and virtual row must also allow the overflow. */
-  .list-view :global(.list-item:has(.rename-input)) {
+  .list-view :global(.list-entry:has(.rename-input)) {
     overflow: visible;
+  }
+  /* Entries are not positioned, so the renaming row's slot is what rises. */
+  .list-view :global(:is(.list-place, .list-row):has(.rename-input)) {
     z-index: 2;
   }
 </style>

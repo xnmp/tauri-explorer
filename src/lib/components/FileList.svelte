@@ -174,7 +174,7 @@
       || explorer.currentPath !== reveal.directory || explorer.viewMode !== reveal.mode) return;
     const focus = document.activeElement;
     if (focus !== document.body && (!fileListRef?.contains(focus)
-      || !focus?.matches('.entry-item, .virtual-viewport:is([role="grid"], [role="treegrid"], [role="listbox"])'))) return;
+      || !focus?.matches('.entry-item, .virtual-viewport:is([role="grid"], [role="treegrid"], [role="tree"], [role="listbox"])'))) return;
     scrollToSelected(entry);
   }
 
@@ -265,7 +265,7 @@
       const index = Number(target.dataset.index);
       const entry = explorer.displayEntries[index];
       if (entry?.path === target.dataset.path) explorer.focusEntry(entry);
-    } else if (target.matches('.virtual-viewport:is([role="grid"], [role="treegrid"], [role="listbox"])') && explorer.focusedEntry) {
+    } else if (target.matches('.virtual-viewport:is([role="grid"], [role="treegrid"], [role="tree"], [role="listbox"])') && explorer.focusedEntry) {
       scrollToSelected(explorer.focusedEntry);
     } else {
       // Column controls and inline editors own their focus independently.
@@ -426,7 +426,8 @@
     if (!dragState.acceptsFileDrag(event.dataTransfer)) return;
 
     const target = event.target as HTMLElement;
-    if (target.closest(".entry-item")) return;
+    // Entries and List card surfaces (their folder) own their drops.
+    if (target.closest(".entry-item, .peek-drop-target")) return;
 
     // Suppress highlight when all sources are already in this directory
     const dragData = dragState.current ?? crossWindow;
@@ -452,7 +453,7 @@
     if (pluginView || holdingView) return;
 
     const target = event.target as HTMLElement;
-    if (target.closest(".entry-item")) return;
+    if (target.closest(".entry-item, .peek-drop-target")) return;
 
     if (!event.dataTransfer) return;
 

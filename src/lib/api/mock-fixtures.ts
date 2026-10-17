@@ -389,6 +389,52 @@ mockFiles["/folder-peek/Beta"] = [file("same.txt", "/folder-peek/Beta/same.txt",
 mockFiles["/folder-peek/Empty"] = [];
 mockFiles["/folder-peek/Large"] = Array.from({ length: 10_000 }, (_, index) => file(`item-${String(index).padStart(5, "0")}.txt`, `/folder-peek/Large/item-${String(index).padStart(5, "0")}.txt`, index));
 
+// List cards (#1240): the spec mock's folders, files and filler, so a List
+// pane has several columns and cards of every size (folder-peek-mock.html).
+{
+  const root = "/folder-peek-list";
+  const tree: Record<string, readonly (readonly [string, boolean])[]> = {
+    "": [
+      ...["Inbox", "Career", "Codex", "Personal", "Archive", "AI Draft Archive"].map(name => [name, true] as const),
+      ...["freeze-fix-guide.md", "Scrivo Sample.md", "Totality Dividends.xlsx", "Totality Trades History.xlsx", "numbers_backup.md", "bpay-2026-oct-receipt.png", "Revenue NSW.pdf", "bot_pat.txt", "numbers_backup_2.md"].map(name => [name, false] as const),
+      ...Array.from({ length: 75 }, (_, i) => [[
+        `IMG_${2041 + i}.jpg`, `invoice-2026-${String(1 + Math.floor(i / 9) % 12).padStart(2, "0")}-${i}.pdf`,
+        `meeting-notes-${String(412 + i).padStart(4, "0")}.md`, `screenshot-2026-09-${String(30 - Math.floor(i / 9)).padStart(2, "0")}-${i}.png`,
+        `project-backup-${String(i + 1).padStart(3, "0")}.zip`, `sales-export-${String(i + 1).padStart(3, "0")}.csv`,
+        `holiday-clip-${String(i + 1).padStart(3, "0")}.mp4`, `research-notes-${String(i + 1).padStart(3, "0")}.txt`,
+        `budget-review-${String(i + 1).padStart(3, "0")}.xlsx`,
+      ][i % 9], false] as const),
+    ],
+    Inbox: [["to-file", true], ...["scan-0193.pdf", "invoice-oct.pdf", "meeting-notes.md", "screenshot-2026-10-15.png", "quote.txt"].map(name => [name, false] as const)],
+    "Inbox/to-file": [["receipt.pdf", false], ["notes.txt", false]],
+    Career: [...["Applications", "Cover Letters", "Portfolio"].map(name => [name, true] as const), ...["Resume-2026.pdf", "Interview Prep.md", "References.docx", "salary-research.xlsx", "headshot.jpg", "offer-letter.pdf"].map(name => [name, false] as const)],
+    "Career/Applications": [...["Acme Corp", "Globex", "Initech"].map(name => [name, true] as const), ["tracker.xlsx", false], ["follow-ups.md", false]],
+    "Career/Applications/Acme Corp": [["cover-letter.pdf", false], ["notes.md", false]],
+    "Career/Applications/Globex": [["application.pdf", false], ["interview.md", false]],
+    "Career/Applications/Initech": [["resume.pdf", false], ["contacts.txt", false]],
+    "Career/Cover Letters": [["general.pdf", false], ["draft.md", false]],
+    "Career/Portfolio": [],
+    Codex: [...["prompts", "sessions", "skills"].map(name => [name, true] as const), ...["AGENTS.md", "config.toml", "notes.md", "rollout-2026-10-12.jsonl", "auth-flow.png", "todo.txt", "history.jsonl", "README.md", "mcp-servers.json", "rollout-2026-10-14.jsonl", "sandbox.log"].map(name => [name, false] as const)],
+    "Codex/prompts": [["system.md", false], ["review.md", false]],
+    "Codex/sessions": [["session-notes.md", false], ["summary.txt", false]],
+    "Codex/skills": [["workflow.md", false]],
+    Personal: [...["Health", "Travel", "Recipes"].map(name => [name, true] as const), ...Array.from({ length: 20 }, (_, i) => [`personal-${String(i + 1).padStart(2, "0")}.pdf`, false] as const)],
+    Archive: [...["2019", "2020", "2021", "2022", "2023"].map(name => [name, true] as const), ...Array.from({ length: 45 }, (_, i) => [`archive-${String(i + 1).padStart(2, "0")}.pdf`, false] as const)],
+    "AI Draft Archive": [["drafts-2025", true], ...["essay-v3.md", "outline.md", "cover-image.png", "prompts.txt", "essay-v1.md", "essay-v2.md", "notes-chat.md", "references.docx", "figure-1.png", "summary.pdf"].map(name => [name, false] as const)],
+    "AI Draft Archive/drafts-2025": [["essay.md", false], ["outline.txt", false]],
+  };
+  for (const [relative, children] of Object.entries(tree)) {
+    const parent = relative ? `${root}/${relative}` : root;
+    mockFiles[parent] = children.map(([name, folder], index) => folder ? dir(name, `${parent}/${name}`) : file(name, `${parent}/${name}`, 100 + index));
+  }
+  for (const [relative, children] of Object.entries(tree)) {
+    for (const [name, folder] of children) {
+      const path = `${relative ? `${root}/${relative}` : root}/${name}`;
+      if (folder && !mockFiles[path]) mockFiles[path] = [];
+    }
+  }
+}
+
 /** Static fake file contents, served by read_text_file and searched by
  *  start_content_search (written files take precedence over these). */
 export const mockFileContent: Record<string, string> = {

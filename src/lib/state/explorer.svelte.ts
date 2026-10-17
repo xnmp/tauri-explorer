@@ -209,8 +209,11 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   // Each peek level is projected once per listing snapshot and projection
   // inputs, so a root keystroke or one peek's publish leaves other levels be.
   let peekLevels: PeekLevelCache | undefined;
+  // Each level uses its view's sort, like the root: only Details has a sort UI;
+  // List (and Tiles) sort by name ascending (§3).
+  const peekSort = (): [SortField, boolean] => coreState.viewMode === "details" ? [coreState.sortBy, coreState.sortAscending] : ["name", true];
   const peekProjectionKey = (parent: string) => [
-    coreState.sortBy, coreState.sortAscending, settingsStore.showHidden, settingsStore.showManuallyHidden,
+    ...peekSort(), settingsStore.showHidden, settingsStore.showManuallyHidden,
     ...(settingsStore.showManuallyHidden ? [] : manualHiddenStore.namesIn(parent)),
   ].join("\0");
   const peekTree = $derived.by(() => {
@@ -220,7 +223,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     return policies.flattenPeekEntries({
       root: coreState.currentPath, entries: ownDisplayEntries, expanded: peek.expanded,
       listing: path => peek.listing(path)?.entries,
-      project: (entries, parent) => sortEntries(visibleEntriesFor(entries, parent), coreState.sortBy, coreState.sortAscending),
+      project: (entries, parent) => sortEntries(visibleEntriesFor(entries, parent), ...peekSort()),
       capability: peek.expanded.size ? capability : "none", windows: isWindows,
       levels: peekLevels, projectionKey: peekProjectionKey,
     });
@@ -242,6 +245,12 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     }
   }
   let peekIntent = 0;
+  /** The last user peek toggle (or collapse-all). Pruning, refreshes,
+   * navigation and card resizes never set it, so renderers can animate user
+   * toggles and keep everything else instant (#1240): a grip resize has
+   * already previewed its height, so its commit snaps. */
+  let peekChange = $state.raw<{ path: string; serial: number } | null>(null);
+  const notePeekChange = (path: string) => { peekChange = { path, serial: (peekChange?.serial ?? 0) + 1 }; };
   // A function, not a narrowed read: capability is live across the lazy load.
   const peeksAllowed = () => capability !== "none";
   async function togglePeek(path: string) {
@@ -257,6 +266,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     if (peek.watchFactory) watch.enablePeeks(peek.watchFactory);
     const before = peekTree;
     peek.toggle(path);
+    notePeekChange(path);
     pruneHiddenChildren(before, displayEntries);
     reconcilePeekResources();
   }
@@ -276,6 +286,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     peekIntent++;
     const before = peekTree;
     peek.collapseAll([coreState.currentPath]);
+    notePeekChange(coreState.currentPath);
     pruneHiddenChildren(before, displayEntries);
     reconcilePeekResources();
   }
@@ -1091,6 +1102,15 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     peekWatchSnapshot: watch.peekSnapshot,
     togglePeek,
     toggleOnRowClick,
+    get peekChange() { return peekChange; },
+    /** Listing state of an open peek ("loading" until its first listing settles). */
+    peekStatus(path: string) { return peek.listing(path)?.status; },
+    /** Remembered List card height (visible rows) for a top-level folder. */
+    listCardRows(path: string) { return peek.cardRows(path); },
+    setListCardRows(path: string, rows: number) {
+      if (capability === "none" || peek.cardRows(path) === rows) return;
+      peek.setCardRows(path, rows);
+    },
     get peekCaretsShown() { return caretsShown(); },
     collapseAllPeeks,
     get peekCommandTarget() { return capability !== "none" ? resolvePeekCommandTarget(focusedEntry, peekTree.meta) : null; },

@@ -1,9 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { columnFlow, listRows, listPageColumns, resolveListMove, listColumnRange, listWheelStep, type SlotSpec } from "$lib/domain/list-column-flow";
+import { buildListModel } from "$lib/domain/list-cards";
+import { flatPeekEntries, flatPeekRows } from "$lib/domain/folder-peek-flat";
+import type { FileEntry } from "$lib/domain/file";
 
 const plain = () => ({ slots: 1, card: false });
 const items = (n: number) => Array.from({ length: n }, (_, i) => i);
 const key = (key: string, modifiers = {}) => ({ key, ctrlKey: false, metaKey: false, shiftKey: false, altKey: false, ...modifiers });
+const files = (n: number): FileEntry[] => Array.from({ length: n }, (_, i) => ({ name: `f${i}`, path: `/d/f${i}`, kind: "file", size: 1, modified: "" }));
+/** A folder with no open cards, optionally with the creation sentinel in slot 0. */
+const flatModel = (n: number, R: number, creating = false) => buildListModel(flatPeekRows(flatPeekEntries("/d", files(n)), creating), R, () => undefined);
 
 describe("columnFlow", () => {
   it("fills down, then across, without a trailing empty column", () => {
@@ -72,8 +78,10 @@ describe("columnFlow", () => {
 });
 
 describe("List navigation and viewport contracts", () => {
-  const flow = columnFlow(items(10), 4, plain);
-  const move = (k: string, index: number, modifiers = {}, offset = 0) => resolveListMove(key(k, modifiers), flow, index, 550, offset);
+  const model = flatModel(10, 4);
+  // offset 1: the creation sentinel holds slot 0, leaving nine entries.
+  const move = (k: string, index: number, modifiers = {}, offset = 0) =>
+    resolveListMove(key(k, modifiers), offset ? flatModel(10 - offset, 4, true) : model, index, 550);
   it("keeps arrows within columns and clamps across uneven final columns", () => {
     expect(move("ArrowUp", 5)).toMatchObject({ kind: "focus", index: 4 });
     expect(move("ArrowDown", 5)).toMatchObject({ kind: "focus", index: 6 });
@@ -110,7 +118,7 @@ describe("List navigation and viewport contracts", () => {
     expect(move("End", 4, {}, 1)).toMatchObject({ index: 8 });
   });
   it("handles empty, missing cursor, unsupported and malformed input", () => {
-    expect(resolveListMove(key("ArrowDown"), columnFlow([],4,plain), -1, 500)).toEqual({ kind: "handled" });
+    expect(resolveListMove(key("ArrowDown"), flatModel(0, 4), -1, 500)).toEqual({ kind: "handled" });
     expect(move("ArrowDown", -1)).toMatchObject({ index: 0 });
     expect(move("Enter", 0)).toBeNull();
     expect(move("ArrowDown", 0, { altKey: true })).toBeNull();

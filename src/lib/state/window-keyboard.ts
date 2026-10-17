@@ -38,7 +38,7 @@ export function startWindowKeyboard(target: EventTarget, dependencies: WindowKey
     const element = event.target as HTMLElement | null;
     return {
       nativeButton: element?.tagName === "BUTTON",
-      fileEntry: element?.matches?.('.file-list .entry-item, .file-list .virtual-viewport[role="grid"], .file-list .virtual-viewport[role="treegrid"], .file-list .virtual-viewport[role="listbox"]') ?? false,
+      fileEntry: element?.matches?.('.file-list .entry-item, .file-list .virtual-viewport[role="grid"], .file-list .virtual-viewport[role="treegrid"], .file-list .virtual-viewport[role="tree"], .file-list .virtual-viewport[role="listbox"]') ?? false,
       input: element?.tagName === "INPUT" || element?.tagName === "TEXTAREA" || !!element?.isContentEditable,
       terminal: !!element?.closest?.(".terminal-panel"),
       customButton: !!element?.closest?.('[role="button"]'),

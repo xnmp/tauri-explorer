@@ -153,7 +153,7 @@ export function buildPeekRows(tree: PeekTree, listing: (path: string) => PeekLis
     const placement = tree.meta.get(entry.path)!;
     while (active.length && active.at(-1)!.depth >= placement.depth) active.pop()!.endRow = rows.length;
     entryToRow.push(rows.length);
-    rows.push({ kind: "entry", key: `entry:${entry.path}`, entry, entryIndex, ...placement, expanded: expanded.has(entry.path) });
+    rows.push({ kind: "entry", key: `entry:${entry.path}`, entry, entryIndex, depth: placement.depth, parentPath: placement.parentPath, expanded: expanded.has(entry.path) });
     if (!expanded.has(entry.path)) return;
     const group = { path: entry.path, depth: placement.depth, startRow: rows.length, endRow: rows.length };
     groups.push(group);
@@ -168,4 +168,35 @@ export function buildPeekRows(tree: PeekTree, listing: (path: string) => PeekLis
   });
   for (const group of active) group.endRow = rows.length;
   return { rows, entryToRow, rowToEntry: rows.map(row => row.kind === "entry" ? row.entryIndex : null), groups };
+}
+
+/** Each entry's tree position among its siblings (entries sharing its parent),
+ * indexed by entry index. A virtualized tree has to state these itself:
+ * assistive technology would otherwise count only the mounted siblings. */
+export interface PeekTreePositions { readonly posinset: readonly number[]; readonly setsize: readonly number[] }
+export function peekTreePositions(rows: readonly PeekRow[]): PeekTreePositions {
+  const counts = new Map<string, number>();
+  const posinset: number[] = [];
+  const parents: string[] = [];
+  for (const row of rows) {
+    if (row.kind !== "entry") continue;
+    const position = (counts.get(row.parentPath) ?? 0) + 1;
+    counts.set(row.parentPath, position);
+    posinset[row.entryIndex] = position;
+    parents[row.entryIndex] = row.parentPath;
+  }
+  return { posinset, setsize: parents.map(parent => counts.get(parent)!) };
+}
+
+/** Tree positions by entry index. With nothing expanded every entry is a
+ * top-level sibling, so the lookup is arithmetic and allocates nothing per
+ * entry: a 10,000-entry List with no open card pays no tree bookkeeping. */
+export interface PeekTreePositionLookup { posinset(entryIndex: number): number; setsize(entryIndex: number): number }
+export function peekTreePositionLookup(layout: PeekRows): PeekTreePositionLookup {
+  if (!layout.groups.length) {
+    const size = layout.entryToRow.length;
+    return { posinset: entryIndex => entryIndex + 1, setsize: () => size };
+  }
+  const { posinset, setsize } = peekTreePositions(layout.rows);
+  return { posinset: entryIndex => posinset[entryIndex], setsize: entryIndex => setsize[entryIndex] };
 }

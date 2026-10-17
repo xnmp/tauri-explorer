@@ -268,6 +268,13 @@ export const viewCommands: Command[] = [
     category: "view",
     handler: () => dialogStore.openThemePicker(),
   },
+  {
+    id: 'view.switchIconTheme',
+    scope: 'window',
+    label: 'Switch Icon Theme...',
+    category: 'view',
+    handler: () => dialogStore.openThemePicker('icon'),
+  },
   // Preview pane dock position (#460). Cycling (or jumping to any edge) also
   // reveals the pane when hidden, so the command has a visible effect.
   {

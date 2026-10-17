@@ -4,6 +4,7 @@
 -->
 <script lang="ts">
   import { settingsStore, type IconTheme, type ThumbnailSize, type WindowsBackdrop, type PaneLayoutMode } from "$lib/state/settings.svelte";
+  import { ICON_THEMES } from './icons/icon-theme-options';
   import { themeStore } from "$lib/state/theme.svelte";
   import { isMac, isWindows } from "$lib/domain/platform";
   import { TERMINAL_LINE_ACTIONS, defaultTerminalShortcuts } from "$lib/domain/terminal-keys";
@@ -273,9 +274,9 @@
               value={settingsStore.iconTheme}
               onchange={(e) => settingsStore.update({ iconTheme: e.currentTarget.value as IconTheme })}
             >
-              <option value="default">Default</option>
-              <option value="material">Material</option>
-              <option value="minimal">Minimal</option>
+              {#each ICON_THEMES as pack (pack.id)}
+                <option value={pack.id}>{pack.name}</option>
+              {/each}
             </select>
           </div>
 

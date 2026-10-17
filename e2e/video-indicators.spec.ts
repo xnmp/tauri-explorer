@@ -14,7 +14,7 @@ async function capture(page: import("@playwright/test").Page, name: string) {
 }
 
 for (const theme of ["light", "dark"] as const) {
-  for (const iconTheme of ["default", "material", "minimal"] as const) {
+  for (const iconTheme of ["default", "material", "classic", "minimal", "catppuccin"] as const) {
     test(`${theme} ${iconTheme}: video markers distinguish matching frames across views`, async ({ page }) => {
       await page.setViewportSize({ width: 1600, height: 900 });
       await seedSettings(page, { theme, iconTheme, zoomLevel: theme === "dark" ? 150 : 100, thumbnailSize: "small" });

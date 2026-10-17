@@ -1,0 +1,41 @@
+Generated using the built-in imagegen tool, with the official VS Code Material
+Icon Theme contact sheet as a visual reference. The user accepted this family
+and requested rounded corners for the TS and JS badges. Production SVG geometry
+is derived from this imagegen direction; Catppuccin is a separate official pack.
+
+Use case: ui-mockup.
+Asset type: ONE visual menu / contact sheet presenting a proposed colorful default file-icon family for a desktop file explorer. This is a style preview, not the production asset atlas.
+Input image 1: STRICT STYLE REFERENCE showing actual VS Code Material Icon Theme symbols. Study their flat, compact, geometric, symbol-first language. Match THIS reference, not generic Material app icons. The reference is visual grammar only; create the requested new sheet with the new labels below.
+
+Primary request: One beautiful crisp comparison sheet on a uniform deep charcoal background (#24262E), with exactly 20 large flat colorful file icons, in a spacious precisely aligned 5-column by 4-row grid. Each cell contains just its icon and one extension label underneath. Every icon is visually the same optical size, around 64–80 px in a 1536-wide board. All icon symbols must have extremely sharp vector-like outlines, uniform solid opaque color fills, simple shapes, no shading at all. Rich saturated complementary colors, still immediately recognizable. Thoughtful craftsmanship suited to 16–64px desktop file-tree icons. All twenty belong to one family.
+
+Header at top, simple restrained sans-serif: exact text "COLORFUL MATERIAL" and below it smaller "Default file icon direction".
+Exact grid order and EXACT labels:
+Row 1: ".ts" , ".js" , ".tsx" , ".py" , ".rs"
+Row 2: ".go" , ".html" , ".css" , ".json" , ".md"
+Row 3: ".svelte" , ".vue" , ".pdf" , ".docx" , ".xlsx"
+Row 4: ".zip" , ".png" , ".mp3" , ".mp4" , "folder"
+
+Symbol direction for each:
+.ts: sharp-cornered blue TS square lettermark, bold solid WHITE TS in lower right, small flat cyan color accent. Not a page.
+.js: warm golden-yellow JS square lettermark with dark JS, tiny orange accent. Not a page.
+.tsx: bright cyan React atom with small coherent blue TypeScript marker; flat, very clear.
+.py: familiar interlocking Python snakes, vivid blue and warm yellow, clear two-color silhouette.
+.rs: clean orange-red Rust gear/R symbol, no excessively fine teeth.
+.go: bold cyan GO speed wordmark, small deeper blue accents.
+.html: saturated orange HTML5 shield with white 5, flat two-tone orange planes.
+.css: violet/blue CSS shield with white 3, flat solid planes.
+.json: gold/orange opposing braces with a small teal center dot.
+.md: blue rounded rectangular Markdown mark, white M and downward arrow.
+.svelte: familiar orange intertwined S symbol with white inner negative spaces.
+.vue: familiar green/teal V chevrons with darker inner chevron.
+.pdf: vivid red geometric PDF/Acrobat-style file symbol with simple white recognizable symbol.
+.docx: overlapping blue document and dark blue W tab, a few broad white lines, flat planes.
+.xlsx: green spreadsheet/grid with darker green X tab, flat planes.
+.zip: warm orange archive carton with bold navy zipper, compact recognizable silhouette.
+.png: violet and pink landscape/photo frame with light sun and mountain glyphs.
+.mp3: magenta music-note symbol with purple secondary accent; no file/page backing.
+.mp4: coral/orange video panel and clear white play triangle; flat.
+folder: warm golden yellow folder, orange back tab and yellow front, clean flat geometry.
+
+Critical visual constraints: match the reference's VS Code file/language SYMBOL style. Most icons are freestanding recognizable logos and symbols, each with its own outline. Do NOT wrap everything in matching document sheets, generic rounded-square app tiles, cards, circles, or plates. Distinct silhouettes are essential. No 3D, photorealism, gradients, lighting, cast shadows, glass, bevels, textures, grain, gloss, luminous halos, paper curls, decorative lines, presentation devices, extra text, extra icons, duplicated labels, irrelevant logos or watermark. No cell borders or card containers; just symbols floating on the charcoal board. Clean professional typography for labels in pale gray. Single landscape image, immaculate grid spacing, enough outer margins.

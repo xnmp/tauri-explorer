@@ -17,3 +17,8 @@ export type NativeFileDragEvent = (
 ) & { copyModifier?: boolean | null; observedAt?: number; observationClock?: string;
   /** Captured at the platform event, independently of renderer completion IPC. */
   completedGestureSequence?: number };
+
+/** Exact HTML5 source retirement also fences a late native adoption command. */
+export function endHtml5FileDrag(source: DragData, reason: "ended" | "owner-disposed"): Promise<void> {
+  return invoke("end_html5_file_drag", { source, reason });
+}

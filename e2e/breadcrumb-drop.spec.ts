@@ -1,22 +1,18 @@
-/**
- * E2E test: breadcrumb segments accept file drops.
- * Issue: feat/breadcrumb-drop-target
- */
+/** Browser/mock outcome coverage for breadcrumb drops; GTK source delivery is
+ * verified separately by the native file-drag regression. */
 import { test, expect } from "./fixtures";
-import { HOME_URL, waitForEntries } from "./helpers";
+import { waitForEntries } from "./helpers";
 
-test.describe("Breadcrumb drop target", () => {
-  test("breadcrumb segments have drag event handlers", async ({ page }) => {
-    await page.goto(HOME_URL);
+for (const mode of ["details", "list", "tiles"] as const) {
+  test(`dropping a file on an ancestor breadcrumb moves it into that folder (${mode})`, async ({ page }) => {
+    await page.goto(`/?path=/home/user/Pictures/vacation&viewMode=${mode}`);
     await waitForEntries(page);
-
-    // Navigate into a subfolder to get breadcrumbs
-    await page.locator(".entry-item").first().dblclick();
-    await page.waitForTimeout(500);
-
-    // Check that breadcrumb segments exist and have the drop-target CSS class available
-    const crumbs = page.locator(".crumb:not(.root)");
-    const count = await crumbs.count();
-    expect(count).toBeGreaterThan(0);
+    const source = page.locator('.entry-item[data-path="/home/user/Pictures/vacation/itinerary.txt"]');
+    const destination = page.locator('.crumb[data-path="/home/user/Pictures"]');
+    await source.dragTo(destination);
+    await expect(page.locator(".toast").filter({ hasText: /Moved/ })).toHaveCount(1);
+    await expect(source).toHaveCount(0);
+    await destination.click();
+    await expect(page.locator('.entry-item[data-path="/home/user/Pictures/itinerary.txt"]')).toBeVisible();
   });
-});
+}

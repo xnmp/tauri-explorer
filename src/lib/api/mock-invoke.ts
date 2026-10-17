@@ -1148,6 +1148,7 @@ const mockCommands: Record<string, CommandHandler> = {
   // so the source retains DOM-drop authority. Never fake a successful lease.
   native_file_drag_clock: () => ({ id: `browser:${performance.timeOrigin}`, now: performance.timeOrigin + performance.now() }),
   start_file_drag: () => { throw "Native file dragging is unavailable in the browser"; },
+  end_html5_file_drag: () => undefined,
   plugin_jobs_snapshot: () => mockAiPresentation().snapshot(),
   plugin_job_reveal: (args) => mockAiPresentation().snapshot().jobs.find(job => job.jobKey === args.jobKey)?.reveal ?? null,
   plugin_job_cancel: (args) => mockAiPresentation().cancel(String(args.jobKey)),

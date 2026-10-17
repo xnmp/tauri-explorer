@@ -13,7 +13,6 @@ export interface WindowKeyContext {
   modal: boolean;
   chord?: boolean;
   filterOpen: boolean;
-  terminalEnabled: boolean;
 }
 
 export type WindowKeyAction = "native-activation" | "pass" | "terminal" | "close-dialogs"
@@ -68,7 +67,7 @@ export function chordPrefixFallbackLabel(shortcut: string): string | undefined {
     code: prefix.key === "`" || prefix.key === "~" ? "Backquote" : prefix.key === "\\" || prefix.key === "|" ? "Backslash" : "",
     ctrlKey: prefix.ctrl, metaKey: prefix.meta, altKey: prefix.alt, shiftKey: prefix.shift,
   }, { input: false, nativeButton: false, fileEntry: false, trackedMetaHeld: false,
-    terminal: false, modal: false, filterOpen: false, terminalEnabled: true });
+    terminal: false, modal: false, filterOpen: false });
   const labels: Partial<Record<WindowKeyAction, string>> = {
     "open-jobs": "Jobs Panel", "open-settings": "Settings", "open-filter": "Filter Current Directory",
     "toggle-dual-pane": "Toggle Dual Pane",

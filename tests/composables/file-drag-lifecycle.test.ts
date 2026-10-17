@@ -841,3 +841,25 @@ it.each(dropClockCases)("fresh external plugin drops survive $direction correcti
   await flush();
   expect(restartedHandler).toHaveBeenCalledExactlyOnceWith(externalPaths, "external");
 });
+
+it.each(["verified", "different-paths", "stale-sequence"] as const)("final %s native provenance rechecks an ambiguous early Enter (#1217)", async (kind) => {
+  let tick = 10; const epoch = clockEpoch += 1000;
+  vi.spyOn(Date, "now").mockImplementation(() => epoch + tick);
+  vi.stubGlobal("performance", { timeOrigin: epoch, now: () => tick });
+  const handler = vi.fn(); cleanup.push(fileDropTargets.register(hit, handler));
+  tick = 9;
+  dragState.start({ ...entry, paths: [...paths], html5: true });
+  tick = 10;
+  dragState.endHtml5(dragState.current);
+  begin(); await flush();
+  const original = { ...dragState.current! };
+  // WebKit Enter can beat adoption inside the previous gesture's end uncertainty.
+  native.emit!({ payload: { type: "enter", paths, source: null, observedAt: epoch + 10.25, position: { x: 40, y: 60 } } });
+  tick = 12;
+  const source = kind === "different-paths" ? { ...original, path: "/other", paths: ["/other"] }
+    : kind === "stale-sequence" ? { ...original, gestureSequence: 0 } : original;
+  native.emit!({ payload: { type: "drop", paths, source, observedAt: epoch + 11, position: { x: 40, y: 60 } } });
+  await flush();
+  if (kind === "verified") expect(handler).toHaveBeenCalledExactlyOnceWith(paths, "pane");
+  else expect(handler).not.toHaveBeenCalled();
+});

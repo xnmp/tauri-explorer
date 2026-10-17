@@ -81,7 +81,11 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     }
     const internalPaths = internalDragPaths(dragData, isWindows);
     const isInternalDrag = internalPaths !== null && sameDropPathSet(paths, internalPaths, isWindows);
-    if (nativeGesture?.expired || dragState.expiredNativeObservation(observedAt, isInternalDrag ? dragData : null,
+    // The final platform Drop can carry verified provenance after an early
+    // Enter arrived before native source adoption. Recheck that proof instead
+    // of preserving the earlier inference's ambiguity.
+    const explicitSource = source != null && isInternalDrag;
+    if ((nativeGesture?.expired && !explicitSource) || dragState.expiredNativeObservation(observedAt, isInternalDrag ? dragData : null,
         source == null && !nativeGesture?.data, observationClock)) {
       nativeDomSession ??= dragState.cancelledNativeSession(observedAt, paths, isWindows, observationClock);
       nativeGesture = null;

@@ -13,9 +13,12 @@ export interface PeekSurface {
   plainLocation: boolean;
   mode: ViewMode;
 }
+/** Details and List (column flow, which is what List is while Folder Peek is
+ * on) nest freely; Tiles has no peek until its phase (#1241). */
 export function peekCapability(surface: PeekSurface): PeekCapability {
   const { enabled, fileListing, builtinView, plainLocation, mode } = surface;
-  return enabled && fileListing && builtinView && plainLocation && mode === "details" ? "tree" : "none";
+  if (!enabled || !fileListing || !builtinView || !plainLocation) return "none";
+  return mode === "details" || mode === "list" ? "tree" : "none";
 }
 
 export interface RowClickInput {

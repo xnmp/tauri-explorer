@@ -93,43 +93,120 @@ export function listWheelStep(
   return { consume: true, apply, carry: total - apply };
 }
 
+/** One top-level slot owner: a plain row, the creation sentinel, or a card. */
+export interface ListTopItem {
+  /** Stable identity across layouts (the row-model key). */
+  readonly key: string;
+  /** The header entry's index; null for the creation sentinel. */
+  readonly entryIndex: number | null;
+  /** Present for an open top-level folder. */
+  readonly card: ListCardSpec | null;
+}
+export interface ListCardSpec {
+  readonly path: string;
+  /** Its descendant rows are `rows[start, end)` of the peek row model. */
+  readonly start: number;
+  readonly end: number;
+  readonly visibleRows: number;
+}
+/** Column flow over top-level items plus the entry -> slot owner maps that
+ * rendering, reveal and keyboard moves share (built by `buildListModel`). */
+export interface ListFlowModel {
+  readonly layout: ColumnFlowLayout;
+  readonly items: readonly ListTopItem[];
+  /** Entry index of each row-model row (null for pseudo and creation rows). */
+  readonly rowEntry: readonly (number | null)[];
+  /** Entry index -> top-level item index. */
+  readonly entryItem: Int32Array;
+  /** Entry index -> offset within its card's content, or -1 for a top-level row. */
+  readonly entryOffset: Int32Array;
+}
+
 /** The same placement snapshot is used by rendering, reveal, and keyboard navigation. */
 export interface ListNavigationSnapshot {
   readonly entries: readonly FileEntry[];
   readonly directory: string;
-  readonly layout: ColumnFlowLayout;
-  readonly sentinelOffset: number;
+  readonly model: ListFlowModel;
   readonly usableWidth: number;
+  /** Current scroll offset (CSS px) of an open card's content. */
+  readonly cardScrollTop: (path: string) => number;
 }
 
-export function resolveListMove(event: FileListKey, layout: ColumnFlowLayout, cursorIndex: number, width: number, offset = 0): FileListMove | null {
-  const count = layout.byIndex.length - offset;
+const finite = (value: number) => (Number.isFinite(value) ? value : 0);
+const clampIndex = (value: number, max: number) => Math.max(0, Math.min(max, value));
+
+/** The on-screen row of an entry: card content rows sit where the card's
+ * scroll currently shows them (clamped to its visible area). */
+function visualRow(model: ListFlowModel, entry: number, scrollTopOf: (path: string) => number): number {
+  const itemIndex = model.entryItem[entry];
+  const placement = model.layout.byIndex[itemIndex];
+  const card = model.items[itemIndex].card;
+  const offset = model.entryOffset[entry];
+  if (!card || offset < 0) return placement.row;
+  const slot = Math.floor((offset * LIST_SLOT_HEIGHT - finite(scrollTopOf(card.path)) + LIST_SLOT_HEIGHT / 2) / LIST_SLOT_HEIGHT);
+  return placement.row + 1 + clampIndex(slot, Math.max(0, card.visibleRows - 1));
+}
+
+/** The entry drawn at (column, row): a card slot maps through the card's scroll
+ * to its nearest entry row; rows past a shorter column clamp to its end. */
+function entryAtSlot(model: ListFlowModel, column: number, row: number, scrollTopOf: (path: string) => number): number | null {
+  const spans = model.layout.columns[column];
+  if (!spans?.length) return null;
+  const last = spans[spans.length - 1];
+  const clamped = Math.min(row, last.row + last.slots - 1);
+  const owner = model.layout.atSlot(column, clamped) ?? last;
+  const item = model.items[owner.index];
+  if (item.entryIndex === null) {
+    // The creation sentinel holds a slot but is not an entry.
+    const next = spans.find(span => model.items[span.index].entryIndex !== null);
+    return next ? model.items[next.index].entryIndex : null;
+  }
+  const card = item.card;
+  if (!card || clamped === owner.row || card.visibleRows <= 0) return item.entryIndex;
+  const content = card.end - card.start;
+  const k = clampIndex(Math.floor(((clamped - owner.row - 1) * LIST_SLOT_HEIGHT + LIST_SLOT_HEIGHT / 2 + finite(scrollTopOf(card.path))) / LIST_SLOT_HEIGHT), content - 1);
+  for (let d = 0; d < content; d++) {
+    for (const candidate of d ? [k - d, k + d] : [k]) {
+      const entry = candidate >= 0 && candidate < content ? model.rowEntry[card.start + candidate] : null;
+      if (entry !== null && entry !== undefined) return entry;
+    }
+  }
+  return item.entryIndex;
+}
+
+/**
+ * List keys keep their visual meaning. Up/Down step through the column's entries,
+ * including a card's descendants, and stop at its ends; Left/Right/Page keys move
+ * to the same on-screen row of another column; Home/End select the first/last entry.
+ */
+export function resolveListMove(event: FileListKey, model: ListFlowModel, cursorIndex: number, width: number,
+  scrollTopOf: (path: string) => number = () => 0): FileListMove | null {
+  const count = model.entryItem.length;
   if (event.altKey || !Number.isSafeInteger(cursorIndex) || cursorIndex < -1 || cursorIndex >= count) return null;
   const arrow = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key);
   const endpoint = event.key === "Home" || event.key === "End";
   if (!arrow && !endpoint && !["PageUp", "PageDown"].includes(event.key)) return null;
   if (count <= 0) return { kind: "handled" };
+  const columnOf = (entry: number) => model.layout.byIndex[model.entryItem[entry]]?.column;
   let target: number;
-  if (event.key === "Home") target = offset;
-  else if (event.key === "End") target = layout.byIndex.length - 1;
-  else if (cursorIndex < 0) target = offset;
+  if (event.key === "Home") target = 0;
+  else if (event.key === "End") target = count - 1;
+  else if (cursorIndex < 0) target = 0;
   else {
-    const current = layout.byIndex[cursorIndex + offset];
+    const column = columnOf(cursorIndex);
+    if (column === undefined) return null;
     const forward = event.key === "ArrowDown" || event.key === "ArrowRight" || event.key === "PageDown";
     if (event.key === "ArrowUp" || event.key === "ArrowDown") {
-      target = current.index + (forward ? 1 : -1);
-      if (target < offset || layout.byIndex[target]?.column !== current.column) return { kind: "handled" };
+      target = cursorIndex + (forward ? 1 : -1);
+      if (target < 0 || target >= count || columnOf(target) !== column) return { kind: "handled" };
     } else {
       const distance = arrow ? 1 : listPageColumns(width);
-      const column = Math.max(0, Math.min(layout.columns.length - 1, current.column + (forward ? distance : -distance)));
-      if (column === current.column) return { kind: "handled" };
-      const candidates = layout.columns[column].filter(p => p.index >= offset);
-      const owner = layout.atSlot(column, current.row);
-      target = owner && owner.index >= offset ? owner.index
-        : (current.row < (candidates[0]?.row ?? 0) ? candidates[0]?.index : candidates.at(-1)?.index) ?? current.index;
+      const next = Math.max(0, Math.min(model.layout.columns.length - 1, column + (forward ? distance : -distance)));
+      if (next === column) return { kind: "handled" };
+      target = entryAtSlot(model, next, visualRow(model, cursorIndex, scrollTopOf), scrollTopOf) ?? cursorIndex;
     }
   }
   // Home/End still select and reveal an already-focused endpoint.
-  if (!endpoint && target === cursorIndex + offset) return { kind: "handled" };
-  return { kind: "focus", index: target - offset, selection: event.shiftKey ? "extend" : (event.ctrlKey || event.metaKey) && arrow ? "preserve" : "replace" };
+  if (!endpoint && target === cursorIndex) return { kind: "handled" };
+  return { kind: "focus", index: target, selection: event.shiftKey ? "extend" : (event.ctrlKey || event.metaKey) && arrow ? "preserve" : "replace" };
 }

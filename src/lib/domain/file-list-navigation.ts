@@ -34,7 +34,7 @@ export function resolveFileListMove(
   if (event.altKey || !Number.isSafeInteger(layout.count) || layout.count < 0
     || !Number.isSafeInteger(layout.cursorIndex) || layout.cursorIndex < -1 || layout.cursorIndex >= layout.count) return null;
   if (layout.viewMode === "list" && layout.listLayout === "columns") {
-    return layout.list ? resolveListMove(event, layout.list.layout, layout.cursorIndex, layout.list.usableWidth, layout.list.sentinelOffset) : null;
+    return layout.list ? resolveListMove(event, layout.list.model, layout.cursorIndex, layout.list.usableWidth, layout.list.cardScrollTop) : null;
   }
   const modified = event.ctrlKey || event.metaKey;
   const arrow = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key);

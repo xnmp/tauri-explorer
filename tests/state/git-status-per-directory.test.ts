@@ -119,3 +119,23 @@ describe("gitStatusStore observation coverage", () => {
     expect(getGitStatusMock.mock.calls.map(([path]) => path)).toEqual(["/repo/src", "/repo/src"]);
   });
 });
+
+describe("gitStatusStore failed scans", () => {
+  it("does not let a failed scan cover a later notification", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const release = gitStatusStore.trackDirectory("/repo/lib");
+      vi.setSystemTime(2_000);
+      getGitStatusMock.mockResolvedValueOnce({ ok: false, error: "index locked" });
+      await gitStatusStore.refreshDirectory("/repo/lib");
+      getGitStatusMock.mockClear();
+      getGitStatusMock.mockResolvedValue({ ok: true, data: { is_git_repo: true, statuses: {} } });
+      gitStatusStore.invalidateDirectories(["/repo/lib"], 1_500);
+      await vi.waitFor(() => expect(getGitStatusMock).toHaveBeenCalledTimes(1));
+      await gitStatusStore.fetchForDirectory("/repo/lib"); // joins that scan
+      release();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

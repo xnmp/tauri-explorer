@@ -101,8 +101,10 @@ function createGitStatusStore() {
     loading = true;
     loadingDirs = { ...loadingDirs, [path]: true };
     const start = performance.now();
+    let succeeded = false;
     try {
       const result = await getGitStatus(path, flight.taskId);
+      succeeded = result.ok;
       const elapsedMs = Math.round(performance.now() - start);
       if (result.ok && !flight.abandoned) {
         console.info(
@@ -131,6 +133,8 @@ function createGitStatusStore() {
         console.warn(`[git-status] fetch for ${path} failed after ${elapsedMs}ms: ${result.error}`);
       }
     } finally {
+      // A failed scan covers nothing: the next change must fetch again.
+      if (!succeeded) requestedAt.delete(path);
       const remaining = (pendingByDir.get(path) ?? 1) - 1;
       if (remaining > 0) {
         pendingByDir.set(path, remaining);

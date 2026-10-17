@@ -228,9 +228,16 @@ jobs:
           set -o pipefail
           started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           set +e
-          CARGO_LOG=cargo::core::compiler::fingerprint=info \
-            bun run tauri build --debug --no-bundle --features e2e-hooks${{ runner.os == 'Windows' && ',e2e-webview2-attach' || '' }} \
-            2>&1 | tee native-contract-diagnostics/tauri-build.log
+          if [[ "$RUNNER_OS" == 'Linux' ]]; then
+            # Record and verify the exact embedded binary's revision/hash for
+            # DnD acceptance, rather than qualifying an arbitrary cached app.
+            CARGO_LOG=cargo::core::compiler::fingerprint=info \
+              bun run build:native:qualification 2>&1 | tee native-contract-diagnostics/tauri-build.log
+          else
+            CARGO_LOG=cargo::core::compiler::fingerprint=info \
+              bun run tauri build --debug --no-bundle --features e2e-hooks,e2e-webview2-attach \
+              2>&1 | tee native-contract-diagnostics/tauri-build.log
+          fi
           status="${PIPESTATUS[0]}"
           set -e
           printf 'command=bun run tauri build --debug --no-bundle\nstarted_at=%s\nfinished_at=%s\nexit_status=%s\n' \
@@ -319,6 +326,8 @@ jobs:
         # 36 isolated native sessions take ~30s each just to start WebKitGTK
         # on hosted runners. The old 15m cap stopped before the final 10 specs.
         timeout-minutes: 30
+        env:
+          NATIVE_BUILD_MANIFEST: qualification-results/native-build.json
         # Own the session bus as well as the display and WM; do not inherit
         # hosted-runner desktop services or rely on D-Bus autolaunch.
         run: |
@@ -332,7 +341,10 @@ jobs:
           chmod 700 "$XDG_RUNTIME_DIR"
           # Export the profile before D-Bus starts: activated portal helpers
           # must inherit the same isolation as WebKit and the application.
-          env -u WAYLAND_DISPLAY GDK_BACKEND=x11 xvfb-run -a --server-args="-screen 0 2600x1600x24" dbus-run-session -- bash e2e-tauri/with-window-manager.sh bun run test:e2e:tauri
+          env -u WAYLAND_DISPLAY GDK_BACKEND=x11 xvfb-run -a --server-args="-screen 0 2600x1600x24" dbus-run-session -- bash e2e-tauri/with-window-manager.sh bash -e -c '
+            bun run test:e2e:tauri:dnd --negative-control
+            bun run test:e2e:tauri:dnd --full
+          '
 
       # The runner's EDGEWEBDRIVER matches the Edge *browser*, but tauri apps
       # run on the WebView2 *runtime*, whose version can differ — msedgedriver

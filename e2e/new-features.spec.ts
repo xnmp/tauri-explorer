@@ -8,8 +8,8 @@
  * - Bookmarks config file persistence (tauri-ti0l)
  */
 
-import { test, expect } from "./fixtures";
-import { MULTI_SELECT_MODIFIER } from "./helpers";
+import { test, expect, type Page } from "./fixtures";
+import { ALL_VIEW_MODES, MULTI_SELECT_MODIFIER } from "./helpers";
 
 async function waitForFileList(page: import("@playwright/test").Page) {
   await page.waitForSelector(".file-list");
@@ -343,53 +343,23 @@ test.describe("Bookmarks", () => {
     await expect(sidebar.getByText("Pictures")).toBeVisible();
   });
 
-  test("dragging a folder to Quick Access adds bookmark", async ({ page }) => {
-    // Find a directory in the file list
-    const folder = page.locator(".entry-item.directory").first();
-    const folderName = await folder.locator(".entry-name").textContent();
+  // Browser/mock contracts: these gestures exercise the DOM bookmark adapter,
+  // not native GTK/Windows file transport.
+  const paths = ["/home/user/Documents", "/home/user/Downloads"];
+  const bookmarks = (page: Page) => page.locator(".sidebar .user-bookmark");
+  const bookmarkPaths = (page: Page) => bookmarks(page).evaluateAll((rows) =>
+    rows.map((row) => row.getAttribute("data-path")),
+  );
 
-    // Get the Quick Access drop target
-    const quickAccess = page.locator(".quick-access");
-
-    // Drag the folder to Quick Access
-    await folder.dragTo(quickAccess);
-    await page.locator(".user-bookmark").first().waitFor({ timeout: 1500 }).catch(() => {});
-
-    // Check if the folder was added as a bookmark
-    const userBookmarks = page.locator(".user-bookmark");
-    const bookmarkCount = await userBookmarks.count();
-    if (bookmarkCount > 0) {
-      // Bookmark was added - verify it has the folder name
-      const bookmarkNames = await userBookmarks.allTextContents();
-      const hasBookmark = bookmarkNames.some((n) =>
-        n.includes(folderName || "")
-      );
-      expect(hasBookmark).toBe(true);
-    }
-  });
-
-  test("removing a bookmark works", async ({ page }) => {
-    // First add a bookmark by dragging
-    const folder = page.locator(".entry-item.directory").first();
-    const quickAccess = page.locator(".quick-access");
-    await folder.dragTo(quickAccess);
-    await page.locator(".user-bookmark").first().waitFor({ timeout: 1500 }).catch(() => {});
-
-    const bookmarks = page.locator(".user-bookmark");
-    const initialCount = await bookmarks.count();
-
-    if (initialCount > 0) {
-      // Hover over the bookmark to reveal remove button
-      await bookmarks.first().hover();
-
-      // Click the remove button
-      const removeBtn = bookmarks.first().locator(".remove-bookmark");
-      await removeBtn.click();
-
-      // Count should decrease
-      await expect(page.locator(".user-bookmark")).toHaveCount(initialCount - 1);
-    }
-  });
+  async function pinFolder(page: Page, path: string) {
+    const folder = page.locator(
+      `.pane-tree:not(.retained) .entry-item.directory[data-path="${path}"]`,
+    );
+    await expect(folder).toBeVisible();
+    await folder.dragTo(page.locator(".quick-access .section-header"));
+    await expect(page.locator(`.sidebar .user-bookmark[data-path="${path}"]`)).toBeVisible();
+    await expect(folder).toBeVisible();
+  }
 
   test("clicking a system folder navigates to it", async ({ page }) => {
     const documentsBtn = page
@@ -402,71 +372,53 @@ test.describe("Bookmarks", () => {
     await expect(breadcrumbs).toContainText("Documents");
   });
 
-  test("bookmarks persist after reload", async ({ page }) => {
-    // Add a bookmark
-    const folder = page.locator(".entry-item.directory").first();
-    const quickAccess = page.locator(".quick-access");
-    await folder.dragTo(quickAccess);
-    await page.locator(".user-bookmark").first().waitFor({ timeout: 1500 }).catch(() => {});
+  for (const mode of ALL_VIEW_MODES) {
+    test.describe(`bookmark outcomes (${mode})`, () => {
+      test.beforeEach(async ({ page }) => {
+        await page.goto(`/?path=/home/user&viewMode=${mode}`);
+        await waitForFileList(page);
+        await expect(page.locator(`.${mode}-view:visible`)).toBeVisible();
+        await expect(bookmarks(page)).toHaveCount(0);
+      });
 
-    const countBefore = await page.locator(".user-bookmark").count();
+      test("dragging a folder to Quick Access adds bookmark", async ({ page }) => {
+        await pinFolder(page, paths[0]);
+        await expect.poll(() => bookmarkPaths(page)).toEqual([paths[0]]);
+        await expect(bookmarks(page).locator(":scope > span")).toHaveText(["Documents"]);
+      });
 
-    if (countBefore > 0) {
-      // Reload
-      await page.reload();
-      await waitForFileList(page);
+      test("removing a bookmark works", async ({ page }) => {
+        for (const path of paths) await pinFolder(page, path);
+        await expect.poll(() => bookmarkPaths(page)).toEqual(paths);
+        const removed = page.locator(`.sidebar .user-bookmark[data-path="${paths[0]}"]`);
+        await removed.hover();
+        await removed.getByTitle("Unpin from Bookmarks").click();
+        await expect.poll(() => bookmarkPaths(page)).toEqual([paths[1]]);
+        await page.reload();
+        await waitForFileList(page);
+        await expect.poll(() => bookmarkPaths(page)).toEqual([paths[1]]);
+      });
 
-      // Bookmarks should persist
-      const countAfter = await page.locator(".user-bookmark").count();
-      expect(countAfter).toBe(countBefore);
-    }
-  });
+      test("bookmarks persist after reload", async ({ page }) => {
+        for (const path of paths) await pinFolder(page, path);
+        await expect.poll(() => bookmarkPaths(page)).toEqual(paths);
+        await page.reload();
+        await waitForFileList(page);
+        await expect.poll(() => bookmarkPaths(page)).toEqual(paths);
+        await expect(bookmarks(page).locator(":scope > span")).toHaveText(["Documents", "Downloads"]);
+      });
 
-  test("bookmark reordering via drag", async ({ page }) => {
-    // Add two bookmarks
-    const folders = page.locator(".entry-item.directory");
-    const folderCount = await folders.count();
-    if (folderCount < 2) return;
-
-    const quickAccess = page.locator(".quick-access");
-    await folders.first().dragTo(quickAccess);
-    await page.locator(".user-bookmark").first().waitFor({ timeout: 1500 }).catch(() => {});
-    await folders.nth(1).dragTo(quickAccess);
-    await page.locator(".user-bookmark").nth(1).waitFor({ timeout: 1500 }).catch(() => {});
-
-    const bookmarks = page.locator(".user-bookmark");
-    const count = await bookmarks.count();
-    if (count < 2) return;
-
-    // Get names before reorder
-    const nameBefore0 = await bookmarks.nth(0).locator("span").nth(0).textContent();
-    const nameBefore1 = await bookmarks.nth(1).locator("span").nth(0).textContent();
-
-    // Drag first bookmark to second position
-    await bookmarks.first().dragTo(bookmarks.nth(1));
-    await page.waitForTimeout(300);
-
-    // Get names after reorder
-    const nameAfter0 = await page
-      .locator(".user-bookmark")
-      .nth(0)
-      .locator("span")
-      .nth(0)
-      .textContent();
-    const nameAfter1 = await page
-      .locator(".user-bookmark")
-      .nth(1)
-      .locator("span")
-      .nth(0)
-      .textContent();
-
-    // Order should have changed
-    if (nameBefore0 !== nameBefore1) {
-      // If names were different, they should be swapped
-      expect(nameAfter0).toBe(nameBefore1);
-      expect(nameAfter1).toBe(nameBefore0);
-    }
-  });
+      test("bookmark reordering via drag", async ({ page }) => {
+        for (const path of paths) await pinFolder(page, path);
+        await expect.poll(() => bookmarkPaths(page)).toEqual(paths);
+        await bookmarks(page).first().dragTo(bookmarks(page).nth(1));
+        await expect.poll(() => bookmarkPaths(page)).toEqual([...paths].reverse());
+        await page.reload();
+        await waitForFileList(page);
+        await expect.poll(() => bookmarkPaths(page)).toEqual([...paths].reverse());
+      });
+    });
+  }
 });
 
 // ==========================================================

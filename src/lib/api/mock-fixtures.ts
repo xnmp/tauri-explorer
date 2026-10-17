@@ -455,6 +455,18 @@ for (const root of ["/folder-peek-list", "/folder-peek-tiles"]) {
   }
 }
 
+// Spring-loaded peeks (#1242): closed folders to hold a drag over, one with a
+// nested folder to spring in turn, an empty one, and loose files to drag.
+{
+  const root = "/folder-peek-spring";
+  mockFiles[root] = [dir("Inbox", `${root}/Inbox`), dir("Archive", `${root}/Archive`), dir("Empty", `${root}/Empty`),
+    file("drag-me.txt", `${root}/drag-me.txt`, 8), file("other.txt", `${root}/other.txt`, 5), file("zeta.txt", `${root}/zeta.txt`, 3)];
+  mockFiles[`${root}/Inbox`] = [dir("Nested", `${root}/Inbox/Nested`), file("alpha.txt", `${root}/Inbox/alpha.txt`, 2), file("beta.txt", `${root}/Inbox/beta.txt`, 4)];
+  mockFiles[`${root}/Inbox/Nested`] = [file("deep.txt", `${root}/Inbox/Nested/deep.txt`, 6)];
+  mockFiles[`${root}/Archive`] = [file("old.txt", `${root}/Archive/old.txt`, 1)];
+  mockFiles[`${root}/Empty`] = [];
+}
+
 /** Static fake file contents, served by read_text_file and searched by
  *  start_content_search (written files take precedence over these). */
 export const mockFileContent: Record<string, string> = {

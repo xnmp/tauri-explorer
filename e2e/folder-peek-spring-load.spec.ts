@@ -1,0 +1,321 @@
+import { test as base } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
+
+// Spring-loaded peeks (#1242, spec §5): holding a drag over a closed folder
+// for 600ms opens a temporary peek (a Details subtree, a List card, a Tiles
+// panel); a drop inside it targets that folder; it closes when the drag
+// leaves the folder and its peek, or ends. Synthetic HTML5 drag events are
+// dispatched at real hit-tested points (`document.elementFromPoint`), so the
+// gap crossings exercise the same hit testing as a real drag.
+const root = "/folder-peek-spring";
+const shown = ".pane-tree:not(.retained)";
+const P = (name: string) => `${root}/${name}`;
+type View = "details" | "list" | "tiles";
+
+const runtimeErrors = new WeakMap<Page, string[]>();
+test.beforeEach(async ({ page }) => {
+  const errors: string[] = [];
+  runtimeErrors.set(page, errors);
+  page.on("pageerror", error => errors.push(error.message));
+  page.on("console", message => { if (/derived_inert|effect_update_depth|state_unsafe_mutation/.test(message.text())) errors.push(message.text()); });
+});
+test.afterEach(async ({ page }) => { expect(runtimeErrors.get(page)).toEqual([]); });
+
+async function open(page: Page, view: View) {
+  await page.setViewportSize({ width: 900, height: 700 });
+  await page.goto(`/?path=${root}&viewMode=${view}`);
+  await expect(page.locator(`${shown} .entry-item[data-path="${P("Inbox")}"]`).first()).toBeVisible();
+}
+const explorer = <T>(page: Page, body: string, arg?: unknown) => page.evaluate(async ([source, value]) => {
+  const { windowTabsManager } = await import("/src/lib/state/window-tabs.svelte.ts");
+  return new Function("explorer", "value", source)(windowTabsManager.getActiveExplorer()!, value);
+}, [body, arg] as const) as Promise<T>;
+const springPeeks = (page: Page) => explorer<string[]>(page, "return [...explorer.springPeeks]");
+const listing = (page: Page, path: string) => page.evaluate(async dir =>
+  (await import("/src/lib/api/mock-fixtures.ts")).mockFiles[dir]?.map(entry => entry.name) ?? null, path);
+
+/** Starts an in-app HTML5 drag of `name` (a root file). */
+const startDrag = (page: Page, name = "drag-me.txt") => page.evaluate(async ([path, label]) => {
+  const { createHtml5FileDrag } = await import("/src/lib/state/html5-file-drag.svelte.ts");
+  const w = window as unknown as { __spring?: { transfer: DataTransfer; last: Element | null } };
+  w.__spring = { transfer: new DataTransfer(), last: null };
+  createHtml5FileDrag().start(new DragEvent("dragstart", { dataTransfer: w.__spring.transfer }), { path, name: label, kind: "file" });
+}, [P(name), name] as const);
+
+/** Moves the drag to the element at a point of `selector`'s box (fractions of
+ * its width/height, or an offset in px below its bottom edge), dispatching
+ * dragenter/dragleave on a change of element and a dragover, as an engine
+ * does. Returns the hit element's identifying attributes. */
+async function dragTo(page: Page, selector: string, at: { fx?: number; fy?: number; below?: number } = {}, types: string[] = ["dragover"]) {
+  return page.evaluate(([target, point, events]) => {
+    const w = window as unknown as { __spring: { transfer: DataTransfer; last: Element | null } };
+    const box = document.querySelector(target)!.getBoundingClientRect();
+    const x = box.left + box.width * (point.fx ?? 0.5);
+    const y = point.below !== undefined ? box.bottom + point.below : box.top + box.height * (point.fy ?? 0.5);
+    const hit = document.elementFromPoint(x, y)!;
+    const init = { bubbles: true, cancelable: true, dataTransfer: w.__spring.transfer, clientX: x, clientY: y };
+    if (hit !== w.__spring.last) {
+      hit.dispatchEvent(new DragEvent("dragenter", init));
+      w.__spring.last?.dispatchEvent(new DragEvent("dragleave", { ...init, relatedTarget: hit }));
+      w.__spring.last = hit;
+    }
+    for (const type of events) hit.dispatchEvent(new DragEvent(type, init));
+    const owner = hit.closest("[data-spring-bridge], [data-peek-state], [data-path]");
+    return owner?.getAttribute("data-spring-bridge") !== null && owner ? `bridge:${owner.getAttribute("data-spring-bridge")}`
+      : owner?.getAttribute("data-peek-state") ?? owner?.getAttribute("data-path") ?? hit.tagName;
+  }, [selector, at, types] as const);
+}
+const dropOn = (page: Page, selector: string, at = {}) => dragTo(page, selector, at, ["dragover", "drop"]);
+/** The source's dragend (a drop's, or Escape/cancel's: dropEffect none). */
+const endDrag = (page: Page) => page.evaluate(() => {
+  const w = window as unknown as { __spring: { transfer: DataTransfer } };
+  w.__spring.transfer.dropEffect = "none";
+  document.body.dispatchEvent(new DragEvent("dragend", { bubbles: true, dataTransfer: w.__spring.transfer }));
+});
+const opened = (page: Page, paths: string[]) => expect.poll(() => springPeeks(page), { timeout: 4000 }).toEqual(paths);
+
+// Per-view selectors: the folder's own row, a child row inside its peek, the
+// peek's surface, and a point in the gap between folder and peek.
+const views: Record<View, {
+  folder: (path: string) => string;
+  child: (path: string) => string;
+  surface: (path: string) => string;
+}> = {
+  details: {
+    folder: path => `${shown} .entry-item[data-path="${path}"]`,
+    child: path => `${shown} .entry-item[data-path="${path}"]`,
+    surface: path => `${shown} [data-peek-state="${path}"]`,
+  },
+  list: {
+    folder: path => `${shown} .list-slot .entry-item[data-path="${path}"]`,
+    child: path => `${shown} [data-card-scroll] .entry-item[data-path="${path}"]`,
+    surface: path => `${shown} [data-card-scroll][data-path="${path}"]`,
+  },
+  tiles: {
+    folder: path => `${shown} .tile-row .entry-item[data-path="${path}"]`,
+    child: path => `${shown} .tile-panel .entry-item[data-path="${path}"]`,
+    surface: path => `${shown} .tile-panel[data-path="${path}"]`,
+  },
+};
+
+for (const view of ["details", "list", "tiles"] as const) {
+  const v = views[view];
+  test.describe(`${view}`, () => {
+    test.beforeEach(async ({ page }) => open(page, view));
+
+    test("opens after 600ms and not before, without touching the expanded set or stored heights", async ({ page }) => {
+      // A first spring loads the lazy driver and peek session in real time.
+      await startDrag(page);
+      await dragTo(page, v.folder(P("Inbox")));
+      await opened(page, [P("Inbox")]);
+      await expect(page.locator(v.child(P("Inbox/alpha.txt")))).toBeVisible();
+      await endDrag(page);
+      await opened(page, []);
+      await expect(page.locator(v.child(P("Inbox/alpha.txt")))).toHaveCount(0);
+
+      // The boundary, on a paused clock: closed at 599ms, open by 601ms.
+      await page.clock.install();
+      await page.clock.pauseAt(Date.now() + 60_000);
+      await startDrag(page);
+      await dragTo(page, v.folder(P("Archive")));
+      await page.clock.runFor(599);
+      expect(await springPeeks(page)).toEqual([]);
+      await page.clock.runFor(2);
+      await opened(page, [P("Archive")]);
+      await page.clock.resume();
+      await expect(page.locator(v.child(P("Archive/old.txt")))).toBeVisible();
+      // Temporary: never in the expanded set, no card or panel height stored.
+      expect(await explorer(page, "return [...explorer.expandedPaths]")).toEqual([]);
+      expect(await explorer(page, "return [explorer.listCardRows(value) ?? null, explorer.tilePanelHeight(value) ?? null]", P("Archive"))).toEqual([null, null]);
+      await endDrag(page);
+      await opened(page, []);
+      expect(await explorer(page, "return [...explorer.expandedPaths]")).toEqual([]);
+    });
+
+    test("a drop on a file row inside the peek moves the file into the folder, and the peek closes", async ({ page }) => {
+      await startDrag(page);
+      await dragTo(page, v.folder(P("Inbox")));
+      await opened(page, [P("Inbox")]);
+      expect(await dragTo(page, v.child(P("Inbox/alpha.txt")))).toBe(P("Inbox/alpha.txt"));
+      await page.waitForTimeout(60); // dragover repeats while a drag rests
+      await dragTo(page, v.child(P("Inbox/alpha.txt")));
+      // Feedback is on the folder (its row, card or panel), not the file row.
+      await expect(page.locator(`${v.child(P("Inbox/alpha.txt"))}.drop-target`)).toHaveCount(0);
+      await expect(page.locator(`${shown} .drop-target[data-path="${P("Inbox")}"]`)).toHaveCount(1);
+      await dropOn(page, v.child(P("Inbox/alpha.txt")));
+      await expect.poll(() => listing(page, P("Inbox"))).toContain("drag-me.txt");
+      expect(await listing(page, root)).not.toContain("drag-me.txt");
+      await endDrag(page);
+      await opened(page, []);
+      await expect(page.locator(`${shown} .drop-target`)).toHaveCount(0);
+    });
+
+    test("a drop on the peek's own surface moves the file into the folder", async ({ page }) => {
+      await startDrag(page);
+      await dragTo(page, v.folder(P("Empty")));
+      await opened(page, [P("Empty")]);
+      await expect(page.locator(v.surface(P("Empty")))).toBeVisible();
+      await dropOn(page, v.surface(P("Empty")));
+      await expect.poll(() => listing(page, P("Empty"))).toEqual(["drag-me.txt"]);
+      await endDrag(page);
+      await opened(page, []);
+    });
+
+    test("crossing from the folder into its peek keeps it open; leaving both closes it", async ({ page }) => {
+      await startDrag(page);
+      await dragTo(page, v.folder(P("Inbox")));
+      await opened(page, [P("Inbox")]);
+      const rows = ["Inbox/Nested", "Inbox/alpha.txt", "Inbox/beta.txt"].map(child => v.child(P(child)));
+      if (view === "tiles") {
+        // The band gap between the tile and its panel hit-tests as the panel's bridge.
+        expect(await dragTo(page, v.folder(P("Inbox")), { below: 5 })).toBe(`bridge:${P("Inbox")}`);
+        expect(await dragTo(page, v.surface(P("Inbox")), { fy: 0.97 })).toBe(P("Inbox"));
+      }
+      for (const row of rows) await dragTo(page, row);
+      // The pixel-snapped edges between rows inside the peek, then (List) the
+      // card's own bottom edge.
+      for (const row of rows) await dragTo(page, row, { fy: 0.02 });
+      if (view === "list") expect(await dragTo(page, v.surface(P("Inbox")), { below: -2 })).toBe(P("Inbox"));
+      await dragTo(page, v.folder(P("Inbox")));
+      await page.waitForTimeout(100);
+      // Any step outside would have closed it (re-opening takes another 600ms).
+      expect(await springPeeks(page)).toEqual([P("Inbox")]);
+      await dragTo(page, v.folder(P("other.txt")));
+      await opened(page, []);
+      await expect(page.locator(v.child(P("Inbox/alpha.txt")))).toHaveCount(0);
+      // Leaving before the delay never opens it.
+      await dragTo(page, v.folder(P("Archive")));
+      await page.waitForTimeout(300);
+      await dragTo(page, v.folder(P("zeta.txt")));
+      await page.waitForTimeout(700);
+      expect(await springPeeks(page)).toEqual([]);
+    });
+
+    test("drag cancel and a drop elsewhere close every temporary peek", async ({ page }) => {
+      await startDrag(page);
+      await dragTo(page, v.folder(P("Inbox")));
+      await opened(page, [P("Inbox")]);
+      await endDrag(page);
+      await opened(page, []);
+      // A drop on another folder row lands there and closes the peek too.
+      await startDrag(page);
+      await dragTo(page, v.folder(P("Inbox")));
+      await opened(page, [P("Inbox")]);
+      await dragTo(page, v.folder(P("Archive")));
+      await opened(page, []);
+      await dragTo(page, v.folder(P("Inbox")));
+      await opened(page, [P("Inbox")]);
+      await dropOn(page, v.folder(P("Inbox")));
+      await opened(page, []);
+      await expect.poll(() => listing(page, P("Inbox"))).toContain("drag-me.txt");
+    });
+
+    if (view !== "tiles") {
+      test("a folder inside a temporary peek springs open in turn; leaving it keeps the outer peek", async ({ page }) => {
+        await startDrag(page);
+        await dragTo(page, v.folder(P("Inbox")));
+        await opened(page, [P("Inbox")]);
+        await dragTo(page, v.child(P("Inbox/Nested")));
+        await opened(page, [P("Inbox"), P("Inbox/Nested")]);
+        await expect(page.locator(v.child(P("Inbox/Nested/deep.txt")))).toBeVisible();
+        await dragTo(page, v.child(P("Inbox/alpha.txt")));
+        await opened(page, [P("Inbox")]);
+        await dragTo(page, v.child(P("Inbox/Nested")));
+        await opened(page, [P("Inbox"), P("Inbox/Nested")]);
+        // A drop on the nested peek's row lands in the nested folder.
+        await dropOn(page, v.child(P("Inbox/Nested/deep.txt")));
+        await expect.poll(() => listing(page, P("Inbox/Nested"))).toContain("drag-me.txt");
+        await endDrag(page);
+        await opened(page, []);
+        expect(await explorer(page, "return [...explorer.expandedPaths]")).toEqual([]);
+      });
+    } else {
+      test("a folder inside a panel does not spring (panels do not nest)", async ({ page }) => {
+        await startDrag(page);
+        await dragTo(page, v.folder(P("Inbox")));
+        await opened(page, [P("Inbox")]);
+        await dragTo(page, v.child(P("Inbox/Nested")));
+        await page.waitForTimeout(1000);
+        expect(await springPeeks(page)).toEqual([P("Inbox")]);
+        await endDrag(page);
+        await opened(page, []);
+      });
+    }
+
+    test("with Folder Peek off nothing springs open", async ({ page }) => {
+      await page.evaluate(async () => (await import("/src/lib/state/settings.svelte.ts")).settingsStore.update({ folderPeek: false }));
+      await expect(page.locator(`${shown} .entry-item[data-path="${P("Inbox")}"]`)).toBeVisible();
+      await startDrag(page);
+      await dragTo(page, `${shown} .entry-item[data-path="${P("Inbox")}"]`);
+      await page.waitForTimeout(1200);
+      await dragTo(page, `${shown} .entry-item[data-path="${P("Inbox")}"]`);
+      expect(await springPeeks(page)).toEqual([]);
+      await expect(page.locator(`${shown} .entry-item[data-path="${P("Inbox/alpha.txt")}"]`)).toHaveCount(0);
+      await expect(page.locator(`${shown} .tile-panel, ${shown} [data-card-scroll]`)).toHaveCount(0);
+      // The folder row is still an ordinary drop target.
+      await dropOn(page, `${shown} .entry-item[data-path="${P("Inbox")}"]`);
+      await expect.poll(() => listing(page, P("Inbox"))).toContain("drag-me.txt");
+      await endDrag(page);
+    });
+  });
+}
+
+test("carets off changes nothing, and the pane background still drops into the current folder", async ({ page }) => {
+  await open(page, "details");
+  await page.evaluate(async () => (await import("/src/lib/state/settings.svelte.ts")).settingsStore.update({ folderPeekCarets: false }));
+  await expect(page.locator(`${shown} .peek-caret`)).toHaveCount(0);
+  await startDrag(page);
+  await dragTo(page, views.details.folder(P("Inbox")));
+  await opened(page, [P("Inbox")]);
+  await endDrag(page);
+  await opened(page, []);
+  // A file from inside Inbox, dropped below the last row, lands in the pane's folder.
+  await page.evaluate(async path => {
+    const { createHtml5FileDrag } = await import("/src/lib/state/html5-file-drag.svelte.ts");
+    const w = window as unknown as { __spring?: { transfer: DataTransfer; last: Element | null } };
+    w.__spring = { transfer: new DataTransfer(), last: null };
+    createHtml5FileDrag().start(new DragEvent("dragstart", { dataTransfer: w.__spring.transfer }), { path, name: "alpha.txt", kind: "file" });
+  }, P("Inbox/alpha.txt"));
+  expect(await dropOn(page, views.details.folder(P("zeta.txt")), { below: 60 })).not.toContain(root);
+  await expect.poll(() => listing(page, root)).toContain("alpha.txt");
+  await endDrag(page);
+});
+
+// The macOS/Windows in-app backend is a pointer drag driven by real mouse
+// input (navigator.platform "MacIntel" selects it); Escape cancels it.
+base("pointer drag (macOS): holding over a folder springs it open, Escape closes it, a release on a child row moves into it", async ({ browser }, info) => {
+  const context = await browser.newContext({ baseURL: info.project.use.baseURL });
+  await context.addInitScript(() => Object.defineProperty(window.navigator, "platform", { get: () => "MacIntel" }));
+  const page = await context.newPage();
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await open(page, "details");
+  const center = async (selector: string) => {
+    const box = (await page.locator(selector).boundingBox())!;
+    return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  };
+  const source = await center(views.details.folder(P("drag-me.txt")));
+  const inbox = await center(views.details.folder(P("Inbox")));
+  await page.mouse.move(source.x, source.y);
+  await page.mouse.down();
+  await page.mouse.move(source.x, source.y - 10, { steps: 2 });
+  await page.mouse.move(inbox.x, inbox.y, { steps: 4 });
+  await opened(page, [P("Inbox")]);
+  await page.keyboard.press("Escape");
+  await opened(page, []);
+  await page.mouse.up();
+
+  await page.mouse.move(source.x, source.y);
+  await page.mouse.down();
+  await page.mouse.move(source.x, source.y - 10, { steps: 2 });
+  await page.mouse.move(inbox.x, inbox.y, { steps: 4 });
+  await opened(page, [P("Inbox")]);
+  const alpha = await center(views.details.child(P("Inbox/alpha.txt")));
+  await page.mouse.move(alpha.x, alpha.y, { steps: 3 });
+  await expect(page.locator(`${shown} .entry-item.drop-target[data-path="${P("Inbox")}"]`)).toHaveCount(1);
+  await page.mouse.up();
+  await expect.poll(() => listing(page, P("Inbox"))).toContain("drag-me.txt");
+  await opened(page, []);
+  expect(errors).toEqual([]);
+  await context.close();
+});

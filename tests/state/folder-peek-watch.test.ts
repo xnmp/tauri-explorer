@@ -28,15 +28,20 @@ it("owns only newest 16 nonrecursive peek leases and retires before promoting re
   try {
     const paths = Array.from({ length: 17 }, (_, i) => `/r/${i}`);
     h.watch.reconcilePeeks(paths, new Map(paths.map((p, i) => [p, i])));
-    await vi.waitFor(() => expect(h.calls).toHaveLength(17));
+    // First listings read at once through the HOW owner, never via scheduling.
+    await vi.waitFor(() => expect(h.refreshed).toHaveLength(17));
+    expect(h.calls).toEqual([]);
     expect([...h.held.values()].map(l => l.path)).not.toContain("/r/0"); expect(h.held.size).toBe(16);
     h.watch.refreshPeeks(false);
     expect(h.calls.at(-1)?.path).toBe("/r/0");
+    h.watch.changed({ path: "/r/16" });
     const stale = h.calls.find(c => c.path === "/r/16")!;
     h.watch.reconcilePeeks(paths.slice(0, 16), new Map(paths.map((p, i) => [p, i])));
     await vi.waitFor(() => expect([...h.held.values()].some(l => l.path === "/r/0")).toBe(true));
     expect(stale.cb({ silent: true })).toBe(false); expect(h.peak()).toBe(16);
-    expect(h.calls.filter(call => call.path === "/r/0")).toHaveLength(3); // initial, fallback and post-acquisition scan
+    // Initial and post-acquisition reads are immediate; the fallback is scheduled.
+    await vi.waitFor(() => expect(h.refreshed.filter(path => path === "/r/0")).toHaveLength(2));
+    expect(h.calls.filter(call => call.path === "/r/0")).toHaveLength(1);
   } finally { await h.watch.destroy(); }
   expect(h.held.size).toBe(0);
 });
@@ -44,10 +49,15 @@ it("routes exact child observations and retains original observation time and mu
   const h = harness();
   try {
     h.watch.reconcilePeeks(["/r/a"], new Map([["/r/a", 1]]));
+    // A change observed while observation is being acquired is covered by the
+    // first read, which starts only after the lease is held.
+    h.watch.changed({ path: "/r/a", observedAt: 1, origin: "watcher" });
+    await vi.waitFor(() => expect(h.refreshed).toEqual(["/r/a"]));
+    expect(h.calls).toEqual([]);
     h.watch.changed({ path: "/r/a", observedAt: 123, origin: "mutation" });
-    await vi.waitFor(() => expect(h.calls).toHaveLength(1));
+    expect(h.calls).toHaveLength(1);
     expect(h.calls[0]).toMatchObject({ path: "/r/a", observedAt: 123, origin: "mutation" });
-    await h.calls[0].cb({ silent: true }); expect(h.refreshed).toEqual(["/r/a"]);
+    await h.calls[0].cb({ silent: true }); expect(h.refreshed).toEqual(["/r/a", "/r/a"]);
     h.watch.invalidatePeeks(); expect(h.calls[0].cb({ silent: true })).toBe(false);
   } finally { await h.watch.destroy(); }
 });
@@ -67,17 +77,18 @@ it("releases a lease returned after collapse, without reviving its refresh subsc
 it("a permanent watch failure falls back without scheduling its own refresh loop", async () => {
   const acquire = vi.fn(async (): Promise<DirectoryWatchLease> => { throw new Error("watch unavailable"); });
   const scheduled = vi.fn();
-  const watch = createPaneWatch({ refresh: async () => {}, refreshPath: async () => {},
+  const refreshPath = vi.fn(async () => {});
+  const watch = createPaneWatch({ refresh: async () => {}, refreshPath,
     subscribe: () => ({ ready: async () => {}, stop: () => {} }), prepare: async () => {},
     createWatch: () => createPathWatch({ watch: acquire, unwatch: async () => {} }), schedule: scheduled,
   });
   try {
     const reconcile = () => watch.reconcilePeeks(["/r/a"], new Map([["/r/a", 1]]));
-    reconcile(); await vi.waitFor(() => expect(scheduled).toHaveBeenCalledTimes(1));
-    await scheduled.mock.calls[0][0]({ silent: true });
+    reconcile(); await vi.waitFor(() => expect(refreshPath).toHaveBeenCalledTimes(1));
     reconcile(); await vi.waitFor(() => expect(acquire).toHaveBeenCalledTimes(2));
-    await Promise.resolve(); expect(scheduled).toHaveBeenCalledTimes(1);
-    watch.refreshPeeks(false); expect(scheduled).toHaveBeenCalledTimes(2);
+    await Promise.resolve(); expect(refreshPath).toHaveBeenCalledTimes(1); expect(scheduled).not.toHaveBeenCalled();
+    // Unwatched, the peek still follows ordinary pane refreshes.
+    watch.refreshPeeks(false); expect(scheduled).toHaveBeenCalledTimes(1);
   } finally { await watch.destroy(); }
 });
 it("promotion retains a post-acquisition scan despite an older event and in-flight fallback", async () => {
@@ -135,9 +146,9 @@ it("keeps replacement admission blocked when retiring a late lease fails", async
   let acquire!: (lease: DirectoryWatchLease) => void;
   let releaseAllowed = false, peak = 0;
   const held = new Set<string>();
-  const scheduled: string[] = [];
-  const watch = createPaneWatch({ refresh: async () => {}, refreshPath: async () => {},
-    subscribe: () => ({ ready: async () => {}, stop: () => {} }), prepare: async () => {}, schedule: (_callback, path) => { scheduled.push(path); },
+  const read: string[] = [];
+  const watch = createPaneWatch({ refresh: async () => {}, refreshPath: async path => { read.push(path); },
+    subscribe: () => ({ ready: async () => {}, stop: () => {} }), prepare: async () => {}, schedule: () => {},
     createWatch: () => createPathWatch({
       watch: async path => {
         const lease = path === "/r/pending" ? await new Promise<DirectoryWatchLease>(resolve => { acquire = resolve; }) : { id: path, path };
@@ -156,7 +167,7 @@ it("keeps replacement admission blocked when retiring a late lease fails", async
     watch.reconcilePeeks([...paths, "/r/pending"], order); await vi.waitFor(() => expect(acquire).toBeTypeOf("function"));
     watch.reconcilePeeks([...paths, "/r/pending", "/r/new"], order);
     acquire({ id: "/r/pending", path: "/r/pending" });
-    await vi.waitFor(() => expect(scheduled).toContain("/r/new"));
+    await vi.waitFor(() => expect(read).toContain("/r/new"));
     expect(held.has("/r/new")).toBe(false); expect(held.size).toBe(16); expect(peak).toBe(16);
     releaseAllowed = true; watch.reconcilePeeks([...paths, "/r/pending", "/r/new"], order);
     await vi.waitFor(() => expect(held.has("/r/new")).toBe(true));

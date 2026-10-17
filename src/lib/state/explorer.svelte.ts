@@ -653,7 +653,11 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     refreshSilent: () => { void refresh({ silent: true }); },
     captureDirectory,
     operationEntries: () => displayEntries,
-    requestReconcile: watch.requestPath,
+    // Immediate HOW reads: the reply already proves the directory changed.
+    refreshDirectory: (parent) => {
+      if (paths.same(parent, coreState.currentPath)) void refresh({ silent: true });
+      else if (peek.target(parent)) void refresh({ silent: true }, parent);
+    },
     removed: (removedPaths) => {
       if (!removedPaths.length) return;
       peek.collapseAll(removedPaths);

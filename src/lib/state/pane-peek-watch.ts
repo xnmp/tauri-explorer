@@ -1,4 +1,11 @@
-/** Lazy peek extension of pane-watch's observation ownership (WHETHER). */
+/** Lazy peek extension of pane-watch's observation ownership (WHETHER).
+ *
+ * A peek's first listing for a slot identity (expand, re-open, a view or
+ * folder returning, an explicit retry) is a read, not a change notification:
+ * it goes straight to the HOW owner once observation is established, like a
+ * pane's own navigation load. Only filesystem notifications (and refreshes
+ * they cause) are scheduled through refresh-manager's debounce and storm
+ * interval. */
 import { isTauri } from "$lib/api/common";
 import { pathComparison } from "$lib/domain/path";
 import { isWindows } from "$lib/domain/platform";
@@ -31,6 +38,13 @@ export function createPeekWatch(deps: PeekWatchDependencies) {
   const dirty = new Map<string, DirectoryChange>();
   const { schedule, mergeChange } = deps;
   const remember = (change: DirectoryChange) => { dirty.set(change.path, mergeChange(dirty.get(change.path), change)); };
+  /** Read now, through pane-refresh. Observation is already held (or has
+   * definitively fallen back), so the scan covers every earlier change. */
+  function readPeek(slot: PeekSlot): void {
+    if (deps.blocked() || peeks.get(slot.path) !== slot || !slot.ready) return;
+    cancelRefreshSubscriber(slot.path, slot.key);
+    void deps.refreshPath?.(slot.path, { silent: true });
+  }
   function requestPeek(slot: PeekSlot, change: DirectoryChange = { path: slot.path }): void {
     if (!slot.ready) { remember({ ...change, path: slot.path }); return; }
     const identity = slot.key;
@@ -102,7 +116,8 @@ export function createPeekWatch(deps: PeekWatchDependencies) {
           const change = aliasChange ? mergeChange(dirty.get(slot.path), { ...aliasChange, path: slot.path }) : dirty.get(slot.path);
           dirty.delete(slot.path);
           if (resolved) unmatchedPeeks.delete(resolved);
-          if (needsScan || change) requestPeek(slot, change);
+          if (needsScan) readPeek(slot);
+          else if (change) requestPeek(slot, change);
         }
       }
       if (isTauri()) {
@@ -152,8 +167,13 @@ export function createPeekWatch(deps: PeekWatchDependencies) {
       if (slot) requestPeek(slot);
       return !!slot;
     },
+    /** Pane refresh fan-out. An explicit (user) refresh reads every ready
+     * peek now; an ordinary one reaches unwatched peeks through scheduling. */
     refresh(explicit: boolean) {
-      for (const slot of peeks.values()) if (explicit || !slot.watch?.held) requestPeek(slot);
+      for (const slot of peeks.values()) {
+        if (explicit && slot.ready) readPeek(slot);
+        else if (explicit || !slot.watch?.held) requestPeek(slot);
+      }
     },
     snapshot() {
       return [...peeks.values()].map(slot => ({ path: slot.path, ready: slot.ready, lease: slot.watch?.held?.lease ?? null }));

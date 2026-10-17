@@ -18,7 +18,9 @@ let createExplorerState: typeof import("$lib/state/explorer.svelte").createExplo
 const panes: ExplorerInstance[] = [];
 const effects: (() => void)[] = [];
 const create = (entries: FileEntry[] = [a, b]) => { let pane!: ExplorerInstance; effects.push(client.effect_root(() => { pane = createExplorerState({ currentPath: "/r", entries, sortBy: "name", sortAscending: true, viewMode: "details" }); client.render_effect(() => { pane.displayEntries; pane.detailRows; }); })); panes.push(pane); return pane; };
-async function settle(ms = 200) { flushSync(); await vi.advanceTimersByTimeAsync(ms); flushSync(); }
+// Zero-delay settling: first peek listings read immediately, so no test waits
+// out a watcher debounce or storm interval to see them.
+async function settle(ms = 0) { for (let i = 0; i < 3; i++) { flushSync(); await vi.advanceTimersByTimeAsync(ms); } flushSync(); }
 beforeEach(async () => {
   createExplorerState = await compileExplorer();
   vi.useFakeTimers(); loads.length = 0; settingsStore.reset(); source.current = async path => ({ ok: true, path, entries: trees[path] ?? [] }); });
@@ -29,15 +31,15 @@ it("persists membership through navigation/back/view switches, stays pane-local,
   pane.selectEntry(child); pane.setViewMode("list");
   expect([...pane.selectedPaths]).toEqual([]); expect(pane.focusedEntry?.path).toBe(a.path);
   expect(pane.displayEntries).toEqual([a, b]); expect(pane.peekWatchSnapshot()).toEqual([]);
-  pane.setViewMode("details"); await settle(2200); expect(pane.displayEntries).toContain(child);
+  pane.setViewMode("details"); await settle(); expect(pane.displayEntries).toContain(child);
   expect(create().expandedPaths.size).toBe(0);
-  await pane.navigateTo("/r"); await pane.navigateTo(a.path); await pane.goBack(); await settle(2200);
+  await pane.navigateTo("/r"); await pane.navigateTo(a.path); await pane.goBack(); await settle();
   expect(pane.currentPath).toBe("/r"); expect(pane.expandedPaths.has(a.path)).toBe(true); expect(pane.displayEntries).toContain(child);
 });
 it("repairs hidden anchors without selecting the folder and keeps other selection levels through refresh", async () => {
   const pane = create(); await pane.togglePeek(a.path); await settle(); pane.selectEntry(child); pane.focusEntry(b);
   await pane.togglePeek(a.path); expect(pane.focusedEntry?.path).toBe(a.path); expect([...pane.selectedPaths]).toEqual([]); expect(pane.state.selectionAnchorPath).toBeNull();
-  await pane.togglePeek(a.path); await settle(2200); pane.selectPaths([child.path, b.path], child.path);
+  await pane.togglePeek(a.path); await settle(); pane.selectPaths([child.path, b.path], child.path);
   await pane.refresh({ silent: true }); flushSync(); expect([...pane.selectedPaths]).toEqual([child.path, b.path]);
   pane.collapseAllPeeks(); expect([...pane.selectedPaths]).toEqual([b.path]); expect(pane.state.selectionAnchorPath).toBeNull();
 });
@@ -47,7 +49,7 @@ it("rejects late success/error responses from collapsed and replaced resources",
   await pane.togglePeek(a.path); await settle();
   await pane.togglePeek(a.path); source.current = async path => ({ ok: true, path, entries: [entry(path + "/new", "file")] });
   await pane.togglePeek(a.path); await settle();
-  release({ ok: true, path: a.path, entries: [child] }); await settle(2200);
+  release({ ok: true, path: a.path, entries: [child] }); await settle();
   expect(pane.displayEntries.map(e => e.path)).toContain("/r/a/new"); expect(pane.displayEntries).not.toContain(child);
 });
 it("prunes deleted remembered branches and their selected descendants after a raw parent refresh", async () => {

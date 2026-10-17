@@ -36,7 +36,9 @@ export interface PaneMutationContext {
   refreshSilent: () => void;
   operationEntries?: () => readonly FileEntry[];
   captureDirectory?: (parent: string) => { publish(transform: (entries: readonly FileEntry[]) => readonly FileEntry[]): void };
-  requestReconcile?: (parent: string) => void;
+  /** Re-list one directory now (the pane's own folder or a peek) when a
+   * reply carries no receipt entry to publish. Defaults to `refreshSilent`. */
+  refreshDirectory?: (parent: string) => void;
   /** Paths that no longer exist; one call per batch (O(n), not O(n²)). */
   removed?: (paths: readonly string[]) => void;
 }
@@ -115,7 +117,7 @@ export function createPaneMutations(ctx: PaneMutationContext) {
         }
         if (coreState.selectionAnchorPath === oldPath) coreState.selectionAnchorPath = path;
         if (coreState.cursorPath === oldPath) coreState.cursorPath = path;
-        if (!entry) { if (ctx.requestReconcile) ctx.requestReconcile(nativeParentDir(oldPath)); else ctx.refreshSilent(); }
+        if (!entry) (ctx.refreshDirectory ?? ctx.refreshSilent)(nativeParentDir(oldPath));
         if (renamingEntry.kind === "directory") ctx.removed?.([oldPath]);
       }
       clipboardStore.rekeyPath(oldPath, path, entry);

@@ -62,8 +62,8 @@ afterEach(async () => {
 
 it("Folder Peek off is the classic flat Details view and keeps no peek resources", async () => {
   const pane = create();
-  await pane.togglePeek(a.path); await settle(200);
-  await pane.togglePeek(nested.path); await settle(200);
+  await pane.togglePeek(a.path); await settle();
+  await pane.togglePeek(nested.path); await settle();
   expect(rows(pane)).toEqual(["0:/r/a+", "1:/r/a/nested+", "2:/r/a/nested/deep", "1:/r/a/child", "0:/r/b"]);
   pane.selectPaths([child.path, b.path], child.path);
   expect(tracked.size).toBe(2);
@@ -96,12 +96,12 @@ it("Folder Peek off is the classic flat Details view and keeps no peek resources
 
 it("turning Folder Peek back on restores the remembered expansions live", async () => {
   const pane = create();
-  await pane.togglePeek(a.path); await settle(200);
-  await pane.togglePeek(nested.path); await settle(200);
+  await pane.togglePeek(a.path); await settle();
+  await pane.togglePeek(nested.path); await settle();
   settingsStore.update({ folderPeek: false }); await settle();
   expect(rows(pane)).toEqual(["0:/r/a", "0:/r/b"]);
 
-  settingsStore.update({ folderPeek: true }); await settle(2200);
+  settingsStore.update({ folderPeek: true }); await settle();
   expect(pane.peekEnabled).toBe(true);
   expect(rows(pane)).toEqual(["0:/r/a+", "1:/r/a/nested+", "2:/r/a/nested/deep", "1:/r/a/child", "0:/r/b"]);
   expect(pane.peekWatchSnapshot().map(slot => slot.path).sort()).toEqual([a.path, nested.path]);
@@ -111,7 +111,7 @@ it("turning Folder Peek back on restores the remembered expansions live", async 
 it("a pane opened while Folder Peek is off never loads the peek session", async () => {
   settingsStore.update({ folderPeek: false });
   const pane = create(); await settle();
-  await pane.togglePeek(a.path); await settle(200);
+  await pane.togglePeek(a.path); await settle();
   expect(pane.expandedPaths.size).toBe(0);
   expect(loads).toEqual([]);
   expect(rows(pane)).toEqual(["0:/r/a", "0:/r/b"]);

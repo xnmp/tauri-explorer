@@ -700,7 +700,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `src/test-support/LayoutInspector.svelte` — optional inspector used by core viewport and fullscreen browser acceptance, registered explicitly without a provider package.
 
-- `e2e-hooks.ts` — entry point: installs every probe for one page session (navigate/reset/file-op hooks, readiness, child-ready receipts); abort retires them all.
+- `e2e-hooks.ts` — entry point: installs every probe for one page session (navigate/reset/file-op hooks, readiness, child-ready receipts and read-only actual native Drop observation); abort retires them all.
 - `dom-rpc.ts` — `createDomRpc`: the shared tokened DOM request/response protocol across WebDriver's isolated world; every request settles, including rejections.
 - `window-operations.ts` — one handler per `e2e-window-operation` op: rejected/unready targets, in-flight closure, duplicate-label creation and warm fixtures, with late-import retirement.
 - `directory-listing-probe.ts` — times real backend listings of one armed path through the `files.ts` listing interceptor seam.
@@ -798,6 +798,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 ### Native qualification tooling
 
 - `e2e-tauri/specs/file-drag.spec.ts`, `e2e-tauri/helpers/native-drag.py` — real GTK file-transfer outcomes driven by XTest after admitting a private Xvfb, D-Bus and XDG environment; validates source removal and destination contents.
+- `e2e-tauri/dnd-acceptance.ts`, `scripts/qualify-native-dnd.ts` — independent required native DnD contracts, verified-binary/run-bound receipts and fatal acceptance inside ordinary Linux smoke; `e2e-tauri/helpers/suppress-drag-status.c` provides a real GTK transport negative control. Contract tests: `tests/qualification/dnd-acceptance.test.ts`.
 - `e2e-tauri/native-clipboard.ts` — independent OS clipboard probes for cross-window smoke: bounded asynchronous Windows PowerShell reads/external Copy with serializable failure diagnostics; X11 URI-list probes.
 - `e2e-tauri/windows-clipboard-read.ps1` — independent direct CF_HDROP/DragQueryFileW reader, avoiding stalled Shell clipboard cmdlets; real empty/single/multi-file Unicode contracts in `clipboard-cross-window.spec.ts`.
 - `tests/e2e-tauri/native-clipboard.test.ts` — cold-shell completion, direct Win32 command dispatch, timeout diagnostics, output validation and literal-path contracts for the native clipboard probes.

@@ -1299,7 +1299,12 @@ fn drop_context_cannot_inherit_an_earlier_different_enter_source() {
     )
     .unwrap();
     assert_eq!(payload["source"], serde_json::Value::Null);
+    // Only GTK can prove another native source owns this context. Other
+    // platforms still reject the stale identity, without claiming GTK proof.
+    #[cfg(target_os = "linux")]
     assert_eq!(payload["externalSource"], true);
+    #[cfg(not(target_os = "linux"))]
+    assert!(payload.get("externalSource").is_none());
     assert_eq!(payload["copyModifier"], true);
 }
 
@@ -1353,7 +1358,10 @@ fn external_drop_without_gdk_window_never_borrows_stale_modifier_intent() {
     )
     .unwrap();
     assert_eq!(payload["source"], serde_json::Value::Null);
+    #[cfg(target_os = "linux")]
     assert_eq!(payload["externalSource"], true);
+    #[cfg(not(target_os = "linux"))]
+    assert!(payload.get("externalSource").is_none());
     assert_eq!(payload["copyModifier"], true);
 }
 

@@ -20,7 +20,10 @@ async function command(label: string): Promise<void> {
   await $(".command-palette-dialog").waitForDisplayed({ reverse: true });
 }
 
-async function drag(source: Entry, destination: Entry, copy = false): Promise<void> {
+async function drag(source: Entry, destination: Entry, options: { copy?: boolean; cancel?: boolean; copyAfterStart?: boolean } = {}): Promise<void> {
+  await browser.waitUntil(() => browser.execute(() => document.documentElement.dataset.e2eNativeDragReady === "true"), {
+    timeout: 5_000, timeoutMsg: "read-only native Drop observer never became ready",
+  });
   await source.waitForDisplayed();
   await destination.waitForDisplayed();
   const from = await source.getLocation();
@@ -29,6 +32,8 @@ async function drag(source: Entry, destination: Entry, copy = false): Promise<vo
     const root = document.documentElement;
     root.dataset.nativeDragSession = "";
     root.dataset.domDropReceived = "false";
+    root.dataset.nativeDragEnded = "";
+    root.dataset.e2eNativeDragDrop = "";
     if (root.dataset.nativeDragProbeInstalled) return;
     root.dataset.nativeDragProbeInstalled = "true";
     document.addEventListener("dragstart", () => {
@@ -36,21 +41,30 @@ async function drag(source: Entry, destination: Entry, copy = false): Promise<vo
       root.dataset.nativeDragSession = source?.sessionId || "";
     });
     document.addEventListener("drop", () => { root.dataset.domDropReceived = "true"; }, { capture: true });
+    document.addEventListener("dragend", () => { root.dataset.nativeDragEnded = root.dataset.nativeDragSession; });
   });
   execFileSync("python3", [fileURLToPath(new URL("../helpers/native-drag.py", import.meta.url)),
     String(Math.round(from.x + 65)), String(Math.round(from.y + 12)),
     String(Math.round(to.x + 65)), String(Math.round(to.y + 12)),
-    ...(copy ? ["--copy"] : []),
+    ...(options.copy ? ["--copy"] : []),
+    ...(options.cancel ? ["--cancel"] : []),
+    ...(options.copyAfterStart ? ["--copy-after-start"] : []),
   ], { timeout: 10_000, stdio: "pipe" });
 }
 
-async function assertNativeTransport(): Promise<void> {
+async function assertNativeTransport(requireDrop = true): Promise<void> {
   assert.equal(await browser.execute(() => {
     const decision = JSON.parse(localStorage.getItem("explorer-native-drag-decision") || "null");
     return !!decision?.accepted && decision.sessionId === document.documentElement.dataset.nativeDragSession;
   }), true, "gesture must use its accepted native source");
   assert.equal(await browser.execute(() => document.documentElement.dataset.domDropReceived), "false",
-    "a DOM fallback cannot qualify the native regression");
+    "the native regression unexpectedly observed a DOM drop");
+  if (requireDrop) {
+    await browser.waitUntil(() => browser.execute(() => {
+      const drop = JSON.parse(document.documentElement.dataset.e2eNativeDragDrop || "null");
+      return drop?.type === "drop" && drop.source?.sessionId === document.documentElement.dataset.nativeDragSession;
+    }), { timeout: 5_000, timeoutMsg: "no actual native receiver Drop for this gesture" });
+  }
 }
 
 (process.platform === "linux" ? describe : describe.skip)("file drag against the real GTK backend", () => {
@@ -60,40 +74,55 @@ async function assertNativeTransport(): Promise<void> {
   });
   after(async () => { await command("Miller Columns: Off"); });
 
-  it("moves every selected file into the folder, preserving spaces and non-ASCII names", async () => {
-    const scratch = createNativeFixtureDirectory("tauri-explorer-file-drag-");
-    const source = path.join(scratch, "a space#.txt");
-    const second = path.join(scratch, "ñ-other.txt");
-    const destination = path.join(scratch, "Inbox");
-    fs.mkdirSync(destination);
-    fs.writeFileSync(source, "dragged file contents");
-    fs.writeFileSync(second, "second selected file");
-    await navigateTo(scratch);
-    const sourceRow = $(entryPathSelector(source, shown + ".entry-item"));
-    const targetRow = $(entryPathSelector(destination, shown + ".entry-item"));
-    await sourceRow.waitForDisplayed();
-    await sourceRow.click();
-    await browser.performActions([{ type: "key", id: "selection-control", actions: [{ type: "keyDown", value: "\uE009" }] }]);
-    try { await $(entryPathSelector(second, shown + ".entry-item")).click(); }
-    finally { await browser.releaseActions(); }
-    await drag(sourceRow, targetRow);
-    const moved = path.join(destination, "a space#.txt");
-    const secondMoved = path.join(destination, "ñ-other.txt");
-    await browser.waitUntil(() => !fs.existsSync(source) && !fs.existsSync(second)
-      && fs.existsSync(moved) && fs.existsSync(secondMoved), {
-      timeout: 10_000, timeoutMsg: "drop highlighted its folder but did not move the file",
+  for (const view of ["Details", "List", "Tiles"]) {
+    it(`[dnd:listing-move-${view.toLowerCase()}] moves every selected file into the folder, preserving spaces and non-ASCII names`, async () => {
+      await command(`${view} View`);
+      const scratch = createNativeFixtureDirectory("tauri-explorer-file-drag-");
+      const source = path.join(scratch, "a space#.txt");
+      const second = path.join(scratch, "ñ-other.txt");
+      const destination = path.join(scratch, "Inbox");
+      fs.mkdirSync(destination);
+      fs.writeFileSync(source, "dragged file contents");
+      fs.writeFileSync(second, "second selected file");
+      await navigateTo(scratch);
+      const sourceRow = $(entryPathSelector(source, shown + ".entry-item"));
+      const targetRow = $(entryPathSelector(destination, shown + ".entry-item"));
+      await sourceRow.waitForDisplayed();
+      await sourceRow.click();
+      await browser.performActions([{ type: "key", id: "selection-control", actions: [{ type: "keyDown", value: "\uE009" }] }]);
+      try { await $(entryPathSelector(second, shown + ".entry-item")).click(); }
+      finally { await browser.releaseActions(); }
+      await drag(sourceRow, targetRow);
+      const moved = path.join(destination, "a space#.txt");
+      const secondMoved = path.join(destination, "ñ-other.txt");
+      try {
+        await browser.waitUntil(() => !fs.existsSync(source) && !fs.existsSync(second)
+          && fs.existsSync(moved) && fs.existsSync(secondMoved), {
+          timeout: 10_000, timeoutMsg: "drop highlighted its folder but did not move the file",
+        });
+      } catch (error) {
+        // Distinguish broken delivery after actual native admission from an input
+        // fixture that never started a drag. Used by the transport negative control.
+        await assertNativeTransport(false);
+        assert.equal(fs.readFileSync(source, "utf8"), "dragged file contents");
+        assert.equal(fs.readFileSync(second, "utf8"), "second selected file");
+        assert.deepEqual(fs.readdirSync(destination), []);
+        throw error;
+      }
+      assert.equal(fs.readFileSync(moved, "utf8"), "dragged file contents");
+      assert.equal(fs.readFileSync(secondMoved, "utf8"), "second selected file");
+      await assertNativeTransport();
+      await sourceRow.waitForExist({ reverse: true });
+      await targetRow.doubleClick();
+      await $(entryPathSelector(moved, shown + ".entry-item")).waitForDisplayed();
+      await $(entryPathSelector(secondMoved, shown + ".entry-item")).waitForDisplayed();
     });
-    assert.equal(fs.readFileSync(moved, "utf8"), "dragged file contents");
-    assert.equal(fs.readFileSync(secondMoved, "utf8"), "second selected file");
-    await assertNativeTransport();
-    await sourceRow.waitForExist({ reverse: true });
-    await targetRow.doubleClick();
-    await $(entryPathSelector(moved, shown + ".entry-item")).waitForDisplayed();
-    await $(entryPathSelector(secondMoved, shown + ".entry-item")).waitForDisplayed();
-  });
+  }
 
-  for (const copy of [false, true]) {
-    it(copy ? "Ctrl-drag from Miller copies and retains the source" : "drag from Miller moves and refreshes its source column", async () => {
+  for (const mode of ["move", "copy", "copy-after-start"] as const) {
+    const copy = mode !== "move";
+    it(`[dnd:miller-${mode}] Miller ${mode} preserves the requested source/destination outcome`, async () => {
+      await command("Details View");
       const scratch = createNativeFixtureDirectory("tauri-explorer-miller-drag-");
       const source = path.join(scratch, "source-dir");
       const current = path.join(scratch, "Work");
@@ -105,7 +134,7 @@ async function assertNativeTransport(): Promise<void> {
       await command("Miller Columns: 1 Layer");
       const sourceRow = $(entryPathSelector(source, shown + ".col-entry"));
       const targetRow = $(entryPathSelector(destination, shown + ".entry-item"));
-      await drag(sourceRow, targetRow, copy);
+      await drag(sourceRow, targetRow, { copy: mode === "copy", copyAfterStart: mode === "copy-after-start" });
       const delivered = path.join(destination, "source-dir");
       await browser.waitUntil(() => fs.existsSync(path.join(delivered, "proof.txt"))
         && fs.existsSync(source) === copy, {
@@ -119,4 +148,46 @@ async function assertNativeTransport(): Promise<void> {
       await $(entryPathSelector(delivered, shown + ".entry-item")).waitForDisplayed();
     });
   }
+
+  it("[dnd:cancel-retry] Escape leaves files untouched and the next gesture moves them", async () => {
+    await command("Miller Columns: Off");
+    await command("Details View");
+    const scratch = createNativeFixtureDirectory("tauri-explorer-drag-cancel-");
+    const source = path.join(scratch, "retry.txt");
+    const destination = path.join(scratch, "Inbox");
+    const moved = path.join(destination, "retry.txt");
+    fs.mkdirSync(destination);
+    fs.writeFileSync(source, "must survive cancellation");
+    await navigateTo(scratch);
+    const sourceRow = $(entryPathSelector(source, shown + ".entry-item"));
+    const targetRow = $(entryPathSelector(destination, shown + ".entry-item"));
+    await drag(sourceRow, targetRow, { cancel: true });
+    await browser.waitUntil(() => browser.execute(() => {
+      const data = document.documentElement.dataset;
+      return !!data.nativeDragSession && data.nativeDragEnded === data.nativeDragSession;
+    }), { timeout: 5_000, timeoutMsg: "cancelled real drag did not end" });
+    await assertNativeTransport(false);
+    assert.equal(await browser.execute(() => document.documentElement.dataset.e2eNativeDragDrop), "",
+      "cancelled gesture unexpectedly delivered a native Drop");
+    assert.equal(fs.readFileSync(source, "utf8"), "must survive cancellation");
+    assert.deepEqual(fs.readdirSync(destination), []);
+    await sourceRow.waitForDisplayed();
+    const cancelledSession = await browser.execute(() => document.documentElement.dataset.nativeDragSession);
+    await drag(sourceRow, targetRow);
+    await browser.waitUntil(() => !fs.existsSync(source) && fs.existsSync(moved), { timeout: 10_000 });
+    assert.equal(fs.readFileSync(moved, "utf8"), "must survive cancellation");
+    await assertNativeTransport();
+    assert.notEqual(await browser.execute(() => document.documentElement.dataset.nativeDragSession), cancelledSession);
+    assert.equal(await browser.execute((session: string) => {
+      const history = JSON.parse(document.documentElement.dataset.e2eNativeDragDrops || "[]");
+      return history.some((drop: { source?: { sessionId?: string } }) => drop.source?.sessionId === session);
+    }, cancelledSession!), false, "cancelled session delivered a late native Drop during retry");
+    await sourceRow.waitForExist({ reverse: true });
+    await targetRow.doubleClick();
+    await $(entryPathSelector(moved, shown + ".entry-item")).waitForDisplayed();
+    if (process.env.TAURI_DND_EVIDENCE_DIRECTORY) {
+      fs.mkdirSync(process.env.TAURI_DND_EVIDENCE_DIRECTORY, { recursive: true });
+      await browser.saveScreenshot(path.resolve(process.env.TAURI_DND_EVIDENCE_DIRECTORY, "native-cancel-retry.png"));
+    }
+  });
 });

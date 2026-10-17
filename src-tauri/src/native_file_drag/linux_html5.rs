@@ -14,9 +14,10 @@ struct Callbacks {
 const CONTEXT_HISTORY: usize = 8;
 static NEXT_CONTEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
 struct Context {
-    // Keep identities alive until their bounded history entry is evicted. GTK
-    // addresses must not be recycled into a later unrelated native gesture.
-    _context: gtk::gdk::DragContext,
+    // Keep the source context alive only during its native gesture. Retaining
+    // an ended context also retains GTK's cancellation icon, which can remain
+    // mapped over the source row and intercept the next gesture's input.
+    live_context: Option<gtk::gdk::DragContext>,
     _window: gtk::gdk::Window,
     id: usize,
     token: usize,
@@ -115,7 +116,7 @@ pub(super) fn watch(owner: &str, view: &webkit2gtk::WebView) {
                 if let Some(tracker) = views.borrow_mut().get_mut(&owner) {
                     tracker.contexts.retain(|old| old.id != id);
                     tracker.contexts.push_back(Context {
-                        _context: context.clone(),
+                        live_context: Some(context.clone()),
                         _window: context.source_window(),
                         id,
                         token,
@@ -175,22 +176,30 @@ pub(super) fn watch(owner: &str, view: &webkit2gtk::WebView) {
     });
 }
 fn end_context(owner: &str, context: usize, result: drag::DragResult) {
-    let completion = VIEWS.with(|views| {
-        views.borrow_mut().get_mut(owner).and_then(|tracker| {
-            if let Some(observed) = tracker
+    let retired = VIEWS.with(|views| {
+        views.borrow_mut().get_mut(owner).map(|tracker| {
+            let retired_context = tracker
                 .contexts
                 .iter_mut()
                 .find(|observed| observed.id == context)
-            {
-                observed.ended = true;
-            }
-            tracker.lifecycle.end_context(context)
+                .and_then(|observed| {
+                    observed.ended = true;
+                    observed.live_context.take()
+                });
+            (tracker.lifecycle.end_context(context), retired_context)
         })
     });
-    if let Some(completion) = completion {
-        (completion.complete)(result);
+    if let Some((completion, retired_context)) = retired {
+        // Release native UI resources outside the tracker borrow. Immutable
+        // session/token history and the IPC-window pin remain available for
+        // delayed source correlation; receiver tokens never reuse addresses.
+        drop(retired_context);
+        if let Some(completion) = completion {
+            (completion.complete)(result);
+        }
     }
 }
+
 fn destroy(owner: &str) {
     let tracker = VIEWS.with(|views| views.borrow_mut().remove(owner));
     if let Some(mut tracker) = tracker {

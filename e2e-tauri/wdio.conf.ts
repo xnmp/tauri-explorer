@@ -190,14 +190,16 @@ export const config: WebdriverIO.Config = {
   port: driverPort,
   framework: "mocha",
   reporters: ["spec"],
-  mochaOpts: { ui: "bdd", timeout: 60_000 },
+  mochaOpts: { ui: "bdd", timeout: 60_000, forbidOnly: !!(process.env.CI || process.env.TAURI_DND_QUALIFICATION_RUN_ID) },
   afterTest: (test, _context, outcome) => {
     // Persist runner outcomes even when native process output obscures the
     // console reporter. Separate worker files avoid concurrent append races.
-    mkdirSync(path.join(here, "logs"), { recursive: true });
-    appendFileSync(path.join(here, "logs", `case-outcomes-${process.pid}.jsonl`), `${JSON.stringify({
+    const outcomeDirectory = process.env.TAURI_NATIVE_CASE_OUTCOMES_DIRECTORY ?? path.join(here, "logs");
+    mkdirSync(outcomeDirectory, { recursive: true });
+    appendFileSync(path.join(outcomeDirectory, `case-outcomes-${process.pid}.jsonl`), `${JSON.stringify({
+      qualificationRunId: process.env.TAURI_DND_QUALIFICATION_RUN_ID ?? null,
       sourceCommit: process.env.GITHUB_SHA ?? null, suite: test.parent, title: test.title,
-      passed: outcome.passed, skipped: outcome.skipped ?? test.pending,
+      passed: outcome.passed, skipped: outcome.skipped ?? test.pending ?? false,
       duration: outcome.duration, retries: outcome.retries,
       error: outcome.error?.stack ?? outcome.error?.message ?? null,
     })}\n`);

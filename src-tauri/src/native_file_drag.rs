@@ -91,6 +91,7 @@ pub struct Source {
 }
 
 impl Source {
+    #[cfg(any(target_os = "linux", test))]
     fn uses_webkit_source(&self) -> bool {
         cfg!(target_os = "linux") && self.html5
     }
@@ -258,6 +259,7 @@ impl Registry {
             }),
         ));
     }
+    #[cfg(any(target_os = "linux", test))]
     fn bind_html5_context(&mut self, token: u64, context: NativeContext) {
         let Some((_, _, Some(source))) = self.active.as_mut().filter(|active| active.0 == token)
         else {
@@ -521,6 +523,7 @@ impl Registry {
         self.receivers.remove(receiver);
         source.map(|source| source.original)
     }
+    #[cfg(any(target_os = "linux", test))]
     fn can_adopt_html5(&self, source: &Source) -> bool {
         source.gesture_sequence > self.completed_gesture_sequence
             && self

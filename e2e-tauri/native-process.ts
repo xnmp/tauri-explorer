@@ -3,6 +3,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { resolveNativeApplication } from "./native-qualification/artifacts";
+
+export function nativeApplicationPath(): string {
+  return fs.realpathSync(resolveNativeApplication(
+    path.resolve("src-tauri/target/debug/tauri-explorer"), process.env,
+  ));
+}
 
 export function processIds(): number[] {
   return fs.readdirSync("/proc").filter(name => /^\d+$/.test(name)).map(Number);
@@ -50,7 +57,7 @@ export function descendants(root: number): number[] {
 
 export function exactApplicationPid(
   config = process.env.XDG_CONFIG_HOME,
-  applicationPath = path.resolve("src-tauri/target/debug/tauri-explorer"),
+  applicationPath = nativeApplicationPath(),
 ): number {
   const application = fs.realpathSync(applicationPath);
   if (!config) throw new Error("renderer crash test requires an isolated XDG_CONFIG_HOME");
@@ -70,7 +77,7 @@ export function terminateRendererDescendants(
 ): number[] {
   const applicationStart = expected?.start ?? processStartTime(applicationPid);
   const applicationExecutable = expected?.executable
-    ?? fs.realpathSync(path.resolve("src-tauri/target/debug/tauri-explorer"));
+    ?? nativeApplicationPath();
   if (!applicationStart || !applicationExecutable) throw new Error("Test application is not alive");
   const renderers = descendants(applicationPid)
     .filter(pid => path.basename(processExecutable(pid) ?? "") === "WebKitWebProcess")

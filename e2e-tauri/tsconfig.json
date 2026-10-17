@@ -17,6 +17,7 @@
     // The macOS startup qualifier consumes this module's exported contracts and
     // runs only on a Mac CI runner, so a type error there costs a whole run.
     // It uses node built-ins only, so it type-checks with this configuration.
-    "../scripts/qualify-macos-startup.ts"
+    "../scripts/qualify-macos-startup.ts",
+    "../scripts/qualify-native-dnd.ts"
   ]
 }

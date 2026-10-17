@@ -16,7 +16,7 @@ test.afterEach(async ({ page }) => { expect(runtimeErrors.get(page)).toEqual([])
 const viewport = (page: Page) => page.locator(`${shown} .list-scroller`);
 const slot = (page: Page, path: string) => page.locator(`${shown} .list-slot[data-motion-key="entry:${path}"]`);
 const row = (page: Page, path: string) => page.locator(`${shown} .entry-item[data-path="${path}"]`);
-const caret = (page: Page, path: string) => row(page, path).locator(":scope > .list-caret-slot > .peek-caret");
+const caret = (page: Page, path: string) => row(page, path).locator(":scope > .peek-caret");
 const card = (page: Page, path: string) => slot(page, path).locator("[data-card-scroll]");
 const layer = (page: Page) => page.locator(`${shown} .list-motion-layer`);
 
@@ -121,13 +121,16 @@ test("nested folders open inside the card with guide lines, the close caret and 
     const p = `.pane-tree:not(.retained) .entry-item[data-path="${parent}"]`, c = `.pane-tree:not(.retained) .entry-item[data-path="${child}"]`;
     const guide = document.querySelector(".pane-tree:not(.retained) .list-guide")!.getBoundingClientRect();
     return {
-      slot: rect(`${p} .list-caret-slot`).width, chevron: rect(`${p} .peek-caret svg`).width,
+      slot: rect(`${p} .peek-caret`).width, chevron: rect(`${p} .peek-caret svg`).width,
+      gap: rect(`${p} .list-icon`).left - rect(`${p} .peek-caret svg`).right,
+      fileIcon: rect(`.pane-tree:not(.retained) .entry-item[data-path="${parent}/follow-ups.md"] .list-icon`).left - rect(`${c} .list-icon`).left,
       indent: rect(`${c} .peek-caret`).left - rect(`${p} .peek-caret`).left,
       underIcon: Math.abs((rect(`${c} .peek-caret svg`).left + 5) - (rect(`${p} .list-icon`).left + 8)),
       guideUnderCaret: Math.abs(guide.left + guide.width / 2 - (rect(`${p} .peek-caret svg`).left + 5)),
     };
   }, [`${root}/Career/Applications`, `${root}/Career/Applications/Acme Corp`]);
-  expect(geometry).toMatchObject({ slot: 14, chevron: 10, indent: 16 });
+  expect(geometry).toMatchObject({ slot: 14, chevron: 10, indent: 16, gap: 4 });
+  expect(geometry.fileIcon).toBe(0); // a file row keeps the caret gutter, so names align
   expect(geometry.underIcon).toBeLessThanOrEqual(2);
   expect(geometry.guideUnderCaret).toBeLessThanOrEqual(1);
   // Scrolling the card moves its descendants under the header, which stays put.
@@ -149,6 +152,37 @@ test("a rename inside a card commits in place and the card keeps its rows", asyn
   await expect(editor).toHaveCount(0);
   await expect(card(page, `${root}/Inbox`).locator(`.entry-item[data-path="${root}/Inbox/a-quote.txt"]`)).toBeVisible();
   await expect(card(page, `${root}/Inbox`).locator(".entry-item")).toHaveCount(6);
+});
+
+test("a card's own surface takes drops for its folder, and its file rows retire that feedback", async ({ page }) => {
+  await open(page);
+  await toggle(page, `${root}/Career`);
+  await toggle(page, `${root}/Career/Portfolio`); // empty: an "Empty folder" pseudo-row
+  const empty = card(page, `${root}/Career`).locator(`.list-peek-state[data-path="${root}/Career/Portfolio"]`);
+  await expect(empty).toHaveText("Empty folder");
+  const portfolio = row(page, `${root}/Career/Portfolio`);
+  const drag = (selector: string, types: string[]) => page.evaluate(async ([target, events]) => {
+    const { createHtml5FileDrag } = await import("/src/lib/state/html5-file-drag.svelte.ts");
+    const w = window as unknown as { __fplDrag?: DataTransfer };
+    if (!w.__fplDrag) {
+      w.__fplDrag = new DataTransfer();
+      createHtml5FileDrag().start(new DragEvent("dragstart", { dataTransfer: w.__fplDrag }), { path: "/home/user/notes.md", name: "notes.md", kind: "file" });
+    }
+    const element = document.querySelector(target)!;
+    for (const type of events) element.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: w.__fplDrag }));
+  }, [selector, types] as const);
+  const emptySelector = `${shown} .list-peek-state[data-path="${root}/Career/Portfolio"]`;
+  await drag(emptySelector, ["dragenter", "dragover"]);
+  await expect(portfolio).toHaveClass(/drop-target/);
+  await expect(page.locator(`${shown} .content.drop-target, ${shown} .file-list.drop-target`)).toHaveCount(0);
+  await drag(`${shown} .entry-item[data-path="${root}/Career/headshot.jpg"]`, ["dragenter", "dragover"]);
+  await expect(portfolio).not.toHaveClass(/drop-target/);
+  await drag(emptySelector, ["dragover", "drop"]);
+  await expect(page.locator(".toast").filter({ hasText: /Moved/ })).toHaveCount(1);
+  // The move reached the nested folder whose pseudo-row took the drop. (Peek
+  // listings are not refreshed by a mock-backend move; Details behaves the same.)
+  expect(await page.evaluate(async () => (await import("/src/lib/api/mock-fixtures.ts")).mockFiles["/folder-peek-list/Career/Portfolio"].map(entry => entry.name))).toEqual(["notes.md"]);
+  await expect(portfolio).not.toHaveClass(/drop-target/);
 });
 
 test("the grip resizes in whole rows, previews only its card, is remembered and never exceeds a column", async ({ page }) => {
@@ -265,7 +299,9 @@ test("a vertical wheel over a card scrolls the card first, then the List sideway
 test("with carets off a click toggles a folder, nested rows have no caret, and double-click navigates", async ({ page }) => {
   await open(page);
   await setting(page, { folderPeekCarets: false });
-  await expect(page.locator(`${shown} .peek-caret, ${shown} .list-caret-slot`)).toHaveCount(0);
+  await expect(page.locator(`${shown} .peek-caret`)).toHaveCount(0);
+  // Without carets the gutter goes too: the icon starts at the row's padding.
+  expect(await row(page, `${root}/Career`).evaluate(el => el.querySelector(".list-icon")!.getBoundingClientRect().left - el.getBoundingClientRect().left)).toBe(11);
   await row(page, `${root}/Career`).click();
   await expect(card(page, `${root}/Career`)).toBeVisible();
   await expect(row(page, `${root}/Career`)).toHaveAttribute("aria-expanded", "true");

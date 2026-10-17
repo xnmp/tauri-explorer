@@ -58,10 +58,6 @@
     revealCard: (path, smooth) => columns.revealCard(path, smooth),
   });
   const carets = $derived(explorer.peekCaretsShown);
-  const headerRow = (entryIndex: number) => explorer.detailRows.rows[explorer.detailRows.entryToRow[entryIndex]] as EntryRow;
-  // Plain each items, not {@const}/destructured deriveds: a rename input's blur
-  // can read its row after a commit has destroyed the slot (derived_inert).
-  const slots = $derived(columns.visibleItems.map(({ item, placement }) => ({ item, placement, header: item.entryIndex === null ? null : headerRow(item.entryIndex) })));
   const revealIndex = (index: number) => columns.revealEntry(index);
   const contains = (index: number) => columns.containsEntry(index);
   const navigation = () => ({ entries: explorer.displayEntries, directory: explorer.currentPath, model: columns.model, usableWidth: columns.usableWidth, cardScrollTop: columns.cardScrollTop });
@@ -85,24 +81,21 @@
   <EntryCell role="option" setSize={explorer.displayEntries.length} column={1} class="list-item list-entry" index={row.entryIndex} entry={row.entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}
     level={explorer.peekEnabled ? row.depth + 1 : undefined}
     expanded={explorer.peekEnabled && row.entry.kind === "directory" ? row.expanded : undefined}>
-    {#if carets}
-      <span class="list-caret-slot">
-        {#if row.entry.kind === "directory"}
-          <!-- A pointer affordance only (as in Details): never a tab stop, and its
-               mousedown keeps focus where it was. -->
-          <button class="peek-caret" type="button" draggable={false} tabindex="-1"
-            aria-expanded={row.expanded} aria-label={`${row.expanded ? "Collapse" : "Expand"} ${row.entry.name}`}
-            onmousedown={(event) => event.preventDefault()}
-            onclick={() => {
-              if (paneId) windowTabsManager.setActivePane(paneId);
-              void explorer.togglePeek(row.entry.path);
-            }}>
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
-              <path d={row.expanded ? "M2 3.5 5 6.5 8 3.5" : "M3.5 2 6.5 5 3.5 8"} stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-          </button>
-        {/if}
-      </span>
+    {#if carets && row.entry.kind === "directory"}
+      <!-- A pointer affordance only (as in Details): never a tab stop, and its
+           mousedown keeps focus where it was. Positioned in the row's caret
+           gutter, so file rows need no blank slot element. -->
+      <button class="peek-caret" type="button" draggable={false} tabindex="-1"
+        aria-expanded={row.expanded} aria-label={`${row.expanded ? "Collapse" : "Expand"} ${row.entry.name}`}
+        onmousedown={(event) => event.preventDefault()}
+        onclick={() => {
+          if (paneId) windowTabsManager.setActivePane(paneId);
+          void explorer.togglePeek(row.entry.path);
+        }}>
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+          <path d={row.expanded ? "M2 3.5 5 6.5 8 3.5" : "M3.5 2 6.5 5 3.5 8"} stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </button>
     {/if}
     <span class="list-icon" data-drag-icon style:color={row.entry.kind !== "directory" ? getFileIconColor(row.entry) : undefined}><FileIcon entry={row.entry} size="small" /></span>
     <span data-drag-name><EntryName entry={row.entry} {explorer} variant="list" bold={row.expanded} /></span>
@@ -110,13 +103,15 @@
   </EntryCell>
 {/snippet}
 
-<div class="list-view" data-rows={columns.rows}>
+<div class="list-view" class:carets data-rows={columns.rows}>
   <div class="virtual-viewport list-scroller file-rows" class:short={columns.short}
     role="listbox" aria-label="Files" aria-multiselectable="true" tabindex={fallbackTabStop ? 0 : -1}
     use:columns.attach>
     <div class="list-measure" aria-hidden="true"></div>
     <div class="list-canvas" bind:this={canvas} style:width="{columns.extent - LIST_PADDING_X * 2}px" style:height="{columns.rows * LIST_SLOT_HEIGHT}px">
-      {#each slots as slot (slot.item.key)}
+      <!-- Plain each items, not {@const}/destructured deriveds: a rename input's
+           blur can read its row after a commit has destroyed the slot. -->
+      {#each columns.visibleItems as slot (slot.item.key)}
         <div class="list-slot list-place" class:list-card-box={!!slot.item.card} class:covered={columns.isCovered(slot.item.key)}
           data-motion-key={slot.item.key} data-column={slot.placement.column}
           style:left="{slot.placement.column * LIST_COLUMN_STRIDE}px" style:top="{slot.placement.row * LIST_SLOT_HEIGHT}px"
@@ -196,6 +191,7 @@
   }
 
   .list-view :global(.list-entry) {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -273,18 +269,17 @@
     background: color-mix(in srgb, var(--accent) 8%, transparent);
   }
 
-  /* The List "close" caret (spec §8.3): a 14px slot with a 10px chevron about
-     4px from the icon; file rows keep the blank slot so names align, and the
-     16px indent puts a child's caret under its parent's icon. */
-  .list-view :global(.list-caret-slot) {
-    display: flex;
-    align-items: center;
-    width: 14px;
-    flex: 0 0 14px;
-    margin-right: -6px;
+  /* The List "close" caret (spec §8.3): a 14px gutter with a 10px chevron about
+     4px from the icon; every row keeps the gutter so names align, and the 16px
+     indent puts a child's caret under its parent's icon. */
+  .list-view.carets :global(.list-entry) {
+    padding-left: calc(24px + var(--depth, 0) * 16px);
   }
 
   .list-view :global(.list-entry .peek-caret) {
+    position: absolute;
+    top: 2px;
+    left: calc(8px + var(--depth, 0) * 16px);
     display: flex;
     align-items: center;
     justify-content: center;

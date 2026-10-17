@@ -88,6 +88,25 @@
     return (path && folders.get(path)) || entry;
   }
 
+  // The folder whose surface shows drop feedback. Rows inside the card are their
+  // own targets (or none), so moving onto one retires the surface's feedback;
+  // no leave event fires for it, because the row is inside the surface.
+  let surfaceFolder: FileEntry | null = null;
+  function retarget(folder: FileEntry | null): void {
+    if (surfaceFolder && surfaceFolder.path !== folder?.path) interactions.releaseDropTarget(surfaceFolder.path);
+    surfaceFolder = folder;
+  }
+  function surfaceOver(event: DragEvent): void {
+    const folder = surfaceTarget(event);
+    retarget(folder);
+    if (folder) interactions.handleDragOver(event, folder);
+  }
+  function surfaceDrop(event: DragEvent): void {
+    const folder = surfaceTarget(event);
+    retarget(null);
+    if (folder) void interactions.handleDrop(event, folder);
+  }
+
   // Grip: pointer travel snaps to whole rows; only this card previews until release.
   let drag: { pointer: number; y: number; rows: number } | null = null;
   function gripDown(event: PointerEvent): void {
@@ -129,10 +148,9 @@
     style:--fade-bottom={`${fades.bottom ? LIST_CARD_FADE : 0}px`}
     bind:this={scroller}
     onscroll={() => { if (scroller) onscrolltop(scroller.scrollTop); }}
-    ondragenter={(event) => { const folder = surfaceTarget(event); if (folder) interactions.handleDragEnter(event, folder); }}
-    ondragover={(event) => { const folder = surfaceTarget(event); if (folder) interactions.handleDragOver(event, folder); }}
-    ondragleave={(event) => { const folder = surfaceTarget(event); if (folder) interactions.handleDragLeave(event, folder); }}
-    ondrop={(event) => { const folder = surfaceTarget(event); if (folder) void interactions.handleDrop(event, folder); }}
+    ondragenter={surfaceOver} ondragover={surfaceOver}
+    ondragleave={(event) => { if (surfaceFolder) interactions.handleDragLeave(event, surfaceFolder); }}
+    ondrop={surfaceDrop}
     oncontextmenu={(event) => { const folder = surfaceTarget(event); if (folder) interactions.handleContextMenu(event, folder); }}>
     <div class="list-card-content" style:height={`${content * LIST_SLOT_HEIGHT}px`}>
       {#each shownGuides as guide (guide.path)}

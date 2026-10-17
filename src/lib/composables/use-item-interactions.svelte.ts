@@ -95,6 +95,7 @@ export function useItemInteractions(deps: ItemInteractionsDeps) {
     handleDragEnter: dropTarget.handleDragEnter,
     handleDragLeave: dropTarget.handleDragLeave,
     handleDrop: dropTarget.handleDrop,
+    releaseDropTarget: dropTarget.releaseDropTarget,
     isDropTarget: dropTarget.isDropTarget,
     isCopyDrop: dropTarget.isCopyDrop,
     handleContextMenu,

@@ -1,7 +1,15 @@
 import { flushSync, getAbortSignal, onDestroy, tick, untrack } from "svelte";
-import { listColumnRange, listExtent, listRows, listWheelStep, LIST_COLUMN_STRIDE, LIST_COLUMN_WIDTH, LIST_PADDING_X, LIST_PADDING_Y, LIST_SLOT_HEIGHT, type ListCardSpec } from "$lib/domain/list-column-flow";
+import { listColumnRange, listExtent, listRows, listWheelStep, LIST_COLUMN_STRIDE, LIST_COLUMN_WIDTH, LIST_PADDING_X, LIST_PADDING_Y, LIST_SLOT_HEIGHT, type ListCardSpec, type ListPlacement, type ListTopItem } from "$lib/domain/list-column-flow";
 import { buildListModel, cardRevealTop, cardWheelConsumes, cardWindow } from "$lib/domain/list-cards";
-import type { PeekRows } from "$lib/domain/folder-peek";
+import type { PeekRow, PeekRows } from "$lib/domain/folder-peek";
+
+/** One mounted top-level slot: its placement, item and (unless it is the
+ * creation row) its header row. */
+export interface ListVisibleItem {
+  readonly placement: ListPlacement;
+  readonly item: ListTopItem;
+  readonly header: Extract<PeekRow, { kind: "entry" }> | null;
+}
 import { dropHover } from "$lib/state/drop-hover";
 import { createRafCoalescer } from "$lib/domain/raf-coalesce";
 
@@ -49,7 +57,24 @@ export function useListColumns(deps: ListColumnsDeps) {
     for (const index of pinnedEntries) columns.add(layout.byIndex[model.entryItem[index]].column);
     return [...columns].sort((a, b) => a - b);
   });
-  const visibleItems = $derived(mountedColumns.flatMap(column => layout.columns[column]).map(placement => ({ placement, item: model.items[placement.index] })));
+  // One object per placement for the layout's lifetime: when sideways scrolling
+  // changes the mounted range, slots that stay mounted keep their identity, so
+  // the keyed each updates nothing but the columns that enter or leave. A new
+  // layout has new placements, so nothing stale can be returned.
+  const visibleObjects = new WeakMap<ListPlacement, ListVisibleItem>();
+  const visibleItems = $derived.by(() => {
+    const peekRows = deps.getRows();
+    return mountedColumns.flatMap(column => layout.columns[column]).map(placement => {
+      let visible = visibleObjects.get(placement);
+      if (!visible) {
+        const item = model.items[placement.index];
+        const header = item.entryIndex === null ? null : peekRows.rows[peekRows.entryToRow[item.entryIndex]] as ListVisibleItem["header"];
+        visible = { placement, item, header };
+        visibleObjects.set(placement, visible);
+      }
+      return visible;
+    });
+  });
 
   // Per-card scroll offsets (CSS px). A fine-grained proxy, so one card's scroll
   // re-renders only that card. Kept while its card stays open, even unmounted.

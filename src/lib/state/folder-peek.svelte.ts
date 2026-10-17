@@ -14,6 +14,7 @@ export function createFolderPeekState(windows: boolean) {
   let disposed = false;
   const resources = new Map<string, { target: RefreshTarget; retire(): Promise<void> }>();
   const retiring = new Set<Promise<void>>();
+  const retired = new Set<{ retire(): Promise<void> }>();
 
   function publish(path: string, listing: PeekListing) {
     snapshots = new Map(snapshots).set(path, listing);
@@ -23,7 +24,10 @@ export function createFolderPeekState(windows: boolean) {
     if (!resource) return;
     resources.delete(path);
     const next = new Map(snapshots); next.delete(path); snapshots = next;
-    const task = resource.retire().finally(() => retiring.delete(task));
+    retired.add(resource);
+    const task = resource.retire().then(() => { retired.delete(resource); }, error => {
+      console.error("Peek listing cleanup failed:", error);
+    }).finally(() => retiring.delete(task));
     retiring.add(task);
   }
   function reconcile(paths: readonly string[]) {
@@ -72,6 +76,9 @@ export function createFolderPeekState(windows: boolean) {
     async dispose() {
       disposed = true; reconcile([]);
       await Promise.all([...retiring]);
+      const results = await Promise.allSettled([...retired].map(async resource => { await resource.retire(); retired.delete(resource); }));
+      const failure = results.find(result => result.status === "rejected");
+      if (failure?.status === "rejected") throw failure.reason;
     },
   };
 }

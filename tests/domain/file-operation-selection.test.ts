@@ -18,3 +18,9 @@ it("uses native platform boundaries", () => {
   expect(operationRoots(selection, true)).toEqual({ ok: true, entries: [selection[0], selection[2]] });
   expect(operationRoots([dir("/r/a"), dir("/r/a\\b")], false).ok).toBe(true);
 });
+
+it("rejects a selected ancestor covering an unselected symlink boundary", () => {
+  const parent = dir("/r/a"), link = dir("/r/a/link", true), child = dir("/r/a/link/child");
+  expect(operationRoots([parent, child], false, [parent, link, child]).ok).toBe(false);
+  expect(operationRoots([child], false, [parent, link, child])).toEqual({ ok: true, entries: [child] });
+});

@@ -80,12 +80,14 @@ export function usePointerDrag(deps: PointerDragDeps) {
 
     const explorer = deps.getExplorer();
     const selectedEntries = explorer.getSelectedEntries();
-    const reduced = operationDrag(isSelected ? selectedEntries : [entry], entry, isWindows);
+    const reduced = operationDrag(isSelected ? selectedEntries : [entry], entry, isWindows, explorer.displayEntries);
     if (!reduced.ok) { toastStore.error(reduced.error); return; }
+    const originalPath = entry.path;
     entry = reduced.primary;
     dragPaths = reduced.entries.map(e => e.path);
     const isMulti = dragPaths.length > 1;
-    sourceEl = (event.currentTarget as HTMLElement) || null;
+    const source = (event.currentTarget as HTMLElement) || null;
+    sourceEl = originalPath === entry.path ? source : reducedDragSource(source, entry.path);
 
     startX = event.clientX;
     startY = event.clientY;
@@ -268,6 +270,12 @@ export function usePointerDrag(deps: PointerDragDeps) {
   }
 
   return { handlePointerDown };
+}
+
+/** The primary can become a selected ancestor after recursive reduction. */
+export function reducedDragSource(source: HTMLElement | null, path: string): HTMLElement | null {
+  const rows = source?.closest(".file-list")?.querySelectorAll<HTMLElement>(".entry-item") ?? [];
+  return [...rows].find(row => row.dataset.path === path) ?? null;
 }
 
 export function createDragGhost(

@@ -34,6 +34,7 @@ export interface PaneMutationContext {
   alive: () => boolean;
   navigateTo: (path: string) => Promise<unknown>;
   refreshSilent: () => void;
+  operationEntries?: () => readonly FileEntry[];
   captureDirectory?: (parent: string) => { publish(transform: (entries: readonly FileEntry[]) => readonly FileEntry[]): void };
   requestReconcile?: (parent: string) => void;
   removed?: (path: string) => void;
@@ -133,7 +134,7 @@ export function createPaneMutations(ctx: PaneMutationContext) {
     if (!origin.current()) return "Pane is closed";
     // Direct actions (including Miller columns) do not own the global dialog.
     const session = entriesArg === undefined ? dialogStore.fileOperationSession : null;
-    const reduced = operationRoots(entriesArg ?? dialogStore.deletingEntries, isWindows);
+    const reduced = operationRoots(entriesArg ?? dialogStore.deletingEntries, isWindows, ctx.operationEntries?.());
     if (!reduced.ok) return reduced.error;
     const entries = reduced.entries;
     const directories = new Map(entries.map(entry => nativeParentDir(entry.path)).map(parent => [parent, captureDirectory(parent)]));

@@ -4,11 +4,13 @@ import type { FileEntry } from "./file";
 import { pathComparison } from "./path";
 
 type OperationRoots = { ok: true; entries: FileEntry[] } | { ok: false; error: string };
-export function operationRoots(entries: readonly FileEntry[], windows: boolean): OperationRoots {
+export function operationRoots(entries: readonly FileEntry[], windows: boolean, visibleEntries: readonly FileEntry[] = entries): OperationRoots {
   const paths = pathComparison(windows);
   const directories = entries.filter(entry => entry.kind === "directory");
   const covers = (parent: FileEntry, child: FileEntry) => parent !== child && !paths.same(parent.path, child.path) && paths.contains(child.path, parent.path);
-  if (directories.some(parent => parent.is_symlink && entries.some(child => covers(parent, child)))) {
+  const links = visibleEntries.filter(entry => entry.kind === "directory" && entry.is_symlink);
+  if (links.some(link => entries.some(child => covers(link, child))
+    && directories.some(parent => paths.same(parent.path, link.path) || covers(parent, link)))) {
     return { ok: false, error: "Select a symbolic link or its children separately before this operation." };
   }
   const seen = new Set<string>();
@@ -19,8 +21,8 @@ export function operationRoots(entries: readonly FileEntry[], windows: boolean):
   }) };
 }
 
-export function operationDrag(entries: readonly FileEntry[], primary: FileEntry, windows: boolean) {
-  const result = operationRoots(entries, windows);
+export function operationDrag(entries: readonly FileEntry[], primary: FileEntry, windows: boolean, visibleEntries: readonly FileEntry[] = entries) {
+  const result = operationRoots(entries, windows, visibleEntries);
   if (!result.ok) return result;
   const paths = pathComparison(windows);
   return { ...result, primary: result.entries.find(entry => paths.same(entry.path, primary.path))

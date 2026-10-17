@@ -50,7 +50,7 @@ export function createPaneWatch(deps: PaneWatchDependencies) {
   const releaseCommand = deps.release ?? unwatchDirectory;
   const schedule = deps.schedule ?? requestRefresh;
   let key = {};
-  type PeekSlot = { path: string; key: object; ready: boolean; watch: ReturnType<typeof createDirectoryWatch> | null };
+  type PeekSlot = { path: string; key: object; ready: boolean; initialized: boolean; watch: ReturnType<typeof createDirectoryWatch> | null };
   const peeks = new Map<string, PeekSlot>();
   const retiredPeeks = new Set<ReturnType<typeof createDirectoryWatch>>();
   let watchTail = Promise.resolve();
@@ -60,8 +60,10 @@ export function createPaneWatch(deps: PaneWatchDependencies) {
 
   function requestPeek(slot: PeekSlot, change: DirectoryChange = { path: slot.path }): void {
     if (!slot.ready) { remember({ ...change, path: slot.path }); return; }
+    const identity = slot.key;
     schedule(options => {
-      if (destroyed || pending || peeks.get(slot.path) !== slot || !slot.ready) return false;
+      if (destroyed || pending || peeks.get(slot.path) !== slot || slot.key !== identity) return false;
+      if (!slot.ready) { remember({ ...change, path: slot.path }); return false; }
       return deps.refreshPath?.(slot.path, options);
     }, slot.path, true, slot.key, change.observedAt, change.origin);
   }
@@ -76,7 +78,7 @@ export function createPaneWatch(deps: PaneWatchDependencies) {
   function reconcilePeeks(paths: readonly string[], order: ReadonlyMap<string, number>): void {
     const wanted = new Set(destroyed || pending ? [] : paths);
     for (const path of peeks.keys()) if (!wanted.has(path)) releasePeek(path);
-    for (const path of wanted) if (!peeks.has(path)) peeks.set(path, { path, key: {}, ready: false, watch: null });
+    for (const path of wanted) if (!peeks.has(path)) peeks.set(path, { path, key: {}, ready: false, initialized: false, watch: null });
     desiredWatches = new Set(choosePeekWatches([...wanted], order));
     watchTail = watchTail.then(async () => {
       for (const slot of peeks.values()) {
@@ -91,23 +93,29 @@ export function createPaneWatch(deps: PaneWatchDependencies) {
       }
       for (const slot of peeks.values()) {
         if (destroyed || pending) break;
+        let needsScan = !slot.initialized;
         if (drained && desiredWatches.has(slot.path) && !slot.watch?.held) {
           slot.ready = false;
-          cancelRefreshSubscriber(slot.path, slot.key);
           const owner = slot.watch ?? (deps.createWatch ?? createDirectoryWatch)();
           slot.watch = owner;
           try { await prepare(slot.path, subscription); await owner.update(slot.path); }
           catch (error) { console.error("Peek observation failed:", error); }
           if (peeks.get(slot.path) !== slot) { retiredPeeks.add(owner); continue; }
+          if (owner.held) {
+            cancelRefreshSubscriber(slot.path, slot.key);
+            slot.key = {};
+            needsScan = true;
+          }
         }
-        if (!slot.ready) {
-          slot.ready = true;
+        slot.ready = true;
+        slot.initialized = true;
+        {
           const resolved = slot.watch?.held?.lease.path;
           const aliasChange = resolved ? unmatchedPeeks.get(resolved) : undefined;
           const change = aliasChange ? mergeChange(dirty.get(slot.path), { ...aliasChange, path: slot.path }) : dirty.get(slot.path);
           dirty.delete(slot.path);
           if (resolved) unmatchedPeeks.delete(resolved);
-          requestPeek(slot, change);
+          if (needsScan || change) requestPeek(slot, change);
         }
       }
       if (isTauri()) {
@@ -120,12 +128,17 @@ export function createPaneWatch(deps: PaneWatchDependencies) {
           if (root) roots.add(root);
         }
         for (const [root, owner] of gitWatches) {
-          if (!roots.has(root)) { await owner.destroy(); gitWatches.delete(root); }
+          if (!roots.has(root)) {
+            try { await owner.destroy(); gitWatches.delete(root); }
+            catch (error) { console.error("Peek Git release failed:", error); }
+          }
         }
         if (roots.size && await ensureGitWatcherListener()) {
           for (const root of roots) {
-            if (destroyed || pending || gitWatches.has(root)) continue;
-            const owner = createGitRepoWatch(); gitWatches.set(root, owner);
+            if (destroyed || pending) continue;
+            const owner = gitWatches.get(root) ?? createGitRepoWatch();
+            if (owner.held) continue;
+            gitWatches.set(root, owner);
             try { await owner.update(root); } catch (error) { console.error("Peek Git observation failed:", error); }
           }
         }
@@ -326,13 +339,17 @@ export function createPaneWatch(deps: PaneWatchDependencies) {
         // An in-flight observed reply still owns a possible lease. Its caller
         // always closes the ticket, including rejected/stale results.
         await watchTail;
-        for (const [root, owner] of gitWatches) { await owner.destroy(); gitWatches.delete(root); }
-        for (const owner of retiredPeeks) { await owner.destroy(); retiredPeeks.delete(owner); }
+        const cleanup = await Promise.allSettled([
+          ...[...gitWatches].map(async ([root, owner]) => { await owner.destroy(); gitWatches.delete(root); }),
+          ...[...retiredPeeks].map(async owner => { await owner.destroy(); retiredPeeks.delete(owner); }),
+        ]);
         await Promise.all([...navigations].map((navigation) => navigation.done));
         while (releases.size) await Promise.all([...releases]);
         for (const lease of retired.values()) attemptRelease(lease);
         while (releases.size) await Promise.all([...releases]);
-        if (retired.size) throw new Error("Directory observation release did not complete");
+        if (retired.size || cleanup.some(result => result.status === "rejected")) {
+          throw new Error("Directory or Git observation release did not complete");
+        }
       })();
       disposal = attempt;
       void attempt.catch(() => { if (disposal === attempt) disposal = undefined; });

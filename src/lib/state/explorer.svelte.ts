@@ -594,6 +594,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     navigateTo,
     refreshSilent: () => { void refresh({ silent: true }); },
     captureDirectory,
+    operationEntries: () => displayEntries,
     requestReconcile: watch.requestPath,
     removed: (path) => {
       peek.collapseAll(path);
@@ -714,7 +715,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   // ===================
 
   async function startDelete(entries: FileEntry | FileEntry[]) {
-    const reduced = operationRoots(Array.isArray(entries) ? entries : [entries], isWindows);
+    const reduced = operationRoots(Array.isArray(entries) ? entries : [entries], isWindows, displayEntries);
     if (!reduced.ok) { toastStore.error(reduced.error); return; }
     const arr = reduced.entries;
     if (arr.length === 0) return;
@@ -735,7 +736,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
 
   /** Start permanent delete — always shows confirmation dialog. */
   function startPermanentDelete(entries: FileEntry | FileEntry[]) {
-    const reduced = operationRoots(Array.isArray(entries) ? entries : [entries], isWindows);
+    const reduced = operationRoots(Array.isArray(entries) ? entries : [entries], isWindows, displayEntries);
     if (!reduced.ok) { toastStore.error(reduced.error); return; }
     const arr = reduced.entries;
     if (arr.length === 0) return;
@@ -802,7 +803,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   // ===================
 
   async function copyToClipboard(entries: FileEntry[]) {
-    const result = operationRoots(entries, isWindows);
+    const result = operationRoots(entries, isWindows, displayEntries);
     if (!result.ok) { toastStore.error(result.error); return; }
     entries = result.entries;
     if (!await clipboardStore.copy(entries)) return;
@@ -811,7 +812,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   }
 
   async function cutToClipboard(entries: FileEntry[]) {
-    const result = operationRoots(entries, isWindows);
+    const result = operationRoots(entries, isWindows, displayEntries);
     if (!result.ok) { toastStore.error(result.error); return; }
     entries = result.entries;
     if (!await clipboardStore.cut(entries)) return;

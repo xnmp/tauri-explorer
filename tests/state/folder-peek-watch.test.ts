@@ -60,3 +60,42 @@ it("releases a lease returned after collapse, without reviving its refresh subsc
   watch.reconcilePeeks([], new Map()); acquire({ id: "late", path: "/r/a" });
   await watch.destroy(); expect(release).toHaveBeenCalledWith({ id: "late", path: "/r/a" }); expect(refreshPath).not.toHaveBeenCalled();
 });
+it("a permanent watch failure falls back without scheduling its own refresh loop", async () => {
+  const acquire = vi.fn(async (): Promise<DirectoryWatchLease> => { throw new Error("watch unavailable"); });
+  const scheduled = vi.fn();
+  const watch = createPaneWatch({ refresh: async () => {}, refreshPath: async () => {},
+    subscribe: () => ({ ready: async () => {}, stop: () => {} }), prepare: async () => {},
+    createWatch: () => createPathWatch({ watch: acquire, unwatch: async () => {} }), schedule: scheduled,
+  });
+  try {
+    const reconcile = () => watch.reconcilePeeks(["/r/a"], new Map([["/r/a", 1]]));
+    reconcile(); await vi.waitFor(() => expect(scheduled).toHaveBeenCalledTimes(1));
+    await scheduled.mock.calls[0][0]({ silent: true });
+    reconcile(); await vi.waitFor(() => expect(acquire).toHaveBeenCalledTimes(2));
+    await Promise.resolve(); expect(scheduled).toHaveBeenCalledTimes(1);
+    watch.refreshPeeks(false); expect(scheduled).toHaveBeenCalledTimes(2);
+  } finally { await watch.destroy(); }
+});
+it("promotion retains a post-acquisition scan despite an older event and in-flight fallback", async () => {
+  const { cancelPendingRefreshes } = await import("$lib/state/refresh-manager");
+  vi.useFakeTimers(); vi.setSystemTime(0); cancelPendingRefreshes();
+  let releaseScan!: () => void;
+  let releaseWatch!: (lease: DirectoryWatchLease) => void;
+  const refreshPath = vi.fn(async (path: string) => { if (path === "/r/0" && !releaseScan) await new Promise<void>(resolve => { releaseScan = resolve; }); });
+  const watch = createPaneWatch({ refresh: async () => {}, refreshPath,
+    subscribe: () => ({ ready: async () => {}, stop: () => {} }), prepare: async () => {},
+    createWatch: () => createPathWatch({ watch: path => path === "/r/0" ? new Promise(resolve => { releaseWatch = resolve; }) : Promise.resolve({ id: path, path }), unwatch: async () => {} }),
+  });
+  const drain = async () => { for (let i = 0; i < 150; i++) await Promise.resolve(); };
+  try {
+    const paths = Array.from({ length: 17 }, (_, i) => `/r/${i}`);
+    const order = new Map(paths.map((path, i) => [path, i]));
+    watch.reconcilePeeks(paths, order); await drain(); await vi.advanceTimersByTimeAsync(150);
+    expect(refreshPath.mock.calls.filter(([path]) => path === "/r/0")).toHaveLength(1);
+    watch.reconcilePeeks(paths.slice(0, 16), order); await drain();
+    watch.changed({ path: "/r/0", observedAt: 50, origin: "watcher" });
+    releaseWatch({ id: "promoted", path: "/r/0" }); await drain();
+    releaseScan(); await drain(); await vi.advanceTimersByTimeAsync(2200);
+    expect(refreshPath.mock.calls.filter(([path]) => path === "/r/0")).toHaveLength(2);
+  } finally { releaseScan?.(); await watch.destroy(); cancelPendingRefreshes(); vi.useRealTimers(); }
+});

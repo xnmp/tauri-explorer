@@ -48,7 +48,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `MillerColumns.svelte` — column/Miller-columns browsing mode; owner identity and pane-content modality follow both inline and hoisted rendering.
 - `PeekGuides.svelte` — virtual-row segments of continuous unboxed folder-peek guide lines.
 - `FileItem.svelte` — single entry row/tile (icon, name, badges, selection state).
-- `EntryCell.svelte` — shared List/Tiles gridcell with roving focus, selection semantics and drag-drop interactions.
+- `EntryCell.svelte` — shared List option / Tiles gridcell with roving focus, selection semantics and drag-drop interactions.
 - `EntryName.svelte` — shared inline rename input/display across all views.
 - `EntryNameLabel.svelte` — explorer-free displayed name per view variant (and the tile rename placeholder); EntryName and FileTiles render names through it.
 - `FileIcon.svelte` — file/folder icon resolution (Material/nerd-font theme); also renders the linked-folder and git-repo-folder badge overlays (all themes, all 3 view modes since it's the shared icon renderer).

@@ -59,6 +59,7 @@
   <div class="virtual-viewport list-scroller file-rows" class:short={columns.short}
     role="listbox" aria-label="Files" aria-multiselectable="true" tabindex={fallbackTabStop ? 0 : -1}
     use:columns.attach>
+    <div class="list-measure" aria-hidden="true"></div>
     <div class="list-canvas" style:width="{columns.extent - LIST_PADDING_X * 2}px" style:height="{columns.rows * LIST_SLOT_HEIGHT}px">
       {#each columns.visibleItems as { entry, placement } (entry.path)}
         <div class="list-slot" data-column={placement.column} style:left="{placement.column * LIST_COLUMN_STRIDE}px" style:top="{placement.row * LIST_SLOT_HEIGHT}px">
@@ -96,6 +97,7 @@
   }
 
   .list-scroller.short { overflow-y: auto; }
+  .list-measure { width: 100%; height: 0; pointer-events: none; }
   .list-canvas { position: relative; }
   .list-slot { position: absolute; width: 260px; height: 30px; }
 
@@ -119,8 +121,9 @@
   }
 
   /* View chrome must stay below FileList’s keyboard ring even when this
-     renderer’s styles arrive after the shared surface. */
-  .list-view :global(.list-item:where(:focus)) {
+     renderer’s styles arrive after the shared surface; pointer-focus resets
+     never match :focus-visible. */
+  .list-view :global(.list-item:where(:focus:not(:focus-visible))) {
     outline: none;
   }
 

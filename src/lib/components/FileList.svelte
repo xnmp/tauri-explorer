@@ -607,7 +607,10 @@
     position: relative;
   }
 
-  .file-list :global(.entry-item:focus-visible) {
+  /* Explicit selected intersections outrank renderer selection chrome even
+     when an optional view's stylesheet arrives after this one. */
+  .file-list :global(.entry-item:focus-visible),
+  .file-list :global(.entry-item.selected:focus-visible) {
     outline: 2px solid var(--focus-stroke-outer);
     outline-offset: -2px;
     /* Selected rows have a 3px accent edge. The inset outline covers only
@@ -615,7 +618,8 @@
     border-left-color: var(--focus-stroke-outer);
   }
 
-  .file-list :global(.tile-item:focus-visible) {
+  .file-list :global(.tile-item:focus-visible),
+  .file-list :global(.tile-item.selected:focus-visible) {
     /* Tiles put the selected indicator on their 3px bottom edge. */
     border-bottom-color: var(--focus-stroke-outer);
   }

@@ -66,10 +66,17 @@ export function useListColumns(deps: ListColumnsDeps) {
     const observer = new ResizeObserver(([entry]) => {
       if (entry.contentRect.width <= 0 || entry.contentRect.height <= 0) return; // retained tab
       scrollWork.cancel();
-      flushSync(() => { width = entry.contentRect.width; height = entry.contentRect.height; });
+      flushSync(() => { height = entry.contentRect.height; });
+      // The short-pane policy can introduce a vertical scrollbar. Read its
+      // actual content width after that CSS change, in this same delivery.
+      // A zero-height, normal-flow probe preserves fractional CSS pixels.
+      const probe = element.querySelector<HTMLElement>(".list-measure")!;
+      flushSync(() => { width = parseFloat(getComputedStyle(probe).width); });
       clamp();
     });
-    observer.observe(element);
+    // Changing overflow changes the content box, but never the CSS-sized
+    // border box. Observing that box avoids a same-depth RO feedback loop.
+    observer.observe(element, { box: "border-box" });
     const scroll = () => scrollWork.push(element.scrollLeft);
     const wheel = (event: WheelEvent) => {
       const delta = listWheelDelta(event, width);

@@ -84,9 +84,10 @@
     justify-content: center;
   }
 
-  /* Lazy view chrome stays below the shared keyboard focus indicator. */
-  .tile-surface:global(.tile-item:where(:focus)),
-  .tile-surface :global(.tile-item:where(:focus)) {
+  /* Lazy view chrome stays below the shared keyboard focus indicator, and
+     pointer-focus resets never match :focus-visible. */
+  .tile-surface:global(.tile-item:where(:focus:not(:focus-visible))),
+  .tile-surface :global(.tile-item:where(:focus:not(:focus-visible))) {
     outline: none;
   }
 

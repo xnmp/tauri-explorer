@@ -1,5 +1,5 @@
 import { flushSync, getAbortSignal, onDestroy, tick, untrack } from "svelte";
-import { columnFlow, listColumnRange, listExtent, listRows, listWheelDelta, LIST_COLUMN_STRIDE, LIST_COLUMN_WIDTH, LIST_PADDING_X, LIST_PADDING_Y, LIST_SLOT_HEIGHT } from "$lib/domain/list-column-flow";
+import { columnFlow, listColumnRange, listExtent, listRows, listWheelStep, LIST_COLUMN_STRIDE, LIST_COLUMN_WIDTH, LIST_PADDING_X, LIST_PADDING_Y, LIST_SLOT_HEIGHT } from "$lib/domain/list-column-flow";
 import { dropHover } from "$lib/state/drop-hover";
 import type { FileEntry } from "$lib/domain/file";
 import { createRafCoalescer } from "$lib/domain/raf-coalesce";
@@ -23,8 +23,13 @@ export function useListColumns(deps: ListColumnsDeps) {
   const pathIndices = $derived(new Map(items.map((entry, index) => [entry.path, index])));
   const extent = $derived(listExtent(layout.columns.length));
   const range = $derived(listColumnRange(layout.columns.length, left, width));
+  // Primitives: `$derived` compares by identity, so scrolling inside the mounted
+  // window leaves these (and everything below) unchanged instead of rebuilding
+  // every wrapper per scroll frame.
+  const rangeStart = $derived(range.start);
+  const rangeEnd = $derived(range.end);
   const mountedColumns = $derived.by(() => {
-    const columns = new Set(Array.from({ length: range.end - range.start }, (_, i) => range.start + i));
+    const columns = new Set(Array.from({ length: rangeEnd - rangeStart }, (_, i) => rangeStart + i));
     for (const path of deps.getPinnedPaths()) {
       const index = pathIndices.get(path);
       if (index !== undefined) columns.add(layout.byIndex[index].column);
@@ -78,13 +83,17 @@ export function useListColumns(deps: ListColumnsDeps) {
     // border box. Observing that box avoids a same-depth RO feedback loop.
     observer.observe(element, { box: "border-box" });
     const scroll = () => scrollWork.push(element.scrollLeft);
+    let wheelCarry = 0; // sub-pixel remainder; see listWheelStep
     const wheel = (event: WheelEvent) => {
-      const delta = listWheelDelta(event, width);
-      if (delta === null || deps.consumeInnerWheel?.(event)) return;
+      if (deps.consumeInnerWheel?.(event)) return;
       // The undersized-pane fallback must still make its fourth row reachable.
       if (height < LIST_SLOT_HEIGHT * 4 && Math.abs(event.deltaY) > Math.abs(event.deltaX)) return;
+      const max = Math.max(0, element.scrollWidth - element.clientWidth);
+      const step = listWheelStep(event, width, wheelCarry, { scrollLeft: element.scrollLeft, max });
+      wheelCarry = step.carry;
+      if (!step.consume) return;
       event.preventDefault();
-      element.scrollLeft += delta;
+      element.scrollLeft += step.apply;
     };
     element.addEventListener("scroll", scroll);
     element.addEventListener("wheel", wheel, { passive: false });

@@ -68,10 +68,29 @@ export function listColumnRange(count: number, left: number, width: number): Rea
   };
 }
 
-export function listWheelDelta(event: { deltaX: number; deltaY: number; deltaMode: number; ctrlKey: boolean }, width: number): number | null {
-  if (event.ctrlKey) return null;
-  const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
-  return delta * (event.deltaMode === 1 ? LIST_SLOT_HEIGHT : event.deltaMode === 2 ? width : 1);
+export interface WheelStep { readonly consume: boolean; readonly apply: number; readonly carry: number }
+const PASS: WheelStep = { consume: false, apply: 0, carry: 0 };
+
+/**
+ * Maps vertical wheel input to horizontal scrolling in whole pixels. Browsers
+ * round scrollLeft writes per direction, so sub-pixel deltas are accumulated in
+ * `carry` and applied symmetrically. Horizontal-dominant gestures, Ctrl-wheel
+ * and input that cannot move the viewport are left to the browser (native
+ * momentum, zoom, scroll chaining).
+ */
+export function listWheelStep(
+  event: { deltaX: number; deltaY: number; deltaMode: number; ctrlKey: boolean },
+  width: number,
+  carry: number,
+  position: { scrollLeft: number; max: number },
+): WheelStep {
+  if (event.ctrlKey || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return PASS;
+  const delta = event.deltaY * (event.deltaMode === 1 ? LIST_SLOT_HEIGHT : event.deltaMode === 2 ? width : 1);
+  if (!Number.isFinite(delta) || delta === 0) return PASS;
+  if ((delta < 0 && position.scrollLeft <= 0) || (delta > 0 && position.scrollLeft >= position.max)) return PASS;
+  const total = (carry * delta < 0 ? 0 : carry) + delta;
+  const apply = Math.trunc(total) || 0; // normalises -0
+  return { consume: true, apply, carry: total - apply };
 }
 
 /** The same placement snapshot is used by rendering, reveal, and keyboard navigation. */

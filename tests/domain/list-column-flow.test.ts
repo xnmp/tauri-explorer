@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { columnFlow, listRows, listPageColumns, resolveListMove, listColumnRange, listWheelDelta, type SlotSpec } from "$lib/domain/list-column-flow";
+import { columnFlow, listRows, listPageColumns, resolveListMove, listColumnRange, listWheelStep, type SlotSpec } from "$lib/domain/list-column-flow";
 
 const plain = () => ({ slots: 1, card: false });
 const items = (n: number) => Array.from({ length: n }, (_, i) => i);
@@ -124,11 +124,49 @@ describe("List navigation and viewport contracts", () => {
     expect(listColumnRange(0, 0, 550)).toEqual({ start: 0, end: 0 });
     expect(listColumnRange(3, 100000, 550)).toEqual({ start: 0, end: 3 });
   });
-  it("maps the dominant wheel axis, normalizes units, and leaves Ctrl-wheel alone", () => {
-    expect(listWheelDelta({ deltaX: 10, deltaY: 50, deltaMode: 0, ctrlKey: false }, 500)).toBe(50);
-    expect(listWheelDelta({ deltaX: -60, deltaY: 50, deltaMode: 0, ctrlKey: false }, 500)).toBe(-60);
-    expect(listWheelDelta({ deltaX: 0, deltaY: 2, deltaMode: 1, ctrlKey: false }, 500)).toBe(60);
-    expect(listWheelDelta({ deltaX: 0, deltaY: -1, deltaMode: 2, ctrlKey: false }, 500)).toBe(-500);
-    expect(listWheelDelta({ deltaX: 0, deltaY: 50, deltaMode: 0, ctrlKey: true }, 500)).toBeNull();
+  describe("listWheelStep", () => {
+    const ev = (deltaX: number, deltaY: number, extra = {}) => ({ deltaX, deltaY, deltaMode: 0, ctrlKey: false, ...extra });
+    const range = { scrollLeft: 500, max: 1000 };
+    /** Feeds a sequence of wheel events and returns the total whole pixels applied. */
+    const drive = (events: ReturnType<typeof ev>[], start = 500) => {
+      let carry = 0, left = start, prevented = 0;
+      for (const e of events) {
+        const step = listWheelStep(e, 500, carry, { scrollLeft: left, max: 1000 });
+        carry = step.carry;
+        if (step.consume) { prevented++; left += step.apply; }
+      }
+      return { left, prevented, carry };
+    };
+    it("maps vertical-dominant input to whole pixels and normalizes line/page units", () => {
+      expect(listWheelStep(ev(10, 50), 500, 0, range)).toEqual({ consume: true, apply: 50, carry: 0 });
+      expect(listWheelStep(ev(0, 2, { deltaMode: 1 }), 500, 0, range)).toEqual({ consume: true, apply: 60, carry: 0 });
+      expect(listWheelStep(ev(0, -1, { deltaMode: 2 }), 500, 0, range)).toEqual({ consume: true, apply: -500, carry: 0 });
+    });
+    it("is symmetric for fractional deltas and never stalls in either direction", () => {
+      for (const d of [0.4, 0.7, 1.5, 0.1]) {
+        const down = drive(Array.from({ length: 20 }, () => ev(0, d)));
+        const up = drive(Array.from({ length: 20 }, () => ev(0, -d)));
+        expect(down.left - 500).toBe(-(up.left - 500));
+        expect(Math.abs(down.left - 500 - 20 * d)).toBeLessThanOrEqual(1);
+        expect(Math.abs(down.carry)).toBeLessThan(1);
+      }
+    });
+    it("passes horizontal-dominant input through to native scrolling", () => {
+      expect(listWheelStep(ev(80, 20), 500, 0.3, range)).toEqual({ consume: false, apply: 0, carry: 0 });
+      expect(listWheelStep(ev(-40, 40), 500, 0, range).consume).toBe(false);
+      expect(listWheelStep(ev(0, 0), 500, 0, range).consume).toBe(false);
+    });
+    it("leaves Ctrl-wheel alone", () => {
+      expect(listWheelStep(ev(0, 50, { ctrlKey: true }), 500, 0.5, range).consume).toBe(false);
+    });
+    it("chains to an outer scroller at either end", () => {
+      expect(listWheelStep(ev(0, -30), 500, 0, { scrollLeft: 0, max: 1000 }).consume).toBe(false);
+      expect(listWheelStep(ev(0, 30), 500, 0, { scrollLeft: 1000, max: 1000 }).consume).toBe(false);
+      expect(listWheelStep(ev(0, 30), 500, 0, { scrollLeft: 0, max: 1000 }).consume).toBe(true);
+      expect(listWheelStep(ev(0, 30), 500, 0, { scrollLeft: 0, max: 0 }).consume).toBe(false);
+    });
+    it("drops a stale remainder when direction reverses", () => {
+      expect(listWheelStep(ev(0, -0.4), 500, 0.9, range)).toEqual({ consume: true, apply: 0, carry: -0.4 });
+    });
   });
 });

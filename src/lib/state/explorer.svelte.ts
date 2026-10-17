@@ -266,23 +266,28 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     pruneHiddenChildren(before, displayEntries);
     reconcilePeekResources();
   }
+  /** A pending navigation keeps the tree it may leave, with its snapshots
+   * and selected children, until it commits; only observation pauses (and
+   * pane-watch blocks peek publication) meanwhile. */
+  function applyPeekResources(reachable: readonly string[], expanded: ReadonlyMap<string, number>, loading: boolean, git: boolean) {
+    if (!loading) peek.reconcile(reachable, git);
+    watch.reconcilePeeks(loading ? [] : reachable, expanded);
+  }
   function reconcilePeekResources() {
-    const reachable = coreState.loading ? [] : peekTree.expanded;
-    peek.reconcile(reachable, settingsStore.showGitStatus);
-    return watch.reconcilePeeks(reachable, peek.expanded);
+    applyPeekResources(peekTree.expanded, peek.expanded, coreState.loading, settingsStore.showGitStatus);
   }
   const disposePeekEffects = $effect.root(() => {
     let previous: { root: string; tree: typeof peekTree } | undefined;
     $effect(() => {
       const tree = peekTree;
       const root = coreState.currentPath;
-      const reachable = coreState.loading ? [] : peekTree.expanded;
+      const loading = coreState.loading;
       const expanded = peek.expanded;
       const git = settingsStore.showGitStatus;
       untrack(() => {
         if (previous?.root === root) pruneHiddenChildren(previous.tree, tree.entries);
         previous = { root, tree };
-        peek.reconcile(reachable, git); watch.reconcilePeeks(reachable, expanded);
+        applyPeekResources(tree.expanded, expanded, loading, git);
       });
     });
   });
@@ -368,7 +373,9 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     creationSession = null;
     const gen = ++navGeneration;
     const navigationFocus = focusIntent ?? beginNavigationFocus();
-    peek.reconcile([]);
+    // Cancel stale peek work at intent: releasing the peek slots drops their
+    // scheduled refreshes, and pane-watch rejects peek publication until the
+    // navigation settles. Snapshots and selection are retired at commit.
     watch.invalidatePeeks();
     // A caller's trace is used only while it is still the pane's newest;
     // anything else starts this navigation's own trace.
@@ -447,6 +454,8 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     } finally {
       retireNavigationFocus(navigationFocus);
       observation.close();
+      // Committed or failed, the newest navigation re-admits the tree it shows.
+      if (gen === navGeneration && !destroyed) reconcilePeekResources();
       // Idempotent: settles a trace an unexpected throw left open.
       load.finish("error");
     }

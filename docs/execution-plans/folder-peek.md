@@ -630,6 +630,10 @@ Screenshots:
   - Arrow keys inside a panel walk its grid. At an edge, Up/Down go to the nearest item in
     that direction. Left/Right go to the nearest item on the same visual line, otherwise
     they wrap in reading order within the cursor's level, as the classic grid does.
+  - A panel's subfolder is a leaf, like a file: "Peek into Folder" on it toggles the
+    panel holding it, and toggling it directly is refused, so Tiles never records an
+    expansion it would hide. Making the command unavailable on mini tiles was rejected:
+    on a mini file it already closes the panel, and a subfolder should behave the same.
   - Renaming a mini tile edits in place and is clipped by the panel's scroll area. The
     renaming entry stays mounted while scrolled out. Lifting the editor out of the panel
     was not needed for v1.

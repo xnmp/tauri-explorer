@@ -111,9 +111,21 @@ it("Tiles peeks top-level folders only, always with carets (#1241)", async () =>
   expect(pane.expandedPaths.size).toBe(0);
   await pane.togglePeek(a.path); await settle();
   expect(pane.displayEntries.map(e => e.name)).toEqual(["a", "nested", "big.txt", "b"]);
-  // A panel's subfolder is a navigation target, not a nested peek.
+  // A panel's subfolder is a navigation target, not a nested peek: toggling it
+  // records no hidden expansion and no toggle.
+  const toggled = pane.peekChange;
   await pane.togglePeek(nested.path); await settle();
   expect(pane.displayEntries.map(e => e.name)).toEqual(["a", "nested", "big.txt", "b"]);
+  expect([...pane.expandedPaths]).toEqual([a.path]);
+  expect(pane.peekChange).toBe(toggled);
+  // "Peek into Folder" on a panel's subfolder or file acts on the panel's folder,
+  // as it does for a file in a Details or List peek.
+  pane.selectPaths([nested.path], nested.path);
+  expect(pane.peekCommandTarget).toBe(a.path);
+  pane.selectPaths([big.path], big.path);
+  expect(pane.peekCommandTarget).toBe(a.path);
+  pane.selectPaths([a.path], a.path);
+  expect(pane.peekCommandTarget).toBe(a.path);
   pane.setViewMode("list"); await settle();
   expect(pane.peekCaretsShown).toBe(false);
 });

@@ -98,6 +98,12 @@ describe("folder peek preorder and policies", () => {
     const tree = flatten();
     expect(resolvePeekCommandTarget(file, tree.meta)).toBe(nested.path);
     expect(resolvePeekCommandTarget(entry("/r/f", "file"), tree.meta)).toBeNull();
+    // Tiles (top-level) peeks only the directory's own folders: a peeked
+    // subfolder resolves to the peek holding it, like a file; none resolves nothing.
+    expect(resolvePeekCommandTarget(nested, tree.meta, "top-level")).toBe(a.path);
+    expect(resolvePeekCommandTarget(a, tree.meta, "top-level")).toBe(a.path);
+    expect(resolvePeekCommandTarget(nested, tree.meta, "tree")).toBe(nested.path);
+    expect(resolvePeekCommandTarget(a, tree.meta, "none")).toBeNull();
     expect(resolvePeekEscape(file, tree.meta)).toBe(nested.path);
     expect(resolvePeekEscape(a, tree.meta)).toBeNull();
   });

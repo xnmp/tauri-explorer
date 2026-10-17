@@ -407,6 +407,23 @@ test("double-clicking a panel's subfolder navigates into it", async ({ page }) =
   await expect.poll(() => explorerCall<string>(page, "return explorer.currentPath")).toBe(P("Career/Applications"));
 });
 
+test("Peek into Folder on a panel's subfolder acts on its panel and records no hidden expansion", async ({ page }) => {
+  await open(page);
+  await toggle(page, P("Career"));
+  await mini(page, P("Career/Applications")).click();
+  await page.keyboard.press("Control+Shift+p");
+  const palette = page.locator(".command-palette-dialog");
+  await palette.locator(".search-input").fill("Peek into Folder");
+  await palette.locator(".command-item", { hasText: "Peek into Folder" }).first().click();
+  await expect(palette).toBeHidden();
+  // Tiles peeks top-level folders only: the subfolder is a leaf, like a file,
+  // so the command toggles the panel holding it.
+  await expect(panel(page, P("Career"))).toHaveCount(0);
+  await expect(caret(page, P("Career"))).toHaveAttribute("aria-expanded", "false");
+  await settled(page);
+  expect(await explorerCall<string[]>(page, "return [...explorer.expandedPaths]")).toEqual([]);
+});
+
 interface Region { x: number; y: number; width: number; height: number }
 /** Pixels the outline layer paints in each region (viewport px): a screenshot
  * with the layer shown against one with it hidden, so the count is what the

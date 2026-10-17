@@ -58,10 +58,17 @@ export function flatPeekRows(tree: PeekTree, creating: boolean): PeekRows {
   return { rows, groups: [], entryToRow: tree.entries.map((_, index) => index + offset), rowToEntry: rows.map(row => row.kind === "entry" ? row.entryIndex : null) };
 }
 
-export function resolvePeekCommandTarget(entry: FileEntry | null | undefined, meta: ReadonlyMap<string, PeekMeta>): string | null {
-  if (!entry) return null;
-  if (entry.kind === "directory") return entry.path;
+/** Whether a folder at `depth` can open a peek: Tiles (top-level) peeks only the
+ * current directory's own folders; a panel's subfolder is a leaf, like a file. */
+export const canPeekAt = (capability: PeekCapability, depth: number): boolean =>
+  capability === "tree" || (capability === "top-level" && depth === 0);
+
+/** The folder "Peek into Folder" toggles: the cursor's folder when it can peek,
+ * else the peek that holds the cursor entry (closing it). */
+export function resolvePeekCommandTarget(entry: FileEntry | null | undefined, meta: ReadonlyMap<string, PeekMeta>, capability: PeekCapability = "tree"): string | null {
+  if (!entry || capability === "none") return null;
   const placement = meta.get(entry.path);
+  if (entry.kind === "directory" && canPeekAt(capability, placement?.depth ?? 0)) return entry.path;
   return placement && placement.depth > 0 ? placement.parentPath : null;
 }
 export function resolvePeekEscape(entry: FileEntry | null | undefined, meta: ReadonlyMap<string, PeekMeta>): string | null {

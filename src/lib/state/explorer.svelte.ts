@@ -28,7 +28,7 @@ import { toastStore } from "./toast.svelte";
 import { gitStatusStore } from "./git-status.svelte";
 import { archiveRoots, operationRoots } from "$lib/domain/file-operation-selection";
 import { createFolderPeekState } from "./folder-peek.svelte";
-import { flatPeekEntries, flatPeekRows, peekCapability, shouldToggleOnRowClick, resolvePeekCommandTarget, resolvePeekEscape } from "$lib/domain/folder-peek-flat";
+import { canPeekAt, flatPeekEntries, flatPeekRows, peekCapability, shouldToggleOnRowClick, resolvePeekCommandTarget, resolvePeekEscape } from "$lib/domain/folder-peek-flat";
 import type { PeekLevelCache } from "$lib/domain/folder-peek";
 import type { RowClickInput } from "$lib/domain/folder-peek-flat";
 import type { BandSide } from "$lib/domain/tile-panels";
@@ -264,6 +264,9 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     }
     const entry = displayEntries.find(e => e.path === path);
     if (!peeksAllowed() || entry?.kind !== "directory" || isVirtualPath(path) || providerFor(path)) return;
+    // Never change membership this view does not show: a Tiles panel's
+    // subfolder is a leaf, so toggling it would record a hidden expansion.
+    if (!canPeekAt(capability, peekTree.meta.get(path)?.depth ?? 0)) return;
     if (peek.watchFactory) watch.enablePeeks(peek.watchFactory);
     const before = peekTree;
     peek.toggle(path);
@@ -1128,7 +1131,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     },
     get peekCaretsShown() { return caretsShown(); },
     collapseAllPeeks,
-    get peekCommandTarget() { return capability !== "none" ? resolvePeekCommandTarget(focusedEntry, peekTree.meta) : null; },
+    get peekCommandTarget() { return resolvePeekCommandTarget(focusedEntry, peekTree.meta, capability); },
     get canEscapePeek() { return capability !== "none" && resolvePeekEscape(focusedEntry, peekTree.meta) !== null; },
     escapeSelectionOrPeek() {
       // A pending lazy renderer has no mounted editor to own its Escape.

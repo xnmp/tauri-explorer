@@ -2,11 +2,11 @@
   DetailsView - Column-based details view with VirtualList and sortable headers.
   Issue: tauri-explorer-9djf.5
 
-  NOTE: unlike List/Tiles this view virtualizes per-ROW-of-one and wires item
-  interactions inside each FileItem, so it deliberately does NOT use the shared
-  useRowGridView composable (which is for the multi-column grid views).
+  This view virtualizes individual rows and wires interactions inside FileItem.
+  Tiles uses useRowGridView; List owns its horizontal column virtualizer.
 -->
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { useColumnResize } from "$lib/composables/use-column-resize.svelte";
@@ -34,9 +34,15 @@
   let { explorer, onitemclick, onitemdblclick, scrollToIndex = $bindable(), containsIndex = $bindable(), fallbackTabStop, onviewportscroll, onlayoutchange }: Props = $props();
 
   let rowScrollToIndex = $state<((index: number) => void) | undefined>();
-  scrollToIndex = (index) => rowScrollToIndex?.(explorer.detailRows.entryToRow[index] ?? -1);
+  const revealIndex = (index: number) => rowScrollToIndex?.(explorer.detailRows.entryToRow[index] ?? -1);
   let rowContainsIndex = $state<((index: number) => boolean) | undefined>();
-  containsIndex = (index) => rowContainsIndex?.(explorer.detailRows.entryToRow[index] ?? -1) ?? false;
+  const contains = (index: number) => rowContainsIndex?.(explorer.detailRows.entryToRow[index] ?? -1) ?? false;
+  scrollToIndex = revealIndex;
+  containsIndex = contains;
+  onDestroy(() => {
+    if (scrollToIndex === revealIndex) scrollToIndex = undefined;
+    if (containsIndex === contains) containsIndex = undefined;
+  });
 
   const viewId = $props.id();
   const inTrash = $derived(isTrashPath(explorer.currentPath));

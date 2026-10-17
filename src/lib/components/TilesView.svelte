@@ -9,6 +9,7 @@
   Issue: tauri-explorer-9djf.5, #128
 -->
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { useRowGridView } from "$lib/composables/use-row-grid-view.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
@@ -61,8 +62,13 @@
     getColumns: () => tileColumns,
   });
   const { interactions, pointerDrag } = grid;
-  scrollToIndex = grid.scrollToIndex;
-  containsIndex = grid.containsIndex;
+  const revealIndex = grid.scrollToIndex, contains = grid.containsIndex;
+  scrollToIndex = revealIndex;
+  containsIndex = contains;
+  onDestroy(() => {
+    if (scrollToIndex === revealIndex) scrollToIndex = undefined;
+    if (containsIndex === contains) containsIndex = undefined;
+  });
 
   // Videos whose thumbnail generation failed (e.g. no ffmpeg) fall back to the
   // plain icon. Keyed by path; reset on navigation.

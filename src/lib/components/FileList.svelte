@@ -550,32 +550,37 @@
       />
       {/await}
     {:else if explorer.viewMode === "list"}
+      <!-- Optional renderers load on demand to keep the Details startup graph bounded. -->
       {#await import("./ListView.svelte") then { default: ListView }}
-      <ListView
-        {explorer}
-        bind:getNavigation={viewNavigation}
-        onitemclick={handleClick}
-        onitemdblclick={handleDoubleClick}
-        onviewportscroll={handleViewportScroll}
-        onlayoutchange={() => { updateMarqueeSelection(); handleViewLayoutChange(); }}
-        {fallbackTabStop}
-        bind:containsIndex={viewContainsIndex}
-        bind:scrollToIndex={viewScrollToIndex}
-      />
+        <ListView
+          {explorer}
+          bind:getNavigation={viewNavigation}
+          onitemclick={handleClick}
+          onitemdblclick={handleDoubleClick}
+          onviewportscroll={handleViewportScroll}
+          onlayoutchange={() => { updateMarqueeSelection(); handleViewLayoutChange(); }}
+          {fallbackTabStop}
+          bind:containsIndex={viewContainsIndex}
+          bind:scrollToIndex={viewScrollToIndex}
+        />
+      {:catch}
+        <div class="status error-state">Unable to load List view</div>
       {/await}
     {:else}
       {#await import("./TilesView.svelte") then { default: TilesView }}
-      <TilesView
-        {explorer}
-        {contentWidth}
-        onitemclick={handleClick}
-        onitemdblclick={handleDoubleClick}
-        onviewportscroll={handleViewportScroll}
-        onlayoutchange={() => { updateMarqueeSelection(); handleViewLayoutChange(); }}
-        {fallbackTabStop}
-        bind:containsIndex={viewContainsIndex}
-        bind:scrollToIndex={viewScrollToIndex}
-      />
+        <TilesView
+          {explorer}
+          {contentWidth}
+          onitemclick={handleClick}
+          onitemdblclick={handleDoubleClick}
+          onviewportscroll={handleViewportScroll}
+          onlayoutchange={() => { updateMarqueeSelection(); handleViewLayoutChange(); }}
+          {fallbackTabStop}
+          bind:containsIndex={viewContainsIndex}
+          bind:scrollToIndex={viewScrollToIndex}
+        />
+      {:catch}
+        <div class="status error-state">Unable to load Tiles view</div>
       {/await}
     {/if}
 

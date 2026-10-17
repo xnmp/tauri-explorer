@@ -1,8 +1,10 @@
 # Application icon
 
-`icon.png` is the canonical full-resolution artwork: the selected jade folder
-with a connected, transparent Greek tau aperture from issue #1000. The source
-is the approved `02-tau-aperture-v2.png`, before the subsequent colour variations.
+`icon.png` is the canonical full-resolution artwork: the jade folder with an
+enclosed, transparent Greek tau aperture approved in issue #1231. It refines the
+#1000 artwork by filling the diagonal opening to the right of the tau with the
+folder surface. The canonical PNG is the exact user-approved imagegen preview;
+its SHA-256 is `7cc37847b569050f2a065f5309caee557b817a4f1828d8d3105d69399464ac89`.
 `icon.svg` and `material-style.png` are historical artwork, not generator inputs.
 
 From the repository root, after installing the locked Bun dependencies, run:

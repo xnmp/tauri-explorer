@@ -64,12 +64,12 @@ test("duplicate chord override survives restart and round-trips explicit unbindi
   await up.getByRole("button", { name: "Record chord" }).click();
   await page.keyboard.press("Alt+m");
   await page.keyboard.press("b");
-  await expect(up.locator(".conflict-warning")).toContainText("Toggle Files Sidebar");
+  await expect(up.locator(".conflict-warning")).toContainText("Toggle Sidebar");
   await up.locator(".override-btn").click();
   const downloadPromise = page.waitForEvent("download");
   await editor.getByRole("button", { name: "Export", exact: true }).click();
   const exported = fs.readFileSync((await (await downloadPromise).path())!, "utf8");
-  expect(JSON.parse(exported)["view.focusFilesSidebar"]).toBeNull();
+  expect(JSON.parse(exported)["view.toggleSidebar"]).toBeNull();
   await editor.getByRole("button", { name: "Reset All" }).click();
   await editor.locator('input[type="file"]').setInputFiles({ name: "chords.json", mimeType: "application/json", buffer: Buffer.from(exported) });
   await expect(up.locator(".shortcut-btn")).toContainText("then");
@@ -165,13 +165,13 @@ test("exported binding swaps import after Reset All without intermediate conflic
   await page.keyboard.press("Alt+m");
   await page.keyboard.press("b");
   await row(page, "Go Up").locator(".override-btn").click();
-  await editor.locator(".search-input").fill("Toggle Files Sidebar");
-  await row(page, "Toggle Files Sidebar").locator(".shortcut-btn").click();
+  await editor.locator(".search-input").fill("Toggle Sidebar");
+  await row(page, "Toggle Sidebar").locator(".shortcut-btn").click();
   await page.keyboard.press("Control+Alt+ArrowUp");
   const downloading = page.waitForEvent("download");
   await editor.getByRole("button", { name: "Export", exact: true }).click();
   const exported = fs.readFileSync((await (await downloading).path())!, "utf8");
-  expect(JSON.parse(exported)).toMatchObject({ "navigation.goUp": "Alt+M B", "view.focusFilesSidebar": "Ctrl+Alt+Up" });
+  expect(JSON.parse(exported)).toMatchObject({ "navigation.goUp": "Alt+M B", "view.toggleSidebar": "Ctrl+Alt+Up" });
   await editor.getByRole("button", { name: "Reset All" }).click();
   await editor.locator('input[type="file"]').setInputFiles({ name: "swap.json", mimeType: "application/json", buffer: Buffer.from(exported) });
   await expect(editor.locator(".import-status")).toHaveText("Imported 2 shortcuts");
@@ -274,7 +274,7 @@ for (const [shortcut, prefix, suffix] of [["Ctrl+V M", "Control+v", "m"], ["Alt+
   test(`terminal-focused ${shortcut} executes the configured toggle`, async ({ page }) => {
     await page.goto("/?path=/home/user/Documents");
     await waitForEntries(page);
-    await page.keyboard.press("Control+`");
+    await page.keyboard.press("Alt+m"); await page.keyboard.press("t");
     const panel = page.locator(".terminal-panel");
     await expect(panel.locator(".xterm")).toBeVisible();
     const editor = await openEditor(page);

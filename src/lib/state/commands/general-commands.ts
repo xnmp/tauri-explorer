@@ -319,7 +319,7 @@ export const terminalCommands: Command[] = [
     handler: () => {
       // With the integrated terminal enabled, "here" means the embedded panel
       // (it starts in the active explorer's directory) and the shortcut
-      // toggles it like Ctrl+` (#250); otherwise fall back to the external
+      // toggles it like Alt+M T (#250); otherwise fall back to the external
       // terminal app (#237).
       if (settingsStore.enableTerminal) {
         terminalPanelStore.toggle();

@@ -2,7 +2,7 @@
  * E2E tests for the embedded terminal panel (issue #139) — browser/mock mode.
  *
  * A real PTY needs the Tauri binary (covered by e2e-tauri/terminal.spec.ts);
- * here we assert the panel chrome behavior: Ctrl+` toggling, xterm mounting,
+ * here we assert the panel chrome behavior: Alt+M T toggling, xterm mounting,
  * theme-following background, and height persistence.
  */
 
@@ -17,10 +17,10 @@ test.describe("Terminal panel", () => {
     await waitForEntries(page);
   });
 
-  test("Ctrl+` opens the panel with a live xterm instance and toggles it closed @smoke", async ({ page }) => {
+  test("Alt+M T opens the panel with a live xterm instance and toggles it closed @smoke", async ({ page }) => {
     await expect(page.locator(".terminal-panel")).toHaveCount(0);
 
-    await page.keyboard.press("Control+`");
+    await page.keyboard.press("Alt+m"); await page.keyboard.press("t");
     const panel = page.locator(".terminal-panel");
     await expect(panel).toBeVisible({ timeout: 5000 });
     // xterm actually mounted (renders its accessibility textarea + screen).
@@ -28,12 +28,12 @@ test.describe("Terminal panel", () => {
     await expect(panel.locator("textarea.xterm-helper-textarea")).toBeAttached();
 
     // Toggle closed: panel hides but stays mounted (shell session survives).
-    await page.keyboard.press("Control+`");
+    await page.keyboard.press("Alt+m"); await page.keyboard.press("t");
     await expect(panel).toBeHidden();
     await expect(panel).toBeAttached();
 
     // And back open.
-    await page.keyboard.press("Control+`");
+    await page.keyboard.press("Alt+m"); await page.keyboard.press("t");
     await expect(panel).toBeVisible();
   });
 
@@ -56,7 +56,7 @@ test.describe("Terminal panel", () => {
   });
 
   test("Alt+M T toggles the terminal while it is focused (#608)", async ({ page }) => {
-    await page.keyboard.press("Control+`");
+    await page.keyboard.press("Alt+m"); await page.keyboard.press("t");
     const panel = page.locator(".terminal-panel");
     await expect(panel).toBeVisible();
 
@@ -73,7 +73,7 @@ test.describe("Terminal panel", () => {
   test("an unrelated Alt+M chord does not steal focused-terminal input (#608)", async ({ page }) => {
     await expect(page.locator(".sidebar")).toBeVisible();
 
-    await page.keyboard.press("Control+`");
+    await page.keyboard.press("Alt+m"); await page.keyboard.press("t");
     const panel = page.locator(".terminal-panel");
     await expect(panel).toBeVisible();
     await page.locator(".file-list").first().click();
@@ -97,7 +97,7 @@ test.describe("Terminal panel", () => {
     await page.locator(".new-tab-btn").click();
     await expect(page.locator(".tab")).toHaveCount(2);
 
-    await page.keyboard.press("Control+`");
+    await page.keyboard.press("Alt+m"); await page.keyboard.press("t");
     const panel = page.locator(".terminal-panel");
     await expect(panel).toBeVisible();
     await panel.locator("textarea.xterm-helper-textarea").focus();
@@ -137,7 +137,7 @@ test.describe("Terminal panel", () => {
   });
 
   test("non-core Explorer shortcuts stay with the focused terminal (#496)", async ({ page }) => {
-    await page.keyboard.press("Control+`");
+    await page.keyboard.press("Alt+m"); await page.keyboard.press("t");
     const panel = page.locator(".terminal-panel");
     await expect(panel).toBeVisible();
     await panel.locator("textarea.xterm-helper-textarea").focus();
@@ -145,10 +145,10 @@ test.describe("Terminal panel", () => {
     await page.keyboard.press("Control+f");
     await expect(page.locator(".filter-bar")).toBeHidden();
 
-    // Ctrl+` is terminal-surface control rather than an Explorer app command:
+    // Alt+M T is terminal-surface control rather than an Explorer app command:
     // it must always hide a focused terminal so the user can dismiss it.
     await panel.locator("textarea.xterm-helper-textarea").focus();
-    await page.keyboard.press("Control+`");
+    await page.keyboard.press("Alt+m"); await page.keyboard.press("t");
     await expect(panel).toBeHidden();
   });
 
@@ -156,7 +156,7 @@ test.describe("Terminal panel", () => {
     // Select a file so an app-side Ctrl+C would visibly mark it copied.
     await page.getByText("Documents", { exact: true }).first().click();
 
-    await page.keyboard.press("Control+`");
+    await page.keyboard.press("Alt+m"); await page.keyboard.press("t");
     const panel = page.locator(".terminal-panel");
     await expect(panel).toBeVisible();
     await panel.locator("textarea.xterm-helper-textarea").focus();
@@ -168,7 +168,7 @@ test.describe("Terminal panel", () => {
   });
 
   test("panel background follows the app theme", async ({ page }) => {
-    await page.keyboard.press("Control+`");
+    await page.keyboard.press("Alt+m"); await page.keyboard.press("t");
     const panel = page.locator(".terminal-panel");
     await expect(panel).toBeVisible();
 
@@ -190,7 +190,7 @@ test.describe("Terminal panel", () => {
   });
 
   test("xterm colors follow a theme switch committed in the picker (#261)", async ({ page }) => {
-    await page.keyboard.press("Control+`");
+    await page.keyboard.press("Alt+m"); await page.keyboard.press("t");
     await expect(page.locator(".terminal-panel")).toBeVisible();
 
     // xterm's DOM renderer emits its theme as a generated stylesheet — the
@@ -218,7 +218,7 @@ test.describe("Terminal panel", () => {
   });
 
   test("a theme switched while the terminal is hidden applies when it reopens (#261)", async ({ page }) => {
-    await page.keyboard.press("Control+`");
+    await page.keyboard.press("Alt+m"); await page.keyboard.press("t");
     await expect(page.locator(".terminal-panel")).toBeVisible();
     const rowsColor = () =>
       page.evaluate(
@@ -230,7 +230,7 @@ test.describe("Terminal panel", () => {
     const before = await rowsColor();
 
     // Hide the panel, then switch theme while it's display:none.
-    await page.keyboard.press("Control+`");
+    await page.keyboard.press("Alt+m"); await page.keyboard.press("t");
     await expect(page.locator(".terminal-panel")).toBeHidden();
     await page.keyboard.press("Control+Shift+p");
     await page.locator("input:focus").fill("Switch Theme");
@@ -240,7 +240,7 @@ test.describe("Terminal panel", () => {
     await page.keyboard.press("Enter");
 
     // Reopen — the terminal must repaint with the committed theme's colors.
-    await page.keyboard.press("Control+`");
+    await page.keyboard.press("Alt+m"); await page.keyboard.press("t");
     await expect(page.locator(".terminal-panel")).toBeVisible();
     await expect.poll(rowsColor).not.toBe(before);
   });
@@ -272,7 +272,7 @@ test.describe("Terminal panel", () => {
   });
 
   test("close button hides the panel", async ({ page }) => {
-    await page.keyboard.press("Control+`");
+    await page.keyboard.press("Alt+m"); await page.keyboard.press("t");
     const panel = page.locator(".terminal-panel");
     await expect(panel).toBeVisible();
 

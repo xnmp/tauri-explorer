@@ -16,7 +16,7 @@ export interface WindowKeyContext {
   terminalEnabled: boolean;
 }
 
-export type WindowKeyAction = "native-activation" | "pass" | "terminal" | "toggle-terminal" | "close-dialogs"
+export type WindowKeyAction = "native-activation" | "pass" | "terminal" | "close-dialogs"
   | "open-filter" | "close-filter" | "open-jobs" | "open-settings" | "toggle-dual-pane" | "command";
 
 /** Native buttons generate activation after key dispatch, including inside dialogs. */
@@ -34,9 +34,7 @@ export function resolveWindowKey(event: WindowKey, context: WindowKeyContext): W
   // or Space as an Explorer command would prevent that activation entirely.
   // File entries use those keys for Open and Preview through the command owner.
   if (isNativeControlActivation(event, context)) return "native-activation";
-  const terminalToggle = (event.key === "`" || event.code === "Backquote") && primary && !context.modal;
   if (context.terminal) {
-    if (terminalToggle && !context.chord) return context.terminalEnabled ? "toggle-terminal" : "pass";
     if (!context.terminalCommand) return "terminal";
     // An eligible chord may use a prefix that is a hardcoded Explorer key.
     // Preserve its command identity instead of opening a filter/settings/etc.
@@ -46,7 +44,6 @@ export function resolveWindowKey(event: WindowKey, context: WindowKeyContext): W
   // Configured prefixes and pending suffixes must reach the matcher before
   // Explorer's fallback surface keys. Editable/modal/terminal ownership wins.
   if (context.chord && !context.input && !context.modal) return "command";
-  if (terminalToggle) return context.terminalEnabled ? "toggle-terminal" : "pass";
   // Repeated Ctrl+F must consume the WebView find shortcut even inside the
   // filter input; Shift+Ctrl+F remains the separate content-search command.
   if (event.key.toLowerCase() === "f" && primary && !event.shiftKey && !event.altKey && !context.modal) {
@@ -74,7 +71,7 @@ export function chordPrefixFallbackLabel(shortcut: string): string | undefined {
     terminal: false, modal: false, filterOpen: false, terminalEnabled: true });
   const labels: Partial<Record<WindowKeyAction, string>> = {
     "open-jobs": "Jobs Panel", "open-settings": "Settings", "open-filter": "Filter Current Directory",
-    "toggle-dual-pane": "Toggle Dual Pane", "toggle-terminal": "Toggle Terminal",
+    "toggle-dual-pane": "Toggle Dual Pane",
   };
   return labels[action];
 }

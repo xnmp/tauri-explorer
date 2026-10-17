@@ -344,6 +344,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             // Trash operations
             file_mutation::delete_entries,
             file_mutation::restore_trash_items,
+            file_mutation::delete_trash_items,
             files::trash_inventory::list_trash,
             files::recovery::commands::file_recovery_list,
             files::recovery::commands::file_recovery_retire_eligible,

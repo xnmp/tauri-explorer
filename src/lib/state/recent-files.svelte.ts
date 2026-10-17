@@ -8,6 +8,7 @@
 
 import { reconcileHistory, sanitizeRecentHistory, type HistoryRecentEntry } from "$lib/domain/history";
 import { enqueueHistory, registerRecentHistory } from "./shared-history";
+import { TRASH_PATH } from "$lib/domain/virtual-path";
 import { checkPathsExist } from "$lib/api/files";
 import { directoryKey } from "$lib/domain/path";
 import { loadPersisted, savePersisted } from "./persisted";
@@ -60,7 +61,7 @@ function createRecentFilesState() {
   async function pruneNonExistent(): Promise<void> {
     if (entries.length === 0) return;
     const inspected = entries;
-    const paths = inspected.map((e) => e.path);
+    const paths = inspected.map((e) => e.path).filter(path => path !== TRASH_PATH);
     const exists = await checkPathsExist(paths);
     // `entries` may have changed while awaiting (e.g. add) — filter by path
     // membership against the snapshot, not by index into a stale array.

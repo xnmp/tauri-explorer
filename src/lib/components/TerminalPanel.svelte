@@ -7,7 +7,7 @@
   on every theme switch (xterm can't consume CSS vars natively).
 
   Lifecycle: one shell per window. The panel stays mounted once opened —
-  hiding it (Ctrl+`) only hides the DOM, the shell keeps running. The PTY is
+  hiding it (Alt+M T) only hides the DOM, the shell keeps running. The PTY is
   killed backend-side when the window is destroyed. If the shell exits, an
   overlay offers a restart.
 
@@ -502,7 +502,7 @@
     <div class="terminal-actions">
       <button
         class="action-btn"
-        title="Hide terminal (Ctrl+`)"
+        title="Hide terminal (Alt+M T)"
         aria-label="Hide terminal"
         onclick={() => terminalPanelStore.close()}
       >

@@ -363,3 +363,23 @@ describe("explicit file reveal", () => {
     await explorer.destroy();
   });
 });
+
+
+describe("Trash deletion confirmation (#1216)", () => {
+  it("always confirms Delete even when ordinary delete confirmation is disabled", async () => {
+    const { dialogStore } = await import("$lib/state/dialogs.svelte");
+    const item = { ...entry("report.txt"), path: "trash://opaque", trash: { id: "opaque", originalPath: "/root/report.txt", originalFolder: "/root", deletedAt: null } };
+    settingsStore.toggleConfirmDelete();
+    deleteEntriesMock.mockResolvedValue({ ok: true, data: { succeeded: [], failed: [] } });
+    const explorer = createExplorerState();
+    try {
+      await explorer.startDelete(item);
+      expect(deleteEntriesMock).not.toHaveBeenCalled();
+      expect(dialogStore.deletingEntries.map(e => e.path)).toEqual([item.path]);
+      expect(dialogStore.isPermanentDelete).toBe(true);
+    } finally {
+      dialogStore.cancelDelete();
+      await explorer.destroy();
+    }
+  });
+});

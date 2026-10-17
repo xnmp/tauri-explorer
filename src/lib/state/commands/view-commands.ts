@@ -152,7 +152,6 @@ export const viewCommands: Command[] = [
     scope: "window",
     label: "Toggle Files Sidebar (Bookmarks & Recent)",
     category: "view",
-    shortcut: "Alt+M B",
     handler: () => {
       if (settingsStore.showSidebar && sidebarViewsStore.activeId === "files") {
         settingsStore.toggleSidebar();
@@ -177,9 +176,6 @@ export const viewCommands: Command[] = [
     scope: "pane",
     label: "Toggle Terminal",
     category: "view",
-    // Display only: Ctrl+` is hardcoded in +page.svelte's keydown handler so
-    // it works even while the terminal's own textarea has focus.
-    shortcut: "Ctrl+`",
     handler: () => terminalPanelStore.toggle(),
     when: () => settingsStore.enableTerminal,
   },

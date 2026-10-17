@@ -230,12 +230,19 @@ describe("window keyboard ownership", () => {
     expect(keybindingsStore.isChordActive).toBe(false);
   });
 
-  it("an Explorer-owned chord cannot suppress the terminal's default toggle", () => {
+  it("Ctrl+backtick belongs to the terminal after retiring the default shortcut", () => {
     const f = fixture(true);
     f.bind("navigation.goUp", "Ctrl+` M");
     f.press("`", { ctrlKey: true, code: "Backquote" });
-    expect(f.terminal.toggle).toHaveBeenCalledOnce();
+    expect(f.terminal.toggle).not.toHaveBeenCalled();
     expect(f.executeCommand).not.toHaveBeenCalled();
+  });
+
+  it.each(["general.openTerminal", "view.toggleTerminal"])("a configured single %s toggle works while terminal input is focused", (commandId) => {
+    const f = fixture(true);
+    f.bind(commandId, "Ctrl+`");
+    expect(f.press("`", { ctrlKey: true, code: "Backquote" }).defaultPrevented).toBe(true);
+    expect(f.executeCommand).toHaveBeenCalledExactlyOnceWith(commandId);
   });
 
   it("custom Quick Open chords remain terminal-owned while configured terminal-toggle chords work", () => {

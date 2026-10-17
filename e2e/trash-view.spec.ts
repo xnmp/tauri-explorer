@@ -171,3 +171,61 @@ test.describe("In-app Trash (#863)", () => {
     await expect.poll(() => page.evaluate(() => (window as unknown as Control).__mockControl?.invokeCounts?.open_recycle_bin ?? 0)).toBe(1);
   });
 });
+
+for (const mode of ["details", "list", "tiles"] as const) {
+  for (const action of ["Delete", "Shift+Delete", "menu"] as const) {
+    test(`Trash ${action} confirms permanent deletion in ${mode} (#1216)`, async ({ page }) => {
+      await page.addInitScript(() => localStorage.setItem("explorer-settings", JSON.stringify({ confirmDelete: false })));
+      await page.goto("/?path=/home/user/Documents");
+      await waitForEntries(page);
+      await trash(page, "/home/user/Documents/notes.md");
+      await openTrash(page);
+      await switchViewMode(page, mode);
+      const row = trashRow(page, "notes.md");
+      await row.click();
+      if (action === "menu") {
+        await row.click({ button: "right" });
+        await page.getByRole("menuitem", { name: "Permanently Delete…" }).click();
+      } else await page.keyboard.press(action);
+      const dialog = page.getByRole("alertdialog");
+      await expect(dialog).toContainText("permanently deleted");
+      await expect(row).toHaveCount(1);
+      if (mode === "details" && action === "menu") {
+        await page.screenshot({ animations: "disabled", path: "screenshots/fix/misc-changes/trash-permanent-delete.png" });
+      }
+      await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+      await expect(dialog).toBeHidden();
+      await expect(row).toHaveCount(1);
+      await row.click();
+      await page.keyboard.press(action === "menu" ? "Delete" : action);
+      await dialog.getByRole("button", { name: "Delete", exact: true }).click();
+      await expect(page.getByText("The Trash is empty")).toBeVisible();
+      await nav(page, "Go back");
+      await expect(page.locator('.entry-item[data-path="/home/user/Documents/notes.md"]')).toHaveCount(0);
+    });
+  }
+}
+
+test("Recycle Bin is discoverable through palette and visited Quick Open history (#1216)", async ({ page }) => {
+  await page.goto("/?path=/home/user/Documents");
+  await waitForEntries(page);
+  await page.keyboard.press("Control+p");
+  let picker = page.locator(".quick-open-dialog");
+  await picker.locator("input").fill("Recycle Bin");
+  await expect(picker.locator(".result-item", { hasText: "Recycle Bin" })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(picker).toBeHidden();
+  await page.keyboard.press("Control+Shift+p");
+  const palette = page.locator(".command-palette-dialog");
+  await palette.locator("input").fill("Open Recycle Bin");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".status-path")).toHaveAttribute("title", "trash://");
+  await nav(page, "Go back");
+  await page.keyboard.press("Control+p");
+  picker = page.locator(".quick-open-dialog");
+  await picker.locator("input").fill("Recycle Bin");
+  await expect(picker.locator(".result-item", { hasText: "Recycle Bin" })).toHaveCount(1);
+  await page.screenshot({ animations: "disabled", path: "screenshots/fix/misc-changes/recycle-bin-quick-open.png" });
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".status-path")).toHaveAttribute("title", "trash://");
+});

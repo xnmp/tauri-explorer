@@ -128,7 +128,6 @@ export function startWindowKeyboard(target: EventTarget, dependencies: WindowKey
     bindings.cancelChord();
     event.preventDefault();
     switch (action) {
-      case "toggle-terminal": if (isAvailable("view.toggleTerminal")) terminal.toggle(); break;
       case "close-dialogs": dialogs.requestCloseTop(event); break;
       case "open-filter": if (isAvailable("general.filterCurrentDir") && explorer && !explorer.showFilter) explorer.openFilter(); break;
       case "close-filter": if (isAvailable("general.filterCurrentDir")) explorer?.closeFilter(); break;

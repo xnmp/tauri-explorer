@@ -7,11 +7,13 @@ import type { FileEntry } from "$lib/domain/file";
 const mocks = vi.hoisted(() => ({
   listTrash: vi.fn(),
   restoreTrashItems: vi.fn(),
+  deleteTrashItems: vi.fn(),
 }));
 
 vi.mock("$lib/api/trash", () => ({
   listTrash: mocks.listTrash,
   restoreTrashItems: mocks.restoreTrashItems,
+  deleteTrashItems: mocks.deleteTrashItems,
 }));
 
 import { installTrashActions, listTrashLocation, restoreFromTrash } from "$lib/state/trash-location";
@@ -162,10 +164,10 @@ describe("Trash as an explorer location", () => {
     const entries = toTrashListing(LISTING).entries;
     const trashOnly = (selection: FileEntry[]) => contextMenuItems.itemsFor(selection)
       .filter((item) => item.scope === "trash").map((item) => item.label);
-    expect(trashOnly([...entries])).toEqual(["Restore"]);
+    expect(trashOnly([...entries])).toEqual(["Restore", "Permanently Delete…"]);
     const unrecorded = { ...entries[0], trash: { ...entries[0].trash!, originalPath: null, originalFolder: null } };
-    expect(trashOnly([unrecorded])).toEqual([]);
-    expect(trashOnly([entries[0], unrecorded])).toEqual([]);
+    expect(trashOnly([unrecorded])).toEqual(["Permanently Delete…"]);
+    expect(trashOnly([entries[0], unrecorded])).toEqual(["Permanently Delete…"]);
     expect(trashOnly([])).toEqual(["Open in System File Manager"]);
     expect(trashOnly([{ name: "a", path: "/a", kind: "file", size: 0, modified: "" }])).toEqual([]);
 
@@ -191,3 +193,14 @@ describe("Trash as an explorer location", () => {
 });
 
 export type { DirectoryListingResult };
+
+
+describe("Trash deletion (#1216)", () => {
+  it("deletes by opaque ID and maps mixed outcomes back to pane entries", async () => {
+    const { deleteFromTrash } = await import("$lib/state/trash-location");
+    mocks.deleteTrashItems.mockResolvedValue({ ok: true, data: { succeeded: ["a1"], failed: [{ path: "b2", error: "item changed" }], unstarted: [], uncertain: [] } });
+    const entries = toTrashListing(LISTING).entries;
+    expect(await deleteFromTrash(entries)).toEqual({ ok: true, data: { succeeded: ["trash://a1"], failed: [{ path: "trash://b2", error: "item changed" }], unstarted: [], uncertain: [] } });
+    expect(mocks.deleteTrashItems).toHaveBeenCalledExactlyOnceWith(["a1", "b2"]);
+  });
+});

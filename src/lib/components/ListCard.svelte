@@ -14,6 +14,7 @@
   import { LIST_SLOT_HEIGHT, type ListCardSpec } from "$lib/domain/list-column-flow";
   import { cardFades, cardMoreCount, LIST_CARD_FADE } from "$lib/domain/list-cards";
   import type { useItemInteractions } from "$lib/composables/use-item-interactions.svelte";
+  import { createSurfaceDropFeedback, surfaceDropPath } from "$lib/composables/surface-drop-feedback";
 
   type EntryRow = Extract<PeekRow, { kind: "entry" }>;
 
@@ -77,30 +78,10 @@
 
   /** The folder a drop or menu on the card's own surface (not a row) targets. */
   function surfaceTarget(event: Event): FileEntry | null {
-    const target = event.target instanceof Element ? event.target : null;
-    if (!target || target.closest(".entry-item")) return null;
-    const path = target.closest<HTMLElement>(".peek-drop-target[data-path]")?.dataset.path;
-    return (path && folders.get(path)) || entry;
+    const path = surfaceDropPath(event.target, entry.path);
+    return path === null ? null : folders.get(path) ?? entry;
   }
-
-  // The folder whose surface shows drop feedback. Rows inside the card are their
-  // own targets (or none), so moving onto one retires the surface's feedback;
-  // no leave event fires for it, because the row is inside the surface.
-  let surfaceFolder: FileEntry | null = null;
-  function retarget(folder: FileEntry | null): void {
-    if (surfaceFolder && surfaceFolder.path !== folder?.path) interactions.releaseDropTarget(surfaceFolder.path);
-    surfaceFolder = folder;
-  }
-  function surfaceOver(event: DragEvent): void {
-    const folder = surfaceTarget(event);
-    retarget(folder);
-    if (folder) interactions.handleDragOver(event, folder);
-  }
-  function surfaceDrop(event: DragEvent): void {
-    const folder = surfaceTarget(event);
-    retarget(null);
-    if (folder) void interactions.handleDrop(event, folder);
-  }
+  const surface = createSurfaceDropFeedback(() => interactions, surfaceTarget);
 </script>
 
 <div class="list-card-body">
@@ -111,9 +92,7 @@
     style:--fade-bottom={`${fades.bottom ? LIST_CARD_FADE : 0}px`}
     bind:this={scroller}
     onscroll={() => { if (scroller) onscrolltop(scroller.scrollTop); }}
-    ondragenter={surfaceOver} ondragover={surfaceOver}
-    ondragleave={(event) => { if (surfaceFolder) interactions.handleDragLeave(event, surfaceFolder); }}
-    ondrop={surfaceDrop}
+    ondragenter={surface.over} ondragover={surface.over} ondragleave={surface.leave} ondrop={surface.drop}
     oncontextmenu={(event) => { const folder = surfaceTarget(event); if (folder) interactions.handleContextMenu(event, folder); }}>
     <div class="list-card-content" style:height={`${content * LIST_SLOT_HEIGHT}px`}>
       {#each shownGuides as guide (guide.path)}

@@ -275,6 +275,68 @@ test("the grip resizes in whole rows, previews only its card, is remembered and 
   expect(await page.evaluate(() => (window as unknown as { fileDrags: number }).fileDrags)).toBe(0);
 });
 
+test("a grip resize stays in its column, so the card never moves, and a press leaves focus where it was", async ({ page }) => {
+  // R = 10 with Codex at [0,3]: six rows remain below its header, fewer than floor(0.7R).
+  const first = await open(page, root, { width: 720, height: 430 });
+  await page.setViewportSize({ width: 720, height: 430 + (10 - first) * 30 });
+  await expect(page.locator(`${shown} .list-view`)).toHaveAttribute("data-rows", "10");
+  await toggle(page, `${root}/Codex`);
+  expect((await placements(page))[`${root}/Codex`]).toEqual([0, 3]);
+  const grip = slot(page, `${root}/Codex`).getByRole("separator", { name: "Resize Codex" });
+  await expect(grip).toHaveAttribute("aria-valuemax", "6");
+  await row(page, `${root}/Codex`).click();
+  await expect(row(page, `${root}/Codex`)).toBeFocused();
+  const bottom = async () => {
+    const [box, port] = await Promise.all([card(page, `${root}/Codex`).boundingBox(), viewport(page).boundingBox()]);
+    return box!.y + box!.height - (port!.y + port!.height);
+  };
+  const box = (await grip.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2, box.y + 4000, { steps: 4 });
+  // The preview stops at the column's bottom edge.
+  await expect(grip).toHaveAttribute("aria-valuenow", "6");
+  expect(await bottom()).toBeLessThanOrEqual(1);
+  await page.mouse.up();
+  await settled(page);
+  expect((await placements(page))[`${root}/Codex`]).toEqual([0, 3]);
+  expect(await inView(page, `${root}/Codex`)).toBe(true);
+  expect(await bottom()).toBeLessThanOrEqual(1);
+  await expect(row(page, `${root}/Codex`)).toBeFocused();
+  // The keyboard stops at the same clamp.
+  await grip.focus();
+  await page.keyboard.press("ArrowUp");
+  await expect(grip).toHaveAttribute("aria-valuenow", "5");
+  await page.keyboard.press("End");
+  await page.keyboard.press("ArrowDown");
+  await expect(grip).toHaveAttribute("aria-valuenow", "6");
+  await settled(page);
+  expect((await placements(page))[`${root}/Codex`]).toEqual([0, 3]);
+});
+
+test("a grip drag whose column scrolls away mid-drag still commits on release and leaves no preview", async ({ page }) => {
+  await open(page, root, { width: 720, height: 430 });
+  await toggle(page, `${root}/Archive`);
+  const grip = slot(page, `${root}/Archive`).getByRole("separator", { name: "Resize Archive" });
+  const box = (await grip.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 40, { steps: 4 }); // 1.33 rows
+  await expect(slot(page, `${root}/Career`)).toHaveClass(/covered/);
+  // A sideways scroll unmounts column 0, grip and all, while the button is held.
+  await viewport(page).evaluate(el => { el.scrollLeft = el.scrollWidth; });
+  await expect(slot(page, `${root}/Archive`)).toHaveCount(0);
+  await page.mouse.up();
+  await viewport(page).evaluate(el => { el.scrollLeft = 0; });
+  await expect(slot(page, `${root}/Archive`)).toBeVisible();
+  await settled(page);
+  await expect(page.locator(`${shown} .list-slot.covered`)).toHaveCount(0);
+  await expect(page.locator(`${shown} .list-card-grip.dragging`)).toHaveCount(0);
+  expect(await explorerCall<number | undefined>(page, "return explorer.listCardRows(value)", `${root}/Archive`)).toBe(7);
+  await expect(grip).toHaveAttribute("aria-valuenow", "7");
+  await expect(card(page, `${root}/Archive`)).toHaveCSS("height", "210px");
+});
+
 test("+N more counts rows below the visible area and fade masks follow the scrolled edges", async ({ page }) => {
   await open(page);
   await toggle(page, `${root}/Archive`); // 50 rows, 6 visible

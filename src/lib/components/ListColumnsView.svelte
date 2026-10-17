@@ -44,6 +44,7 @@
     getRows: () => explorer.detailRows,
     getPreferredRows: path => explorer.listCardRows(path),
     getPinnedPaths: () => dialogStore.renamingEntry ? [dialogStore.renamingEntry.path] : [],
+    commitCardRows: (path, rows) => explorer.setListCardRows(path, rows),
     onviewportscroll: () => onviewportscroll?.(),
     onlayoutchange: () => onlayoutchange?.(),
   });
@@ -75,10 +76,6 @@
     if (scrollToIndex === revealIndex) scrollToIndex = undefined;
   });
   $effect(() => { if (explorer.isCreatingFolder) columns.revealItem(0); });
-  function commitRows(path: string, rows: number): void {
-    explorer.setListCardRows(path, rows);
-    columns.setPreview(path, null);
-  }
 </script>
 
 {#snippet entryRow(row: EntryRow, card?: ListCardSpec | null)}
@@ -105,12 +102,12 @@
     <span class="list-icon" data-drag-icon style:color={row.entry.kind !== "directory" ? getFileIconColor(row.entry) : undefined}><FileIcon entry={row.entry} size="small" /></span>
     <span data-drag-name><EntryName entry={row.entry} {explorer} variant="list" bold={row.expanded} /></span>
     <GitStatusBadge directory={row.parentPath} entryName={row.entry.name} />
-    {#if card}
+    {#if card && card.end > card.start}
       <!-- Inside the folder's treeitem (a tree owns only groups and treeitems),
            positioned on the card's bottom edge against the slot. -->
-      <ListCardGrip name={row.entry.name} {card} R={columns.rows} previewRows={columns.previewRows(card.path)}
-        onpreview={(rows) => columns.setPreview(card.path, rows)}
-        oncommit={(rows) => commitRows(card.path, rows)} />
+      <ListCardGrip name={row.entry.name} rows={columns.previewRows(card.path) ?? card.visibleRows} max={columns.gripMax(card.path)}
+        dragging={columns.previewRows(card.path) !== null}
+        onstart={(pointer, y) => columns.beginGrip(card.path, pointer, y)} onkey={(key) => columns.gripKey(card.path, key)} />
     {/if}
   </EntryCell>
 {/snippet}

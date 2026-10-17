@@ -1,6 +1,7 @@
 import { flushSync, getAbortSignal, onDestroy, tick, untrack } from "svelte";
 import { listColumnRange, listExtent, listRows, listWheelStep, LIST_COLUMN_STRIDE, LIST_COLUMN_WIDTH, LIST_PADDING_X, LIST_PADDING_Y, LIST_SLOT_HEIGHT, type ListCardSpec, type ListPlacement, type ListTopItem } from "$lib/domain/list-column-flow";
-import { buildListModel, cardRevealTop, cardWheelConsumes, cardWindow } from "$lib/domain/list-cards";
+import { buildListModel, cardMaxRows, cardRevealTop, cardWheelConsumes, cardWindow, gripKeyRows, gripRows } from "$lib/domain/list-cards";
+import { rectDimToCSS } from "$lib/domain/zoom";
 import type { PeekRow, PeekRows } from "$lib/domain/folder-peek";
 
 /** One mounted top-level slot: its placement, item and (unless it is the
@@ -20,6 +21,8 @@ interface ListColumnsDeps {
   getPreferredRows: (path: string) => number | undefined;
   /** Entries whose slot, and card row, must stay mounted (inline editors). */
   getPinnedPaths: () => readonly string[];
+  /** Store a card height chosen with its grip (`explorer.setListCardRows`). */
+  commitCardRows?: (path: string, rows: number) => void;
   onviewportscroll?: () => void;
   onlayoutchange?: () => void;
 }
@@ -94,6 +97,9 @@ export function useListColumns(deps: ListColumnsDeps) {
   }
   // A grip drag previews one card's height without committing the layout.
   let preview = $state.raw<{ path: string; rows: number } | null>(null);
+  /** The grip a pointer is dragging. Window listeners own its end, so a card
+   * whose column unmounts mid-drag (sideways wheel) still commits or cancels. */
+  let grip: { path: string; pointer: number; y: number; rows: number; stop: () => void } | null = null;
   const previewRows = (path: string): number | null => preview?.path === path ? preview.rows : null;
   /** Items covered by a growing grip preview (hidden until release). */
   const covered = $derived.by(() => {
@@ -146,6 +152,7 @@ export function useListColumns(deps: ListColumnsDeps) {
       const open = new Set(model.items.flatMap(item => item.card ? [item.card.path] : []));
       for (const path of Object.keys(cardScroll)) if (!open.has(path)) delete cardScroll[path];
       // A card closed mid-drag may never deliver its grip's cancel.
+      if (grip && !open.has(grip.path)) endGrip(null);
       if (preview && !open.has(preview.path)) preview = null;
     });
     void tick().then(() => {
@@ -268,11 +275,68 @@ export function useListColumns(deps: ListColumnsDeps) {
     return x < left + width + LIST_PADDING_X && x + LIST_COLUMN_WIDTH > left - LIST_PADDING_X;
   }
 
+  /** An open card's grip range: whole rows, at most floor(0.7R), and never past
+   * the bottom of its column, so a resize never moves the card. */
+  function gripRange(path: string) {
+    const index = model.items.findIndex(item => item.card?.path === path);
+    const card = index < 0 ? null : model.items[index].card;
+    if (!card) return null;
+    const content = card.end - card.start;
+    const limit = layout.rows - layout.byIndex[index].row - 1;
+    return { card, content, limit, max: Math.max(1, Math.min(content, cardMaxRows(layout.rows), limit)) };
+  }
+  function endGrip(clientY: number | null): void {
+    const session = grip;
+    if (!session) return;
+    grip = null;
+    session.stop();
+    const range = clientY === null ? null : gripRange(session.path);
+    preview = null;
+    if (range) deps.commitCardRows?.(session.path, gripRows(session.rows, rectDimToCSS(clientY! - session.y), range.content, layout.rows, range.limit));
+  }
+  /** Start dragging a card's grip; the pointer's travel snaps to whole rows. */
+  function beginGrip(path: string, pointer: number, clientY: number): void {
+    endGrip(null);
+    const range = gripRange(path);
+    if (!range) return;
+    const move = (event: PointerEvent) => {
+      if (event.pointerId !== pointer || !grip) return;
+      const current = gripRange(path);
+      if (!current) { endGrip(null); return; }
+      preview = { path, rows: gripRows(grip.rows, rectDimToCSS(event.clientY - grip.y), current.content, layout.rows, current.limit) };
+    };
+    const up = (event: PointerEvent) => { if (event.pointerId === pointer) endGrip(event.clientY); };
+    // A blur (no pointerId) also ends the drag: the release may never arrive.
+    const cancel = (event: Event) => { if ((event as Partial<PointerEvent>).pointerId === undefined || (event as PointerEvent).pointerId === pointer) endGrip(null); };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", cancel);
+    window.addEventListener("blur", cancel);
+    grip = { path, pointer, y: clientY, rows: range.card.visibleRows, stop: () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", cancel);
+      window.removeEventListener("blur", cancel);
+    } };
+  }
+  onDestroy(() => endGrip(null));
+  /** Separator keys on a card's grip; true when the key was the grip's. */
+  function gripKey(path: string, key: string): boolean {
+    const range = gripRange(path);
+    if (!range) return false;
+    const next = gripKeyRows(key, range.card.visibleRows, range.content, layout.rows, range.limit);
+    if (next === null) return false;
+    if (next !== range.card.visibleRows) deps.commitCardRows?.(path, next);
+    return true;
+  }
+
   return {
     attach, revealItem, revealEntry, revealCard, containsEntry, columnVisible,
     cardScrollTop, setCardScrollTop, cardOffsets,
     previewRows,
-    setPreview(path: string, rows: number | null) { preview = rows === null ? null : { path, rows }; },
+    beginGrip, gripKey,
+    /** The grip's largest height for an open card (its aria-valuemax). */
+    gripMax: (path: string) => gripRange(path)?.max ?? 1,
     isCovered: (key: string) => covered.has(key),
     get model() { return model; },
     get layout() { return layout; },

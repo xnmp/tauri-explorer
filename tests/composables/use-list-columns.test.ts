@@ -25,33 +25,52 @@ function compileClient(path: string): string {
     .replaceAll("export ", "");
 }
 
+// onDestroy callbacks run when a test unmounts the view (`destroy()`).
+const destroyers: (() => void)[] = [];
+const destroy = () => { for (const fn of destroyers.splice(0)) fn(); };
 const svelte = {
   flushSync: (fn?: () => void) => client.flush(fn),
-  tick: client.tick, untrack: client.untrack, onDestroy: () => {},
+  tick: client.tick, untrack: client.untrack, onDestroy: (fn: () => void) => { destroyers.push(fn); },
   getAbortSignal: () => new AbortController().signal,
 };
-const create = new Function("$", "svelte", "flow", "cards", "dropHover", "createRafCoalescer",
+const create = new Function("$", "svelte", "flow", "cards", "dropHover", "createRafCoalescer", "rectDimToCSS",
   `const { flushSync, getAbortSignal, onDestroy, tick, untrack } = svelte;
    const { ${Object.keys(flow).join(", ")} } = flow;
    const { ${Object.keys(cards).join(", ")} } = cards;
    ${compileClient("../../src/lib/composables/use-list-columns.svelte.ts")}
-   return useListColumns;`)(client, svelte, flow, cards, dropHover, createRafCoalescer) as typeof useListColumns;
+   return useListColumns;`)(client, svelte, flow, cards, dropHover, createRafCoalescer, (value: number) => value) as typeof useListColumns;
+
+/** A window whose listeners a test can count and fire. */
+function stubWindow() {
+  const listeners = new Map<string, Set<(event: unknown) => void>>();
+  vi.stubGlobal("window", {
+    addEventListener: (name: string, fn: (event: unknown) => void) => { if (!listeners.has(name)) listeners.set(name, new Set()); listeners.get(name)!.add(fn); },
+    removeEventListener: (name: string, fn: (event: unknown) => void) => listeners.get(name)?.delete(fn),
+  });
+  return {
+    fire: (name: string, event: object = {}) => client.flush(() => { for (const fn of [...listeners.get(name) ?? []]) fn(event); }),
+    count: () => [...listeners.values()].reduce((sum, set) => sum + set.size, 0),
+  };
+}
 
 const entries = (n: number): FileEntry[] => Array.from({ length: n }, (_, i) => ({ name: `f${i}`, path: `/d/f${i}`, kind: "file", size: 1, modified: "2026-01-01T00:00:00Z" }) as FileEntry);
 
-/** `/d/open` expanded with `children` rows, then `after` plain siblings. */
-function cardRows(children: number, after: number): PeekRows {
+/** `before` plain siblings, `/d/open` expanded with `children` rows, then `after` plain siblings. */
+function cardRows(children: number, after: number, before = 0): PeekRows {
   const open = { name: "open", path: "/d/open", kind: "directory", size: 0, modified: "" } as FileEntry;
   const kids = Array.from({ length: children }, (_, i) => ({ name: `k${i}`, path: `/d/open/k${i}`, kind: "file", size: 1, modified: "" }) as FileEntry);
+  const plain = (entry: FileEntry) => ({ kind: "entry" as const, key: `entry:${entry.path}`, entry, expanded: false, depth: 0, parentPath: "/d" });
   const rows: PeekRow[] = [
-    { kind: "entry", key: "entry:/d/open", entry: open, entryIndex: 0, expanded: true, depth: 0, parentPath: "/d" },
-    ...kids.map((entry, i) => ({ kind: "entry" as const, key: `entry:${entry.path}`, entry, entryIndex: i + 1, expanded: false, depth: 1, parentPath: open.path })),
-    ...entries(after).map((entry, i) => ({ kind: "entry" as const, key: `entry:${entry.path}`, entry, entryIndex: children + 1 + i, expanded: false, depth: 0, parentPath: "/d" })),
-  ];
-  return { rows, entryToRow: rows.map((_, i) => i), rowToEntry: rows.map((_, i) => i), groups: [{ path: open.path, depth: 0, startRow: 1, endRow: children + 1 }] };
+    ...entries(before).map(entry => ({ ...plain(entry), key: `entry:/d/b-${entry.name}`, entry: { ...entry, path: `/d/b-${entry.name}` } })),
+    { kind: "entry", key: "entry:/d/open", entry: open, expanded: true, depth: 0, parentPath: "/d" },
+    ...kids.map(entry => ({ kind: "entry" as const, key: `entry:${entry.path}`, entry, expanded: false, depth: 1, parentPath: open.path })),
+    ...entries(after).map(plain),
+  ].map((row, entryIndex) => ({ ...row, entryIndex }) as PeekRow);
+  const start = before + 1;
+  return { rows, entryToRow: rows.map((_, i) => i), rowToEntry: rows.map((_, i) => i), groups: [{ path: open.path, depth: 0, startRow: start, endRow: start + children }] };
 }
 
-function mount(items: readonly FileEntry[] | PeekRows, size: { width: number; height: number }) {
+function mount(items: readonly FileEntry[] | PeekRows, size: { width: number; height: number }, commitCardRows?: (path: string, rows: number) => void) {
   const listeners = new Map<string, (event: unknown) => void>();
   let resize!: (entries: unknown[]) => void;
   vi.stubGlobal("ResizeObserver", class { constructor(cb: typeof resize) { resize = cb; } observe() {} disconnect() {} });
@@ -66,12 +85,13 @@ function mount(items: readonly FileEntry[] | PeekRows, size: { width: number; he
   let columns!: ReturnType<typeof useListColumns>;
   const dispose = client.effect_root(() => {
     const rows = "rows" in items ? items : flatPeekRows(flatPeekEntries("/d", items), false);
-    columns = create({ getRows: () => rows, getPreferredRows: () => undefined, getPinnedPaths: () => [] });
+    columns = create({ getRows: () => rows, getPreferredRows: () => undefined, getPinnedPaths: () => [], commitCardRows });
     columns.attach(element as unknown as HTMLElement);
   });
   client.flush(() => resize([{ contentRect: { width: size.width, height: size.height } }]));
   return {
     columns, dispose,
+    unmount() { destroy(); dispose(); },
     scrollTo(left: number) { element.scrollLeft = left; listeners.get("scroll")!({}); },
     wheel: (event: object) => listeners.get("wheel")!(event),
     element,
@@ -83,7 +103,7 @@ describe("useListColumns cards", () => {
     vi.stubGlobal("requestAnimationFrame", () => 1);
     vi.stubGlobal("cancelAnimationFrame", () => {});
   });
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => { destroy(); vi.unstubAllGlobals(); });
 
   it("reveals a card row by scrolling the card synchronously, so it is mounted for focus", () => {
     // 10 rows per column: the card shows 6 of its 40 rows (floor(0.7 * 10) = 7 cap, default 6).
@@ -114,28 +134,113 @@ describe("useListColumns cards", () => {
       columns.attach(element as unknown as HTMLElement);
     });
     client.flush(() => resize([{ contentRect: { width: 800, height: 300 } }]));
+    const win = stubWindow();
     // Card occupies rows 0..6 of column 0; plain siblings fill rows 7..9.
-    columns.setPreview("/d/open", 7);
-    client.flush();
+    columns.beginGrip("/d/open", 1, 100);
+    win.fire("pointermove", { pointerId: 1, clientY: 130 });
+    expect(columns.previewRows("/d/open")).toBe(7);
     expect(columns.layout.byIndex[1]).toMatchObject({ column: 0, row: 7 });
     expect(columns.isCovered("entry:/d/f0")).toBe(true);
     expect(columns.isCovered("entry:/d/f1")).toBe(false);
-    columns.setPreview("/d/open", null);
-    client.flush();
+    win.fire("pointercancel", { pointerId: 1 });
+    expect(columns.previewRows("/d/open")).toBeNull();
     expect(columns.isCovered("entry:/d/f0")).toBe(false);
+    expect(win.count()).toBe(0);
     columns.setCardScrollTop("/d/open", 90);
-    // A preview whose card closes before its grip's cancel arrives is dropped.
-    columns.setPreview("/d/open", 7);
+    // A drag whose card closes before the pointer is released is dropped.
+    columns.beginGrip("/d/open", 1, 100);
+    win.fire("pointermove", { pointerId: 1, clientY: 130 });
     current = flatPeekRows(flatPeekEntries("/d", entries(5)), false);
     client.flush(() => client.set(source, 1));
     expect(columns.cardScrollTop("/d/open")).toBe(0);
     expect(columns.previewRows("/d/open")).toBeNull();
+    expect(win.count()).toBe(0);
     current = rows;
     client.flush(() => client.set(source, 2));
     expect(columns.model.items[0].card?.visibleRows).toBe(6);
     expect(columns.previewRows("/d/open")).toBeNull();
     expect(columns.isCovered("entry:/d/f0")).toBe(false);
     dispose();
+  });
+
+  describe("grip session", () => {
+    it("commits the dragged height on a window release though the card's column unmounted mid-drag", () => {
+      let frame: FrameRequestCallback | undefined;
+      vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => { frame = cb; return 1; });
+      const win = stubWindow();
+      const commits: [string, number][] = [];
+      const mounted = mount(cardRows(40, 200), { width: 800, height: 300 }, (path, rows) => commits.push([path, rows]));
+      const { columns } = mounted;
+      columns.beginGrip("/d/open", 7, 100);
+      win.fire("pointermove", { pointerId: 8, clientY: 400 }); // another pointer
+      expect(columns.previewRows("/d/open")).toBeNull();
+      win.fire("pointermove", { pointerId: 7, clientY: 130 });
+      expect(columns.previewRows("/d/open")).toBe(7);
+      // A sideways wheel unmounts column 0, grip and all.
+      mounted.scrollTo(4000);
+      client.flush(() => frame?.(0));
+      expect(columns.visibleItems.length).toBeGreaterThan(0);
+      expect(columns.visibleItems.some(slot => slot.item.card)).toBe(false);
+      win.fire("pointerup", { pointerId: 7, clientY: 130 });
+      expect(commits).toEqual([["/d/open", 7]]);
+      expect(columns.previewRows("/d/open")).toBeNull();
+      expect(columns.isCovered("entry:/d/f0")).toBe(false);
+      expect(win.count()).toBe(0);
+      mounted.dispose();
+    });
+
+    it("never previews or commits a height past the card's column, so the card stays in place", () => {
+      const win = stubWindow();
+      const commits: number[] = [];
+      // R = 10 and the card's header at [0,3]: six rows remain below it.
+      const mounted = mount(cardRows(40, 20, 3), { width: 800, height: 300 }, (_, rows) => commits.push(rows));
+      const { columns } = mounted;
+      const index = columns.model.items.findIndex(item => item.card);
+      expect(columns.layout.byIndex[index]).toMatchObject({ column: 0, row: 3 });
+      expect(columns.gripMax("/d/open")).toBe(6);
+      columns.beginGrip("/d/open", 1, 100);
+      win.fire("pointermove", { pointerId: 1, clientY: 5000 });
+      expect(columns.previewRows("/d/open")).toBe(6);
+      win.fire("pointerup", { pointerId: 1, clientY: 5000 });
+      expect(columns.gripKey("/d/open", "End")).toBe(true);
+      expect(columns.gripKey("/d/open", "ArrowDown")).toBe(true);
+      expect(commits).toEqual([6]); // End and ArrowDown are already at the clamp
+      expect(columns.gripKey("/d/open", "ArrowUp")).toBe(true);
+      expect(columns.gripKey("/d/open", "Enter")).toBe(false);
+      expect(commits).toEqual([6, 5]);
+      mounted.dispose();
+    });
+
+    it("drops the preview without committing on cancel, blur or unmount, and removes its listeners", () => {
+      const win = stubWindow();
+      const commits: number[] = [];
+      const mounted = mount(cardRows(40, 20), { width: 800, height: 300 }, (_, rows) => commits.push(rows));
+      const { columns } = mounted;
+      for (const end of [() => win.fire("blur"), () => win.fire("pointercancel", { pointerId: 1 })]) {
+        columns.beginGrip("/d/open", 1, 100);
+        win.fire("pointermove", { pointerId: 1, clientY: 40 });
+        expect(columns.previewRows("/d/open")).toBe(4);
+        end();
+        expect(columns.previewRows("/d/open")).toBeNull();
+        expect(win.count()).toBe(0);
+      }
+      columns.beginGrip("/d/open", 1, 100);
+      expect(win.count()).toBeGreaterThan(0);
+      mounted.unmount();
+      expect(win.count()).toBe(0);
+      win.fire("pointerup", { pointerId: 1, clientY: 400 });
+      expect(commits).toEqual([]);
+    });
+
+    it("ignores a grip press on a folder that is not an open card", () => {
+      const win = stubWindow();
+      const mounted = mount(cardRows(40, 20), { width: 800, height: 300 });
+      mounted.columns.beginGrip("/d/f3", 1, 100);
+      expect(win.count()).toBe(0);
+      expect(mounted.columns.gripKey("/d/f3", "End")).toBe(false);
+      expect(mounted.columns.gripMax("/d/f3")).toBe(1);
+      mounted.dispose();
+    });
   });
 
   it("tells FileList after a card scroll changes the mounted rows, once per frame", async () => {

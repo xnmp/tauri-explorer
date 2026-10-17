@@ -39,7 +39,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `DetailsView.svelte` — virtual-scrolled table view (columns, resize, sort headers).
 - `ListColumnsView.svelte` — Folder Peek List: column-major tree (`role=tree`, per-level `aria-posinset`/`setsize` from `peekTreePositions`; a listbox without peek) with horizontal windowing and shared reveal/navigation snapshot; an open top-level folder keeps its header row and renders a `ListCard`, and its inert `.list-motion-layer` holds `use-list-motion` ghosts (#1240).
 - `ListCard.svelte` — one List card's descendant scroll area (`role=group`, virtualized rows, nested guides, treeitem pseudo-rows) and "+N more"; its surface is a `.peek-drop-target` for the folder.
-- `ListCardGrip.svelte` — a List card's bottom-edge grip (separator, whole-row preview/commit, arrow/Home/End keys), rendered inside the folder's header treeitem because a tree owns only groups and treeitems.
+- `ListCardGrip.svelte` — a List card's bottom-edge grip control (separator with arrow/Home/End keys), rendered inside the folder's header treeitem because a tree owns only groups and treeitems; its drag session lives in `use-list-columns`.
 - `ListView.svelte` — classic row-major List (Folder Peek off); `listViewColumns`/`listColumnMaxWidth` apply here only.
 - `TilesView.svelte` — row-virtualized tile view with thumbnails; renders through `TileSurface.svelte`/`TileVisual.svelte`; runs `scroll-jank-monitor.ts` during scroll and logs `tiles-scroll-jank` events only when jank occurred (#593).
 - `view-loaders.svelte.ts` — memoised, retryable dynamic imports for every built-in view renderer (Details, List columns, classic List, Tiles); FileList starts the chunk in parallel with the listing, and settled renderers are published reactively so later mounts render them in the same flush.
@@ -375,7 +375,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-panel-resize.svelte.ts` — localStorage width preference adapter for Sidebar, SCM, Miller and Git columns.
 - `use-resize-owner.svelte.ts` — shared axis-aware pointer capture, geometry, keyboard and activity lifetime.
 - `use-controlled-size.svelte.ts` — external-source size adapter; transient drafts, final commits and value-based source supersession.
-- `use-list-columns.svelte.ts` — List column virtualizer over `buildListModel`; synchronous content-box sizing, wheel ownership (a scrollable card first), editor pinning, card scroll offsets and grip preview, entry/card reveal and settled callbacks.
+- `use-list-columns.svelte.ts` — List column virtualizer over `buildListModel`; synchronous content-box sizing, wheel ownership (a scrollable card first), editor pinning, card scroll offsets, the grip drag session (window-level release, clamped to the card's column) and preview, entry/card reveal and settled callbacks.
+- `surface-drop-feedback.ts` — drop feedback for a List card's own surface: target resolution (nested pseudo-row or the card's folder, never a row) and retiring feedback when the pointer reaches a row inside it.
 - `use-list-motion.svelte.ts` — applies `domain/list-motion.ts` plans to the List canvas for user peek toggles only (FLIP, conveyor clip, card growth, sanitized ghosts in an inert layer, finish-on-interrupt).
 - `use-row-grid-view.svelte.ts` — shared virtualization wiring (rows, DnD, new-folder sentinel, scrollToIndex) for Tiles view.
 

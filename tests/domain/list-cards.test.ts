@@ -247,6 +247,17 @@ describe("card grip, scroll edges and reveal", () => {
     expect(gripKeyRows("ArrowDown", 9, 9, 21)).toBe(9);
     expect(gripKeyRows("End", 2, 5, 4)).toBe(2);
   });
+  it("never grows past the rows left in the card's column, so a resize cannot move the card", () => {
+    // R = 10, header at row 3: six rows remain below it.
+    expect(gripRows(6, 10_000, 40, 10, 6)).toBe(6);
+    expect(gripRows(4, 30, 40, 10, 6)).toBe(5);
+    expect(gripRows(6, -1000, 40, 10, 6)).toBe(1);
+    expect(["ArrowDown", "End", "ArrowUp", "Home"].map(key => gripKeyRows(key, 6, 40, 10, 6))).toEqual([6, 6, 5, 1]);
+    // No rows left still allows one (never zero), and empty content stays empty.
+    expect(gripRows(6, 0, 40, 10, 0)).toBe(1);
+    expect(gripRows(3, 0, 0, 21, 5)).toBe(0);
+    expect(gripRows(6, 10_000, 40, 10, Number.NaN)).toBe(7);
+  });
   it("counts rows whose centre lies below the visible area", () => {
     expect(cardMoreCount(10, 6, 0)).toBe(4);
     expect(cardMoreCount(10, 6, 15)).toBe(3);

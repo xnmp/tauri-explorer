@@ -59,19 +59,23 @@ export function buildListModel(rows: PeekRows, R: number, preferredOf: (path: st
 }
 
 /** Grip drag: the start height plus the pointer travel, snapped to whole rows. */
-export function gripRows(startRows: number, deltaCss: number, content: number, R: number): number {
-  return cardVisibleRows(content, startRows + (Number.isFinite(deltaCss) ? deltaCss : 0) / LIST_SLOT_HEIGHT, R);
+export function gripRows(startRows: number, deltaCss: number, content: number, R: number, limit = Infinity): number {
+  return withinLimit(cardVisibleRows(content, startRows + (Number.isFinite(deltaCss) ? deltaCss : 0) / LIST_SLOT_HEIGHT, R), limit);
 }
 
 /** Grip keys (separator pattern): one row per arrow, Home/End = min/max. */
-export function gripKeyRows(key: string, rows: number, content: number, R: number): number | null {
-  const max = Math.max(1, Math.min(wholeRows(content), cardMaxRows(R)));
-  if (key === "ArrowUp") return cardVisibleRows(content, rows - 1, R);
-  if (key === "ArrowDown") return cardVisibleRows(content, rows + 1, R);
+export function gripKeyRows(key: string, rows: number, content: number, R: number, limit = Infinity): number | null {
+  const max = withinLimit(Math.max(1, Math.min(wholeRows(content), cardMaxRows(R))), limit);
+  if (key === "ArrowUp") return withinLimit(cardVisibleRows(content, rows - 1, R), limit);
+  if (key === "ArrowDown") return withinLimit(cardVisibleRows(content, rows + 1, R), limit);
   if (key === "Home") return cardVisibleRows(content, 1, R);
-  if (key === "End") return cardVisibleRows(content, max, R);
+  if (key === "End") return withinLimit(cardVisibleRows(content, max, R), limit);
   return null;
 }
+
+/** `limit`: the rows left below the card's header in its column, so a grip
+ * resize never pushes the card into the next column. */
+const withinLimit = (rows: number, limit: number) => Number.isFinite(limit) ? Math.min(rows, Math.max(1, Math.floor(limit))) : rows;
 
 function scrollRange(content: number, visible: number, scrollTop: number) {
   const max = Math.max(0, (wholeRows(content) - wholeRows(visible)) * LIST_SLOT_HEIGHT);

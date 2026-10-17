@@ -568,6 +568,109 @@ test("only visible columns animate, with sanitized ghosts on the conveyor and an
   await expect(card(page, `${root}/Career`)).toHaveCount(0);
 });
 
+test("motion stays inside the scrollport on both sides: columns wholly off either edge never animate", async ({ page }) => {
+  await open(page, root, { width: 720, height: 430 });
+  await toggle(page, `${root}/Career`);
+  // Columns 0 and 1 lie wholly off the left edge, column 2 straddles it, and
+  // columns past the right edge are still mounted (overscan).
+  await viewport(page).evaluate(el => { el.scrollLeft = 2 * 276 + 100; });
+  await expect.poll(() => page.locator(`${shown} .list-slot[data-column="0"]`).count()).toBeGreaterThan(0);
+  // Collapsing Career moves every later item up six rows, in every column.
+  const frames = await page.evaluate(async selector => {
+    const { windowTabsManager } = await import("/src/lib/state/window-tabs.svelte.ts");
+    const pane = document.querySelector(selector)!;
+    const scroller = pane.querySelector<HTMLElement>(".list-scroller")!;
+    const canvas = pane.querySelector<HTMLElement>(".list-canvas")!;
+    const box = scroller.getBoundingClientRect();
+    const port = { left: box.left + scroller.clientLeft, right: box.left + scroller.clientLeft + scroller.clientWidth };
+    const intersects = (left: number, right: number) => right > port.left && left < port.right;
+    windowTabsManager.getActiveExplorer()!.collapseAllPeeks();
+    const out: { moving: number; strayMoving: string[]; strayGhosts: number; ghosts: number; offLeft: number; offRight: number; edgeMoving: number }[] = [];
+    for (let i = 0; i < 6; i++) {
+      await new Promise(resolve => requestAnimationFrame(resolve));
+      const origin = canvas.getBoundingClientRect().left;
+      const slots = [...pane.querySelectorAll<HTMLElement>(".list-slot")];
+      const ghosts = [...pane.querySelector(".list-motion-layer")!.children] as HTMLElement[];
+      // A slot's layout box (without its transform), and its drawn box.
+      const layout = (el: HTMLElement) => ({ left: origin + el.offsetLeft, right: origin + el.offsetLeft + el.offsetWidth });
+      const moving = slots.filter(el => el.style.transform || el.style.clipPath);
+      out.push({
+        moving: moving.length,
+        strayMoving: moving.filter(el => {
+          const drawn = el.getBoundingClientRect(), placed = layout(el);
+          return !intersects(drawn.left, drawn.right) || !intersects(placed.left, placed.right);
+        }).map(el => el.dataset.motionKey!),
+        strayGhosts: ghosts.filter(el => { const r = el.getBoundingClientRect(); return !intersects(r.left, r.right); }).length,
+        ghosts: ghosts.length,
+        offLeft: slots.filter(el => layout(el).right <= port.left).length,
+        offRight: slots.filter(el => layout(el).left >= port.right).length,
+        edgeMoving: moving.filter(el => layout(el).left < port.left).length,
+      });
+    }
+    return out;
+  }, shown);
+  expect(frames.some(frame => frame.moving > 0)).toBe(true);
+  // The column straddling the left edge animates; nothing wholly outside does.
+  expect(frames.some(frame => frame.edgeMoving > 0)).toBe(true);
+  expect(frames.every(frame => frame.offLeft > 0 && frame.offRight > 0)).toBe(true);
+  expect(frames.flatMap(frame => frame.strayMoving)).toEqual([]);
+  expect(frames.every(frame => frame.strayGhosts === 0)).toBe(true);
+  await settled(page);
+});
+
+test("refresh, navigation and a row-count change re-lay the List out instantly, while a user toggle animates", async ({ page }) => {
+  await open(page, root, { width: 720, height: 430 });
+  /** Starts recording, per animation frame, how many elements carry motion. */
+  const record = () => page.evaluate(selector => {
+    const w = window as unknown as { motion: number[] };
+    w.motion = [];
+    const tick = () => {
+      const pane = document.querySelector(selector);
+      const styled = pane ? [...pane.querySelectorAll<HTMLElement>(".list-slot, [data-card-scroll]")]
+        .filter(el => el.style.transform || el.style.clipPath || el.style.visibility || (el.matches("[data-card-scroll]") && el.style.height)) : [];
+      w.motion.push((pane?.querySelector(".list-motion-layer")?.childElementCount ?? 0) + styled.length);
+      if (w.motion.length < 30) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }, shown);
+  const recorded = async () => {
+    await expect.poll(() => page.evaluate(() => (window as unknown as { motion: number[] }).motion.length)).toBe(30);
+    return page.evaluate(() => (window as unknown as { motion: number[] }).motion);
+  };
+  // Positive control: the same probe sees a user toggle animate.
+  await record();
+  await caret(page, `${root}/Career`).click();
+  expect(Math.max(...await recorded())).toBeGreaterThan(0);
+  await settled(page);
+  // A refresh that inserts a file before every other file shifts all later items.
+  await record();
+  await page.evaluate(async parent => {
+    const { mockFiles } = await import("/src/lib/api/mock-fixtures.ts");
+    const files = mockFiles[parent];
+    const first = files.find(entry => entry.kind !== "directory")!;
+    mockFiles[parent] = [...files, { ...first, name: "!early.txt", path: `${parent}/!early.txt` }];
+    const { windowTabsManager } = await import("/src/lib/state/window-tabs.svelte.ts");
+    await windowTabsManager.getActiveExplorer()!.refresh();
+  }, root);
+  await expect(row(page, `${root}/!early.txt`)).toHaveCount(1);
+  expect(await recorded()).toEqual(Array(30).fill(0));
+  // A row-count change (the window grows by two rows).
+  const R = Number(await page.locator(`${shown} .list-view`).getAttribute("data-rows"));
+  await record();
+  await page.setViewportSize({ width: 720, height: 490 });
+  await expect(page.locator(`${shown} .list-view`)).toHaveAttribute("data-rows", String(R + 2));
+  expect(await recorded()).toEqual(Array(30).fill(0));
+  // Navigation away and back.
+  await record();
+  await explorerCall(page, "return explorer.navigateTo(value)", `${root}/Archive`);
+  await expect(row(page, `${root}/Archive/2019`)).toBeVisible();
+  expect(await recorded()).toEqual(Array(30).fill(0));
+  await record();
+  await explorerCall(page, "return explorer.goBack()");
+  await expect(row(page, `${root}/Career`)).toBeVisible();
+  expect(await recorded()).toEqual(Array(30).fill(0));
+});
+
 test("interrupted toggles of cards leave no ghost, stuck style or hidden entry", async ({ page }) => {
   const R = await open(page);
   const folders = ["Career", "Archive", "Personal", "Inbox", "Codex"].map(name => `${root}/${name}`);

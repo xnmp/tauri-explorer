@@ -258,6 +258,40 @@ test("an above band keeps the clicked row fixed on screen", async ({ page }) => 
   expect(box.y).toBeGreaterThanOrEqual(port!.y - 1);
 });
 
+test("an above band at the top of the list moves its row down by the shortfall, within the motion", async ({ page }) => {
+  const base = "/folder-peek-tiles-rows";
+  expect(await open(page, base)).toBe(7);
+  // Row 0 holds Folder 01..07: open 07 below, then 06 goes above. With the list
+  // at its top, keeping row 0 fixed would put the new panel above the viewport.
+  await toggle(page, P("Folder 07", base));
+  const before = (await tile(page, P("Folder 06", base)).boundingBox())!.y;
+  const samples = await page.evaluate(async ([selector, path]) => {
+    const pane = document.querySelector(selector)!;
+    const cell = () => pane.querySelector<HTMLElement>(`.tile-row .entry-item[data-path="${path}"]`)!;
+    cell().querySelector<HTMLElement>(".peek-caret")!.click();
+    const start = performance.now();
+    const out: { t: number; y: number }[] = [];
+    while (performance.now() - start < 700) {
+      await new Promise(resolve => requestAnimationFrame(resolve));
+      out.push({ t: performance.now() - start, y: cell().getBoundingClientRect().y });
+    }
+    return out;
+  }, [shown, P("Folder 06", base)] as const);
+  await settled(page);
+  expect(await side(page, P("Folder 06", base))).toBe("above");
+  const [box, port, row] = await Promise.all([rect(page, P("Folder 06", base)), scroller(page).boundingBox(), tile(page, P("Folder 06", base)).boundingBox()]);
+  // The panel's top is at the viewport's top: fully shown, not pushed above it.
+  expect(box.y).toBeGreaterThanOrEqual(port!.y - 1);
+  expect(box.y - port!.y).toBeLessThan(16);
+  // The row moved down by only that shortfall: it sits right below its panel.
+  expect(row!.y).toBeGreaterThan(before + box.height - 1);
+  expect(row!.y - (box.y + box.height)).toBeLessThan(24);
+  // All of it happens in the open motion: from 250ms on, nothing moves (no
+  // separate reveal scroll after the motion), and the row never moves up.
+  for (const s of samples.filter(s => s.t >= 250)) expect(Math.abs(s.y - row!.y), `row at ${Math.round(s.t)}ms`).toBeLessThan(1.5);
+  for (let i = 1; i < samples.length; i++) expect(samples[i].y).toBeGreaterThanOrEqual(samples[i - 1].y - 1);
+});
+
 test("a column-count change keeps each panel on its side while feasible", async ({ page }) => {
   expect(await open(page, root, { width: 730, height: 800 })).toBe(5);
   await toggle(page, P("Career"));

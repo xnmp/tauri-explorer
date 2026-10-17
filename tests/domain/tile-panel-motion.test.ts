@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canAnimate, easeOutCubic, geometryChanged, leavingPaths, mixGeometry, TILE_MOTION_MS } from "$lib/domain/tile-panel-motion";
+import { anchoredScrollTop, canAnimate, easeOutCubic, geometryChanged, leavingPaths, mixGeometry, TILE_MOTION_MS } from "$lib/domain/tile-panel-motion";
 import { BAND_GAP } from "$lib/domain/tile-panels";
 import { P, modelFor } from "./tile-panels-fixture";
 
@@ -43,6 +43,51 @@ describe("Tiles panel motion (§9.5)", () => {
       // Below-band members travel with the row.
       expect(boxOf(frame, "Career").top - frame[0].rowTop).toBeCloseTo(to[0].boxes.find(b => b.path === P("Career"))!.top - to[0].rowTop);
     }
+  });
+
+  describe("anchoring an opening above panel's row (§14)", () => {
+    const from = modelFor(["Career", "Personal"]).model.geometry;
+    const to = modelFor(["Career", "Personal", "Inbox"]).model.geometry;
+    const frames = [0, 0.1, 0.3, 0.5, 0.8, 1].map(e => mixGeometry(from, to, e));
+    /** The row's and the panel's screen tops (relative to the viewport's top) per frame. */
+    const onScreen = (rowScreenTop: number) => {
+      const anchor = { top: from[0].rowTop, scrollTop: from[0].rowTop - rowScreenTop };
+      return frames.map(frame => {
+        const scroll = anchoredScrollTop(anchor, frame[0].rowTop, boxOf(frame, "Inbox").top);
+        return { row: frame[0].rowTop - scroll, panel: boxOf(frame, "Inbox").top - scroll };
+      });
+    };
+    const inboxHeight = to[0].boxes.find(b => b.path === P("Inbox"))!.height;
+
+    it("keeps the row fixed while the whole panel stays on screen", () => {
+      const rowAt = inboxHeight + 100;
+      for (const { row, panel } of onScreen(rowAt)) {
+        expect(row).toBeCloseTo(rowAt);
+        expect(panel).toBeGreaterThanOrEqual(0);
+      }
+    });
+
+    it("stops at the panel's top near the top of the list, moving the row down only by the shortfall", () => {
+      const rowAt = from[0].rowTop; // the list at its top
+      const shown = onScreen(rowAt);
+      for (const { panel } of shown) expect(panel).toBeGreaterThanOrEqual(-1e-9);
+      for (let i = 1; i < shown.length; i++) expect(shown[i].row).toBeGreaterThanOrEqual(shown[i - 1].row - 1e-9);
+      const end = shown.at(-1)!;
+      expect(end.panel).toBeCloseTo(0);
+      // Full compensation would leave the row at rowAt with the panel's top at
+      // rowAt - (rowTop - panelTop); the row moves down by exactly that shortfall.
+      const shortfall = to[0].rowTop - boxOf(frames.at(-1)!, "Inbox").top - rowAt;
+      expect(shortfall).toBeGreaterThan(0);
+      expect(end.row - rowAt).toBeCloseTo(shortfall);
+    });
+
+    it("follows the row alone without an above panel, and ignores a non-finite panel top", () => {
+      const anchor = { top: 300, scrollTop: 120 };
+      expect(anchoredScrollTop(anchor, 520, null)).toBe(340);
+      expect(anchoredScrollTop(anchor, 520, Number.NaN)).toBe(340);
+      expect(anchoredScrollTop(anchor, 520, 400)).toBe(340);
+      expect(anchoredScrollTop(anchor, 520, 200)).toBe(200);
+    });
   });
 
   it("shrinks a closing panel's ghost back to its row and re-splits the rest", () => {

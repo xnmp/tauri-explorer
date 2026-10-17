@@ -36,7 +36,7 @@ const create = new Function("$", "svelte", "panels", "navigation", "motion", "li
   `const { flushSync, onDestroy, tick, untrack } = svelte;
    const { buildTilePanelModel, clampPreferredHeight, gripKeyHeight, groupOffsets, placementSides, PANEL_PAD_Y } = panels;
    const { panelRevealTop, panelRowTop, resolveTileMove } = navigation;
-   const { canAnimate, easeOutCubic, geometryChanged, leavingPaths, mixGeometry, TILE_MOTION_MS } = motion;
+   const { anchoredScrollTop, canAnimate, easeOutCubic, geometryChanged, leavingPaths, mixGeometry, TILE_MOTION_MS } = motion;
    const { motionArmAt, stepMotionArm } = listMotion;
    ${compileClient("../../src/lib/composables/use-tile-panels.svelte.ts")}
    return useTilePanels;`)(client, svelte, panels, navigation, motion, listMotion, TILE_GRID_PAD_X, createRafCoalescer, dropHover,

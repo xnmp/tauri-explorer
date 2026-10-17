@@ -60,6 +60,23 @@ export function mixGeometry(from: readonly GroupGeometry[], to: readonly GroupGe
   });
 }
 
+/** A row kept at its screen position across a geometry change: its canvas top and the scroll offset then. */
+export interface ScrollAnchor { readonly top: number; readonly scrollTop: number }
+
+/**
+ * The outer scroll offset for an anchored row now at canvas top `rowTop` (spec
+ * §14). The scroll follows the row, keeping it where it was on screen, unless
+ * that would put the top of `revealTop` (an opening panel above the row) above
+ * the viewport's top: the scroll then stops with that top at the viewport's top,
+ * and the row moves down by exactly the shortfall. Applied to every motion
+ * frame, the row's descent stays inside the open motion; there is nothing left
+ * for a reveal to scroll afterwards.
+ */
+export function anchoredScrollTop(anchor: ScrollAnchor, rowTop: number, revealTop: number | null): number {
+  const kept = anchor.scrollTop + rowTop - anchor.top;
+  return revealTop === null || !Number.isFinite(revealTop) ? kept : Math.min(kept, revealTop);
+}
+
 /** Paths whose boxes are only in `from` (they leave during this motion). */
 export function leavingPaths(from: readonly GroupGeometry[], to: readonly GroupGeometry[]): Set<string> {
   const after = new Set(to.flatMap(group => group.boxes.map(box => box.path)));

@@ -34,7 +34,7 @@ import {
   type BandSide, type GroupGeometry, type PanelBox, type TileGroup, type TilePanelModel,
 } from "$lib/domain/tile-panels";
 import { panelRevealTop, panelRowTop, resolveTileMove, type TileNavigationSnapshot } from "$lib/domain/tile-panel-navigation";
-import { canAnimate, easeOutCubic, geometryChanged, leavingPaths, mixGeometry, TILE_MOTION_MS } from "$lib/domain/tile-panel-motion";
+import { anchoredScrollTop, canAnimate, easeOutCubic, geometryChanged, leavingPaths, mixGeometry, TILE_MOTION_MS, type ScrollAnchor } from "$lib/domain/tile-panel-motion";
 
 /** Mini rows mounted beyond a panel's visible area. */
 const PANEL_OVERSCAN = 1;
@@ -59,8 +59,9 @@ export interface TileGhost {
 /** A grid cell: the creation sentinel (entry null) or a top-level entry. */
 export interface TileCell { readonly key: string; readonly index: number | null; readonly entry: FileEntry | null }
 
-/** A row kept fixed on screen across a geometry change. */
-interface Anchor { group: number; top: number; scrollTop: number }
+/** A row kept fixed on screen across a geometry change; `reveal` is the panel
+ * opening with it, whose top the anchor never scrolls past (spec §14). */
+interface Anchor extends ScrollAnchor { group: number; reveal: string | null }
 
 interface TilePanelsDeps {
   getExplorer: () => ExplorerInstance;
@@ -140,7 +141,7 @@ export function useTilePanels(deps: TilePanelsDeps) {
     return item >= 0 ? Math.floor(item / m.metrics.columns) : null;
   }
   /** The row to keep fixed: `path`'s, else the first row on screen. */
-  function captureAnchor(m: TilePanelModel, shown: readonly GroupGeometry[], path: string | null): Anchor | null {
+  function captureAnchor(m: TilePanelModel, shown: readonly GroupGeometry[], path: string | null, reveal: string | null): Anchor | null {
     const viewport = deps.getViewport();
     if (!viewport || !viewport.getClientRects().length) return null;
     const scrollTop = viewport.scrollTop;
@@ -152,13 +153,19 @@ export function useTilePanels(deps: TilePanelsDeps) {
       if (group < 0) return null;
     }
     if (!shown[group]) return null;
-    return { group, top: tops[group] + shown[group].rowTop, scrollTop };
+    return { group, top: tops[group] + shown[group].rowTop, scrollTop, reveal };
+  }
+  /** Canvas top of `path`'s panel in the shown geometry, when it opens above its row. */
+  function aboveTop(path: string | null): number | null {
+    const row = path === null ? undefined : model.panels.get(path)?.row;
+    const box = row === undefined ? undefined : geometry[row]?.boxes.find(b => b.path === path);
+    return box?.side === "above" ? offsets[row!] + box.top : null;
   }
   function applyAnchor(anchor: Anchor | null): void {
     if (!anchor || !geometry[anchor.group]) return;
-    const top = offsets[anchor.group] + geometry[anchor.group].rowTop;
-    if (Math.abs(top - anchor.top) > 0.01 || Math.abs((deps.getViewport()?.scrollTop ?? anchor.scrollTop) - anchor.scrollTop) > 0.5) {
-      scrollToOffset?.(anchor.scrollTop + top - anchor.top);
+    const target = anchoredScrollTop(anchor, offsets[anchor.group] + geometry[anchor.group].rowTop, aboveTop(anchor.reveal));
+    if (Math.abs(target - anchor.scrollTop) > 0.01 || Math.abs((deps.getViewport()?.scrollTop ?? anchor.scrollTop) - anchor.scrollTop) > 0.5) {
+      scrollToOffset?.(target);
     }
   }
 
@@ -259,7 +266,7 @@ export function useTilePanels(deps: TilePanelsDeps) {
       if (!previous) return;
       const sameGrid = canAnimate(previous.model, next);
       const path = user ? change.path : anchorPath ?? tracked;
-      const anchor = sameGrid ? captureAnchor(previous.model, frame ?? previous.model.geometry, path) : null;
+      const anchor = sameGrid ? captureAnchor(previous.model, frame ?? previous.model.geometry, path, step.reveal) : null;
       const animate = step.animate && sameGrid && !grip && !prefersReducedMotion();
       // A new toggle, and every change that does not animate, finishes the running motion.
       if (user || !animate) finishMotion();

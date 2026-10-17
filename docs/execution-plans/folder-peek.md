@@ -632,6 +632,13 @@ Screenshots:
     Chromium (and so WebView2) paints nothing for an empty SVG root. axe reads any SVG
     under text as an image, so the WCAG scan replaces the decorative layer with the fill
     it composites, rather than the product moving fill and hairline into CSS.
+  - An above panel keeps its clicked row fixed on screen only while the whole panel
+    stays visible. When full compensation would put the panel's top above the viewport
+    (a row near the top of the scroll range), the scroll stops with the panel's top at
+    the viewport's top, clamped to the scroll range, and the row moves down by exactly
+    that shortfall. This is part of every frame of the same 150ms motion, so no reveal
+    scroll follows it. Holding the row and then smooth-scrolling the panel into view
+    was rejected: it moved the page twice, with a visible pause between.
 
 - **Details:** tinted or bordered group boxes were rejected; groups are unboxed.
 - **List layout:**

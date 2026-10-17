@@ -77,8 +77,8 @@ export interface Settings {
   backgroundImage: string; // absolute path to wallpaper image, empty = none
   backgroundBlur: number; // 0-20, blur in px for custom wallpaper
   columnVisibility: ColumnVisibility;
-  listViewColumns: number; // 0 = auto (based on window width), 1-6 = fixed
-  listColumnMaxWidth: number; // max width per column in px (used when listViewColumns=0)
+  listViewColumns: number; // Legacy persisted setting; unused by List column flow
+  listColumnMaxWidth: number; // Legacy persisted setting; unused by List column flow
   viewMode: ViewMode; // default view mode for new panes
   defaultFileView: string; // plugin file view id for new panes, "" = built-in view mode
   previewPaneWidth: number; // width in px when docked right, 0 = default (280px)
@@ -110,7 +110,7 @@ export interface Settings {
   floatingIslands: boolean; // island layout on any OS — panels float as rounded islands; composes with native macOS/Windows transparency, plain themed backdrop elsewhere (#277)
   windowsBackdrop: WindowsBackdrop; // Windows: translucent system backdrop (Mica/Acrylic), requires restart
   windowsBackdropOpacity: number; // Windows: acrylic tint opacity 0-100 (lower = more see-through)
-  yaziNavigation: boolean; // left/right arrows navigate up/into folders in details/list view
+  yaziNavigation: boolean; // left/right arrows navigate up/into folders in Details view
   folderPeek: boolean; // folder peek (inline folder expansion); off = classic views (#1238)
   folderPeekCarets: boolean; // expand carets beside folders; off = a plain click on a folder toggles its peek (#1248)
   previewFontSize: number; // base font size (px) for text/code/markdown previews

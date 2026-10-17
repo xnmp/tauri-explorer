@@ -304,7 +304,7 @@
   ];
 
   let menuEl: HTMLDivElement | undefined = $state();
-  let listSubmenuOpen = $state(false);
+
   let tilesSubmenuOpen = $state(false);
   let aiSubmenuOpen = $state(false);
 
@@ -630,8 +630,6 @@
       <div class="menu-section-label">View</div>
       {#each viewModes as mode}
         {#if mode.id === "list"}
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div class="submenu-wrapper" class:flip-left={submenuFlip.flipLeft} class:flip-up={submenuFlip.flipUp} onmouseenter={() => listSubmenuOpen = true} onmouseleave={() => listSubmenuOpen = false}>
             <button
               class="menu-item"
               class:selected={builtInShown(mode.id)}
@@ -648,46 +646,8 @@
                   <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
               {/if}
-              <svg class="submenu-arrow" width="8" height="8" viewBox="0 0 8 8" fill="none">
-                <path d="M3 1.5L6 4L3 6.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
+
             </button>
-            {#if listSubmenuOpen}
-              <div class="submenu">
-                <div class="menu-section-label">Columns</div>
-                <button
-                  class="menu-item"
-                  class:selected={settingsStore.listViewColumns === 0}
-                  onclick={() => { settingsStore.setListViewColumns(0); contextMenuStore.close(); }}
-                  role="menuitemradio"
-                  aria-checked={settingsStore.listViewColumns === 0}
-                >
-                  <span>Auto</span>
-                  {#if settingsStore.listViewColumns === 0}
-                    <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
-                      <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                  {/if}
-                </button>
-                {#each [1, 2, 3] as n}
-                  <button
-                    class="menu-item"
-                    class:selected={settingsStore.listViewColumns === n}
-                    onclick={() => { settingsStore.setListViewColumns(n); contextMenuStore.close(); }}
-                    role="menuitemradio"
-                    aria-checked={settingsStore.listViewColumns === n}
-                  >
-                    <span>{n}</span>
-                    {#if settingsStore.listViewColumns === n}
-                      <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
-                        <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                      </svg>
-                    {/if}
-                  </button>
-                {/each}
-              </div>
-            {/if}
-          </div>
         {:else if mode.id === "tiles"}
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div class="submenu-wrapper" class:flip-left={submenuFlip.flipLeft} class:flip-up={submenuFlip.flipUp} onmouseenter={() => tilesSubmenuOpen = true} onmouseleave={() => tilesSubmenuOpen = false}>

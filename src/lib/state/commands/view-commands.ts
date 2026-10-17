@@ -213,26 +213,7 @@ export const viewCommands: Command[] = [
     shortcut: "Ctrl+0",
     handler: () => settingsStore.zoomReset(),
   },
-  {
-    id: "view.setListColumns",
-    scope: "pane",
-    label: "Set List View Column Count",
-    category: "view",
-    handler: () => {
-      const current = settingsStore.listViewColumns;
-      dialogStore.openPicker({
-        title: "Select column count",
-        options: [
-          { id: "0", label: "Auto", current: current === 0 },
-          { id: "1", label: "1 Column", current: current === 1 },
-          { id: "2", label: "2 Columns", current: current === 2 },
-          { id: "3", label: "3 Columns", current: current === 3 },
-          { id: "4", label: "4 Columns", current: current === 4 },
-        ],
-        onSelect: (id) => settingsStore.setListViewColumns(Number(id)),
-      });
-    },
-  },
+
   {
     id: "view.setTileSize",
     scope: "pane",

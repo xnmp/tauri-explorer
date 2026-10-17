@@ -28,6 +28,8 @@
      *  selection maps a rendered (virtualized) tile/row back to its entry. */
     index?: number;
     column: number;
+    role?: "gridcell" | "option";
+    setSize?: number;
     onitemclick: (entry: FileEntry, event: MouseEvent) => void;
     onitemdblclick: (entry: FileEntry) => void;
     children: Snippet;
@@ -41,6 +43,8 @@
     class: className = "",
     index,
     column,
+    role = "gridcell",
+    setSize,
     onitemclick,
     onitemdblclick,
     children,
@@ -51,16 +55,19 @@
   const appearance = useEntryAppearance(() => entry, () => explorer.currentPath);
 </script>
 
+<!-- svelte-ignore a11y_no_noninteractive_tabindex -- Roving composite focus is managed by FileList. -->
 <!-- svelte-ignore a11y_click_events_have_key_events -- FileList owns cursor navigation; the window command router owns configurable Open/Preview and selection commands. -->
 <div
-  role="gridcell"
+  {role}
   aria-label={isVideoMediaFile(entry) ? `${entry.name}, video` : undefined}
   tabindex={!isRenaming && explorer.focusedEntry?.path === entry.path ? 0 : -1}
   aria-selected={explorer.isSelected(entry)}
   class="{className} entry-item"
   data-path={entry.path}
   data-index={index}
-  aria-colindex={column}
+  aria-colindex={role === "gridcell" ? column : undefined}
+  aria-posinset={role === "option" && index !== undefined ? index + 1 : undefined}
+  aria-setsize={role === "option" ? setSize : undefined}
   class:directory={entry.kind === "directory"}
   class:selected={explorer.isSelected(entry)}
   class:cut={appearance.cut}

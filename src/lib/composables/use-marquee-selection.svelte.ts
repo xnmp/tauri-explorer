@@ -29,6 +29,8 @@ const DEFAULT_OPTIONS: Required<MarqueeOptions> = {
     "list-view",
     "tile-row",
     "list-row",
+    "list-canvas",
+    "list-slot",
     "virtual-viewport",
     "virtual-item",
     "virtual-spacer-top",
@@ -231,6 +233,11 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
 
     // marqueeRect is in CSS space; item rects from getBoundingClientRect() are
     // in viewport space on macOS. Scale marquee to viewport for comparison.
+    const scrollRect = scrollEl.getBoundingClientRect();
+    const clipLeft = scrollRect.left + cssToRect(scrollEl.clientLeft);
+    const clipTop = scrollRect.top + cssToRect(scrollEl.clientTop);
+    const clipRight = clipLeft + cssToRect(scrollEl.clientWidth);
+    const clipBottom = clipTop + cssToRect(scrollEl.clientHeight);
     const mLeft = cssToRect(marqueeRect.left) + containerRect.left;
     const mTop = cssToRect(marqueeRect.top) + containerRect.top;
     const mRight = mLeft + cssToRect(marqueeRect.width);
@@ -239,11 +246,11 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
     const selected: number[] = [];
     for (let i = 0; i < cachedItemRects!.length; i++) {
       const rect = cachedItemRects![i];
-      const rLeft = rect.left;
-      const rRight = rect.right;
-      const rTop = rect.top;
-      const rBottom = rect.bottom;
-      if (rRight > mLeft && rLeft < mRight && rBottom > mTop && rTop < mBottom) {
+      const rLeft = Math.max(rect.left, clipLeft);
+      const rRight = Math.min(rect.right, clipRight);
+      const rTop = Math.max(rect.top, clipTop);
+      const rBottom = Math.min(rect.bottom, clipBottom);
+      if (rRight > rLeft && rBottom > rTop && rRight > mLeft && rLeft < mRight && rBottom > mTop && rTop < mBottom) {
         selected.push(cachedItemIndices![i]);
       }
     }

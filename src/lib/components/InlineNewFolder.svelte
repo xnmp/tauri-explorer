@@ -207,8 +207,19 @@
 
   /* List view variant */
   .list-inline-new-folder {
-    padding: 4px 8px;
-    height: auto;
+    box-sizing: border-box;
+    padding: 3px 8px;
+    height: 30px;
+    position: relative;
+  }
+
+  .list-inline-new-folder .new-folder-input { min-width: 0; }
+  .list-inline-new-folder .new-folder-error {
+    position: absolute;
+    top: 100%;
+    left: 8px;
+    z-index: 3;
+    background: var(--control-fill);
   }
 
   .list-inline-new-folder .list-icon {

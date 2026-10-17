@@ -16,6 +16,7 @@ import { toastStore } from "$lib/state/toast.svelte";
 import type { FileEntry } from "$lib/domain/file";
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";
 import { basename, pathComparison } from "$lib/domain/path";
+import { dropHover } from "$lib/state/drop-hover";
 import { dragState } from "$lib/state/drag.svelte";
 import { bookmarksStore } from "$lib/state/bookmarks.svelte";
 import { terminalPanelStore } from "$lib/state/terminal.svelte";
@@ -56,6 +57,7 @@ export function usePointerDrag(deps: PointerDragDeps) {
   let startY = 0;
   let ghostEl: HTMLElement | null = null;
   let sourceEl: HTMLElement | null = null;
+  let hoverPoint = { x: 0, y: 0 };
   let entryData: { path: string; name: string; kind: string; paths?: string[] } | null = null;
   // A mousedown is usually a click. Recursive-root reduction over the whole
   // selection waits until the pointer crosses the drag threshold.
@@ -135,8 +137,14 @@ export function usePointerDrag(deps: PointerDragDeps) {
       return;
     }
 
-    if (!nativeStarted) {
-      const target = resolveDropTargetAtPoint(event.clientX, event.clientY);
+    hoverPoint = { x: event.clientX, y: event.clientY };
+    dropHover.set(refreshHover);
+    refreshHover();
+  }
+
+  function refreshHover(): void {
+    if (dragActive && !nativeStarted) {
+      const target = resolveDropTargetAtPoint(hoverPoint.x, hoverPoint.y);
       const destDir =
         target?.type === "folder" || target?.type === "tab"
           ? target.path
@@ -151,7 +159,7 @@ export function usePointerDrag(deps: PointerDragDeps) {
         clearHighlights();
         return;
       }
-      highlightTargetAtPoint(event.clientX, event.clientY);
+      highlightTargetAtPoint(hoverPoint.x, hoverPoint.y);
     }
   }
 
@@ -171,6 +179,7 @@ export function usePointerDrag(deps: PointerDragDeps) {
   }
 
   function startNativeDrag(): void {
+    dropHover.clear(refreshHover);
     clearHighlights();
     removeListeners();
     if (ghostEl) {
@@ -267,6 +276,7 @@ export function usePointerDrag(deps: PointerDragDeps) {
   }
 
   function cleanup(clearDrag: boolean): void {
+    dropHover.clear(refreshHover);
     removeListeners();
     if (ghostEl) {
       ghostEl.remove();

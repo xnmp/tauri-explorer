@@ -1,102 +1,80 @@
-<!--
-  ListView - Compact multi-column list view.
-
-  DOM-virtualized by ROW (#128): entries are chunked row-major into rows of
-  `effectiveListColumns`, and each row is one fixed-height VirtualList item, so
-  only the visible rows live in the DOM. This changed the fill order from the
-  old column-flow (down-then-across) to row-major (across-then-down); the DOM
-  stays in sequence order so the list remains name-sorted.
-  Issue: tauri-explorer-9djf.5, #128
--->
+<!-- List fills fixed-width columns from top to bottom and virtualizes sideways. -->
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
-  import { settingsStore } from "$lib/state/settings.svelte";
-  import { useRowGridView } from "$lib/composables/use-row-grid-view.svelte";
+  import { useListColumns } from "$lib/composables/use-list-columns.svelte";
+  import { useItemInteractions } from "$lib/composables/use-item-interactions.svelte";
+  import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
+  import { usesPointerDrag } from "$lib/domain/platform";
+  import { dialogStore } from "$lib/state/dialogs.svelte";
+  import type { ListNavigationSnapshot } from "$lib/domain/list-column-flow";
+  import { LIST_COLUMN_STRIDE, LIST_PADDING_X, LIST_SLOT_HEIGHT } from "$lib/domain/list-column-flow";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { getFileIconColor } from "$lib/domain/file-types";
-
   import EntryName from "./EntryName.svelte";
   import FileIcon from "./FileIcon.svelte";
   import GitStatusBadge from "./GitStatusBadge.svelte";
-  import InlineNewFolder, { isNewFolderSentinel } from "./InlineNewFolder.svelte";
+  import InlineNewFolder, { NEW_FOLDER_SENTINEL, isNewFolderSentinel } from "./InlineNewFolder.svelte";
   import EntryCell from "./EntryCell.svelte";
-  import VirtualList from "./VirtualList.svelte";
-
   import type { FileEntry } from "$lib/domain/file";
 
   interface Props {
     explorer: ExplorerInstance;
-    contentWidth: number;
     onitemclick: (entry: FileEntry, event: MouseEvent) => void;
     onitemdblclick: (entry: FileEntry) => void;
-    /** Scroll the given displayEntries index into view (bound by FileList). */
     scrollToIndex?: (index: number) => void;
     containsIndex?: (index: number) => boolean;
+    getNavigation?: () => ListNavigationSnapshot;
     fallbackTabStop: boolean;
     onviewportscroll?: () => void;
     onlayoutchange?: () => void;
   }
-
-  let { explorer, contentWidth, onitemclick, onitemdblclick, scrollToIndex = $bindable(), containsIndex = $bindable(), fallbackTabStop, onviewportscroll, onlayoutchange }: Props = $props();
-
-  // Fixed row height: a single-line list item (16px icon / one text line +
-  // 4px vertical padding + border) plus the 4px inter-row gap. List names are
-  // `white-space: nowrap`, so every row is exactly this tall.
-  const LIST_ROW_HEIGHT = 30;
-
-  // Compute effective list column count (auto or fixed)
-  const effectiveListColumns = $derived.by(() => {
-    if (settingsStore.listViewColumns > 0) return settingsStore.listViewColumns;
-    if (contentWidth <= 0) return 1;
-    return Math.max(1, Math.min(6, Math.floor(contentWidth / settingsStore.listColumnMaxWidth)));
+  let { explorer, onitemclick, onitemdblclick, scrollToIndex = $bindable(), containsIndex = $bindable(), getNavigation = $bindable(), fallbackTabStop, onviewportscroll, onlayoutchange }: Props = $props();
+  const interactions = useItemInteractions({ getExplorer: () => explorer, refreshPanes: () => windowTabsManager.refreshAllPanes(), selectOnContextMenu: true });
+  const pointerDrag = usesPointerDrag ? usePointerDrag({ getExplorer: () => explorer, refreshPanes: () => windowTabsManager.refreshAllPanes() }) : null;
+  const sentinelOffset = $derived(explorer.isCreatingFolder ? 1 : 0);
+  const items = $derived(explorer.isCreatingFolder ? [NEW_FOLDER_SENTINEL, ...explorer.displayEntries] : explorer.displayEntries);
+  const columns = useListColumns({
+    getItems: () => items,
+    getPinnedPaths: () => [explorer.isCreatingFolder ? NEW_FOLDER_SENTINEL.path : "", dialogStore.renamingEntry?.path ?? ""],
+    onviewportscroll: () => onviewportscroll?.(),
+    onlayoutchange: () => onlayoutchange?.(),
   });
-
-  // Shared row-grid wiring (interactions, pointer drag, sentinel splice,
-  // row chunking, scrollToIndex mapping) — see useRowGridView.
-  const grid = useRowGridView({
-    getExplorer: () => explorer,
-    refreshPanes: () => windowTabsManager.refreshAllPanes(),
-    getColumns: () => effectiveListColumns,
+  const revealIndex = (index: number) => columns.reveal(index + sentinelOffset);
+  const contains = (index: number) => columns.containsIndex(index + sentinelOffset);
+  const navigation = () => ({ entries: explorer.displayEntries, directory: explorer.currentPath, layout: columns.layout, sentinelOffset, usableWidth: columns.usableWidth });
+  scrollToIndex = revealIndex;
+  containsIndex = contains;
+  getNavigation = navigation;
+  onDestroy(() => {
+    // The incoming view can install its bindings before the outgoing view dies.
+    if (getNavigation === navigation) getNavigation = undefined;
+    if (containsIndex === contains) containsIndex = undefined;
+    if (scrollToIndex === revealIndex) scrollToIndex = undefined;
   });
-  const { interactions, pointerDrag } = grid;
-  scrollToIndex = grid.scrollToIndex;
-  containsIndex = grid.containsIndex;
+  $effect(() => { if (explorer.isCreatingFolder) columns.reveal(0); });
 </script>
 
-<div class="list-view" data-columns={effectiveListColumns}>
-  <VirtualList
-    class="list-scroller file-rows"
-    role="grid" aria-label="Files" aria-multiselectable={true}
-    aria-rowcount={grid.rows.length} aria-colcount={effectiveListColumns}
-    tabindex={fallbackTabStop ? 0 : -1}
-    bind:containsIndex={grid.rowContainsIndex}
-    items={grid.rows}
-    itemHeight={LIST_ROW_HEIGHT}
-    itemOverflow="visible"
-    viewportPadding="6px 8px"
-    getKey={(row) => row.startIndex}
-    {onviewportscroll}
-    {onlayoutchange}
-    bind:scrollToIndex={grid.rowScrollToIndex}
-  >
-    {#snippet children(row, rowIndex)}
-      <div role="row" aria-rowindex={rowIndex + 1} class="list-row" style="grid-template-columns: repeat({effectiveListColumns}, minmax(0, 1fr));">
-        {#each row.items as entry, col (entry.path)}
+<div class="list-view" data-rows={columns.rows}>
+  <div class="virtual-viewport list-scroller file-rows" class:short={columns.short}
+    role="listbox" aria-label="Files" aria-multiselectable="true" tabindex={fallbackTabStop ? 0 : -1}
+    use:columns.attach>
+    <div class="list-canvas" style:width="{columns.extent - LIST_PADDING_X * 2}px" style:height="{columns.rows * LIST_SLOT_HEIGHT}px">
+      {#each columns.visibleItems as { entry, placement } (entry.path)}
+        <div class="list-slot" data-column={placement.column} style:left="{placement.column * LIST_COLUMN_STRIDE}px" style:top="{placement.row * LIST_SLOT_HEIGHT}px">
           {#if isNewFolderSentinel(entry)}
-            <div role="gridcell"><InlineNewFolder {explorer} variant="list" /></div>
+            <InlineNewFolder {explorer} variant="list" />
           {:else}
-          <EntryCell column={col + 1} class="list-item" index={row.startIndex + col - grid.sentinelOffset} {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
-            <span class="list-icon" data-drag-icon style:color={entry.kind !== "directory" ? getFileIconColor(entry) : undefined}>
-              <FileIcon {entry} size="small" />
-            </span>
-            <span data-drag-name><EntryName {entry} {explorer} variant="list" /></span>
-            <GitStatusBadge entryName={entry.name} />
-          </EntryCell>
+            <EntryCell role="option" setSize={explorer.displayEntries.length} column={placement.column + 1} class="list-item" index={placement.index - sentinelOffset} {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
+              <span class="list-icon" data-drag-icon style:color={entry.kind !== "directory" ? getFileIconColor(entry) : undefined}><FileIcon {entry} size="small" /></span>
+              <span data-drag-name><EntryName {entry} {explorer} variant="list" /></span>
+              <GitStatusBadge entryName={entry.name} />
+            </EntryCell>
           {/if}
-        {/each}
-      </div>
-    {/snippet}
-  </VirtualList>
+        </div>
+      {/each}
+    </div>
+  </div>
 </div>
 
 <style>
@@ -105,18 +83,21 @@
     flex-direction: column;
     flex: 1;
     min-height: 0;
+    min-width: 0;
   }
 
-  /* Each virtualized row is an equal-width grid. minmax(0, 1fr), not 1fr: a
-     1fr track's implicit min is min-content, so a long unbreakable name (or the
-     wider rename box) would expand its column and shove the others sideways. A
-     0 min keeps every column an equal share and lets the name truncate / the
-     rename box overflow instead. */
-  .list-view :global(.list-row) {
-    display: grid;
-    gap: 4px;
-    align-items: start;
+  .list-scroller {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    overflow-x: scroll;
+    overflow-y: hidden;
+    padding: 6px 8px;
   }
+
+  .list-scroller.short { overflow-y: auto; }
+  .list-canvas { position: relative; }
+  .list-slot { position: absolute; width: 260px; height: 30px; }
 
   .list-view :global(.list-item) {
     display: flex;
@@ -124,6 +105,8 @@
     gap: 8px;
     padding: 4px 8px;
     width: 100%;
+    box-sizing: border-box;
+    height: 26px;
     background: transparent;
     border: 1px solid transparent;
     border-left-width: var(--selection-indicator-width);

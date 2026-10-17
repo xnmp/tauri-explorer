@@ -131,7 +131,9 @@ export interface MotionArm {
   readonly reveal: string | null;
 }
 export interface MotionArmInput {
-  readonly change: { readonly path: string; readonly serial: number } | null;
+  /** `reveal: false` animates the change without revealing its card (a
+   * spring-loaded peek, #1242: scrolling would move it out from under the drag). */
+  readonly change: { readonly path: string; readonly serial: number; readonly reveal?: boolean } | null;
   readonly now: number;
   readonly status: (path: string) => string | undefined;
   /** The top-level card that is `path` or contains it, or null. */
@@ -153,7 +155,7 @@ export function stepMotionArm(state: MotionArm, input: MotionArmInput): MotionAr
   const { change, now } = input;
   const user = change !== null && change.serial !== state.seen;
   let armed = user ? { path: change.path, until: now + LIST_MOTION_ARM_MS } : state.armed;
-  let pending = user ? change.path : state.reveal;
+  let pending = user ? (change.reveal === false ? null : change.path) : state.reveal;
   if (armed && now > armed.until) armed = null;
   const animate = armed !== null;
   const loading = (path: string) => input.status(path) === "loading";

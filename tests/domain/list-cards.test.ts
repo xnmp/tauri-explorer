@@ -131,6 +131,35 @@ describe("buildListModel (ports the mock selfTest)", () => {
     expect(positions(ai)["freeze-fix-guide.md"]).toEqual([1, 5]);
     expect(ai.layout.atSlot(0, 5)).toBeUndefined();
   });
+  it("a spring-loaded card that does not fit shrinks in place instead of wrapping (#1242)", () => {
+    const rows = rowsFor(TOP, ["AI Draft Archive"]).rows;
+    const spring = (path: string) => path === `${ROOT}/AI Draft Archive`;
+    const fit = sizeListModel(buildListStructure(rows), 6, () => undefined, spring);
+    // The header keeps its place (column 0, row 5); the card holds only the rows left.
+    expect(positions(fit)["AI Draft Archive"]).toEqual([0, 5]);
+    const index = fit.items.findIndex(item => item.card);
+    expect(fit.layout.byIndex[index].slots).toBe(1);
+    expect(fit.items[index].card).toMatchObject({ visibleRows: 0 });
+    expect(positions(fit)["freeze-fix-guide.md"]).toEqual([1, 0]);
+    // Two rows left: header plus one visible row.
+    const career = sizeListModel(buildListStructure(rowsFor(TOP, ["Personal"]).rows), 6, () => undefined, path => path === `${ROOT}/Personal`);
+    expect(positions(career).Personal).toEqual([0, 3]);
+    expect(career.items[3].card).toMatchObject({ visibleRows: 2 });
+    // An ordinary card in the same place still wraps, and a fitting card that fits is unchanged.
+    expect(positions(sizeListModel(buildListStructure(rows), 6, () => undefined))["AI Draft Archive"]).toEqual([1, 0]);
+    const inbox = rowsFor(TOP, ["Inbox"]).rows;
+    expect(sizeListModel(buildListStructure(inbox), 21, () => undefined, () => true).layout.byIndex)
+      .toEqual(sizeListModel(buildListStructure(inbox), 21, () => undefined).layout.byIndex);
+  });
+  it("columnFlow shrinks only cards with a valid minimum, and never below it", () => {
+    const item = (slots: number, min?: number) => ({ slots, card: slots > 1, ...(min === undefined ? {} : { min }) });
+    const flow = (specs: { slots: number; card: boolean; min?: number }[]) => columnFlow(specs, 6, spec => spec).byIndex.map(p => [p.column, p.row, p.slots]);
+    expect(flow([item(1), item(1), item(1), item(5, 1)])).toEqual([[0, 0, 1], [0, 1, 1], [0, 2, 1], [0, 3, 3]]);
+    expect(flow([item(1), item(1), item(1), item(5, 4)])).toEqual([[0, 0, 1], [0, 1, 1], [0, 2, 1], [1, 0, 5]]);
+    for (const min of [0, -1, 1.5, Number.NaN]) expect(flow([item(1), item(1), item(1), item(5, min)])).toEqual([[0, 0, 1], [0, 1, 1], [0, 2, 1], [1, 0, 5]]);
+    // A plain item never shrinks or grows.
+    expect(flow([item(1), item(1, 1)])).toEqual([[0, 0, 1], [0, 1, 1]]);
+  });
   it("puts nested expansion inside the card, in tree order, and maps entries to their card", () => {
     const { rows, tree } = rowsFor(TOP, ["Career", "Career/Applications"]);
     const model = buildListModel(rows, 6, () => undefined);

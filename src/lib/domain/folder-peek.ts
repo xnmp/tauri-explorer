@@ -63,6 +63,19 @@ export function pruneExpanded(expanded: ExpandedPaths, parent: string, entries: 
   }));
 }
 
+/**
+ * The expanded set the projection renders: the user's expanded paths plus the
+ * temporary (spring-loaded, #1242) peeks of a live drag. Temporary paths take
+ * ordinal 0, below every user ordinal (>= 1), so they never win a watch slot
+ * from a user peek; they never enter the stored set itself.
+ */
+export function withTemporaryPeeks(expanded: ExpandedPaths, temporary: readonly string[]): ExpandedPaths {
+  if (!temporary.length) return expanded;
+  const next = new Map(expanded);
+  for (const path of temporary) if (!next.has(path)) next.set(path, 0);
+  return next;
+}
+
 export function choosePeekWatches(reachable: readonly string[], expanded: ExpandedPaths, cap = 16): string[] {
   return [...reachable].sort((a, b) => (expanded.get(b) ?? -1) - (expanded.get(a) ?? -1)).slice(0, cap);
 }

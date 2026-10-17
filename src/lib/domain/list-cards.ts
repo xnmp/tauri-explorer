@@ -74,8 +74,10 @@ export function buildListStructure(rows: PeekRows): ListStructure {
 
 /** Sizes a structure's cards for R rows per column and flows it. Plain items are
  * reused as they are (they have no size), so with no open card nothing per item
- * is allocated beyond the flow's placements. */
-export function sizeListModel(structure: ListStructure, R: number, preferredOf: (path: string) => number | undefined): ListFlowModel {
+ * is allocated beyond the flow's placements. A card for which `fitsInPlace`
+ * holds (a spring-loaded peek, #1242) shrinks to the rows left in its column,
+ * down to its header alone, rather than moving its header to the next column. */
+export function sizeListModel(structure: ListStructure, R: number, preferredOf: (path: string) => number | undefined, fitsInPlace?: (path: string) => boolean): ListFlowModel {
   let items: readonly ListTopItem[];
   if (!structure.cards.length) items = structure.items as readonly ListTopItem[]; // every card is null
   else {
@@ -86,7 +88,19 @@ export function sizeListModel(structure: ListStructure, R: number, preferredOf: 
     }
     items = sized;
   }
-  const layout = columnFlow(items, R, item => item.card ? { slots: 1 + item.card.visibleRows, card: true } : { slots: 1, card: false });
+  const fitting = fitsInPlace && structure.cards.length ? new Set(structure.cards.filter(index => fitsInPlace(items[index].card!.path))) : null;
+  const layout = columnFlow(items, R, (item, index) => item.card
+    ? { slots: 1 + item.card.visibleRows, card: true, ...(fitting?.has(index) ? { min: 1 } : {}) }
+    : { slots: 1, card: false });
+  if (fitting?.size) {
+    // A shrunk card shows only the rows its placement holds.
+    const shrunk = [...fitting].filter(index => layout.byIndex[index].slots !== 1 + items[index].card!.visibleRows);
+    if (shrunk.length) {
+      const sized = items.slice() as ListTopItem[];
+      for (const index of shrunk) sized[index] = { ...items[index], card: { ...items[index].card!, visibleRows: layout.byIndex[index].slots - 1 } };
+      items = sized;
+    }
+  }
   return { layout, items, rowEntry: structure.rowEntry, entryItem: structure.entryItem, entryOffset: structure.entryOffset };
 }
 

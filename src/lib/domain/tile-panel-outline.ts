@@ -173,6 +173,10 @@ export interface PanelOutline {
   readonly accent: AccentGradient;
   /** A stacked panel's ribbon centre line (the hover hit stroke). */
   readonly ribbon: string | null;
+  /** An attached panel's tab across the band gap (between the parent tile and
+   * the panel): a transparent hit area, so hovering the gap is hovering the
+   * panel, and a spring-loaded panel (#1242) stays open while a drag crosses it. */
+  readonly bridge: { readonly x: number; readonly y: number; readonly width: number; readonly height: number } | null;
   readonly opacity: number;
 }
 
@@ -194,8 +198,11 @@ export function groupOutlines(geometry: GroupGeometry, m: RowMetrics, compact = 
     if (box.side !== "stacked" || !box.label) {
       const d = box.side === "above" ? -1 : 1;
       const yp = d > 0 ? box.top : box.top + box.height;
+      const near = d > 0 ? rowBottom : rowTop;
+      const bridge = Math.abs(yp - near) > 0 && tab.x1 > tab.x0
+        ? { x: tab.x0, y: Math.min(yp, near), width: tab.x1 - tab.x0, height: Math.abs(yp - near) } : null;
       outlines.push({
-        path: box.path, opacity: box.opacity, ribbon: null,
+        path: box.path, opacity: box.opacity, ribbon: null, bridge,
         d: outlinePath({ x0, x1, yp, yf: d > 0 ? box.top + box.height : box.top, d, tab: { tx0: tab.x0, tx1: tab.x1, ty: d > 0 ? rowTop : rowBottom } }),
         accent: { y1: yp, y2: yp + d * fade, stops: [{ offset: 0, opacity: 1 }, { offset: 1, opacity: 0 }] },
       });
@@ -223,7 +230,7 @@ export function groupOutlines(geometry: GroupGeometry, m: RowMetrics, compact = 
     const mid = (route.sy + route.ey) / 2;
     const at = (y: number, opacity: number): GradientStop => ({ offset: Math.max(0, Math.min(1, (y - start) / span)), opacity });
     outlines.push({
-      path: box.path, opacity: box.opacity, ribbon: ribbon.path, d,
+      path: box.path, opacity: box.opacity, ribbon: ribbon.path, bridge: null, d,
       accent: { y1: start, y2: end, stops: [at(start, 1), at(Math.min(route.sy + 64, mid), 0), at(Math.max(route.ey - 64, mid), 0), at(route.ey, 1), at(box.top, 1), at(end, 0)] },
     });
   });

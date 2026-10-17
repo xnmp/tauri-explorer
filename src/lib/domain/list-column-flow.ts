@@ -8,7 +8,11 @@ export const LIST_COLUMN_STRIDE = LIST_COLUMN_WIDTH + LIST_COLUMN_GAP;
 export const LIST_PADDING_X = 8;
 export const LIST_PADDING_Y = 6;
 
-export type SlotSpec = Readonly<{ slots: number; card: boolean }>;
+/** `min`: a card that does not fit the rows left in its column may shrink to as
+ * few as `min` slots (at least its header) and stay there instead of starting the
+ * next column. Spring-loaded cards (#1242) use it: their header must stay under
+ * the drag that opened them. */
+export type SlotSpec = Readonly<{ slots: number; card: boolean; min?: number }>;
 export type ListPlacement = Readonly<{ index: number; column: number; row: number; slots: number }>;
 export interface ColumnFlowLayout {
   readonly rows: number;
@@ -18,21 +22,26 @@ export interface ColumnFlowLayout {
 }
 
 /** Stateless prefix scan. Storage follows entries, never the number of available slots. */
-export function columnFlow<T>(items: readonly T[], R: number, slotsOf: (item: T) => SlotSpec): ColumnFlowLayout {
+export function columnFlow<T>(items: readonly T[], R: number, slotsOf: (item: T, index: number) => SlotSpec): ColumnFlowLayout {
   if (!Number.isSafeInteger(R) || R < 4) throw new RangeError("Rows per column must be an integer >= 4");
   const columns: ListPlacement[][] = [];
   const byIndex: ListPlacement[] = [];
   let column = 0, row = 0;
   items.forEach((item, index) => {
-    const spec = slotsOf(item);
+    const spec = slotsOf(item, index);
     if (!spec || !Number.isSafeInteger(spec.slots) || spec.slots < 1 || spec.slots > R || (!spec.card && spec.slots !== 1)) {
       throw new RangeError("Entries must fit one column; plain items use one slot");
     }
-    if (row + spec.slots > R) { column++; row = 0; }
-    const placement = { index, column, row, slots: spec.slots };
+    let slots = spec.slots;
+    if (row + slots > R) {
+      const fit = spec.card && spec.min !== undefined && Number.isSafeInteger(spec.min) && spec.min >= 1 && R - row >= spec.min;
+      if (fit) slots = R - row;
+      else { column++; row = 0; }
+    }
+    const placement = { index, column, row, slots };
     (columns[column] ??= []).push(placement);
     byIndex.push(placement);
-    row += spec.slots;
+    row += slots;
     if (row === R) { column++; row = 0; }
   });
   return {

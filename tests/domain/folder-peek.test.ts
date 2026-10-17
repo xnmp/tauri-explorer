@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createPeekLevelCache, flattenPeekEntries, toggleExpanded, collapseSubtree, pruneExpanded, choosePeekWatches, peekCapability, rememberWhileExpanded, resolvePeekCommandTarget, resolvePeekEscape } from "$lib/domain/folder-peek";
+import { createPeekLevelCache, flattenPeekEntries, toggleExpanded, collapseSubtree, pruneExpanded, choosePeekWatches, peekCapability, rememberWhileExpanded, withTemporaryPeeks, resolvePeekCommandTarget, resolvePeekEscape } from "$lib/domain/folder-peek";
 import { pathComparison } from "$lib/domain/path";
 import { sortEntries, filterHidden, type FileEntry } from "$lib/domain/file";
 
@@ -77,6 +77,20 @@ describe("folder peek preorder and policies", () => {
     expect(expanded.size).toBe(500);
     expect(expanded.has("/r/0")).toBe(false);
     expect(choosePeekWatches([...expanded.keys()], expanded)).toEqual(Array.from({ length: 16 }, (_, i) => `/r/${500 - i}`));
+  });
+  it("temporary peeks join the projection below every user peek, without touching the stored set", () => {
+    let expanded = new Map<string, number>();
+    for (let i = 1; i <= 16; i++) expanded = toggleExpanded(expanded, `/r/${i}`, i);
+    const stored = new Map(expanded);
+    expect(withTemporaryPeeks(expanded, [])).toBe(expanded);
+    const projected = withTemporaryPeeks(expanded, ["/r/spring", "/r/3"]);
+    expect(projected.get("/r/spring")).toBe(0);
+    // A temporary path that is already expanded keeps its user ordinal.
+    expect(projected.get("/r/3")).toBe(3);
+    expect(expanded).toEqual(stored);
+    // At the watch cap, a temporary peek never evicts a user peek's watch.
+    expect(choosePeekWatches([...projected.keys()], projected)).not.toContain("/r/spring");
+    expect(choosePeekWatches(["/r/spring", "/r/1"], projected)).toEqual(["/r/1", "/r/spring"]);
   });
   it.each([["setting off", { enabled: false }], ["git graph", { fileListing: false }], ["plugin view", { builtinView: false }], ["virtual location", { plainLocation: false }]] as const)(
     "treats %s exactly like an unsupported view", (_label, change) => {

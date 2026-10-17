@@ -553,6 +553,31 @@ Screenshots:
 - **Carets option (#1248):** `folderPeekCarets` hides carets and makes a plain folder click toggle, because some users want a caret-free list and the classic single-click-selects behaviour never expanded anything. Decided purely (`shouldToggleOnRowClick`) and routed through `togglePeek`, so it shares the caret's capability, eligibility and lazy-load guards. Modifier clicks stay selection-only and double-click is two toggles then navigate: a click-delay to disambiguate was rejected as input latency. Drag/marquee-ending clicks are excluded by comparing the press and release points and the marquee grace window.
 - **Caret is not a tab stop:** the caret keeps its button role and accessible name for pointer and assistive-technology users, but has `tabindex="-1"` and prevents focus on mousedown. A focusable caret stole keyboard focus from the row grid, so arrows and typeahead stopped following the cursor row after a click, and Tab stopped on every expanded folder. Keyboard users expand the cursor row's folder with the "Peek into Folder" command (bindable) and step back out with Escape, so the caret needs no tab stop of its own.
 
+- **Phase 3 (List cards, #1240):**
+  - The card's `role="group"` ("<name> contents") is its scroll area, not the whole
+    card: the header stays an option in the listbox flow and keeps one DOM node whether
+    the folder is open or closed.
+  - Every List level sorts by name, like the List root; the pane's Details sort applies
+    only in Details. A Details sort (for example size) reordering a List card was
+    rejected as surprising in a name-ordered view.
+  - A grip drag previews only the card's scroll area (items it would cover are hidden)
+    and commits on release without motion; pointercancel or lost capture aborts the
+    preview. Heights are remembered per pane for the session, capped at 500 paths like
+    the expanded set.
+  - Motion is driven by an explicit user-toggle signal (`peekChange`), armed until the
+    opened folder's listing settles (at most 1.5s). Inferring "user change" from layout
+    diffs was rejected: refreshes and restores would animate.
+  - Loading (after 150ms), Empty and Error rows take one content row like Details; a
+    card is header-only while its listing has produced no row.
+  - Card heights come only from the model (CSS variables); measuring rendered heights
+    was rejected (#1061).
+  - A scrollable card takes a vertical wheel natively until its range end, then the
+    List's sideways mapping resumes; taking it with `preventDefault` would lose native
+    momentum and scroll chaining.
+  - A card's own surface and its pseudo-rows are drop targets for their folder; file
+    rows inside a card stay non-targets, as everywhere else. Marquee hits are clipped to
+    the card's scroll area.
+
 - **Details:** tinted or bordered group boxes were rejected; groups are unboxed.
 - **List layout:**
   - masonry/shortest-column: scattered motion and lone files under cards;

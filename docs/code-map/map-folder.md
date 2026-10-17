@@ -37,7 +37,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `PreviewImageSurface.svelte` — the Preview pane's image surface (container, image, zoom indicator, fullscreen styles) shared by file images and plugin targets; event handling comes from `use-preview-fullscreen` (#1033).
 - `ImageResolutionCell.svelte` — lazy intrinsic image metadata for mounted Details rows.
 - `DetailsView.svelte` — virtual-scrolled table view (columns, resize, sort headers).
-- `ListColumnsView.svelte` — Folder Peek List: column-major listbox with horizontal windowing and shared reveal/navigation snapshot.
+- `ListColumnsView.svelte` — Folder Peek List: column-major listbox with horizontal windowing and shared reveal/navigation snapshot; an open top-level folder keeps its header row and renders a `ListCard`, and its inert `.list-motion-layer` holds `use-list-motion` ghosts (#1240).
+- `ListCard.svelte` — one List card's descendant scroll area (`role=group`, virtualized rows, nested guides, pseudo-rows), bottom grip (separator, whole-row preview/commit) and "+N more"; its surface is a `.peek-drop-target` for the folder.
 - `ListView.svelte` — classic row-major List (Folder Peek off); `listViewColumns`/`listColumnMaxWidth` apply here only.
 - `TilesView.svelte` — row-virtualized tile view with thumbnails; renders through `TileSurface.svelte`/`TileVisual.svelte`; runs `scroll-jank-monitor.ts` during scroll and logs `tiles-scroll-jank` events only when jank occurred (#593).
 - `view-loaders.svelte.ts` — memoised, retryable dynamic imports for every built-in view renderer (Details, List columns, classic List, Tiles); FileList starts the chunk in parallel with the listing, and settled renderers are published reactively so later mounts render them in the same flush.
@@ -373,7 +374,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-panel-resize.svelte.ts` — localStorage width preference adapter for Sidebar, SCM, Miller and Git columns.
 - `use-resize-owner.svelte.ts` — shared axis-aware pointer capture, geometry, keyboard and activity lifetime.
 - `use-controlled-size.svelte.ts` — external-source size adapter; transient drafts, final commits and value-based source supersession.
-- `use-list-columns.svelte.ts` — List column virtualizer; synchronous content-box sizing, wheel ownership, editor pinning, reveal and settled callbacks.
+- `use-list-columns.svelte.ts` — List column virtualizer over `buildListModel`; synchronous content-box sizing, wheel ownership (a scrollable card first), editor pinning, card scroll offsets and grip preview, entry/card reveal and settled callbacks.
+- `use-list-motion.svelte.ts` — applies `domain/list-motion.ts` plans to the List canvas for user peek toggles only (FLIP, conveyor clip, card growth, sanitized ghosts in an inert layer, finish-on-interrupt).
 - `use-row-grid-view.svelte.ts` — shared virtualization wiring (rows, DnD, new-folder sentinel, scrollToIndex) for Tiles view.
 
 ## src/lib/domain/ — pure logic, no framework deps. Test + reuse here.
@@ -446,7 +448,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `file-batch-outcome.ts` — typed successful/failed path receipt and aggregate error formatting for best-effort file mutations.
 - `src/lib/domain/copy-session.ts` — ordered native session event, conflict-decision and positional result contracts, plus the copy and move incomplete-session presentations.
 - `file-history.ts` — shared action, summary, receipt and HistoryPort types for the native history authority.
-- `list-column-flow.ts` — slot-aware column prefix scan, span lookup, List keyboard movement, wheel mapping (`listWheelStep`: sub-pixel carry, native passthrough) and viewport math.
+- `list-column-flow.ts` — slot-aware column prefix scan, span lookup, the `ListFlowModel` types, card-aware List keyboard movement (`resolveListMove`), wheel mapping (`listWheelStep`: sub-pixel carry, native passthrough) and viewport math.
+- `list-cards.ts` — List cards (#1240): `buildListModel` over peek rows, height clamp, grip snapping/keys, "+N more", scroll-edge fades, card reveal/window/wheel policies and bounded session heights.
+- `list-motion.ts` — pure List open/close motion plan (FLIP, conveyor distance with empty slots, card growth, visible-column gating) and easing/clip helpers.
 - `drop-feedback.ts` — pure decision for whether a DOM dragend may retire drop-hover feedback (stale echo vs cancelled drag).
 - `virtual-layout.ts` — variable-height virtual list layout math (VirtualList).
 - `tile-layout.ts` — tile sizes (`THUMBNAIL_SIZE_CONFIG`, re-exported by settings), spacing/row-height `tileLayout()` and grid arrow-key `gridFocusStep()` shared by every tile grid; the SDK's `PaneTileSize`/`TileSizePreset` and `paneTileSize()`; `tileGridMetrics()` exposes minimum width, allocated cell height, gap and grid padding through `ui/file-tile`.

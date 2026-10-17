@@ -590,6 +590,39 @@ Screenshots:
     rows inside a card stay non-targets, as everywhere else. Marquee hits are clipped to
     the card's scroll area.
 
+- **Phase 4 (Tiles panels, #1241):**
+  - With peek on, Tiles always renders through `TilePanelsView`, a separate lazy
+    renderer, even with no panel open, so a tile keeps its DOM node across a toggle.
+    Off is the unchanged classic `TilesView`. Adding bands to the classic view was
+    rejected: off must stay exactly as before, and per-row band expressions would cost
+    plain Tiles scrolling.
+  - A VirtualList item is a row group (the grid row plus its above, below and stacked
+    bands), with its height from the computed geometry. Outlines and ribbons join a row
+    only to its own bands, so each group draws its own outlines. A page-wide overlay was
+    rejected: it would need its own virtualization and offsets.
+  - Panels are `role="rowgroup"` labelled "<name> contents", not §10's `group`: the
+    Tiles grid may own only rows and rowgroups. The stacked label and the grip are rows
+    holding a gridcell.
+  - The column count comes from the classic content-width rule, so turning peek on never
+    changes C; panel widths use the probe's inner width, committed in the
+    ResizeObserver delivery (#1061).
+  - Sides are kept on column-count and width changes while feasible; otherwise panels
+    are re-placed in opening order (the spec's rule, not the mock's re-place-all).
+  - Opening reveals the panel after the motion settles. Revealing a target that is still
+    growing chased a moving bottom edge.
+  - A ribbon with no free channel between panels runs in the scroller's 8px side
+    padding rather than crossing a panel.
+  - A stacked label is max(parent tab width, 240px) wide, capped at the panel width, and
+    its name and count ellipsize. Sizing the label to its text would need a measurement.
+  - Arrow keys inside a panel walk its grid. At an edge, Up/Down go to the nearest item in
+    that direction. Left/Right go to the nearest item on the same visual line, otherwise
+    they wrap in reading order within the cursor's level, as the classic grid does.
+  - Renaming a mini tile edits in place and is clipped by the panel's scroll area. The
+    renaming entry stays mounted while scrolled out. Lifting the editor out of the panel
+    was not needed for v1.
+  - The outline layer is a zero-size SVG that draws outside itself. A full-size layer
+    under the tiles made axe report tile text as covered by an image in every theme.
+
 - **Details:** tinted or bordered group boxes were rejected; groups are unboxed.
 - **List layout:**
   - masonry/shortest-column: scattered motion and lone files under cards;

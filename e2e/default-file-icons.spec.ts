@@ -134,14 +134,18 @@ test('Material distinguishes neighboring file types, rounds TS/JS and obeys cust
   for(const [name,id] of cases) await expect(row(page,name).locator(`[data-icon-id="${id}"]`)).toBeVisible();
   await chooseView(page,'tiles');
   for(const name of ['playwright.config.ts','main.js']) {
-    const pixels=decodePng(await row(page,name).locator('svg').first().screenshot());
-    expect(colorDistance(pixels.pixel(5,5),pixels.pixel(5,32)),`${name} corner must be rounded`).toBeGreaterThan(30);
+    await expect.poll(async()=>{
+      const pixels=decodePng(await row(page,name).locator('svg').first().screenshot());
+      return colorDistance(pixels.pixel(5,5),pixels.pixel(5,32));
+    },{message:`${name} corner must be rounded`}).toBeGreaterThan(30);
   }
   await page.evaluate(()=>document.documentElement.style.setProperty('--icon-file-tint','#a24cde'));
   for(const name of ['playwright.config.ts','budget.xlsx']) {
-    const pixels=decodePng(await row(page,name).locator('svg').first().screenshot());
-    let count=0;for(let y=0;y<pixels.height;y++)for(let x=0;x<pixels.width;x++)if(colorDistance(pixels.pixel(x,y),[162,76,222])<20)count++;
-    expect(count,`${name} must use file tint`).toBeGreaterThan(20);
+    await expect.poll(async()=>{
+      const pixels=decodePng(await row(page,name).locator('svg').first().screenshot());
+      let count=0;for(let y=0;y<pixels.height;y++)for(let x=0;x<pixels.width;x++)if(colorDistance(pixels.pixel(x,y),[162,76,222])<20)count++;
+      return count;
+    },{message:`${name} must use file tint`}).toBeGreaterThan(20);
   }
 });
 
@@ -206,22 +210,26 @@ test('all aliases follow their identity category in both colorful packs',async({
   for(const pack of ['material','catppuccin']) {
     await choosePack(page,pack);
     for(const [name,color] of [['playwright.config.ts','rgb(239, 18, 52)'],['main.mts','rgb(239, 18, 52)'],['data.jsonc','rgb(239, 18, 52)'],['files.bz2','rgb(18, 52, 239)']]) {
-      const pixels=decodePng(await row(page,name).locator(`[data-icon-theme="${pack}"]`).screenshot());
       const target=color==='rgb(239, 18, 52)' ? [239,18,52] as [number,number,number] : [18,52,239] as [number,number,number];
-      let matching=0;
-      for(let y=0;y<pixels.height;y++)for(let x=0;x<pixels.width;x++)if(colorDistance(pixels.pixel(x,y),target)<20)matching++;
-      expect(matching,`${pack} ${name} must paint the category tint`).toBeGreaterThan(5);
+      await expect.poll(async()=>{
+        const pixels=decodePng(await row(page,name).locator(`[data-icon-theme="${pack}"]`).screenshot());
+        let matching=0;
+        for(let y=0;y<pixels.height;y++)for(let x=0;x<pixels.width;x++)if(colorDistance(pixels.pixel(x,y),target)<20)matching++;
+        return matching;
+      },{message:`${pack} ${name} must paint the category tint`}).toBeGreaterThan(5);
     }
   }
 });
 
-test('Minimal uses one monochrome foreground across file types and folders',async({page})=>{
+test('Minimal files use one monochrome foreground while folders retain their theme color',async({page})=>{
   await openIcons(page,'dark','minimal');
   const colors=[];
-  for(const name of ['playwright.config.ts','main.js','report.pdf','index.html','movie.mp4','Folder']) {
+  for(const name of ['playwright.config.ts','main.js','report.pdf','index.html','movie.mp4']) {
     colors.push(await row(page,name).locator('svg').first().evaluate(svg=>getComputedStyle(svg).color));
   }
   expect(new Set(colors).size).toBe(1);
+  const folderColor=await row(page,'Folder').locator('svg').first().evaluate(svg=>getComputedStyle(svg).color);
+  expect(folderColor).not.toBe(colors[0]);
 });
 
 test('photo folders retain pack styling and link/repository decorations at large sizes',async({page})=>{

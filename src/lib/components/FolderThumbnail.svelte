@@ -134,7 +134,7 @@
 </script>
 
 <div class="folder-thumb" class:outlined-folder={outlinedFolder} class:git-repo-folder={imagePaths.length > 0 && decoration==='repository'} class:linked-folder={imagePaths.length > 0 && decoration==='linked'}
-  data-icon-theme={imagePaths.length > 0 ? iconThemeStore.effectiveTheme : undefined} bind:this={containerEl} style="--size: {size}px" style:--folder-outline={iconThemeStore.effectiveTheme === 'minimal' ? 'var(--icon-file-tint, var(--text-secondary, currentColor))' : 'var(--icon-folder, currentColor)'}>
+  data-icon-theme={imagePaths.length > 0 ? iconThemeStore.effectiveTheme : undefined} bind:this={containerEl} style="--size: {size}px" style:--folder-outline={'var(--icon-folder, currentColor)'}>
   {#if imagePaths.length === 0}
     {@render children?.()}
   {:else}
@@ -164,12 +164,10 @@
            interior open so the photos can fill the folder. -->
       <path d="M2 37.5H46V41.25C46 43.3 44.66 45 43 45H5C3.34 45 2 43.3 2 41.25V37.5Z" class="folder-front-fill"/>
       {#if !outlinedFolder}<path d="M2 37.5H46V39H2V37.5Z" fill="#fff" fill-opacity="0.35"/>{/if}
-    </svg>
-    {#if entry}
-      <svg class="folder-layer" viewBox="0 0 48 48" aria-hidden="true">
+      {#if entry}
         <FolderDecoration {entry} size="large" arrowColor={outlinedFolder ? 'var(--icon-link-arrow, var(--folder-outline))' : undefined} />
-      </svg>
-    {/if}
+      {/if}
+    </svg>
   {/if}
 </div>
 

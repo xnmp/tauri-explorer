@@ -8,7 +8,7 @@
 </script>
 
 <span class="icon-cat folder-icon" class:linked-folder={decoration==='linked'} class:git-repo-folder={decoration==='repository'} class:classic-large={theme==='classic' && size==='large'}
-  data-icon-theme={theme} style:color={theme==='minimal' ? 'var(--icon-file-tint, var(--text-secondary, currentColor))' : 'var(--icon-folder, #ffb900)'}>
+  data-icon-theme={theme} style:color={'var(--icon-folder, #ffb900)'}>
   <svg class:folder-large={size==='large'} width={size==='small'?16:64} height={size==='small'?16:64} viewBox={size==='small'?'0 0 18 18':'0 0 48 48'} fill="none" aria-hidden="true">
     {#if theme==='minimal'}
       {#if size==='small'}

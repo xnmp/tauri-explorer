@@ -95,6 +95,13 @@ describe("List navigation and viewport contracts", () => {
     expect(listPageColumns(536)).toBe(2);
     expect(listPageColumns(0)).toBe(1);
   });
+  it("applies endpoint selection and reveal actions even when the cursor does not move", () => {
+    expect(move("Home", 0)).toEqual({ kind: "focus", index: 0, selection: "replace" });
+    expect(move("Home", 0, { ctrlKey: true })).toEqual({ kind: "focus", index: 0, selection: "replace" });
+    expect(move("End", 9, { metaKey: true })).toEqual({ kind: "focus", index: 9, selection: "replace" });
+    expect(move("Home", 0, { shiftKey: true })).toEqual({ kind: "focus", index: 0, selection: "extend" });
+    expect(move("End", 9, { shiftKey: true })).toEqual({ kind: "focus", index: 9, selection: "extend" });
+  });
   it("preserves selection modifiers and excludes the creation sentinel", () => {
     expect(move("ArrowDown", 0, { ctrlKey: true })).toMatchObject({ index: 1, selection: "preserve" });
     expect(move("ArrowDown", 0, { shiftKey: true })).toMatchObject({ index: 1, selection: "extend" });

@@ -15,6 +15,8 @@ tabs' zero measurements.
 
 Virtualization must preserve keyed rename/creation editors, refresh stationary
 marquee/drop hit tests after scrolling, and reveal before moving DOM focus.
+Home/End select and reveal even when the cursor already names the endpoint;
+cursor equality cannot establish that selection or viewport position is settled.
 Outgoing views clear reveal/membership bindings by identity: a cold lazy import
 can otherwise call a disposed view after navigation. Keep callback reads out of
 the parent's reactive dependencies to avoid subscribing to a child being removed.

@@ -87,7 +87,8 @@ export function resolveListMove(event: FileListKey, layout: ColumnFlowLayout, cu
   const count = layout.byIndex.length - offset;
   if (event.altKey || !Number.isSafeInteger(cursorIndex) || cursorIndex < -1 || cursorIndex >= count) return null;
   const arrow = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key);
-  if (!arrow && !["Home", "End", "PageUp", "PageDown"].includes(event.key)) return null;
+  const endpoint = event.key === "Home" || event.key === "End";
+  if (!arrow && !endpoint && !["PageUp", "PageDown"].includes(event.key)) return null;
   if (count <= 0) return { kind: "handled" };
   let target: number;
   if (event.key === "Home") target = offset;
@@ -109,6 +110,7 @@ export function resolveListMove(event: FileListKey, layout: ColumnFlowLayout, cu
         : (current.row < (candidates[0]?.row ?? 0) ? candidates[0]?.index : candidates.at(-1)?.index) ?? current.index;
     }
   }
-  if (target === cursorIndex + offset) return { kind: "handled" };
+  // Home/End still select and reveal an already-focused endpoint.
+  if (!endpoint && target === cursorIndex + offset) return { kind: "handled" };
   return { kind: "focus", index: target - offset, selection: event.shiftKey ? "extend" : (event.ctrlKey || event.metaKey) && arrow ? "preserve" : "replace" };
 }

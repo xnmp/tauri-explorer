@@ -338,6 +338,7 @@
                 ondragstart={usesHtml5Drag ? (e) => handleDragStart(e, entry) : undefined}
                 ondragend={usesHtml5Drag ? handleDragEnd : undefined}
                 onmousedown={usesPointerDrag ? (e) => pointerDrag!.handlePointerDown(e, entry, false) : undefined}
+                ondragenter={(e) => dropTarget.handleDragEnter(e, entry)}
                 ondragover={(e) => dropTarget.handleDragOver(e, entry)}
                 ondragleave={(e) => dropTarget.handleDragLeave(e, entry)}
                 ondrop={(e) => dropTarget.handleDrop(e, entry)}

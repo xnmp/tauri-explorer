@@ -153,6 +153,7 @@
   draggable={usesHtml5Drag}
   ondragstart={usesHtml5Drag ? (e) => { if (isPeekControl(e)) e.preventDefault(); else interactions.handleDragStart(e, entry, selected); } : undefined}
   ondragend={usesHtml5Drag ? interactions.handleDragEnd : undefined}
+  ondragenter={(e) => interactions.handleDragEnter(e, entry)}
   ondragover={(e) => interactions.handleDragOver(e, entry)}
   ondragleave={(e) => interactions.handleDragLeave(e, entry)}
   ondrop={(e) => interactions.handleDrop(e, entry)}

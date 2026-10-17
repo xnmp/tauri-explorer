@@ -92,6 +92,7 @@ export function useItemInteractions(deps: ItemInteractionsDeps) {
     handleDragEnd,
     trackDragSource: sourceDrag.trackSource,
     handleDragOver: dropTarget.handleDragOver,
+    handleDragEnter: dropTarget.handleDragEnter,
     handleDragLeave: dropTarget.handleDragLeave,
     handleDrop: dropTarget.handleDrop,
     isDropTarget: dropTarget.isDropTarget,

@@ -30,8 +30,9 @@ on a page runs markedly slower (warm-up), so the order charged it to classic
 and understated the peek renderer: the "+8%" was wrong. Alternate the order
 when comparing two renderers in one page. Rendering each grid tile through the
 shared tile snippet also cost a snippet block per tile, plus an if block around
-its caret. Grid tiles are now written inline and pass the caret as a badge only
-to folders. A file row adds one wrapper element and two block anchors to a
+its caret. Grid tiles are now written inline, and the caret is the peek cell's
+own child placed from the tile layout (`paddingTop` + icon size), so classic
+Tiles' shared `TileVisual` carries no peek hook at all. A file row adds one wrapper element and two block anchors to a
 classic row. Alternating sweeps on a loaded host, where every swept tile is a
 folder with a caret: no panel +9% to +18% task time, panel open +9% to +16%.
 The caret's chevron is a masked `::before` like List's. Removing the inline SVG

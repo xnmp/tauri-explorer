@@ -218,6 +218,8 @@ export const viewCommands: Command[] = [
     scope: "pane",
     label: "Set List View Column Count",
     category: "view",
+    // Classic List only: Folder Peek's column flow sizes itself from the pane height.
+    when: () => !settingsStore.folderPeek,
     handler: () => {
       const current = settingsStore.listViewColumns;
       dialogStore.openPicker({

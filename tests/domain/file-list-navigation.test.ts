@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { columnFlow } from "$lib/domain/list-column-flow";
 import type { FileEntry, ViewMode } from "$lib/domain/file";
 import {
   resolveFileCursor,
@@ -267,5 +268,38 @@ describe("resolveFileListMove", () => {
       key("ArrowDown"),
       layout({ count, cursorIndex }),
     )).toBeNull();
+  });
+
+  describe("column-flow List (Folder Peek on)", () => {
+    const list = {
+      entries: [], directory: "/files", sentinelOffset: 0, usableWidth: 500,
+      layout: columnFlow(Array.from({ length: 10 }), 4, () => ({ slots: 1, card: false })),
+    };
+    const columns = (o: Partial<Layout> = {}) => layout({ viewMode: "list", listLayout: "columns", count: 10, cursorIndex: 5, list, ...o });
+
+    it("moves spatially: Left/Right change column, Up/Down stay in it", () => {
+      expect(resolveFileListMove(key("ArrowLeft"), columns())).toEqual({ kind: "focus", index: 1, selection: "replace" });
+      expect(resolveFileListMove(key("ArrowRight"), columns())).toEqual({ kind: "focus", index: 9, selection: "replace" });
+      expect(resolveFileListMove(key("ArrowDown"), columns())).toEqual({ kind: "focus", index: 6, selection: "replace" });
+    });
+
+    it("never applies Yazi parent/open, even in a single-column listing", () => {
+      expect(resolveFileListMove(key("ArrowLeft"), columns({ yazi: true, columns: 1 }))).toEqual({ kind: "focus", index: 1, selection: "replace" });
+      expect(resolveFileListMove(key("ArrowRight"), columns({ yazi: true, directory: true }))).toEqual({ kind: "focus", index: 9, selection: "replace" });
+    });
+
+    it("yields no move without a settled layout snapshot", () => {
+      expect(resolveFileListMove(key("ArrowDown"), columns({ list: null }))).toBeNull();
+    });
+
+    it("leaves Details walking its flattened visible entries (peeked children included)", () => {
+      // 6 root entries plus 6 peeked children: Details counts all 12 visible entries.
+      const details = (o: Partial<Layout> = {}) => columns({ viewMode: "details", count: 12, cursorIndex: 9, ...o });
+      expect(resolveFileListMove(key("ArrowDown"), details())).toEqual({ kind: "focus", index: 10, selection: "replace" });
+      expect(resolveFileListMove(key("End", { ctrlKey: true }), details())).toEqual({ kind: "focus", index: 11, selection: "replace" });
+      expect(resolveFileListMove(key("ArrowRight"), details())).toBeNull();
+      expect(resolveFileListMove(key("ArrowLeft"), details({ yazi: true }))).toEqual({ kind: "parent" });
+      expect(resolveFileListMove(key("ArrowDown"), details({ list: null, cursorIndex: 11 }))).toBeNull();
+    });
   });
 });

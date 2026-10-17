@@ -87,6 +87,40 @@ for (const mode of ["details", "list", "tiles"] as const) {
   });
 }
 
+// The column List (Folder Peek on) loads through the same renderer seam; a
+// navigation that settles before its chunk arrives still owns focus only while
+// nothing newer has claimed it.
+for (const moved of [false, true] as const) {
+  test(`pending column List renderer ${moved ? "keeps focus moved during its load" : "returns submitted-address focus to its listing"}`, async ({ page }) => {
+    await page.goto(HOME_URL); await waitForEntries(page);
+    let requested = false;
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    await page.route(/\/src\/lib\/components\/ListColumnsView\.svelte(?:\?|$)/, async route => {
+      requested = true; await pending; await route.continue();
+    });
+    await page.evaluate(async () => {
+      const { windowTabsManager } = await import("/src/lib/state/window-tabs.svelte.ts");
+      windowTabsManager.getActiveExplorer()!.setViewMode("list");
+    });
+    await expect.poll(() => requested).toBe(true);
+    await page.keyboard.press("ControlOrMeta+l");
+    await page.locator(".path-input").fill("/home/user/Documents");
+    await page.keyboard.press("Enter");
+    await expect(page.locator(".status-path")).toHaveAttribute("title", "/home/user/Documents");
+    await expect(page.locator(".pane-tree:not(.retained) .list-canvas")).toHaveCount(0);
+    if (moved) {
+      await page.getByRole("button", { name: "New tab", exact: true }).focus();
+      await page.evaluate(() => document.activeElement!.setAttribute("data-focus-owner", "pending-list-toolbar"));
+    }
+    release();
+    const project = page.locator('.pane-tree:not(.retained) .list-canvas .entry-item[data-path="/home/user/Documents/project"]');
+    await expect(project).toBeVisible();
+    if (moved) await expect(page.locator('[data-focus-owner="pending-list-toolbar"]')).toBeFocused();
+    else await expect(project).toBeFocused();
+  });
+}
+
 test("auto-enter descent cannot reclaim focus moved during its preflight listing", async ({ page }) => {
   await page.goto(HOME_URL); await waitForEntries(page);
   await page.evaluate(async () => {

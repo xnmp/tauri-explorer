@@ -8,6 +8,8 @@
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";
 import { useExternalDrop } from "$lib/composables/use-external-drop.svelte";
 import { resolveDropTarget, resolveDropTargetFromElement, captureDropDestination, highlightTarget, highlightTargetAtPoint, clearHighlights, captureHighlightCleanup } from "$lib/composables/use-native-drop-target.svelte";
+import { dropHover } from "$lib/state/drop-hover";
+import { shouldRetireOnDragEnd } from "$lib/domain/drop-feedback";
 import { dragState, type DragData } from "$lib/state/drag.svelte";
 import { handleFileDropMany } from "$lib/state/drop-operations";
 import { isCopyModifier as isCopyMod, isMac, isWindows } from "$lib/domain/platform";
@@ -28,6 +30,9 @@ const pathsForPlatform = pathComparison(isWindows);
 
 export function useNativeDropHandler(deps: NativeDropDeps) {
   let copyModifierHeld = false;
+  let hoverSession: string | undefined;
+  let hoverPosition: { x: number; y: number } | null = null;
+  const refreshHover = () => { if (hoverPosition) handleNativeOver(hoverPosition); };
   // Receiver-owned snapshot of the live source at native Enter. Source result
   // and destination Drop use different IPC channels and can arrive reordered.
   let nativeGesture: { data: DragData | null; hasPaths: boolean; expired?: boolean } | null = null;
@@ -70,6 +75,8 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
   }
 
   async function handleNativeDrop(rawPaths: string[], position: { x: number; y: number }, source?: DragData | null, copyModifier?: boolean | null, observedAt?: number, completedGestureSequence?: number, observationClock?: string, externalSource?: boolean): Promise<void> {
+    dropHover.clear(refreshHover);
+    hoverPosition = null;
     if (externalSource) nativeDomSession = undefined;
     const dragData = externalSource ? null : nativeDragSession(rawPaths)
       ? nativeSource(rawPaths, source, observedAt, completedGestureSequence, observationClock)
@@ -181,6 +188,9 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
   }
 
   function handleNativeOver(position: { x: number; y: number }, copyModifier?: boolean | null): void {
+    hoverPosition = position;
+    hoverSession = nativeGesture?.data?.sessionId;
+    dropHover.set(refreshHover);
     if (copyModifier != null) copyModifierHeld = copyModifier;
     const explorer = deps.getActiveExplorer();
     if (explorer) {
@@ -207,7 +217,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     onDrop: handleNativeDrop,
     onEnter: handleNativeEnter,
     onOver: handleNativeOver,
-    onLeave: () => { nativeGesture = null; clearNativeHighlights?.(); clearNativeHighlights = null; },
+    onLeave: () => { dropHover.clear(refreshHover); hoverPosition = null; nativeGesture = null; clearNativeHighlights?.(); clearNativeHighlights = null; },
   });
 
   function trackModifierDown(e: KeyboardEvent) { copyModifierHeld = isCopyMod(e); }
@@ -296,6 +306,19 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     void dispatchFileDrop(target, paths, "pane", paths.length ? data : null);
   }
 
+  function handleDomDragEnd(event: DragEvent): void {
+    const source = event.dataTransfer ? dragState.domSource(event.dataTransfer) : null;
+    const endedSession = event.dataTransfer?.getData("application/x-explorer-session") || source?.sessionId;
+    const live = dragState.latestSource();
+    // Retire feedback only. Native Drop may still need its captured provenance,
+    // and a delayed old DOM event cannot retire a successor's hover.
+    if (!shouldRetireOnDragEnd({ endedSession: endedSession || undefined, liveSession: live?.sessionId, hoverSession, hovering: !!hoverPosition })) return;
+    dropHover.clear(refreshHover);
+    hoverPosition = null;
+    clearHighlights();
+    clearNativeHighlights = null;
+  }
+
   let domGeneration = 0;
   function setup(): void {
     domGeneration++;
@@ -305,7 +328,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     window.addEventListener("dragstart", trackDragModifiers, true);
     window.addEventListener("dragover", handleDomDragOver, { capture: true });
     window.addEventListener("drop", handleDomDrop, { capture: true });
-    window.addEventListener("dragend", clearHighlights);
+    window.addEventListener("dragend", handleDomDragEnd);
   }
 
   function cleanup(): void {
@@ -320,7 +343,9 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     window.removeEventListener("dragstart", trackDragModifiers, true);
     window.removeEventListener("dragover", handleDomDragOver, { capture: true });
     window.removeEventListener("drop", handleDomDrop, { capture: true });
-    window.removeEventListener("dragend", clearHighlights);
+    window.removeEventListener("dragend", handleDomDragEnd);
+    dropHover.clear(refreshHover);
+    hoverPosition = null;
     clearHighlights();
   }
 

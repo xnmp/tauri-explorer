@@ -164,7 +164,8 @@ nativeDescribe("native file-list composite focus", () => {
       // The Tab stop is the pane's cursor entry, which navigation may restore.
       const reached = await activeEntryPath();
       expect(reached).toBeTruthy();
-      const navigationKey = viewMode === "details" ? "ArrowDown" : "ArrowRight";
+      // Column-flow List (#1239) moves down its column; only Tiles is row-major.
+      const navigationKey = viewMode === "tiles" ? "ArrowRight" : "ArrowDown";
       await browser.keys(navigationKey);
       await browser.waitUntil(async () => {
         const current = await activeEntryPath();
@@ -183,7 +184,7 @@ nativeDescribe("native file-list composite focus", () => {
       const first = $(entrySelector(folderNames[0]));
       await first.waitForDisplayed();
       await first.click();
-      const arrow = viewMode === "details" ? "ArrowDown" : "ArrowRight";
+      const arrow = viewMode === "tiles" ? "ArrowRight" : "ArrowDown";
 
       await browser.keys(["Shift", arrow]);
       await browser.keys(["Shift", arrow]);

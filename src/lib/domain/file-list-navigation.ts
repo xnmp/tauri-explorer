@@ -1,4 +1,5 @@
 import type { FileEntry, ViewMode } from "./file";
+import { resolveListMove, type ListNavigationSnapshot } from "./list-column-flow";
 
 /** A keyboard cursor is independent of the selected set and survives sorting. */
 export function resolveFileCursor(
@@ -20,15 +21,21 @@ export interface FileListKey {
 }
 export type FileListMove =
   | { kind: "focus"; index: number; selection: "replace" | "extend" | "preserve" }
+  | { kind: "handled" }
   | { kind: "parent" }
   | { kind: "open"; index: number };
 
 export function resolveFileListMove(
   event: FileListKey,
-  layout: { viewMode: ViewMode; columns: number; count: number; cursorIndex: number; directory: boolean; yazi: boolean },
+  layout: { viewMode: ViewMode; columns: number; count: number; cursorIndex: number; directory: boolean; yazi: boolean;
+    /** "columns" = Folder Peek column flow (needs `list`); "rows" = classic row-major List. */
+    listLayout?: "rows" | "columns"; list?: ListNavigationSnapshot | null },
 ): FileListMove | null {
   if (event.altKey || !Number.isSafeInteger(layout.count) || layout.count < 0
     || !Number.isSafeInteger(layout.cursorIndex) || layout.cursorIndex < -1 || layout.cursorIndex >= layout.count) return null;
+  if (layout.viewMode === "list" && layout.listLayout === "columns") {
+    return layout.list ? resolveListMove(event, layout.list.layout, layout.cursorIndex, layout.list.usableWidth, layout.list.sentinelOffset) : null;
+  }
   const modified = event.ctrlKey || event.metaKey;
   const arrow = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key);
   const columns = Number.isFinite(layout.columns) ? Math.max(1, Math.floor(layout.columns)) : 1;

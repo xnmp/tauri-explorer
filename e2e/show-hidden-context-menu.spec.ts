@@ -10,8 +10,15 @@ const dotFolder = (page: Page) =>
   page.locator(".entry-item .entry-name", { hasText: /^\.config$/ });
 
 async function openBackgroundMenu(page: Page) {
-  const box = (await page.locator(".file-list").first().boundingBox())!;
-  await page.mouse.click(box.x + 6, box.y + box.height - 6, { button: "right" });
+  // Empty space near the bottom of the scrollport's client box. Classic
+  // scrollbars (WebKit) are not background, and column List always reserves
+  // its horizontal track (overflow-x: scroll keeps the row count stable).
+  const point = await page.locator(".file-list").first().evaluate((list) => {
+    const port = list.querySelector<HTMLElement>(".virtual-viewport") ?? (list as HTMLElement);
+    const rect = port.getBoundingClientRect();
+    return { x: rect.left + port.clientLeft + 6, y: rect.top + port.clientTop + port.clientHeight - 6 };
+  });
+  await page.mouse.click(point.x, point.y, { button: "right" });
   const menu = page.locator(".context-menu");
   await expect(menu).toBeVisible();
   return menu;

@@ -1,6 +1,6 @@
 /** Main file-list rows form one keyboard focus/selection composite. */
 import { test, expect, type Page } from "./fixtures";
-import { ALL_VIEW_MODES, MULTI_SELECT_MODIFIER, focusBeforeFileList, waitForEntries, type ViewMode } from "./helpers";
+import { ALL_VIEW_VARIANTS, MULTI_SELECT_MODIFIER, seedSettings, focusBeforeFileList, waitForEntries, type ViewMode } from "./helpers";
 
 const HOME_PATH = "/home/user";
 const TARGET_PATH = `${HOME_PATH}/Downloads`;
@@ -26,9 +26,13 @@ async function rowState(page: Page) {
   });
 }
 
-for (const viewMode of ALL_VIEW_MODES) {
-  test.describe(`File-list composite focus [${viewMode}]`, () => {
+// Variants cover Folder Peek's column-flow List and the classic row-major List.
+for (const { name, viewMode, classic } of ALL_VIEW_VARIANTS) {
+  // Details and column-flow List step vertically; Tiles and classic List horizontally.
+  const nextKey = viewMode === "tiles" || classic ? "ArrowRight" : "ArrowDown";
+  test.describe(`File-list composite focus [${name}]`, () => {
     test.beforeEach(async ({ page }) => {
+      if (classic) await seedSettings(page, { folderPeek: false });
       await openPath(page, HOME_PATH, viewMode);
     });
 
@@ -78,7 +82,7 @@ for (const viewMode of ALL_VIEW_MODES) {
       const initialPath = await selected.getAttribute("data-path");
       const focusedAfterOpen = await selected.evaluate((row) => row === document.activeElement);
 
-      await page.keyboard.press(viewMode === "details" ? "ArrowDown" : "ArrowRight");
+      await page.keyboard.press(nextKey);
       await expect.poll(() => selected.getAttribute("data-path")).not.toBe(initialPath);
       await expect(selected).toBeInViewport();
       await expect(selected).toBeFocused();
@@ -93,7 +97,7 @@ for (const viewMode of ALL_VIEW_MODES) {
       expect(endpointPath).toBeTruthy();
 
       await first.click();
-      const move = viewMode === "details" ? "Shift+ArrowDown" : "Shift+ArrowRight";
+      const move = `Shift+${nextKey}`;
       await page.keyboard.press(move);
       await page.keyboard.press(move);
 
@@ -144,6 +148,7 @@ for (const viewMode of ALL_VIEW_MODES) {
       await page.keyboard.press("Shift+Tab");
       await page.locator(".file-list .virtual-viewport").evaluate((viewport) => {
         viewport.scrollTop = 0;
+        viewport.scrollLeft = 0;
         viewport.dispatchEvent(new Event("scroll", { bubbles: true }));
       });
       const endpoint = entry(page, endpointPath!);
@@ -190,7 +195,7 @@ for (const viewMode of ALL_VIEW_MODES) {
       expect(renamedIndex).toBeGreaterThanOrEqual(0);
       expect(nextPath).toBeTruthy();
 
-      await page.keyboard.press(viewMode === "details" ? "ArrowDown" : "ArrowRight");
+      await page.keyboard.press(nextKey);
       const next = entry(page, nextPath!);
       await expect(next).toBeFocused();
       expect(await rowState(page)).toEqual({

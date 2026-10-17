@@ -1,11 +1,11 @@
 /**
  * E2E test: List view layout must stay put. Neither a long filename nor an
  * open rename box may resize/shift the equal-width columns — they truncate /
- * overflow instead (grid uses minmax(0,1fr), not 1fr).
+ * overflow within fixed 260px tracks.
  * Issue: feat/rename-box (list layout stability)
  */
 import { test, expect } from "./fixtures";
-import { HOME_URL, waitForEntries, switchViewMode } from "./helpers";
+import { HOME_URL, waitForEntries, switchViewMode, seedSettings } from "./helpers";
 
 const LONG_NAME =
   "4F7F6867D2195D2B19EEB0C460017958AB54092BD604447A41A6C98250AB9034.jpeg";
@@ -18,9 +18,15 @@ async function rightNeighbourIndex(page: import("@playwright/test").Page) {
   });
 }
 
-test.describe("List view layout stability", () => {
+// Column flow (Folder Peek on) needs a folder tall enough to fill several
+// columns; the classic row-major List (Folder Peek off) uses the home fixture.
+for (const classic of [false, true]) test.describe(`List view layout stability [${classic ? "classic" : "column flow"}]`, () => {
+  const open = async (page: import("@playwright/test").Page) => {
+    if (classic) await seedSettings(page, { folderPeek: false });
+    await page.goto(classic ? HOME_URL : "/?path=/perf/huge-100&viewMode=list");
+  };
   test("a long display name does not shift or widen other columns @smoke", async ({ page }) => {
-    await page.goto(HOME_URL);
+    await open(page);
     await waitForEntries(page);
     await switchViewMode(page, "list");
 
@@ -47,7 +53,7 @@ test.describe("List view layout stability", () => {
   });
 
   test("opening a rename box does not shift the column to its right", async ({ page }) => {
-    await page.goto(HOME_URL);
+    await open(page);
     await waitForEntries(page);
     await switchViewMode(page, "list");
 

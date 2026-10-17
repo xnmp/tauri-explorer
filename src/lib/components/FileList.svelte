@@ -3,7 +3,9 @@
   Issue: tauri-explorer-iw0, tauri-explorer-x25, tauri-explorer-as45, tauri-explorer-1k9k, tauri-explorer-im3m, tauri-explorer-9djf.5
 -->
 <script lang="ts">
-  import { flushSync, tick, onDestroy } from "svelte";
+  import { loadView, loadedView, viewLoadFailed, viewRendererFor } from "./view-loaders.svelte";
+  import { flushSync, tick, onDestroy, untrack } from "svelte";
+  import { settingsStore } from "$lib/state/settings.svelte";
   import { setFileListFocusReturn } from "$lib/state/file-list-focus-context";
   import { createDeferredFocusRequest, type DeferredFocusRequest } from "$lib/state/deferred-focus";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
@@ -32,16 +34,24 @@
   import { isTrashPath } from "$lib/domain/virtual-path";
   import { explainTrashedOpen } from "$lib/state/trash-provider";
 
+  import type { ListNavigationSnapshot } from "$lib/domain/list-column-flow";
+
   interface Props {
     explorer: ExplorerInstance;
     presentation: FileViewPresentation;
+    getListNavigation?: () => ListNavigationSnapshot | null;
     /** Scroll a selected entry into view; bound by ExplorerPane's keyboard navigation. */
     scrollToEntry?: (entry: FileEntry) => void;
   }
 
-  let { explorer, presentation, scrollToEntry = $bindable() }: Props = $props();
+  let { explorer, presentation, scrollToEntry = $bindable(), getListNavigation = $bindable() }: Props = $props();
 
   const paneId = getPaneIdContext();
+  // Start the renderer chunk as soon as the view is known, in parallel with the
+  // directory listing; the view branches below render it once it is published.
+  $effect.pre(() => {
+    void loadView(viewRendererFor(explorer.viewMode, settingsStore.folderPeek));
+  });
   // A plugin view replaces the listing only where it applies; elsewhere the
   // pane shows its built-in view while retaining the preference.
   const resolution = $derived(presentation.resolution);
@@ -73,9 +83,23 @@
   // (Details/List/Tiles all virtualize and own their scroll container).
   let viewContainsIndex = $state<((index: number) => boolean) | undefined>();
   const cursorIndex = $derived(explorer.focusedEntry ? explorer.displayEntries.indexOf(explorer.focusedEntry) : -1);
-  const fallbackTabStop = $derived(cursorIndex >= 0 && !(viewContainsIndex?.(cursorIndex) ?? false));
+  let viewMembershipRevision = $state(0);
+  const fallbackTabStop = $derived.by(() => {
+    void viewMembershipRevision;
+    const index = cursorIndex, contains = viewContainsIndex;
+    // Child-owned derived state dies when a view is replaced. Subscribe to its
+    // settled notifications, rather than retaining its reactive dependencies.
+    return index >= 0 && !untrack(() => contains?.(index) ?? false);
+  });
   let pendingFocus: DeferredFocusRequest | undefined;
   onDestroy(() => pendingFocus?.cancel());
+
+  let viewNavigation = $state<(() => ListNavigationSnapshot) | undefined>();
+  getListNavigation = () => {
+    if (explorer.loading || explorer.error || explorer.driveGone || pluginView || holdingView || explorer.viewMode !== "list" || !settingsStore.folderPeek) return null;
+    const snapshot = viewNavigation?.();
+    return snapshot?.entries === explorer.displayEntries && snapshot.directory === explorer.currentPath ? snapshot : null;
+  };
 
   let viewScrollToIndex = $state<((index: number) => void) | undefined>();
 
@@ -136,7 +160,13 @@
 
   // The virtual view reports settled geometry, including grid-column changes.
   // Its clientHeight observer may run after the outer container's observer.
+  function handleViewportScroll(): void {
+    viewMembershipRevision++;
+    updateMarqueeSelection();
+  }
+
   function handleViewLayoutChange(): void {
+    viewMembershipRevision++;
     const reveal = cursorReveal;
     const entry = explorer.focusedEntry;
     if (!reveal || !entry || entry.path !== reveal.path
@@ -144,7 +174,7 @@
       || explorer.currentPath !== reveal.directory || explorer.viewMode !== reveal.mode) return;
     const focus = document.activeElement;
     if (focus !== document.body && (!fileListRef?.contains(focus)
-      || !focus?.matches('.entry-item, .virtual-viewport:is([role="grid"], [role="treegrid"])'))) return;
+      || !focus?.matches('.entry-item, .virtual-viewport:is([role="grid"], [role="treegrid"], [role="listbox"])'))) return;
     scrollToSelected(entry);
   }
 
@@ -235,7 +265,7 @@
       const index = Number(target.dataset.index);
       const entry = explorer.displayEntries[index];
       if (entry?.path === target.dataset.path) explorer.focusEntry(entry);
-    } else if (target.matches('.virtual-viewport:is([role="grid"], [role="treegrid"])') && explorer.focusedEntry) {
+    } else if (target.matches('.virtual-viewport:is([role="grid"], [role="treegrid"], [role="listbox"])') && explorer.focusedEntry) {
       scrollToSelected(explorer.focusedEntry);
     } else {
       // Column controls and inline editors own their focus independently.
@@ -509,51 +539,79 @@
           Go back
         </button>
       </div>
-    {:else if explorer.displayEntries.length === 0 && explorer.isCreatingFolder}
+    {:else if explorer.displayEntries.length === 0 && explorer.isCreatingFolder && !(explorer.viewMode === "list" && settingsStore.folderPeek)}
       <div class="empty-create-folder">
         <InlineNewFolder {explorer} variant="details" />
       </div>
     {:else if explorer.viewMode === "details"}
-      {#await import("./DetailsView.svelte") then { default: DetailsView }}
-      <DetailsView
-        {explorer}
-        onitemclick={handleClick}
-        onitemdblclick={handleDoubleClick}
-        onviewportscroll={updateMarqueeSelection}
-        onlayoutchange={handleViewLayoutChange}
-        {fallbackTabStop}
-        bind:containsIndex={viewContainsIndex}
-        bind:scrollToIndex={viewScrollToIndex}
-      />
-      {/await}
+      <!-- Every renderer loads on demand (view-loaders) to keep the startup graph bounded. -->
+      {@const DetailsView = loadedView("details")}
+      {#if DetailsView}
+        <DetailsView
+          {explorer}
+          onitemclick={handleClick}
+          onitemdblclick={handleDoubleClick}
+          onviewportscroll={handleViewportScroll}
+          onlayoutchange={() => { updateMarqueeSelection(); handleViewLayoutChange(); }}
+          {fallbackTabStop}
+          bind:containsIndex={viewContainsIndex}
+          bind:scrollToIndex={viewScrollToIndex}
+        />
+      {:else if viewLoadFailed("details")}
+        <div class="status error-state">Unable to load Details view</div>
+      {/if}
+    {:else if explorer.viewMode === "list" && settingsStore.folderPeek}
+      {@const ListColumnsView = loadedView("list-columns")}
+      {#if ListColumnsView}
+        <ListColumnsView
+          {explorer}
+          bind:getNavigation={viewNavigation}
+          onitemclick={handleClick}
+          onitemdblclick={handleDoubleClick}
+          onviewportscroll={handleViewportScroll}
+          onlayoutchange={() => { updateMarqueeSelection(); handleViewLayoutChange(); }}
+          {fallbackTabStop}
+          bind:containsIndex={viewContainsIndex}
+          bind:scrollToIndex={viewScrollToIndex}
+        />
+      {:else if viewLoadFailed("list-columns")}
+        <div class="status error-state">Unable to load List view</div>
+      {/if}
     {:else if explorer.viewMode === "list"}
-      {#await import("./ListView.svelte") then { default: ListView }}
-      <ListView
-        {explorer}
-        {contentWidth}
-        onitemclick={handleClick}
-        onitemdblclick={handleDoubleClick}
-        onviewportscroll={updateMarqueeSelection}
-        onlayoutchange={handleViewLayoutChange}
-        {fallbackTabStop}
-        bind:containsIndex={viewContainsIndex}
-        bind:scrollToIndex={viewScrollToIndex}
-      />
-      {/await}
+      <!-- Classic row-major List (Folder Peek off). -->
+      {@const ListView = loadedView("list")}
+      {#if ListView}
+        <ListView
+          {explorer}
+          {contentWidth}
+          onitemclick={handleClick}
+          onitemdblclick={handleDoubleClick}
+          onviewportscroll={handleViewportScroll}
+          onlayoutchange={() => { updateMarqueeSelection(); handleViewLayoutChange(); }}
+          {fallbackTabStop}
+          bind:containsIndex={viewContainsIndex}
+          bind:scrollToIndex={viewScrollToIndex}
+        />
+      {:else if viewLoadFailed("list")}
+        <div class="status error-state">Unable to load List view</div>
+      {/if}
     {:else}
-      {#await import("./TilesView.svelte") then { default: TilesView }}
-      <TilesView
-        {explorer}
-        {contentWidth}
-        onitemclick={handleClick}
-        onitemdblclick={handleDoubleClick}
-        onviewportscroll={updateMarqueeSelection}
-        onlayoutchange={handleViewLayoutChange}
-        {fallbackTabStop}
-        bind:containsIndex={viewContainsIndex}
-        bind:scrollToIndex={viewScrollToIndex}
-      />
-      {/await}
+      {@const TilesView = loadedView("tiles")}
+      {#if TilesView}
+        <TilesView
+          {explorer}
+          {contentWidth}
+          onitemclick={handleClick}
+          onitemdblclick={handleDoubleClick}
+          onviewportscroll={handleViewportScroll}
+          onlayoutchange={() => { updateMarqueeSelection(); handleViewLayoutChange(); }}
+          {fallbackTabStop}
+          bind:containsIndex={viewContainsIndex}
+          bind:scrollToIndex={viewScrollToIndex}
+        />
+      {:else if viewLoadFailed("tiles")}
+        <div class="status error-state">Unable to load Tiles view</div>
+      {/if}
     {/if}
 
     <!-- Marquee selection rectangle. Five fixed-size layers moved and scaled
@@ -579,7 +637,10 @@
     position: relative;
   }
 
-  .file-list :global(.entry-item:focus-visible) {
+  /* Explicit selected intersections outrank renderer selection chrome even
+     when an optional view's stylesheet arrives after this one. */
+  .file-list :global(.entry-item:focus-visible),
+  .file-list :global(.entry-item.selected:focus-visible) {
     outline: 2px solid var(--focus-stroke-outer);
     outline-offset: -2px;
     /* Selected rows have a 3px accent edge. The inset outline covers only
@@ -587,7 +648,8 @@
     border-left-color: var(--focus-stroke-outer);
   }
 
-  .file-list :global(.tile-item:focus-visible) {
+  .file-list :global(.tile-item:focus-visible),
+  .file-list :global(.tile-item.selected:focus-visible) {
     /* Tiles put the selected indicator on their 3px bottom edge. */
     border-bottom-color: var(--focus-stroke-outer);
   }

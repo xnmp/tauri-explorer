@@ -37,8 +37,10 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `PreviewImageSurface.svelte` — the Preview pane's image surface (container, image, zoom indicator, fullscreen styles) shared by file images and plugin targets; event handling comes from `use-preview-fullscreen` (#1033).
 - `ImageResolutionCell.svelte` — lazy intrinsic image metadata for mounted Details rows.
 - `DetailsView.svelte` — virtual-scrolled table view (columns, resize, sort headers).
-- `ListView.svelte` — CSS-grid compact list view.
+- `ListColumnsView.svelte` — Folder Peek List: column-major listbox with horizontal windowing and shared reveal/navigation snapshot.
+- `ListView.svelte` — classic row-major List (Folder Peek off); `listViewColumns`/`listColumnMaxWidth` apply here only.
 - `TilesView.svelte` — row-virtualized tile view with thumbnails; renders through `TileSurface.svelte`/`TileVisual.svelte`; runs `scroll-jank-monitor.ts` during scroll and logs `tiles-scroll-jank` events only when jank occurred (#593).
+- `view-loaders.svelte.ts` — memoised, retryable dynamic imports for every built-in view renderer (Details, List columns, classic List, Tiles); FileList starts the chunk in parallel with the listing, and settled renderers are published reactively so later mounts render them in the same flush.
 - `TileSurface.svelte` — tile-grid root: publishes `domain/tile-layout.ts` as tile CSS variables and owns all `.tile-item` chrome (hover, selected underline, ghosted/cut/drop states, icon scaling) for TilesView and FileTiles.
 - `TileVisual.svelte` — one tile's icon block (image/video thumbnail, folder preview, FileIcon, video marker) and name; the name defaults to `EntryNameLabel`, TilesView passes `EntryName`.
 - `src/lib/components/FileTile.svelte` — SDK module `ui/file-tile` (capability `fileTile`): one standalone gridcell, shared TileSurface/TileVisual, pane rename and clipboard/hidden/empty-folder appearance; the plugin owns rows, grid and keyboard navigation.
@@ -48,7 +50,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `MillerColumns.svelte` — column/Miller-columns browsing mode; owner identity and pane-content modality follow both inline and hoisted rendering.
 - `PeekGuides.svelte` — virtual-row segments of continuous unboxed folder-peek guide lines.
 - `FileItem.svelte` — single entry row/tile (icon, name, badges, selection state).
-- `EntryCell.svelte` — shared List/Tiles gridcell with roving focus, selection semantics and drag-drop interactions.
+- `EntryCell.svelte` — shared List option / Tiles gridcell with roving focus, selection semantics and drag-drop interactions.
 - `EntryName.svelte` — shared inline rename input/display across all views.
 - `EntryNameLabel.svelte` — explorer-free displayed name per view variant (and the tile rename placeholder); EntryName and FileTiles render names through it.
 - `FileIcon.svelte` — shared Material/Classic/Minimal/Catppuccin dispatch; optional pack override supplies stable picker previews across every file view.
@@ -220,6 +222,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `conflict-resolver.svelte.ts` — paste conflict resolution state (overwrite/skip/cancel).
 - `clipboard.svelte.ts` — cross-pane/window revisioned file clipboard state and Cut ownership reconciliation.
 - `src/lib/state/drag-clock.ts` — native process clock calibration with renderer performance.now, IPC uncertainty bounds and runtime identity.
+- `drop-hover.ts` — live drag hover owner; re-hit-tests a stationary drag after List virtualization/layout.
 - `drag.svelte.ts` — shared drag state, cross-window gesture sequence, HTML5 observation history, bounded shared completion receipts and native provenance expiry (dataTransfer is unreliable in Tauri).
 - `undo.svelte.ts` — revisioned native-history projection; queued writes retain their receipts so Undo targets the entry captured at intent.
 - `undo-helpers.ts` — pure completion labels for renderer and native-only history actions.
@@ -370,7 +373,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-panel-resize.svelte.ts` — localStorage width preference adapter for Sidebar, SCM, Miller and Git columns.
 - `use-resize-owner.svelte.ts` — shared axis-aware pointer capture, geometry, keyboard and activity lifetime.
 - `use-controlled-size.svelte.ts` — external-source size adapter; transient drafts, final commits and value-based source supersession.
-- `use-row-grid-view.svelte.ts` — shared virtualization wiring (rows, DnD, new-folder sentinel, scrollToIndex) for List + Tiles views.
+- `use-list-columns.svelte.ts` — List column virtualizer; synchronous content-box sizing, wheel ownership, editor pinning, reveal and settled callbacks.
+- `use-row-grid-view.svelte.ts` — shared virtualization wiring (rows, DnD, new-folder sentinel, scrollToIndex) for Tiles view.
 
 ## src/lib/domain/ — pure logic, no framework deps. Test + reuse here.
 
@@ -442,6 +446,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `file-batch-outcome.ts` — typed successful/failed path receipt and aggregate error formatting for best-effort file mutations.
 - `src/lib/domain/copy-session.ts` — ordered native session event, conflict-decision and positional result contracts, plus the copy and move incomplete-session presentations.
 - `file-history.ts` — shared action, summary, receipt and HistoryPort types for the native history authority.
+- `list-column-flow.ts` — slot-aware column prefix scan, span lookup, List keyboard movement, wheel mapping (`listWheelStep`: sub-pixel carry, native passthrough) and viewport math.
+- `drop-feedback.ts` — pure decision for whether a DOM dragend may retire drop-hover feedback (stale echo vs cancelled drag).
 - `virtual-layout.ts` — variable-height virtual list layout math (VirtualList).
 - `tile-layout.ts` — tile sizes (`THUMBNAIL_SIZE_CONFIG`, re-exported by settings), spacing/row-height `tileLayout()` and grid arrow-key `gridFocusStep()` shared by every tile grid; the SDK's `PaneTileSize`/`TileSizePreset` and `paneTileSize()`; `tileGridMetrics()` exposes minimum width, allocated cell height, gap and grid padding through `ui/file-tile`.
 - `image-resolution.ts` — source pixel shape, supported raster extensions and display formatting.

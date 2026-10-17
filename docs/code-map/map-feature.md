@@ -15,18 +15,18 @@ backend for E2E/browser).
 
 ## View modes & virtualization
 
-- `components/FileList.svelte` — dispatches to Details/List/Tiles; owns deferred cursor focus and explicit reveal ownership across settled virtual layout changes; manual scroll intent releases reveal ownership
-- `components/EntryCell.svelte` — shared List/Tiles gridcell interaction and roving focus attributes
+- `components/FileList.svelte` — dispatches to Details/List/Tiles (every renderer, Details included, loads on demand through `components/view-loaders.svelte.ts`, started in parallel with the listing and rendered directly once settled); owns deferred cursor focus and explicit reveal ownership across settled virtual layout changes; manual scroll intent releases reveal ownership
+- `components/EntryCell.svelte` — shared List option / Tiles gridcell interaction and roving focus attributes
 - Resolution column: `components/ImageResolutionCell.svelte` → `state/image-resolution-service.ts` / `state/image-resolution.ts` → `api/image-resolution.ts` → `src-tauri/src/files/image_resolution.rs`; formatting/filtering in `domain/image-resolution.ts`. Shares directory-change observation; no pixel decoding or retained dimension cache.
 - `components/DetailsView.svelte` — virtual-scrolled table (columns, sort headers); `domain/detail-columns.ts` + `composables/use-column-resize.svelte.ts` project session-local widths through one keyed scalar resize owner
 - Details Length column (#995): `FileItem.svelte` requests `state/media-durations.svelte.ts` per rendered row → `api/media.ts` → `src-tauri/src/media_duration.rs`; `domain/media-duration.ts` formats. Durations are lazy row metadata, never listing fields.
-- `components/ListView.svelte` — CSS-grid columns view
+- `components/ListColumnsView.svelte` (Folder Peek on; classic row-major `ListView.svelte` when `settingsStore.folderPeek` is off, chosen in FileList) → `composables/use-list-columns.svelte.ts` → `domain/list-column-flow.ts` — fixed-width column-major List listbox; horizontal virtualization, slot-aware placement, wheel mapping, shared navigation snapshot and editor pinning
 - `components/TilesView.svelte` — auto-fill tile grid
 - `components/TileSurface.svelte`, `components/TileVisual.svelte`, `domain/tile-layout.ts` — the one tile implementation (chrome CSS, icon/name, geometry) shared by TilesView and the plugin SDK's `src/lib/components/FileTile.svelte` / `components/FileTiles.svelte`; change tiles here so both stay identical
 - `components/VirtualList.svelte` — windowing engine (visible-range calc, persistent extent canvas and positioned rows); settled scroll/layout callbacks keep marquees and explicitly revealed cursors aligned with current virtual rows
 - `domain/virtual-layout.ts` — row/col geometry math for the virtualizer
 - `composables/use-progressive-render.svelte.ts` — chunked reveal of large lists
-- `composables/use-row-grid-view.svelte.ts` — shared virtualization wiring (rows, DnD, new-folder sentinel, scrollToIndex) behind List + Tiles
+- `composables/use-row-grid-view.svelte.ts` — shared virtualization wiring (rows, DnD, new-folder sentinel, scrollToIndex) behind Tiles
 - `state/commands/view-commands.ts` — view.details/list/tiles, sort, columns cmds
 - `state/sort-prefs.ts`, `state/folder-views.svelte.ts` — per-folder view+sort persistence; `state/folder-tile-size.ts` resolves a folder's effective tile size (override, else global) for every consumer
 - `components/FileIcon.svelte` — shared icon-pack dispatch used by all 3 views and picker/plugin surfaces; Material and Catppuccin have thin sprite renderers, while Classic and Minimal retain their file paths. `components/FolderIcon.svelte` shares folder silhouettes and `components/FolderDecoration.svelte` supplies the same badges to plain and photo-folder previews.
@@ -34,6 +34,8 @@ backend for E2E/browser).
 - `domain/file-types.ts` — `isGitRepoFolder` (icon-selection predicate for the git-repo folder badge, #463); backend flag set in `src-tauri/src/files/mod.rs::metadata_to_entry` (`FileEntry.is_git_repo`, one `.git`-exists stat per directory entry)
 - `domain/relative-time.ts` — shared compact relative labels for file metadata, today's git commits, and PR comments
 - FLOW: view mode lives on explorer store; `FileList` reads it, mounts one view; all three must change together for display features. Since Details/List/Tiles all route icons through `FileIcon.svelte`, icon-only features (like the git-repo badge) don't need per-view changes — the shared component is the single seam.
+
+- `state/drop-hover.ts` — shared live drag hover refresh lease; List settled layout re-hit-tests pointer/native destinations without moving the pointer.
 
 ## Selection & marquee
 
@@ -65,7 +67,7 @@ backend for E2E/browser).
 - `components/DetailsView.svelte`, `FileItem.svelte`, `PeekGuides.svelte` — virtualized treegrid, 22px Name-only indentation, native caret buttons and continuous unboxed guides. Selection and keyboard movement use visible entries; Ctrl+A/typeahead/status totals use root entries. Collapsing prunes hidden child selections.
 - `state/pane-watch.ts`, `pane-refresh.ts`, `refresh-manager.ts` — shared per-path WHEN/WHETHER/HOW refresh split, newest-16 native directory/Git watches, fallback refresh for overflow, identity-guarded publication and subscriber retirement.
 - `domain/file-operation-selection.ts`, `state/pane-mutations.ts` — recursive batch roots and captured owning-directory publication for child mutations; native copy/session contracts remain unchanged.
-- `state/pane-peek-watch.ts` remains part of pane-watch’s WHETHER owner and loads with the first peek. The file-list dispatcher loads each built-in view renderer on demand, keeping the treegrid renderer out of the static startup graph.
+- `state/pane-peek-watch.ts` remains part of pane-watch’s WHETHER owner and loads with the first peek. The file-list dispatcher loads each built-in view renderer on demand (`components/view-loaders.svelte.ts`), keeping the treegrid renderer out of the static startup graph.
 - Coverage: `tests/domain/folder-peek*.test.ts`, `file-operation-selection.test.ts`, `tests/state/folder-peek*.test.ts`, `e2e/folder-peek-*.spec.ts`, `e2e-tauri/specs/folder-peek-watch.spec.ts`. E2E-only `e2e-folder-peek` DOM RPC in `src/test-support/e2e-hooks.ts` publishes live lease ownership.
 
 ## Directory listing & refresh/watcher events

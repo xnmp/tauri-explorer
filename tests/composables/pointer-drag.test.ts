@@ -41,6 +41,7 @@ vi.mock("$lib/composables/use-native-drop-target.svelte", () => ({
 }));
 
 import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
+import { dropHover } from "$lib/state/drop-hover";
 import { dragState } from "$lib/state/drag.svelte";
 import { bookmarksStore } from "$lib/state/bookmarks.svelte";
 import { handleFileDropMany } from "$lib/state/drop-operations";
@@ -226,6 +227,22 @@ describe("usePointerDrag", () => {
     fireWindowEvent("mousemove", { clientX: 200, clientY: 200 });
 
     expect(highlightTargetAtPoint).toHaveBeenCalledWith(200, 200);
+  });
+
+  it("re-hit-tests a stationary drag after layout changes and releases hover ownership on cancel", () => {
+    const explorer = makeMockExplorer();
+    const drag = usePointerDrag({ getExplorer: () => explorer });
+    drag.handlePointerDown(makeMouseEvent(), makeEntry("file.txt"), false);
+    fireWindowEvent("mousemove", { clientX: 200, clientY: 200 });
+    vi.mocked(resolveDropTargetAtPoint).mockClear();
+    vi.mocked(resolveDropTargetAtPoint).mockReturnValue({ type: "folder", path: "/elsewhere" });
+    dropHover.refresh();
+    expect(resolveDropTargetAtPoint).toHaveBeenCalledExactlyOnceWith(200, 200);
+    expect(highlightTargetAtPoint).toHaveBeenLastCalledWith(200, 200);
+    fireWindowEvent("keydown", { key: "Escape" });
+    vi.mocked(resolveDropTargetAtPoint).mockClear();
+    dropHover.refresh();
+    expect(resolveDropTargetAtPoint).not.toHaveBeenCalled();
   });
 
   it("drops onto folder target on mouseup", async () => {

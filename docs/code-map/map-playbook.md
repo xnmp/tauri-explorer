@@ -44,8 +44,8 @@ Cross-cutting truth: most features flow **component → store (`src/lib/state`) 
 - Gotchas: selection context comes from `explorer.svelte.ts`; predicate on `FileEntry[]`. Consider also adding the same action as a command (recipe 1) + shortcut.
 
 ## 6. Change view-mode behavior (Details / List / Tiles / Miller)
-1. `src/lib/components/FileList.svelte` — dispatches to `DetailsView`/`ListView`/`TilesView` by `explorer.viewMode`.
-2. `src/lib/components/DetailsView.svelte`, `ListView.svelte`, `TilesView.svelte` — **update ALL THREE** for display-affecting changes (columns, badges, icons, selection visuals).
+1. `src/lib/components/FileList.svelte` — dispatches to `DetailsView`/`ListView` or `ListColumnsView` (by `settingsStore.folderPeek`)/`TilesView` by `explorer.viewMode`.
+2. `src/lib/components/DetailsView.svelte`, `ListColumnsView.svelte` + classic `ListView.svelte`, `TilesView.svelte` — **update ALL THREE** view modes (both List renderers) for display-affecting changes (columns, badges, icons, selection visuals).
 3. `src/lib/components/MillerColumns.svelte` — a FOURTH surface; rendered separately by `ExplorerPane.svelte` (not via FileList). Easy to forget.
 4. `src/lib/components/FileItem.svelte` / `EntryName.svelte` — shared row/name rendering used across views; change here to hit all at once.
 5. `src/lib/state/commands/view-commands.ts` — view/miller/sort commands.

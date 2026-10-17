@@ -61,7 +61,7 @@ describe("marquee visible row contracts after scrolling and virtualization", () 
 
   it("uses actual zoomed positions after a CSS-space scroll rather than unscaled deltas", () => {
     const marquee = drag();
-    const scroller = { scrollLeft: 0, scrollTop: 0 } as HTMLElement;
+    const scroller = { scrollLeft: 0, scrollTop: 0, clientLeft: 0, clientTop: 0, clientWidth: 400, clientHeight: 400, getBoundingClientRect: () => containerRect } as HTMLElement;
     const rows = [
       row(0, () => rect(120, 90 - scroller.scrollTop * 1.5, 40, 20)),
       row(1, () => rect(120, 120 - scroller.scrollTop * 1.5, 40, 20)),
@@ -81,7 +81,7 @@ describe("marquee visible row contracts after scrolling and virtualization", () 
 
   it("selects the current global entry indices when scrolling remounts virtual rows", () => {
     const marquee = drag();
-    const scroller = { scrollLeft: 0, scrollTop: 0 } as HTMLElement;
+    const scroller = { scrollLeft: 0, scrollTop: 0, clientLeft: 0, clientTop: 0, clientWidth: 400, clientHeight: 400, getBoundingClientRect: () => containerRect } as HTMLElement;
     let rows = [row(0, () => rect(120, 90, 40, 20))];
     const container = {
       getBoundingClientRect: () => containerRect,
@@ -103,6 +103,7 @@ describe("marquee visible row contracts after scrolling and virtualization", () 
     const container = {
       scrollLeft: 0,
       scrollTop: 0,
+      clientLeft: 0, clientTop: 0, clientWidth: 400, clientHeight: 400,
       getBoundingClientRect: () => containerRect,
       querySelectorAll: () => rows,
     } as unknown as HTMLElement;
@@ -121,6 +122,7 @@ describe("marquee visible row contracts after scrolling and virtualization", () 
     const container = {
       scrollLeft: 0,
       scrollTop: 0,
+      clientLeft: 0, clientTop: 0, clientWidth: 400, clientHeight: 400,
       getBoundingClientRect: () => containerRect,
       querySelectorAll: () => rows,
     } as unknown as HTMLElement;

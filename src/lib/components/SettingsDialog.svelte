@@ -141,8 +141,8 @@
     navRefresh: ["Refresh", "Show the refresh/reload button"],
     showHidden: ["Show Hidden Files", "Show files and folders starting with a dot (Ctrl+H)"],
     millerHideEmpty: ["Hide Empty Folders in Miller View", "Don't show folders that have no visible entries in miller columns"],
-    yaziNavigation: ["Yazi-style Navigation", "Left/right arrows navigate up/into folders in details and list view"],
-    folderPeek: ["Folder Peek", "Expand folders in place with a caret in Details view. Off restores the classic views"],
+    yaziNavigation: ["Yazi-style Navigation", "Left/right arrows navigate up/into folders in Details view (and List view when Folder Peek is off)"],
+    folderPeek: ["Folder Peek", "Expand folders in place with a caret; List view flows into columns that scroll sideways. Off restores the classic views"],
     folderPeekCarets: ["Show Folder Peek Carets", "Show expand carets beside folders in Details and List. Off: a single click on a folder expands or collapses it"],
     autoEnterSingleSubdir: ["Auto-Enter Single Subfolder", "When a folder contains only one subfolder (and nothing else), descend into it automatically"],
     tabTitleGitRoot: ["Git Repo Root in Tab Title", "When the folder is inside a git repository, show the repo's root folder name in the tab title"],
@@ -555,7 +555,7 @@
           <div class="setting-row" class:hidden={!matchesSearch(...rows.yaziNavigation)}>
             <div class="setting-info">
               <span class="setting-label">Yazi-style Navigation</span>
-              <span class="setting-description">Left/right arrows navigate up/into folders in details and list view</span>
+              <span class="setting-description">Left/right arrows navigate up/into folders in Details view (and List view when Folder Peek is off)</span>
             </div>
             <label class="toggle">
               <input
@@ -569,7 +569,7 @@
           <div class="setting-row" class:hidden={!matchesSearch(...rows.folderPeek)}>
             <div class="setting-info">
               <span class="setting-label">Folder Peek</span>
-              <span class="setting-description">Expand folders in place with a caret in Details view. Off restores the classic views</span>
+              <span class="setting-description">Expand folders in place with a caret; List view flows into columns that scroll sideways. Off restores the classic views</span>
             </div>
             <label class="toggle">
               <input

@@ -80,6 +80,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   const pluginViewActive = $derived(fileViewPresentation.resolution.kind !== "builtin");
 
   let paneRef = $state<HTMLElement | null>(null);
+  let getListNavigation = $state<(() => import("$lib/domain/list-column-flow").ListNavigationSnapshot | null) | undefined>();
   let fileListScrollToEntry = $state<((entry: import("$lib/domain/file").FileEntry) => void) | undefined>();
 
   // All keyboard navigation is handled at window level so it works regardless
@@ -307,16 +308,18 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     // File navigation belongs to the collection. Ordinary controls, Miller
     // columns and sidebar widgets retain their own arrow keys. A pane-switch
     // command changes active-pane state before the old collection loses focus.
-    if (!target.matches('.file-list .entry-item, .file-list .virtual-viewport:is([role="grid"], [role="treegrid"]), .explorer-pane, body')) return;
+    if (!target.matches('.file-list .entry-item, .file-list .virtual-viewport:is([role="grid"], [role="treegrid"], [role="listbox"]), .explorer-pane, body')) return;
     const entries = paneExplorer.displayEntries;
     const cursor = paneExplorer.focusedEntry;
     const move = resolveFileListMove(event, {
       viewMode: paneExplorer.viewMode, columns: gridColumns(paneExplorer.viewMode),
       count: entries.length, cursorIndex: cursor ? entries.indexOf(cursor) : -1,
+      listLayout: settingsStore.folderPeek ? "columns" : "rows", list: getListNavigation?.(),
       directory: cursor?.kind === "directory", yazi: settingsStore.yaziNavigation,
     });
     if (!move) return;
     event.preventDefault();
+    if (move.kind === "handled") return;
     if (move.kind === "parent") { void paneExplorer.goUp(); return; }
     if (move.kind === "open") {
       const target = entries[move.index];
@@ -408,7 +411,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
       {#if settingsStore.showGitStatus && paneScmVisible}
         <ScmPanel {reserveInlineWidth} />
       {/if}
-      <FileList explorer={paneExplorer} presentation={fileViewPresentation} bind:scrollToEntry={fileListScrollToEntry} />
+      <FileList explorer={paneExplorer} presentation={fileViewPresentation} bind:scrollToEntry={fileListScrollToEntry} bind:getListNavigation />
     </div>
     <ContextMenu explorer={paneExplorer} />
   {/if}

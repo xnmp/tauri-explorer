@@ -251,7 +251,9 @@ test("an above band keeps the clicked row fixed on screen", async ({ page }) => 
   }, [shown, P("Folder 23", base)] as const);
   await settled(page);
   expect(await side(page, P("Folder 23", base))).toBe("above");
-  for (const y of during) expect(Math.abs(y - before)).toBeLessThan(1.5);
+  // Mid-motion frames allow 2px: WebKit keeps the outer scroll offset in whole
+  // pixels while the mixed geometry is fractional (an unanchored row jumps ~200px).
+  for (const y of during) expect(Math.abs(y - before)).toBeLessThan(2);
   expect(Math.abs((await tile(page, P("Folder 23", base)).boundingBox())!.y - before)).toBeLessThan(1.5);
   // The opened panel is fully on screen, above its parent.
   const [box, port] = await Promise.all([rect(page, P("Folder 23", base)), scroller(page).boundingBox()]);
@@ -265,18 +267,27 @@ test("an above band at the top of the list moves its row down by the shortfall, 
   // at its top, keeping row 0 fixed would put the new panel above the viewport.
   await toggle(page, P("Folder 07", base));
   const before = (await tile(page, P("Folder 06", base)).boundingBox())!.y;
+  // Each frame records the row and the opening panel's height. Times count from
+  // the row's first movement: the motion starts when the folder's listing
+  // arrives, which a loaded host can delay after the click.
   const samples = await page.evaluate(async ([selector, path]) => {
     const pane = document.querySelector(selector)!;
     const cell = () => pane.querySelector<HTMLElement>(`.tile-row .entry-item[data-path="${path}"]`)!;
+    const y0 = cell().getBoundingClientRect().y;
     cell().querySelector<HTMLElement>(".peek-caret")!.click();
-    const start = performance.now();
-    const out: { t: number; y: number }[] = [];
-    while (performance.now() - start < 700) {
+    const clicked = performance.now();
+    let moved: number | null = null;
+    const out: { t: number; y: number; height: number }[] = [];
+    while (performance.now() - (moved ?? clicked) < (moved === null ? 5000 : 600)) {
       await new Promise(resolve => requestAnimationFrame(resolve));
-      out.push({ t: performance.now() - start, y: cell().getBoundingClientRect().y });
+      const y = cell().getBoundingClientRect().y;
+      if (moved === null && Math.abs(y - y0) > 0.5) moved = performance.now();
+      const box = pane.querySelector<HTMLElement>(`.tile-panel[data-path="${path}"]`)?.getBoundingClientRect();
+      out.push({ t: moved === null ? -1 : performance.now() - moved, y, height: box?.height ?? 0 });
     }
     return out;
   }, [shown, P("Folder 06", base)] as const);
+  expect(samples.some(s => s.t >= 0), "the row moved").toBe(true);
   await settled(page);
   expect(await side(page, P("Folder 06", base))).toBe("above");
   const [box, port, row] = await Promise.all([rect(page, P("Folder 06", base)), scroller(page).boundingBox(), tile(page, P("Folder 06", base)).boundingBox()]);
@@ -286,8 +297,13 @@ test("an above band at the top of the list moves its row down by the shortfall, 
   // The row moved down by only that shortfall: it sits right below its panel.
   expect(row!.y).toBeGreaterThan(before + box.height - 1);
   expect(row!.y - (box.y + box.height)).toBeLessThan(24);
-  // All of it happens in the open motion: from 250ms on, nothing moves (no
-  // separate reveal scroll after the motion), and the row never moves up.
+  // All of it happens in the open motion. By the frame the panel has grown to
+  // its full height, the row is already in place (no separate reveal scroll
+  // after the motion); from 250ms after the row starts to move, nothing moves;
+  // and the row never moves up.
+  const grown = samples.filter(s => s.height >= box.height - 1);
+  expect(grown.length).toBeGreaterThan(0);
+  for (const s of grown) expect(Math.abs(s.y - row!.y), `row once the panel is full, at ${Math.round(s.t)}ms`).toBeLessThan(1.5);
   for (const s of samples.filter(s => s.t >= 250)) expect(Math.abs(s.y - row!.y), `row at ${Math.round(s.t)}ms`).toBeLessThan(1.5);
   for (let i = 1; i < samples.length; i++) expect(samples[i].y).toBeGreaterThanOrEqual(samples[i - 1].y - 1);
 });

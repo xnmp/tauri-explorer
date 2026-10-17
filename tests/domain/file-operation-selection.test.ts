@@ -24,3 +24,31 @@ it("rejects a selected ancestor covering an unselected symlink boundary", () => 
   expect(operationRoots([parent, child], false, [parent, link, child]).ok).toBe(false);
   expect(operationRoots([child], false, [parent, link, child])).toEqual({ ok: true, entries: [child] });
 });
+
+it("treats filesystem roots as covering every descendant", () => {
+  const root = dir("/"), child = dir("/r/a"), drive = dir("C:\\"), driveChild = dir("c:/x/y"), share = dir("\\\\host\\share"), shareChild = dir("//HOST/share/x");
+  expect(operationRoots([child, root], false)).toEqual({ ok: true, entries: [root] });
+  expect(operationRoots([driveChild, drive], true)).toEqual({ ok: true, entries: [drive] });
+  expect(operationRoots([shareChild, share], true)).toEqual({ ok: true, entries: [share] });
+});
+it("keeps uncomparable paths and literal duplicates out of coverage", () => {
+  const relative = dir("r/a/b"), parent = dir("r/a"), file = { ...dir("/r/a/f"), kind: "file" as const };
+  expect(operationRoots([parent, relative, relative], false)).toEqual({ ok: true, entries: [parent, relative] });
+  // A file is never a covering parent, and duplicates collapse by key.
+  expect(operationRoots([file, dir("/r/a/f/x"), { ...file, path: "/r//a/f" }], false)).toEqual({ ok: true, entries: [file, dir("/r/a/f/x")] });
+  expect(operationDrag([relative], relative, false)).toEqual({ ok: true, entries: [relative], primary: relative });
+});
+it("reduces ten thousand siblings and nested children in linear time", () => {
+  const siblings = Array.from({ length: 10_000 }, (_, i) => dir(`/r/folder-${i}`));
+  const children = siblings.slice(0, 1_000).flatMap(parent => [dir(`${parent.path}/x`), dir(`${parent.path}/x/y`)]);
+  const links = siblings.slice(5_000, 5_010).map(entry => ({ ...entry, is_symlink: true }));
+  const selection = [...children, ...siblings];
+  const started = performance.now();
+  const result = operationRoots(selection, false, [...selection, ...links]);
+  const drag = operationDrag(selection, children[1], false);
+  const elapsed = performance.now() - started;
+  expect(result).toEqual({ ok: true, entries: siblings });
+  expect(drag.ok && drag.primary).toBe(siblings[0]);
+  // The quadratic reduction took ~1.4s for 1,000 siblings and ~23s for 4,000.
+  expect(elapsed).toBeLessThan(1_500);
+});

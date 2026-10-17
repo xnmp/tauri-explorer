@@ -37,7 +37,8 @@ export interface PaneMutationContext {
   operationEntries?: () => readonly FileEntry[];
   captureDirectory?: (parent: string) => { publish(transform: (entries: readonly FileEntry[]) => readonly FileEntry[]): void };
   requestReconcile?: (parent: string) => void;
-  removed?: (path: string) => void;
+  /** Paths that no longer exist; one call per batch (O(n), not O(n²)). */
+  removed?: (paths: readonly string[]) => void;
 }
 
 export function createPaneMutations(ctx: PaneMutationContext) {
@@ -115,7 +116,7 @@ export function createPaneMutations(ctx: PaneMutationContext) {
         if (coreState.selectionAnchorPath === oldPath) coreState.selectionAnchorPath = path;
         if (coreState.cursorPath === oldPath) coreState.cursorPath = path;
         if (!entry) { if (ctx.requestReconcile) ctx.requestReconcile(nativeParentDir(oldPath)); else ctx.refreshSilent(); }
-        if (renamingEntry.kind === "directory") ctx.removed?.(oldPath);
+        if (renamingEntry.kind === "directory") ctx.removed?.([oldPath]);
       }
       clipboardStore.rekeyPath(oldPath, path, entry);
       dialogStore.cancelRename(session);
@@ -137,7 +138,8 @@ export function createPaneMutations(ctx: PaneMutationContext) {
     const reduced = operationRoots(entriesArg ?? dialogStore.deletingEntries, isWindows, ctx.operationEntries?.());
     if (!reduced.ok) return reduced.error;
     const entries = reduced.entries;
-    const directories = new Map(entries.map(entry => nativeParentDir(entry.path)).map(parent => [parent, captureDirectory(parent)]));
+    // One capture per parent directory, not per entry.
+    const directories = new Map([...new Set(entries.map(entry => nativeParentDir(entry.path)))].map(parent => [parent, captureDirectory(parent)]));
     if (entries.length === 0) return "No entries selected for delete";
     const requestedPermanent = isPermanentArg ?? dialogStore.isPermanentDelete;
 
@@ -159,7 +161,7 @@ export function createPaneMutations(ctx: PaneMutationContext) {
       const deletedPaths = new Set(removed);
       if (origin.current()) {
         for (const parent of new Set(removed.map(nativeParentDir))) directories.get(parent)!.publish(entries => entries.filter(e => !deletedPaths.has(e.path)));
-        for (const path of removed) ctx.removed?.(path);
+        ctx.removed?.(removed);
         ctx.setSelection(
           [...coreState.selectedPaths].filter((p) => !deletedPaths.has(p))
         );

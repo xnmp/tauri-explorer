@@ -43,7 +43,7 @@ describe("folder peek preorder and policies", () => {
       expect(cmp.sameParent(child, root)).toBe(true);
       expect(cmp.contains(outside, root)).toBe(false);
       const expanded = new Map([[child, 1], [outside, 2]]);
-      expect([...collapseSubtree(expanded, root, windows).keys()]).toEqual([outside]);
+      expect([...collapseSubtree(expanded, [root], windows).keys()]).toEqual([outside]);
       expect([...pruneExpanded(expanded, root, [], windows).keys()]).toEqual([outside]);
     }
   });

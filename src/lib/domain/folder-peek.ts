@@ -4,7 +4,7 @@ import { flatPeekEntries } from "./folder-peek-flat";
 import type { PeekCapability } from "./folder-peek-flat";
 export { peekCapability, resolvePeekCommandTarget, resolvePeekEscape, entryIndicesForRows } from "./folder-peek-flat";
 export type { PeekCapability, PeekSurface } from "./folder-peek-flat";
-import { pathComparison } from "./path";
+import { coverageOf, pathComparison } from "./path";
 
 export type ExpandedPaths = ReadonlyMap<string, number>;
 export interface PeekMeta { depth: number; parentPath: string }
@@ -26,9 +26,10 @@ export function toggleExpanded(expanded: ExpandedPaths, path: string, ordinal: n
   return next;
 }
 
-export function collapseSubtree(expanded: ExpandedPaths, root: string, windows: boolean): Map<string, number> {
-  const paths = pathComparison(windows);
-  return new Map([...expanded].filter(([path]) => !paths.contains(path, root)));
+/** Remove every expanded path at or below any of `roots`. */
+export function collapseSubtree(expanded: ExpandedPaths, roots: readonly string[], windows: boolean): Map<string, number> {
+  const covered = coverageOf(roots, windows);
+  return new Map([...expanded].filter(([path]) => !covered(path)));
 }
 
 /** Only a complete raw snapshot can establish that a branch disappeared. */

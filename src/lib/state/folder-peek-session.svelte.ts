@@ -68,7 +68,10 @@ export function createFolderPeekSession(windows: boolean) {
     get expanded() { return expanded; },
     toggle(path: string) { if (!disposed) expanded = toggleExpanded(expanded, path, ++ordinal); },
     collapse(path: string) { if (expanded.has(path)) { const next = new Map(expanded); next.delete(path); expanded = next; } },
-    collapseAll(root: string) { expanded = collapseSubtree(expanded, root, windows); },
+    collapseAll(roots: readonly string[]) {
+      const next = collapseSubtree(expanded, roots, windows);
+      if (next.size !== expanded.size) expanded = next;
+    },
     prune(parent: string, entries: readonly FileEntry[]) {
       const next = pruneExpanded(expanded, parent, entries, windows);
       if (next.size !== expanded.size) expanded = next;

@@ -19,7 +19,7 @@ export function createFolderPeekState(windows: boolean) {
     },
     toggle(path: string) { session?.toggle(path); },
     collapse(path: string) { session?.collapse(path); },
-    collapseAll(root: string) { session?.collapseAll(root); },
+    collapseAll(roots: readonly string[]) { session?.collapseAll(roots); },
     prune(parent: string, entries: readonly FileEntry[]) { session?.prune(parent, entries); },
     listing(path: string) { return session?.listing(path); },
     target(path: string) { return session?.target(path); },

@@ -31,7 +31,7 @@ import { createFolderPeekState } from "./folder-peek.svelte";
 import { flatPeekEntries, flatPeekRows, peekCapability, resolvePeekCommandTarget, resolvePeekEscape } from "$lib/domain/folder-peek-flat";
 import { isVirtualPath } from "$lib/domain/virtual-path";
 import { providerFor } from "$lib/plugins/fs-providers";
-import { basename, toNativeSeparators, pathComparison } from "$lib/domain/path";
+import { basename, toNativeSeparators, pathComparison, coverageOf } from "$lib/domain/path";
 import { isWindows } from "$lib/domain/platform";
 import { clipboardImageStatus, clipboardPasteImage } from "$lib/api/clipboard-image";
 import { withClipboardImageProgress } from "$lib/state/clipboard-image-progress.svelte";
@@ -248,7 +248,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   function collapseAllPeeks() {
     peekIntent++;
     const before = peekTree;
-    peek.collapseAll(coreState.currentPath);
+    peek.collapseAll([coreState.currentPath]);
     pruneHiddenChildren(before, displayEntries);
     reconcilePeekResources();
   }
@@ -297,14 +297,13 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
 
   // Accepted filesystem work outlives its pane. Only publication into that
   // pane borrows the navigation generation and lifetime.
-  function captureMutation() {
+  function captureOrigin() {
     const generation = navGeneration;
     const path = coreState.currentPath;
-    return {
-      path,
-      selectionCurrent: captureSelection(),
-      current: () => !destroyed && generation === navGeneration && path === coreState.currentPath,
-    };
+    return () => !destroyed && generation === navGeneration && path === coreState.currentPath;
+  }
+  function captureMutation() {
+    return { path: coreState.currentPath, selectionCurrent: captureSelection(), current: captureOrigin() };
   }
 
   // The pane's newest navigation trace. Starting another settles it as
@@ -631,11 +630,12 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
 
   function captureDirectory(parent: string) {
     const root = paths.same(parent, coreState.currentPath);
-    const origin = captureMutation();
+    // Publication needs only pane identity, never a selection snapshot.
+    const current = captureOrigin();
     const target = root ? undefined : peek.target(parent);
     return {
       publish(transform: (entries: readonly FileEntry[]) => readonly FileEntry[]) {
-        if (!origin.current() || (!root && !target?.current())) { watch.requestPath(parent); return; }
+        if (!current() || (!root && !target?.current())) { watch.requestPath(parent); return; }
         const next = transform(root ? coreState.entries : target!.entries);
         if (root) coreState.entries = next;
         else target!.entries = next;
@@ -654,9 +654,11 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     captureDirectory,
     operationEntries: () => displayEntries,
     requestReconcile: watch.requestPath,
-    removed: (path) => {
-      peek.collapseAll(path);
-      setSelection([...coreState.selectedPaths].filter(p => !paths.contains(p, path)));
+    removed: (removedPaths) => {
+      if (!removedPaths.length) return;
+      peek.collapseAll(removedPaths);
+      const gone = coverageOf(removedPaths, isWindows);
+      setSelection([...coreState.selectedPaths].filter(path => !gone(path)));
       reconcilePeekResources();
     },
   });

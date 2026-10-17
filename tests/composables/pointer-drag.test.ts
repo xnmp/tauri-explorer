@@ -180,6 +180,27 @@ describe("usePointerDrag", () => {
     );
   });
 
+  it("reduces a recursive selection at drag start, never on a plain click", () => {
+    const folder = makeEntry("folder", "directory"), child = { ...makeEntry("folder/child.txt"), name: "child.txt" };
+    const explorer = makeMockExplorer([folder, child], [folder, child]);
+    const selected = vi.spyOn(explorer, "getSelectedEntries");
+    const drag = usePointerDrag({ getExplorer: () => explorer, refreshPanes: undefined });
+
+    // A click on a selected row in a large selection does no selection work.
+    drag.handlePointerDown(makeMouseEvent({ clientX: 100, clientY: 100 }), child, true);
+    fireWindowEvent("mouseup", { clientX: 100, clientY: 100 });
+    expect(selected).not.toHaveBeenCalled();
+
+    drag.handlePointerDown(makeMouseEvent({ clientX: 100, clientY: 100 }), child, true);
+    fireWindowEvent("mousemove", { clientX: 103, clientY: 100 });
+    expect(selected).not.toHaveBeenCalled();
+    fireWindowEvent("mousemove", { clientX: 110, clientY: 100 });
+    fireWindowEvent("mousemove", { clientX: 120, clientY: 100 });
+    expect(selected).toHaveBeenCalledTimes(1);
+    // The covered child travels inside its selected folder.
+    expect(dragState.start).toHaveBeenCalledWith(expect.objectContaining({ path: folder.path, paths: undefined }));
+  });
+
   it("triggers native drag when cursor exits window bounds", () => {
     const explorer = makeMockExplorer();
     const drag = usePointerDrag({ getExplorer: () => explorer, refreshPanes: undefined });

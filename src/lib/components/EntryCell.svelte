@@ -30,6 +30,10 @@
     column: number;
     role?: "gridcell" | "option";
     setSize?: number;
+    /** Peek tree depth + 1 (List cards, #1240); omitted outside a peek tree. */
+    level?: number;
+    /** A folder's peek state; omitted for files and outside a peek tree. */
+    expanded?: boolean;
     onitemclick: (entry: FileEntry, event: MouseEvent) => void;
     onitemdblclick: (entry: FileEntry) => void;
     children: Snippet;
@@ -45,6 +49,8 @@
     column,
     role = "gridcell",
     setSize,
+    level,
+    expanded,
     onitemclick,
     onitemdblclick,
     children,
@@ -53,6 +59,9 @@
   const isRenaming = $derived(dialogStore.renamingEntry?.path === entry.path);
 
   const appearance = useEntryAppearance(() => entry, () => explorer.currentPath);
+  // A peek caret inside the cell is its own control: never a row click, double
+  // click or drag (mirrors FileItem).
+  const isPeekControl = (event: Event) => event.target instanceof Element && !!event.target.closest(".peek-caret");
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -- Roving composite focus is managed by FileList. -->
@@ -68,6 +77,8 @@
   aria-colindex={role === "gridcell" ? column : undefined}
   aria-posinset={role === "option" && index !== undefined ? index + 1 : undefined}
   aria-setsize={role === "option" ? setSize : undefined}
+  aria-level={level}
+  aria-expanded={expanded}
   class:directory={entry.kind === "directory"}
   class:selected={explorer.isSelected(entry)}
   class:cut={appearance.cut}
@@ -78,16 +89,16 @@
   class:copy-drop={interactions.isCopyDrop(entry.path)}
   use:interactions.trackDragSource
   draggable={usesHtml5Drag}
-  onclick={(e) => onitemclick(entry, e)}
-  ondblclick={() => { if (!isRenaming) onitemdblclick(entry); }}
+  onclick={(e) => { if (!isPeekControl(e)) onitemclick(entry, e); }}
+  ondblclick={(e) => { if (!isRenaming && !isPeekControl(e)) onitemdblclick(entry); }}
   oncontextmenu={(e) => interactions.handleContextMenu(e, entry)}
-  ondragstart={usesHtml5Drag ? (e) => interactions.handleDragStart(e, entry, explorer.isSelected(entry)) : undefined}
+  ondragstart={usesHtml5Drag ? (e) => { if (isPeekControl(e)) e.preventDefault(); else interactions.handleDragStart(e, entry, explorer.isSelected(entry)); } : undefined}
   ondragend={usesHtml5Drag ? interactions.handleDragEnd : undefined}
   ondragenter={(e) => interactions.handleDragEnter(e, entry)}
   ondragover={(e) => interactions.handleDragOver(e, entry)}
   ondragleave={(e) => interactions.handleDragLeave(e, entry)}
   ondrop={(e) => interactions.handleDrop(e, entry)}
-  onmousedown={usesPointerDrag ? (e) => { e.stopPropagation(); pointerDrag!.handlePointerDown(e, entry, explorer.isSelected(entry)); } : undefined}
+  onmousedown={usesPointerDrag ? (e) => { if (isPeekControl(e)) return; e.stopPropagation(); pointerDrag!.handlePointerDown(e, entry, explorer.isSelected(entry)); } : undefined}
 >
   {@render children()}
   <EntrySymlinkBadge {entry} renaming={isRenaming} />

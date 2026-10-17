@@ -24,7 +24,7 @@ const kids = (parent: string, dirs: string[], files: string[]) => [...dirs.map(d
 const KIDS: Record<string, FileEntry[]> = {
   Inbox: kids("Inbox", ["to-file"], ["scan-0193.pdf", "invoice-oct.pdf", "meeting-notes.md", "screenshot-2026-10-15.png", "quote.txt"]),
   Career: kids("Career", ["Applications", "Cover Letters", "Portfolio"], ["Resume-2026.pdf", "Interview Prep.md", "References.docx", "salary-research.xlsx", "headshot.jpg", "offer-letter.pdf"]),
-  Codex: kids("Codex", ["prompts", "sessions", "skills"], ["AGENTS.md", "config.toml", "notes.md", "rollout-2026-10-12.jsonl", "auth-flow.png", "todo.txt", "history.jsonl", "README.md", "mcp-servers.json", "rollout-2026-10-14.jsonl", "sandbox.log"]),
+  Codex: kids("Codex", ["prompts", "sessions", "skills"], ["agents-guide.md", "config.toml", "notes.md", "rollout-2026-10-12.jsonl", "auth-flow.png", "todo.txt", "history.jsonl", "readme-notes.md", "mcp-servers.json", "rollout-2026-10-14.jsonl", "sandbox.log"]),
   Personal: kids("Personal", ["Health", "Travel", "Recipes"], Array.from({ length: 20 }, (_, i) => `personal-${i}.pdf`)),
   Archive: kids("Archive", ["2019", "2020", "2021", "2022", "2023"], ["taxes-2022.pdf", "old-notes.md", "scans.zip", ...archiveExtra]),
   "AI Draft Archive": kids("AI Draft Archive", ["drafts-2025"], ["essay-v3.md", "outline.md", "cover-image.png", "prompts.txt", "essay-v1.md", "essay-v2.md", "notes-chat.md", "references.docx", "figure-1.png", "summary.pdf"]),

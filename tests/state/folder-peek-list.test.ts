@@ -48,7 +48,7 @@ it("peeks in List, sorting every level by name like the List root, and Details b
   expect(pane.displayEntries).toEqual([a, b]);
 });
 
-it("records user peek changes for renderers, but not pruning, refresh or navigation", async () => {
+it("records user peek toggles for renderers, but not pruning, refresh or navigation", async () => {
   const pane = create("list");
   expect(pane.peekChange).toBeNull();
   await pane.togglePeek(a.path); await settle();
@@ -78,15 +78,14 @@ it("exposes each peek's listing state", async () => {
 it("remembers card heights per pane for the session, across collapse and re-open", async () => {
   const left = create("list"), right = create("list");
   await left.togglePeek(a.path); await right.togglePeek(a.path); await settle();
+  const toggled = left.peekChange;
   left.setListCardRows(a.path, 3);
   expect(left.listCardRows(a.path)).toBe(3);
   expect(right.listCardRows(a.path)).toBeUndefined();
-  expect(left.peekChange).toMatchObject({ path: a.path });
+  // A resize is not a toggle: its preview already showed the height.
+  expect(left.peekChange).toBe(toggled);
   await left.togglePeek(a.path); await left.togglePeek(a.path); await settle();
   expect(left.listCardRows(a.path)).toBe(3);
-  const serial = left.peekChange!.serial;
-  left.setListCardRows(a.path, 3);
-  expect(left.peekChange!.serial).toBe(serial);
   left.setViewMode("tiles");
   left.setListCardRows(a.path, 5);
   expect(left.listCardRows(a.path)).toBe(3);

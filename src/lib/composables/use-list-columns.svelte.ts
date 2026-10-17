@@ -1,26 +1,36 @@
 import { flushSync, getAbortSignal, onDestroy, tick, untrack } from "svelte";
-import { columnFlow, listColumnRange, listExtent, listRows, listWheelStep, LIST_COLUMN_STRIDE, LIST_COLUMN_WIDTH, LIST_PADDING_X, LIST_PADDING_Y, LIST_SLOT_HEIGHT } from "$lib/domain/list-column-flow";
+import { listColumnRange, listExtent, listRows, listWheelStep, LIST_COLUMN_STRIDE, LIST_COLUMN_WIDTH, LIST_PADDING_X, LIST_PADDING_Y, LIST_SLOT_HEIGHT, type ListCardSpec } from "$lib/domain/list-column-flow";
+import { buildListModel, cardRevealTop, cardWheelConsumes, cardWindow } from "$lib/domain/list-cards";
+import type { PeekRows } from "$lib/domain/folder-peek";
 import { dropHover } from "$lib/state/drop-hover";
-import type { FileEntry } from "$lib/domain/file";
 import { createRafCoalescer } from "$lib/domain/raf-coalesce";
 
 interface ListColumnsDeps {
-  getItems: () => readonly FileEntry[];
+  /** The pane's peek row model (`explorer.detailRows`): entries, pseudo-rows, creation row. */
+  getRows: () => PeekRows;
+  /** Remembered card height (visible rows) for an open top-level folder. */
+  getPreferredRows: (path: string) => number | undefined;
+  /** Entries whose slot, and card row, must stay mounted (inline editors). */
   getPinnedPaths: () => readonly string[];
   onviewportscroll?: () => void;
   onlayoutchange?: () => void;
-  /** Phase 3: an inner card may consume wheel input before the outer List. */
-  consumeInnerWheel?: (event: WheelEvent) => boolean;
 }
+
+/** Card content rows mounted beyond the visible ones, on each side. */
+const CARD_OVERSCAN = 2;
 
 /** Horizontal fixed-column virtualization; geometry is committed before paint. */
 export function useListColumns(deps: ListColumnsDeps) {
   let viewport: HTMLElement | null = null;
   let width = $state(0), height = $state(0), left = $state(0);
   const rows = $derived(listRows(height));
-  const items = $derived(deps.getItems());
-  const layout = $derived(columnFlow(items, rows, () => ({ slots: 1, card: false })));
-  const pathIndices = $derived(new Map(items.map((entry, index) => [entry.path, index])));
+  const model = $derived(buildListModel(deps.getRows(), rows, deps.getPreferredRows));
+  const layout = $derived(model.layout);
+  const entryIndices = $derived.by(() => {
+    const indices = new Map<string, number>();
+    for (const row of deps.getRows().rows) if (row.kind === "entry") indices.set(row.entry.path, row.entryIndex);
+    return indices;
+  });
   const extent = $derived(listExtent(layout.columns.length));
   const range = $derived(listColumnRange(layout.columns.length, left, width));
   // Primitives: `$derived` compares by identity, so scrolling inside the mounted
@@ -28,15 +38,57 @@ export function useListColumns(deps: ListColumnsDeps) {
   // every wrapper per scroll frame.
   const rangeStart = $derived(range.start);
   const rangeEnd = $derived(range.end);
+  const pinnedEntries = $derived(deps.getPinnedPaths().flatMap(path => {
+    const index = entryIndices.get(path);
+    return index === undefined ? [] : [index];
+  }));
   const mountedColumns = $derived.by(() => {
     const columns = new Set(Array.from({ length: rangeEnd - rangeStart }, (_, i) => rangeStart + i));
-    for (const path of deps.getPinnedPaths()) {
-      const index = pathIndices.get(path);
-      if (index !== undefined) columns.add(layout.byIndex[index].column);
-    }
+    // The creation row is the first item whenever it exists.
+    if (model.items[0]?.entryIndex === null) columns.add(layout.byIndex[0].column);
+    for (const index of pinnedEntries) columns.add(layout.byIndex[model.entryItem[index]].column);
     return [...columns].sort((a, b) => a - b);
   });
-  const visibleItems = $derived(mountedColumns.flatMap(column => layout.columns[column]).map(placement => ({ placement, entry: items[placement.index] })));
+  const visibleItems = $derived(mountedColumns.flatMap(column => layout.columns[column]).map(placement => ({ placement, item: model.items[placement.index] })));
+
+  // Per-card scroll offsets (CSS px). A fine-grained proxy, so one card's scroll
+  // re-renders only that card. Kept while its card stays open, even unmounted.
+  const cardScroll = $state<Record<string, number>>({});
+  const cardScrollTop = (path: string): number => cardScroll[path] ?? 0;
+  function setCardScrollTop(path: string, top: number): void {
+    const value = Number.isFinite(top) ? Math.max(0, top) : 0;
+    if (cardScroll[path] !== value) cardScroll[path] = value;
+  }
+  // A grip drag previews one card's height without committing the layout.
+  let preview = $state.raw<{ path: string; rows: number } | null>(null);
+  const previewRows = (path: string): number | null => preview?.path === path ? preview.rows : null;
+  /** Items covered by a growing grip preview (hidden until release). */
+  const covered = $derived.by(() => {
+    const hidden = new Set<string>();
+    if (!preview) return hidden;
+    const index = model.items.findIndex(item => item.card?.path === preview!.path);
+    const card = model.items[index]?.card;
+    if (!card || preview.rows <= card.visibleRows) return hidden;
+    const placement = layout.byIndex[index];
+    const end = placement.row + 1 + preview.rows;
+    for (const other of layout.columns[placement.column]) {
+      if (other.row >= placement.row + placement.slots && other.row < end) hidden.add(model.items[other.index].key);
+    }
+    return hidden;
+  });
+
+  /** Content offsets to mount for a card: its window plus pinned editor rows. */
+  function cardOffsets(card: ListCardSpec): number[] {
+    const visible = previewRows(card.path) ?? card.visibleRows;
+    const { start, end } = cardWindow(card.end - card.start, visible, cardScrollTop(card.path), CARD_OVERSCAN);
+    const offsets = Array.from({ length: end - start }, (_, i) => start + i);
+    for (const entry of pinnedEntries) {
+      const offset = model.entryOffset[entry];
+      const item = model.items[model.entryItem[entry]];
+      if (item?.card === card && offset >= 0 && (offset < start || offset >= end)) offsets.push(offset);
+    }
+    return offsets.sort((a, b) => a - b);
+  }
 
   const scrollWork = createRafCoalescer<number>(position => {
     left = position;
@@ -56,7 +108,11 @@ export function useListColumns(deps: ListColumnsDeps) {
     void width;
     void height;
     const signal = getAbortSignal();
-    untrack(clamp);
+    untrack(() => {
+      clamp();
+      const open = new Set(model.items.flatMap(item => item.card ? [item.card.path] : []));
+      for (const path of Object.keys(cardScroll)) if (!open.has(path)) delete cardScroll[path];
+    });
     void tick().then(() => {
       if (!signal.aborted && viewport?.isConnected && viewport.getClientRects().length) {
         deps.onviewportscroll?.();
@@ -85,7 +141,9 @@ export function useListColumns(deps: ListColumnsDeps) {
     const scroll = () => scrollWork.push(element.scrollLeft);
     let wheelCarry = 0; // sub-pixel remainder; see listWheelStep
     const wheel = (event: WheelEvent) => {
-      if (deps.consumeInnerWheel?.(event)) return;
+      // A card that can still scroll that way takes the wheel natively first.
+      const card = (event.target as Element | null)?.closest?.<HTMLElement>("[data-card-scroll]");
+      if (card && element.contains(card) && cardWheelConsumes(event, card.scrollTop, card.scrollHeight - card.clientHeight)) return;
       // The undersized-pane fallback must still make its fourth row reachable.
       if (height < LIST_SLOT_HEIGHT * 4 && Math.abs(event.deltaY) > Math.abs(event.deltaX)) return;
       const max = Math.max(0, element.scrollWidth - element.clientWidth);
@@ -106,29 +164,82 @@ export function useListColumns(deps: ListColumnsDeps) {
     } };
   }
 
-  function reveal(index: number): void {
+  /** Horizontal target for showing a column, or null when already visible. */
+  function columnTarget(column: number): number | null {
+    if (!viewport) return null;
+    const start = LIST_PADDING_X + column * LIST_COLUMN_STRIDE;
+    const end = start + LIST_COLUMN_WIDTH;
+    const innerLeft = viewport.scrollLeft + LIST_PADDING_X;
+    const innerRight = viewport.scrollLeft + viewport.clientWidth - LIST_PADDING_X;
+    if (width < LIST_COLUMN_WIDTH || start < innerLeft) return start - LIST_PADDING_X;
+    if (end > innerRight) return end - viewport.clientWidth + LIST_PADDING_X;
+    return null;
+  }
+
+  /** Reveal a top-level item (and, inside a card, content row `offset`). */
+  function revealItem(index: number, offset = -1): void {
     if (!viewport || !viewport.getClientRects().length) return;
     const placement = layout.byIndex[index];
     if (!placement) return;
     scrollWork.cancel();
-    const start = LIST_PADDING_X + placement.column * LIST_COLUMN_STRIDE;
-    const end = start + LIST_COLUMN_WIDTH;
-    const innerLeft = viewport.scrollLeft + LIST_PADDING_X;
-    const innerRight = viewport.scrollLeft + viewport.clientWidth - LIST_PADDING_X;
-    if (width < LIST_COLUMN_WIDTH) viewport.scrollLeft = start - LIST_PADDING_X;
-    else if (start < innerLeft) viewport.scrollLeft = start - LIST_PADDING_X;
-    else if (end > innerRight) viewport.scrollLeft = end - viewport.clientWidth + LIST_PADDING_X;
+    const target = columnTarget(placement.column);
+    if (target !== null) viewport.scrollLeft = target;
+    const card = model.items[index].card;
+    let row = placement.row;
+    if (card && offset >= 0) {
+      // Scroll the card first, synchronously, so the row is in its mounted
+      // window by the time FileList focuses it.
+      const top = cardRevealTop(offset, card.visibleRows, cardScrollTop(card.path));
+      setCardScrollTop(card.path, top);
+      row = placement.row + 1 + Math.max(0, Math.min(card.visibleRows - 1, Math.round(offset - top / LIST_SLOT_HEIGHT)));
+    }
     if (height < LIST_SLOT_HEIGHT * 4) {
-      const top = LIST_PADDING_Y + placement.row * LIST_SLOT_HEIGHT;
+      const top = LIST_PADDING_Y + row * LIST_SLOT_HEIGHT;
       if (top < viewport.scrollTop) viewport.scrollTop = top;
       else if (top + LIST_SLOT_HEIGHT > viewport.scrollTop + viewport.clientHeight) viewport.scrollTop = top + LIST_SLOT_HEIGHT - viewport.clientHeight;
     }
     left = viewport.scrollLeft;
   }
 
+  function revealEntry(entry: number): void {
+    const index = model.entryItem[entry];
+    if (index === undefined || index < 0) return;
+    revealItem(index, model.entryOffset[entry]);
+  }
+
+  /** Bring a just-opened card fully into view (after its motion settles). */
+  function revealCard(path: string, smooth: boolean): void {
+    const index = model.items.findIndex(item => item.card?.path === path);
+    if (!viewport || index < 0 || !viewport.getClientRects().length) return;
+    const target = columnTarget(layout.byIndex[index].column);
+    if (target === null) return;
+    scrollWork.cancel();
+    viewport.scrollTo({ left: target, behavior: smooth ? "smooth" : "instant" });
+    if (!smooth) left = viewport.scrollLeft;
+  }
+
+  function containsEntry(entry: number): boolean {
+    const index = model.entryItem[entry];
+    const placement = index === undefined || index < 0 ? undefined : layout.byIndex[index];
+    if (!placement || !mountedColumns.includes(placement.column)) return false;
+    const card = model.items[index].card;
+    const offset = model.entryOffset[entry];
+    return !card || offset < 0 || cardOffsets(card).includes(offset);
+  }
+
+  /** Whether column `column` intersects the scrollport (no overscan). */
+  function columnVisible(column: number): boolean {
+    const x = column * LIST_COLUMN_STRIDE;
+    return x < left + width + LIST_PADDING_X && x + LIST_COLUMN_WIDTH > left - LIST_PADDING_X;
+  }
+
   return {
-    attach, reveal,
-    containsIndex: (index: number) => !!layout.byIndex[index] && mountedColumns.includes(layout.byIndex[index].column),
+    attach, revealItem, revealEntry, revealCard, containsEntry, columnVisible,
+    cardScrollTop, setCardScrollTop, cardOffsets,
+    previewRows,
+    setPreview(path: string, rows: number | null) { preview = rows === null ? null : { path, rows }; },
+    isCovered: (key: string) => covered.has(key),
+    get model() { return model; },
     get layout() { return layout; },
     get usableWidth() { return width; },
     get rows() { return rows; },

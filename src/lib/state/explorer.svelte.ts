@@ -245,9 +245,10 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     }
   }
   let peekIntent = 0;
-  /** The last user peek mutation (toggle, collapse-all, card resize). Pruning,
-   * refreshes and navigation never set it, so renderers can animate user
-   * changes and keep programmatic ones instant (#1240). */
+  /** The last user peek toggle (or collapse-all). Pruning, refreshes,
+   * navigation and card resizes never set it, so renderers can animate user
+   * toggles and keep everything else instant (#1240): a grip resize has
+   * already previewed its height, so its commit snaps. */
   let peekChange = $state.raw<{ path: string; serial: number } | null>(null);
   const notePeekChange = (path: string) => { peekChange = { path, serial: (peekChange?.serial ?? 0) + 1 }; };
   // A function, not a narrowed read: capability is live across the lazy load.
@@ -1109,7 +1110,6 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     setListCardRows(path: string, rows: number) {
       if (capability === "none" || peek.cardRows(path) === rows) return;
       peek.setCardRows(path, rows);
-      notePeekChange(path);
     },
     get peekCaretsShown() { return caretsShown(); },
     collapseAllPeeks,

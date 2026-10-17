@@ -23,10 +23,20 @@ frames). Fresh cell objects then updated every mounted tile's props each frame:
 with Folder Peek on and no panel open, plain scrolling cost 31% more renderer
 task time than classic Tiles in the perf sweep. `cells` now returns one array per
 row group for the model's lifetime (a `WeakMap` in a derived keyed by the
-model and entries), which brought it down to +8%. The remainder is the folder
-caret, measured where every tile is a folder. The caret's chevron is a masked
-`::before` like List's. Removing the inline SVG and the shadow did not measurably
-change the cost: it is the per-tile reactive block, not paint.
+model and entries).
+
+That sweep also always measured classic first on a fresh page. The first case
+on a page runs markedly slower (warm-up), so the order charged it to classic
+and understated the peek renderer: the "+8%" was wrong. Alternate the order
+when comparing two renderers in one page. Rendering each grid tile through the
+shared tile snippet also cost a snippet block per tile, plus an if block around
+its caret. Grid tiles are now written inline and pass the caret as a badge only
+to folders. A file row adds one wrapper element and two block anchors to a
+classic row. Alternating sweeps on a loaded host, where every swept tile is a
+folder with a caret: no panel +9% to +18% task time, panel open +9% to +16%.
+The caret's chevron is a masked `::before` like List's. Removing the inline SVG
+and the shadow did not measurably change the cost: it is the per-tile reactive
+block, not paint.
 
 ## Width and columns
 
@@ -38,22 +48,53 @@ ResizeObserver delivery (#1061). While bands exist the scroller is
 `overflow-anchor: none`, so browser scroll anchoring cannot fight the
 above-band compensation (`scrollToOffset` every frame).
 
-## Outlines must not cover text for axe
+## Outlines need a real box; axe needs them neutralised
 
-A full-size absolutely positioned SVG under the tiles made axe's colour
-contrast check report tile and panel text as "contains an image node" in every
-theme. The outline layer is now a zero-size `<svg>` with `overflow: visible`:
-it paints the same, but nothing hit-tests or stacks under the text. Only the
-ribbon's wide transparent stroke takes the pointer (hover emphasis).
+A zero-size `<svg>` with `overflow: visible` paints in WebKit but not in
+Chromium (and so WebView2): Chromium skips an empty SVG root, so no contour,
+accent, fill, ribbon or parent highlight appeared. Each row group's outline
+layer now spans the group, behind the row and panels, with pointer events off.
+Only the ribbon's wide transparent stroke takes the pointer (hover emphasis).
 
-## A destroyed tile's thumbnail load read a derived
+axe reports any SVG under text as "contains an image node", whatever its
+pointer events. The theme scan therefore replaces the decorative layer with
+the fill it composites (on the panels, and a patch behind each open parent
+tile), like its other composited layers. A pixel test compares screenshots
+with the layer shown and hidden near panel edges in Chromium and WebKit; DOM
+assertions could not have caught a layer that renders nothing.
+
+## Thumbnail loads outlive their tile
 
 Panels mount and unmount image tiles quickly. `ThumbnailImage`'s async loaders
 compared their key against a component-owned `$derived` after each await,
-which warned `derived_inert` once the tile had unmounted (stack attribution:
-`loadProgressiveThumbnail`). It predates this phase; the stress test exposed it.
-The loaders now check liveness (`onDestroy`) before reading the derived, as
-in the #680 rename lesson.
+which warned `derived_inert` once the tile had unmounted. A first fix returned
+early once the tile was gone, and so dropped every response in flight at
+unmount, in classic Tiles too: its blob URL was neither cached nor revoked,
+and scrolling back requested the thumbnail again (8 of 81 paths). The loads now
+live in `state/thumbnail-loads.ts`, one per cache key. A tile watches its key
+while mounted and on screen. The load publishes what it completes to the cache
+whatever its watchers do, and a remount joins a load in flight. Queued work
+still starts only for an on-screen watcher (#136).
+
+## Review fixes
+
+- An above panel's anchor keeps the clicked row fixed only while the whole
+  panel stays visible. Near the top of the scroll range the scroll stops with
+  the panel's top at the viewport's top, applied on every motion frame
+  (`anchoredScrollTop`), so the row moves down by the shortfall inside the same
+  motion. Before, the row held, then a reveal scrolled the panel back into view.
+- Side memory is session state beside panel heights. A plain variable that
+  the model derived reassigned was a side effect in a derived (#444). It was
+  lost on remount (Details and back), and any layout that did not place a
+  folder (another directory) erased the folder's side. The composable merges
+  each layout's sides from its pre-effect and reads the memory untracked.
+- "Peek into Folder" on a panel's subfolder added a Tiles expansion that was
+  never drawn. `canPeekAt` decides which depths a capability can peek, for both
+  the command target and `togglePeek`.
+- Once panels are open, grid row numbering is inconsistent: label, mini and grip
+  rows, and side-by-side panels' interleaved rows. `aria-rowcount`/`rowindex`/
+  `colcount` are kept only while no panel is open, and mini tiles have no
+  `aria-colindex`.
 
 ## Shared with List cards (phase 3 review)
 

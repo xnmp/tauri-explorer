@@ -120,6 +120,14 @@ export async function switchViewMode(page: Page, mode: ViewMode) {
   };
   await page.locator(`${viewSelector[mode]}:visible`).waitFor({ timeout: 3000 });
   await page.locator(".entry-item:visible").first().waitFor({ timeout: 3000 });
+  if (mode === "list") {
+    // The initial column window follows the first geometry delivery. A mounted
+    // option can precede it, so counting entries at that point samples setup.
+    await content.locator(".list-scroller").evaluate(element => new Promise<void>(resolve => {
+      const observer = new ResizeObserver(() => { observer.disconnect(); resolve(); });
+      observer.observe(element);
+    }));
+  }
 }
 
 /**

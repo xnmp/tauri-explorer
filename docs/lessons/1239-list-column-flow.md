@@ -13,6 +13,11 @@ After applying the short class, a normal-flow, zero-height width probe gives
 the actual fractional content width in the same delivery. Ignore hidden retained
 tabs' zero measurements.
 
+Browser helpers that count mounted List entries must await its first geometry
+delivery after switching modes. The first option can mount before that delivery:
+the four-row setup window contains eight entries while a settled home listing
+contains nine. Observe the scrollport once instead of adding a settling timeout.
+
 Virtualization must preserve keyed rename/creation editors, refresh stationary
 marquee/drop hit tests after scrolling, and reveal before moving DOM focus.
 Home/End select and reveal even when the cursor already names the endpoint;

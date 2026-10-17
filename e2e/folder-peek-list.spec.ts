@@ -584,6 +584,9 @@ test("motion stays inside the scrollport on both sides: columns wholly off eithe
   // Columns 0 and 1 lie wholly off the left edge, column 2 straddles it, and
   // columns past the right edge are still mounted (overscan).
   await viewport(page).evaluate(el => { el.scrollLeft = 2 * 276 + 100; });
+  // The List has taken the scroll once columns past the first window mount
+  // (column 0 stays mounted as overscan).
+  await expect.poll(() => page.locator(`${shown} .list-slot[data-column="5"]`).count()).toBeGreaterThan(0);
   await expect.poll(() => page.locator(`${shown} .list-slot[data-column="0"]`).count()).toBeGreaterThan(0);
   // Collapsing Career moves every later item up six rows, in every column.
   const frames = await page.evaluate(async selector => {

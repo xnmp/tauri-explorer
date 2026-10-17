@@ -308,7 +308,7 @@
     opacity: 0.5;
   }
 
-  .file-item.in-clipboard:not(.cut) {
+  .file-item.in-clipboard:where(:not(.cut)) {
     background: linear-gradient(135deg, rgba(0, 120, 212, 0.06), rgba(0, 120, 212, 0.02));
     border-color: rgba(0, 120, 212, 0.2);
   }

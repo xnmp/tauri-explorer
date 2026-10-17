@@ -84,8 +84,9 @@
     justify-content: center;
   }
 
-  .tile-surface:global(.tile-item:focus),
-  .tile-surface :global(.tile-item:focus) {
+  /* Lazy view chrome stays below the shared keyboard focus indicator. */
+  .tile-surface:global(.tile-item:where(:focus)),
+  .tile-surface :global(.tile-item:where(:focus)) {
     outline: none;
   }
 
@@ -96,8 +97,8 @@
     border-bottom-color: var(--focus-stroke-outer);
   }
 
-  .tile-surface:global(.tile-item:hover),
-  .tile-surface :global(.tile-item:hover) {
+  .tile-surface:global(.tile-item:where(:hover)),
+  .tile-surface :global(.tile-item:where(:hover)) {
     background: var(--subtle-fill-secondary);
   }
 
@@ -106,8 +107,8 @@
     transform: scale(0.97);
   }
 
-  .tile-surface:global(.tile-item.selected),
-  .tile-surface :global(.tile-item.selected) {
+  .tile-surface:global(.tile-item:where(.selected)),
+  .tile-surface :global(.tile-item:where(.selected)) {
     background: color-mix(in srgb, var(--accent) 8%, transparent);
     border-color: transparent;
     border-bottom-color: var(--accent);
@@ -143,8 +144,8 @@
     opacity: 0.5;
   }
 
-  .tile-surface:global(.tile-item.in-clipboard:not(.cut)),
-  .tile-surface :global(.tile-item.in-clipboard:not(.cut)) {
+  .tile-surface:global(.tile-item:where(.in-clipboard:not(.cut))),
+  .tile-surface :global(.tile-item:where(.in-clipboard:not(.cut))) {
     outline: 1px dashed var(--accent);
     outline-offset: -1px;
   }

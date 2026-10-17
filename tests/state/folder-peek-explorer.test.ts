@@ -39,7 +39,7 @@ async function compileClient(modulePath: string, overrides: Record<string, unkno
   return new Function("$", "imports", compiled + `\nreturn { ${modulePath === "folder-peek-session.svelte" ? "createFolderPeekSession" : modulePath === "folder-peek.svelte" ? "createFolderPeekState" : "createExplorerState"} };`)(client, imports);
 }
 
-const create = () => { let pane!: ExplorerInstance; effects.push(client.effect_root(() => { pane = createExplorerState({ currentPath: "/r", entries: [a, b], sortBy: "name", sortAscending: true, viewMode: "details" }); client.render_effect(() => { pane.displayEntries; pane.detailRows; }); })); panes.push(pane); return pane; };
+const create = (entries: FileEntry[] = [a, b]) => { let pane!: ExplorerInstance; effects.push(client.effect_root(() => { pane = createExplorerState({ currentPath: "/r", entries, sortBy: "name", sortAscending: true, viewMode: "details" }); client.render_effect(() => { pane.displayEntries; pane.detailRows; }); })); panes.push(pane); return pane; };
 async function settle(ms = 200) { flushSync(); await vi.advanceTimersByTimeAsync(ms); flushSync(); }
 beforeEach(async () => {
   const session = await compileClient("folder-peek-session.svelte");
@@ -104,4 +104,75 @@ it.each(["collapse", "view", "navigation", "destroy"])("does not revive a first 
   expect(pane.expandedPaths.size).toBe(0);
   expect(pane.peekWatchSnapshot()).toEqual([]);
   expect(loads).not.toContain(a.path);
+});
+
+it("captures navigation focus before loading and completes only the current request", async () => {
+  const pane = create();
+  const outcomes: string[] = [];
+  let resolveFirst!: (result: DirectoryListingResult) => void;
+  source.current = path => path === "/first" ? new Promise(resolve => { resolveFirst = resolve; }) : Promise.resolve({ ok: true, path, entries: [] });
+  let serial = 0;
+  pane.onNavigationFocus = () => {
+    const id = ++serial; outcomes.push(`capture ${id}`);
+    return { complete: () => outcomes.push(`complete ${id}`), cancel: () => outcomes.push(`cancel ${id}`) };
+  };
+  const first = pane.initialLoad("/first");
+  expect(outcomes).toEqual(["capture 1"]);
+  await pane.initialLoad("/second");
+  resolveFirst({ ok: true, path: "/first", entries: [] }); await first;
+  expect(outcomes.filter(event => event.startsWith("complete"))).toEqual(["complete 2"]);
+  expect(outcomes).toContain("cancel 1");
+});
+it.each(["unbind", "destroy", "error"])("retires a late-mounted navigation focus request on %s", async action => {
+  const pane = create();
+  let resolve!: (result: DirectoryListingResult) => void;
+  source.current = () => new Promise(done => { resolve = done; });
+  const pending = pane.initialLoad("/next");
+  const complete = vi.fn(), cancel = vi.fn();
+  pane.onNavigationFocus = () => ({ complete, cancel });
+  if (action === "unbind") pane.onNavigationFocus = null;
+  const closing = action === "destroy" ? pane.destroy() : undefined;
+  resolve(action === "error" ? { ok: false, error: "denied" } : { ok: true, path: "/next", entries: [] });
+  await pending; await closing;
+  expect(cancel).toHaveBeenCalled();
+  expect(complete).not.toHaveBeenCalled();
+});
+
+it("does not recapture newer focus when a pending navigation pane remounts", async () => {
+  const pane = create();
+  let resolve!: (result: DirectoryListingResult) => void;
+  source.current = () => new Promise(done => { resolve = done; });
+  const pending = pane.initialLoad("/next");
+  const complete = vi.fn(), cancel = vi.fn(), replacement = vi.fn(() => ({ complete, cancel }));
+  pane.onNavigationFocus = () => ({ complete, cancel });
+  pane.onNavigationFocus = null;
+  pane.onNavigationFocus = replacement;
+  resolve({ ok: true, path: "/next", entries: [] }); await pending;
+  expect(replacement).not.toHaveBeenCalled();
+  expect(complete).not.toHaveBeenCalled();
+  expect(cancel).toHaveBeenCalled();
+});
+it("keeps a user's seeded-list selection when initial navigation publishes", async () => {
+  const pane = create();
+  let resolve!: (result: DirectoryListingResult) => void;
+  source.current = () => new Promise(done => { resolve = done; });
+  const pending = pane.initialLoad("/r");
+  pane.selectEntry(b);
+  resolve({ ok: true, path: "/r", entries: [a, b] }); await pending;
+  expect([...pane.selectedPaths]).toEqual([b.path]);
+  expect(pane.focusedEntry?.path).toBe(b.path);
+});
+it("keeps root selections hidden by presentation filters during a seeded load", async () => {
+  settingsStore.update({ showHidden: true });
+  const hidden = entry("/r/.hidden", "file"), pane = create([a, b, hidden]);
+  flushSync();
+  let resolve!: (result: DirectoryListingResult) => void;
+  source.current = () => new Promise(done => { resolve = done; });
+  const pending = pane.initialLoad("/r");
+  pane.selectEntry(hidden); settingsStore.update({ showHidden: false }); pane.setSorting("size"); flushSync();
+  expect([...pane.selectedPaths]).toEqual([hidden.path]);
+  expect(pane.displayEntries).not.toContain(hidden);
+  resolve({ ok: true, path: "/r", entries: [a, b, hidden] }); await pending;
+  expect([...pane.selectedPaths]).toEqual([hidden.path]);
+  expect(pane.state.cursorPath).toBe(hidden.path);
 });

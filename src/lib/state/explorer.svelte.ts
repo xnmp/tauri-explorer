@@ -16,6 +16,7 @@
  * - Undo (undo.svelte.ts) - global undo stack
  */
 
+import { reconcileDirectorySelection } from "$lib/domain/directory-reconciliation";
 import { isFileViewId } from "$lib/domain/file-view-id";
 import { createFileViewPresentation } from "./file-view-presentation.svelte";
 import { fileViewRegistry } from "$lib/plugins/file-view-registry.svelte";
@@ -62,6 +63,9 @@ import type { LoadReason } from "$lib/domain/load-diagnostics";
 
 import type { ExplorerSeed } from "$lib/domain/window-input";
 import type { PreviewTarget } from "$lib/plugins/preview-registry.svelte";
+
+interface NavigationFocusRequest { complete(): void; cancel(): void }
+interface NavigationFocusIntent { request: NavigationFocusRequest | null; offered: boolean }
 
 // Distinguishes concurrent panes in slow-load diagnostics (#1022).
 let explorerSerial = 0;
@@ -120,7 +124,9 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
 
   /** Replace the selection contents, mutating the reactive Set in place.
    *  Only added/removed keys fire; untouched rows never re-render. */
+  let selectionRevision = 0;
   function setSelection(next: Iterable<string>): void {
+    selectionRevision++;
     const cur = coreState.selectedPaths;
     const nextSet = next instanceof Set ? (next as ReadonlySet<string>) : new Set(next);
     if (revealedPath && !nextSet.has(revealedPath)) revealedPath = null;
@@ -149,8 +155,10 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   // setting, so panes without an explicit choice track Settings changes.
   let millerLayersOverride = $state<number | null>(null);
 
-  // Navigation callback for UI (e.g. focusing the selected item after nav)
-  let onNavigateCallback: (() => void) | null = null;
+  // Focus belongs to navigation intent, including a load that began before
+  // its pane mounted. Completion must not claim a newer toolbar interaction.
+  let navigationFocusFactory: (() => NavigationFocusRequest | null) | null = null;
+  let pendingNavigationFocus: NavigationFocusIntent | null = null;
   let onRevealCallback: (() => void) | null = null;
 
   // Filesystem observation ownership
@@ -302,10 +310,24 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     return activeLoad;
   }
 
+  function beginNavigationFocus(): NavigationFocusIntent {
+    pendingNavigationFocus?.request?.cancel();
+    const intent = { request: untrack(() => navigationFocusFactory?.() ?? null), offered: navigationFocusFactory !== null };
+    pendingNavigationFocus = intent;
+    return intent;
+  }
+
+  function retireNavigationFocus(intent: NavigationFocusIntent) {
+    intent.request?.cancel();
+    intent.request = null;
+    if (pendingNavigationFocus === intent) pendingNavigationFocus = null;
+  }
+
   async function navigateInternal(
     rawPath: string,
     reason: LoadReason = "history",
     trace?: LoadTraceHandle,
+    focusIntent?: NavigationFocusIntent,
   ): Promise<"ok" | "error" | "stale"> {
     // Normalize separators to the platform-native style up front. The backend
     // echoes the requested path back verbatim as `currentPath`, so this is the
@@ -315,11 +337,13 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     const path = toNativeSeparators(rawPath, isWindows ? "\\" : "/");
     if (destroyed) {
       trace?.finish("destroyed");
+      if (focusIntent) retireNavigationFocus(focusIntent);
       return "stale";
     }
     presentationDirectory = path;
     creationSession = null;
     const gen = ++navGeneration;
+    const navigationFocus = focusIntent ?? beginNavigationFocus();
     peek.reconcile([]);
     watch.invalidatePeeks();
     // A caller's trace is used only while it is still the pane's newest;
@@ -330,6 +354,8 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
       // If we already have entries for this path (e.g. seeded from another tab),
       // don't show loading state — the existing entries stay visible while we refresh.
       const isSeeded = coreState.currentPath === path && coreState.entries.length > 0;
+      const initialSelectionRevision = selectionRevision;
+      const initialCursor = coreState.cursorPath;
       if (!isSeeded) {
         coreState.loading = true;
       }
@@ -361,9 +387,17 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
           coreState.sortAscending = savedSort.sortAscending;
         }
 
-        // Auto-select first item when navigating to a new directory
-        // Issue: tauri-explorer-130a
-        if (displayEntries.length > 0) {
+        // Seeded rows accept interaction before the load settles. Preserve that
+        // newer selection; ordinary navigation still selects the first item.
+        if (isSeeded && (selectionRevision !== initialSelectionRevision || coreState.cursorPath !== initialCursor)) {
+          const membership = peek.expanded.size ? [...result.entries, ...displayEntries] : result.entries;
+          const selection = reconcileDirectorySelection(membership, {
+            selectedPaths: coreState.selectedPaths, cursorPath: coreState.cursorPath, anchorPath: coreState.selectionAnchorPath,
+          });
+          setSelection(selection.selectedPaths);
+          coreState.cursorPath = selection.cursorPath;
+          coreState.selectionAnchorPath = selection.anchorPath;
+        } else if (displayEntries.length > 0) {
           setSelection([displayEntries[0].path]);
           coreState.selectionAnchorPath = displayEntries[0]?.path ?? null;
           coreState.cursorPath = coreState.selectionAnchorPath;
@@ -372,7 +406,9 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
           coreState.selectionAnchorPath = null;
         }
 
-        onNavigateCallback?.();
+        const focus = navigationFocus.request;
+        navigationFocus.request = null;
+        focus?.complete();
 
         coreState.loading = false;
         load.finish("ok");
@@ -385,6 +421,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
         return "error";
       }
     } finally {
+      retireNavigationFocus(navigationFocus);
       observation.close();
       // Idempotent: settles a trace an unexpected throw left open.
       load.finish("error");
@@ -392,8 +429,8 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   }
 
   /** Navigate and push to history. Returns true on success. */
-  async function applyNavigation(path: string, reason: LoadReason, trace?: LoadTraceHandle): Promise<boolean> {
-    const status = await navigateInternal(path, reason, trace);
+  async function applyNavigation(path: string, reason: LoadReason, trace?: LoadTraceHandle, focusIntent?: NavigationFocusIntent): Promise<boolean> {
+    const status = await navigateInternal(path, reason, trace, focusIntent);
     if (status !== "ok") return false;
     const newHistory = navigation.pushToHistory(
       coreState.history,
@@ -419,6 +456,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     options: { autoEnterSingleSubdir?: boolean } = {}
   ) {
     const { autoEnterSingleSubdir = true } = options;
+    const focusIntent = beginNavigationFocus();
 
     // Resolve the "auto-enter single subfolder" descent BEFORE committing any
     // navigation. Peeking at the directory listings without touching pane state
@@ -445,10 +483,11 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
       // its result must not land after the newer folder.
       success = trace && (trace !== activeLoad || destroyed)
         ? false
-        : await applyNavigation(target, "navigate", trace);
+        : await applyNavigation(target, "navigate", trace, focusIntent);
     } finally {
       // Idempotent: settles the trace if the descent threw.
       trace?.finish("error");
+      retireNavigationFocus(focusIntent);
     }
     if (success) {
       // Track the *resolved* path (separator-normalized by navigateInternal),
@@ -1182,9 +1221,17 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     // Undo/Redo
     undo,
     redo,
-    // Navigation callback
-    set onNavigate(cb: (() => void) | null) {
-      onNavigateCallback = cb;
+    // A mounted pane can attach to an initial load already in flight.
+    set onNavigationFocus(factory: (() => NavigationFocusRequest | null) | null) {
+      navigationFocusFactory = factory;
+      if (pendingNavigationFocus) {
+        pendingNavigationFocus.request?.cancel();
+        pendingNavigationFocus.request = null;
+        if (factory && !pendingNavigationFocus.offered) {
+          pendingNavigationFocus.offered = true;
+          pendingNavigationFocus.request = untrack(factory);
+        }
+      }
     },
     set onReveal(cb: (() => void) | null) {
       onRevealCallback = cb;
@@ -1195,6 +1242,8 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
       // Seal pending listings and release late observation leases,
       // so a closed tab cannot retain a late native observation lease.
       destroyed = true;
+      pendingNavigationFocus?.request?.cancel();
+      pendingNavigationFocus = null;
       disposePeekEffects();
       fileViewPresentation.dispose();
       creationSession = null;

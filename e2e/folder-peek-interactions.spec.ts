@@ -181,14 +181,18 @@ test("a drag started on a covered child shows its reduced folder primary", async
     const { windowTabsManager } = await import("/src/lib/state/window-tabs.svelte.ts");
     windowTabsManager.getActiveExplorer()!.selectPaths(paths);
   }, [`${root}/Alpha`, `${root}/Alpha/same.txt`]);
-  const label = await child.evaluate(element => {
+  const drag = await child.evaluate(async element => {
+    const { dragState } = await import("/src/lib/state/drag.svelte.ts");
     const dataTransfer = new DataTransfer();
     element.dispatchEvent(new DragEvent("dragstart", { bubbles: true, cancelable: true, dataTransfer }));
     const label = document.querySelector(".pointer-drag-ghost")?.textContent;
+    const data = dragState.current;
+    const dragged = { label, primary: data?.path, paths: data?.paths ?? (data ? [data.path] : []) };
     element.dispatchEvent(new DragEvent("dragend", { bubbles: true, dataTransfer }));
-    return label;
+    return dragged;
   });
-  expect(label).toBe("Alpha");
+  // The covered child reduces into its selected folder: one operation root.
+  expect(drag).toEqual({ label: "Alpha", primary: `${root}/Alpha`, paths: [`${root}/Alpha`] });
 });
 
 test("expansions survive DOM retention eviction and remain independent in a split pane", async ({ page }) => {

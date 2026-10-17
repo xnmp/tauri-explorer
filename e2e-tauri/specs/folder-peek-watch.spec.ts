@@ -115,6 +115,14 @@ describe("folder peek native observation", () => {
     await receipt(nested, deletedAt); await waitForEntry(created, false);
     const overflow = path.join(folders[0], "overflow.txt"); fs.writeFileSync(overflow, "overflow");
     await peek("refresh"); await waitForEntry(overflow);
+    // The overflow peek has no notifications of its own: an unchanged wait
+    // proves that, then a real root notification's ordinary (non-explicit)
+    // pane refresh reaches it through scheduling.
+    const unnotified = path.join(folders[0], "unnotified.txt"); fs.writeFileSync(unnotified, "unnotified");
+    await browser.pause(2_500);
+    expect((await snapshot()).entries).not.toContain(unnotified);
+    const rootChangedAt = Date.now(); fs.writeFileSync(path.join(root, "root-change.txt"), "root");
+    await receipt(root, rootChangedAt); await waitForEntry(unnotified);
     const parentDeletedAt = Date.now(); fs.rmSync(folders[16], { recursive: true });
     await receipt(root, parentDeletedAt); await waitForEntry(folders[16], false);
     expect((await snapshot()).expanded).not.toContain(folders[16]);

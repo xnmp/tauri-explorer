@@ -45,7 +45,7 @@
             style:width="{Math.max(0, box.width - PANEL_PAD_X)}px" style:height="{mini.rowHeight}px"
             style:grid-template-columns="repeat({ghost.cols}, {mini.track}px)">
             {#each row.entries as entry (entry.path)}
-              <div class="ghost-cell"><TileVisual {entry} layout={surface} ghost /></div>
+              <div class="ghost-cell"><TileVisual {entry} layout={surface} /></div>
             {/each}
           </div>
         {/each}
@@ -88,7 +88,7 @@
     flex-shrink: 0;
     transform: scale(var(--tile-icon-scale, 1));
   }
-  .ghost-cell :global(.tile-name) {
+  .ghost-cell :global([data-drag-name]) {
     width: 100%;
     min-height: var(--tile-name-height);
     display: flex;

@@ -90,6 +90,8 @@ export interface TileLayout extends ThumbnailSizeConfig {
   gap: number;
   /** CSS padding of one tile. */
   padding: string;
+  /** Its top padding: the icon block's offset inside the tile. */
+  paddingTop: number;
   /** padding-top + padding-bottom of one tile. */
   paddingY: number;
   /** Reserved two-line name height. */
@@ -112,11 +114,13 @@ export function tileLayout(size: ThumbnailSize): TileLayout {
   const small = resolved === "small";
   const gap = small ? 2 : 6;
   const paddingY = small ? 12 : 22;
+  const paddingTop = small ? 6 : 12;
   return {
     ...config,
     size: resolved,
     gap,
-    padding: small ? "6px 4px 6px" : "12px 8px 10px",
+    padding: small ? `${paddingTop}px 4px 6px` : `${paddingTop}px 8px 10px`,
+    paddingTop,
     paddingY,
     nameHeight: TILE_NAME_HEIGHT,
     rowHeight: paddingY + config.displaySize + 4 + TILE_NAME_HEIGHT + 2 + gap,

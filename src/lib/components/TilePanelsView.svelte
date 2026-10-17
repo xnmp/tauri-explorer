@@ -164,6 +164,7 @@
 {/snippet}
 
 <TileSurface class="tiles-view tile-panels-view" fill {layout} bind:element={rootEl} data-columns={columns}
+  style="--tile-caret-top: {layout.paddingTop + layout.displaySize - 17}px"
   onpointerover={hover} onpointerleave={() => tiles.setHot(null)}>
   <VirtualList
     class="tiles-scroller file-rows{banded ? ' banded' : ''}"
@@ -194,12 +195,11 @@
             {#if cell.entry === null || cell.index === null}
               <div role="gridcell"><InlineNewFolder {explorer} variant="tiles" /></div>
             {:else}
-              {#snippet folderCaret()}{@render caret(cell.entry!)}{/snippet}
               <EntryCell column={col + 1} class="tile-item" index={cell.index} entry={cell.entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
-                <TileVisual entry={cell.entry} {layout} videoUnavailable={thumbs.has(cell.entry.path)} onvideounavailable={() => thumbs.mark(cell.entry!.path)}
-                  badge={cell.entry.kind === "directory" && explorer.peekCaretsShown ? folderCaret : undefined}>
+                <TileVisual entry={cell.entry} {layout} videoUnavailable={thumbs.has(cell.entry.path)} onvideounavailable={() => thumbs.mark(cell.entry!.path)}>
                   {#snippet name()}<EntryName entry={cell.entry!} {explorer} variant="tiles" bold={model.panels.has(cell.entry!.path)} />{/snippet}
                 </TileVisual>
+                {#if cell.entry.kind === "directory" && explorer.peekCaretsShown}{@render caret(cell.entry)}{/if}
                 <GitStatusBadge entryName={cell.entry.name} />
               </EntryCell>
             {/if}
@@ -223,11 +223,14 @@
   .tile-row { position: absolute; left: 0; right: 0; }
 
   /* The Tiles caret (spec §9.3): a small round badge on the icon's corner,
-     pointing right when closed and toward its panel when open. */
+     pointing right when closed and toward its panel when open. It is the
+     tile's child, not the icon's, so the shared TileVisual (and with it classic
+     Tiles) carries no hook for it: the icon is centred, and its top is the
+     tile's top padding (--tile-caret-top puts the badge 3px below its bottom). */
   .tile-caret {
     position: absolute;
-    right: -6px;
-    bottom: -3px;
+    left: calc(50% + var(--tile-icon-size, 64px) / 2 - 14px);
+    top: var(--tile-caret-top);
     z-index: 1;
     display: grid;
     place-items: center;

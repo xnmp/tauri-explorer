@@ -355,5 +355,23 @@ test("List column flow: 10,000 entries", async ({ page }) => {
       await viewport.evaluate(el => { el.scrollLeft=0; });
       await page.locator('.list-item[data-index="0"]').waitFor();
     });
+    // List cards (#1240): a user toggle of a 5,000-row folder, including its
+    // listing and the ~200ms conveyor motion, until no ghost or motion style remains.
+    const caret = page.locator('.pane-tree:not(.retained) .entry-item[data-path="/perf/huge-10000/folder-00016"] .peek-caret');
+    const motionDone = () => page.waitForFunction(() => {
+      const pane = document.querySelector('.pane-tree:not(.retained)')!;
+      return pane.querySelector('.list-motion-layer')!.childElementCount === 0
+        && ![...pane.querySelectorAll<HTMLElement>('.list-slot')].some(el => el.style.transform);
+    });
+    await measure(page,'list: open 5,000-row card',async () => {
+      await caret.click();
+      await page.locator('.pane-tree:not(.retained) [data-card-scroll] .entry-item').first().waitFor();
+      await motionDone();
+    });
+    await measure(page,'list: close card',async () => {
+      await caret.click();
+      await page.locator('.pane-tree:not(.retained) [data-card-scroll]').waitFor({ state: 'detached' });
+      await motionDone();
+    });
   }
 });

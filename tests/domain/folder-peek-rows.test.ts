@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
-import { buildPeekRows, flattenPeekEntries, entryIndicesForRows, peekTreePositions } from "$lib/domain/folder-peek";
+import { buildPeekRows, flattenPeekEntries, entryIndicesForRows, peekTreePositionLookup, peekTreePositions } from "$lib/domain/folder-peek";
+import { flatPeekEntries, flatPeekRows } from "$lib/domain/folder-peek-flat";
 import type { FileEntry } from "$lib/domain/file";
 const dir = (path: string): FileEntry => ({ path, name: path.split("/").at(-1)!, kind: "directory", size: 0, modified: "2026-01-01T00:00:00Z" });
 it("maps entry indices past editor and status rows, including marquee ranges", () => {
@@ -41,4 +42,23 @@ it("treats a flat folder as one level and same-named folders under different par
   const twins = treeOf([dir("/r/a"), dir("/r/b")], { "/r/a": [file("/r/a/same")], "/r/b": [file("/r/b/same"), file("/r/b/other")] });
   expect(peekTreePositions(twins.rows)).toEqual({ posinset: [1, 1, 2, 1, 2], setsize: [2, 1, 2, 2, 2] });
   expect(peekTreePositions([])).toEqual({ posinset: [], setsize: [] });
+});
+
+it("looks positions up arithmetically while nothing is expanded, and from the tree otherwise", () => {
+  const read = (lookup: ReturnType<typeof peekTreePositionLookup>, count: number) =>
+    Array.from({ length: count }, (_, i) => [lookup.posinset(i), lookup.setsize(i)]);
+  // Flat, with and without the creation row (entry indices skip it).
+  for (const creating of [false, true]) {
+    const flat = treeOf([dir("/r/a"), file("/r/b"), file("/r/c")], {}, creating);
+    expect(flat.groups).toEqual([]);
+    expect(read(peekTreePositionLookup(flat), 3)).toEqual([[1, 3], [2, 3], [3, 3]]);
+    const { posinset, setsize } = peekTreePositions(flat.rows);
+    expect(read(peekTreePositionLookup(flat), 3)).toEqual(posinset.map((p, i) => [p, setsize[i]]));
+  }
+  const many = flatPeekRows(flatPeekEntries("/r", Array.from({ length: 10_000 }, (_, i) => file(`/r/f${i}`))), false);
+  expect([peekTreePositionLookup(many).posinset(9_999), peekTreePositionLookup(many).setsize(0)]).toEqual([10_000, 10_000]);
+  // An expanded (even empty) folder makes it a tree.
+  const nested = treeOf([dir("/r/a"), file("/r/c"), dir("/r/d")], { "/r/a": [file("/r/a/x")], "/r/d": [] });
+  expect(read(peekTreePositionLookup(nested), 4)).toEqual([[1, 3], [1, 1], [2, 3], [3, 3]]);
+  expect(read(peekTreePositionLookup(treeOf([], {})), 0)).toEqual([]);
 });

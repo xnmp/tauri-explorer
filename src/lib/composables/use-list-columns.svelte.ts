@@ -1,6 +1,6 @@
 import { flushSync, getAbortSignal, onDestroy, tick, untrack } from "svelte";
 import { listColumnRange, listExtent, listRows, listWheelStep, LIST_COLUMN_STRIDE, LIST_COLUMN_WIDTH, LIST_PADDING_X, LIST_PADDING_Y, LIST_SLOT_HEIGHT, type ListCardSpec, type ListPlacement, type ListTopItem } from "$lib/domain/list-column-flow";
-import { buildListModel, cardMaxRows, cardRevealTop, cardWheelConsumes, cardWindow, gripKeyRows, gripRows } from "$lib/domain/list-cards";
+import { buildListStructure, cardMaxRows, cardRevealTop, cardWheelConsumes, cardWindow, gripKeyRows, gripRows, sizeListModel } from "$lib/domain/list-cards";
 import { rectDimToCSS } from "$lib/domain/zoom";
 import type { PeekRow, PeekRows } from "$lib/domain/folder-peek";
 
@@ -35,13 +35,10 @@ export function useListColumns(deps: ListColumnsDeps) {
   let viewport: HTMLElement | null = null;
   let width = $state(0), height = $state(0), left = $state(0);
   const rows = $derived(listRows(height));
-  const model = $derived(buildListModel(deps.getRows(), rows, deps.getPreferredRows));
+  // A row-count change re-sizes and re-flows; only a row-model change rebuilds items.
+  const structure = $derived(buildListStructure(deps.getRows()));
+  const model = $derived(sizeListModel(structure, rows, deps.getPreferredRows));
   const layout = $derived(model.layout);
-  const entryIndices = $derived.by(() => {
-    const indices = new Map<string, number>();
-    for (const row of deps.getRows().rows) if (row.kind === "entry") indices.set(row.entry.path, row.entryIndex);
-    return indices;
-  });
   const extent = $derived(listExtent(layout.columns.length));
   const range = $derived(listColumnRange(layout.columns.length, left, width));
   // Primitives: `$derived` compares by identity, so scrolling inside the mounted
@@ -49,10 +46,17 @@ export function useListColumns(deps: ListColumnsDeps) {
   // every wrapper per scroll frame.
   const rangeStart = $derived(range.start);
   const rangeEnd = $derived(range.end);
-  const pinnedEntries = $derived(deps.getPinnedPaths().flatMap(path => {
-    const index = entryIndices.get(path);
-    return index === undefined ? [] : [index];
-  }));
+  // Looked up only while an editor is pinned (rare), so a listing costs no
+  // per-entry path index.
+  const pinnedEntries = $derived.by(() => {
+    const paths = deps.getPinnedPaths();
+    if (!paths.length) return [];
+    const rows = deps.getRows().rows;
+    return paths.flatMap(path => {
+      const row = rows.find(row => row.kind === "entry" && row.entry.path === path);
+      return row?.kind === "entry" ? [row.entryIndex] : [];
+    });
+  });
   const mountedColumns = $derived.by(() => {
     const columns = new Set(Array.from({ length: rangeEnd - rangeStart }, (_, i) => rangeStart + i));
     // The creation row is the first item whenever it exists.

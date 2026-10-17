@@ -121,16 +121,26 @@ test("nested folders open inside the card with guide lines, the close caret and 
     const rect = (selector: string) => document.querySelector(selector)!.getBoundingClientRect();
     const p = `.pane-tree:not(.retained) .entry-item[data-path="${parent}"]`, c = `.pane-tree:not(.retained) .entry-item[data-path="${child}"]`;
     const guide = document.querySelector(".pane-tree:not(.retained) .list-guide")!.getBoundingClientRect();
+    // The chevron is the caret button's centred ::before.
+    const chevron = (row: string) => {
+      const button = document.querySelector(`${row} .peek-caret`)!;
+      const box = button.getBoundingClientRect(), style = getComputedStyle(button, "::before");
+      const left = box.left + (box.width - parseFloat(style.width)) / 2;
+      return { left, right: left + parseFloat(style.width), width: parseFloat(style.width), height: parseFloat(style.height), turned: style.transform };
+    };
     return {
-      slot: rect(`${p} .peek-caret`).width, chevron: rect(`${p} .peek-caret svg`).width,
-      gap: rect(`${p} .list-icon`).left - rect(`${p} .peek-caret svg`).right,
+      slot: rect(`${p} .peek-caret`).width, chevron: chevron(p).width, chevronHeight: chevron(p).height,
+      gap: rect(`${p} .list-icon`).left - chevron(p).right,
       fileIcon: rect(`.pane-tree:not(.retained) .entry-item[data-path="${parent}/follow-ups.md"] .list-icon`).left - rect(`${c} .list-icon`).left,
       indent: rect(`${c} .peek-caret`).left - rect(`${p} .peek-caret`).left,
-      underIcon: Math.abs((rect(`${c} .peek-caret svg`).left + 5) - (rect(`${p} .list-icon`).left + 8)),
-      guideUnderCaret: Math.abs(guide.left + guide.width / 2 - (rect(`${p} .peek-caret svg`).left + 5)),
+      underIcon: Math.abs((chevron(c).left + 5) - (rect(`${p} .list-icon`).left + 8)),
+      guideUnderCaret: Math.abs(guide.left + guide.width / 2 - (chevron(p).left + 5)),
+      // Open points down (a quarter turn), closed points right.
+      open: chevron(p).turned, closed: chevron(c).turned,
     };
   }, [`${root}/Career/Applications`, `${root}/Career/Applications/Acme Corp`]);
-  expect(geometry).toMatchObject({ slot: 14, chevron: 10, indent: 16, gap: 4 });
+  expect(geometry).toMatchObject({ slot: 14, chevron: 10, chevronHeight: 10, indent: 16, gap: 4, closed: "none" });
+  expect(geometry.open).toMatch(/^matrix\((?:[-\d.e]+), 1, -1, (?:[-\d.e]+), 0, 0\)$/);
   expect(geometry.fileIcon).toBe(0); // a file row keeps the caret gutter, so names align
   expect(geometry.underIcon).toBeLessThanOrEqual(2);
   expect(geometry.guideUnderCaret).toBeLessThanOrEqual(1);

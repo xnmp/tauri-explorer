@@ -10,7 +10,7 @@
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import type { ListCardSpec, ListNavigationSnapshot } from "$lib/domain/list-column-flow";
   import { LIST_COLUMN_STRIDE, LIST_PADDING_X, LIST_SLOT_HEIGHT } from "$lib/domain/list-column-flow";
-  import { peekTreePositions, type PeekRow } from "$lib/domain/folder-peek";
+  import { peekTreePositionLookup, type PeekRow } from "$lib/domain/folder-peek";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { getPaneIdContext } from "$lib/state/pane-context";
   import { getFileIconColor } from "$lib/domain/file-types";
@@ -65,7 +65,7 @@
   const carets = $derived(explorer.peekCaretsShown);
   // With peek on, rows are a tree: levels, expanded folders and caret buttons
   // are not allowed on listbox options (axe aria-allowed-attr, nested-interactive).
-  const tree = $derived(explorer.peekEnabled ? peekTreePositions(explorer.detailRows.rows) : null);
+  const tree = $derived(explorer.peekEnabled ? peekTreePositionLookup(explorer.detailRows) : null);
   const revealIndex = (index: number) => columns.revealEntry(index);
   const contains = (index: number) => columns.containsEntry(index);
   const navigation = () => ({ entries: explorer.displayEntries, directory: explorer.currentPath, model: columns.model, usableWidth: columns.usableWidth, cardScrollTop: columns.cardScrollTop });
@@ -82,7 +82,7 @@
 </script>
 
 {#snippet entryRow(row: EntryRow, card?: ListCardSpec | null)}
-  <EntryCell role={tree ? "treeitem" : "option"} setSize={tree ? tree.setsize[row.entryIndex] : explorer.displayEntries.length} posInSet={tree?.posinset[row.entryIndex]}
+  <EntryCell role={tree ? "treeitem" : "option"} setSize={tree ? tree.setsize(row.entryIndex) : explorer.displayEntries.length} posInSet={tree?.posinset(row.entryIndex)}
     column={1} class="list-item list-entry" index={row.entryIndex} entry={row.entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}
     level={tree ? row.depth + 1 : undefined} owns={card && tree ? cardGroupId(row.entryIndex) : undefined}
     expanded={tree && row.entry.kind === "directory" ? row.expanded : undefined}>
@@ -90,17 +90,14 @@
       <!-- A pointer affordance only (as in Details): never a tab stop, and its
            mousedown keeps focus where it was. Positioned in the row's caret
            gutter, so file rows need no blank slot element. -->
+      <!-- The chevron is the button's ::before (one element per folder row). -->
       <button class="peek-caret" type="button" draggable={false} tabindex="-1"
         aria-expanded={row.expanded} aria-label={`${row.expanded ? "Collapse" : "Expand"} ${row.entry.name}`}
         onmousedown={(event) => event.preventDefault()}
         onclick={() => {
           if (paneId) windowTabsManager.setActivePane(paneId);
           void explorer.togglePeek(row.entry.path);
-        }}>
-        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
-          <path d={row.expanded ? "M2 3.5 5 6.5 8 3.5" : "M3.5 2 6.5 5 3.5 8"} stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
-        </svg>
-      </button>
+        }}></button>
     {/if}
     <span class="list-icon" data-drag-icon style:color={row.entry.kind !== "directory" ? getFileIconColor(row.entry) : undefined}><FileIcon entry={row.entry} size="small" /></span>
     <span data-drag-name><EntryName entry={row.entry} {explorer} variant="list" bold={row.expanded} /></span>
@@ -308,6 +305,21 @@
     background: transparent;
     color: var(--text-secondary);
     cursor: pointer;
+  }
+
+  /* Details' 10px chevron (stroke 1.3, round caps), drawn as a mask so a
+     folder row adds one element, not three; open rotates it to point down. */
+  .list-view :global(.list-entry .peek-caret::before) {
+    content: "";
+    width: 10px;
+    height: 10px;
+    background: currentColor;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M3.5 2 6.5 5 3.5 8' fill='none' stroke='black' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 10px 10px no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M3.5 2 6.5 5 3.5 8' fill='none' stroke='black' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 10px 10px no-repeat;
+  }
+
+  .list-view :global(.list-entry .peek-caret[aria-expanded="true"]::before) {
+    transform: rotate(90deg);
   }
 
   .list-view :global(.list-entry .peek-caret:hover) {

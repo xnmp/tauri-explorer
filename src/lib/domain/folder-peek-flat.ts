@@ -51,7 +51,10 @@ export function flatPeekEntries(root: string, entries: readonly FileEntry[]): Pe
 export function flatPeekRows(tree: PeekTree, creating: boolean): PeekRows {
   const offset = Number(creating);
   const rows: PeekRow[] = creating ? [{ kind: "create", key: "create" }] : [];
-  tree.entries.forEach((entry, entryIndex) => rows.push({ kind: "entry", key: `entry:${entry.path}`, entry, entryIndex, ...tree.meta.get(entry.path)!, expanded: false }));
+  tree.entries.forEach((entry, entryIndex) => {
+    const meta = tree.meta.get(entry.path)!;
+    rows.push({ kind: "entry", key: `entry:${entry.path}`, entry, entryIndex, depth: meta.depth, parentPath: meta.parentPath, expanded: false });
+  });
   return { rows, groups: [], entryToRow: tree.entries.map((_, index) => index + offset), rowToEntry: rows.map(row => row.kind === "entry" ? row.entryIndex : null) };
 }
 

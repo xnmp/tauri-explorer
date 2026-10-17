@@ -4,7 +4,7 @@ import { buildPeekRows, flattenPeekEntries, type PeekListing } from "$lib/domain
 import { flatPeekEntries, flatPeekRows } from "$lib/domain/folder-peek-flat";
 import { columnFlow, resolveListMove, type ListFlowModel } from "$lib/domain/list-column-flow";
 import {
-  buildListModel, cardFades, cardMaxRows, cardMoreCount, cardRevealTop, cardVisibleRows, cardWheelConsumes,
+  buildListModel, buildListStructure, sizeListModel, cardFades, cardMaxRows, cardMoreCount, cardRevealTop, cardVisibleRows, cardWheelConsumes,
   cardWindow, gripKeyRows, gripRows, rememberCardRows, LIST_CARD_DEFAULT_ROWS,
 } from "$lib/domain/list-cards";
 
@@ -80,6 +80,28 @@ describe("card height clamp", () => {
     expect(cardVisibleRows(-3, 6, 21)).toBe(0);
     expect(cardVisibleRows(Number.POSITIVE_INFINITY, 6, 21)).toBe(0);
     expect(cardVisibleRows(10, Number.POSITIVE_INFINITY, 21)).toBe(LIST_CARD_DEFAULT_ROWS);
+  });
+});
+
+describe("List structure and sizing", () => {
+  it("re-sizes cards for a new R without rebuilding plain items, and matches a full build", () => {
+    const rows = rowsFor(TOP, ["Archive"]).rows;
+    const structure = buildListStructure(rows);
+    expect(structure.cards).toHaveLength(1);
+    const [card] = structure.cards;
+    const tall = sizeListModel(structure, 20, () => 12), short = sizeListModel(structure, 8, () => 12);
+    expect(tall.items[card].card?.visibleRows).toBe(12);
+    expect(short.items[card].card?.visibleRows).toBe(cardMaxRows(8));
+    // Plain items keep their identity across sizes; the card item is re-sized.
+    expect(short.items.filter((item, index) => index !== card && item !== tall.items[index])).toEqual([]);
+    const full = buildListModel(rows, 8, () => 12);
+    expect([short.items, short.layout.byIndex, short.entryItem, short.entryOffset]).toEqual([full.items, full.layout.byIndex, full.entryItem, full.entryOffset]);
+  });
+  it("allocates no item copies while no card is open", () => {
+    const structure = buildListStructure(rowsFor(TOP, []).rows);
+    expect(structure.cards).toEqual([]);
+    expect(sizeListModel(structure, 4, () => undefined).items).toBe(structure.items);
+    expect(sizeListModel(structure, 9, () => undefined).items).toBe(structure.items);
   });
 });
 

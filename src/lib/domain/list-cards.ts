@@ -4,7 +4,7 @@
  * scroll-edge and reveal policies shared by rendering, keyboard and motion.
  */
 import type { PeekRows } from "./folder-peek";
-import { columnFlow, LIST_SLOT_HEIGHT, type ListFlowModel, type ListTopItem } from "./list-column-flow";
+import { columnFlow, LIST_SLOT_HEIGHT, type ListCardSpec, type ListFlowModel, type ListTopItem } from "./list-column-flow";
 
 export const LIST_CARD_DEFAULT_ROWS = 6;
 /** Scroll-edge fade mask height (CSS px). */
@@ -25,18 +25,33 @@ export function cardVisibleRows(content: number, preferred: number, R: number): 
   return Math.min(rows, Math.max(1, Math.min(wanted, cardMaxRows(R))));
 }
 
+/** A top-level item before sizing: a card's span without its visible rows. */
+export type ListStructureItem = Omit<ListTopItem, "card"> & { readonly card: Omit<ListCardSpec, "visibleRows"> | null };
+
+/** The rows-per-column-independent part of the List model, so a resize that
+ * changes R re-sizes cards and re-flows, but never rebuilds every item. */
+export interface ListStructure {
+  readonly items: readonly ListStructureItem[];
+  /** Indices of card items (empty while nothing is open). */
+  readonly cards: readonly number[];
+  readonly rowEntry: ListFlowModel["rowEntry"];
+  readonly entryItem: Int32Array;
+  readonly entryOffset: Int32Array;
+}
+
 /**
  * Top-level items in row order: the creation row, every depth-0 entry and, for an
  * expanded one, a card over its depth-0 group's rows (nested entries and Loading/
  * Empty/Error rows). Any entry row outside a card is a plain top-level item, so
  * every entry always has a slot owner.
  */
-export function buildListModel(rows: PeekRows, R: number, preferredOf: (path: string) => number | undefined): ListFlowModel {
+export function buildListStructure(rows: PeekRows): ListStructure {
   const entryCount = rows.entryToRow.length;
   const entryItem = new Int32Array(entryCount).fill(-1);
   const entryOffset = new Int32Array(entryCount).fill(-1);
   const groups = new Map(rows.groups.filter(group => group.depth === 0).map(group => [group.path, group]));
-  const items: ListTopItem[] = [];
+  const items: ListStructureItem[] = [];
+  const cards: number[] = [];
   for (let i = 0; i < rows.rows.length;) {
     const row = rows.rows[i];
     if (row.kind === "create") { items.push({ key: row.key, entryIndex: null, card: null }); i++; continue; }
@@ -50,12 +65,33 @@ export function buildListModel(rows: PeekRows, R: number, preferredOf: (path: st
       const entry = rows.rowToEntry[j];
       if (entry !== null && entry !== undefined) { entryItem[entry] = itemIndex; entryOffset[entry] = j - start; }
     }
-    const visibleRows = cardVisibleRows(end - start, preferredOf(row.entry.path) ?? LIST_CARD_DEFAULT_ROWS, R);
-    items.push({ key: row.key, entryIndex: row.entryIndex, card: { path: row.entry.path, start, end, visibleRows } });
+    cards.push(itemIndex);
+    items.push({ key: row.key, entryIndex: row.entryIndex, card: { path: row.entry.path, start, end } });
     i = end;
   }
+  return { items, cards, rowEntry: rows.rowToEntry, entryItem, entryOffset };
+}
+
+/** Sizes a structure's cards for R rows per column and flows it. Plain items are
+ * reused as they are (they have no size), so with no open card nothing per item
+ * is allocated beyond the flow's placements. */
+export function sizeListModel(structure: ListStructure, R: number, preferredOf: (path: string) => number | undefined): ListFlowModel {
+  let items: readonly ListTopItem[];
+  if (!structure.cards.length) items = structure.items as readonly ListTopItem[]; // every card is null
+  else {
+    const sized = structure.items.slice() as ListTopItem[];
+    for (const index of structure.cards) {
+      const item = structure.items[index], span = item.card!;
+      sized[index] = { ...item, card: { ...span, visibleRows: cardVisibleRows(span.end - span.start, preferredOf(span.path) ?? LIST_CARD_DEFAULT_ROWS, R) } };
+    }
+    items = sized;
+  }
   const layout = columnFlow(items, R, item => item.card ? { slots: 1 + item.card.visibleRows, card: true } : { slots: 1, card: false });
-  return { layout, items, rowEntry: rows.rowToEntry, entryItem, entryOffset };
+  return { layout, items, rowEntry: structure.rowEntry, entryItem: structure.entryItem, entryOffset: structure.entryOffset };
+}
+
+export function buildListModel(rows: PeekRows, R: number, preferredOf: (path: string) => number | undefined): ListFlowModel {
+  return sizeListModel(buildListStructure(rows), R, preferredOf);
 }
 
 /** Grip drag: the start height plus the pointer travel, snapped to whole rows. */

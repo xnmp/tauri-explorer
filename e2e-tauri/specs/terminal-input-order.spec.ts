@@ -2,7 +2,7 @@ import { browser, $ } from "@wdio/globals";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createNativeFixtureDirectory } from "../native-qualification";
-import { domText } from "./helpers";
+import { domText, resetNativeKeybindings } from "./helpers";
 
 /**
  * Keystrokes reach the PTY in the order xterm emitted them (#709). Each xterm
@@ -95,6 +95,7 @@ function expectInOrder(written: string, expected: string): void {
   // Shell startup gets its own mocha budget: on CI it regularly takes most of
   // a minute, and must not be charged to the ordering cases.
   it("opens a ready shell", async () => {
+    await resetNativeKeybindings();
     input = await openTerminal();
   });
 

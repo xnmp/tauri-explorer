@@ -2,7 +2,7 @@ import { browser, $, expect } from "@wdio/globals";
 import { basename } from "node:path";
 import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
-import { domText, navigateTo } from "./helpers";
+import { domText, navigateTo, resetNativeKeybindings } from "./helpers";
 import { createNativeFixtureDirectory } from "../native-qualification";
 
 /**
@@ -44,6 +44,7 @@ async function sendTerminalCommand(
 }
 
 describe("embedded terminal", () => {
+  before(async () => { await resetNativeKeybindings(); });
   it("opens with Alt+M T and shows a live shell", async () => {
     await $(".file-list").waitForExist({ timeout: 15_000 });
     await toggleTerminal();

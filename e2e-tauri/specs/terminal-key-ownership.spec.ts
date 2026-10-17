@@ -1,5 +1,5 @@
 import { browser, $, expect } from "@wdio/globals";
-import { domText } from "./helpers";
+import { domText, resetNativeKeybindings } from "./helpers";
 
 async function terminalText(): Promise<string> {
   return domText(".terminal-panel .xterm-rows");
@@ -30,7 +30,7 @@ const keyProbe = process.platform === "win32"
   after(async () => {
     // Native specs share their isolated profile. Do not leak this collision
     // into later tests that exercise the shipped terminal shortcut.
-    await browser.execute(() => localStorage.removeItem("explorer-keybindings"));
+    await resetNativeKeybindings();
   });
   it("delivers Ctrl+Q to a terminal-hosted application instead of Explorer", async () => {
     // The native WebView keeps its tab layout between test runs. Start from

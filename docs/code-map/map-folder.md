@@ -375,7 +375,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/domain/image-job-progress.ts` — elapsed image-job timing and explicitly estimated progress; median of the latest 20 successful completions with ≥3 samples, keyed cohort → source → 120s, plus overdue estimate wording.
 - `src/lib/domain/folder-peek.ts` — pure preorder expansion, pruning/caps and Details tree row/index geometry.
 - `src/lib/domain/folder-peek-flat.ts` — flat Details rows and command admission before first peek activation.
-- `src/lib/domain/file-operation-selection.ts` — Explorer recursive batch reduction, symlink-overlap admission and drag-primary remapping.
+- `src/lib/domain/file-operation-selection.ts` — Explorer recursive batch reduction, symlink-overlap admission, drag-primary remapping, and archive roots (same-basename refusal).
+- `src/lib/domain/bulk-rename.ts` — bulk rename plan: name-part find/replace previews, per-folder collision keys, and descendant-first rename order.
 - `src/lib/domain/file-drop.ts` — validated internal payloads, full path-set verification and explicit DOM/native transport authority.
 - `src/lib/domain/native-drop-paths.ts` — filesystem-only path admission for native drops; excludes blob URLs, relative paths and traversal before any transfer, bookmark or terminal action.
 - `src/lib/domain/file-view-id.ts` — bounded, plugin-scoped file view id format, validated wherever ids are persisted with pane layouts.

@@ -263,7 +263,7 @@ backend for E2E/browser).
 
 - `composables/use-inline-rename.svelte.ts` — inline edit field lifecycle
 - `components/EntryName.svelte` — name label + inline rename input; the label itself is `components/EntryNameLabel.svelte`
-- `components/BulkRenameDialog.svelte` — multi-file pattern rename
+- `components/BulkRenameDialog.svelte` — multi-file pattern rename; its plan (previews, per-folder collisions, descendant-first order) is `domain/bulk-rename.ts`
 - `components/InlineNewFolder.svelte` — inline new-entry create (folder or file, per `explorer.newEntryKind`; #436)
 - `state/rename-suggestion.svelte.ts`, `domain/ai-rename.ts`, `api/ai-rename.ts` — AI rename suggestions
 - `api/files.ts` (renameEntry, createDirectory, createEmptyFile), `api/file-mutations.ts`, `src-tauri/src/file_mutation.rs` — native forward admission and settled history receipts; reusable filesystem primitives remain in `files/file_ops.rs`.

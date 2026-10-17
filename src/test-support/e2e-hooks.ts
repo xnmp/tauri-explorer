@@ -33,15 +33,19 @@ export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise
   startFileMutationProbe(signal);
   // Read-only transport receipt: a DOM fallback must not qualify a test that
   // claims GTK delivered Drop. Observe the real Rust event, never synthesize it.
-  void getCurrentWebview().listen<NativeFileDragEvent>("explorer-native-file-drag", event => {
-    if (!signal.aborted && event.payload.type === "drop") {
-      document.documentElement.dataset.e2eNativeDragDrop = JSON.stringify(event.payload);
-    }
-  }).then(unlisten => {
+  void (async () => {
+    const unlisten = await getCurrentWebview().listen<NativeFileDragEvent>("explorer-native-file-drag", event => {
+      if (!signal.aborted && event.payload.type === "drop") {
+        const dataset = document.documentElement.dataset;
+        dataset.e2eNativeDragDrop = JSON.stringify(event.payload);
+        const history = JSON.parse(dataset.e2eNativeDragDrops || "[]") as NativeFileDragEvent[];
+        dataset.e2eNativeDragDrops = JSON.stringify([...history.slice(-15), event.payload]);
+      }
+    });
     if (signal.aborted) { unlisten(); return; }
     signal.addEventListener("abort", unlisten, { once: true });
     document.documentElement.dataset.e2eNativeDragReady = "true";
-  }).catch(error => {
+  })().catch(error => {
     if (!signal.aborted) document.documentElement.dataset.e2eNativeDragReady = `error: ${String(error)}`;
   });
   const listen = (name: string, handler: EventListener) => window.addEventListener(name, handler, { signal });
@@ -50,7 +54,7 @@ export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise
   signal.addEventListener("abort", () => {
     capturedDelete = null;
     if (windowTabsManager.windowLabel !== "main") localStorage.removeItem(readyKey);
-    for (const key of ["e2eHooksReady", "e2eWindowLabel", "e2eNavigationComplete", "e2eFileOperationResult", "e2eNativeDragDrop", "e2eNativeDragReady"]) {
+    for (const key of ["e2eHooksReady", "e2eWindowLabel", "e2eNavigationComplete", "e2eFileOperationResult", "e2eNativeDragDrop", "e2eNativeDragDrops", "e2eNativeDragReady"]) {
       delete document.documentElement.dataset[key];
     }
   }, { once: true });

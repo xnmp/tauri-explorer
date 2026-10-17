@@ -178,6 +178,10 @@ async function assertNativeTransport(requireDrop = true): Promise<void> {
     assert.equal(fs.readFileSync(moved, "utf8"), "must survive cancellation");
     await assertNativeTransport();
     assert.notEqual(await browser.execute(() => document.documentElement.dataset.nativeDragSession), cancelledSession);
+    assert.equal(await browser.execute((session: string) => {
+      const history = JSON.parse(document.documentElement.dataset.e2eNativeDragDrops || "[]");
+      return history.some((drop: { source?: { sessionId?: string } }) => drop.source?.sessionId === session);
+    }, cancelledSession!), false, "cancelled session delivered a late native Drop during retry");
     await sourceRow.waitForExist({ reverse: true });
     await targetRow.doubleClick();
     await $(entryPathSelector(moved, shown + ".entry-item")).waitForDisplayed();

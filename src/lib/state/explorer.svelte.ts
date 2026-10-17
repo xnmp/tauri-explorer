@@ -35,8 +35,6 @@ import * as selection from "./selection";
 import * as navigation from "./navigation";
 import { clipboardStore, CUT_ALREADY_PASTED } from "./clipboard.svelte";
 import { dialogStore } from "./dialogs.svelte";
-import { TRASH_PATH } from "$lib/domain/virtual-path";
-import { frecencyStore } from "./frecency.svelte";
 import { recentFilesStore } from "./recent-files.svelte";
 import { contextMenuStore } from "./context-menu.svelte";
 import { undoStore } from "./undo.svelte";
@@ -380,8 +378,7 @@ function createExplorerState(seed?: ExplorerSeed) {
       // Track the *resolved* path (separator-normalized by navigateInternal),
       // not the raw request, so the same folder reached two ways dedupes.
       const resolved = coreState.currentPath;
-      if (resolved === TRASH_PATH) frecencyStore.recordAccess(resolved);
-      recentFilesStore.add(resolved, resolved === TRASH_PATH ? "Recycle Bin" : basename(resolved), "directory");
+      recentFilesStore.add(resolved, basename(resolved), "directory");
       if (skipped > 0) {
         // Let the user know the view jumped past one or more single-child folders.
         const levels = skipped === 1 ? "subfolder" : `${skipped} subfolders`;
@@ -619,11 +616,6 @@ function createExplorerState(seed?: ExplorerSeed) {
   async function startDelete(entries: FileEntry | FileEntry[]) {
     const arr = Array.isArray(entries) ? entries : [entries];
     if (arr.length === 0) return;
-
-    if (arr.some((entry) => entry.trash)) {
-      dialogStore.startDelete(arr, true);
-      return;
-    }
 
     if (!settingsStore.confirmDelete) {
       const error = await mutations.confirmDelete(arr, false);

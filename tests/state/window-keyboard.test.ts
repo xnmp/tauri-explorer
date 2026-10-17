@@ -33,6 +33,7 @@ function fixture(terminalFocus = false, ancestors: readonly string[] = [], owner
     subscribeOwnership: ownership?.subscribe,
     isPaneBlocked: (paneId: string) => dialogs.hasModalOpen || !!ownership?.hasOpen || !!ownership?.hasPaneOpen(paneId),
   };
+  const terminal = { enabled: true, toggle: vi.fn() };
   const explorer = {
     showFilter: false,
     openFilter: vi.fn(() => { explorer.showFilter = true; }),
@@ -42,7 +43,7 @@ function fixture(terminalFocus = false, ancestors: readonly string[] = [], owner
     bindings: keybindingsStore,
     getCommand: (id) => available.has(id) ? { scope: commandScopes.get(id)!, paneIds: affectedPanes.get(id), allowInDialogInput: id === "view.switchPane" || id.startsWith("pane.focus") || /tabs\.(next|prev)Tab/.test(id), when: whens.get(id) } : undefined,
     executeCommand,
-    dialogs,
+    dialogs, terminal,
     toggleDualPane: vi.fn(),
     getActiveExplorer: () => explorer,
     getActivePaneId: () => activePaneId,
@@ -57,7 +58,7 @@ function fixture(terminalFocus = false, ancestors: readonly string[] = [], owner
     target.dispatchEvent(event);
     return event;
   };
-  return { target, executeCommand, bind, press, stop, available, dialogs, explorer, whens,
+  return { target, executeCommand, bind, press, stop, available, dialogs, terminal, explorer, whens,
     setAffectedPanes(id: string, panes: readonly string[]) { affectedPanes.set(id, () => panes); },
     setActivePane(id: string) { activePaneId = id; },
   };
@@ -191,6 +192,7 @@ describe("window keyboard ownership", () => {
     expect(f.dialogs.openJobsPanel).not.toHaveBeenCalled();
     expect(f.dialogs.openSettings).not.toHaveBeenCalled();
     expect(f.explorer.openFilter).not.toHaveBeenCalled();
+    expect(f.terminal.toggle).not.toHaveBeenCalled();
   });
 
   it("an unrelated key never evaluates chord availability guards (#1174)", () => {
@@ -228,18 +230,12 @@ describe("window keyboard ownership", () => {
     expect(keybindingsStore.isChordActive).toBe(false);
   });
 
-  it("Ctrl+backtick belongs to the terminal after retiring the default shortcut", () => {
+  it("an Explorer-owned chord cannot suppress the terminal's default toggle", () => {
     const f = fixture(true);
     f.bind("navigation.goUp", "Ctrl+` M");
     f.press("`", { ctrlKey: true, code: "Backquote" });
+    expect(f.terminal.toggle).toHaveBeenCalledOnce();
     expect(f.executeCommand).not.toHaveBeenCalled();
-  });
-
-  it.each(["general.openTerminal", "view.toggleTerminal"])("a configured single %s toggle works while terminal input is focused", (commandId) => {
-    const f = fixture(true);
-    f.bind(commandId, "Ctrl+`");
-    expect(f.press("`", { ctrlKey: true, code: "Backquote" }).defaultPrevented).toBe(true);
-    expect(f.executeCommand).toHaveBeenCalledExactlyOnceWith(commandId);
   });
 
   it("custom Quick Open chords remain terminal-owned while configured terminal-toggle chords work", () => {
@@ -698,6 +694,7 @@ it.each(["f", "`"])("pane modal blocks fallback %s from window chrome using its 
   vi.stubGlobal("document", { body: new EventTarget() });
   f.press(key, { ctrlKey: true });
   expect(f.explorer.openFilter).not.toHaveBeenCalled();
+  expect(f.terminal.toggle).not.toHaveBeenCalled();
 });
 
 it.each(["Enter", " "])("pane dialog native button retains %j despite a rebound window command", key => {

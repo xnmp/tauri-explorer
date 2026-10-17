@@ -3,7 +3,7 @@
  *
  * Visibility and opening focus intent — the shell session lives in TerminalPanel.svelte.
  * `everOpened` keeps the panel mounted after first open so hiding it (or
- * toggling with Alt+M T) preserves the running shell; the component hides
+ * toggling with Ctrl+`) preserves the running shell; the component hides
  * with CSS instead of unmounting.
  */
 

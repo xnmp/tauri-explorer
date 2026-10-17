@@ -75,7 +75,7 @@ export function isShellReservedKey(event: KeyEventLike, context?: ShellKeyContex
   );
 }
 
-export type TerminalCommandId = AlwaysActiveTerminalCommandId | "general.openTerminal" | "view.toggleTerminal";
+export type TerminalCommandId = AlwaysActiveTerminalCommandId | "general.openTerminal";
 
 interface TerminalCommandBindings {
   matchesAnyBinding(event: KeyboardEvent, isAvailable: (id: string) => boolean): boolean;
@@ -95,13 +95,14 @@ export function getTerminalCommand(
   const coreCommandAvailable = core !== undefined && bindings.matchesAnyBinding(
     event, (id) => id === core && isAvailable(id),
   );
-  if (coreCommandAvailable) return core;
-  return (["general.openTerminal", "view.toggleTerminal"] as const).find(toggle =>
-    isAvailable(toggle) && (
-      bindings.matchesAnyBinding(event, id => id === toggle)
-      || bindings.matchesChordPrefixForCommand(event, toggle)
-      || bindings.isChordActiveForCommand(event, toggle)
-    ));
+  const toggle = "general.openTerminal";
+  const toggleAvailable = isAvailable(toggle);
+  const context = {
+    coreCommandAvailable,
+    terminalToggleChordPrefix: toggleAvailable && bindings.matchesChordPrefixForCommand(event, toggle),
+    terminalToggleChordActive: toggleAvailable && bindings.isChordActiveForCommand(event, toggle),
+  };
+  return isShellReservedKey(event, context) ? undefined : coreCommandAvailable ? core : toggle;
 }
 
 // ─── Configurable line-editing shortcuts (#375) ─────────────────────────────

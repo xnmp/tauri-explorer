@@ -12,7 +12,6 @@
 
 import { reconcileHistory, sanitizeFrecencyHistory, type HistoryFrecencyEntry } from "$lib/domain/history";
 import { enqueueHistory, registerFrecencyHistory } from "./shared-history";
-import { TRASH_PATH } from "$lib/domain/virtual-path";
 import { checkPathsExist } from "$lib/api/files";
 import { directoryKey, parentDir } from "$lib/domain/path";
 import { loadPersisted, savePersisted } from "./persisted";
@@ -176,7 +175,7 @@ function createFrecencyStore() {
   async function pruneNonExistent(): Promise<void> {
     if (data.length === 0) return;
     const inspected = data;
-    const paths = inspected.map((e) => e.path).filter(path => path !== TRASH_PATH);
+    const paths = inspected.map((e) => e.path);
     const exists = await checkPathsExist(paths);
     // `data` may have changed while awaiting (e.g. recordAccess) — filter by
     // path membership against the snapshot, not by index into a stale array.

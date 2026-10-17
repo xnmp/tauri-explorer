@@ -130,7 +130,6 @@
   onclick={handleClick}
   ondblclick={handleDoubleClick}
   oncontextmenu={(e) => interactions.handleContextMenu(e, entry)}
-  use:interactions.trackDragSource
   draggable={usesHtml5Drag}
   ondragstart={usesHtml5Drag ? (e) => interactions.handleDragStart(e, entry, selected) : undefined}
   ondragend={usesHtml5Drag ? interactions.handleDragEnd : undefined}

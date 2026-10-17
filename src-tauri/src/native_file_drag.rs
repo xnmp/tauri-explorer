@@ -14,8 +14,6 @@ use std::{
 use tauri::{ipc::Channel, Emitter, Manager};
 
 #[cfg(target_os = "linux")]
-mod linux_html5;
-#[cfg(target_os = "linux")]
 mod wayland_intent;
 
 const EVENT: &str = "explorer-native-file-drag";
@@ -86,17 +84,6 @@ pub struct Source {
     paths: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     native_copy_policy: Option<CopyPolicy>,
-    #[serde(default)]
-    html5: bool,
-}
-
-impl Source {
-    fn uses_webkit_source(&self) -> bool {
-        cfg!(target_os = "linux") && self.html5
-    }
-    fn needs_copy_intent(&self) -> bool {
-        self.native_copy_policy != Some(CopyPolicy::Move)
-    }
 }
 
 fn matches(source: &Source, paths: &[PathBuf]) -> bool {
@@ -184,14 +171,11 @@ fn receiver_paths(paths: &[PathBuf], windows: bool) -> bool {
     })
 }
 
-type NativeContext = usize;
-
 #[derive(Clone)]
 struct CapturedSource {
     original: Source,
     transport: Vec<String>,
     windows: bool,
-    native_context: Option<NativeContext>,
 }
 
 fn transport_keys(paths: &[PathBuf], windows: bool) -> Vec<String> {
@@ -216,18 +200,12 @@ impl CapturedSource {
     }
 }
 
-struct Receiver {
-    paths: Vec<PathBuf>,
-    source: Option<CapturedSource>,
-    native_context: Option<NativeContext>,
-}
-
 #[derive(Default)]
 struct Registry {
     clock: ObservationClock,
     active: Option<(u64, String, Option<CapturedSource>)>,
     completed_gesture_sequence: u64,
-    receivers: HashMap<String, Receiver>,
+    receivers: HashMap<String, CapturedSource>,
     pending: HashMap<usize, VecDeque<(wry::DragDropEvent, Event)>>,
     native_labels: HashMap<usize, String>,
 }
@@ -254,31 +232,9 @@ impl Registry {
                 original,
                 transport: transport_keys(transport, windows),
                 windows,
-                native_context: None,
             }),
         ));
     }
-    fn bind_html5_context(&mut self, token: u64, context: NativeContext) {
-        let Some((_, _, Some(source))) = self.active.as_mut().filter(|active| active.0 == token)
-        else {
-            return;
-        };
-        if !source.original.html5 {
-            return;
-        }
-        source.native_context = Some(context);
-        let source = source.clone();
-        for receiver in self
-            .receivers
-            .values_mut()
-            .filter(|receiver| receiver.native_context == Some(context))
-        {
-            if receiver_paths(&receiver.paths, source.windows) && source.matches(&receiver.paths) {
-                receiver.source = Some(source.clone());
-            }
-        }
-    }
-
     fn capture(&mut self, window: usize, event: &wry::DragDropEvent, copying: bool) {
         let observed_at = self.clock.now();
         self.capture_with_intent(window, event, copying, observed_at, |source| {
@@ -303,48 +259,12 @@ impl Registry {
     ) {
         let mut copying = copying;
         if let wry::DragDropEvent::Drop { paths, .. } = event {
-            let receiver = window.to_string();
-            let raw_drop_context =
-                wry::drag_drop_snapshot::source_window().filter(|context| *context != 0);
-            let drop_context = wry::drag_drop_snapshot::source_token();
-            if wry::drag_drop_snapshot::source_is_local() == Some(false)
-                || self.receivers.get(&receiver).is_some_and(|entered| {
-                    entered.native_context.is_some()
-                        && (raw_drop_context.is_some()
-                            || wry::drag_drop_snapshot::source_is_local().is_some())
-                        && entered.native_context != drop_context
-                })
+            if let Some(source) = self
+                .receivers
+                .get(&window.to_string())
+                .filter(|source| source.matches(paths))
             {
-                self.leave(&receiver);
-            }
-            #[cfg(target_os = "linux")]
-            let own_drop = wry::drag_drop_snapshot::source_is_local() == Some(true);
-            #[cfg(not(target_os = "linux"))]
-            let own_drop = false;
-            if paths.iter().all(|path| path.is_absolute())
-                && (own_drop
-                    || self
-                        .receivers
-                        .get(&receiver)
-                        .is_some_and(|receiver| receiver.native_context.is_some()))
-                && self.receiver_source(&receiver, paths).is_none()
-            {
-                self.leave(&receiver);
-                self.pending
-                    .entry(window)
-                    .or_default()
-                    .push_back((event.clone(), Event::Leave));
-                return;
-            }
-            if let Some(source) = self.receiver_source(&window.to_string(), paths) {
-                // Listings have a fixed move policy. A missing keyboard restoration
-                // must only cancel sources whose policy actually needs Ctrl.
-                let modifier_intent = if source.original.needs_copy_intent() {
-                    intent(&source.original)
-                } else {
-                    None
-                };
-                match modifier_intent {
+                match intent(&source.original) {
                     Some(Ok(fresh)) => copying = fresh,
                     Some(Err(error)) => {
                         self.leave(&window.to_string());
@@ -378,21 +298,12 @@ impl Registry {
             x: x as f64,
             y: y as f64,
         };
-        #[cfg(target_os = "linux")]
-        let external_source = wry::drag_drop_snapshot::source_is_local().map(|local| !local);
-        #[cfg(not(target_os = "linux"))]
-        let external_source = None;
         let event = match event {
             wry::DragDropEvent::Enter {
                 paths,
                 position: point,
             } => {
-                let native_context = wry::drag_drop_snapshot::source_token();
-                let mut source = self.enter_with_context(&receiver, paths, native_context);
-                if external_source == Some(true) {
-                    self.receivers.get_mut(&receiver).unwrap().source = None;
-                    source = None;
-                }
+                let source = self.enter(&receiver, paths);
                 Event::Enter {
                     paths: receiver_event_paths(paths, source.as_ref()),
                     position: position(*point),
@@ -401,7 +312,6 @@ impl Registry {
                     observed_at,
                     observation_clock: self.clock.id.clone(),
                     completed_gesture_sequence: self.completed_gesture_sequence,
-                    external_source,
                 }
             }
             wry::DragDropEvent::Over { position: point } => Event::Over {
@@ -421,7 +331,6 @@ impl Registry {
                     observed_at,
                     observation_clock: self.clock.id.clone(),
                     completed_gesture_sequence: self.completed_gesture_sequence,
-                    external_source,
                 }
             }
             wry::DragDropEvent::Leave => {
@@ -473,83 +382,24 @@ impl Registry {
             self.active = None;
         }
     }
-    #[cfg(test)]
     fn enter(&mut self, receiver: &str, paths: &[PathBuf]) -> Option<Source> {
-        self.enter_with_context(receiver, paths, None)
-    }
-    fn enter_with_context(
-        &mut self,
-        receiver: &str,
-        paths: &[PathBuf],
-        native_context: Option<NativeContext>,
-    ) -> Option<Source> {
         let source = self
             .active
             .as_ref()
             .and_then(|active| active.2.as_ref())
-            .filter(|source| {
-                (!source.original.html5
-                    || (source.native_context.is_some() && source.native_context == native_context))
-                    && receiver_paths(paths, source.windows)
-                    && source.matches(paths)
-            })
+            .filter(|source| receiver_paths(paths, source.windows) && source.matches(paths))
             .cloned();
-        self.receivers.insert(
-            receiver.into(),
-            Receiver {
-                paths: paths.to_vec(),
-                source: source.clone(),
-                native_context,
-            },
-        );
-        source.map(|source| source.original)
-    }
-    fn receiver_source(&self, receiver: &str, paths: &[PathBuf]) -> Option<&CapturedSource> {
-        let entered = self.receivers.get(receiver)?;
-        if transport_keys(&entered.paths, cfg!(target_os = "windows"))
-            != transport_keys(paths, cfg!(target_os = "windows"))
-        {
-            return None;
+        self.receivers.remove(receiver);
+        if let Some(source) = &source {
+            self.receivers.insert(receiver.into(), source.clone());
         }
-        entered
-            .source
-            .as_ref()
-            .filter(|source| source.matches(paths))
+        source.map(|source| source.original)
     }
     fn receive_drop(&mut self, receiver: &str, paths: &[PathBuf]) -> Option<Source> {
-        let source = self.receiver_source(receiver, paths).cloned();
-        self.receivers.remove(receiver);
-        source.map(|source| source.original)
-    }
-    fn can_adopt_html5(&self, source: &Source) -> bool {
-        source.gesture_sequence > self.completed_gesture_sequence
-            && self
-                .active
-                .as_ref()
-                .and_then(|active| active.2.as_ref())
-                .is_none_or(|active| source.gesture_sequence > active.original.gesture_sequence)
-    }
-    fn end_html5(&mut self, owner: &str, source: &Source, owner_disposed: bool) -> bool {
-        let matching = self
-            .active
-            .as_ref()
-            .filter(|(_, window, captured)| {
-                window == owner
-                    && captured.as_ref().is_some_and(|captured| {
-                        captured.original.session_id == source.session_id
-                            && captured.original.gesture_sequence == source.gesture_sequence
-                    })
-            })
-            .map(|active| active.0);
-        if owner_disposed && matching.is_some() {
-            return false;
-        }
-        self.completed_gesture_sequence =
-            self.completed_gesture_sequence.max(source.gesture_sequence);
-        if let Some(token) = matching {
-            self.complete(token);
-        }
-        true
+        self.receivers
+            .remove(receiver)
+            .filter(|source| source.matches(paths))
+            .map(|source| source.original)
     }
     fn leave(&mut self, receiver: &str) {
         self.receivers.remove(receiver);
@@ -566,13 +416,8 @@ impl Registry {
             self.pending.remove(&id);
             self.leave(&id.to_string());
         }
-        if let Some(token) = self
-            .active
-            .as_ref()
-            .filter(|active| active.1 == owner)
-            .map(|active| active.0)
-        {
-            self.complete(token);
+        if self.active.as_ref().is_some_and(|active| active.1 == owner) {
+            self.active = None;
         }
     }
     fn register_window(&mut self, id: usize, label: &str) {
@@ -628,8 +473,6 @@ enum Event {
         observed_at: f64,
         observation_clock: String,
         completed_gesture_sequence: u64,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        external_source: Option<bool>,
     },
     Over {
         position: tauri::PhysicalPosition<f64>,
@@ -643,8 +486,6 @@ enum Event {
         observed_at: f64,
         observation_clock: String,
         completed_gesture_sequence: u64,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        external_source: Option<bool>,
     },
     Leave,
 }
@@ -652,14 +493,6 @@ enum Event {
 // Copy intent and source identity are snapshotted at the platform callback,
 // before Wry/Tao enqueue delivery. Never query keyboard state during dispatch.
 pub fn install_snapshots(app: tauri::AppHandle) {
-    #[cfg(target_os = "linux")]
-    wry::drag_drop_snapshot::set_source_resolver(Some(std::sync::Arc::new(|window, local| {
-        if local == Some(true) {
-            window.and_then(linux_html5::context_for_window)
-        } else {
-            None
-        }
-    })));
     wry::drag_drop_snapshot::set_observer(Some(std::sync::Arc::new(
         move |window, event, copying| {
             // A window can close before Tauri delivers its first queued drag
@@ -793,190 +626,6 @@ fn complete_native_drag(
     enqueue(Box::new(notify));
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum Html5EndReason {
-    Ended,
-    OwnerDisposed,
-}
-
-#[tauri::command]
-pub async fn end_html5_file_drag(
-    app: tauri::AppHandle,
-    window: tauri::Window,
-    source: Source,
-    reason: Html5EndReason,
-) -> Result<(), AppError> {
-    if source.session_id.is_empty()
-        || source.gesture_sequence == 0
-        || source.gesture_sequence > 9_007_199_254_740_991
-    {
-        return Err("Invalid HTML5 drag identity".into());
-    }
-    let (send, receive) = tokio::sync::oneshot::channel();
-    app.run_on_main_thread(move || {
-        #[cfg(target_os = "linux")]
-        let preserve_native = matches!(reason, Html5EndReason::OwnerDisposed)
-            && linux_html5::native_active(window.label(), &source.session_id);
-        #[cfg(not(target_os = "linux"))]
-        let preserve_native = {
-            let _ = reason;
-            false
-        };
-        let retire = window
-            .state::<Sessions>()
-            .registry
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .end_html5(window.label(), &source, preserve_native);
-        #[cfg(target_os = "linux")]
-        if retire {
-            linux_html5::finish(window.label(), &source.session_id);
-        }
-        #[cfg(not(target_os = "linux"))]
-        let _ = retire;
-        let _ = send.send(());
-    })
-    .map_err(|error| AppError::Other(error.to_string()))?;
-    receive
-        .await
-        .map_err(|error| AppError::Other(error.to_string()))
-}
-
-#[cfg(target_os = "linux")]
-pub fn html5_source_lifecycle() -> tauri::plugin::TauriPlugin<tauri::Wry> {
-    tauri::plugin::Builder::new("html5-source-lifecycle")
-        .on_webview_ready(|webview| {
-            let owner = webview.label().to_owned();
-            if let Err(error) = webview.with_webview(move |native| {
-                linux_html5::watch(&owner, &native.inner());
-            }) {
-                log::warn!("Could not observe WebKit native source lifecycle: {error}");
-            }
-        })
-        .build()
-}
-
-#[cfg(target_os = "linux")]
-async fn adopt_html5_file_drag(
-    app: tauri::AppHandle,
-    window: tauri::Window,
-    item: Vec<PathBuf>,
-    source: Source,
-    on_event: Channel<Completion>,
-) -> Result<(), AppError> {
-    let webview = app
-        .get_webview_window(window.label())
-        .ok_or("Source webview unavailable")?;
-    let token = app
-        .state::<Sessions>()
-        .sequence
-        .fetch_add(1, Ordering::Relaxed);
-    let (send, receive) = tokio::sync::oneshot::channel();
-    webview
-        .with_webview(move |native| {
-            let result = (|| -> Result<(), String> {
-                let sessions = app.state::<Sessions>();
-                {
-                    let mut registry = sessions
-                        .registry
-                        .lock()
-                        .unwrap_or_else(|poison| poison.into_inner());
-                    if !registry.can_adopt_html5(&source) {
-                        return Err("HTML5 source already ended".into());
-                    }
-                    registry.begin_prepared(
-                        token,
-                        window.label().into(),
-                        Some(source.clone()),
-                        &item,
-                        false,
-                    );
-                }
-                if source.needs_copy_intent() {
-                    let monitor = window
-                        .gtk_window()
-                        .map_err(|error| error.to_string())
-                        .and_then(|window| wayland_intent::begin(&window, &source.session_id));
-                    if let Err(error) = monitor {
-                        // Keep ownership and fail closed at Drop; rejection would
-                        // route this source through an unverified modifier fallback.
-                        wayland_intent::unavailable(&source.session_id, error);
-                    }
-                }
-                let session = source.session_id.clone();
-                let owner = window.label().to_owned();
-                let completion_app = app.clone();
-                let bind_app = app.clone();
-                let completion_session = source.session_id.clone();
-                let paths = source
-                    .paths
-                    .clone()
-                    .unwrap_or_else(|| vec![source.path.clone()]);
-                let observed = linux_html5::observe(
-                    &owner,
-                    &session,
-                    paths,
-                    &native.inner(),
-                    move |context| {
-                        bind_app
-                            .state::<Sessions>()
-                            .registry
-                            .lock()
-                            .unwrap_or_else(|poison| poison.into_inner())
-                            .bind_html5_context(token, context);
-                    },
-                    move |result| {
-                        wayland_intent::finish(&completion_session);
-                        let retire_app = completion_app.clone();
-                        let notify_app = completion_app.clone();
-                        complete_native_drag(
-                            move || {
-                                retire_app
-                                    .state::<Sessions>()
-                                    .registry
-                                    .lock()
-                                    .unwrap_or_else(|poison| poison.into_inner())
-                                    .complete(token);
-                            },
-                            move || {
-                                let _ = on_event.send(Completion {
-                                    result,
-                                    cursor_pos: drag::CursorPosition { x: 0, y: 0 },
-                                });
-                            },
-                            move |notification| {
-                                let queued = std::thread::spawn(move || {
-                                    notify_app.run_on_main_thread(notification)
-                                })
-                                .join();
-                                if !matches!(queued, Ok(Ok(()))) {
-                                    log::warn!("Could not queue HTML5 drag completion");
-                                }
-                            },
-                        );
-                    },
-                );
-                if let Err(error) = observed {
-                    wayland_intent::finish(&source.session_id);
-                    sessions
-                        .registry
-                        .lock()
-                        .unwrap_or_else(|poison| poison.into_inner())
-                        .end_html5(&owner, &source, false);
-                    return Err(error);
-                }
-                Ok(())
-            })();
-            let _ = send.send(result);
-        })
-        .map_err(|error| AppError::Other(error.to_string()))?;
-    receive
-        .await
-        .map_err(|error| AppError::Other(error.to_string()))?
-        .map_err(AppError::from)
-}
-
 #[tauri::command]
 pub async fn start_file_drag(
     app: tauri::AppHandle,
@@ -996,10 +645,6 @@ pub async fn start_file_drag(
         return Err("Drag source does not match the native files".into());
     }
     let options = native_drag_options(source.as_ref())?;
-    #[cfg(target_os = "linux")]
-    if source.as_ref().is_some_and(Source::uses_webkit_source) {
-        return adopt_html5_file_drag(app, window, item, source.unwrap(), on_event).await;
-    }
     let item =
         drag::prepare_file_paths(item).map_err(|error| AppError::Other(error.to_string()))?;
     let image = if let Some(data) = image.strip_prefix("data:image/png;base64,") {
@@ -1030,7 +675,7 @@ pub async fn start_file_drag(
             .map_err(|error| error.to_string())
             .and_then(|native_window| {
                 #[cfg(target_os = "linux")]
-                if let Some(source) = source.as_ref().filter(|source| source.needs_copy_intent()) {
+                if let Some(source) = &source {
                     wayland_intent::begin(&native_window, &source.session_id)?;
                 }
                 window

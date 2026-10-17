@@ -159,6 +159,13 @@ Rules that bite:
 
 ## Verification
 
+For a Windows native-smoke failure, inspect the individual failed step before
+changing GUI tests: `Windows Rust lint` compiles the ordinary library as well as
+test targets with warnings denied. A Linux-only helper used by cross-platform
+unit tests can still be dead code in the non-test Windows library. Reintroducing
+the changes rolled back for #1222 must pass that exact feature-enabled Clippy
+command, not only Linux tests or Windows test compilation.
+
 The three test tiers see different things; pick by what could actually break:
 
 1. **Vitest (`tests/`)** — domain logic and store behavior. The default home for every fix's regression test.

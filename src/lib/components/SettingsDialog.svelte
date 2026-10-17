@@ -156,7 +156,7 @@
     wallpaperBlur: ["Wallpaper Blur", "Blur the background image"],
     terminalApp: ["Terminal Application", "Command to open terminal (empty = auto-detect)"],
     terminalFollowsExplorer: ["Terminal Follows Explorer", "Auto-cd the embedded terminal when the active pane navigates (queued if a command is running)", "terminal", "cwd", "sync"],
-    enableTerminal: ["Integrated Terminal", "Feature flag: the embedded terminal panel and its Alt+M T shortcut", "experimental", "feature flag"],
+    enableTerminal: ["Integrated Terminal", "Feature flag: the embedded terminal panel and its Ctrl+` shortcut", "experimental", "feature flag"],
     enableGitGraph: ["Git Commit Graph", "Feature flag: the git graph tab and its palette command", "experimental", "feature flag", "git graph"],
     f5SyncsLocalBranches: ["F5 Syncs Local Branches", "In the git graph, F5 also fetches and fast-forwards any local branch that is strictly behind its upstream. Diverged branches are never touched — they're reported in a toast.", "git graph", "fetch", "fast-forward", "sync"],
     explorerFollowsTerminal: ["Explorer Follows Terminal", "Navigate the active pane when the terminal's shell changes directory (OSC 7)", "terminal", "cwd", "sync"],
@@ -942,7 +942,7 @@
           <div class="setting-row" class:hidden={!matchesSearch(...rows.enableTerminal)}>
             <div class="setting-info">
               <span class="setting-label">Integrated Terminal</span>
-              <span class="setting-description">Enable the embedded terminal panel (Alt+M T)</span>
+              <span class="setting-description">Enable the embedded terminal panel (Ctrl+`)</span>
             </div>
             <label class="toggle">
               <input

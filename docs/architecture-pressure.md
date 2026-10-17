@@ -12,6 +12,12 @@ Passes: [#1205](https://github.com/xnmp/tauri-explorer/issues/1205)
 (first pass, 2026-10-16), [#1219](https://github.com/xnmp/tauri-explorer/issues/1219)
 (incremental pass, 2026-10-17).
 
+Rollback note (#1222): the CI recovery reverts #1218 because its Linux-only
+helpers fail Windows library Clippy with warnings denied. The inspection below
+remains a historical record of the covered tip; #1218's purge and drag adapter
+are no longer present. Reassess its drag intervention when it is reintroduced
+with Windows qualification.
+
 ## How the first pass inspected history
 
 There was no earlier ledger, so #1205 covered the whole `dev` history
@@ -201,7 +207,7 @@ separately.
   [#1218](https://github.com/xnmp/tauri-explorer/pull/1218) then fixes competing
   GTK source contexts, receiver action negotiation, multi-URI export,
   source-row disposal and delayed URI identity. The
-  [coverage audit](testing/1217-dnd-coverage-audit.md#new-regression-review)
+  coverage audit (removed with the #1222 rollback; retained in #1218's diff)
   reports 22,683 synthetic tests green on broken source, then the same three
   real native outcome tests red before and green after the fix. Historical
   controls refute attributing onset to #1098; they use today's GTK runtime,

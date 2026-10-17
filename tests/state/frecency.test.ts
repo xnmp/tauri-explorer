@@ -186,22 +186,3 @@ describe("frecencyStore.recordFileAction", () => {
     expect(frecencyStore.entries[0].accesses).toHaveLength(2);
   });
 });
-
-
-describe("Trash frecency (#1216)", () => {
-  it("retains the built-in Trash while pruning missing filesystem directories", async () => {
-    const api = await import("$lib/api/files");
-    const check = vi.spyOn(api, "checkPathsExist").mockResolvedValue([false]);
-    frecencyStore.clear();
-    try {
-      frecencyStore.recordAccess("trash://");
-      frecencyStore.recordAccess("/missing");
-      await frecencyStore.pruneNonExistent();
-      expect(check).toHaveBeenCalledExactlyOnceWith(["/missing"]);
-      expect(frecencyStore.entries.map(entry => entry.path)).toEqual(["trash://"]);
-    } finally {
-      check.mockRestore();
-      frecencyStore.clear();
-    }
-  });
-});

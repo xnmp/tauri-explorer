@@ -29,10 +29,10 @@ use windows::{
         UI::Shell::{
             FileOperation, IFileOperation, IFileOperationProgressSink,
             IFileOperationProgressSink_Impl, IShellItem, SHCreateItemFromParsingName,
-            FOFX_EARLYFAILURE, FOFX_RECYCLEONDELETE, FOF_NOCONFIRMATION, FOF_NOERRORUI,
-            FOF_NO_CONNECTED_ELEMENTS, FOF_RENAMEONCOLLISION, FOF_SILENT, FOF_WANTNUKEWARNING,
-            SICHINT_CANONICAL, SIGDN_DESKTOPABSOLUTEPARSING, SIGDN_FILESYSPATH,
-            TSF_DELETE_RECYCLE_IF_POSSIBLE, TSF_OVERWRITE_EXIST,
+            FOFX_EARLYFAILURE, FOFX_RECYCLEONDELETE, FOF_NOERRORUI, FOF_NO_CONNECTED_ELEMENTS,
+            FOF_RENAMEONCOLLISION, FOF_SILENT, FOF_WANTNUKEWARNING, SICHINT_CANONICAL,
+            SIGDN_DESKTOPABSOLUTEPARSING, SIGDN_FILESYSPATH, TSF_DELETE_RECYCLE_IF_POSSIBLE,
+            TSF_OVERWRITE_EXIST,
         },
     },
 };
@@ -100,7 +100,6 @@ enum SinkMode {
     },
     Delete {
         state: Arc<Mutex<DeleteSinkState>>,
-        permanent: bool,
     },
 }
 
@@ -197,7 +196,7 @@ impl ShellSink {
         flags: u32,
         callback_source: windows::core::Ref<'_, IShellItem>,
     ) -> windows::core::Result<()> {
-        let SinkMode::Delete { state, .. } = &self.mode else {
+        let SinkMode::Delete { state } = &self.mode else {
             return Ok(());
         };
         match self.source_matches(callback_source) {
@@ -211,14 +210,7 @@ impl ShellSink {
                 return Ok(());
             }
         }
-        let permanent = matches!(
-            &self.mode,
-            SinkMode::Delete {
-                permanent: true,
-                ..
-            }
-        );
-        if (flags & TSF_DELETE_RECYCLE_IF_POSSIBLE.0 as u32 != 0) == permanent {
+        if flags & TSF_DELETE_RECYCLE_IF_POSSIBLE.0 as u32 == 0 {
             state
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -252,7 +244,7 @@ impl ShellSink {
                     .map(DeletedArtifact::ParsingName)
                     .unwrap_or_else(DeletedArtifact::Unavailable)
             });
-        let SinkMode::Delete { state, .. } = &self.mode else {
+        let SinkMode::Delete { state } = &self.mode else {
             return;
         };
         let mut state = state
@@ -277,7 +269,7 @@ impl ShellSink {
                     state.invalid_source = Some(error);
                 }
             }
-            SinkMode::Delete { state, .. } => {
+            SinkMode::Delete { state } => {
                 let mut state = state
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -664,55 +656,27 @@ pub(crate) fn delete_item(
     _apartment: &StaApartment,
     source_path: &Path,
 ) -> Result<TrashSuccess, AppError> {
-    let source_name = shell_filesystem_name(source_path);
-    let source: IShellItem =
-        unsafe { SHCreateItemFromParsingName(PCWSTR(source_name.as_ptr()), None) }
-            .map_err(|error| windows_error("Could not open the item to recycle", error))?;
-    delete_shell_item(source, false)
-}
-
-/// Remove the exact Recycle Bin namespace item, never its original path.
-/// Completion uses the same source-verified callbacks as ordinary deletion.
-pub(crate) fn purge_exact(
-    _apartment: &StaApartment,
-    artifact: &TrashArtifact,
-) -> Result<TrashSuccess, AppError> {
-    let TrashArtifact::WindowsShell { parsing_name_utf16 } = artifact else {
-        return Err(AppError::InvalidPath(
-            "Not a Windows Recycle Bin identity".into(),
-        ));
-    };
-    if parsing_name_utf16.is_empty() || parsing_name_utf16.contains(&0) {
-        return Err(AppError::InvalidPath(
-            "Invalid Windows Recycle Bin identity".into(),
-        ));
-    }
-    let mut name = parsing_name_utf16.clone();
-    name.push(0);
-    let source: IShellItem = unsafe { SHCreateItemFromParsingName(PCWSTR(name.as_ptr()), None) }
-        .map_err(|error| windows_error("Could not open the Recycle Bin item", error))?;
-    delete_shell_item(source, true)
-}
-
-fn delete_shell_item(source: IShellItem, permanent: bool) -> Result<TrashSuccess, AppError> {
     let operation: IFileOperation = unsafe {
         CoCreateInstance(&FileOperation, None, CLSCTX_INPROC_SERVER)
             .map_err(|error| windows_error("Could not create the Windows trash operation", error))?
     };
-    let flags = FOF_SILENT | FOF_NOERRORUI | FOF_NO_CONNECTED_ELEMENTS | FOFX_EARLYFAILURE;
-    let flags = if permanent {
-        flags | FOF_NOCONFIRMATION
-    } else {
-        flags | FOF_WANTNUKEWARNING | FOFX_RECYCLEONDELETE
-    };
+    let flags = FOF_SILENT
+        | FOF_NOERRORUI
+        | FOF_NO_CONNECTED_ELEMENTS
+        | FOF_WANTNUKEWARNING
+        | FOFX_EARLYFAILURE
+        | FOFX_RECYCLEONDELETE;
     unsafe { operation.SetOperationFlags(flags) }
         .map_err(|error| windows_error("Could not configure the Windows trash operation", error))?;
 
+    let source_name = shell_filesystem_name(source_path);
+    let source: IShellItem =
+        unsafe { SHCreateItemFromParsingName(PCWSTR(source_name.as_ptr()), None) }
+            .map_err(|error| windows_error("Could not open the item to recycle", error))?;
     let state = Arc::new(Mutex::new(DeleteSinkState::default()));
     let sink: IFileOperationProgressSink = ShellSink {
         mode: SinkMode::Delete {
             state: Arc::clone(&state),
-            permanent,
         },
         source: source.clone(),
     }
@@ -740,15 +704,11 @@ fn delete_shell_item(source: IShellItem, permanent: bool) -> Result<TrashSuccess
         aborted,
     };
     match classify_delete(evidence) {
-        DeleteOutcome::Recycled(_) if permanent => Err(AppError::MutationUncertain(
-            "The Shell recycled the item instead of permanently deleting it".into(),
-        )),
         DeleteOutcome::Recycled(parsing_name_utf16) => Ok(TrashSuccess {
             publication: None,
             artifact: Some(Arc::new(TrashArtifact::WindowsShell { parsing_name_utf16 })),
             warning: None,
         }),
-        DeleteOutcome::CommittedWithoutArtifact(_) if permanent => Ok(TrashSuccess::default()),
         DeleteOutcome::CommittedWithoutArtifact(warning) => Ok(TrashSuccess {
             publication: None,
             artifact: None,

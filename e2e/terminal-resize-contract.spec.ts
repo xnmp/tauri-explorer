@@ -10,7 +10,7 @@ async function openTerminal(page: Page, zoom = 100) {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto("/?path=/home/user/Documents");
   await expect(page.locator(".file-list .entry-item").first()).toBeVisible();
-  await page.keyboard.press("Alt+m"); await page.keyboard.press("t");
+  await page.keyboard.press("Control+`");
   await expect(page.locator(".terminal-panel .xterm")).toBeVisible();
 }
 async function savedHeight(page: Page) {
@@ -44,10 +44,10 @@ for (const retirement of ["blur", "hide"] as const) {
     await openTerminal(page);
     const initial = await savedHeight(page), { x, y } = await begin(page);
     if (retirement === "blur") await page.evaluate(() => window.dispatchEvent(new Event("blur")));
-    else { await page.keyboard.press("Alt+m"); await page.keyboard.press("t"); await expect(page.locator(".terminal-panel")).toBeHidden(); }
+    else { await page.keyboard.press("Control+`"); await expect(page.locator(".terminal-panel")).toBeHidden(); }
     await page.mouse.move(x, y - 60); await page.mouse.up();
     expect(await savedHeight(page)).toBe(initial);
-    if (retirement === "hide") { await page.keyboard.press("Alt+m"); await page.keyboard.press("t"); }
+    if (retirement === "hide") await page.keyboard.press("Control+`");
     await expect.poll(async () => (await page.locator(".terminal-panel").boundingBox())!.height).toBeCloseTo(initial, 0);
   });
 }

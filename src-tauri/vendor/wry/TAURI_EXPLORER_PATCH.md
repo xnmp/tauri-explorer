@@ -54,32 +54,6 @@ The host also records native-ID-to-label mappings before queued delivery and
 clears all mapped queues/receiver identity by label at Destroyed, when Tauri's
 runtime no longer exposes the native handle.
 
-GTK callbacks carry a pinned `SourceSnapshot` (source window, locality, opaque
-host token). The host resolves its token at the first receiver motion, before
-asynchronous URI delivery. GTK pools source IPC windows; resolving a raw window
-again at Enter/Drop could lend a successor's source policy to an older reply.
-Nested callbacks restore the previous scope on return or unwind.
-
-GDK Wayland also reuses a destination context per seat. A native Leave ends its
-receiver generation even if URI data has not arrived; the next motion starts a
-new generation. Deferred Leave captures that generation. Reject empty/cancelled
-selection data and old nonzero request times; preserve external Wayland time0.
-GTK's same-app selection path is synchronous and retains request time; its
-Wayland offer replacement removes old buffers before notifications can retrieve
-old payloads. See [GTK selection delivery](https://github.com/GNOME/gtk/blob/gtk-3-24/gtk/gtkselection.c)
-and [GDK Wayland offer buffers](https://github.com/GNOME/gtk/blob/gtk-3-24/gdk/wayland/gdkselection-wayland.c).
-Re-apply these scope, generation, and context rules when re-vendoring until an
-upstream equivalent supplies exact native gesture provenance.
-
-For admitted absolute filesystem URI sets, the GTK motion handler acknowledges
-`GDK_ACTION_COPY` and returns true, owning the native destination. Internal
-Move/Modifier intent remains host policy; native acknowledgement never requests
-deletion from another application. Non-filesystem URI carriers continue through
-WebKit DOM negotiation. This follows the [GTK drag-motion contract](https://docs.gtk.org/gtk3/signal.Widget.drag-motion.html).
-The callback scope also records `gtk_drag_get_source_widget` locality, allowing
-the host to identify an external source even when Wayland supplies no source
-window. Preserve these receiver semantics when re-vendoring.
-
 ## Guard
 
 `src-tauri/tests/vendored_wry_patch.rs` fails when `Cargo.lock` resolves `wry`

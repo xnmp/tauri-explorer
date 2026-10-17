@@ -19,6 +19,7 @@ export interface WindowKeyboardDependencies {
     requestCloseTop(event?: KeyboardEvent, scope?: ModalScope): void;
     openJobsPanel(): void; openSettings(): void;
   };
+  terminal: { readonly enabled: boolean; toggle(): void };
   toggleDualPane(): void;
   getActiveExplorer(): { readonly showFilter: boolean; openFilter(): void; closeFilter(): void } | undefined;
   getActivePaneId?(): string;
@@ -26,7 +27,7 @@ export interface WindowKeyboardDependencies {
 
 /** Own window keyboard subscriptions and transient modifier/chord state. */
 export function startWindowKeyboard(target: EventTarget, dependencies: WindowKeyboardDependencies): () => void {
-  const { bindings, dialogs } = dependencies;
+  const { bindings, dialogs, terminal } = dependencies;
   let disposed = false;
   const isAvailable = (id: string) => {
     const command = dependencies.getCommand(id);
@@ -94,6 +95,7 @@ export function startWindowKeyboard(target: EventTarget, dependencies: WindowKey
       input, nativeButton, fileEntry, trackedMetaHeld: bindings.trackedMetaHeld,
       terminal: terminalFocus && scope === undefined, terminalCommand,
       chord, modal: scope === null, filterOpen: explorer?.showFilter ?? false,
+      terminalEnabled: terminal.enabled,
     });
     if (action === "native-activation") {
       bindings.cancelChord();
@@ -126,6 +128,7 @@ export function startWindowKeyboard(target: EventTarget, dependencies: WindowKey
     bindings.cancelChord();
     event.preventDefault();
     switch (action) {
+      case "toggle-terminal": if (isAvailable("view.toggleTerminal")) terminal.toggle(); break;
       case "close-dialogs": dialogs.requestCloseTop(event); break;
       case "open-filter": if (isAvailable("general.filterCurrentDir") && explorer && !explorer.showFilter) explorer.openFilter(); break;
       case "close-filter": if (isAvailable("general.filterCurrentDir")) explorer?.closeFilter(); break;

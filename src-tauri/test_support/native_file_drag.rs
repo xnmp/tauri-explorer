@@ -563,6 +563,7 @@ fn source() -> Source {
         kind: "file".into(),
         paths: Some(vec![path("z.png"), path("a.png")]),
         native_copy_policy: Some(CopyPolicy::Modifier),
+        html5: false,
     }
 }
 fn paths() -> Vec<PathBuf> {
@@ -601,6 +602,7 @@ fn native_provenance_requires_a_frontend_safe_gesture_sequence() {
 fn receiver_event_carries_drop_time_modifiers_independently_of_source_policy() {
     for copying in [false, true] {
         let event = Event::Drop {
+            external_source: None,
             paths: paths(),
             position: tauri::PhysicalPosition { x: 20.0, y: 30.0 },
             source: Some(source()),
@@ -965,4 +967,476 @@ fn unavailable_fresh_intent_cannot_publish_a_destructive_guess() {
         ),
         Some(Event::Enter { .. })
     ));
+}
+
+#[test]
+fn move_only_listing_drop_does_not_require_a_copy_modifier_snapshot() {
+    let mut registry = Registry::default();
+    registry.begin(
+        1,
+        "source".into(),
+        Some(Source {
+            native_copy_policy: Some(CopyPolicy::Move),
+            ..source()
+        }),
+    );
+    registry.capture_at(
+        42,
+        &wry::DragDropEvent::Enter {
+            paths: paths(),
+            position: (20, 30),
+        },
+        false,
+        1000.0,
+    );
+    registry
+        .take(
+            42,
+            &tauri::DragDropEvent::Enter {
+                paths: paths(),
+                position: tauri::PhysicalPosition { x: 20.0, y: 30.0 },
+            },
+        )
+        .unwrap();
+    registry.capture_with_intent(
+        42,
+        &wry::DragDropEvent::Drop {
+            paths: paths(),
+            position: (20, 30),
+        },
+        true,
+        1001.0,
+        |_| Some(Err("No fresh keyboard-focus snapshot".into())),
+    );
+    let payload = serde_json::to_value(
+        registry
+            .take(
+                42,
+                &tauri::DragDropEvent::Drop {
+                    paths: paths(),
+                    position: tauri::PhysicalPosition { x: 20.0, y: 30.0 },
+                },
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        payload["type"], "drop",
+        "a fixed move policy has no modifier observation dependency"
+    );
+    assert_eq!(payload["source"]["nativeCopyPolicy"], "move");
+}
+
+#[test]
+fn linux_html5_listing_retains_webkits_original_native_drag() {
+    let listing = serde_json::from_value::<Source>(serde_json::json!({
+        "sessionId": "listing-drag", "gestureSequence": 1,
+        "path": path("a.png"), "name": "a.png", "kind": "file",
+        "nativeCopyPolicy": "move", "html5": true,
+    }))
+    .unwrap();
+    assert_eq!(listing.uses_webkit_source(), cfg!(target_os = "linux"));
+    assert!(native_drag_options(Some(&listing)).is_ok());
+    // Pointer/API sources still start their explicit native session.
+    let pointer = Source {
+        html5: false,
+        ..listing.clone()
+    };
+    assert!(!pointer.uses_webkit_source());
+    assert!(native_drag_options(Some(&pointer)).is_ok());
+    // Miller adopts the same native source while retaining fresh copy intent.
+    let miller = Source {
+        native_copy_policy: Some(CopyPolicy::Modifier),
+        ..listing
+    };
+    assert_eq!(miller.uses_webkit_source(), cfg!(target_os = "linux"));
+    assert!(miller.needs_copy_intent());
+    assert!(native_drag_options(Some(&miller)).is_ok());
+}
+
+#[test]
+fn ended_html5_source_cannot_be_adopted_late_or_retire_its_replacement() {
+    let mut registry = Registry::default();
+    let first = Source {
+        html5: true,
+        ..source()
+    };
+    assert!(registry.end_html5("source", &first, false));
+    assert!(!registry.can_adopt_html5(&first));
+    let next = Source {
+        session_id: "next".into(),
+        gesture_sequence: 2,
+        ..first.clone()
+    };
+    assert!(registry.can_adopt_html5(&next));
+    registry.begin(2, "source".into(), Some(next.clone()));
+    registry.bind_html5_context(2, 77);
+    assert!(registry.end_html5("source", &first, false));
+    assert_eq!(
+        registry.enter_with_context("receiver", &paths(), Some(77)),
+        Some(next.clone())
+    );
+    // Row disposal preserves an observed live GTK context. Actual DOM end
+    // and widget destruction complete it through the common native sink.
+    assert!(!registry.end_html5("source", &next, true));
+    assert_eq!(
+        registry.enter_with_context("receiver", &paths(), Some(77)),
+        Some(next.clone())
+    );
+    assert!(registry.end_html5("source", &next, false));
+    assert!(!registry.can_adopt_html5(&next));
+    assert_eq!(registry.enter("receiver", &paths()), None);
+}
+
+#[test]
+fn html5_enter_before_adoption_retains_fresh_intent_after_source_completion() {
+    let mut registry = Registry::default();
+    let original = Source {
+        html5: true,
+        ..source()
+    };
+    assert_eq!(registry.enter_with_context("42", &paths(), Some(77)), None);
+    registry.begin(1, "source".into(), Some(original.clone()));
+    registry.bind_html5_context(1, 77);
+    registry.complete(1);
+    registry.capture_with_intent(
+        42,
+        &wry::DragDropEvent::Drop {
+            paths: paths(),
+            position: (20, 30),
+        },
+        false,
+        1001.0,
+        |source| {
+            assert_eq!(source, &original);
+            Some(Ok(true))
+        },
+    );
+    let payload = serde_json::to_value(
+        registry
+            .take(
+                42,
+                &tauri::DragDropEvent::Drop {
+                    paths: paths(),
+                    position: tauri::PhysicalPosition { x: 20.0, y: 30.0 },
+                },
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(payload["type"], "drop");
+    assert_eq!(payload["source"]["sessionId"], original.session_id);
+    assert_eq!(payload["copyModifier"], true);
+}
+
+#[test]
+fn window_destruction_fences_source_before_late_widget_completion() {
+    let mut registry = Registry::default();
+    let original = Source {
+        html5: true,
+        ..source()
+    };
+    registry.begin(1, "closing-source".into(), Some(original.clone()));
+    registry.destroyed("closing-source");
+    registry.complete(1);
+    assert!(!registry.can_adopt_html5(&original));
+    let event = wry::DragDropEvent::Enter {
+        paths: paths(),
+        position: (20, 30),
+    };
+    registry.capture_at(42, &event, true, 2000.0);
+    let delivered = registry
+        .take(
+            42,
+            &tauri::DragDropEvent::Enter {
+                paths: paths(),
+                position: tauri::PhysicalPosition { x: 20.0, y: 30.0 },
+            },
+        )
+        .unwrap();
+    let payload = serde_json::to_value(delivered).unwrap();
+    assert_eq!(payload["source"], serde_json::Value::Null);
+    assert_eq!(
+        payload["completedGestureSequence"],
+        original.gesture_sequence
+    );
+}
+
+#[test]
+fn delayed_older_adoption_cannot_replace_newer_active_source() {
+    let mut registry = Registry::default();
+    let newer = Source {
+        session_id: "newer".into(),
+        gesture_sequence: 2,
+        html5: true,
+        ..source()
+    };
+    registry.begin(2, "source".into(), Some(newer.clone()));
+    assert!(!registry.can_adopt_html5(&source()));
+    assert!(!registry.can_adopt_html5(&newer));
+    registry.bind_html5_context(2, 77);
+    assert_eq!(
+        registry.enter_with_context("receiver", &paths(), Some(77)),
+        Some(newer)
+    );
+}
+
+#[test]
+fn unadopted_own_context_is_cancelled_without_borrowing_a_later_external_drop() {
+    let mut registry = Registry::default();
+    registry.enter_with_context("42", &paths(), Some(77));
+    let native_drop = wry::DragDropEvent::Drop {
+        paths: paths(),
+        position: (20, 30),
+    };
+    let delivered = tauri::DragDropEvent::Drop {
+        paths: paths(),
+        position: tauri::PhysicalPosition { x: 20.0, y: 30.0 },
+    };
+    registry.capture_with_intent(42, &native_drop, true, 1000.0, |_| {
+        panic!("unowned source has no intent")
+    });
+    assert!(matches!(registry.take(42, &delivered), Some(Event::Leave)));
+    registry.enter_with_context("42", &paths(), None);
+    registry.capture_with_intent(42, &native_drop, true, 2000.0, |_| {
+        panic!("external source has no app intent")
+    });
+    let payload = serde_json::to_value(registry.take(42, &delivered).unwrap()).unwrap();
+    assert_eq!(payload["type"], "drop");
+    assert_eq!(payload["source"], serde_json::Value::Null);
+    assert_eq!(payload["copyModifier"], true);
+}
+
+#[test]
+fn gtk_source_identity_is_callback_scoped_and_restored_on_nesting_and_unwind() {
+    let _guard = OBSERVER_TEST_LOCK.lock().unwrap();
+    use wry::{drag_drop_snapshot as snapshot, DragDropEvent};
+    assert_eq!(snapshot::source_window(), None);
+    snapshot::dispatch_with_source_window(
+        1,
+        false,
+        DragDropEvent::Leave,
+        Some(11),
+        Some(true),
+        &|_| {
+            assert_eq!(snapshot::source_window(), Some(11));
+            snapshot::dispatch_with_source_window(
+                1,
+                false,
+                DragDropEvent::Leave,
+                Some(22),
+                Some(false),
+                &|_| {
+                    assert_eq!(snapshot::source_window(), Some(22));
+                    assert_eq!(snapshot::source_is_local(), Some(false));
+                    false
+                },
+            );
+            assert_eq!(snapshot::source_window(), Some(11));
+            true
+        },
+    );
+    assert_eq!(snapshot::source_window(), None);
+    let _ = std::panic::catch_unwind(|| {
+        snapshot::dispatch_with_source_window(
+            1,
+            false,
+            DragDropEvent::Leave,
+            Some(33),
+            None,
+            &|_| panic!("scoped callback"),
+        )
+    });
+    assert_eq!(snapshot::source_window(), None);
+}
+
+#[test]
+fn drop_context_cannot_inherit_an_earlier_different_enter_source() {
+    let _guard = OBSERVER_TEST_LOCK.lock().unwrap();
+    use std::cell::RefCell;
+    let registry = RefCell::new(Registry::default());
+    let original = Source {
+        html5: true,
+        ..source()
+    };
+    registry
+        .borrow_mut()
+        .begin(1, "source".into(), Some(original));
+    registry.borrow_mut().bind_html5_context(1, 100);
+    registry
+        .borrow_mut()
+        .enter_with_context("42", &paths(), Some(100));
+    let event = wry::DragDropEvent::Drop {
+        paths: paths(),
+        position: (20, 30),
+    };
+    wry::drag_drop_snapshot::dispatch_with_source_window(
+        42,
+        true,
+        event.clone(),
+        Some(200),
+        Some(false),
+        &|event| {
+            registry
+                .borrow_mut()
+                .capture_with_intent(42, &event, true, 1000.0, |_| {
+                    panic!("external drop has no source intent")
+                });
+            true
+        },
+    );
+    let payload = serde_json::to_value(
+        registry
+            .borrow_mut()
+            .take(
+                42,
+                &tauri::DragDropEvent::Drop {
+                    paths: paths(),
+                    position: tauri::PhysicalPosition { x: 20.0, y: 30.0 },
+                },
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(payload["source"], serde_json::Value::Null);
+    // Only GTK can prove another native source owns this context. Other
+    // platforms still reject the stale identity, without claiming GTK proof.
+    #[cfg(target_os = "linux")]
+    assert_eq!(payload["externalSource"], true);
+    #[cfg(not(target_os = "linux"))]
+    assert!(payload.get("externalSource").is_none());
+    assert_eq!(payload["copyModifier"], true);
+}
+
+#[test]
+fn external_drop_without_gdk_window_never_borrows_stale_modifier_intent() {
+    let _guard = OBSERVER_TEST_LOCK.lock().unwrap();
+    let registry = std::cell::RefCell::new(Registry::default());
+    let original = Source {
+        html5: true,
+        native_copy_policy: Some(CopyPolicy::Modifier),
+        ..source()
+    };
+    registry
+        .borrow_mut()
+        .begin(1, "source".into(), Some(original));
+    registry.borrow_mut().bind_html5_context(1, 100);
+    registry
+        .borrow_mut()
+        .enter_with_context("42", &paths(), Some(100));
+    registry.borrow_mut().complete(1);
+    let event = wry::DragDropEvent::Drop {
+        paths: paths(),
+        position: (20, 30),
+    };
+    wry::drag_drop_snapshot::dispatch_with_source_window(
+        42,
+        true,
+        event.clone(),
+        None,
+        Some(false),
+        &|event| {
+            registry
+                .borrow_mut()
+                .capture_with_intent(42, &event, true, 1000.0, |_| {
+                    panic!("external drop must not query source monitor")
+                });
+            true
+        },
+    );
+    let payload = serde_json::to_value(
+        registry
+            .borrow_mut()
+            .take(
+                42,
+                &tauri::DragDropEvent::Drop {
+                    paths: paths(),
+                    position: tauri::PhysicalPosition { x: 20.0, y: 30.0 },
+                },
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(payload["source"], serde_json::Value::Null);
+    #[cfg(target_os = "linux")]
+    assert_eq!(payload["externalSource"], true);
+    #[cfg(not(target_os = "linux"))]
+    assert!(payload.get("externalSource").is_none());
+    assert_eq!(payload["copyModifier"], true);
+}
+
+#[test]
+fn delayed_uri_reply_keeps_the_first_receiver_motion_token_after_ipc_window_reuse() {
+    use std::sync::{atomic::AtomicUsize, Arc};
+    use wry::drag_drop_snapshot as snapshot;
+    let _guard = OBSERVER_TEST_LOCK.lock().unwrap();
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            snapshot::set_source_resolver(None);
+        }
+    }
+    let _reset = Reset;
+    let current = Arc::new(AtomicUsize::new(100));
+    let lookup = current.clone();
+    snapshot::set_source_resolver(Some(Arc::new(move |window, local| {
+        (window == Some(77) && local == Some(true)).then(|| lookup.load(Ordering::Relaxed))
+    })));
+    let first_motion = snapshot::resolve_source(Some(77), Some(true));
+    current.store(200, Ordering::Relaxed);
+    let registry = std::cell::RefCell::new(Registry::default());
+    registry.borrow_mut().begin(
+        2,
+        "newer-source".into(),
+        Some(Source {
+            html5: true,
+            ..source()
+        }),
+    );
+    registry.borrow_mut().bind_html5_context(2, 200);
+    let enter = wry::DragDropEvent::Enter {
+        paths: paths(),
+        position: (20, 30),
+    };
+    snapshot::dispatch_with_source_snapshot(42, false, enter, first_motion, &|event| {
+        registry.borrow_mut().capture_at(42, &event, false, 1000.0);
+        true
+    });
+    let payload = serde_json::to_value(
+        registry
+            .borrow_mut()
+            .take(
+                42,
+                &tauri::DragDropEvent::Enter {
+                    paths: paths(),
+                    position: tauri::PhysicalPosition { x: 20.0, y: 30.0 },
+                },
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(payload["source"], serde_json::Value::Null);
+    let drop = wry::DragDropEvent::Drop {
+        paths: paths(),
+        position: (20, 30),
+    };
+    snapshot::dispatch_with_source_snapshot(42, false, drop, first_motion, &|event| {
+        registry
+            .borrow_mut()
+            .capture_with_intent(42, &event, false, 1001.0, |_| {
+                panic!("old URI reply cannot borrow new source intent")
+            });
+        true
+    });
+    assert!(matches!(
+        registry.borrow_mut().take(
+            42,
+            &tauri::DragDropEvent::Drop {
+                paths: paths(),
+                position: tauri::PhysicalPosition { x: 20.0, y: 30.0 }
+            }
+        ),
+        Some(Event::Leave)
+    ));
+    assert_eq!(snapshot::source_token(), None);
 }

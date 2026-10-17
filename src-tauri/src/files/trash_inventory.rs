@@ -51,6 +51,8 @@ pub(crate) struct Item {
     pub entry: TrashEntry,
     /// `None` when the platform did not record where the item came from.
     pub restore: Option<Restorable>,
+    #[cfg(unix)]
+    pub native_deletion: Option<NativeDeletion>,
 }
 
 /// Where a listed item restores to. Checks use the native destination;
@@ -68,7 +70,25 @@ pub(crate) struct Inventory {
     pub issues: Vec<TrashIssue>,
 }
 
-type Registry = HashMap<String, Option<Restorable>>;
+#[derive(Clone)]
+struct Registered {
+    restore: Option<Restorable>,
+    #[cfg(unix)]
+    native_deletion: Option<NativeDeletion>,
+}
+
+/// macOS lists entries without origin records too; permanent deletion still
+/// retains their exact native identity, independently of restore eligibility.
+#[cfg(unix)]
+#[derive(Clone)]
+pub(crate) struct NativeDeletion {
+    path: PathBuf,
+    version: super::entry_version::EntryVersion,
+    changed_seconds: i64,
+    changed_nanos: i64,
+}
+
+type Registry = HashMap<String, Registered>;
 
 /// Artifacts from the most recent listing, keyed by entry ID.
 static REGISTRY: LazyLock<Mutex<Registry>> = LazyLock::new(Default::default);
@@ -91,7 +111,14 @@ pub(crate) fn publish(inventory: Inventory) -> TrashListing {
         .items
         .into_iter()
         .map(|item| {
-            registry.insert(item.entry.id.clone(), item.restore);
+            registry.insert(
+                item.entry.id.clone(),
+                Registered {
+                    restore: item.restore,
+                    #[cfg(unix)]
+                    native_deletion: item.native_deletion,
+                },
+            );
             item.entry
         })
         .collect();
@@ -304,7 +331,7 @@ pub(crate) fn recorded_inventory(
     root: &Path,
     records: &[super::trash_origins::Record],
 ) -> Inventory {
-    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::{ffi::OsStrExt, fs::MetadataExt};
     let mut inventory = Inventory::default();
     let entries = match std::fs::read_dir(root) {
         Ok(entries) => entries,
@@ -335,7 +362,13 @@ pub(crate) fn recorded_inventory(
             .find(|record| record.trashed == path && record.matches(&metadata));
         inventory.items.push(Item {
             entry: TrashEntry {
-                id: entry_id(&[path.as_os_str().as_bytes()]),
+                id: entry_id(&[
+                    path.as_os_str().as_bytes(),
+                    &metadata.dev().to_le_bytes(),
+                    &metadata.ino().to_le_bytes(),
+                    &metadata.ctime().to_le_bytes(),
+                    &metadata.ctime_nsec().to_le_bytes(),
+                ]),
                 // A same-named item already in the Trash makes the system
                 // rename this one; show the name it will be restored under.
                 name: record
@@ -353,6 +386,14 @@ pub(crate) fn recorded_inventory(
                 size: if metadata.is_dir() { 0 } else { metadata.len() },
                 is_symlink: metadata.file_type().is_symlink(),
             },
+            native_deletion: super::file_identity::version_from_metadata(&metadata)
+                .ok()
+                .map(|version| NativeDeletion {
+                    path: path.clone(),
+                    version,
+                    changed_seconds: metadata.ctime(),
+                    changed_nanos: metadata.ctime_nsec(),
+                }),
             restore: record.map(|record| Restorable {
                 key: record.original.to_string_lossy().into_owned(),
                 destination: record.original.clone(),
@@ -397,7 +438,7 @@ fn plan_restore_in(registry: &Registry, ids: &[String]) -> (Vec<RestoreRequest>,
             key,
             destination,
             artifact,
-        }) = registered
+        }) = &registered.restore
         else {
             failures.push(FileFailure {
                 path: id.clone(),
@@ -480,3 +521,199 @@ mod tests;
 #[cfg(all(test, not(target_os = "linux")))]
 #[path = "../../test_support/trash_inventory_native.rs"]
 mod native_tests;
+
+/// Delete only registered IDs. Receipt keys remain opaque through settlement;
+/// physical Trash paths never cross IPC and never become history actions.
+pub(crate) async fn delete(
+    ids: Vec<String>,
+    runtime: &super::admission::Runtime,
+) -> Result<FileBatchOutcome, AppError> {
+    use super::batch::{self, BatchPlan};
+    if ids.len() > 32_768
+        || ids
+            .iter()
+            .try_fold(0usize, |size, id| size.checked_add(id.len()))
+            .is_none_or(|size| size > 8 * 1024 * 1024)
+    {
+        return Err(AppError::InvalidPath(
+            "Trash selection exceeds its count or size limit".into(),
+        ));
+    }
+    let mut seen = HashSet::new();
+    let ids: Vec<_> = ids
+        .into_iter()
+        .filter(|id| seen.insert(id.clone()))
+        .collect();
+    if ids.is_empty() {
+        return Ok(FileBatchOutcome::default());
+    }
+    let registered = {
+        let registry = REGISTRY.lock().unwrap_or_else(|poison| poison.into_inner());
+        ids.iter()
+            .map(|id| (id.clone(), registry.get(id).cloned()))
+            .collect::<HashMap<_, _>>()
+    };
+    if registered.values().all(Option::is_none) {
+        return Ok(FileBatchOutcome {
+            failed: ids
+                .into_iter()
+                .map(|path| FileFailure {
+                    path,
+                    error: stale_id(),
+                })
+                .collect(),
+            ..Default::default()
+        });
+    }
+    let plan = BatchPlan { paths: ids };
+    #[cfg(unix)]
+    {
+        let keys = Arc::new(plan.paths.clone());
+        let prepare_registered = registered.clone();
+        let prepare = move || {
+            let mut auxiliary = HashSet::new();
+            let entries = keys
+                .iter()
+                .map(|key| {
+                    let entry = prepare_registered
+                        .get(key)
+                        .and_then(Option::as_ref)
+                        .ok_or_else(stale_id)?;
+                    #[cfg(target_os = "linux")]
+                    if let Some(restorable) = &entry.restore {
+                        auxiliary.extend(
+                            super::freedesktop_trash::restoration::deletion_resources(
+                                &restorable.artifact,
+                            )
+                            .map_err(|error| error.to_string())?,
+                        );
+                    }
+                    if let Some(native) = &entry.native_deletion {
+                        auxiliary.extend(
+                            super::recovery::resources::capture_requests(&[
+                                super::recovery::resources::Request {
+                                    path: native.path.clone(),
+                                    access: super::recovery::resources::Access::Write,
+                                    scope: super::recovery::resources::Scope::Subtree,
+                                },
+                            ])
+                            .map_err(|error| error.to_string())?,
+                        );
+                    }
+                    deletion_source(entry)
+                })
+                .collect::<Vec<_>>();
+            let (selection, mut resources) =
+                super::permanent_delete::prepare_exact_selection(Arc::clone(&keys), &entries)?
+                    .into_admission();
+            resources.extend(auxiliary);
+            Ok((selection, resources))
+        };
+        let execute = move |mut selection: super::permanent_delete::ExactSelection, owner| async move {
+            Ok(batch::run_with_receipts_owned(owner, plan, move |key, _| {
+                let entry = registered
+                    .get(key)
+                    .and_then(Option::as_ref)
+                    .ok_or_else(stale_id);
+                // Revalidate metadata and the listing's native identity directly
+                // before the prepared engine captures its already-bound payload.
+                // Consume aligned prepared refusals too, preserving later siblings.
+                let verification = entry
+                    .as_ref()
+                    .map_err(Clone::clone)
+                    .and_then(|entry| deletion_source(entry));
+                if let Err(error) = verification {
+                    selection.skip_next(key)?;
+                    return Err(AppError::Other(error));
+                }
+                let entry = entry.map_err(AppError::Other)?;
+                let mut success = selection.execute_next(key)?;
+                if let Err(error) = cleanup_deletion(entry) {
+                    let cleanup =
+                        format!("Deleted item, but Trash metadata cleanup failed: {error}");
+                    success.warning = Some(match success.warning {
+                        Some(warning) => format!("{warning}; {cleanup}"),
+                        None => cleanup,
+                    });
+                }
+                Ok(success)
+            })
+            .await)
+        };
+        #[cfg(target_os = "linux")]
+        {
+            super::admission::admitted_prepared(runtime, prepare, execute).await
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = runtime;
+            let (selection, _) = super::run_blocking(prepare).await?;
+            execute(selection, ()).await
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let _ = runtime;
+        batch::run_dedicated_receipts(
+            plan,
+            super::windows_restore::StaApartment::new,
+            move |apartment, key| {
+                let entry = registered
+                    .get(key)
+                    .and_then(Option::as_ref)
+                    .ok_or_else(|| AppError::Other(stale_id()))?;
+                let restorable = entry
+                    .restore
+                    .as_ref()
+                    .ok_or_else(|| AppError::Other(stale_id()))?;
+                super::windows_restore::purge_exact(apartment, &restorable.artifact)
+            },
+        )
+        .await
+    }
+}
+
+fn stale_id() -> String {
+    "This item is no longer in the trash list. Refresh the Trash and try again.".into()
+}
+
+#[cfg(unix)]
+fn deletion_source(
+    entry: &Registered,
+) -> Result<(PathBuf, super::entry_version::EntryVersion), String> {
+    use std::os::unix::fs::MetadataExt;
+    #[cfg(target_os = "linux")]
+    if let Some(restorable) = &entry.restore {
+        return super::freedesktop_trash::restoration::deletion_source(&restorable.artifact)
+            .map_err(|error| error.to_string());
+    }
+    let native = entry.native_deletion.as_ref().ok_or_else(stale_id)?;
+    let metadata = std::fs::symlink_metadata(&native.path).map_err(|error| error.to_string())?;
+    if metadata.ctime() != native.changed_seconds
+        || metadata.ctime_nsec() != native.changed_nanos
+        || super::file_identity::version_from_metadata(&metadata)
+            .map_err(|error| error.to_string())?
+            != native.version
+    {
+        return Err(
+            "The item in the Trash changed since it was listed; nothing was deleted".into(),
+        );
+    }
+    Ok((native.path.clone(), native.version.clone()))
+}
+
+#[cfg(unix)]
+fn cleanup_deletion(entry: &Registered) -> Result<(), AppError> {
+    #[cfg(target_os = "linux")]
+    if let Some(restorable) = &entry.restore {
+        return super::freedesktop_trash::restoration::cleanup_deleted(&restorable.artifact);
+    }
+    #[cfg(not(target_os = "linux"))]
+    if let Some(native) = &entry.native_deletion {
+        if let Some(store) = super::trash_origins::Store::default_location() {
+            store.remove(&native.path)?;
+        }
+    }
+    let _ = entry;
+    Ok(())
+}

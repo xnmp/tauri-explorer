@@ -136,6 +136,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-repo-watch.ts` — shared graph/SCM adapter over ordered watch ownership; retains unique native leases until acknowledged release, including retries.
 - `git-graph-coverage.ts` — repository observation leases shared by pending graph reads and retained snapshots; listener/watch acknowledgement precedes reads, final release drains acquisition, and UNC polling roots stay uncached.
 - `directory-watch.ts` — generic ordered path-lease ownership plus the directory adapter; retains exact release authority across failed teardown and drains late acquisition; reused by Git, thumbnails, Miller columns and drives.
+- `src/lib/state/preview-content.ts` — file-kind loaders produce one PreviewContent union; owns per-pane image cache/lifetime, held-image replacement, lazy PDF/video viewers, text fallbacks and rendition upgrades.
 - `preview-lifetime.ts` — full-revision preview request and object-URL ownership; stale results cannot publish or revoke a replacement.
 - `preview-image.ts` — Preview image load for files and plugin targets: optional display-sized rendition first (`get_preview_image`, any failure falls back to the original, #1054), then asset protocol + off-screen decode, then the backend `read_image_data_url` fallback (paths outside the asset scope, cloud placeholders; the only path in browser mode); blob ownership through the caller's lifetime (#1033).
 - `preview-image-cache.ts` — pane-scoped memory of shown Preview images per file version (path + mtime/size/local revision; original or rendition-at-edge): a revisit is a synchronous hit with no request; bounded by count and decoded pixels, never evicts the on-screen entry, owns and revokes its blobs, cleared on unmount (#1014).
@@ -444,6 +445,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `settings-migration.ts` — versioned one-shot migrations for the persisted settings blob; `migrateSettings` + the append-only ledger (#506).
 - `settings-numbers.ts` — Numeric preference consumer contracts shared by persisted validation and interactive setters.
 - `folder-preview.ts` — folder preview image selection (#146).
+- `src/lib/domain/preview-kind.ts` — single file-preview precedence classifier and hold-image policy, shared by dispatch and viewer presentation.
 - `preview-size.ts` — pure dock-to-setting resize policy; source-zero defaults and bounded width/height options.
 - `image-viewer-zoom.ts` — pure fullscreen image zoom/pan math: clamped zoom, cursor-anchored zoom, pan, transform and the fullscreen key map (#219, #236, #1033).
 - `image-crop.ts` — full-resolution crop bounds and measured pointer mapping; fixed ICNS canvas projection with transparent padding (#681, crop UI/save implementation pending).
@@ -698,7 +700,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `src/test-support/LayoutInspector.svelte` — optional inspector used by core viewport and fullscreen browser acceptance, registered explicitly without a provider package.
 
-- `e2e-hooks.ts` — entry point: installs every probe for one page session (navigate/reset/file-op hooks, readiness, child-ready receipts); abort retires them all.
+- `e2e-hooks.ts` — entry point: installs every probe for one page session (navigate/reset/file-op hooks, readiness, child-ready receipts and read-only actual native Drop observation); abort retires them all.
 - `dom-rpc.ts` — `createDomRpc`: the shared tokened DOM request/response protocol across WebDriver's isolated world; every request settles, including rejections.
 - `window-operations.ts` — one handler per `e2e-window-operation` op: rejected/unready targets, in-flight closure, duplicate-label creation and warm fixtures, with late-import retirement.
 - `directory-listing-probe.ts` — times real backend listings of one armed path through the `files.ts` listing interceptor seam.
@@ -795,6 +797,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ### Native qualification tooling
 
+- `e2e-tauri/specs/file-drag.spec.ts`, `e2e-tauri/helpers/native-drag.py` — real GTK file-transfer outcomes driven by XTest after admitting a private Xvfb, D-Bus and XDG environment; validates source removal and destination contents.
+- `e2e-tauri/dnd-acceptance.ts`, `scripts/qualify-native-dnd.ts` — independent required native DnD contracts, verified-binary/run-bound receipts and fatal acceptance inside ordinary Linux smoke; `e2e-tauri/helpers/suppress-drag-status.c` provides a real GTK transport negative control. Contract tests: `tests/qualification/dnd-acceptance.test.ts`.
 - `e2e-tauri/native-clipboard.ts` — independent OS clipboard probes for cross-window smoke: bounded asynchronous Windows PowerShell reads/external Copy with serializable failure diagnostics; X11 URI-list probes.
 - `e2e-tauri/windows-clipboard-read.ps1` — independent direct CF_HDROP/DragQueryFileW reader, avoiding stalled Shell clipboard cmdlets; real empty/single/multi-file Unicode contracts in `clipboard-cross-window.spec.ts`.
 - `tests/e2e-tauri/native-clipboard.test.ts` — cold-shell completion, direct Win32 command dispatch, timeout diagnostics, output validation and literal-path contracts for the native clipboard probes.
@@ -956,6 +960,7 @@ TraceExplorer's image UI, provider adapters and SQLite journal are maintained in
 - `src-tauri/src/installed_plugins/service_graph_tests.rs` — service graph version, identity, optional dependency and cycle contracts.
 - `src-tauri/src/installed_plugins/service_host.rs` — host lifetime service store and legacy recovery compatibility.
 - `src-tauri/src/native_deadline.rs` — scoped monotonic native lock, queue and RPC budgets.
+- `src-tauri/src/native_file_drag/linux_html5.rs` — adopts WebKitGTK’s original HTML5 drag with shared, exact-source native signal and renderer retirement handling; never starts a competing GTK drag.
 - `src-tauri/src/native_file_drag/wayland_intent.rs` — GNOME Wayland per-gesture source keyboard channel; freezes the first post-grab focus modifier snapshot independently of GTK cache and OS actions.
 - `src-tauri/test_support/wayland_drag_intent_test.rs` — in-process Wayland compositor tests for late Ctrl, post-drop key changes, foreign connection/queue isolation and snapshot lifetime.
 - `src-tauri/src/native_file_drag.rs` — async OS drag start (rejects shortcut sources before export), synchronous platform-completion retirement, sequence-bearing provenance and per-window receiver snapshots emitted before frontend channel reordering.

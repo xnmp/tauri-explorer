@@ -2,7 +2,7 @@ import { browser, $, expect } from "@wdio/globals";
 import fs from "node:fs";
 import path from "node:path";
 import { createNativeFixtureDirectory } from "../native-qualification";
-import { domText, entryPathSelector, navigateTo } from "./helpers";
+import { domText, entryPathSelector, navigateTo, resetNativeKeybindings } from "./helpers";
 
 const scratch = createNativeFixtureDirectory("terminal-resize");
 const fixtureEntry = path.join(scratch, "terminal-resize-proof.txt");
@@ -16,7 +16,10 @@ const countTo80 = process.platform === "win32"
 
 /** Real WebKitGTK/WebView2, PTY output/scrollback, and pointer capture under root zoom. */
 (process.platform === "linux" || process.platform === "win32" ? describe : describe.skip)("native terminal resizing", () => {
-  before(() => fs.writeFileSync(fixtureEntry, "terminal resize fixture"));
+  before(async () => {
+    fs.writeFileSync(fixtureEntry, "terminal resize fixture");
+    await resetNativeKeybindings();
+  });
 
   it("keeps a zoomed drag continuous with scrollback and the shell usable after keyboard resize", async () => {
     await browser.setWindowSize(1280, 900);
@@ -64,7 +67,8 @@ const countTo80 = process.platform === "win32"
     for (let i = 0; i < 5; i++) await browser.keys(["Control", "="]);
     await browser.waitUntil(async () => await browser.execute(() => parseFloat(document.documentElement.style.getPropertyValue("--app-zoom"))) === 1.5,
       { timeoutMsg: "root zoom did not reach 150%" });
-    await browser.keys(["Control", "`"]);
+    await browser.keys(["Alt", "m"]);
+    await browser.keys("t");
     await $(".terminal-panel .xterm").waitForDisplayed();
     await browser.waitUntil(async () => (await domText(".terminal-panel .xterm-rows")).trim().length > 0,
       { timeout: 45000, timeoutMsg: "shell never produced a prompt" });

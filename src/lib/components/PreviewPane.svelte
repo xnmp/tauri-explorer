@@ -7,35 +7,28 @@
   import { useControlledSize } from "$lib/composables/use-controlled-size.svelte";
   import { previewResizeSpec } from "$lib/domain/preview-size";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { readTextFile, fetchDirectory } from "$lib/api/files";
-  import { decodeImage, loadPreviewImage, type PreviewImageOptions, type PreviewImageReady } from "$lib/state/preview-image";
-  import { createFullResolutionUpgrade, type ShownRendition } from "$lib/state/preview-resolution";
-  import { createPreviewImageCache } from "$lib/state/preview-image-cache";
+  import type { PreviewImageOptions } from "$lib/state/preview-image";
+  import { createPreviewContentLoader, type PreviewContent } from "$lib/state/preview-content";
+  import { classifyPreview } from "$lib/domain/preview-kind";
   import { needsFullResolution, renditionMaxEdge } from "$lib/domain/preview-rendition";
   import { createLatestOnlyRunner } from "$lib/domain/latest-only";
   import { usePreviewFullscreen } from "$lib/composables/use-preview-fullscreen.svelte";
   import PreviewImageSurface from "./PreviewImageSurface.svelte";
 import { gitDiff } from "$lib/api/git";
-import { listArchiveContents } from "$lib/api/archive";
 import { openFile } from "$lib/api/open";
   import { toastStore } from "$lib/state/toast.svelte";
-  import { isImageFile, isSvgFile, isTextFile, isPdfFile, isVideoFile, isVideoMediaFile, isZipFile, getFileType, formatDate } from "$lib/domain/file-types";
+  import { getFileType, formatDate } from "$lib/domain/file-types";
   import VideoIndicator from "./VideoIndicator.svelte";
   import { formatResolution, formatSize, isSystemHidden, type FileEntry } from "$lib/domain/file";
-  import { extractError } from "$lib/api/common";
-  import { highlightCode, highlightDiffLine } from "$lib/domain/syntax-highlight";
-  import { renderMarkdown } from "$lib/domain/markdown";
+  import { highlightDiffLine } from "$lib/domain/syntax-highlight";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { frecencyStore } from "$lib/state/frecency.svelte";
   import { getScmStore } from "$lib/state/scm.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { createPreviewDiffActions, type HunkAction } from "$lib/state/preview-diff-actions";
   import { gitCommitFileDiff, gitCompareCommitFileDiff } from "$lib/api/git-log";
-  import { logFrontendDiagnostic } from "$lib/api/frontend-log";
-  import { getVideoThumbnailData } from "$lib/api/thumbnails";
   import VirtualList from "./VirtualList.svelte";
-  import { parseCsvPreview, type CsvPreview } from "$lib/domain/csv-preview";
-  import { createPreviewLifetime, type PreviewRequest } from "$lib/state/preview-lifetime";
+  import { type CsvPreview } from "$lib/domain/csv-preview";
   import { subscribeToLocalFileChanges } from "$lib/state/file-events";
   import { parentDir } from "$lib/domain/path";
   let localPreviewRevision = $state(0);
@@ -75,8 +68,6 @@ import { openFile } from "$lib/api/open";
     return () => observer.disconnect();
   });
 
-  // This frame is also the fullscreen source, separate from the tile thumbnails.
-  const VIDEO_PREVIEW_SIZE = 1024;
   const paneId = $props.id();
   const position = $derived(settingsStore.resolvedPreviewPanePosition);
   const isVertical = $derived(position !== "right");
@@ -96,7 +87,7 @@ import { openFile } from "$lib/api/open";
     onToggle: () => resize.cancel(),
     navigate: (delta) => navigateSibling(delta),
     // PDF and video previews own their keys in fullscreen; only Esc stays ours.
-    subjectOwnsKeys: () => !!selectedFile && (isPdfFile(selectedFile) || isVideoMediaFile(selectedFile)),
+    subjectOwnsKeys: () => selectedKind === "pdf" || selectedKind === "video",
     // Text, markdown and code zoom with the wheel and scroll with Up/Down (#1039).
     subjectZoomsText: () => textZoomable,
     scrollSubject: (dy) => previewContentEl?.scrollBy({ top: dy }),
@@ -154,58 +145,38 @@ import { openFile } from "$lib/api/open";
 
   /** Stable primitive that changes when the selected path OR its mtime changes,
    * so external edits to the same file invalidate the cached preview. */
+  const selectedKind = $derived(selectedFile ? classifyPreview(selectedFile) : null);
   const selectedPath = $derived(selectedFile?.path ?? null);
   const previewKey = $derived(
     selectedFile ? `${selectedFile.path}|${selectedFile.modified}|${selectedFile.size}|${localPreviewRevision}` : null,
   );
 
-  // Preview content state
-  let previewImageUrl = $state<string | null>(null);
-  // Natural size reported by the <img>, keyed by URL so a held previous image
-  // or a new selection never shows another file's resolution (#1118).
+  // One replacement owns all format data, loading/held state and errors.
+  let content = $state<PreviewContent<
+    typeof import("./PdfPreview.svelte").default,
+    typeof import("./VideoPreview.svelte").default
+  >>({ kind: "empty" });
+  const contentLoader = createPreviewContentLoader((url) => URL.revokeObjectURL(url), {
+    pdf: async () => (await import("./PdfPreview.svelte")).default,
+    video: async () => (await import("./VideoPreview.svelte")).default,
+  });
+  // Natural size is DOM measurement, keyed by URL so held/replaced images
+  // cannot show another file's resolution (#1118).
   let previewImageSize = $state<{ url: string; width: number; height: number } | null>(null);
   const previewResolution = $derived(
-    previewImageUrl && previewImageSize?.url === previewImageUrl
-      ? formatResolution(previewImageSize.width, previewImageSize.height)
-      : "",
+    (content.kind === "image" || content.kind === "audio-cover") && previewImageSize?.url === content.url
+      ? formatResolution(previewImageSize.width, previewImageSize.height) : "",
   );
-  // True while `previewImageUrl` is the previous file's image, kept on screen
-  // while the next image loads and decodes. Blanking it in between left the
-  // content empty for the decode and re-laid out the pane for those frames.
-  let previewImageHeld = $state(false);
-  let previewImageNote = $state<string | null>(null);
-  // Large images show a display-sized rendition (#1054); fullscreen and zoom
-  // swap in the original (state/preview-resolution). The runner keeps skipped
-  // selections from queueing rendition decodes in the backend.
-  let previewShowsRendition = $state(false);
   let previewContentWidth = $state(0);
   let previewContentHeight = $state(0);
   const renditionRunner = createLatestOnlyRunner();
-  // Images this pane already showed, per file version: a revisit shows one
-  // synchronously instead of loading it again (#1014). Released on unmount.
-  const imageCache = createPreviewImageCache((url) => URL.revokeObjectURL(url));
-  const fullResolution = createFullResolutionUpgrade(async (path, cacheBust, owner) =>
-    imageCache.lookup(path, cacheBust, {}) ?? loadPreviewImage(path, cacheBust, owner),
-  );
-  let previewText = $state<string | null>(null);
-  let previewHighlightedHtml = $state<string | null>(null);
-  let previewMarkdownHtml = $state<string | null>(null);
-  let previewCsv = $state<CsvPreview | null>(null);
-  let previewPdf = $state<{ path: string; key: string } | null>(null);
-  let PdfPreview = $state<typeof import("./PdfPreview.svelte").default | null>(null);
-  let previewVideo = $state<{ path: string; name: string; key: string } | null>(null);
-  let VideoPreview = $state<typeof import("./VideoPreview.svelte").default | null>(null);
-  let previewFolderChildrenRaw = $state<readonly FileEntry[]>([]);
-  // Set when a folder/ZIP preview descended through one or more single-child
-  // folders: the collapsed path (e.g. "a/b") and a short note describing it.
-  let previewCollapsedRoot = $state<string | null>(null);
-  let previewCollapsedNote = $state<string | null>(null);
-  const previewFolderChildren = $derived(
-    settingsStore.showHidden
-      ? previewFolderChildrenRaw
-      : previewFolderChildrenRaw.filter((e) => !e.name.startsWith(".") && !isSystemHidden(e.name))
-  );
-  let previewLoading = $state(false);
+  const previewFolderChildren = $derived.by(() => {
+    if (content.kind !== "directory" && content.kind !== "zip") return [];
+    return settingsStore.showHidden ? content.entries
+      : content.entries.filter((e) => !e.name.startsWith(".") && !isSystemHidden(e.name));
+  });
+  const previewLoading = $derived(content.kind === "loading" ||
+    ((content.kind === "image" || content.kind === "audio-cover") && content.held));
   // Defer the spinner: a preview that resolves in under 150ms shouldn't flash
   // a spinner. Show it only once loading has been pending long enough to read.
   let showPreviewSpinner = $state(false);
@@ -217,11 +188,7 @@ import { openFile } from "$lib/api/open";
     const timer = setTimeout(() => (showPreviewSpinner = true), 150);
     return () => clearTimeout(timer);
   });
-  let previewError = $state<string | null>(null);
-  let previewTruncatedLines = $state(0);
-  let previewTruncatedLabel = $state("lines");
   let lastPreviewKey: string | null = null;
-  const previewLifetime = createPreviewLifetime((url) => URL.revokeObjectURL(url));
 
   function csvRowHeight(row: string[]): number {
     return Math.max(28, 12 + Math.max(...row.map((cell) => cell.split("\n").length)) * 16);
@@ -247,10 +214,8 @@ import { openFile } from "$lib/api/open";
 
   /** The branch of the template that shows reflowing text: the only subject whose fullscreen zoom is a font zoom. */
   const textZoomable = $derived(
-    !!selectedFile && !activeDiff && !commitDiff && !previewLoading &&
-    !previewPdf && !previewVideo && !previewImageUrl && previewFolderChildren.length === 0 &&
-    previewCsv === null &&
-    (previewMarkdownHtml !== null || previewHighlightedHtml !== null || previewText !== null),
+    !!selectedFile && !activeDiff && !commitDiff &&
+    (content.kind === "markdown" || content.kind === "code" || content.kind === "text"),
   );
   const diffPath = $derived(commitDiff?.path ?? activeDiff?.path ?? "");
   let diffParsed = $state<ParsedDiff | null>(null);
@@ -410,24 +375,8 @@ import { openFile } from "$lib/api/open";
     const key = previewKey;
     const file = selectedFile;
     if (!file || !path) {
-      previewLifetime.invalidate();
-      previewLifetime.clearBlob();
+      content = contentLoader.clear();
       lastPreviewKey = null;
-      previewImageUrl = null;
-      previewImageHeld = false;
-      previewImageNote = null;
-      showingRendition(null);
-      previewText = null;
-      previewHighlightedHtml = null;
-      previewMarkdownHtml = null;
-      previewCsv = null;
-      previewPdf = null;
-      previewVideo = null;
-      previewFolderChildrenRaw = [];
-      previewCollapsedRoot = null;
-      previewCollapsedNote = null;
-      previewError = null;
-      previewLoading = false;
       return;
     }
     if (key === lastPreviewKey) return;
@@ -435,74 +384,13 @@ import { openFile } from "$lib/api/open";
     loadPreview(file);
   });
 
-  /** Shows a decoded image. A held image's blob is released here unless the
-   * new image already adopted a blob in its place (which released it). */
-  function showImage(url: string): void {
-    if (!url.startsWith("blob:")) previewLifetime.clearBlob();
-    previewImageUrl = url;
-    previewImageHeld = false;
-  }
-
-  /** Remembers a loaded file image (the cache takes its blob) and shows it. */
-  function showLoadedImage(request: PreviewRequest, path: string, cacheBust: string, options: PreviewImageOptions, image: PreviewImageReady): void {
-    previewLifetime.disownBlob(request, image.url);
-    imageCache.store(path, cacheBust, options, image);
-    showCachedImage(image);
-  }
-
-  /** Shows a remembered image for `file` (rendition state included); false on a miss. */
-  function showRememberedImage(request: PreviewRequest, file: FileEntry, cacheBust: string, options: PreviewImageOptions): boolean {
-    const image = imageCache.lookup(file.path, cacheBust, options);
-    if (!image) return false;
-    showCachedImage(image);
-    if (image.resolution === "rendition") showingRendition({ path: file.path, cacheBust, owner: imageOwner(request), request });
-    previewImageNote = imageNote(file, image);
-    return true;
-  }
-
-  function imageOwner(request: PreviewRequest) {
-    return {
-      isCurrent: () => previewLifetime.isCurrent(request),
-      adoptBlob: (url: string) => previewLifetime.adoptBlob(request, url),
-      releaseBlob: (url: string) => previewLifetime.releaseBlob(request, url),
-    };
-  }
-
-  function imageNote(file: FileEntry, image: PreviewImageReady): string | null {
-    return image.viaBackend && /\.avif$/i.test(file.name) ? "AVIF fallback preview shows the first frame." : null;
-  }
-
-  /** Shows an image the cache owns; any blob the lifetime still holds is released. */
-  function showCachedImage(image: PreviewImageReady): void {
-    previewLifetime.clearBlob();
-    previewImageUrl = image.url;
-    previewImageHeld = false;
-  }
-
-  // The rendition on screen and the request that showed it, so its upgrade
-  // can be remembered under that file version.
-  let shownRendition: (ShownRendition & { readonly request: PreviewRequest }) | null = null;
-
-  function showingRendition(rendition: typeof shownRendition): void {
-    shownRendition = rendition;
-    fullResolution.showing(rendition);
-    previewShowsRendition = rendition !== null;
-  }
-
-  // Fullscreen or zoom needs the original: decode it off-screen while the
-  // rendition stays up, then swap it in (#1054).
+  // Fullscreen/zoom upgrades the shown rendition without blanking it.
   const wantsFullResolution = () => needsFullResolution({ fullscreen: fullscreen.active, zoom: fullscreen.zoom });
   $effect(() => {
-    if (!previewShowsRendition || !wantsFullResolution()) return;
-    // Captured with the upgrade's target: the original is remembered under
-    // the version of the rendition it replaces.
-    const source = shownRendition;
-    void fullResolution.upgrade(wantsFullResolution).then((image) => {
-      // Re-checked at the swap: leaving fullscreen or moving to another file
-      // while the original decoded must keep what is on screen.
-      if (!image || !source || shownRendition !== source || !previewShowsRendition || !wantsFullResolution()) return;
-      showLoadedImage(source.request, source.path, source.cacheBust, {}, image);
-      previewShowsRendition = false;
+    const source = content;
+    if (source.kind !== "image" || !source.rendition || !wantsFullResolution()) return;
+    void contentLoader.upgrade(source, wantsFullResolution).then((upgraded) => {
+      if (upgraded && content === source && wantsFullResolution()) content = upgraded;
     });
   });
 
@@ -522,246 +410,16 @@ import { openFile } from "$lib/api/open";
     });
   }
 
-  /** Whether loadPreview shows this file as a plain image (its image branch). */
-  function rendersAsImage(file: FileEntry): boolean {
-    return file.kind !== "directory" && !isZipFile(file) && !isPdfFile(file) && !isVideoMediaFile(file)
-      && (isImageFile(file) || isSvgFile(file));
+  function loadPreview(file: FileEntry): void {
+    if (file.kind !== "directory") frecencyStore.recordFileAction(file.path);
+    // Reads inside the loader must not subscribe the selection effect to the
+    // content it replaces (including a held image) or the viewer's geometry.
+    untrack(() => void contentLoader.load(file, content, {
+      localRevision: localPreviewRevision, imageOptions: imageLoadOptions(),
+    }, next => { content = next; }));
   }
 
-  async function loadPreview(file: FileEntry): Promise<void> {
-    const request = previewLifetime.begin(`${file.path}|${file.modified}|${file.size}`);
-    // Image to image keeps the current image until the next one is decoded;
-    // its blob (if any) is released when the next image is adopted or shown
-    // (showImage), or below if that load fails. Otherwise release any
-    // object-URL from a previous backend-fallback image now so the bytes
-    // aren't pinned in memory across navigations.
-    const holdImage = previewImageUrl !== null && rendersAsImage(file);
-    if (!holdImage) {
-      previewLifetime.clearBlob();
-      previewImageUrl = null;
-    }
-    previewImageHeld = holdImage;
-    previewImageNote = null;
-    showingRendition(null);
-    previewText = null;
-    previewHighlightedHtml = null;
-    previewMarkdownHtml = null;
-    previewCsv = null;
-    previewPdf = null;
-    previewVideo = null;
-    previewFolderChildrenRaw = [];
-    previewCollapsedRoot = null;
-    previewCollapsedNote = null;
-    previewError = null;
-    previewTruncatedLines = 0;
-    previewTruncatedLabel = "lines";
-    previewLoading = true;
-
-    if (file.kind !== "directory") {
-      // Previewing a file marks its folder as actively worked-in for Recent ranking.
-      frecencyStore.recordFileAction(file.path);
-    }
-
-    if (file.kind === "directory") {
-      // Descend through any chain of single-child folders so the preview
-      // shows useful content instead of one lonely folder, then report the
-      // collapsed path (e.g. "a/b") in the indicator. Capped to guard against
-      // symlink cycles.
-      const MAX_DESCENT = 40;
-      let dirPath = file.path;
-      const chain: string[] = [];
-      for (let depth = 0; depth < MAX_DESCENT; depth++) {
-        const result = await fetchDirectory(dirPath);
-        if (!previewLifetime.isCurrent(request)) return;
-        if (!result.ok) {
-          previewError = result.error;
-          previewLoading = false;
-          return;
-        }
-        const entries = result.data.entries;
-        if (entries.length === 1 && entries[0].kind === "directory") {
-          chain.push(entries[0].name);
-          dirPath = entries[0].path;
-          continue;
-        }
-        previewFolderChildrenRaw = entries;
-        if (chain.length > 0) {
-          previewCollapsedRoot = chain.join("/");
-          previewCollapsedNote = chain.length === 1 ? "single subfolder" : "single-folder chain";
-        }
-        break;
-      }
-      previewLoading = false;
-      return;
-    }
-
-    // ZIP files preview their contents in the same folder-list format as a
-    // directory (one level deep, directories first). When the archive collapses
-    // to a single top-level folder (or chain of them), descend and show its name.
-    if (isZipFile(file)) {
-      const result = await listArchiveContents(file.path);
-      if (!previewLifetime.isCurrent(request)) return;
-      if (result.ok) {
-        previewFolderChildrenRaw = result.data.entries;
-        if (result.data.rootFolder) {
-          previewCollapsedRoot = result.data.rootFolder;
-          previewCollapsedNote = "single top-level folder";
-        }
-      } else {
-        previewError = result.error;
-      }
-      previewLoading = false;
-      return;
-    }
-
-    // Cache-busting suffix derived from mtime+size — same value as previewKey,
-    // ensures the webview re-fetches when the on-disk file changes.
-    const bust = `${file.modified}-${file.size}-${localPreviewRevision}`;
-
-    if (isPdfFile(file)) {
-      try {
-        const component = await import("./PdfPreview.svelte");
-        if (!previewLifetime.isCurrent(request)) return;
-        PdfPreview = component.default;
-        previewPdf = { path: file.path, key: request.key };
-      } catch (error) {
-        if (!previewLifetime.isCurrent(request)) return;
-        previewError = `Cannot preview PDF: ${error instanceof Error ? error.message : String(error)}`;
-      }
-      previewLoading = false;
-      return;
-    }
-
-    if (isVideoMediaFile(file)) {
-      const key = `${file.path}|${file.modified}|${file.size}|${localPreviewRevision}`;
-      try {
-        const component = await import("./VideoPreview.svelte");
-        if (!previewLifetime.isCurrent(request)) return;
-        VideoPreview = component.default;
-        previewVideo = { path: file.path, name: file.name, key };
-      } catch (error) {
-        if (!previewLifetime.isCurrent(request)) return;
-        previewError = `Cannot preview video: ${extractError(error)}`;
-      }
-      previewLoading = false;
-      return;
-    }
-
-    if (isImageFile(file) || isSvgFile(file)) {
-      // A display-sized rendition for large images, else the original: asset
-      // protocol first, then the backend read (cloud placeholders, and the
-      // only path in browser/E2E mode); see state/preview-image.
-      // An image this pane already showed for this file version is shown at
-      // once, with no request (#1014).
-      const options = imageLoadOptions();
-      if (showRememberedImage(request, file, bust, options)) {
-        previewLoading = false;
-        return;
-      }
-      const owner = imageOwner(request);
-      const image = await loadPreviewImage(file.path, bust, owner, options);
-      if (image.status === "stale") return;
-      if (image.status === "ready") {
-        showLoadedImage(request, file.path, bust, options, image);
-        if (image.resolution === "rendition") showingRendition({ path: file.path, cacheBust: bust, owner, request });
-        previewImageNote = imageNote(file, image);
-      } else {
-        previewError = "Cannot preview image";
-      }
-    } else if (isVideoFile(file)) {
-      // Audio cover art retains the independent ffmpeg-backed preview seam.
-      const result = await getVideoThumbnailData(file.path, VIDEO_PREVIEW_SIZE);
-      if (!previewLifetime.isCurrent(request)) {
-        if (result.ok) previewLifetime.adoptBlob(request, result.data);
-        return;
-      }
-      if (result.ok) {
-        if (!previewLifetime.adoptBlob(request, result.data)) return;
-        try {
-          await decodeImage(result.data);
-          if (!previewLifetime.isCurrent(request)) return;
-          showImage(result.data);
-        } catch (error) {
-          if (!previewLifetime.isCurrent(request)) return;
-          previewLifetime.releaseBlob(request, result.data);
-          console.warn("[preview] video frame decode failed", { path: file.path, error });
-          logFrontendDiagnostic("preview video frame decode failed", {
-            path: file.path,
-            error: error instanceof Error ? error.message : String(error),
-          });
-          previewError = "Cannot preview video";
-        }
-      } else {
-        console.warn("[preview] video frame extraction failed", { path: file.path, error: result.error });
-        logFrontendDiagnostic("preview video frame extraction failed", {
-          path: file.path,
-          error: result.error,
-        });
-        previewError = "Cannot preview video";
-      }
-    } else if (isTextFile(file)) {
-      const result = await readTextFile(file.path, 524288); // 512KB limit for preview
-      if (!previewLifetime.isCurrent(request)) return; // Stale
-      if (result.ok) {
-        const csvPreview = /\.csv$/i.test(file.name) ? parseCsvPreview(result.data) : null;
-        if (csvPreview) {
-          previewCsv = csvPreview;
-          if (csvPreview.totalRows > csvPreview.rows.length) {
-            previewTruncatedLines = csvPreview.totalRows;
-            previewTruncatedLabel = "rows";
-          }
-        } else {
-        // Limit to first 200 lines to avoid lag on large files
-        const MAX_PREVIEW_LINES = 200;
-        const lines = result.data.split("\n");
-        const truncated = lines.length > MAX_PREVIEW_LINES;
-        const displayText = truncated
-          ? lines.slice(0, MAX_PREVIEW_LINES).join("\n")
-          : result.data;
-        previewText = displayText;
-        previewTruncatedLines = truncated ? lines.length : 0;
-        const isMarkdown = /\.(md|markdown)$/i.test(file.name);
-        if (isMarkdown && displayText.length < 200_000) {
-          // Obsidian-style: render the markdown; fenced code blocks keep
-          // syntax highlighting via the shared hljs setup.
-          try {
-            previewMarkdownHtml = renderMarkdown(displayText);
-          } catch {
-            previewMarkdownHtml = null;
-          }
-        }
-        // Only syntax-highlight if content is reasonably small (< 50KB)
-        if (displayText.length < 50_000) {
-          try {
-            previewHighlightedHtml = highlightCode(displayText, file.name);
-          } catch {
-            previewHighlightedHtml = null;
-          }
-        } else {
-          previewHighlightedHtml = null;
-        }
-        }
-      } else {
-        previewError = result.error;
-      }
-    }
-
-    // A superseded request must not hide the current selection's spinner.
-    if (previewLifetime.isCurrent(request)) {
-      // The next image failed: drop the previous one so the error shows.
-      if (previewImageHeld) {
-        previewImageHeld = false;
-        previewImageUrl = null;
-        previewLifetime.clearBlob();
-      }
-      previewLoading = false;
-    }
-  }
-
-  onDestroy(() => {
-    previewLifetime.dispose();
-    imageCache.clear();
-  });
+  onDestroy(() => contentLoader.dispose());
 </script>
 
 <!-- The dock slot holds the preview's docked size in the layout, whether or
@@ -913,45 +571,47 @@ import { openFile } from "$lib/api/open";
     <div class="preview-content" class:fs-text={fullscreen.active && textZoomable}
       style:--fs-text-zoom={fullscreen.zoom}
       onwheel={textZoomable ? fullscreen.wheel : undefined}
-      role="region" aria-label="Preview of {selectedFile.name}{isVideoMediaFile(selectedFile) ? ' (video)' : ''}" aria-busy={previewLoading} tabindex="0"
+      role="region" aria-label="Preview of {selectedFile.name}{selectedKind === "video" ? ' (video)' : ''}" aria-busy={previewLoading} tabindex="0"
       bind:this={previewContentEl} bind:clientWidth={previewContentWidth} bind:clientHeight={previewContentHeight}>
-      {#if isVideoMediaFile(selectedFile)}
+      {#if selectedKind === "video"}
         <span class="video-preview-marker"><VideoIndicator /></span>
       {/if}
-      {#if previewLoading && !previewImageHeld}
+      {#if content.kind === "loading"}
         {#if showPreviewSpinner}
-          <div class="preview-loading">
-            <div class="spinner"></div>
-          </div>
+          <div class="preview-loading"><div class="spinner"></div></div>
         {/if}
-      {:else if previewPdf && PdfPreview}
-        {#key previewPdf.key}
-          <PdfPreview path={previewPdf.path} name={selectedFile.name} fullscreen={fullscreen.active}
+      {:else if content.kind === "pdf"}
+        {#key content.key}
+          <content.component path={content.path} name={selectedFile.name} fullscreen={fullscreen.active}
             ontogglefullscreen={fullscreen.toggle} onnavigate={navigateSibling} />
         {/key}
-      {:else if previewVideo && VideoPreview}
-        {#key previewVideo.key}
-          <VideoPreview path={previewVideo.path} name={previewVideo.name} fullscreen={fullscreen.active} ontogglefullscreen={fullscreen.toggle} />
+      {:else if content.kind === "video"}
+        {#key content.key}
+          <content.component path={content.path} name={content.name} fullscreen={fullscreen.active} ontogglefullscreen={fullscreen.toggle} />
         {/key}
-      {:else if previewImageUrl}
-        <PreviewImageSurface src={previewImageUrl} alt={selectedFile.name} {fullscreen}
+      {:else if content.kind === "image" || content.kind === "audio-cover"}
+        <PreviewImageSurface src={content.url} alt={selectedFile.name} {fullscreen}
           onresolution={(url, width, height) => (previewImageSize = { url, width, height })}>
-          {#if previewImageNote}<p class="image-preview-note">{previewImageNote}</p>{/if}
-          {#if previewImageHeld && showPreviewSpinner}
+          {#if content.note}<p class="image-preview-note">{content.note}</p>{/if}
+          {#if content.held && showPreviewSpinner}
             <div class="preview-loading preview-loading-over-image"><div class="spinner"></div></div>
           {/if}
         </PreviewImageSurface>
-      {:else if previewFolderChildren.length > 0}
-        <PreviewFolderList entries={previewFolderChildren} collapsedRoot={previewCollapsedRoot} collapsedNote={previewCollapsedNote} />
-      {:else if previewCsv !== null}
+      {:else if content.kind === "directory" || content.kind === "zip"}
+        {#if previewFolderChildren.length > 0}
+          <PreviewFolderList entries={previewFolderChildren} collapsedRoot={content.collapsedRoot} collapsedNote={content.collapsedNote} />
+        {:else}
+          <div class="preview-empty"><span>No preview available</span></div>
+        {/if}
+      {:else if content.kind === "csv"}
         <div class="preview-csv" role="table" aria-label="CSV preview">
-          <div class="preview-csv-table" style={`--csv-column-template: ${csvColumnTemplate(previewCsv)};`}>
+          <div class="preview-csv-table" style={`--csv-column-template: ${csvColumnTemplate(content.csv)};`}>
             <div class="preview-csv-row preview-csv-header" role="row">
-              {#each previewCsv.header as cell, index (index)}
+              {#each content.csv.header as cell, index (index)}
                 <div class="preview-csv-cell" role="columnheader">{cell}</div>
               {/each}
             </div>
-            <VirtualList items={previewCsv.rows} itemHeight={28} getItemHeight={csvRowHeight} getKey={(_row, index) => index} itemOverflow="visible" class="preview-csv-rows">
+            <VirtualList items={content.csv.rows} itemHeight={28} getItemHeight={csvRowHeight} getKey={(_row, index) => index} itemOverflow="visible" class="preview-csv-rows">
               {#snippet children(row)}
                 <div class="preview-csv-row" role="row">
                   {#each row as cell, index (index)}
@@ -962,32 +622,19 @@ import { openFile } from "$lib/api/open";
             </VirtualList>
           </div>
         </div>
-        {#if previewTruncatedLines > 0}
-          <div class="preview-truncated">Showing first 200 of {previewTruncatedLines.toLocaleString()} {previewTruncatedLabel}</div>
-        {/if}
-      {:else if previewMarkdownHtml !== null}
-        <div class="preview-markdown" class:hljs-light={isLightTheme} class:hljs-dark={!isLightTheme}>{@html previewMarkdownHtml}</div>
-        {#if previewTruncatedLines > 0}
-          <div class="preview-truncated">Showing first 200 of {previewTruncatedLines.toLocaleString()} {previewTruncatedLabel}</div>
-        {/if}
-      {:else if previewHighlightedHtml !== null}
-        <pre class="preview-text preview-code" class:hljs-light={isLightTheme} class:hljs-dark={!isLightTheme}><code class="hljs">{@html previewHighlightedHtml}</code></pre>
-        {#if previewTruncatedLines > 0}
-          <div class="preview-truncated">Showing first 200 of {previewTruncatedLines.toLocaleString()} {previewTruncatedLabel}</div>
-        {/if}
-      {:else if previewText !== null}
-        <pre class="preview-text">{previewText}</pre>
-        {#if previewTruncatedLines > 0}
-          <div class="preview-truncated">Showing first 200 of {previewTruncatedLines.toLocaleString()} {previewTruncatedLabel}</div>
-        {/if}
-      {:else if previewError}
-        <div class="preview-empty">
-          <span class="preview-error-text">{previewError}</span>
-        </div>
+      {:else if content.kind === "markdown"}
+        <div class="preview-markdown" class:hljs-light={isLightTheme} class:hljs-dark={!isLightTheme}>{@html content.html}</div>
+      {:else if content.kind === "code"}
+        <pre class="preview-text preview-code" class:hljs-light={isLightTheme} class:hljs-dark={!isLightTheme}><code class="hljs">{@html content.html}</code></pre>
+      {:else if content.kind === "text"}
+        <pre class="preview-text">{content.text}</pre>
+      {:else if content.kind === "error"}
+        <div class="preview-empty"><span class="preview-error-text">{content.message}</span></div>
       {:else}
-        <div class="preview-empty">
-          <span>No preview available</span>
-        </div>
+        <div class="preview-empty"><span>No preview available</span></div>
+      {/if}
+      {#if "truncatedLines" in content && content.truncatedLines > 0}
+        <div class="preview-truncated">Showing first 200 of {content.truncatedLines.toLocaleString()} {content.truncatedLabel}</div>
       {/if}
     </div>
 

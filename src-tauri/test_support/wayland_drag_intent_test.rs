@@ -338,6 +338,7 @@ fn drop_intent_uses_fresh_protocol_snapshot_and_survives_later_key_changes() {
                 name: "file.txt".into(),
                 kind: "file".into(),
                 native_copy_policy: Some(crate::native_file_drag::CopyPolicy::Modifier),
+                html5: false,
             }),
         );
         registry.capture(

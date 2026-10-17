@@ -841,3 +841,45 @@ it.each(dropClockCases)("fresh external plugin drops survive $direction correcti
   await flush();
   expect(restartedHandler).toHaveBeenCalledExactlyOnceWith(externalPaths, "external");
 });
+
+it.each(["verified", "different-paths", "stale-sequence"] as const)("final %s native provenance rechecks an ambiguous early Enter (#1217)", async (kind) => {
+  let tick = 10; const epoch = clockEpoch += 1000;
+  vi.spyOn(Date, "now").mockImplementation(() => epoch + tick);
+  vi.stubGlobal("performance", { timeOrigin: epoch, now: () => tick });
+  const handler = vi.fn(); cleanup.push(fileDropTargets.register(hit, handler));
+  tick = 9;
+  dragState.start({ ...entry, paths: [...paths], html5: true });
+  tick = 10;
+  dragState.endHtml5(dragState.current);
+  begin(); await flush();
+  const original = { ...dragState.current! };
+  // WebKit Enter can beat adoption inside the previous gesture's end uncertainty.
+  native.emit!({ payload: { type: "enter", paths, source: null, observedAt: epoch + 10.25, position: { x: 40, y: 60 } } });
+  tick = 12;
+  const source = kind === "different-paths" ? { ...original, path: "/other", paths: ["/other"] }
+    : kind === "stale-sequence" ? { ...original, gestureSequence: 0 } : original;
+  native.emit!({ payload: { type: "drop", paths, source, observedAt: epoch + 11, position: { x: 40, y: 60 } } });
+  await flush();
+  if (kind === "verified") expect(handler).toHaveBeenCalledExactlyOnceWith(paths, "pane");
+  else expect(handler).not.toHaveBeenCalled();
+});
+
+it.each(["fresh-enter", "old-enter"] as const)("proven external GTK source keeps external policy with %s and an unsettled own source (#1217)", async kind => {
+  let tick = 10; const epoch = clockEpoch += 1000;
+  vi.spyOn(Date, "now").mockImplementation(() => epoch + tick);
+  vi.stubGlobal("performance", { timeOrigin: epoch, now: () => tick });
+  native.start.mockImplementationOnce(() => new Promise<void>(() => {}));
+  const handler = vi.fn(); cleanup.push(fileDropTargets.register(hit, handler));
+  begin(); await flush();
+  const source = dragState.current!;
+  const deliver = (type: string, externalSource?: boolean) => native.emit!({ payload: {
+    type, paths, source: null, externalSource, observedAt: epoch + tick,
+    observationClock: `browser:${epoch}`, position: { x: 40, y: 60 },
+  } });
+  if (kind === "old-enter") deliver("enter");
+  tick = 20;
+  if (kind === "fresh-enter") deliver("enter", true);
+  deliver("drop", true); await flush();
+  expect(handler).toHaveBeenCalledExactlyOnceWith(paths, "external");
+  expect(dragState.current?.sessionId).toBe(source.sessionId);
+});

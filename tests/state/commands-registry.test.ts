@@ -12,6 +12,7 @@ import {
   type Command,
 } from "$lib/state/commands.svelte";
 
+import { keybindingsStore } from "$lib/state/keybindings.svelte";
 import { modalOwnership } from "$lib/state/modal-ownership.svelte";
 import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 import { runAfterClose } from "$lib/state/run-after-close";
@@ -96,4 +97,20 @@ it("palette dispatch cannot mutate a covered pane after its own window modal clo
     await expect(executeCommand("t.a")).resolves.toBe(true);
     expect(handler).toHaveBeenCalledOnce();
   } finally { releasePalette(); releasePane(); }
+});
+
+
+it("keeps custom bindings when a command retires its default shortcut (#1216)", () => {
+  const event = { key: "t", code: "KeyT", ctrlKey: true, altKey: true, metaKey: false, shiftKey: false, repeat: false } as KeyboardEvent;
+  registerCommand(cmd("t.a", { shortcut: "Ctrl+`" }));
+  keybindingsStore.setShortcut("t.a", "Ctrl+Alt+T");
+  try {
+    registerCommand(cmd("t.a"));
+    expect(keybindingsStore.findMatchingCommand(event)).toBe("t.a");
+    unregisterCommand("t.a");
+    expect(keybindingsStore.findMatchingCommand(event)).toBeUndefined();
+  } finally {
+    unregisterCommand("t.a");
+    keybindingsStore.resetToDefault("t.a");
+  }
 });

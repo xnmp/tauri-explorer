@@ -69,6 +69,7 @@
   class:empty-folder={appearance.emptyFolder}
   class:drop-target={interactions.isDropTarget(entry.path)}
   class:copy-drop={interactions.isCopyDrop(entry.path)}
+  use:interactions.trackDragSource
   draggable={usesHtml5Drag}
   onclick={(e) => onitemclick(entry, e)}
   ondblclick={() => { if (!isRenaming) onitemdblclick(entry); }}

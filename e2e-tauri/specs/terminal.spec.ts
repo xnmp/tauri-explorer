@@ -2,7 +2,7 @@ import { browser, $, expect } from "@wdio/globals";
 import { basename } from "node:path";
 import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
-import { domText, navigateTo } from "./helpers";
+import { domText, navigateTo, resetNativeKeybindings } from "./helpers";
 import { createNativeFixtureDirectory } from "../native-qualification";
 
 /**
@@ -17,6 +17,11 @@ import { createNativeFixtureDirectory } from "../native-qualification";
  * live DOM rows (.xterm-rows), which WebKitWebDriver exposes via
  * textContent (rendered-text clipping doesn't apply, see helpers.ts).
  */
+
+async function toggleTerminal(): Promise<void> {
+  await browser.keys(["Alt", "m"]);
+  await browser.keys("t");
+}
 
 async function terminalText(): Promise<string> {
   return domText(".terminal-panel .xterm-rows");
@@ -39,9 +44,10 @@ async function sendTerminalCommand(
 }
 
 describe("embedded terminal", () => {
-  it("opens with Ctrl+` and shows a live shell", async () => {
+  before(async () => { await resetNativeKeybindings(); });
+  it("opens with Alt+M T and shows a live shell", async () => {
     await $(".file-list").waitForExist({ timeout: 15_000 });
-    await browser.keys(["Control", "`"]);
+    await toggleTerminal();
     await $(".terminal-panel .xterm").waitForDisplayed({ timeout: 10_000 });
 
     // A prompt (any output at all) must arrive from the PTY. Generous
@@ -86,7 +92,7 @@ describe("embedded terminal", () => {
 
   (process.platform === "linux" ? it : it.skip)("pastes OS clipboard text into the real shell (#732)", async () => {
     await $(".file-list").waitForExist({ timeout: 15_000 });
-    if (!(await $(".terminal-panel").isDisplayed())) await browser.keys(["Control", "`"]);
+    if (!(await $(".terminal-panel").isDisplayed())) await toggleTerminal();
     await $(".terminal-panel .xterm").waitForDisplayed({ timeout: 10_000 });
     await browser.waitUntil(async () => (await terminalText()).trim().length > 0, { timeout: 45_000 });
     const marker = `terminal-paste-${Date.now()}`;
@@ -142,8 +148,8 @@ describe("embedded terminal", () => {
     );
   });
 
-  it("Ctrl+` from inside the terminal hides the panel and keeps the session", async () => {
-    await browser.keys(["Control", "`"]);
+  it("Alt+M T from inside the terminal hides the panel and keeps the session", async () => {
+    await toggleTerminal();
     await browser.waitUntil(
       async () => !(await $(".terminal-panel").isDisplayed()),
       { timeout: 5_000, timeoutMsg: "panel never hid" },
@@ -152,7 +158,7 @@ describe("embedded terminal", () => {
     await expect($(".terminal-panel")).toExist();
 
     // Reopen: previous scrollback is still there (same session, no respawn).
-    await browser.keys(["Control", "`"]);
+    await toggleTerminal();
     await $(".terminal-panel .xterm").waitForDisplayed({ timeout: 5_000 });
     const text = await terminalText();
     expect(text).toContain("pwd");
@@ -170,7 +176,7 @@ describe("embedded terminal", () => {
     async () => {
       // Ensure the panel is open and focused.
       if (!(await $(".terminal-panel").isDisplayed())) {
-        await browser.keys(["Control", "`"]);
+        await toggleTerminal();
       }
       await $(".terminal-panel .xterm").waitForDisplayed({ timeout: 5_000 });
 
@@ -194,7 +200,7 @@ describe("embedded terminal", () => {
       // Only zsh (via the ZDOTDIR shim) and fish emit OSC 7; bash in CI won't,
       // so this is skipped there.
       if (!(await $(".terminal-panel").isDisplayed())) {
-        await browser.keys(["Control", "`"]);
+        await toggleTerminal();
       }
       await $(".terminal-panel .xterm").waitForDisplayed({ timeout: 5_000 });
 

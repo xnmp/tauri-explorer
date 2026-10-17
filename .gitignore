@@ -23,6 +23,7 @@ __pycache__/
 /test-results-load/
 /test-results-sweep/
 /qualification-results/
+/native-contract-diagnostics/
 /test-corpus/
 .vagrant/
 test-screenshots/

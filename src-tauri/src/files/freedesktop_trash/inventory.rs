@@ -378,6 +378,9 @@ fn read_item(
         id: super::super::trash_inventory::entry_id(&[
             source.root.as_os_str().as_bytes(),
             name.as_bytes(),
+            &serde_json::to_vec(&payload).map_err(|error| error.to_string())?,
+            &stat.ctime().to_le_bytes(),
+            &stat.ctime_nsec().to_le_bytes(),
         ]),
         name: display_name,
         original_path: Some(original.to_string_lossy().into_owned()),
@@ -400,6 +403,7 @@ fn read_item(
     };
     Ok(Item {
         entry,
+        native_deletion: None,
         restore: Some(Restorable {
             key: original.to_string_lossy().into_owned(),
             destination: original,

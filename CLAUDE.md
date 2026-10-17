@@ -73,6 +73,12 @@ Rules that bite:
 - The external Recycle Bin launch (Trash view → "Open in System File Manager") is platform-specific and belongs in `system::open_recycle_bin`: Windows uses `shell:RecycleBinFolder`, macOS opens `~/.Trash`, and Linux requests the native `trash:///` view through FileManager1. On definite service unavailability, launch a registered graphical file manager for the absolute Freedesktop `Trash/files` directory (#660, #672, #757).
 - Do not use generic `gio open trash:///` or `xdg-open` on `Trash/files` as proof of a graphical Trash view: the former can dispatch to a handler that rejects the URI asynchronously, while the latter can open a terminal as the directory MIME default. Treat uncertain FileManager1 responses as errors rather than launching a second manager (#660, #672, #757).
 - Keep state machines and caches out of component-local scope (`<script module>` in a `.svelte` file is not a state layer). If it can't be unit-tested through an import, it will eventually be wrong unobserved (#444).
+- Preview file-kind precedence lives only in `domain/preview-kind.ts`. File loaders,
+  image holds/cache ownership and rendition upgrades live in `state/preview-content.ts`;
+  replace `PreviewContent` as a whole. Keep selection-effect reads of content and
+  geometry untracked so publishing a preview cannot start another request (#1206).
+  Supply lazy PDF/video viewer factories from the component; even type-only
+  component imports in state violate the architecture boundary (`bun run lint:arch`).
 - Rust test modules included with `#[path]` from production modules belong in `src-tauri/test_support/`, not Cargo's auto-discovered `src-tauri/tests/`. Keeping source-included modules under `tests/` makes `cargo clippy --all-targets` compile them again as standalone integration crates, where their `super`/`crate` imports are invalid.
 - The native crate is a desktop application library with no Rust doctest examples; keep `[lib] doctest = false` so shared qualification target caches cannot feed a zero-test rustdoc harness mixed-feature Tauri artifacts. Unit and integration tests remain under ordinary `cargo test` targets.
 - Progress toasts must bypass the generic opacity entrance animation so accepted long-running work is visible immediately. Under load, WebKit can strand an entrance animation on its zero-opacity first frame; keep motion on the progress spinner instead.
@@ -132,6 +138,10 @@ Rules that bite:
 
 ## Documentation
 
+- Architecture passes resume from the ledger's `Covered through` commit, not
+  the previous pass's merge date. Read PR review findings and residual limits;
+  a landed intervention expires its active entry. Rename-aware per-file churn
+  needs `git log --follow -- <file>`; aggregate counts can differ (#1219).
 - **Start at [docs/code-map/](docs/code-map/)**: [map-feature.md](docs/code-map/map-feature.md) for cross-layer work and bug hunts, [map-playbook.md](docs/code-map/map-playbook.md) recipes for task-shaped changes (new palette command / context-menu action / Tauri command / setting), [map-folder.md](docs/code-map/map-folder.md) as the exhaustive per-file index. For a small localized change you can already name, skip the maps and grep (measured net loss on cheap tasks; prose architecture docs were deleted for the same reason — see [STUDY.md](docs/code-map/STUDY.md)).
 - **Keep the maps current or they turn harmful.** New/moved source file → update `map-folder.md` (+ the `map-feature.md` cluster), then `python3 docs/code-map/validate.py --coverage`. CI runs the same check.
 - [docs/lessons/](docs/lessons/) — gotchas from closed issues, **one file per issue**: write `docs/lessons/<issue>-<slug>.md` when you fix a bug (never append to the frozen [docs/lessons_learnt.md](docs/lessons_learnt.md) archive — shared-file appends conflicted every open PR, #544). When hunting a bug, search both: `grep -ri <term> docs/lessons/ docs/lessons_learnt.md`.

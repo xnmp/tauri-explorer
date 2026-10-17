@@ -2,6 +2,38 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.12.2 — 2026-10-17
+
+Hotfix for Linux file drags that failed to move files into folders. Cancelling
+a drag with Escape also no longer blocks the next drag. Trash gains permanent
+deletion with confirmation, and Recycle Bin is easier to reach from search.
+
+### Added
+
+- Permanently delete Trash items from the context menu, Delete or Shift+Delete,
+  always with confirmation and checks that the exact listed item is deleted
+  (#1216, #1218).
+- Open Recycle Bin from the Command Palette. Quick Open includes it when it
+  appears in your visited-location history (#1216, #1218).
+
+### Changed
+
+- The application icon fills the opening to the right of the tau, making the
+  complete letter visible inside the jade folder (#1231, #1232).
+- Default shortcuts for Toggle Sidebar and Toggle Terminal are now Alt+M B
+  and Alt+M T. Custom bindings are preserved (#1216, #1218).
+- Required Linux native tests exercise real file moves in Details, List, Tiles
+  and Miller columns, modifier-controlled copies, and Escape followed by a new
+  drag. Filesystem outcomes and a deliberate transport-failure control prevent
+  simulated drag events alone from passing the gate (#1226, #1227).
+
+### Fixed
+
+- Linux in-app file drags use WebKit's original native drag source and complete
+  receiver negotiation, restoring moves into folders (#1217, #1218).
+- Completed Linux drag contexts are released so cancelling a drag with Escape
+  does not leave an invisible input window blocking the next gesture (#1227).
+
 ## v1.12.1 — 2026-10-16
 
 Trash and Recycle Bin now open inside Tauri Explorer, with original locations

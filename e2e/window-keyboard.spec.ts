@@ -6,12 +6,12 @@ for (const shortcut of ["Ctrl+P", "Alt+M T"]) {
     await page.addInitScript((shortcut) => {
       // Navigation commands precede dialog/terminal commands in the registry.
       // A user override makes the old broad second lookup select Go Up.
-      localStorage.setItem("explorer-keybindings", JSON.stringify({ "navigation.goUp": shortcut }));
+      localStorage.setItem("explorer-keybindings", JSON.stringify({ "navigation.goUp": shortcut, "view.toggleTerminal": "Ctrl+Alt+T" }));
     }, shortcut);
     await page.goto(HOME_URL);
     await waitForEntries(page);
     const pathBefore = await page.locator(".status-path").getAttribute("title");
-    await page.keyboard.press("Control+`");
+    await page.keyboard.press("Control+Alt+t");
     const panel = page.locator(".terminal-panel");
     await expect(panel).toBeVisible();
     await panel.locator("textarea.xterm-helper-textarea").focus();
@@ -70,7 +70,7 @@ test("deferred terminal layout preserves the newer dialog's input ownership", as
       return new Promise((resolve) => request(() => request(() => resolve())));
     };
   });
-  await page.keyboard.press("Control+`");
+  await page.keyboard.press("Alt+m"); await page.keyboard.press("t");
   const terminal = page.locator(".terminal-panel textarea.xterm-helper-textarea");
   await terminal.waitFor({ state: "attached" });
   await terminal.focus();
@@ -99,7 +99,7 @@ for (const destination of ["dialog", "filter"] as const) {
     });
     await page.goto(HOME_URL);
     await waitForEntries(page);
-    await page.keyboard.press("Control+`");
+    await page.keyboard.press("Alt+m"); await page.keyboard.press("t");
     await request;
     await page.keyboard.press(destination === "dialog" ? "Control+p" : "Control+f");
     const input = page.locator(destination === "dialog" ? ".quick-open-dialog input.search-input" : ".filter-input");

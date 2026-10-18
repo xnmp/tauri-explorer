@@ -6,12 +6,13 @@ An architecture pass updates this file. When an entry crosses its trigger, the
 pass files at most three `tech-debt` issues (never `ai-ready`; a human chooses
 which debt to work). "Defer" is a valid verdict. Drop entries once they expire.
 
-Covered through: b9ef798baeb45037847337deaaa8390cebdc568d
+Covered through: 6bd522a0970e1be18609b97cc763872346722b33
 
 Passes: [#1205](https://github.com/xnmp/tauri-explorer/issues/1205)
 (first pass, 2026-10-16), [#1219](https://github.com/xnmp/tauri-explorer/issues/1219)
 (incremental pass, 2026-10-17), [#1251](https://github.com/xnmp/tauri-explorer/issues/1251)
 (incremental pass, 2026-10-18), [#1262](https://github.com/xnmp/tauri-explorer/issues/1262)
+(incremental pass, 2026-10-18), [#1277](https://github.com/xnmp/tauri-explorer/issues/1277)
 (incremental pass, 2026-10-18).
 
 ## How the first pass inspected history
@@ -153,6 +154,46 @@ warranted. Treat List's reported wheel cost/native-input gap as a residual to
 recheck on real hardware or in the next view phase, not an established repeated
 ownership defect.
 
+## Incremental inspection (#1277)
+
+Inspected all seven commits in
+`b9ef798baeb45037847337deaaa8390cebdc568d..6bd522a0970e1be18609b97cc763872346722b33`,
+the fetched `origin/dev` tip, including the previous ledger update. Read changed
+production ownership boundaries, tests, workflow/cache wiring, the execution
+plan and lessons, plus all seven PR bodies, comments, reviews and review threads.
+Only #1261 and #1263 have GitHub reviews; none has comments or review threads,
+and every conversation connection reports no further page. Review narratives
+in feature PR bodies are implementation reports, not GitHub review records.
+
+| Change | Evidence and disposition |
+| --- | --- |
+| [Native peek overflow expectation (#1261)](https://github.com/xnmp/tauri-explorer/pull/1261) | The [approval](https://github.com/xnmp/tauri-explorer/pull/1261#pullrequestreview-5558978885) accepts a causal root-notification receipt and displayed fresh child instead of assuming an evicted peek stays stale. The test explicitly touches directory metadata to exercise Windows' ancestor-notification path on Linux. It preserves cap, Git, pruning and retirement checks; production observation is unchanged (ADR 0013 and ADR 0014). |
+| [Previous ledger (#1263)](https://github.com/xnmp/tauri-explorer/pull/1263) | Documentation only. Its [approval](https://github.com/xnmp/tauri-explorer/pull/1263#pullrequestreview-5559050800) verified boundaries, fields, counts and expiries but could not access GitHub discussions/statuses. This pass retrieved conversations and rechecked filing owners. |
+| [List cards (#1265)](https://github.com/xnmp/tauri-explorer/pull/1265) | Pure structure/sizing/placement and navigation share one model; the composable owns scroll, grip and mounted windows, FileList still owns focus. Motion uses shared pure arming/reveal policy and inert identity-free ghosts. Session heights stay with peek state; surface feedback has an importable owner. Intra-PR focus, grip, reveal, accessibility and perf corrections are not separate deployed recurrences. Residual: reported concurrent production A/B scroll-back cost is +21–26%, +11% with carets off; improved wheel results do not establish native input/compositing performance. |
+| [Tiles panels and thumbnail ownership (#1266)](https://github.com/xnmp/tauri-explorer/pull/1266) | Pure panel geometry/navigation feeds variable-height VirtualList groups; the view composable owns motion, reveal and grip lifetime. Panel-side memory is pane session state. `thumbnail-loads` moves in-flight loads out of unmounted components into one cache-key owner, retaining results and allowing remounts to join (ADR 0008). This is an intervention already made, not grounds to file another extraction. Residuals: reported task cost +9–18% with no panel, +9–16% with one, and a brief above-panel first-frame sliver. Pre-existing crop invalidation is owned by open [#1267](https://github.com/xnmp/tauri-explorer/issues/1267). Turbo output now streams so shard timings are measurable; no cache-trust/publication policy changed. |
+| [Spring-loaded peeks (#1268)](https://github.com/xnmp/tauri-explorer/pull/1268) | One pure timer controller and lazy driver serve DOM, native and pointer drag adapters. Temporary peeks project through existing listings/watch caps without entering user expansion or size memory. Shared row identity drives hover and drop; deferred closes/holds preserve destination resolution. Pointer drags survive virtualization but cancel when the source leaves its listing. Native source snapshots and Rust/Wry completion ownership are unchanged. Open [#1269](https://github.com/xnmp/tauri-explorer/issues/1269) owns lost-Leave cleanup, old replay closing a newer spring, probe tightening and lingering background feedback. Native tests record a peek-open token and assert close plus final transfer into the hovered folder; #1269 still asks for stricter probe timing. A dedicated native drop *inside* the peek is deferred. The Chromium job cap rises to 30 minutes after an all-passing shard exceeded 20 minutes; this does not remove test assertions. |
+| [Late command registration (#1271)](https://github.com/xnmp/tauri-explorer/pull/1271) | An open palette now observes owned-registry list changes through `reactive-registry`; point lookups remain untracked and stale disposers cannot remove replacements. Client-compiled unit tests cover mutation notifications and registration-effect loops; the browser contract enables/disables a plugin while the palette stays open. Peek startup exposed an older missing reactive dependency, not a listing/watch regression. The smallest ownership wrapper has already landed; retain ADR 0008 rather than introduce another registry owner. |
+| [Peek coverage audit (#1273)](https://github.com/xnmp/tauri-explorer/pull/1273) | Tests only: cross-level List range, root-only Ctrl+A/typeahead, rendered Tiles grip increments/bounds and recursive Details sort. The PR records mutation controls for each, with no product defect found. Its body says all five gaps close, but the actual commit/title closes gaps 1–4: [#1272](https://github.com/xnmp/tauri-explorer/issues/1272) is still open, has no comments and still owns the missing perf medians. Do not treat approximations in earlier PRs or a promised later comment as that evidence. |
+
+### Filing decision
+
+Rechecked all open/closed `tech-debt` filings: #1206 remains the only labelled
+filing and is closed. No entry has expired or crossed its trigger. File **zero**
+issues and retain five entries, merging List/Tiles/spring pressure into file-list
+ownership and drag lifetime below. Preserve all existing expiry dates.
+
+At this tip the six monitored page/file-list files still have
+1 / 3 / 1 / 1 / 1 / 5 `fix:` commits since 2026-09-18 (same command and file
+order as below); neither new `fix:` commit touches them. The mock dispatcher
+is 3,226 lines, one more fixture branch, below 4,000; no native commands,
+backend files or governing ADRs changed. Renderer retirement [#1137](https://github.com/xnmp/tauri-explorer/issues/1137),
+DnD qualification [#1225](https://github.com/xnmp/tauri-explorer/issues/1225),
+native Trash locators [#1228](https://github.com/xnmp/tauri-explorer/issues/1228),
+thumbnail invalidation #1267, spring follow-ups #1269 and perf evidence #1272
+are all open. Reuse their existing scope; no duplicate filing or label change
+is warranted. Native drop-inside-peek and platform delivery gaps stay explicit;
+synthetic/browser success does not discharge them.
+
 ## Entries
 
 Undated historical churn counts below are the first pass's snapshots at its
@@ -182,6 +223,8 @@ separately.
   The #1262 range changes neither command registration, wrappers nor mocks;
   `mock-invoke.ts` remains at 3,225 lines. Icon packs and List flow add no IPC
   dispatch surfaces.
+  The #1277 range adds only a delayed-thumbnail fixture branch (#1266), taking
+  the mock to 3,226 lines. It adds no native command or reported parity escape.
 - **Trend:** the touch rate is rising with feature work; the drift-fix rate has
   fallen to zero since #917. The changes to `lib.rs` are wiring, not defects.
   The file remains below the 4,000-line trigger.
@@ -212,6 +255,8 @@ separately.
   scrub sites unchanged; #1227's GTK interposer is test-only transport evidence.
   The #1262 range changes no backend files. #1137 is still open, so neither
   the early expiry nor an additional per-spawn policy/leak trigger has fired.
+  The #1277 range also changes no backend or child-environment policy; #1137
+  remains open at inspection, so neither trigger nor early expiry has fired.
 - **Trend:** new (all since 2026-10-11) and driven by the upstream WebKitGTK
   2.52 releases.
 - **Candidate intervention:** a single `process_ext` constructor for user-facing
@@ -241,6 +286,8 @@ separately.
   or admission bypass.
   The #1262 range again changes no recovery code or governing ADR status;
   no new checkpoint/admission bypass contributes to the 30-day trigger.
+  The #1277 range likewise leaves recovery and governing ADRs unchanged.
+  Peek renderers and drag adapters continue through existing mutation APIs.
 - **Trend:** falling since the 2026-10-01 consolidation.
 - **Candidate intervention:** none yet. First accept or revise the Proposed
   ADRs, so that later fixes have a written contract to check against.
@@ -287,12 +334,26 @@ separately.
   Counts since 2026-09-18 remain 1 / 3 / 1 / 1 / 1 / 5 at this boundary.
   [#1256](https://github.com/xnmp/tauri-explorer/pull/1256) corrects readiness
   normalization in the native watcher test, not production observation.
+  In the #1277 range, #1265/#1266 add List cards and Tiles panels, with pure
+  models shared by rendering/reveal/navigation and session-owned size/side
+  memory; #1268 projects temporary peeks through existing resources. These
+  extend ADR 0011, ADR 0014 and ADR 0015 rather than create another refresh
+  gate or focus queue. #1261 corrects ancestor-notification expectations, and
+  #1273 adds missing observable selection/sort/grip tests without product fixes.
+  Counts since 2026-09-18 remain 1 / 3 / 1 / 1 / 1 / 5. Keep the reported
+  List/Tiles overhead, pending medians (#1272), and native-input gap explicit.
+  #1266 already extracts thumbnail request lifetime into a cache-key owner;
+  #1267 owns the distinct crop-key invalidation defect. #1271's reactive
+  command wrapper repairs a palette dependency, not peek navigation ownership.
 - **Trend:** below the existing trigger in every file; retain the falling
   first-pass assessment, but the short incremental windows cannot establish
   a new long-term trend. Peek adds ownership complexity without a deployed
   recurrence yet; List adds renderer/geometry/focus complexity. Its reported
   throttled wheel cost and missing native-input qualification remain explicit
   limits, not evidence that another refresh or focus owner is needed.
+  Three further feature phases increase renderer/gesture complexity, but the
+  deployed fix count is unchanged. Shared motion arming and importable grip,
+  thumbnail and spring owners already remove the reported local-lifetime cases.
 - **Candidate intervention:** retain the existing ADR owners. If follow-up
   fixes repeat child/root publication or lease-cap exceptions, extend the
   existing `RefreshTarget` and pane-owned listing/observation seam rather than
@@ -345,6 +406,16 @@ separately.
   no Rust/Wry source context, identity inference or transfer-completion owner.
   Unit tests exercise stale dragend and sessionless cancellation, and browser
   tests exercise a drop after scroll; these do not qualify native delivery.
+  In the #1277 range, #1268 adds spring holds, deferred closing and shared
+  hit identity in frontend adapters. It preserves pinned native provenance;
+  surviving a virtualized pointer-source row does not infer a new source.
+  Open #1269 records spring cleanup/session isolation defects, including an
+  old replay closing a newer drag's peeks; it does not report stale internal
+  Move authority. Reuse that owner instead of counting each intra-feature
+  correction as a deployed native identity/completion fix. Native tests add a
+  peek-open token and close assertions to existing transfers, but #1269 retains
+  probe-timing limits. A dedicated native drop-inside-peek test remains deferred
+  because the helper lacks a second waypoint.
 - **Trend:** repeated native ownership/intent changes in October; #1218 adds
   a dedicated adapter and real GTK X11 transfer coverage, so observe that
   intervention before proposing another extraction. Physical GNOME Wayland,
@@ -359,6 +430,9 @@ separately.
   exception after #1227: native Drop still consumes its prior captured source.
   No new stale internal Move authority is demonstrated in this range, and
   #1225 remains open for the broader platform/receiver evidence.
+  #1268 increases frontend gesture-lifetime pressure, with concrete residuals
+  owned by #1269. No second native identity/completion exception or stale Move
+  authority is demonstrated; required GTK transfer coverage is retained.
 - **Candidate intervention:** extend the existing exact-session lifecycle and
   pinned `SourceSnapshot` boundary if another transport needs it. The smallest
   further abstraction would be a typed source lease (adopt/bind/complete) shared

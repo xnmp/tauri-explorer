@@ -139,11 +139,12 @@ test("sizes the panel grid by its count and the height by the default preference
   const archive = panel(page, P("Archive"));
   const counts = await rowsOf(P("Archive"));
   expect(counts[0]).toBe(6);
-  const metrics = await archive.evaluate(el => {
-    const row = el.querySelector<HTMLElement>(".tile-panel-row")!;
-    return { height: el.getBoundingClientRect().height, row: row.getBoundingClientRect().height };
-  });
-  expect(metrics.height).toBeCloseTo(3.5 * metrics.row + 20, 0);
+  // Polled: `settled` compares rounded rects, so a loaded runner's slow motion
+  // tail (sub-pixel per sample) can still be finishing when it returns.
+  await expect.poll(() => archive.evaluate(el => {
+    const row = el.querySelector<HTMLElement>(".tile-panel-row")!.getBoundingClientRect().height;
+    return Math.abs(el.getBoundingClientRect().height - (3.5 * row + 20));
+  })).toBeLessThan(0.5);
   await expect(archive.locator(".tile-panel-more")).toHaveText(/^\+\d+ more$/);
 });
 
@@ -535,6 +536,16 @@ async function edgePaint(page: Page, path: string, edge: "top" | "bottom" | "lef
   return matched / (scale * scale);
 }
 
+/** Make `path` the cursor with a keyboard-visible ring. WebKit withholds
+ * :focus-visible from focus that script moves after a mouse click, so a Tab
+ * first puts the page in keyboard modality; the cursor then moves by script. */
+async function keyboardFocus(page: Page, path: string): Promise<void> {
+  await tile(page, path).click();
+  await page.keyboard.press("Tab");
+  await tile(page, path).focus();
+  await expect(tile(page, path)).toBeFocused();
+}
+
 test("a selected or focused open folder leaves its tab open toward the panel", async ({ page }) => {
   await open(page);
   for (const name of ["Career", "Personal", "Inbox"]) await toggle(page, P(name));
@@ -550,6 +561,7 @@ test("a selected or focused open folder leaves its tab open toward the panel", a
   expect(await edgePaint(page, P("Career"), "bottom", accent)).toBeLessThan(4);
 
   // Keyboard focus: the control's ring closes its tile on every side...
+  await keyboardFocus(page, P("Career"));
   await page.keyboard.press("ArrowRight");
   await expect(tile(page, P("Codex"))).toBeFocused();
   const ring = rgb(await tile(page, P("Codex")).evaluate(el => getComputedStyle(el).outlineColor));
@@ -560,7 +572,7 @@ test("a selected or focused open folder leaves its tab open toward the panel", a
   expect(await edgePaint(page, P("Career"), "left", ring)).toBeGreaterThan(40);
   expect(await edgePaint(page, P("Career"), "bottom", ring)).toBeLessThan(4);
   // An above panel's tab opens through the tile's top instead.
-  await tile(page, P("Inbox")).click();
+  await keyboardFocus(page, P("Inbox"));
   await page.keyboard.press("ArrowRight");
   await page.keyboard.press("ArrowLeft");
   await expect(tile(page, P("Inbox"))).toBeFocused();

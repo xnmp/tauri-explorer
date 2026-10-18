@@ -111,9 +111,10 @@ describe("useTilePanels grip session", () => {
     const win = stubWindow();
     const mounted = mount(["Career", "Personal"]);
     const { tiles, box } = mounted;
-    // The band is as tall as its taller member (Personal); Career's content is shorter.
+    // Both members take the band's height (its tallest member's), so a grip
+    // on either previews and commits it for both.
     const start = box("Personal")!.height;
-    expect(box("Career")!.height).toBeLessThan(start);
+    expect(box("Career")!.height).toBe(start);
     tiles.beginGrip(P("Personal"), 7, 100);
     win.fire("pointermove", { pointerId: 8, clientY: 10 }); // another pointer
     expect(tiles.gripping(P("Personal"))).toBe(false);

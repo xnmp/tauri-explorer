@@ -114,6 +114,9 @@ export interface SpringLoadControllerOptions {
   readonly lostLeaveMs?: number;
   /** The gesture ended (an `end`, a lost-Leave fallback or a newer drag). */
   readonly onEnd?: () => void;
+  /** True while something still needs the peeks as they are (a pending drop's
+   * hold): the lost-Leave fallback then waits for `endDeferred`. */
+  readonly keepOpen?: () => boolean;
   readonly timer?: SpringTimer;
 }
 
@@ -134,12 +137,13 @@ export const defaultSpringTimer: SpringTimer = {
  * retires the older gesture and everything scoped to it.
  */
 export function createSpringLoadController(options: SpringLoadControllerOptions) {
-  const { paths, apply, delay = SPRING_LOAD_DELAY_MS, lostLeaveMs = SPRING_LOST_LEAVE_MS, timer = defaultSpringTimer, onEnd } = options;
+  const { paths, apply, delay = SPRING_LOAD_DELAY_MS, lostLeaveMs = SPRING_LOST_LEAVE_MS, timer = defaultSpringTimer, onEnd, keepOpen } = options;
   let state = springIdle;
   let handle: unknown = null;
   let armed: SpringTarget | null = null;
   let gesture: string | undefined;
   let fallback: unknown = null;
+  let deferred: { scope: string; expired?: () => void } | null = null;
 
   function dispatch(event: SpringEvent): void {
     const previous = state;
@@ -159,6 +163,7 @@ export function createSpringLoadController(options: SpringLoadControllerOptions)
   function cancelFallback(): void {
     if (fallback !== null) timer.clear(fallback);
     fallback = null;
+    deferred = null;
   }
 
   /** Ends the gesture; false when `scope` names an older one. */
@@ -183,12 +188,25 @@ export function createSpringLoadController(options: SpringLoadControllerOptions)
     /** End every temporary peek; with `scope`, only if it is still the live gesture. */
     end,
     /** The source ended but the native receiver may still report this gesture:
-     * end it unless `settle`, an `end` or a new gesture comes first. */
-    endSoon(): void {
+     * end it unless `settle`, an `end` or a new gesture comes first.
+     * `expired` runs when the fallback really closed the peeks: from then on
+     * the layout under the pointer is no longer the one the drag saw. */
+    endSoon(expired?: () => void): void {
       cancelFallback();
       const scope = gesture;
       if (scope === undefined) return;
-      fallback = timer.set(() => { fallback = null; end(scope); }, lostLeaveMs);
+      fallback = timer.set(() => {
+        fallback = null;
+        if (keepOpen?.()) deferred = { scope, expired };
+        else if (end(scope)) expired?.();
+      }, lostLeaveMs);
+    },
+    /** A `keepOpen` reason went away: complete a fallback that was waiting. */
+    endDeferred(): void {
+      const waiting = deferred;
+      if (!waiting || keepOpen?.()) return;
+      deferred = null;
+      if (end(waiting.scope)) waiting.expired?.();
     },
     /** The native receiver delivered its Drop or Leave: no fallback needed. */
     settle(): void { cancelFallback(); },

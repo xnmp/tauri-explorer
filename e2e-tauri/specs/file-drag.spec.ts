@@ -52,6 +52,8 @@ async function drag(source: Entry, destination: Entry, options: { copy?: boolean
     root.dataset.springPeekWatch = peeks;
     root.dataset.springPeekOpened = "";
     root.dataset.springPeekOpenedAfterEnd = "";
+    root.dataset.springPeekEndSignalAt = "";
+    root.dataset.springPeekClosedLagMs = "";
     if (root.dataset.nativeDragProbeInstalled) return;
     root.dataset.nativeDragProbeInstalled = "true";
     document.addEventListener("dragstart", () => {
@@ -59,9 +61,18 @@ async function drag(source: Entry, destination: Entry, options: { copy?: boolean
       root.dataset.nativeDragSession = source?.sessionId || "";
     });
     document.addEventListener("drop", () => { root.dataset.domDropReceived = "true"; }, { capture: true });
-    document.addEventListener("dragend", () => { root.dataset.nativeDragEnded = root.dataset.nativeDragSession; });
+    // The last sign the drag is over: its dragend or the receiver's Drop.
+    const endSignal = () => { root.dataset.springPeekEndSignalAt = String(performance.now()); };
+    document.addEventListener("dragend", () => { root.dataset.nativeDragEnded = root.dataset.nativeDragSession; endSignal(); });
+    new MutationObserver(endSignal).observe(root, { attributes: true, attributeFilter: ["data-e2e-native-drag-drop"] });
     new MutationObserver(() => {
       const watch = root.dataset.springPeekWatch;
+      // How long after the last end signal the peek closed. The lost-Leave
+      // fallback closes it 500ms after dragend, which would hide a broken
+      // native Drop or Leave close: only the receiver may close it that fast.
+      if (watch && root.dataset.springPeekOpened === "true" && !root.dataset.springPeekClosedLagMs && !document.querySelector(watch)) {
+        root.dataset.springPeekClosedLagMs = String(performance.now() - Number(root.dataset.springPeekEndSignalAt || performance.now()));
+      }
       if (watch && root.dataset.springPeekOpened !== "true" && document.querySelector(watch)) {
         root.dataset.springPeekOpened = "true";
         // Whether the native drag was already over (its dragend, or the
@@ -95,6 +106,10 @@ async function assertSprangOpen(): Promise<void> {
  * a List card, a Tiles panel), and a navigated listing would prove nothing. */
 async function assertSpringClosed(folder: string, contents: readonly string[] = []): Promise<void> {
   await $(springPeekSelector(folder)).waitForExist({ reverse: true, timeout: 5_000, timeoutMsg: "the drag's spring-loaded peek outlived the gesture" });
+  // Closed by the receiver's Drop or Leave, well inside the 500ms lost-Leave
+  // fallback (SPRING_LOST_LEAVE_MS), which must stay a backstop (#1269).
+  const lag = Number(await browser.execute(() => document.documentElement.dataset.springPeekClosedLagMs));
+  assert.ok(lag < 400, `the peek closed ${lag}ms after the drag ended: that is the lost-Leave fallback, not the native Drop or Leave`);
   for (const entry of contents) {
     assert.equal(await $(entryPathSelector(entry, shown + ".entry-item")).isExisting(), false,
       `${path.basename(entry)} is shown before navigating into its folder`);

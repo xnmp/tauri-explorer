@@ -39,12 +39,20 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
   // dragstart) clears what an earlier one left behind.
   let hoverPosition: { x: number; y: number } | null = null;
   let receiverReports = false;
+  // The source's dragend, while the native receiver still owes its Drop or
+  // Leave (Linux): the drop target the drag was over, captured while the
+  // layout was still the drag's own. Once the lost-Leave fallback has closed
+  // the temporary peeks that layout is gone, so a Drop arriving after it must
+  // not resolve its target from the pointer position (#1269).
+  let endedDrag: { target: DropTargetResult; expired: boolean } | null = null;
   const refreshHover = () => { if (hoverPosition) handleNativeOver(hoverPosition); };
   // Receiver-owned snapshot of the live source at native Enter. Source result
   // and destination Drop use different IPC channels and can arrive reordered.
   let nativeGesture: { data: DragData | null; hasPaths: boolean; expired?: boolean } | null = null;
   let nativeDomSession: string | undefined;
   const deferredDomSources = new WeakMap<DragEvent, DragData>();
+  /** The spring gesture a replayed drop was dropped in. */
+  const replayGestures = new WeakMap<DragEvent, string>();
   const pendingDomDrops = new Set<() => void>();
   let clearNativeHighlights: (() => void) | null = null;
 
@@ -64,6 +72,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
   function handleNativeEnter(rawPaths: string[], _position: { x: number; y: number }, source?: DragData | null, copyModifier?: boolean | null, observedAt?: number, completedGestureSequence?: number, observationClock?: string, externalSource?: boolean): void {
     if (copyModifier != null) copyModifierHeld = copyModifier;
     hoverPosition = null; receiverReports = true;
+    endedDrag = null;
     springSettle();
     // Native context identity outranks path/time inference from a pending renderer source.
     const data = externalSource ? null : nativeSource(rawPaths, source, observedAt, completedGestureSequence, observationClock);
@@ -89,6 +98,8 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     retireDropFeedback();
     dropHover.clear(refreshHover);
     hoverPosition = null; receiverReports = false;
+    const ended = endedDrag;
+    endedDrag = null;
     if (externalSource) nativeDomSession = undefined;
     const dragData = externalSource ? null : nativeDragSession(rawPaths)
       ? nativeSource(rawPaths, source, observedAt, completedGestureSequence, observationClock)
@@ -114,8 +125,17 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
       toastStore.show("Drop cancelled because its gesture identity expired. Drop the files again.");
       return;
     }
-    const target = resolveDropTarget(position);
+    // After the fallback closed the peeks the pointer position names a
+    // different row than the drag was over: route to what it captured, or
+    // cancel rather than guess.
+    const target = ended?.expired ? ended.target : resolveDropTarget(position);
     nativeGesture = null;
+    if (ended?.expired && !target) {
+      nativeDomSession = undefined;
+      clearHighlights();
+      toastStore.show("Drop cancelled because its destination could not be confirmed. Drop the files again.");
+      return;
+    }
     if (isInternalDrag) nativeDomSession = dragData?.sessionId;
     const sourcePaths = isInternalDrag ? internalPaths : paths;
     const delivery = dispatchFileDrop(target, sourcePaths, isInternalDrag ? "pane" : "external", isInternalDrag ? dragData : null);
@@ -230,13 +250,13 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     onDrop: handleNativeDrop,
     onEnter: handleNativeEnter,
     onOver: handleNativeOver,
-    onLeave: () => { springHover(() => null); springSettle(); retireDropFeedback(); dropHover.clear(refreshHover); hoverPosition = null; receiverReports = false; nativeGesture = null; clearNativeHighlights?.(); clearNativeHighlights = null; },
+    onLeave: () => { springHover(() => null); springSettle(); endedDrag = null; retireDropFeedback(); dropHover.clear(refreshHover); hoverPosition = null; receiverReports = false; nativeGesture = null; clearNativeHighlights?.(); clearNativeHighlights = null; },
   });
 
   function trackModifierDown(e: KeyboardEvent) { copyModifierHeld = isCopyMod(e); }
   function trackModifierUp(e: KeyboardEvent) { copyModifierHeld = isCopyMod(e); }
   function trackDragModifiers(event: DragEvent): void { copyModifierHeld = isCopyMod(event); }
-  function handleDomDragStart(event: DragEvent): void { trackDragModifiers(event); hoverPosition = null; receiverReports = false; springSettle(); }
+  function handleDomDragStart(event: DragEvent): void { trackDragModifiers(event); hoverPosition = null; receiverReports = false; endedDrag = null; springSettle(); }
 
   // ---- Spring-loaded peeks (#1242) -------------------------------------------
   // A row, row wrapper, peek-state row or bridge inside a drag's temporary
@@ -300,9 +320,12 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
   }
 
   function handleDomDrop(event: DragEvent): void {
+    // A replay belongs to the drag that dropped: a newer drag's feedback and
+    // springs are not its to end (#1269).
+    const replayGesture = replayGestures.get(event);
     // Any drop ends the gesture: no folder keeps drop feedback, including one
     // whose surface unmounted (a closing spring peek) before a leave reached it.
-    retireDropFeedback();
+    if (replayGesture === undefined || replayGesture === springGesture()) retireDropFeedback();
     if (!dragState.acceptsFileDrop(event.dataTransfer)) return;
     const bound = event.dataTransfer ? dragState.domSource(event.dataTransfer) : null;
     if (dragState.expiredDomSource(bound, event.dataTransfer)) {
@@ -327,7 +350,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     // A native Drop owns the gesture and ends its spring peeks once it has
     // resolved its own position; a pending drop ends them in its replay (or
     // leaves them to the accepted native Drop); every other drop ends them here.
-    if (!nativeOwned && !pending) springEnd();
+    if (!nativeOwned && !pending) springEnd(replayGesture);
     if (pending) {
       // A Drop can beat the start-command reply. Reserve routing until the
       // handoff is known; snapshot while the DOM drag data store is readable.
@@ -341,6 +364,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
       const replay = new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer,
         clientX: event.clientX, clientY: event.clientY, ctrlKey: event.ctrlKey, altKey: event.altKey,
         shiftKey: event.shiftKey, metaKey: event.metaKey });
+      replayGestures.set(replay, springGestureAtDrop);
       const owner = domGeneration;
       const release = dragState.retain(source);
       const cancel = () => { targetElement = null; pending.dispose(); release(); releaseSpring?.(); };
@@ -404,7 +428,12 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     // On Linux a DOM dragend can precede the native Drop, which resolves its
     // target by position: the native Drop or Leave ends spring peeks instead,
     // with a bounded fallback for a Leave that never comes (#1269).
-    if (!receiverReports && !hoverPosition) springEnd(); else springEndSoon();
+    if (!receiverReports && !hoverPosition) springEnd();
+    else {
+      const record = { target: hoverPosition ? resolveDropTarget(hoverPosition) : null, expired: false };
+      endedDrag = record;
+      springEndSoon(() => { record.expired = true; });
+    }
     dropHover.clear(refreshHover);
     hoverPosition = null;
     clearHighlights();
@@ -441,7 +470,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     window.removeEventListener("drop", handleDomDrop, { capture: true });
     window.removeEventListener("dragend", handleDomDragEnd);
     dropHover.clear(refreshHover);
-    hoverPosition = null; receiverReports = false;
+    hoverPosition = null; receiverReports = false; endedDrag = null;
     springEnd();
     clearHighlights();
   }

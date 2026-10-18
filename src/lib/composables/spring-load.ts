@@ -82,10 +82,11 @@ export function springEnd(gesture?: string): void {
 }
 
 /** The source's dragend while the native receiver may still report the drop:
- * close the peeks unless its Drop or Leave arrives within a bounded wait. */
-export function springEndSoon(): void {
+ * close the peeks unless its Drop or Leave arrives within a bounded wait.
+ * `expired` runs if they were closed by the wait. */
+export function springEndSoon(expired?: () => void): void {
   latest = null;
-  driver?.endSoon();
+  driver?.endSoon(expired);
 }
 
 /** The native receiver delivered its Drop or Leave: the fallback is moot. */

@@ -3,18 +3,23 @@ import { beforeEach, expect, it, vi } from "vitest";
 // The eager spring-load entry point (#1242): free while Folder Peek is off,
 // loads the driver on the first eligible hover and replays only what is
 // still current once it has loaded.
-const { settings, calls } = vi.hoisted(() => ({
+const { settings, calls, drag } = vi.hoisted(() => ({
   settings: { folderPeek: true },
   calls: [] as string[],
+  /** The in-app drag's session, and the gesture each driver call was given. */
+  drag: { session: undefined as string | undefined, hovered: [] as (string | undefined)[], expired: undefined as (() => void) | undefined },
 }));
 vi.mock("$lib/state/settings.svelte", () => ({ settingsStore: settings }));
+vi.mock("$lib/state/drag.svelte", () => ({
+  dragState: { latestSource: () => drag.session === undefined ? null : { sessionId: drag.session } },
+}));
 vi.mock("$lib/composables/spring-load-driver", () => ({
   createDomSpringLoadDriver: () => ({
-    hover: (element: { id: string } | null) => calls.push(`hover:${element?.id ?? "null"}`),
+    hover: (element: { id: string } | null, gesture?: string) => { drag.hovered.push(gesture); calls.push(`hover:${element?.id ?? "null"}`); },
     end: (gesture?: string) => calls.push(gesture === undefined ? "end" : `end:${gesture}`),
-    endSoon: () => calls.push("endSoon"),
+    endSoon: (expired?: () => void) => { drag.expired = expired; calls.push("endSoon"); },
     settle: () => calls.push("settle"),
-    gesture: "g1",
+    get gesture() { return drag.hovered.at(-1) ?? ""; },
     hold: () => { calls.push("hold"); return () => calls.push("release"); },
   }),
 }));
@@ -25,6 +30,7 @@ beforeEach(() => {
   vi.resetModules();
   settings.folderPeek = true;
   calls.length = 0;
+  drag.session = undefined; drag.hovered = []; drag.expired = undefined;
 });
 const load = () => import("$lib/composables/spring-load");
 const settle = () => new Promise(resolve => setTimeout(resolve, 0));
@@ -87,13 +93,31 @@ it("turning Folder Peek off mid-drag closes the drag's peeks", async () => {
 
 it("hands the driver the source's session as the drag's identity, and scopes a later end to it (#1269)", async () => {
   const { springHover, springEnd, springEndSoon, springSettle, springGesture } = await load();
+  drag.session = "session-7";
   springHover(() => element("a"));
   await settle();
-  expect(springGesture()).toBe("g1");
-  springEnd(springGesture());
-  springEndSoon();
+  springHover(() => element("b"));
+  expect(drag.hovered).toEqual(["session-7", "session-7"]);
+  expect(springGesture()).toBe("session-7");
+  // A newer drag: the captured identity is what a late end must carry.
+  const captured = springGesture();
+  drag.session = "session-8";
+  springHover(() => element("c"));
+  expect(springGesture()).toBe("session-8");
+  springEnd(captured);
+  const expired = () => {};
+  springEndSoon(expired);
   springSettle();
-  expect(calls).toEqual(["hover:a", "end:g1", "endSoon", "settle"]);
+  expect(calls).toEqual(["hover:a", "hover:b", "hover:c", "end:session-7", "endSoon", "settle"]);
+  expect(drag.expired).toBe(expired);
+});
+
+it("a drag without an in-app source passes no gesture, leaving the current one alone", async () => {
+  const { springHover } = await load();
+  springHover(() => element("a"));
+  await settle();
+  springHover(() => element("b"));
+  expect(drag.hovered).toEqual([undefined, undefined]);
 });
 
 it("before the driver loads there is no gesture to scope to, and the fallback calls are inert", async () => {

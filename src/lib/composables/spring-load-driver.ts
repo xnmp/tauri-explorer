@@ -96,7 +96,7 @@ export interface SpringLoadDriver<E = Element> {
   end(gesture?: string): void;
   /** The source ended while the native receiver may still deliver its Drop or
    * Leave: end the session unless `settle` or another end comes first. */
-  endSoon(): void;
+  endSoon(expired?: () => void): void;
   /** The native receiver delivered its Drop or Leave. */
   settle(): void;
   /** The live drag's identity ("" when none), for a caller that ends it later. */
@@ -137,6 +137,7 @@ export function createSpringLoadDriver<E>(deps: SpringLoadDriverDeps<E>): Spring
     apply: open => { wanted = open; schedule(); },
     // Holds belong to the gesture that took them.
     onEnd: () => { holds.clear(); schedule(); },
+    keepOpen: () => holds.size > 0,
   });
 
   return {
@@ -152,13 +153,13 @@ export function createSpringLoadDriver<E>(deps: SpringLoadDriverDeps<E>): Spring
       controller.hover(deps.observe(element), gesture);
     },
     end(gesture) { controller.end(gesture); },
-    endSoon() { controller.endSoon(); },
+    endSoon(expired) { controller.endSoon(expired); },
     settle() { controller.settle(); },
     get gesture() { return controller.gesture ?? ""; },
     hold() {
       const token = {};
       holds.add(token);
-      return () => { if (holds.delete(token) && !holds.size) schedule(); };
+      return () => { if (holds.delete(token) && !holds.size) { controller.endDeferred(); schedule(); } };
     },
   };
 }

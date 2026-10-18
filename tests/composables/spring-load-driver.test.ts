@@ -298,17 +298,59 @@ describe("spring-load driver (fake timers)", () => {
     expect(applied).toEqual([["p1", []]]);
   });
 
-  it("the lost-Leave fallback closes the peeks and the native Drop just before it keeps them", async () => {
+  it("the lost-Leave fallback closes the peeks, and reports it", async () => {
     driver.hover(over("p1", "/r/Inbox"), "drag-1");
     await springDelay();
     applied.length = 0;
-    driver.endSoon();
+    const expired = vi.fn();
+    driver.endSoon(expired);
     await vi.advanceTimersByTimeAsync(499);
-    driver.settle();
+    expect(expired).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(2);
+    expect(applied).toEqual([["p1", []]]);
+    expect(expired).toHaveBeenCalledTimes(1);
+  });
+
+  it("a native Drop just before the deadline ends the peeks itself, once, and the fallback never fires", async () => {
+    driver.hover(over("p1", "/r/Inbox"), "drag-1");
+    await springDelay();
+    applied.length = 0;
+    const expired = vi.fn();
+    driver.endSoon(expired);
+    await vi.advanceTimersByTimeAsync(499);
+    driver.end(); // what the native Drop does
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(applied).toEqual([["p1", []]]);
+    expect(expired).not.toHaveBeenCalled();
+  });
+
+  it("a pending drop's hold outlives the fallback; the peeks close when it is released (#1269)", async () => {
+    driver.hover(over("p1", "/r/Inbox"), "drag-1");
+    await springDelay();
+    applied.length = 0;
+    const release = driver.hold();
+    const expired = vi.fn();
+    driver.endSoon(expired);
     await vi.advanceTimersByTimeAsync(5_000);
     expect(applied).toEqual([]);
-    driver.endSoon();
-    await vi.advanceTimersByTimeAsync(501);
+    expect(expired).not.toHaveBeenCalled();
+    release();
+    await nextTask();
     expect(applied).toEqual([["p1", []]]);
+    expect(expired).toHaveBeenCalledTimes(1);
+  });
+
+  it("a hold released after a newer drag started ends nothing", async () => {
+    driver.hover(over("p1", "/r/Inbox"), "drag-1");
+    await springDelay();
+    const release = driver.hold();
+    driver.endSoon();
+    await vi.advanceTimersByTimeAsync(600);
+    driver.hover(over("p1", "/r/Archive"), "drag-2");
+    await springDelay();
+    applied.length = 0;
+    release();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(applied).toEqual([]);
   });
 });

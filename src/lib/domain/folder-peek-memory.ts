@@ -36,4 +36,3 @@ export function pruneExpanded(expanded: ExpandedPaths, parent: string, entries: 
     return directories.has(paths.key(child));
   }));
 }
-

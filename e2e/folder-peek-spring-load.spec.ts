@@ -10,6 +10,8 @@ import { test, expect, type Page } from "./fixtures";
 const root = "/folder-peek-spring";
 const shown = ".pane-tree:not(.retained)";
 const P = (name: string) => `${root}/${name}`;
+/** List slot height (LIST_SLOT_HEIGHT). */
+const LIST_SLOT = 30;
 type View = "details" | "list" | "tiles";
 
 const runtimeErrors = new WeakMap<Page, string[]>();
@@ -509,13 +511,18 @@ base("pointer drag (macOS): a source deleted elsewhere mid-drag cancels the drag
 
 // A spring open must never move the hovered row out from under the pointer.
 test.describe("list: spring cards keep the hovered row in place", () => {
-  const hasRows = (page: Page, rows: number) => expect(page.locator(`${shown} .list-view`)).toHaveAttribute("data-rows", String(rows));
-
-  test("a folder springing open inside a user card keeps the card in its column (R=7)", async ({ page }) => {
-    await page.setViewportSize({ width: 900, height: 330 });
+  /** Opens List with exactly `rows` slots per column (engines differ in chrome height). */
+  async function listAtRows(page: Page, width: number, rows: number) {
+    await page.setViewportSize({ width, height: 400 });
     await page.goto(`/?path=${root}&viewMode=list`);
     await expect(page.locator(views.list.folder(P("Inbox")))).toBeVisible();
-    await hasRows(page, 7);
+    const client = await page.locator(`${shown} .list-scroller`).evaluate(element => element.clientHeight);
+    await page.setViewportSize({ width, height: 400 + rows * LIST_SLOT + 27 - client });
+    await expect(page.locator(`${shown} .list-view`)).toHaveAttribute("data-rows", String(rows));
+  }
+
+  test("a folder springing open inside a user card keeps the card in its column (R=7)", async ({ page }) => {
+    await listAtRows(page, 900, 7);
     await explorer(page, "return explorer.togglePeek(value)", P("Inbox"));
     await expect(page.locator(views.list.child(P("Inbox/Nested")))).toBeVisible();
     // The card's opening motion has settled (it clips and moves the live slots).
@@ -536,10 +543,7 @@ test.describe("list: spring cards keep the hovered row in place", () => {
 
   for (const [label, width] of [["the next column in view", 900], ["a reveal scroll to the next column", 600]] as const) {
     test(`a folder in a column's last row springs into the next column, stays open over its old slot and takes a drop (${label})`, async ({ page }) => {
-      await page.setViewportSize({ width, height: 250 });
-      await page.goto(`/?path=${root}&viewMode=list`);
-      await expect(page.locator(views.list.folder(P("Inbox")))).toBeVisible();
-      await hasRows(page, 4);
+      await listAtRows(page, width, 4);
       // Archive, Bulk, Empty, Inbox: Inbox holds column 0's last row.
       const slot = await centerOf(page, views.list.folder(P("Inbox")));
       await startDrag(page);

@@ -446,7 +446,7 @@ backend for E2E/browser).
 - `+page.svelte` — composes the window keyboard owner with active explorer and surface commands
 - `state/keybindings.svelte.ts` — `keybindingsStore`: binding map, resolve
 - `domain/keybinding-parser.ts` — parse "Ctrl+Shift+P" ↔ event; capture/runtime share the existing recorder identity (physical Alt letters/shifted digits, logical other keys), with US shifted-digit aliases
-- `domain/shortcut-conflicts.ts`, `domain/shortcut-import.ts` — modifier/key overlap and prospective import validation, including swaps/cycles and fallback-default conflicts
+- `domain/shortcut-conflicts.ts`, `domain/shortcut-import.ts` — one-time obsolete Files Sidebar default migration (#1309/#1310), modifier/key overlap and prospective import validation, including swaps/cycles and fallback-default conflicts
 - `domain/shortcut-recording.ts`, `state/shortcut-recorder.ts` — explicit two-step recording, immutable transitions and owned timeout/cancellation; runtime ignores modifiers/repeats without renewing its deadline (#759)
 - `domain/keyboard.ts` — key event normalization
 - `components/KeybindingsSettings.svelte`, `components/ShortcutCheatsheet.svelte` — edit + cheat sheet UI

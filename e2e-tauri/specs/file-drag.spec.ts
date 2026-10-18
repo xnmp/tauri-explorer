@@ -20,10 +20,13 @@ async function command(label: string): Promise<void> {
   await $(".command-palette-dialog").waitForDisplayed({ reverse: true });
 }
 
-/** A folder's spring-loaded peek in any view: a Details subtree's state row, a
- * List card's scroll area, a Tiles panel (#1242). */
+/** A folder's spring-loaded peek in any view: a Details subtree (the state row
+ * of an empty folder, or the rows of a populated one: entries directly below
+ * the folder, which the pane's own listing never shows), a List card's scroll
+ * area, a Tiles panel (#1242, #1269). */
 const springPeekSelector = (folder: string) => [
   entryPathSelector(folder, shown).replace('[data-path="', '[data-peek-state="'),
+  entryPathSelector(folder, `${shown}.entry-item`).replace('[data-path="', '[data-path^="').replace(/"\]$/, `${path.sep}"]`),
   entryPathSelector(folder, `${shown}[data-card-scroll]`),
   entryPathSelector(folder, `${shown}.tile-panel`),
 ].join(", ");
@@ -48,6 +51,7 @@ async function drag(source: Entry, destination: Entry, options: { copy?: boolean
     // Records whether the hover sprang the destination open (`assertSprangOpen`).
     root.dataset.springPeekWatch = peeks;
     root.dataset.springPeekOpened = "";
+    root.dataset.springPeekOpenedAfterEnd = "";
     if (root.dataset.nativeDragProbeInstalled) return;
     root.dataset.nativeDragProbeInstalled = "true";
     document.addEventListener("dragstart", () => {
@@ -58,7 +62,13 @@ async function drag(source: Entry, destination: Entry, options: { copy?: boolean
     document.addEventListener("dragend", () => { root.dataset.nativeDragEnded = root.dataset.nativeDragSession; });
     new MutationObserver(() => {
       const watch = root.dataset.springPeekWatch;
-      if (watch && root.dataset.springPeekOpened !== "true" && document.querySelector(watch)) root.dataset.springPeekOpened = "true";
+      if (watch && root.dataset.springPeekOpened !== "true" && document.querySelector(watch)) {
+        root.dataset.springPeekOpened = "true";
+        // Whether the native drag was already over (its dragend, or the
+        // receiver's Drop) when the peek appeared: a peek that only shows up
+        // after the drop proves nothing about the hover.
+        root.dataset.springPeekOpenedAfterEnd = root.dataset.nativeDragEnded || root.dataset.e2eNativeDragDrop ? "true" : "false";
+      }
     }).observe(document.body, { childList: true, subtree: true });
   }, folder ? springPeekSelector(folder) : "");
   execFileSync("python3", [fileURLToPath(new URL("../helpers/native-drag.py", import.meta.url)),
@@ -76,6 +86,8 @@ async function drag(source: Entry, destination: Entry, options: { copy?: boolean
 async function assertSprangOpen(): Promise<void> {
   assert.equal(await browser.execute(() => document.documentElement.dataset.springPeekOpened), "true",
     "the hover never sprang the destination folder open");
+  assert.equal(await browser.execute(() => document.documentElement.dataset.springPeekOpenedAfterEnd), "false",
+    "the destination's peek only appeared after the native drag had ended, not during the hover");
 }
 
 /** The drop or cancel must still resolve to the folder and close the temporary

@@ -82,14 +82,25 @@ export interface SpringLoadDriverDeps<E> {
    * the pane dropped its peeks itself (navigation) or is gone. */
   requested(pane: string): readonly string[] | undefined;
   timer?: SpringTimer;
+  /** Wait for a native Drop or Leave after the source ended (default 500ms). */
+  lostLeaveMs?: number;
   /** Runs an apply one macrotask later (see the module comment). */
   defer?: (run: () => void) => void;
 }
 
 export interface SpringLoadDriver<E = Element> {
-  hover(element: E | null): void;
-  /** The drag session ended: close every temporary peek and release every hold. */
-  end(): void;
+  /** `gesture` names the drag the element belongs to (see the controller). */
+  hover(element: E | null, gesture?: string): void;
+  /** The drag session ended: close every temporary peek and release every
+   * hold. With `gesture`, only if that drag is still the live one. */
+  end(gesture?: string): void;
+  /** The source ended while the native receiver may still deliver its Drop or
+   * Leave: end the session unless `settle` or another end comes first. */
+  endSoon(): void;
+  /** The native receiver delivered its Drop or Leave. */
+  settle(): void;
+  /** The live drag's identity ("" when none), for a caller that ends it later. */
+  readonly gesture: string;
   /** Keep the applied peeks until the returned release runs (idempotent) or
    * the session ends, so a start that never settles cannot freeze them. */
   hold(): () => void;
@@ -122,12 +133,14 @@ export function createSpringLoadDriver<E>(deps: SpringLoadDriverDeps<E>): Spring
     defer(flush);
   }
   const controller = createSpringLoadController({
-    paths: deps.paths, timer: deps.timer,
+    paths: deps.paths, timer: deps.timer, lostLeaveMs: deps.lostLeaveMs,
     apply: open => { wanted = open; schedule(); },
+    // Holds belong to the gesture that took them.
+    onEnd: () => { holds.clear(); schedule(); },
   });
 
   return {
-    hover(element) {
+    hover(element, gesture) {
       // A pane that replaced its request dropped the peeks applied there
       // (navigation, or the pane closed): forget them, so the folder can
       // spring again instead of counting as open but invisible.
@@ -136,13 +149,12 @@ export function createSpringLoadDriver<E>(deps: SpringLoadDriverDeps<E>): Spring
         applied.delete(pane);
         controller.reset(pane);
       }
-      controller.hover(deps.observe(element));
+      controller.hover(deps.observe(element), gesture);
     },
-    end() {
-      holds.clear();
-      controller.end();
-      schedule();
-    },
+    end(gesture) { controller.end(gesture); },
+    endSoon() { controller.endSoon(); },
+    settle() { controller.settle(); },
+    get gesture() { return controller.gesture ?? ""; },
     hold() {
       const token = {};
       holds.add(token);

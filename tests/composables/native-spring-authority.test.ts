@@ -11,10 +11,13 @@ vi.mock("$lib/state/drag-clock", async actual => ({ ...await actual<object>(), d
   initialize: async () => {}, ready: true,
   stamp: () => ({ clockId: `browser:${performance.timeOrigin}`, at: Math.floor(performance.timeOrigin + performance.now()), uncertainty: 0 }),
 } }));
-const spring = vi.hoisted(() => ({ calls: [] as string[] }));
+const spring = vi.hoisted(() => ({ calls: [] as string[], settled: 0 }));
 vi.mock("$lib/composables/spring-load", () => ({
   springHover: (locate: () => Element | null) => { spring.calls.push(`hover:${(locate() as unknown as { id?: string } | null)?.id ?? "null"}`); },
   springEnd: () => { spring.calls.push("end"); },
+  springEndSoon: () => { spring.calls.push("endSoon"); },
+  springSettle: () => { spring.settled++; },
+  springGesture: () => "g",
   springHold: () => () => {},
 }));
 const native = vi.hoisted(() => ({ emit: undefined as ((event: unknown) => void) | undefined }));
@@ -46,6 +49,7 @@ const named = (id: string, className = "entry-item directory") => Object.assign(
 
 beforeEach(async () => {
   spring.calls.length = 0;
+  spring.settled = 0;
   dragState.clear();
   win = new EventTarget();
   atNative = named("native-row");
@@ -106,5 +110,18 @@ describe("spring hover authority", () => {
     // Cancelled, its dragend closes the temporary peeks.
     win.dispatchEvent(domEvent("dragend", domRow));
     expect(spring.calls.at(-1)).toBe("end");
+  });
+
+  it("a dragend while the receiver reports defers to a bounded fallback instead of ending, and the receiver's Leave or Enter settles it (#1269)", () => {
+    nativeEvent("enter");
+    nativeEvent("over");
+    spring.calls.length = 0;
+    win.dispatchEvent(domEvent("dragend", named("dom-row")));
+    expect(spring.calls).toEqual(["endSoon"]);
+    spring.settled = 0;
+    nativeEvent("leave");
+    expect(spring.settled).toBe(1);
+    nativeEvent("enter");
+    expect(spring.settled).toBe(2);
   });
 });

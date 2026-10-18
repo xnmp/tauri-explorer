@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 vi.mock("$lib/state/drag.svelte", () => ({ dragState: { acceptsFileDrag: () => true, acceptsFileDrop: () => true } }));
-import { retireDropFeedback, useDropTarget } from "$lib/composables/use-drop-target.svelte";
+import { retireDropFeedback, useBackgroundDropFeedback, useDropTarget } from "$lib/composables/use-drop-target.svelte";
 import type { FileEntry } from "$lib/domain/file";
 
 // Folder drop feedback belongs to one gesture (#1242 review): a drop, a drag
@@ -38,5 +38,18 @@ describe("drop feedback lifetime", () => {
     const targets = useDropTarget({ onRefresh: () => {} });
     targets.handleDragOver(over(), { ...folder("/r/a.txt"), kind: "file" });
     expect(targets.isDropTarget("/r/a.txt")).toBe(false);
+  });
+
+  it("the listing background's highlight is retired with the gesture, though no leave or drop reached it (#1269)", () => {
+    const background = useBackgroundDropFeedback();
+    background.set(true);
+    expect(background.active).toBe(true);
+    retireDropFeedback();
+    expect(background.active).toBe(false);
+    // The next gesture highlights it again.
+    background.set(true);
+    expect(background.active).toBe(true);
+    background.set(false);
+    expect(background.active).toBe(false);
   });
 });

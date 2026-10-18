@@ -11,7 +11,10 @@ vi.mock("$lib/state/settings.svelte", () => ({ settingsStore: settings }));
 vi.mock("$lib/composables/spring-load-driver", () => ({
   createDomSpringLoadDriver: () => ({
     hover: (element: { id: string } | null) => calls.push(`hover:${element?.id ?? "null"}`),
-    end: () => calls.push("end"),
+    end: (gesture?: string) => calls.push(gesture === undefined ? "end" : `end:${gesture}`),
+    endSoon: () => calls.push("endSoon"),
+    settle: () => calls.push("settle"),
+    gesture: "g1",
     hold: () => { calls.push("hold"); return () => calls.push("release"); },
   }),
 }));
@@ -80,4 +83,24 @@ it("turning Folder Peek off mid-drag closes the drag's peeks", async () => {
   springHover(locate);
   expect(locate).not.toHaveBeenCalled();
   expect(calls).toEqual(["hover:a", "hover:null"]);
+});
+
+it("hands the driver the source's session as the drag's identity, and scopes a later end to it (#1269)", async () => {
+  const { springHover, springEnd, springEndSoon, springSettle, springGesture } = await load();
+  springHover(() => element("a"));
+  await settle();
+  expect(springGesture()).toBe("g1");
+  springEnd(springGesture());
+  springEndSoon();
+  springSettle();
+  expect(calls).toEqual(["hover:a", "end:g1", "endSoon", "settle"]);
+});
+
+it("before the driver loads there is no gesture to scope to, and the fallback calls are inert", async () => {
+  const { springGesture, springEnd, springEndSoon, springSettle } = await load();
+  expect(springGesture()).toBe("");
+  springEnd(springGesture());
+  springEndSoon();
+  springSettle();
+  expect(calls).toEqual([]);
 });

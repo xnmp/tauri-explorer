@@ -10,7 +10,7 @@ import { useExternalDrop } from "$lib/composables/use-external-drop.svelte";
 import { resolveDropTarget, resolveDropTargetFromElement, captureDropDestination, highlightTarget, highlightTargetAtPoint, highlightTargetElement, elementAtNativePosition, clearHighlights, captureHighlightCleanup, claimSpringEvent, type DropTargetResult } from "$lib/composables/use-native-drop-target.svelte";
 import { dropIntoDirectory } from "$lib/composables/use-dom-directory-drop";
 import { retireDropFeedback } from "$lib/composables/use-drop-target.svelte";
-import { springEnd, springHold, springHover } from "$lib/composables/spring-load";
+import { springEnd, springEndSoon, springGesture, springHold, springHover, springSettle } from "$lib/composables/spring-load";
 import { dropHover } from "$lib/state/drop-hover";
 import { shouldRetireOnDragEnd } from "$lib/domain/drop-feedback";
 import { dragState, type DragData } from "$lib/state/drag.svelte";
@@ -64,6 +64,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
   function handleNativeEnter(rawPaths: string[], _position: { x: number; y: number }, source?: DragData | null, copyModifier?: boolean | null, observedAt?: number, completedGestureSequence?: number, observationClock?: string, externalSource?: boolean): void {
     if (copyModifier != null) copyModifierHeld = copyModifier;
     hoverPosition = null; receiverReports = true;
+    springSettle();
     // Native context identity outranks path/time inference from a pending renderer source.
     const data = externalSource ? null : nativeSource(rawPaths, source, observedAt, completedGestureSequence, observationClock);
     const paths = resolveNativeDragPaths(rawPaths, data, isWindows);
@@ -229,13 +230,13 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     onDrop: handleNativeDrop,
     onEnter: handleNativeEnter,
     onOver: handleNativeOver,
-    onLeave: () => { springHover(() => null); retireDropFeedback(); dropHover.clear(refreshHover); hoverPosition = null; receiverReports = false; nativeGesture = null; clearNativeHighlights?.(); clearNativeHighlights = null; },
+    onLeave: () => { springHover(() => null); springSettle(); retireDropFeedback(); dropHover.clear(refreshHover); hoverPosition = null; receiverReports = false; nativeGesture = null; clearNativeHighlights?.(); clearNativeHighlights = null; },
   });
 
   function trackModifierDown(e: KeyboardEvent) { copyModifierHeld = isCopyMod(e); }
   function trackModifierUp(e: KeyboardEvent) { copyModifierHeld = isCopyMod(e); }
   function trackDragModifiers(event: DragEvent): void { copyModifierHeld = isCopyMod(event); }
-  function handleDomDragStart(event: DragEvent): void { trackDragModifiers(event); hoverPosition = null; receiverReports = false; }
+  function handleDomDragStart(event: DragEvent): void { trackDragModifiers(event); hoverPosition = null; receiverReports = false; springSettle(); }
 
   // ---- Spring-loaded peeks (#1242) -------------------------------------------
   // A row, row wrapper, peek-state row or bridge inside a drag's temporary
@@ -318,6 +319,8 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     const pending = deferredDomSources.has(event) || !source || source.sessionId !== live?.sessionId ? undefined : dragState.pendingNative();
     // The replay below must find the row it was dropped on: hold temporary peeks.
     const releaseSpring = pending ? springHold() : null;
+    // The replay ends this drag's springs, never a newer drag's (#1269).
+    const springGestureAtDrop = springGesture();
     const session = event.dataTransfer?.getData("application/x-explorer-session") || undefined;
     const nativeOwned = !pending && !domOwnsFileDrop(!!nativeGesture?.hasPaths || dragState.nativeOwns(session)
         || (!!session && session === nativeDomSession));
@@ -354,7 +357,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
             if (source) dragState.bindDomSource(dataTransfer, source);
             if (target?.type === "folder" && target.spring) {
               // Its row may have unmounted with the peek: drop by its folder.
-              springEnd();
+              springEnd(springGestureAtDrop);
               if (targetElement) void dropIntoDirectory(replay, target.path, "folder", { onRefresh: deps.refreshAllPanes });
             } else targetElement?.dispatchEvent(replay);
           }
@@ -399,8 +402,9 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     if (!shouldRetireOnDragEnd({ endedSession: endedSession || undefined, liveSession: live?.sessionId, hoverSession, hovering: !!hoverPosition })) return;
     retireDropFeedback();
     // On Linux a DOM dragend can precede the native Drop, which resolves its
-    // target by position: the native Drop or Leave ends spring peeks instead.
-    if (!receiverReports && !hoverPosition) springEnd();
+    // target by position: the native Drop or Leave ends spring peeks instead,
+    // with a bounded fallback for a Leave that never comes (#1269).
+    if (!receiverReports && !hoverPosition) springEnd(); else springEndSoon();
     dropHover.clear(refreshHover);
     hoverPosition = null;
     clearHighlights();

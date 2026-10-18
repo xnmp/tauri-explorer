@@ -235,10 +235,10 @@
   :global(.tile-panels-view .tile-row > .tile-item.tab-above) { border-top-left-radius: 0; border-top-right-radius: 0; }
   :global(.file-list .tile-panels-view .tile-row > .tile-item.tab-below:is(.selected, :focus-visible)) { border-bottom-color: transparent; }
   /* The selected tint fades out toward the panel rather than stopping in a line. */
-  :global(.tile-panels-view .tile-row > .tile-item.tab-below.selected:not(:hover)) {
+  :global(.tile-panels-view .tile-row > .tile-item.tab-below.selected:not(:hover, .drop-target)) {
     background: linear-gradient(to bottom, color-mix(in srgb, var(--accent) 8%, transparent) 50%, transparent) border-box;
   }
-  :global(.tile-panels-view .tile-row > .tile-item.tab-above.selected:not(:hover)) {
+  :global(.tile-panels-view .tile-row > .tile-item.tab-above.selected:not(:hover, .drop-target)) {
     background: linear-gradient(to top, color-mix(in srgb, var(--accent) 8%, transparent) 50%, transparent) border-box;
   }
   /* The ring is the 1px border plus a 1px inset shadow: FileList's 2px inset outline, less one side. */

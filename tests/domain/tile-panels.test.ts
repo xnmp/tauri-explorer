@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   bandHeight, buildTilePanelModel, cellX, chooseSide, clampPreferredHeight, computeBands, defaultPanelHeight,
-  gripKeyHeight, groupOffsets, miniSurfaceLayout, miniTileLayout, panelFades, panelGridColumns, panelHeightBounds, panelMoreCount, panelX, placePanels,
+  gripKeyHeight, groupOffsets, panelFades, panelGridColumns, panelHeightBounds, panelMoreCount, panelTileLayout, panelX, placePanels,
   placementSides, ribbonChannel, segmentX, splitColumns, stackedLabelX, tabX,
   BAND_GAP, DETOUR_BELOW_MARGIN, DETOUR_STACKED_MARGIN, MIN_PANEL_COLUMNS, PANEL_PAD_X, PANEL_PAD_Y, STACKED_MARGIN,
   type BandSide, type ColumnSegment, type PanelPlacement, type PanelRequest, type RowMetrics,
@@ -227,12 +227,18 @@ describe("placement (§9.1)", () => {
 });
 
 describe("panel sizing (§9.2)", () => {
-  const mini = miniTileLayout(MEDIUM);
+  /** Medium tiles, seven 108px columns. */
+  const m: RowMetrics = { columns: 7, width: widthFor(7), gap: MEDIUM.gap, tileHeight: MEDIUM.rowHeight - MEDIUM.gap };
+  const tile = panelTileLayout(m);
+  const min = tile.rowHeight + PANEL_PAD_Y;
 
-  it("uses ~70% tiles on ~96px tracks", () => {
-    expect(mini).toEqual({ iconSize: 45, track: 96, rowHeight: 96 });
-    expect(miniTileLayout(tileLayout("small")).iconSize).toBe(34);
-    expect(miniTileLayout(tileLayout("xlarge")).track).toBeGreaterThan(mini.track);
+  it("uses the grid's own tiles: a grid cell plus the gap per track, the grid's row height", () => {
+    expect(tile).toEqual({ track: 108 + MEDIUM.gap, rowHeight: MEDIUM.rowHeight });
+    // Cells stretched by a wider pane widen the panel's tiles with them.
+    expect(panelTileLayout({ ...m, width: widthFor(7, 150) }).track).toBeCloseTo(150 + MEDIUM.gap);
+    const xl = tileLayout("xlarge");
+    expect(panelTileLayout({ columns: 4, width: widthFor(4, 172, xl.gap), gap: xl.gap, tileHeight: xl.rowHeight - xl.gap }))
+      .toEqual({ track: 172 + xl.gap, rowHeight: xl.rowHeight });
   });
 
   it("sizes the grid: 6 -> 3x2, 9 -> 5x2, 11 -> 6x2, 14 -> 7x2, 48 -> as wide as fits", () => {
@@ -256,25 +262,26 @@ describe("panel sizing (§9.2)", () => {
   });
 
   it("is centred under its tab, clamped to its segment, and flush with a tab side within 16px", () => {
-    const tab = { x0: 228, x1: 336 };
-    expect(panelX(9, { x0: 0, x1: 792 }, tab, mini)).toEqual({ x0: 30, width: 504, cols: 5 });
+    const tab = { x0: 342, x1: 450 };
+    expect(panelX(9, { x0: 0, x1: 792 }, tab, tile)).toEqual({ x0: 99, width: 5 * tile.track + PANEL_PAD_X, cols: 5, track: tile.track });
     // Clamped against the segment's left edge, then snapped flush with the tab.
-    const left = panelX(9, { x0: 0, x1: 792 }, { x0: 0, x1: 108 }, mini);
+    const left = panelX(9, { x0: 0, x1: 792 }, { x0: 0, x1: 108 }, tile);
     expect(left.x0).toBe(0);
     // Centring would leave the tab 12px from the panel side: snap flush instead.
-    const near = panelX(2, { x0: 0, x1: 792 }, { x0: 300, x1: 516 - 2 * 12 }, mini);
+    const near = panelX(2, { x0: 0, x1: 792 }, { x0: 300, x1: 300 + 2 * tile.track + PANEL_PAD_X - 2 * 12 }, tile);
     expect(near.x0).toBe(300);
     // A panel is never narrower than its tab.
-    expect(panelX(1, { x0: 0, x1: 792 }, { x0: 100, x1: 400 }, mini).width).toBe(300);
-    // A segment narrower than the grid caps the width.
-    expect(panelX(48, { x0: 10, x1: 110 }, { x0: 10, x1: 60 }, mini)).toMatchObject({ x0: 10, width: 100 });
+    expect(panelX(1, { x0: 0, x1: 792 }, { x0: 100, x1: 400 }, tile).width).toBe(300);
+    // A segment narrower than one track plus padding (a one-column grid) narrows
+    // the track to what fits, so its tiles stay inside the panel.
+    expect(panelX(48, { x0: 10, x1: 110 }, { x0: 10, x1: 60 }, tile)).toEqual({ x0: 10, width: 100, cols: 1, track: 100 - PANEL_PAD_X });
   });
 
   it("derives band and panel heights from preferred and content heights", () => {
-    const bounds = panelHeightBounds(mini, 1000);
-    expect(bounds).toEqual({ min: 96 + PANEL_PAD_Y, max: 700 });
-    expect(defaultPanelHeight(504, mini)).toBe(3.5 * 96 + PANEL_PAD_Y);
-    expect(defaultPanelHeight(216, mini)).toBe(216);
+    const bounds = panelHeightBounds(tile, 1000);
+    expect(bounds).toEqual({ min, max: 700 });
+    expect(defaultPanelHeight(5 * tile.track + PANEL_PAD_X, tile)).toBe(3.5 * tile.rowHeight + PANEL_PAD_Y);
+    expect(defaultPanelHeight(216, tile)).toBe(216);
     expect(bandHeight([{ preferred: 356, content: 1000 }], bounds)).toBe(356);
     expect(bandHeight([{ preferred: 356, content: 212 }], bounds)).toBe(212);
     // A short member's preference never enlarges its taller sibling.
@@ -283,33 +290,33 @@ describe("panel sizing (§9.2)", () => {
     expect(bandHeight([{ preferred: 5000, content: 5000 }], bounds)).toBe(700);
     expect(bandHeight([{ preferred: Number.NaN, content: 5000 }], bounds)).toBe(bounds.min);
     // A tiny viewport still keeps one row.
-    expect(panelHeightBounds(mini, 50)).toEqual({ min: 116, max: 116 });
-    expect(panelHeightBounds(mini, Number.NaN)).toEqual({ min: 116, max: 116 });
+    expect(panelHeightBounds(tile, 50)).toEqual({ min, max: min });
+    expect(panelHeightBounds(tile, Number.NaN)).toEqual({ min, max: min });
   });
 
   it("clamps grip heights to one row, 70% of the viewport and the content", () => {
-    const bounds = panelHeightBounds(mini, 1000);
-    expect(clampPreferredHeight(50, 1000, bounds)).toBe(116);
+    const bounds = panelHeightBounds(tile, 1000);
+    expect(clampPreferredHeight(50, 1000, bounds)).toBe(min);
     expect(clampPreferredHeight(900, 5000, bounds)).toBe(700);
     expect(clampPreferredHeight(600, 404, bounds)).toBe(404);
-    expect(clampPreferredHeight(Number.NaN, 404, bounds)).toBe(116);
-    expect(gripKeyHeight("ArrowDown", "below", 212, 1000, mini, bounds)).toBe(308);
-    expect(gripKeyHeight("ArrowUp", "below", 212, 1000, mini, bounds)).toBe(116);
-    expect(gripKeyHeight("ArrowUp", "above", 212, 1000, mini, bounds)).toBe(308);
-    expect(gripKeyHeight("Home", "stacked", 400, 1000, mini, bounds)).toBe(116);
-    expect(gripKeyHeight("End", "stacked", 200, 1000, mini, bounds)).toBe(700);
-    expect(gripKeyHeight("End", "stacked", 200, 404, mini, bounds)).toBe(404);
-    expect(gripKeyHeight("Enter", "below", 200, 404, mini, bounds)).toBeNull();
+    expect(clampPreferredHeight(Number.NaN, 404, bounds)).toBe(min);
+    expect(gripKeyHeight("ArrowDown", "below", 212, 1000, tile, bounds)).toBe(212 + tile.rowHeight);
+    expect(gripKeyHeight("ArrowUp", "below", 212, 1000, tile, bounds)).toBe(min);
+    expect(gripKeyHeight("ArrowUp", "above", 212, 1000, tile, bounds)).toBe(212 + tile.rowHeight);
+    expect(gripKeyHeight("Home", "stacked", 400, 1000, tile, bounds)).toBe(min);
+    expect(gripKeyHeight("End", "stacked", 200, 1000, tile, bounds)).toBe(700);
+    expect(gripKeyHeight("End", "stacked", 200, 404, tile, bounds)).toBe(404);
+    expect(gripKeyHeight("Enter", "below", 200, 404, tile, bounds)).toBeNull();
   });
 });
 
 describe("panel scroll edges", () => {
-  const mini = miniTileLayout(MEDIUM);
-  const spec = (n: number, cols: number, side: BandSide = "below") => ({ side, entries: Array.from({ length: n }, (_, i) => i), cols, contentHeight: Math.ceil(n / cols) * mini.rowHeight + PANEL_PAD_Y });
+  const tile = panelTileLayout({ columns: 7, width: widthFor(7), gap: MEDIUM.gap, tileHeight: MEDIUM.rowHeight - MEDIUM.gap });
+  const spec = (n: number, cols: number, side: BandSide = "below") => ({ side, entries: Array.from({ length: n }, (_, i) => i), cols, contentHeight: Math.ceil(n / cols) * tile.rowHeight + PANEL_PAD_Y });
 
   it("fades only the edges with content scrolled out of view", () => {
     const s = spec(30, 5);
-    const height = 2 * mini.rowHeight + PANEL_PAD_Y;
+    const height = 2 * tile.rowHeight + PANEL_PAD_Y;
     expect(panelFades(s.contentHeight, height, 0)).toEqual({ top: false, bottom: true });
     expect(panelFades(s.contentHeight, height, 100)).toEqual({ top: true, bottom: true });
     expect(panelFades(s.contentHeight, height, 1e9)).toEqual({ top: true, bottom: false });
@@ -320,23 +327,15 @@ describe("panel scroll edges", () => {
   it("counts the items in rows whose centre lies below the visible area", () => {
     // 30 items in 5 columns: 6 rows, two whole rows visible -> 4 rows (20 items) below.
     const s = spec(30, 5);
-    const height = 2 * mini.rowHeight + PANEL_PAD_Y;
-    expect(panelMoreCount(s, height, mini.rowHeight, 0)).toBe(20);
+    const height = 2 * tile.rowHeight + PANEL_PAD_Y;
+    expect(panelMoreCount(s, height, tile.rowHeight, 0)).toBe(20);
     // Scrolled half a row: the third row's centre is now visible.
-    expect(panelMoreCount(s, height, mini.rowHeight, mini.rowHeight / 2 + 1)).toBe(15);
-    expect(panelMoreCount(s, height, mini.rowHeight, 1e9)).toBe(0);
-    expect(panelMoreCount(s, s.contentHeight, mini.rowHeight, 0)).toBe(0);
+    expect(panelMoreCount(s, height, tile.rowHeight, tile.rowHeight / 2 + 1)).toBe(15);
+    expect(panelMoreCount(s, height, tile.rowHeight, 1e9)).toBe(0);
+    expect(panelMoreCount(s, s.contentHeight, tile.rowHeight, 0)).toBe(0);
     // A shorter last row counts only its own items.
-    expect(panelMoreCount(spec(27, 5), height, mini.rowHeight, 0)).toBe(17);
+    expect(panelMoreCount(spec(27, 5), height, tile.rowHeight, 0)).toBe(17);
     expect(panelMoreCount(s, height, 0, 0)).toBe(0);
-  });
-
-  it("publishes the tile layout at mini scale for the nested surface", () => {
-    const surface = miniSurfaceLayout(MEDIUM, mini);
-    expect(surface).toMatchObject({ displaySize: mini.iconSize, rowHeight: mini.rowHeight, genSize: MEDIUM.genSize, showFolderThumbnails: false });
-    expect(surface.iconScale).toBeCloseTo(mini.iconSize / 64);
-    // Padding, icon, the 4px icon->name gap, the name and borders fit inside a mini row.
-    expect(surface.paddingY + mini.iconSize + 4 + surface.nameHeight + 4 + surface.gap).toBeLessThanOrEqual(mini.rowHeight);
   });
 });
 
@@ -386,11 +385,14 @@ describe("buildTilePanelModel", () => {
   it("lays one below panel under its parent with a 12px gap", () => {
     const { model } = modelFor(["Career"]);
     const career = model.panels.get(P("Career"))!;
-    expect(career).toMatchObject({ row: 0, col: 2, side: "below", cols: 5, contentRows: 2, contentHeight: 2 * 96 + PANEL_PAD_Y });
+    // Nine grid-sized tiles: 5x2 on 114px tracks (a 108px cell plus the gap).
+    expect(career).toMatchObject({ row: 0, col: 2, side: "below", cols: 5, track: 114, contentRows: 2, contentHeight: 2 * MEDIUM.rowHeight + PANEL_PAD_Y });
     expect(career.entries).toHaveLength(KIDS.Career.length);
     const [box] = model.geometry[0].boxes;
-    expect(box).toMatchObject({ x0: 30, width: 504, top: 129 + BAND_GAP, height: 212 });
-    expect(model.geometry[0]).toMatchObject({ rowTop: 0, height: 129 + BAND_GAP + 212 + BAND_GAP });
+    // Centring under Career would cross the row's left edge: clamped to it.
+    const height = 2 * MEDIUM.rowHeight + PANEL_PAD_Y;
+    expect(box).toMatchObject({ x0: 0, width: 5 * 114 + PANEL_PAD_X, top: 129 + BAND_GAP, height });
+    expect(model.geometry[0]).toMatchObject({ rowTop: 0, height: 129 + BAND_GAP + height + BAND_GAP });
     // Other rows keep the classic row height.
     expect(model.geometry.slice(1).every(g => g.height === MEDIUM.rowHeight && g.boxes.length === 0)).toBe(true);
     // With nothing open every row is classic.
@@ -398,14 +400,15 @@ describe("buildTilePanelModel", () => {
   });
 
   it("splits a band and aligns every member's top", () => {
-    const { model } = modelFor(["Career", "Personal"]);
+    const { model } = modelFor(["Career", "Personal"], { preferred: () => 5000 });
     const [career, personal] = model.geometry[0].boxes;
     expect(career.x0 + career.width).toBeLessThanOrEqual(453 - 12);
     expect(personal.x0).toBeGreaterThanOrEqual(453 + 12);
     expect(career.top).toBe(personal.top);
-    // Career's 4-column grid needs 3 rows, less than Personal's band height.
+    // Career's 3-column grid needs 3 rows, less than Personal's band height.
+    expect(model.panels.get(P("Career"))!.cols).toBe(3);
     expect(career.height).toBe(model.panels.get(P("Career"))!.contentHeight);
-    expect(career.height).toBe(3 * 96 + PANEL_PAD_Y);
+    expect(career.height).toBe(3 * MEDIUM.rowHeight + PANEL_PAD_Y);
     expect(personal.height).toBeGreaterThan(career.height);
   });
 
@@ -419,13 +422,14 @@ describe("buildTilePanelModel", () => {
     const bandBottom = Math.max(...above.map(b => b.top + b.height));
     expect(above.every(b => b.top + b.height === bandBottom)).toBe(true);
     expect(group.rowTop).toBe(bandBottom + BAND_GAP);
-    // Codex's ribbon leaves its tab and bends into the 27px channel between
+    // Codex's ribbon leaves its tab and bends into the channel between
     // Career's and Personal's panels: the below band makes room for the bend.
     expect(Math.min(...below.map(b => b.top))).toBe(group.rowTop + 129 + DETOUR_BELOW_MARGIN);
     const belowBottom = Math.max(...below.map(b => b.top + b.height));
     expect(stacked.top - belowBottom).toBe(STACKED_MARGIN);
-    // Its band is full width; the panel is sized by its grid (14 -> 7x2), centred under Codex.
-    expect(stacked).toMatchObject({ x0: 48, width: 7 * 96 + PANEL_PAD_X, labelHeight: 30 });
+    // Its band is full width; the panel is sized by its grid (14 wants 7x2, six
+    // 114px tracks fit), centred under Codex (whose cell centre is x = 396).
+    expect(stacked).toMatchObject({ x0: 396 - (6 * 114 + PANEL_PAD_X) / 2, width: 6 * 114 + PANEL_PAD_X, labelHeight: 30 });
     expect(stacked.label).toEqual({ x0: 342, width: 240 });
   });
 
@@ -464,11 +468,11 @@ describe("buildTilePanelModel", () => {
   it("uses remembered heights, clamped to the bounds", () => {
     const tall = modelFor(["Archive"], { preferred: () => 5000, viewportHeight: 600 }).model;
     expect(tall.geometry[0].boxes[0].height).toBe(420);
-    // Never above the content.
-    const personal = modelFor(["Personal"], { preferred: () => 5000, viewportHeight: 600 }).model;
-    expect(personal.geometry[0].boxes[0].height).toBe(3 * 96 + PANEL_PAD_Y);
+    // Never above the content (Inbox: 3x2).
+    const inbox = modelFor(["Inbox"], { preferred: () => 5000, viewportHeight: 600 }).model;
+    expect(inbox.geometry[0].boxes[0].height).toBe(2 * MEDIUM.rowHeight + PANEL_PAD_Y);
     const short = modelFor(["Personal"], { preferred: () => 1 }).model;
-    expect(short.geometry[0].boxes[0].height).toBe(116);
+    expect(short.geometry[0].boxes[0].height).toBe(MEDIUM.rowHeight + PANEL_PAD_Y);
   });
 
   it("degrades gracefully for malformed geometry", () => {

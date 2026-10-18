@@ -16,7 +16,7 @@
     height: number;
     min: number;
     max: number;
-    /** A mini row's height, for the value text. */
+    /** A tile row's height, for the value text. */
     rowHeight: number;
     dragging: boolean;
     onstart: (pointer: number, clientY: number) => void;

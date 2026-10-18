@@ -14,7 +14,7 @@
   import type { FileEntry } from "$lib/domain/file";
   import { autoFillColumns } from "$lib/domain/virtual-layout";
   import { tileLayout, TILE_GRID_PAD_X } from "$lib/domain/tile-layout";
-  import { miniSurfaceLayout, type GroupGeometry, type PanelBox, type TileGroup } from "$lib/domain/tile-panels";
+  import type { GroupGeometry, PanelBox, TileGroup } from "$lib/domain/tile-panels";
   import type { TileNavigationSnapshot } from "$lib/domain/tile-panel-navigation";
   import { useTilePanels } from "$lib/composables/use-tile-panels.svelte";
   import { useTilesScrollJank, useUnavailableThumbs } from "$lib/composables/use-tile-view-support.svelte";
@@ -76,12 +76,11 @@
     onlayoutchange: () => onlayoutchange?.(),
   });
   const model = $derived(tiles.model);
-  const surface = $derived(miniSurfaceLayout(layout, model.mini));
   const banded = $derived(model.panels.size > 0);
   // Grid counts and row indices hold only while the grid is uniform rows of
-  // tiles, as in classic Tiles. Panels add label, mini and grip rows, and
+  // tiles, as in classic Tiles. Panels add label, tile and grip rows, and
   // side-by-side panels interleave theirs, so no row numbering is consistent:
-  // the counts and indices are then omitted (mini tiles never take a colindex).
+  // the counts and indices are then omitted (panel tiles never take a colindex).
   const uniform = $derived(!banded && tiles.ghosts.size === 0);
 
   const thumbs = useUnavailableThumbs(() => explorer.currentPath);
@@ -113,6 +112,12 @@
     tiles.setHot(owner && model.panels.has(owner) ? owner : null);
   }
 
+  /** An open folder's tile is its panel's tab, open on the panel's side. */
+  const tabClass = (path: string): string => {
+    const side = model.panels.get(path)?.side;
+    return side === undefined ? "" : side === "above" ? " tab-above" : " tab-below";
+  };
+
   /** A group the geometry has not caught up with yet: its row alone. */
   const NO_GEOMETRY: GroupGeometry = { height: 0, rowTop: 0, boxes: [] };
   const above = (boxes: readonly PanelBox[]) => boxes.filter(box => box.side === "above");
@@ -131,13 +136,13 @@
     onclick={() => toggle(entry.path)}></button>
 {/snippet}
 
-<!-- A panel's mini tile: no caret (Tiles peeks top-level folders only) and no
+<!-- A panel's tile: no caret (Tiles peeks top-level folders only) and no
      aria-colindex (the panel's columns are not the grid's). The grid's own
      tiles are written inline in the row, so a row costs what a classic row
      does plus the caret: no snippet block per tile. -->
-{#snippet miniTile(entry: FileEntry, index: number)}
-  <EntryCell class="tile-item tile-mini" {index} {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
-    <TileVisual {entry} layout={surface} videoUnavailable={thumbs.has(entry.path)} onvideounavailable={() => thumbs.mark(entry.path)}>
+{#snippet panelTile(entry: FileEntry, index: number)}
+  <EntryCell class="tile-item tile-panel-item" {index} {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
+    <TileVisual {entry} {layout} videoUnavailable={thumbs.has(entry.path)} onvideounavailable={() => thumbs.mark(entry.path)}>
       {#snippet name()}<EntryName {entry} {explorer} variant="tiles" />{/snippet}
     </TileVisual>
     <GitStatusBadge entryName={entry.name} />
@@ -148,10 +153,10 @@
   {@const spec = model.panels.get(box.path)}
   {@const folder = spec ? explorer.displayEntries[spec.entryIndex] : undefined}
   {#if spec && folder}
-    <TilePanel {box} {spec} {folder} entries={explorer.displayEntries} mini={model.mini} {surface}
+    <TilePanel {box} {spec} {folder} entries={explorer.displayEntries} {layout} rowHeight={model.tile.rowHeight}
       bandHeight={tiles.bandExtent(box.path).height} gripBounds={tiles.gripBounds(box.path)}
       offsets={tiles.panelOffsets(box.path, box)} scrollTop={tiles.panelScrollTop(box.path)} dragging={tiles.gripping(box.path)}
-      {interactions} tile={miniTile}
+      {interactions} tile={panelTile}
       onscrolltop={(top) => tiles.setPanelScrollTop(box.path, top)}
       ongripstart={(pointer, clientY) => tiles.beginGrip(box.path, pointer, clientY)}
       ongripkey={(key) => tiles.gripKey(box.path, key)}
@@ -159,7 +164,7 @@
       onlabel={() => tiles.revealParent(box.path)} />
   {:else}
     {@const ghost = tiles.ghosts.get(box.path)}
-    {#if ghost}<TilePanelGhost {box} {ghost} mini={model.mini} {surface} />{/if}
+    {#if ghost}<TilePanelGhost {box} {ghost} {layout} rowHeight={model.tile.rowHeight} />{/if}
   {/if}
 {/snippet}
 
@@ -195,7 +200,7 @@
             {#if cell.entry === null || cell.index === null}
               <div role="gridcell"><InlineNewFolder {explorer} variant="tiles" /></div>
             {:else}
-              <EntryCell column={col + 1} class="tile-item" index={cell.index} entry={cell.entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
+              <EntryCell column={col + 1} class="tile-item{tabClass(cell.entry.path)}" index={cell.index} entry={cell.entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
                 <TileVisual entry={cell.entry} {layout} videoUnavailable={thumbs.has(cell.entry.path)} onvideounavailable={() => thumbs.mark(cell.entry!.path)}>
                   {#snippet name()}<EntryName entry={cell.entry!} {explorer} variant="tiles" bold={model.panels.has(cell.entry!.path)} />{/snippet}
                 </TileVisual>
@@ -220,6 +225,33 @@
   :global(.tile-panels-view .tiles-scroller) { overflow-anchor: none; }
   :global(.tile-panels-view .tiles-scroller.banded) { overflow-y: scroll; }
   .tile-group { position: absolute; inset: 0; }
+
+  /* An open folder's tile is its panel's tab (spec §9.3): like the outline, its
+     selection and focus chrome stay open on the panel's side (square corners,
+     no selected underline, no focus edge), so a selected parent runs into its
+     panel instead of reading as a box closed off on top of it. These outrank
+     TileSurface's selected edge and FileList's focus ring. */
+  :global(.tile-panels-view .tile-row > .tile-item.tab-below) { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+  :global(.tile-panels-view .tile-row > .tile-item.tab-above) { border-top-left-radius: 0; border-top-right-radius: 0; }
+  :global(.file-list .tile-panels-view .tile-row > .tile-item.tab-below:is(.selected, :focus-visible)) { border-bottom-color: transparent; }
+  /* The selected tint fades out toward the panel rather than stopping in a line. */
+  :global(.tile-panels-view .tile-row > .tile-item.tab-below.selected:not(:hover)) {
+    background: linear-gradient(to bottom, color-mix(in srgb, var(--accent) 8%, transparent) 50%, transparent) border-box;
+  }
+  :global(.tile-panels-view .tile-row > .tile-item.tab-above.selected:not(:hover)) {
+    background: linear-gradient(to top, color-mix(in srgb, var(--accent) 8%, transparent) 50%, transparent) border-box;
+  }
+  /* The ring is the 1px border plus a 1px inset shadow: FileList's 2px inset outline, less one side. */
+  :global(.file-list .tile-panels-view .tile-row > .tile-item.tab-below:focus-visible:not(.drop-target)) {
+    outline: none;
+    border-color: var(--focus-stroke-outer) var(--focus-stroke-outer) transparent;
+    box-shadow: inset 1px 1px 0 var(--focus-stroke-outer), inset -1px 0 0 var(--focus-stroke-outer);
+  }
+  :global(.file-list .tile-panels-view .tile-row > .tile-item.tab-above:focus-visible:not(.drop-target)) {
+    outline: none;
+    border-color: transparent var(--focus-stroke-outer) var(--focus-stroke-outer);
+    box-shadow: inset 1px 0 0 var(--focus-stroke-outer), inset -1px 0 0 var(--focus-stroke-outer);
+  }
   .tile-row { position: absolute; left: 0; right: 0; }
 
   /* The Tiles caret (spec §9.3): a small round badge on the icon's corner,

@@ -39,12 +39,12 @@ export const panelRowTop = (box: PanelBox, rowHeight: number, row: number): numb
 
 /** A panel item's rectangle in scroll-content coordinates (scrolled within its panel). */
 export function panelItemRect(state: TileNavigationState, spec: TilePanelSpec, box: PanelBox, groupTop: number, offset: number): TileRect {
-  const { mini } = state.model;
+  const { rowHeight } = state.model.tile;
   const row = Math.floor(offset / spec.cols), col = offset % spec.cols;
-  const inset = Math.max(0, (box.width - PANEL_PAD_X - spec.cols * mini.track) / 2);
-  const x0 = box.x0 + PANEL_PAD_NEAR + inset + col * mini.track;
-  const y0 = groupTop + box.top + panelRowTop(box, mini.rowHeight, row) - state.panelScrollTop(spec.path);
-  return { x0, x1: x0 + mini.track, y0, y1: y0 + mini.rowHeight };
+  const inset = Math.max(0, (box.width - PANEL_PAD_X - spec.cols * spec.track) / 2);
+  const x0 = box.x0 + PANEL_PAD_NEAR + inset + col * spec.track;
+  const y0 = groupTop + box.top + panelRowTop(box, rowHeight, row) - state.panelScrollTop(spec.path);
+  return { x0, x1: x0 + spec.track, y0, y1: y0 + rowHeight };
 }
 
 function gridRect(state: TileNavigationState, group: number, col: number, groupTop: number): TileRect {

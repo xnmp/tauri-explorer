@@ -661,12 +661,15 @@ test("tiles: a stacked temporary panel is reachable through the channel around i
   const ribbon = `${shown} .outline-ribbon-hit[data-spring-bridge="${P("Empty")}"]`;
   await expect(page.locator(ribbon)).toHaveCount(1);
   await expect(page.locator(views.tiles.surface(P("Empty")))).toBeVisible();
-  // Down from the tile to the label 20px either side of the ribbon: never outside the peek.
+  // Down from the tile to the label beside the ribbon, 20px either side within
+  // its channel (Archive's panel bounds the channel on the left): never outside the peek.
   const tile = (await page.locator(views.tiles.folder(P("Empty"))).boundingBox())!;
   const line = (await page.locator(ribbon).boundingBox())!;
-  for (const offset of [-20, 20]) {
+  const archive = (await page.locator(views.tiles.surface(P("Archive"))).boundingBox())!;
+  const centre = line.x + line.width / 2;
+  for (const offset of [-Math.min(20, centre - (archive.x + archive.width) - 2), 20]) {
     for (let y = tile.y + tile.height - 4; y < line.y + line.height; y += 12) {
-      expect(await dragTo(page, { x: line.x + line.width / 2 + offset, y })).toMatch(new RegExp(`^(bridge:)?${P("Empty")}$`));
+      expect(await dragTo(page, { x: centre + offset, y })).toMatch(new RegExp(`^(bridge:)?${P("Empty")}$`));
       expect(await springPeeks(page)).toEqual([P("Empty")]);
     }
   }

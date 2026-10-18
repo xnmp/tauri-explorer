@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { nearestInDirection, panelRevealTop, panelStep, resolveTileMove, type TileNavigationState } from "$lib/domain/tile-panel-navigation";
 import type { FileListKey } from "$lib/domain/file-list-navigation";
 import type { PanelBox } from "$lib/domain/tile-panels";
-import { P, modelFor } from "./tile-panels-fixture";
+import { MEDIUM, P, modelFor } from "./tile-panels-fixture";
 
 const key = (k: string, mods: Partial<FileListKey> = {}): FileListKey => ({ key: k, ctrlKey: false, metaKey: false, shiftKey: false, altKey: false, ...mods });
 
@@ -24,7 +24,7 @@ describe("spatial arrows with panels open (§6)", () => {
   it("enters the panel under its parent and leaves it again", () => {
     const { move } = nav(["Career"]);
     // Career's panel: 5 columns, Applications..References over Resume..salary.
-    // The mini tile under the parent's centre.
+    // The panel tile under the parent's centre.
     expect(move("Career", "ArrowDown")).toBe("Career/Portfolio");
     expect(move("Career/Portfolio", "ArrowUp")).toBe("Career");
     // Leaving the bottom row reaches the next grid row, under the item.
@@ -50,9 +50,9 @@ describe("spatial arrows with panels open (§6)", () => {
 
   it("leaves a panel sideways for the nearest item in that direction", () => {
     const { move } = nav(["Career", "Personal"]);
-    // Career's 4-column grid ends beside Personal's panel in the same band.
-    expect(move("Career/Interview Prep.md", "ArrowRight")).toBe("Personal/Health");
-    expect(move("Personal/Health", "ArrowLeft")).toBe("Career/Interview Prep.md");
+    // Career's 3-column grid ends beside Personal's panel in the same band.
+    expect(move("Career/Portfolio", "ArrowRight")).toBe("Personal/Health");
+    expect(move("Personal/Health", "ArrowLeft")).toBe("Career/Portfolio");
   });
 
   it("moves between grid tiles spatially and wraps at row ends like the classic grid", () => {
@@ -78,11 +78,11 @@ describe("spatial arrows with panels open (§6)", () => {
   });
 
   it("enters a scrolled panel at its first visible row", () => {
-    const { move, model } = nav(["Archive"], { [P("Archive")]: 2 * 96 });
-    expect(model.panels.get(P("Archive"))!.cols).toBe(8);
+    const { move, model } = nav(["Archive"], { [P("Archive")]: 2 * MEDIUM.rowHeight });
+    expect(model.panels.get(P("Archive"))!.cols).toBe(6);
     const target = move("Archive", "ArrowDown")!;
     const offset = model.panels.get(P("Archive"))!.entries.findIndex(e => e === nav(["Archive"]).index(P(target)));
-    expect(Math.floor(offset / 8)).toBe(2);
+    expect(Math.floor(offset / 6)).toBe(2);
   });
 
   it("reaches a stacked panel past the below band", () => {

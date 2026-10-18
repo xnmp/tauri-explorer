@@ -312,6 +312,19 @@ describe("spring-load controller gestures", () => {
     expect(openPaths()).toEqual(["/r/Inbox"]);
   });
 
+  it("an end cancels the fallback: the same drag hovering again keeps its springs past the deadline", () => {
+    // The fallback's own scope cannot save this case (it is still the live
+    // gesture), so only end() cancelling the timer does. A newer drag, by
+    // contrast, is guarded twice: the cancel and the fallback's scope (#1290).
+    openInbox("drag-1");
+    controller.endSoon();
+    controller.end();
+    openInbox("drag-1");
+    vi.advanceTimersByTime(SPRING_LOST_LEAVE_MS * 2);
+    expect(openPaths()).toEqual(["/r/Inbox"]);
+    expect(controller.gesture).toBe("drag-1");
+  });
+
   it("a newer drag arriving before the deadline is not ended by the older fallback", () => {
     openInbox("drag-1");
     controller.endSoon();

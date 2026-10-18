@@ -7,9 +7,9 @@
   focus ring drawn as the 1px border plus a 1px inset shadow on the other three
   sides (an `outline` cannot omit a side). These rules must outrank
   TileSurface's selected edge and FileList's `.tile-item:focus-visible` ring.
-- A gradient background on a tile repeats into its transparent 3px bottom
-  border unless it is anchored to the border box (`... border-box`), which
-  draws a thin tinted line across the very mouth the fade was meant to open.
+- The selected tint stays the ordinary solid one. A fade toward the panel
+  was tried and removed in #1304: axe cannot measure text contrast over a
+  background gradient (see `docs/lessons/1304-tiles-tab-solid-selection.md`).
 - Panel tiles are the grid's own tiles: `panelTileLayout(metrics)` gives a track
   of one grid cell plus the tile gap and the grid's row height, and the panel
   renders with the grid's `TileLayout` (so folder previews follow the grid at

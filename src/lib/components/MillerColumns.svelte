@@ -264,7 +264,9 @@
   // Shared drop-target behavior
   const dropTarget = useDropTarget({ onRefresh: () => windowTabsManager.refreshAllPanes() });
 
-  const pointerDrag = usesPointerDrag ? usePointerDrag({ getExplorer: () => explorer, refreshPanes: () => windowTabsManager.refreshAllPanes() }) : null;
+  // Ancestor columns list directories outside the pane's own listing.
+  const pointerDrag = usesPointerDrag ? usePointerDrag({ getExplorer: () => explorer, refreshPanes: () => windowTabsManager.refreshAllPanes(),
+    isListed: path => columns.some(column => column.entries.some(entry => entry.path === path)) }) : null;
 
   // Background drop: dropping onto empty space in a column moves to that column's dir
   let bgDropColumn = $state<string | null>(null);

@@ -46,7 +46,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `TilePanel.svelte` — one open folder's Tiles panel: mini-tile grid (`role=rowgroup`, windowed rows, nested mini `TileSurface`) with List-card fades and "+N more", the stacked label (× and scroll-to-parent) and the grip; the whole panel is the folder's `.peek-drop-target` and context-menu surface.
 - `TilePanelGrip.svelte` — a Tiles panel's far-edge resize separator (row > gridcell > separator): pointer preview of the whole band, arrow/Home/End keys, clamped by `tile-panels.ts`.
 - `TilePanelGhost.svelte` — a closing Tiles panel's inert, aria-hidden copy (captured entries, no identity classes/data/ARIA) that collapses with the motion frame.
-- `TilePanelOutlines.svelte` — one row group's SVG tab-and-page outlines, accent gradients and stacked ribbons from `tile-panel-outline.ts`; only the ribbon's hit stroke takes the pointer (hover emphasis).
+- `TilePanelOutlines.svelte` — one row group's SVG tab-and-page outlines, accent gradients and stacked ribbons from `tile-panel-outline.ts`; only the ribbon's hit stroke takes the pointer (hover emphasis), plus a temporary panel's spring bridges (band gap; a stacked panel's ribbon and its 32px channel, #1242).
 - `view-loaders.svelte.ts` — memoised, retryable dynamic imports for every built-in view renderer (Details, List columns, classic List, Tiles); FileList starts the chunk in parallel with the listing, and settled renderers are published reactively so later mounts render them in the same flush.
 - `TileSurface.svelte` — tile-grid root: publishes `domain/tile-layout.ts` as tile CSS variables and owns all `.tile-item` chrome (hover, selected underline, ghosted/cut/drop states, icon scaling) for TilesView and FileTiles.
 - `TileVisual.svelte` — one tile's icon block (image/video thumbnail, folder preview, FileIcon, video marker) and name; the name defaults to `EntryNameLabel`, TilesView passes `EntryName`.
@@ -361,7 +361,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-type-ahead.svelte.ts` — type-to-select matching in file lists.
 - `use-column-resize.svelte.ts` — One keyed resize owner with session-local Details widths, visibility projection and ordered retirement.
 - `use-progressive-render.svelte.ts` — chunked render to avoid freeze on huge dirs.
-- `use-drop-target.svelte.ts` — directory-entry drop-target behavior.
+- `use-drop-target.svelte.ts` — directory-entry drop-target behavior; `retireDropFeedback` ends every folder's feedback at once (drop, dragend, leave).
 - `use-native-drop-target.svelte.ts` — position-based drop target detection, shared pane/window owner resolution and live modality admission for deferred destinations.
 - `use-native-drop-handler.ts` — handle native (external) OS file drops.
 - `src/lib/composables/observe-active-directory.svelte.ts` — lifecycle-owned plugin observation of the active workspace directory without polling or cloning its listing.
@@ -382,6 +382,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-resize-owner.svelte.ts` — shared axis-aware pointer capture, geometry, keyboard and activity lifetime.
 - `use-controlled-size.svelte.ts` — external-source size adapter; transient drafts, final commits and value-based source supersession.
 - `use-list-columns.svelte.ts` — List column virtualizer over `buildListModel`; synchronous content-box sizing, wheel ownership (a scrollable card first), editor pinning, card scroll offsets, the grip drag session (window-level release, clamped to the card's column) and preview, entry/card reveal and settled callbacks.
+- `spring-load.ts` — eager spring-loaded peek facade (#1242): every drag backend reports the element under the drag (`springHover`), drop/end (`springEnd`) and pending-replay holds (`springHold`); free while Folder Peek is off, lazy-loads the driver with its eager dependencies injected.
+- `spring-load-driver.ts` — lazy spring-load driver: `observeSpringHit` (pane, identity anchors, folder eligibility from the element under the drag) and `createSpringLoadDriver` (controller, per-pane apply one macrotask later, holds).
 - `surface-drop-feedback.ts` — drop feedback for a List card's own surface: target resolution (nested pseudo-row or the card's folder, never a row) and retiring feedback when the pointer reaches a row inside it.
 - `use-list-motion.svelte.ts` — applies `domain/list-motion.ts` plans to the List canvas for user peek toggles only (FLIP, conveyor clip, card growth, sanitized ghosts in an inert layer, finish-on-interrupt).
 - `use-row-grid-view.svelte.ts` — shared virtualization wiring (rows, DnD, new-folder sentinel, scrollToIndex) for Tiles view.
@@ -459,7 +461,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/domain/copy-session.ts` — ordered native session event, conflict-decision and positional result contracts, plus the copy and move incomplete-session presentations.
 - `file-history.ts` — shared action, summary, receipt and HistoryPort types for the native history authority.
 - `list-column-flow.ts` — slot-aware column prefix scan, span lookup, the `ListFlowModel` types, card-aware List keyboard movement (`resolveListMove`), wheel mapping (`listWheelStep`: sub-pixel carry, native passthrough) and viewport math.
-- `list-cards.ts` — List cards (#1240): `buildListModel` over peek rows, height clamp, grip snapping/keys, "+N more", scroll-edge fades, card reveal/window/wheel policies and bounded session heights.
+- `list-cards.ts` — List cards (#1240): `buildListModel` over peek rows, height clamp, grip snapping/keys, "+N more", scroll-edge fades, card reveal/window/wheel policies and bounded session heights; spring-loaded cards (#1242): `springCardFits` (cards holding a temporary peek keep their place; a temporary card wraps when fewer than two rows fit) and `springWrapBridges`.
+- `spring-load.ts` — spring-loaded peek controller (#1242): `SPRING_LOAD_DELAY_MS`, pure `stepSpringLoad` (pending folder, nested open list, leave cascade, per-pane reset, end) and the timer-injected `createSpringLoadController`.
+- `spring-rows.ts` — `springRowOf`: the one row resolver shared by the spring hover observation and the spring drop redirect (rows, Details row wrappers, peek-state rows, `[data-spring-bridge]` bridges) (#1242).
 - `list-motion.ts` — pure List open/close motion plan (FLIP, conveyor distance with empty slots, card growth, visible-column gating) and easing/clip helpers.
 - `drop-feedback.ts` — pure decision for whether a DOM dragend may retire drop-hover feedback (stale echo vs cancelled drag).
 - `virtual-layout.ts` — variable-height virtual list layout math (VirtualList).

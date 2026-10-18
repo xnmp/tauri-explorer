@@ -10,7 +10,7 @@
  * coordinates even after the cursor leaves the viewport.
  */
 
-import { onDestroy } from "svelte";
+import { onDestroy, tick } from "svelte";
 import { operationDrag } from "$lib/domain/file-operation-selection";
 import { toastStore } from "$lib/state/toast.svelte";
 import type { FileEntry } from "$lib/domain/file";
@@ -22,8 +22,9 @@ import { bookmarksStore } from "$lib/state/bookmarks.svelte";
 import { terminalPanelStore } from "$lib/state/terminal.svelte";
 import { handleFileDropMany } from "$lib/state/drop-operations";
 import { startExternalDrag } from "./use-external-drag.svelte";
-import { resolveDropTargetAtPoint, highlightTargetAtPoint, clearHighlights, captureHighlightCleanup } from "./use-native-drop-target.svelte";
+import { elementAtPoint, resolveDropTargetAtPoint, highlightTargetAtPoint, clearHighlights, captureHighlightCleanup } from "./use-native-drop-target.svelte";
 import { dispatchFileDrop, admitFileDrop } from "$lib/state/dispatch-file-drop";
+import { springEnd, springHover } from "./spring-load";
 import { internalDragPaths } from "$lib/domain/file-drop";
 import { isWindows, isCopyModifier } from "$lib/domain/platform";
 import { getZoomFactor } from "$lib/domain/zoom";
@@ -33,6 +34,11 @@ export interface PointerDragDeps {
   /** Refresh every pane that may show an affected directory after a drop.
    *  Defaults to refreshing only the owning pane. */
   refreshPanes?: () => void;
+  /** Whether a dragged path is still in the listing its row came from. The
+   *  default reads the gesture pane's listing (its root and open peeks); a
+   *  surface that lists other directories (Miller ancestor columns) supplies
+   *  its own. */
+  isListed?: (path: string) => boolean;
 }
 
 const THRESHOLD_PX = 5;
@@ -62,21 +68,37 @@ export function usePointerDrag(deps: PointerDragDeps) {
   // A mousedown is usually a click. Recursive-root reduction over the whole
   // selection waits until the pointer crosses the drag threshold.
   let pending: { entry: FileEntry; isSelected: boolean; source: HTMLElement | null } | null = null;
+  /** The pane the gesture started in, captured at the drag start: the source
+   * row (and its props) can unmount while the drag continues. */
+  let gestureExplorer: ExplorerInstance | null = null;
+  const explorerOf = () => gestureExplorer ?? deps.getExplorer();
 
-  // Window listeners are added on pointerdown; if the owning component is
-  // destroyed mid-drag they would otherwise leak for the rest of the session.
+  const isListed = deps.isListed ?? ((path: string) => explorerOf().entryMeta.has(path));
+  /** A dragged source left its listing (deleted or renamed elsewhere, or its
+   * pane navigated): a drop could only attempt a failing move. */
+  const sourceGone = () => dragPaths.some(path => !isListed(path));
+
+  /** The owning row unmounted. A press that has not become a drag is
+   * released (its window listeners would otherwise leak). An active drag
+   * belongs to the pointer, not the row, whatever the Folder Peek setting: a
+   * spring-loaded peek (#1242), a refresh or a scroll can move its source row
+   * out of the virtual window mid-gesture, and the gesture still ends through
+   * mouseup, Escape or blur. Only a source that is genuinely gone cancels it,
+   * checked after the update: the row's teardown runs before that update's
+   * listing is readable (it still reads the removed entry). */
+  function dispose(): void {
+    if (!dragActive) cleanup(false);
+    else void tick().then(() => { if (dragActive && sourceGone()) onCancel(); });
+  }
   try {
-    onDestroy(() => {
-      if (dragActive) clearHighlights();
-      cleanup(dragActive);
-    });
+    onDestroy(dispose);
   } catch {
     // Not called during component init (e.g. unit tests) — caller manages lifetime.
   }
 
   function refreshPanes(): void {
     if (deps.refreshPanes) deps.refreshPanes();
-    else deps.getExplorer().refresh({ silent: true });
+    else explorerOf().refresh({ silent: true });
   }
 
   function handlePointerDown(event: MouseEvent, entry: FileEntry, isSelected: boolean): void {
@@ -84,6 +106,7 @@ export function usePointerDrag(deps: PointerDragDeps) {
     event.preventDefault();
 
     pending = { entry, isSelected, source: (event.currentTarget as HTMLElement) || null };
+    gestureExplorer = null;
     dragPaths = [];
     entryData = null;
     sourceEl = null;
@@ -144,6 +167,7 @@ export function usePointerDrag(deps: PointerDragDeps) {
 
   function refreshHover(): void {
     if (dragActive && !nativeStarted) {
+      springHover(() => elementAtPoint(hoverPoint.x, hoverPoint.y));
       const target = resolveDropTargetAtPoint(hoverPoint.x, hoverPoint.y);
       const destDir =
         target?.type === "folder" || target?.type === "tab"
@@ -151,7 +175,7 @@ export function usePointerDrag(deps: PointerDragDeps) {
           : target?.type === "bookmark" && entryData?.kind !== "directory"
             ? target.path
           : target?.type === "background"
-            ? target.path || deps.getExplorer().currentPath
+            ? target.path || explorerOf().currentPath
             : undefined;
       // Don't highlight a destination where the drop would be a no-op (every
       // dragged item is already there, or it's the dragged folder / a descendant).
@@ -168,7 +192,7 @@ export function usePointerDrag(deps: PointerDragDeps) {
     if (!pending) return false;
     const { entry, isSelected, source } = pending;
     pending = null;
-    const explorer = deps.getExplorer();
+    const explorer = gestureExplorer = deps.getExplorer();
     const reduced = operationDrag(isSelected ? explorer.getSelectedEntries() : [entry], entry, isWindows, explorer.displayEntries);
     if (!reduced.ok) { toastStore.error(reduced.error); return false; }
     const primary = reduced.primary;
@@ -179,6 +203,9 @@ export function usePointerDrag(deps: PointerDragDeps) {
   }
 
   function startNativeDrag(): void {
+    // The OS drag owns the gesture now; this window's native receiver springs
+    // peeks again if it comes back.
+    springEnd();
     dropHover.clear(refreshHover);
     clearHighlights();
     removeListeners();
@@ -200,6 +227,8 @@ export function usePointerDrag(deps: PointerDragDeps) {
       return;
     }
 
+    // A source that left its listing after its row unmounted cancels here.
+    if (sourceGone()) { onCancel(); return; }
     if (ghostEl) ghostEl.style.display = "none";
     const target = resolveDropTargetAtPoint(event.clientX, event.clientY);
     const kind = entryData?.kind;
@@ -213,7 +242,7 @@ export function usePointerDrag(deps: PointerDragDeps) {
     if (!lease) return;
     const clear = captureHighlightCleanup();
     const isCopy = !!isCopyModifier(event);
-    const explorer = deps.getExplorer();
+    const explorer = explorerOf();
     try {
       if (!paths.length) return;
       if (target?.type === "terminal") {
@@ -276,6 +305,9 @@ export function usePointerDrag(deps: PointerDragDeps) {
   }
 
   function cleanup(clearDrag: boolean): void {
+    // Mouseup (after resolving its target), Escape, blur and unmount. The
+    // close lands a macrotask later, after the drop has read its target.
+    if (dragActive) springEnd();
     dropHover.clear(refreshHover);
     removeListeners();
     if (ghostEl) {
@@ -291,7 +323,7 @@ export function usePointerDrag(deps: PointerDragDeps) {
     pending = null;
   }
 
-  return { handlePointerDown };
+  return { handlePointerDown, dispose };
 }
 
 /** The primary can become a selected ancestor after recursive reduction. */

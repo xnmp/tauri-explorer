@@ -8,7 +8,13 @@ export const LIST_COLUMN_STRIDE = LIST_COLUMN_WIDTH + LIST_COLUMN_GAP;
 export const LIST_PADDING_X = 8;
 export const LIST_PADDING_Y = 6;
 
-export type SlotSpec = Readonly<{ slots: number; card: boolean }>;
+/** `fit`: a card that keeps its place whenever at least `fit` slots are left in
+ * its column, shrinking to them if it is taller; with fewer left it starts the
+ * next column even when it would fit, so the choice does not change as its
+ * listing loads. `alone`: a card that `fit` moved to the next column ends that
+ * column too, so the rows below it stay empty. Spring-loaded peeks (#1242) use
+ * both so the row a drag holds stays under the pointer (`springCardFits`). */
+export type SlotSpec = Readonly<{ slots: number; card: boolean; fit?: number; alone?: boolean }>;
 export type ListPlacement = Readonly<{ index: number; column: number; row: number; slots: number }>;
 export interface ColumnFlowLayout {
   readonly rows: number;
@@ -18,22 +24,27 @@ export interface ColumnFlowLayout {
 }
 
 /** Stateless prefix scan. Storage follows entries, never the number of available slots. */
-export function columnFlow<T>(items: readonly T[], R: number, slotsOf: (item: T) => SlotSpec): ColumnFlowLayout {
+export function columnFlow<T>(items: readonly T[], R: number, slotsOf: (item: T, index: number) => SlotSpec): ColumnFlowLayout {
   if (!Number.isSafeInteger(R) || R < 4) throw new RangeError("Rows per column must be an integer >= 4");
   const columns: ListPlacement[][] = [];
   const byIndex: ListPlacement[] = [];
   let column = 0, row = 0;
   items.forEach((item, index) => {
-    const spec = slotsOf(item);
+    const spec = slotsOf(item, index);
     if (!spec || !Number.isSafeInteger(spec.slots) || spec.slots < 1 || spec.slots > R || (!spec.card && spec.slots !== 1)) {
       throw new RangeError("Entries must fit one column; plain items use one slot");
     }
-    if (row + spec.slots > R) { column++; row = 0; }
-    const placement = { index, column, row, slots: spec.slots };
+    let slots = spec.slots, alone = false;
+    const fit = spec.card && spec.fit !== undefined && Number.isSafeInteger(spec.fit) && spec.fit >= 1 ? spec.fit : null;
+    if (fit !== null) {
+      if (row > 0 && R - row < fit) { column++; row = 0; alone = spec.alone === true; }
+      slots = Math.min(slots, R - row);
+    } else if (row + slots > R) { column++; row = 0; }
+    const placement = { index, column, row, slots };
     (columns[column] ??= []).push(placement);
     byIndex.push(placement);
-    row += spec.slots;
-    if (row === R) { column++; row = 0; }
+    row += slots;
+    if (row === R || alone) { column++; row = 0; }
   });
   return {
     rows: R, columns, byIndex,

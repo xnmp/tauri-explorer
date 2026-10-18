@@ -186,7 +186,7 @@
       {@const geometry = tiles.geometry[g] ?? NO_GEOMETRY}
       <div class="tile-group">
         {#if geometry.boxes.length}
-          <TilePanelOutlines {geometry} metrics={model.metrics} compact={tiles.compact} hot={tiles.hot} live={model.panels} />
+          <TilePanelOutlines {geometry} metrics={model.metrics} compact={tiles.compact} hot={tiles.hot} live={model.panels} bridged={explorer.springPeeks} />
           {#each above(geometry.boxes) as box (box.path)}{@render panel(box)}{/each}
         {/if}
         <div role="row" aria-rowindex={uniform ? g + 1 : undefined} class="tile-row"

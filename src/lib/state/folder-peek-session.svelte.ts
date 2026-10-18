@@ -4,7 +4,7 @@ import { createPeekWatch } from "./pane-peek-watch";
 import { pathComparison } from "$lib/domain/path";
 import type { FileEntry } from "$lib/domain/file";
 import * as policies from "$lib/domain/folder-peek";
-import { toggleExpanded, collapseSubtree, pruneExpanded, rememberWhileExpanded, type ExpandedPaths, type PeekListing } from "$lib/domain/folder-peek";
+import { toggleExpanded, collapseSubtree, pruneExpanded, rememberWhileExpanded, withTemporaryPeeks, type ExpandedPaths, type PeekListing } from "$lib/domain/folder-peek";
 import type { BandSide } from "$lib/domain/tile-panels";
 import { rememberCardRows } from "$lib/domain/list-cards";
 import { createDirectoryListing } from "./directory-listing";
@@ -13,6 +13,10 @@ import type { RefreshTarget } from "./pane-refresh";
 
 export function createFolderPeekSession(windows: boolean) {
   let expanded = $state.raw<ReadonlyMap<string, number>>(new Map());
+  /** Spring-loaded peeks of a live drag (#1242), outer first: rendered and
+   * loaded like expanded folders, never part of `expanded`, heights or storage. */
+  let temporary = $state.raw<readonly string[]>([]);
+  const projected = $derived(withTemporaryPeeks(expanded, temporary));
   let snapshots = $state.raw<ReadonlyMap<string, PeekListing>>(new Map());
   /** List card heights (visible rows) per top-level path, for the session. */
   let cardRows = $state.raw<ReadonlyMap<string, number>>(new Map());
@@ -91,6 +95,10 @@ export function createFolderPeekSession(windows: boolean) {
   return {
     policies, watchFactory: createPeekWatch,
     get expanded() { return expanded; },
+    get temporary() { return temporary; },
+    /** What the projection renders: the expanded set plus temporary peeks. */
+    get projected() { return projected; },
+    setTemporary(paths: readonly string[]) { if (!disposed) temporary = paths; },
     toggle(path: string) { if (!disposed) setExpanded(toggleExpanded(expanded, path, ++ordinal)); },
     collapse(path: string) { if (expanded.has(path)) { const next = new Map(expanded); next.delete(path); setExpanded(next); } },
     collapseAll(roots: readonly string[]) {
@@ -113,7 +121,7 @@ export function createFolderPeekSession(windows: boolean) {
     target(path: string) { return [...resources].find(([key]) => pathComparison(windows).same(key, path))?.[1].target; },
     reconcile,
     async dispose() {
-      disposed = true; reconcile([]);
+      disposed = true; temporary = []; reconcile([]);
       await Promise.all([...retiring]);
       const results = await Promise.allSettled([...retired].map(async resource => { await resource.retire(); retired.delete(resource); }));
       const failure = results.find(result => result.status === "rejected");

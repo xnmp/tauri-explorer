@@ -46,6 +46,7 @@
   const columns = useListColumns({
     getRows: () => explorer.detailRows,
     getPreferredRows: path => explorer.listCardRows(path),
+    getSpringPaths: () => explorer.springPeeks,
     getPinnedPaths: () => dialogStore.renamingEntry ? [dialogStore.renamingEntry.path] : [],
     commitCardRows: (path, rows) => explorer.setListCardRows(path, rows),
     onviewportscroll: () => onviewportscroll?.(),
@@ -55,7 +56,10 @@
   let layer = $state<HTMLElement | null>(null);
   useListMotion({
     getModel: () => columns.model,
-    getChange: () => explorer.peekChange,
+    // A drag's temporary card animates but is revealed only when it started
+    // the next column: scrolling would otherwise move its header out from
+    // under the held pointer; a wrapped card's bridges keep it inside (#1242).
+    getChange: () => { const change = explorer.peekChange; return change?.temporary ? { ...change, reveal: columns.springWrapped(change.path) } : change; },
     getStatus: path => explorer.peekStatus(path),
     columnVisible: column => columns.columnVisible(column),
     getCanvas: () => canvas,
@@ -139,6 +143,12 @@
           {/if}
         </div>
       {/each}
+      {#each columns.springBridges as bridge (`${bridge.path}:${bridge.left}:${bridge.top}`)}
+        <!-- Inside a temporary card that started the next column: the slot it
+             left, the rows below it and the gap between (#1242, list-cards.ts). -->
+        <div class="list-spring-bridge" data-spring-bridge={bridge.path} aria-hidden="true"
+          style:left="{bridge.left}px" style:top="{bridge.top}px" style:width="{bridge.width}px" style:height="{bridge.height}px"></div>
+      {/each}
       <div class="list-motion-layer" bind:this={layer} aria-hidden="true" inert></div>
     </div>
   </div>
@@ -170,6 +180,7 @@
      live query can reach them. */
   .list-place { position: absolute; width: 260px; height: 30px; }
   .list-place.covered { visibility: hidden; }
+  .list-spring-bridge { position: absolute; z-index: 3; }
   .list-motion-layer { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
   /* Idle, the layer must not exist for hit testing: axe reads an empty
      full-canvas overlay as covering every row's text. */

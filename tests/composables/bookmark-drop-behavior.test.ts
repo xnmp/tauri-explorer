@@ -19,6 +19,8 @@ vi.mock("$lib/composables/use-external-drop.svelte", () => ({
 vi.mock("$lib/composables/use-native-drop-target.svelte", () => ({
   resolveDropTarget: () => state.target,
   resolveDropTargetAtPoint: () => state.pointerTarget,
+  elementAtPoint: () => null,
+  elementAtNativePosition: () => null,
   highlightTarget: vi.fn(),
   highlightTargetAtPoint: vi.fn(),
   clearHighlights: vi.fn(),
@@ -38,6 +40,9 @@ vi.mock("$lib/composables/use-external-drag.svelte", () => ({ startExternalDrag:
 
 import { useNativeDropHandler } from "$lib/composables/use-native-drop-handler";
 import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
+
+/** The source pane still lists every dragged path. */
+const listed = { has: () => true };
 
 describe("native bookmark drops", () => {
   beforeEach(() => {
@@ -128,7 +133,7 @@ describe("pointer bookmark drops", () => {
   });
 
   it("does nothing when a file is dropped on empty Bookmarks space", async () => {
-    const explorer = { currentPath: "/home/user", getSelectedEntries: () => [], refresh: vi.fn() } as any;
+    const explorer = { currentPath: "/home/user", getSelectedEntries: () => [], refresh: vi.fn(), entryMeta: listed } as any;
     const drag = usePointerDrag({ getExplorer: () => explorer });
     drag.handlePointerDown({ button: 0, preventDefault: vi.fn(), currentTarget: { querySelector: () => null } } as any, {
       path: "/home/user/report.txt", name: "report.txt", kind: "file",
@@ -143,7 +148,7 @@ describe("pointer bookmark drops", () => {
 
   it("moves a file dropped directly on a bookmark instead of pinning it", async () => {
     state.pointerTarget = { type: "bookmark", path: "/home/user/Archive" };
-    const explorer = { currentPath: "/home/user", getSelectedEntries: () => [], refresh: vi.fn() } as any;
+    const explorer = { currentPath: "/home/user", getSelectedEntries: () => [], refresh: vi.fn(), entryMeta: listed } as any;
     const drag = usePointerDrag({ getExplorer: () => explorer });
     drag.handlePointerDown({ button: 0, preventDefault: vi.fn(), currentTarget: { querySelector: () => null } } as any, {
       path: "/home/user/report.txt", name: "report.txt", kind: "file",
@@ -163,7 +168,7 @@ describe("pointer bookmark drops", () => {
 
   it("pins a directory dropped directly on a user-created bookmark instead of moving it", async () => {
     state.pointerTarget = { type: "bookmark", path: "/home/user/Archive" };
-    const explorer = { currentPath: "/home/user", getSelectedEntries: () => [], refresh: vi.fn() } as any;
+    const explorer = { currentPath: "/home/user", getSelectedEntries: () => [], refresh: vi.fn(), entryMeta: listed } as any;
     const drag = usePointerDrag({ getExplorer: () => explorer });
     drag.handlePointerDown({ button: 0, preventDefault: vi.fn(), currentTarget: { querySelector: () => null } } as any, {
       path: "/home/user/Projects", name: "Projects", kind: "directory",
@@ -178,7 +183,7 @@ describe("pointer bookmark drops", () => {
 
   it("pins a directory dropped directly on a built-in bookmark instead of moving it", async () => {
     state.pointerTarget = { type: "bookmark", path: "/home/user/Downloads" };
-    const explorer = { currentPath: "/home/user", getSelectedEntries: () => [], refresh: vi.fn() } as any;
+    const explorer = { currentPath: "/home/user", getSelectedEntries: () => [], refresh: vi.fn(), entryMeta: listed } as any;
     const drag = usePointerDrag({ getExplorer: () => explorer });
     drag.handlePointerDown({ button: 0, preventDefault: vi.fn(), currentTarget: { querySelector: () => null } } as any, {
       path: "/home/user/Projects", name: "Projects", kind: "directory",

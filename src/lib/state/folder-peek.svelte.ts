@@ -5,6 +5,7 @@ import type { createFolderPeekSession } from "./folder-peek-session.svelte";
 
 const emptyExpanded: ReadonlyMap<string, number> = new Map();
 const emptySides: ReadonlyMap<string, BandSide> = new Map();
+const noPaths: readonly string[] = [];
 export function createFolderPeekState(windows: boolean) {
   let session = $state.raw<ReturnType<typeof createFolderPeekSession> | null>(null);
   let loading: Promise<void> | undefined;
@@ -13,6 +14,10 @@ export function createFolderPeekState(windows: boolean) {
     get watchFactory() { return session?.watchFactory; },
     get policies() { return session?.policies; },
     get expanded() { return session?.expanded ?? emptyExpanded; },
+    /** Spring-loaded peeks (#1242); projected with `expanded`, never stored in it. */
+    get temporary() { return session?.temporary ?? noPaths; },
+    get projected() { return session?.projected ?? emptyExpanded; },
+    setTemporary(paths: readonly string[]) { session?.setTemporary(paths); },
     activate(): Promise<void> {
       if (session || disposed) return Promise.resolve();
       return loading ??= import("./folder-peek-session.svelte").then(({ createFolderPeekSession }) => {

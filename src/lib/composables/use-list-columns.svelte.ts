@@ -1,6 +1,6 @@
 import { flushSync, getAbortSignal, onDestroy, tick, untrack } from "svelte";
 import { listColumnRange, listExtent, listRows, listWheelStep, LIST_COLUMN_STRIDE, LIST_COLUMN_WIDTH, LIST_PADDING_X, LIST_PADDING_Y, LIST_SLOT_HEIGHT, type ListCardSpec, type ListPlacement, type ListTopItem } from "$lib/domain/list-column-flow";
-import { buildListStructure, cardMaxRows, cardRevealTop, cardWheelConsumes, cardWindow, gripKeyRows, gripRows, sizeListModel } from "$lib/domain/list-cards";
+import { buildListStructure, cardMaxRows, cardRevealTop, cardWheelConsumes, cardWindow, gripKeyRows, gripRows, sizeListModel, springCardFits, springCardWrapped, springWrapBridges } from "$lib/domain/list-cards";
 import { rectDimToCSS } from "$lib/domain/zoom";
 import type { PeekRow, PeekRows } from "$lib/domain/folder-peek";
 
@@ -19,6 +19,9 @@ interface ListColumnsDeps {
   getRows: () => PeekRows;
   /** Remembered card height (visible rows) for an open top-level folder. */
   getPreferredRows: (path: string) => number | undefined;
+  /** A drag's temporary peeks (#1242): the cards holding them keep their place,
+   * and one that starts the next column is bridged (`springCardFits`). */
+  getSpringPaths?: () => readonly string[];
   /** Entries whose slot, and card row, must stay mounted (inline editors). */
   getPinnedPaths: () => readonly string[];
   /** Store a card height chosen with its grip (`explorer.setListCardRows`). */
@@ -37,7 +40,9 @@ export function useListColumns(deps: ListColumnsDeps) {
   const rows = $derived(listRows(height));
   // A row-count change re-sizes and re-flows; only a row-model change rebuilds items.
   const structure = $derived(buildListStructure(deps.getRows()));
-  const model = $derived(sizeListModel(structure, rows, deps.getPreferredRows));
+  const springPaths = $derived(deps.getSpringPaths?.() ?? []);
+  const model = $derived(sizeListModel(structure, rows, deps.getPreferredRows, springCardFits(structure, deps.getRows(), springPaths, rows, deps.getPreferredRows)));
+  const springBridges = $derived(springWrapBridges(model, springPaths));
   const layout = $derived(model.layout);
   const extent = $derived(listExtent(layout.columns.length));
   const range = $derived(listColumnRange(layout.columns.length, left, width));
@@ -348,6 +353,10 @@ export function useListColumns(deps: ListColumnsDeps) {
     get rows() { return rows; },
     get extent() { return extent; },
     get visibleItems() { return visibleItems; },
+    /** Regions inside a temporary card that started the next column (#1242). */
+    get springBridges() { return springBridges; },
+    /** Whether temporary card `path` started the next column. */
+    springWrapped: (path: string) => springCardWrapped(springBridges, path),
     get short() { return height < LIST_SLOT_HEIGHT * 4; },
   };
 }

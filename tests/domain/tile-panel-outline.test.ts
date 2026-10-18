@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { accentFade, groupOutlines, outlinePath, ribbonGeometry } from "$lib/domain/tile-panel-outline";
-import { RIBBON_HALF, STACKED_LABEL_HEIGHT } from "$lib/domain/tile-panels";
+import { RIBBON_HALF, STACKED_LABEL_HEIGHT, tabX } from "$lib/domain/tile-panels";
 import { P, modelFor } from "./tile-panels-fixture";
 
 type Command = { op: string; args: number[] };
@@ -126,6 +126,22 @@ describe("groupOutlines", () => {
       if (box.side === "below") expect(o.accent).toMatchObject({ y1: box.top, y2: box.top + accentFade(box.height) });
       if (box.side === "above") expect(o.accent).toMatchObject({ y1: box.top + box.height, y2: box.top + box.height - accentFade(box.height) });
     }
+  });
+
+  it("bridges each attached panel's band gap under its parent's tab, and nothing else (#1242)", () => {
+    for (const [i, o] of outlines.entries()) {
+      const box = group.boxes[i];
+      if (box.side === "stacked") { expect(o.bridge).toBeNull(); continue; }
+      const tab = tabX(box.col, model.metrics);
+      const rowBottom = group.rowTop + model.metrics.tileHeight;
+      // The gap between the row and the band, at the tab's x-range: never the
+      // tile itself, never the panel itself.
+      expect(o.bridge).toEqual(box.side === "below"
+        ? { x: tab.x0, y: rowBottom, width: tab.x1 - tab.x0, height: box.top - rowBottom }
+        : { x: tab.x0, y: box.top + box.height, width: tab.x1 - tab.x0, height: group.rowTop - box.top - box.height });
+      expect(o.bridge!.height).toBeGreaterThan(0);
+    }
+    expect(outlines.some(o => o.bridge)).toBe(true);
   });
 
   it("is empty for a group without panels", () => {

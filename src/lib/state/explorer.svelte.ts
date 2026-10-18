@@ -222,10 +222,11 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     if (!policies) return flatPeekEntries(coreState.currentPath, ownDisplayEntries);
     peekLevels ??= policies.createPeekLevelCache(isWindows);
     return policies.flattenPeekEntries({
-      root: coreState.currentPath, entries: ownDisplayEntries, expanded: peek.expanded,
+      // Spring-loaded peeks (#1242) project exactly like expanded folders.
+      root: coreState.currentPath, entries: ownDisplayEntries, expanded: peek.projected,
       listing: path => peek.listing(path)?.entries,
       project: (entries, parent) => sortEntries(visibleEntriesFor(entries, parent), ...peekSort()),
-      capability: peek.expanded.size ? capability : "none", windows: isWindows,
+      capability: peek.projected.size ? capability : "none", windows: isWindows,
       levels: peekLevels, projectionKey: peekProjectionKey,
     });
   });
@@ -250,8 +251,10 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
    * navigation and card resizes never set it, so renderers can animate user
    * toggles and keep everything else instant (#1240): a grip resize has
    * already previewed its height, so its commit snaps. */
-  let peekChange = $state.raw<{ path: string; serial: number } | null>(null);
-  const notePeekChange = (path: string) => { peekChange = { path, serial: (peekChange?.serial ?? 0) + 1 }; };
+  let peekChange = $state.raw<{ path: string; serial: number; temporary?: true } | null>(null);
+  const notePeekChange = (path: string, temporary = false) => {
+    peekChange = { path, serial: (peekChange?.serial ?? 0) + 1, ...(temporary ? { temporary: true as const } : {}) };
+  };
   // A function, not a narrowed read: capability is live across the lazy load.
   const peeksAllowed = () => capability !== "none";
   async function togglePeek(path: string) {
@@ -304,7 +307,38 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     watch.reconcilePeeks(loading ? [] : reachable, expanded);
   }
   function reconcilePeekResources() {
-    applyPeekResources(peekTree.expanded, peek.expanded, coreState.loading, settingsStore.showGitStatus);
+    applyPeekResources(peekTree.expanded, peek.projected, coreState.loading, settingsStore.showGitStatus);
+  }
+  // ---- Spring-loaded peeks (#1242) ---------------------------------------------
+  /** The drag's latest request; replayed once the lazy session has loaded. */
+  let springRequest: readonly string[] = [];
+  /** Only visible, closed, plain directories of a peekable pane may spring
+   * open; Tiles panels are top-level only. */
+  function admitSpring(paths: readonly string[]): string[] {
+    if (capability === "none") return [];
+    return paths.filter(path => !peek.expanded.has(path) && !isVirtualPath(path) && !providerFor(path)
+      && displayEntries.some(entry => entry.path === path && entry.kind === "directory")
+      && (capability === "tree" || peekTree.meta.get(path)?.depth === 0));
+  }
+  function applySpring(paths: readonly string[]) {
+    const current = peek.temporary;
+    const next = admitSpring(paths);
+    if (next.length === current.length && next.every((path, i) => path === current[i])) return;
+    if (next.length && peek.watchFactory) watch.enablePeeks(peek.watchFactory);
+    const changed = next.find(path => !current.includes(path)) ?? current.find(path => !next.includes(path))!;
+    peek.setTemporary(next);
+    notePeekChange(changed, true);
+    reconcilePeekResources();
+  }
+  /** The temporary peeks a live drag holds open, outer first. */
+  function setSpringPeeks(paths: readonly string[]) {
+    springRequest = paths;
+    if (peek.policies) { applySpring(paths); return; }
+    if (!paths.length || !peeksAllowed()) return;
+    const generation = navGeneration;
+    void peek.activate().then(() => {
+      if (!destroyed && generation === navGeneration && springRequest === paths) applySpring(paths);
+    });
   }
   const disposePeekEffects = $effect.root(() => {
     let previous: { root: string; tree: typeof peekTree } | undefined;
@@ -312,7 +346,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
       const tree = peekTree;
       const root = coreState.currentPath;
       const loading = coreState.loading;
-      const expanded = peek.expanded;
+      const expanded = peek.projected;
       const git = settingsStore.showGitStatus;
       untrack(() => {
         if (previous?.root === root) pruneHiddenChildren(previous.tree, tree.entries);
@@ -407,6 +441,9 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     // scheduled refreshes, and pane-watch rejects peek publication until the
     // navigation settles. Snapshots and selection are retired at commit.
     watch.invalidatePeeks();
+    // A drag's temporary peeks belong to the folder being left.
+    springRequest = [];
+    if (peek.temporary.length) peek.setTemporary([]);
     // A caller's trace is used only while it is still the pane's newest;
     // anything else starts this navigation's own trace.
     const load = trace && trace === activeLoad ? trace : traceLoad(path, reason);
@@ -1105,6 +1142,29 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     get detailRows() { return detailRows; },
     get peekEnabled() { return capability !== "none"; },
     get expandedPaths() { return new Set(peek.expanded.keys()); },
+    get peekCapability() { return capability; },
+    /** In the user's expanded set (not a temporary peek). */
+    isPeekExpanded(path: string) { return peek.expanded.has(path); },
+    /** Spring-loaded peeks of a live drag (#1242), outer first. */
+    get springPeeks() { return peek.temporary; },
+    isSpringPeek(path: string) { return peek.temporary.includes(path); },
+    setSpringPeeks,
+    /** The drag's last request (`setSpringPeeks`), by identity: navigation
+     * replaces it, so the spring driver can tell its peeks were dropped. */
+    get springRequest() { return springRequest; },
+    /** The folder a drop on a row targets while it lies inside a temporary peek:
+     * a file row's folder, or the directory itself (a directory row's wrapper;
+     * a peek-state row, named by its folder). Null outside temporary peeks,
+     * where such rows keep their ordinary (non-)target behaviour. */
+    springDropFolder(path: string, kind: "directory" | "file" | "state"): string | null {
+      const temporary = peek.temporary;
+      if (!temporary.length || capability === "none") return null;
+      const folder = kind === "file" ? peekTree.meta.get(path)?.parentPath : path;
+      for (let at = folder; at && at !== coreState.currentPath; at = peekTree.meta.get(at)?.parentPath) {
+        if (temporary.includes(at)) return folder!;
+      }
+      return null;
+    },
     peekWatchSnapshot: watch.peekSnapshot,
     togglePeek,
     toggleOnRowClick,
@@ -1114,13 +1174,13 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     /** Remembered List card height (visible rows) for a top-level folder. */
     listCardRows(path: string) { return peek.cardRows(path); },
     setListCardRows(path: string, rows: number) {
-      if (capability === "none" || peek.cardRows(path) === rows) return;
+      if (capability === "none" || peek.temporary.includes(path) || peek.cardRows(path) === rows) return;
       peek.setCardRows(path, rows);
     },
     /** Remembered Tiles panel height (CSS px) for a top-level folder. */
     tilePanelHeight(path: string) { return peek.panelHeight(path); },
     setTilePanelHeight(path: string, height: number) {
-      if (capability === "none" || !Number.isFinite(height) || height < 1 || peek.panelHeight(path) === Math.round(height)) return;
+      if (capability === "none" || peek.temporary.includes(path) || !Number.isFinite(height) || height < 1 || peek.panelHeight(path) === Math.round(height)) return;
       peek.setPanelHeight(path, height);
     },
     /** Tiles panel sides of the expanded folders, from the last Tiles layout (§9.1). */

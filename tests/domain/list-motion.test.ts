@@ -187,6 +187,20 @@ describe("stepMotionArm", () => {
     expect(close).toMatchObject({ animate: true, reveal: null });
   });
 
+  it("animates a spring-loaded open (reveal: false) like a toggle but never reveals it (#1242)", () => {
+    let status = "loading";
+    const spring = { path: "/r/a", serial: 1, reveal: false };
+    const steps = run([
+      { now: 0, change: spring, status: () => status, cardOf: () => "/r/a" },
+      { now: 100, change: spring, status: () => (status = "loaded"), cardOf: () => "/r/a" },
+      { now: 200, change: spring, status: () => status, cardOf: () => "/r/a" },
+    ]);
+    expect(steps.map(step => step.animate)).toEqual([true, true, false]);
+    expect(steps.map(step => step.reveal)).toEqual([null, null, null]);
+    // A later ordinary toggle reveals again.
+    const [user] = run([{ now: 0, change: { path: "/r/b", serial: 2 }, cardOf: path => path }], steps.at(-1)!.next);
+    expect(user.reveal).toBe("/r/b");
+  });
   it("keeps the reveal an interrupted motion owed, while that card still exists", () => {
     const [owed] = run([{ now: 0, carried: "/r/p", cardOf: path => path === "/r/p" ? "/r/p" : null }]);
     expect(owed).toMatchObject({ animate: false, reveal: "/r/p" });

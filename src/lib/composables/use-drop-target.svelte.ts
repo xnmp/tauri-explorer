@@ -14,9 +14,17 @@ interface DropTargetDeps {
   onRefresh: () => void;
 }
 
+/** Advanced when a drag drops, ends or leaves the window: every folder's
+ * feedback from earlier belongs to a finished gesture. A leave never reaches
+ * a surface that unmounted first (a closing spring-loaded peek, #1242). */
+let feedbackEpoch = $state(0);
+export function retireDropFeedback(): void { feedbackEpoch++; }
+
 export function useDropTarget(deps: DropTargetDeps) {
   let dropTargets = $state<Record<string, boolean>>({});
   let copyDropTargets = $state<Record<string, boolean>>({});
+  /** The gesture the recorded feedback belongs to. */
+  let epoch = feedbackEpoch;
 
   function handleDragOver(event: DragEvent, entry: FileEntry): void {
     if (entry.kind !== "directory") return;
@@ -24,6 +32,7 @@ export function useDropTarget(deps: DropTargetDeps) {
     event.preventDefault();
     const copying = isCopyModifier(event);
     if (event.dataTransfer) event.dataTransfer.dropEffect = copying ? "copy" : "move";
+    if (epoch !== feedbackEpoch) { dropTargets = {}; copyDropTargets = {}; epoch = feedbackEpoch; }
     dropTargets[entry.path] = true;
     copyDropTargets[entry.path] = copying;
   }
@@ -79,11 +88,11 @@ export function useDropTarget(deps: DropTargetDeps) {
   }
 
   function isDropTarget(path: string): boolean {
-    return dropTargets[path] ?? false;
+    return epoch === feedbackEpoch && (dropTargets[path] ?? false);
   }
 
   function isCopyDrop(path: string): boolean {
-    return copyDropTargets[path] ?? false;
+    return epoch === feedbackEpoch && (copyDropTargets[path] ?? false);
   }
 
   return {

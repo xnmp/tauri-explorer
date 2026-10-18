@@ -20,6 +20,14 @@ async function command(label: string): Promise<void> {
   await $(".command-palette-dialog").waitForDisplayed({ reverse: true });
 }
 
+/** A folder's spring-loaded peek in any view: a Details subtree's state row, a
+ * List card's scroll area, a Tiles panel (#1242). */
+const springPeekSelector = (folder: string) => [
+  entryPathSelector(folder, shown).replace('[data-path="', '[data-peek-state="'),
+  entryPathSelector(folder, `${shown}[data-card-scroll]`),
+  entryPathSelector(folder, `${shown}.tile-panel`),
+].join(", ");
+
 async function drag(source: Entry, destination: Entry, options: { copy?: boolean; cancel?: boolean; copyAfterStart?: boolean } = {}): Promise<void> {
   await browser.waitUntil(() => browser.execute(() => document.documentElement.dataset.e2eNativeDragReady === "true"), {
     timeout: 5_000, timeoutMsg: "read-only native Drop observer never became ready",
@@ -28,12 +36,18 @@ async function drag(source: Entry, destination: Entry, options: { copy?: boolean
   await destination.waitForDisplayed();
   const from = await source.getLocation();
   const to = await destination.getLocation();
-  await browser.execute(() => {
+  const folder = await destination.getAttribute("data-path");
+  // WebKitWebDriver may run this in an isolated world: the probes share only
+  // the DOM with the app, so they report through attributes, never globals.
+  await browser.execute((peeks: string) => {
     const root = document.documentElement;
     root.dataset.nativeDragSession = "";
     root.dataset.domDropReceived = "false";
     root.dataset.nativeDragEnded = "";
     root.dataset.e2eNativeDragDrop = "";
+    // Records whether the hover sprang the destination open (`assertSprangOpen`).
+    root.dataset.springPeekWatch = peeks;
+    root.dataset.springPeekOpened = "";
     if (root.dataset.nativeDragProbeInstalled) return;
     root.dataset.nativeDragProbeInstalled = "true";
     document.addEventListener("dragstart", () => {
@@ -42,7 +56,11 @@ async function drag(source: Entry, destination: Entry, options: { copy?: boolean
     });
     document.addEventListener("drop", () => { root.dataset.domDropReceived = "true"; }, { capture: true });
     document.addEventListener("dragend", () => { root.dataset.nativeDragEnded = root.dataset.nativeDragSession; });
-  });
+    new MutationObserver(() => {
+      const watch = root.dataset.springPeekWatch;
+      if (watch && root.dataset.springPeekOpened !== "true" && document.querySelector(watch)) root.dataset.springPeekOpened = "true";
+    }).observe(document.body, { childList: true, subtree: true });
+  }, folder ? springPeekSelector(folder) : "");
   execFileSync("python3", [fileURLToPath(new URL("../helpers/native-drag.py", import.meta.url)),
     String(Math.round(from.x + 65)), String(Math.round(from.y + 12)),
     String(Math.round(to.x + 65)), String(Math.round(to.y + 12)),
@@ -50,6 +68,25 @@ async function drag(source: Entry, destination: Entry, options: { copy?: boolean
     ...(options.cancel ? ["--cancel"] : []),
     ...(options.copyAfterStart ? ["--copy-after-start"] : []),
   ], { timeout: 10_000, stdio: "pipe" });
+}
+
+/** native-drag.py hovers about a second over an adjacent destination before
+ * releasing, so with Folder Peek on (the default) the gesture springs it open
+ * (#1242). The probe `drag` installs saw that peek appear during the hover. */
+async function assertSprangOpen(): Promise<void> {
+  assert.equal(await browser.execute(() => document.documentElement.dataset.springPeekOpened), "true",
+    "the hover never sprang the destination folder open");
+}
+
+/** The drop or cancel must still resolve to the folder and close the temporary
+ * peek: until it does, the folder's contents show in place (a Details subtree,
+ * a List card, a Tiles panel), and a navigated listing would prove nothing. */
+async function assertSpringClosed(folder: string, contents: readonly string[] = []): Promise<void> {
+  await $(springPeekSelector(folder)).waitForExist({ reverse: true, timeout: 5_000, timeoutMsg: "the drag's spring-loaded peek outlived the gesture" });
+  for (const entry of contents) {
+    assert.equal(await $(entryPathSelector(entry, shown + ".entry-item")).isExisting(), false,
+      `${path.basename(entry)} is shown before navigating into its folder`);
+  }
 }
 
 async function assertNativeTransport(requireDrop = true): Promise<void> {
@@ -113,6 +150,8 @@ async function assertNativeTransport(requireDrop = true): Promise<void> {
       assert.equal(fs.readFileSync(secondMoved, "utf8"), "second selected file");
       await assertNativeTransport();
       await sourceRow.waitForExist({ reverse: true });
+      await assertSprangOpen();
+      await assertSpringClosed(destination, [moved, secondMoved]);
       await targetRow.doubleClick();
       await $(entryPathSelector(moved, shown + ".entry-item")).waitForDisplayed();
       await $(entryPathSelector(secondMoved, shown + ".entry-item")).waitForDisplayed();
@@ -144,6 +183,7 @@ async function assertNativeTransport(requireDrop = true): Promise<void> {
       if (copy) assert.equal(fs.readFileSync(path.join(source, "proof.txt"), "utf8"), "Miller native contents");
       else await sourceRow.waitForExist({ reverse: true });
       await assertNativeTransport();
+      await assertSpringClosed(destination, [delivered]);
       await targetRow.doubleClick();
       await $(entryPathSelector(delivered, shown + ".entry-item")).waitForDisplayed();
     });
@@ -171,6 +211,9 @@ async function assertNativeTransport(requireDrop = true): Promise<void> {
       "cancelled gesture unexpectedly delivered a native Drop");
     assert.equal(fs.readFileSync(source, "utf8"), "must survive cancellation");
     assert.deepEqual(fs.readdirSync(destination), []);
+    // Escape ends the native drag, and with it the peek it sprang open.
+    await assertSprangOpen();
+    await assertSpringClosed(destination);
     await sourceRow.waitForDisplayed();
     const cancelledSession = await browser.execute(() => document.documentElement.dataset.nativeDragSession);
     await drag(sourceRow, targetRow);
@@ -183,6 +226,8 @@ async function assertNativeTransport(requireDrop = true): Promise<void> {
       return history.some((drop: { source?: { sessionId?: string } }) => drop.source?.sessionId === session);
     }, cancelledSession!), false, "cancelled session delivered a late native Drop during retry");
     await sourceRow.waitForExist({ reverse: true });
+    await assertSprangOpen();
+    await assertSpringClosed(destination, [moved]);
     await targetRow.doubleClick();
     await $(entryPathSelector(moved, shown + ".entry-item")).waitForDisplayed();
     if (process.env.TAURI_DND_EVIDENCE_DIRECTORY) {

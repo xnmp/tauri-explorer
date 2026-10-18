@@ -6,7 +6,7 @@ An architecture pass updates this file. When an entry crosses its trigger, the
 pass files at most three `tech-debt` issues (never `ai-ready`; a human chooses
 which debt to work). "Defer" is a valid verdict. Drop entries once they expire.
 
-Covered through: afe5cc888540100b7c3ae0ace5a7b21daab4e89f
+Covered through: d668d00b3469cdc408c82654b86b4ac4edaf46b9
 
 Passes: [#1205](https://github.com/xnmp/tauri-explorer/issues/1205)
 (first pass, 2026-10-16), [#1219](https://github.com/xnmp/tauri-explorer/issues/1219)
@@ -14,7 +14,8 @@ Passes: [#1205](https://github.com/xnmp/tauri-explorer/issues/1205)
 (incremental pass, 2026-10-18), [#1262](https://github.com/xnmp/tauri-explorer/issues/1262)
 (incremental pass, 2026-10-18), [#1277](https://github.com/xnmp/tauri-explorer/issues/1277)
 (incremental pass, 2026-10-18), [#1288](https://github.com/xnmp/tauri-explorer/issues/1288)
-(incremental pass, 2026-10-18).
+(incremental pass, 2026-10-18), [#1301](https://github.com/xnmp/tauri-explorer/issues/1301)
+(incremental pass, 2026-10-19).
 
 ## How the first pass inspected history
 
@@ -242,6 +243,56 @@ benchmark or native wheel/compositor qualification. The thumbnail in-flight
 residual remains explicitly unresolved below, without evidence of repeated
 fixes that would cross the current file-list trigger.
 
+## Incremental inspection (#1301)
+
+Inspected all seven commits in
+`afe5cc888540100b7c3ae0ace5a7b21daab4e89f..d668d00b3469cdc408c82654b86b4ac4edaf46b9`,
+the fetched `origin/dev` tip and prepared branch base. Read every changed text
+file, including the preceding ledger consolidation, production boundaries,
+tests, bundle gate, lessons and code maps. Screenshot additions document the
+features; they do not add resource owners. Retrieved all seven PR bodies,
+comments, reviews and review threads. Only #1289 and #1293 have GitHub reviews;
+none has comments or review threads, and every conversation connection reports
+no further page. Review and mutation reports inside other PR bodies remain
+attributed implementation evidence, not additional GitHub reviews or locally
+rerun native qualification.
+
+| Change | Evidence and disposition |
+| --- | --- |
+| [Late-drop destination (#1287)](https://github.com/xnmp/tauri-explorer/pull/1287) | Closes #1283: every post-dragend Drop with a capture uses it, independent of spring revision. Missing/unverifiable filesystem folders cancel after claiming the drop, before transfer; provider targets skip the filesystem check. External Drops cannot borrow captures by path set, and a delivered native Leave retires its gesture's capture. Handler tests assert dispatched destination, cancellation and duplicate-claim outcomes. The reported intra-PR external misdrop selected an old destination; it did not grant internal source/Move authority. Rust/Wry provenance is unchanged. This completes the existing destination owner rather than adding another identity heuristic. No new real native filesystem-outcome test is added. |
+| [Previous ledger (#1289)](https://github.com/xnmp/tauri-explorer/pull/1289) | Documentation only. Its [approval](https://github.com/xnmp/tauri-explorer/pull/1289#pullrequestreview-5562431024) confirmed local boundaries/counts but could not access GitHub discussions or statuses. This pass retrieved the current window's conversations and rechecked carried-forward follow-ups. |
+| [Spring fallback cancellation coverage (#1291)](https://github.com/xnmp/tauri-explorer/pull/1291) | Closes #1290 with a fake-timer controller outcome: after endSoon/end, the same gesture's renewed hover survives the obsolete fallback deadline. The PR reports failure when end's cancellation is removed. The fallback's separate scope guard remains redundant and is documented as unobservable under the existing lifecycle. Test-only; no new timer owner or production recurrence. |
+| [Spring hit-test readiness (#1293)](https://github.com/xnmp/tauri-explorer/pull/1293) | Waits for populated children and completed List motion before synthetic crossing probes sample row edges. A final bounding box previously included still-clipped pixels. The [approval](https://github.com/xnmp/tauri-explorer/pull/1293#pullrequestreview-5562728857) confirms unchanged crossing/departure/short-hover assertions, but could not rerun browsers. The PR reports 40 WebKit cases and repeated crossing runs. This fixes test readiness, not production spring or observation ownership. |
+| [Tiles tab chrome and shared sizing (#1296)](https://github.com/xnmp/tauri-explorer/pull/1296) | Removes the mini-tile layout and renders panel children with the grid's TileLayout. A per-panel track carries narrow-segment clamping through model, navigation, renderer and closing ghosts. Selected/focused open parents leave the panel-facing edge open; drag tint retains priority. Unit geometry/navigation contracts and browser box/icon/font plus pixel controls cover the result; the PR reports both new browser tests failing with the source reverted. Motion/readiness and corridor fixtures adapt to larger panels. This reduces a parallel sizing policy within ADR 0011/0015's shared-geometry/focus direction. No new perf sweep or native compositing evidence accompanies the larger tiles. |
+| [Ten-line paging (#1297)](https://github.com/xnmp/tauri-explorer/pull/1297) | PAGE_LINES is shared by classic navigation and Tiles panels; a panel uses its own columns and paging stays within the cursor's level. Details moves ten entries; classic grids move ten rows. Column-flow List keeps its horizontal paging. Domain outcomes cover bounds, selection intent and panel columns; the PR reports 56 all-view browser cases. Existing explorer selection and FileList reveal ownership remain intact (ADR 0015). |
+| [Caret-less double-click (#1300)](https://github.com/xnmp/tauri-explorer/pull/1300) | One rowClickOwnsPeek predicate and explorer input builder govern click toggling and refused folder double-clicks. FileList shows the configured Open key, or the context menu when unbound; Tiles/providers/peek-off retain navigation. Domain, state and browser outcomes cover that boundary with reported revert controls. The eager guard adds a reported 188 gzip bytes; the startup cap rises 512 bytes with a recorded rationale. Preserve that budget change as a cost, not a startup-speed claim. No second input or focus owner is introduced. |
+
+### Filing decision
+
+Rechecked all open/closed `tech-debt` filings: #1206 remains the only labelled
+filing and is closed. **Zero** issues filed across this pass; no labels changed.
+All five entries remain unexpired on 2026-10-19 and below their existing
+triggers. Merge the Tiles sizing/input changes into file-list ownership and
+the late-drop correction into drag destination lifetime; preserve expiries.
+
+The six monitored page/file-list files still have 1 / 4 / 1 / 1 / 1 / 5
+`fix:` commits both since the prior 2026-09-18 baseline and since 2026-09-19
+(the current 30-day date window). #1296 fixes TilePanelsView and its shared
+geometry, outside those six paths; #1300 is a feature commit. Neither changes
+the defined count trigger. The mock remains 3,226 lines. No backend, vendored
+Wry, workflow or governing ADR changed. Recovery has no new checkpoint or
+admission bypass, and there is no new renderer/environment policy.
+
+#1283 and #1290 are now closed by #1287 and #1291. Renderer retirement
+[#1137](https://github.com/xnmp/tauri-explorer/issues/1137), wider DnD qualification
+[#1225](https://github.com/xnmp/tauri-explorer/issues/1225) and native Trash locators
+[#1228](https://github.com/xnmp/tauri-explorer/issues/1228) remain open; reuse them.
+The unchanged thumbnail loader still permits invalidated in-flight publication
+and rejoining (ADR 0008); no new recurrence crosses the file-list trigger.
+Earlier List/Tiles measurements remain historical, not measurements of #1296's
+larger panel tiles. Native drop-inside-peek, platform delivery and input/compositor
+qualification remain outstanding; synthetic handler outcomes do not close them.
+
 ## Entries
 
 Historical windows and PR-specific limits remain in the inspection sections
@@ -257,7 +308,7 @@ replacing earlier snapshots.
   (`tests/api/mock-invoke-parity.test.ts`). #1218 wires new purge/drag commands;
   #1243 adds child-listing fixtures; #1266 adds a delayed-thumbnail fixture.
   No reported parity escape follows #917. This pass changes none of these
-  surfaces: `mock-invoke.ts` is still 3,226 lines at the #1288 boundary.
+  surfaces: `mock-invoke.ts` is still 3,226 lines at the #1301 boundary.
 - **Trend:** feature wiring raised touch rate; drift-fix rate remains zero
   since #917. Below the size trigger.
 - **Candidate intervention:** split mocks by the existing API domains with a
@@ -275,7 +326,7 @@ replacing earlier snapshots.
   the [environment leak fix #1141](https://github.com/xnmp/tauri-explorer/pull/1141)
   had CI follow-ups #1178/#1180. Four opt-in scrub sites coexist with direct
   process spawns in about 30 modules (first-pass snapshot). No renderer or
-  child-environment policy changed in any incremental window, including #1288.
+  child-environment policy changed in any incremental window, including #1301.
   [#1137](https://github.com/xnmp/tauri-explorer/issues/1137) remains open, so
   its early expiry has not fired. Frontend spring cleanup is a different seam.
 - **Trend:** new since 2026-10-11, driven by WebKitGTK 2.52; no additional
@@ -297,7 +348,7 @@ replacing earlier snapshots.
   [coverage #1162](https://github.com/xnmp/tauri-explorer/pull/1162).
   #1210 preserves exact restore identities; #1218 purge reuses admission and
   prepared deletion; #1243 reduces selections before batch APIs. No incremental
-  window, including #1288, changes recovery code or its ADR statuses; spring
+  window, including #1301, changes recovery code or its ADR statuses; spring
   adapters continue through existing mutation APIs.
 - **Trend:** falling since the 2026-10-01 consolidation; no new bypass.
 - **Candidate intervention:** none yet; accept or revise the Proposed ADRs
@@ -318,9 +369,9 @@ replacing earlier snapshots.
   #1243 peeks extend pane-owned listing/observation and publication; #1258,
   #1265 and #1266 share placement/navigation with FileList-owned deferred
   focus. See their inspection rows for performance and platform limits.
-  #1282 adds one FileList feedback fix: counts since 2026-09-18 at #1288 are
+  #1282 adds one FileList feedback fix: counts since 2026-09-19 at #1301 are
   **1 / 4 / 1 / 1 / 1 / 5**, using
-  `git log <covered-tip> --since=2026-09-18 --no-merges --format='%s' -- <file>`
+  `git log <covered-tip> --since=2026-09-19 --no-merges --format='%s' -- <file>`
   and counting subjects starting `fix:`. #1279 repairs only the motion probe.
   [#1276](https://github.com/xnmp/tauri-explorer/pull/1276) repairs cache-key
   matching and mounted reloads, closing #1267; shared `thumbnail-loads`
@@ -329,10 +380,14 @@ replacing earlier snapshots.
   now supply the previously missing performance evidence; they do not remove
   measured overhead or qualify native input. #1285's checked spec adds no
   new runtime evidence. Website peeks have separate fake-data/demo limits.
-- **Trend:** below the existing trigger in every monitored file, with one
-  new deployed feedback recurrence. These short windows do not establish a
-  new long-term trend. List/Tiles overhead, the thumbnail in-flight residual
-  and native-input/compositing gaps remain explicit.
+  [#1296](https://github.com/xnmp/tauri-explorer/pull/1296) removes mini-tile
+  sizing in favor of grid TileLayout and per-panel tracks shared with navigation
+  and ghosts. #1297 shares paging distance; #1300 shares click ownership.
+- **Trend:** monitored counts are unchanged and below the existing trigger.
+  Tiles chrome/geometry adds one deployed fix outside those six paths, while
+  removing a parallel sizing policy. These short windows do not establish a
+  long-term trend. Earlier List/Tiles costs do not measure the new panel size;
+  thumbnail in-flight and native-input/compositing gaps remain explicit.
 - **Candidate intervention:** extend existing `RefreshTarget`/pane observation
   for repeated child/root publication or lease-cap exceptions; retain the
   shared loader, placement snapshot and identity-bound reveal callbacks for
@@ -365,19 +420,23 @@ replacing earlier snapshots.
   captured target; `isInternalDrag` still gates source/Move authority.
   Native probes now reject post-end opening and fallback-masked closure;
   no dedicated native drop-inside-peek test or broader platform proof is added.
-  Open [#1283](https://github.com/xnmp/tauri-explorer/issues/1283) records
-  navigation/watcher/view layout changes not covered by the spring revision.
-- **Trend:** frontend gesture/destination pressure rises with #1282, but native
-  provenance/completion policy is unchanged. #1227 remains the one follow-up
-  native lifecycle correction after #1218; #1282 does not add another native
-  identity inference or completion exception. No demonstrated stale internal
-  Move authority. Physical GNOME Wayland, cross-window and external receiver
+  [#1287](https://github.com/xnmp/tauri-explorer/pull/1287) closes #1283 by
+  always using an ended drag's capture, checking folder existence after claiming
+  the drop, excluding external path-set borrowing and retiring captures on Leave.
+  #1291 closes #1290's timer cancellation coverage gap; #1293 fixes only browser
+  hit-test readiness. Neither changes the native provenance contract.
+- **Trend:** frontend destination lifetime has a further deployed correction,
+  but Rust/Wry provenance/completion policy is unchanged. #1227 remains the
+  one native lifecycle correction after #1218; #1287 adds no alternative native
+  identity inference or completion exception. Its intra-PR external destination
+  borrowing defect is fixed, with no demonstrated stale internal source/Move
+  authority. Physical GNOME Wayland, cross-window and external receiver
   acceptance stays with open [#1225](https://github.com/xnmp/tauri-explorer/issues/1225).
 - **Candidate intervention:** extend the exact-session/pinned `SourceSnapshot`
   boundary with a typed source lease (adopt/bind/complete) if transport owners
-  accumulate exceptions; keep copy policy separate. For destination lifetime,
-  reuse #1283's existing capture owner: route ended drops to their own capture
-  or invalidate against every relevant layout change. Retain real filesystem
+  accumulate exceptions; keep copy policy separate. Destination lifetime now
+  uses the existing capture owner unconditionally after dragend (#1287);
+  extend that owner if further destination exceptions recur. Retain real filesystem
   outcomes rather than substitute another synthetic policy matrix.
 - **Reconsideration trigger:** two further ownership fixes after #1218 within
   30 days that add alternative identity inference or completion exceptions

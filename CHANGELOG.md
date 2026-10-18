@@ -2,6 +2,49 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.13.0 — 2026-10-19
+
+Folder Peek lets you browse folders inline in Details, List and Tiles, with
+spring-loaded expansion while dragging. This release also adds selectable icon
+themes and fixes repeated peek notices, restored-tab expansion and legacy
+sidebar shortcuts.
+
+### Added
+
+- Folder Peek in Details, List and Tiles, including nested folder expansion,
+  scrollable List groups, resizable Tiles panels and keyboard navigation
+  (#1238, #1240, #1241, #1243, #1258, #1265, #1266).
+- Optional peek carets: with carets hidden, click a folder to expand it and
+  use Open / Enter to navigate into it (#1248, #1250, #1298, #1300).
+- Spring-loaded folder peeks while dragging, with safe drop routing and
+  cleanup when a drag ends or is cancelled (#1242, #1268, #1269, #1282, #1287).
+- Selectable Material, Classic, Minimal and Catppuccin icon themes (#1246).
+
+### Changed
+
+- Page Up and Page Down move the file-list selection by ten lines
+  (#1295, #1297).
+- List peek groups use indentation and guide lines without surrounding
+  bounding boxes (#1311).
+- Caret-less double-click advice appears at most once per minute per window
+  (#1307).
+
+### Fixed
+
+- Reopening a closed tab or split pane restores its own peek expansion;
+  fresh tabs stay independent and expansion remains session-only (#1308).
+- An obsolete saved Files Sidebar binding no longer steals Alt+M T from
+  Terminal after the sidebar is rebound. The sidebar default remains
+  Alt+M B, and custom bindings are preserved (#1309, #1310).
+- Tiles peek panels align selected folder tabs and tile sizing, with
+  measurable selected-state contrast (#1294, #1296, #1304, #1305).
+- Thumbnail cache invalidation and rename use the correct cache keys
+  (#1267, #1276).
+- The Command Palette discovers plugin commands registered while it is open
+  (#1270, #1271).
+- Git graph merge-base jumps cancel pending path-filter reloads, and native
+  Git watcher readiness handles normalized paths (#1281, #1286, #1254, #1256).
+
 ## v1.12.2 — 2026-10-17
 
 Hotfix for Linux file drags that failed to move files into folders. Cancelling

@@ -60,10 +60,29 @@ it("a stale disposer does not remove or invalidate its replacement", () => {
   expect(seen()).toEqual(["A2"]);
 });
 
-it("per-id readers see the entry appear", () => {
+it("point lookups do not subscribe the reader to registry changes", () => {
   const registry = create<string>();
-  const seen = observe(() => [registry.get("a")]);
-  registry.register("a", "A");
+  let runs = 0;
+  stops.push(client.effect_root(() => { client.render_effect(() => { registry.get("a"); runs++; }); }));
   client.flush();
-  expect(seen()).toEqual(["A"]);
+  registry.register("a", "A");
+  registry.delete("a");
+  client.flush();
+  expect(runs).toBe(1);
+});
+
+it("an effect that registers and disposes entries does not re-trigger itself", () => {
+  const registry = create<string>();
+  let runs = 0;
+  stops.push(client.effect_root(() => {
+    client.user_effect(() => {
+      runs++;
+      registry.delete("a");
+      const dispose = registry.register("a", "A");
+      return () => { dispose(); };
+    });
+  }));
+  client.flush();
+  client.flush();
+  expect(runs).toBe(1);
 });

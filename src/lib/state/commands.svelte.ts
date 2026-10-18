@@ -104,11 +104,12 @@ function trackCommandUsage(id: string): void {
 /** Get commands ranked by frecency score (highest first). */
 export function getCommandsByFrecency(): Command[] {
   const now = Date.now();
+  const byId = new Map(getAllCommands().map((c) => [c.id, c]));
   return frecencyData
     .map((e) => ({ id: e.id, score: computeFrecencyScore(e.accesses, now) }))
     .filter((e) => e.score > 0)
     .sort((a, b) => b.score - a.score)
-    .map((e) => commands.get(e.id))
+    .map((e) => byId.get(e.id))
     .filter(
       (cmd): cmd is Command =>
         cmd !== undefined && !cmd.hidden && (!cmd.when || cmd.when()),

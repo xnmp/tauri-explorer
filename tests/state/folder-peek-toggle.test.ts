@@ -155,6 +155,22 @@ it("with carets shown a row click never toggles, and with Folder Peek off nothin
   expect(pane.expandedPaths.size).toBe(0);
 });
 
+it("a folder's double-click is refused exactly where its click toggles the peek (#1298)", async () => {
+  const pane = create();
+  expect(pane.rowClickOwnsPeek(a)).toBe(false);
+  settingsStore.update({ folderPeekCarets: false }); await settle();
+  expect(pane.rowClickOwnsPeek(a)).toBe(true);
+  expect(pane.rowClickOwnsPeek(nested)).toBe(true);
+  expect(pane.rowClickOwnsPeek(child)).toBe(false);
+  // Tiles always draws carets, and Folder Peek off leaves no peek to toggle.
+  pane.setViewMode("tiles"); await settle();
+  expect(pane.rowClickOwnsPeek(a)).toBe(false);
+  pane.setViewMode("list"); await settle();
+  expect(pane.rowClickOwnsPeek(a)).toBe(true);
+  settingsStore.update({ folderPeek: false }); await settle();
+  expect(pane.rowClickOwnsPeek(a)).toBe(false);
+});
+
 it("toggling the carets option applies live", async () => {
   const pane = create();
   expect(pane.peekCaretsShown).toBe(true);

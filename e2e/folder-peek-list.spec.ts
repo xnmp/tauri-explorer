@@ -429,7 +429,7 @@ test("a vertical wheel over a card scrolls the card first, then the List sideway
   expect(prevented).toBe(false);
 });
 
-test("with carets off a click toggles a folder, nested rows have no caret, and double-click navigates", async ({ page }) => {
+test("with carets off a click toggles a folder, nested rows have no caret, and Enter (not double-click) navigates", async ({ page }) => {
   await open(page);
   await setting(page, { folderPeekCarets: false });
   await expect(page.locator(`${shown} .peek-caret`)).toHaveCount(0);
@@ -448,7 +448,12 @@ test("with carets off a click toggles a folder, nested rows have no caret, and d
   const expanded = () => explorerCall<string[]>(page, "return [...explorer.expandedPaths]");
   const was = await expanded();
   expect(was).toContain(`${root}/Inbox`); // a closed card remembers its nested peeks
+  // A double-click is two toggles here, so it stays put and explains the key (#1298).
   await row(page, `${root}/Codex`).dblclick();
+  await expect(page.locator(".toast.info").filter({ hasText: "Use Enter to navigate into folders" })).toHaveCount(1);
+  await expect(card(page, `${root}/Codex`)).toHaveCount(0);
+  expect(await explorerCall<string>(page, "return explorer.currentPath")).toBe(root);
+  await page.keyboard.press("Enter");
   await expect(page.locator(`${shown} .entry-item[data-path="${root}/Codex/AGENTS.md"]`)).toBeVisible();
   await explorerCall(page, "return explorer.goBack()");
   await expect(row(page, `${root}/Codex`)).toBeVisible();

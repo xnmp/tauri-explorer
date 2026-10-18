@@ -159,6 +159,12 @@ Rules that bite:
   missing medians. Destination capture by path set does not grant internal
   Move authority; inspect that gate before counting a provenance recurrence
   (#1288).
+- A closed destination follow-up can remove its old revision policy entirely:
+  #1287 routes every ended drop to its capture and excludes external path-set
+  borrowing. Check the source-authority gate separately. Likewise #1296 removes
+  mini-tile sizing, so earlier Tiles perf medians do not measure its larger
+  panels; shared sizing is an intervention already made, not a new extraction
+  to file (#1301).
 - **Start at [docs/code-map/](docs/code-map/)**: [map-feature.md](docs/code-map/map-feature.md) for cross-layer work and bug hunts, [map-playbook.md](docs/code-map/map-playbook.md) recipes for task-shaped changes (new palette command / context-menu action / Tauri command / setting), [map-folder.md](docs/code-map/map-folder.md) as the exhaustive per-file index. For a small localized change you can already name, skip the maps and grep (measured net loss on cheap tasks; prose architecture docs were deleted for the same reason — see [STUDY.md](docs/code-map/STUDY.md)).
 - **Keep the maps current or they turn harmful.** New/moved source file → update `map-folder.md` (+ the `map-feature.md` cluster), then `python3 docs/code-map/validate.py --coverage`. CI runs the same check.
 - [docs/lessons/](docs/lessons/) — gotchas from closed issues, **one file per issue**: write `docs/lessons/<issue>-<slug>.md` when you fix a bug (never append to the frozen [docs/lessons_learnt.md](docs/lessons_learnt.md) archive — shared-file appends conflicted every open PR, #544). When hunting a bug, search both: `grep -ri <term> docs/lessons/ docs/lessons_learnt.md`.

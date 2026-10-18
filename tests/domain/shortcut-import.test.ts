@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { planShortcutImport } from "$lib/domain/shortcut-import";
+import { planShortcutImport, migrateLegacySidebarBinding } from "$lib/domain/shortcut-import";
 
 describe("shortcut import final-state validation", () => {
   it.each([
@@ -20,4 +20,15 @@ describe("shortcut import final-state validation", () => {
   it("rechecks restored defaults after rejecting another candidate", () => {
     expect(planShortcutImport({ a: "Ctrl+A", b: "Ctrl+B", c: "Ctrl+C" }, { a: "Ctrl+B", b: "Ctrl+C" })).toEqual({ accepted: {}, conflicts: ["b", "a"] });
   });
+});
+
+
+it("retires the obsolete Files Sidebar default while preserving the canonical rebind", () => {
+  const bindings = { "view.focusFilesSidebar": "Alt+M T", "view.toggleSidebar": "Ctrl+Alt+I", "file.openSelected": null };
+  expect(migrateLegacySidebarBinding(bindings)).toEqual({ "view.toggleSidebar": "Ctrl+Alt+I", "file.openSelected": null });
+  expect(bindings["view.focusFilesSidebar"]).toBe("Alt+M T");
+});
+it.each([null, "Ctrl+Alt+B"])("preserves a deliberate Files Sidebar binding: %s", shortcut => {
+  const bindings = { "view.focusFilesSidebar": shortcut };
+  expect(migrateLegacySidebarBinding(bindings)).toBe(bindings);
 });

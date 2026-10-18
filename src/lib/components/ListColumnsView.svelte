@@ -128,8 +128,7 @@
       {#each columns.visibleItems as slot (slot.item.key)}
         <div class="list-slot list-place" class:list-card-box={!!slot.item.card} class:covered={columns.isCovered(slot.item.key)}
           data-motion-key={slot.item.key} data-column={slot.placement.column}
-          style:left="{slot.placement.column * LIST_COLUMN_STRIDE}px" style:top="{slot.placement.row * LIST_SLOT_HEIGHT}px"
-          style:--card-fade={slot.item.card ? `${Math.min(64, 0.6 * (1 + (columns.previewRows(slot.item.card.path) ?? slot.item.card.visibleRows)) * LIST_SLOT_HEIGHT)}px` : undefined}>
+          style:left="{slot.placement.column * LIST_COLUMN_STRIDE}px" style:top="{slot.placement.row * LIST_SLOT_HEIGHT}px">
           {#if !slot.header}
             <InlineNewFolder {explorer} variant="list" columns />
           {:else}
@@ -186,31 +185,9 @@
      full-canvas overlay as covering every row's text. */
   .list-motion-layer:empty { display: none; }
 
-  /* An open top-level folder: panel tint, hairline, radius 8 and a 1.5px accent
-     border fading into the hairline, inset 2px inside its slots. Content-sized,
-     so the box follows its scroll area while that animates. */
+  /* Open folders remain layout groups; indentation and guide lines convey
+     their hierarchy without surrounding panel chrome (#1311). */
   .list-place.list-card-box { height: auto; isolation: isolate; }
-  .list-card-box::after {
-    content: "";
-    position: absolute;
-    inset: 2px 0;
-    z-index: -1;
-    border-radius: 8px;
-    background: var(--subtle-fill-tertiary);
-    box-shadow: inset 0 0 0 1px var(--surface-stroke);
-    pointer-events: none;
-  }
-  .list-card-box::before {
-    content: "";
-    position: absolute;
-    inset: 2px 0;
-    z-index: 1;
-    border-radius: 8px;
-    border: 1.5px solid var(--accent);
-    pointer-events: none;
-    mask-image: linear-gradient(to bottom, #000, transparent var(--card-fade, 64px));
-    -webkit-mask-image: linear-gradient(to bottom, #000, transparent var(--card-fade, 64px));
-  }
 
   /* Not positioned: absolute row controls (caret, card grip) resolve against
      the row's slot (.list-place, or a card's .list-row), so a header's grip

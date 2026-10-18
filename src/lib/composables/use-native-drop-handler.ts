@@ -45,7 +45,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
   // lost-Leave fallback, a newer drag, a Leave) a position no longer names
   // that target, so the Drop routes to the capture instead (#1269). A newer
   // drag never clears an older one's capture; the map is bounded.
-  const endedDrags = new Map<string, { target: DropTargetResult; revision: number }>();
+  const endedDrags = new Map<string, { target: DropTargetResult; revision: number; paths: readonly string[] | null }>();
   const MAX_ENDED_DRAGS = 8;
   const refreshHover = () => { if (hoverPosition) handleNativeOver(hoverPosition); };
   // Receiver-owned snapshot of the live source at native Enter. Source result
@@ -106,8 +106,15 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
       : source ?? (nativeGesture ? nativeGesture.data : nativeSource(rawPaths, source, observedAt, completedGestureSequence, observationClock));
     const paths = resolveNativeDragPaths(rawPaths, dragData, isWindows);
     // Only this drag's own capture: a Drop never borrows another drag's.
-    const endedKey = dragData?.sessionId ?? "";
-    const ended = endedDrags.get(endedKey);
+    let endedKey = dragData?.sessionId ?? "";
+    let ended = endedDrags.get(endedKey);
+    if (!ended && !dragData?.sessionId) {
+      // A Drop that lost its source identity: its capture is the one ended
+      // drag that carried exactly these paths. Several (or none) means it
+      // cannot be told apart: resolve by position, as before.
+      const same = [...endedDrags].filter(([, capture]) => capture.paths && sameDropPathSet(paths, capture.paths, isWindows));
+      if (same.length === 1) [endedKey, ended] = same[0];
+    }
     endedDrags.delete(endedKey);
     if (!paths.length) {
       nativeGesture = null;
@@ -439,7 +446,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     else {
       const key = endedSession || "";
       endedDrags.delete(key);
-      endedDrags.set(key, { target: hoverPosition ? resolveDropTarget(hoverPosition) : null, revision: springRevision() });
+      endedDrags.set(key, { target: hoverPosition ? resolveDropTarget(hoverPosition) : null, revision: springRevision(), paths: internalDragPaths(source, isWindows) });
       for (const old of endedDrags.keys()) { if (endedDrags.size <= MAX_ENDED_DRAGS) break; endedDrags.delete(old); }
       springEndSoon();
     }

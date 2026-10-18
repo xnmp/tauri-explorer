@@ -164,6 +164,7 @@ describe("two drags in a row (the first one's Drop is still owed)", () => {
   const internal = (session: string) => ({ source: source(session), externalSource: false, paths: ["/r/f.txt"] });
   const dragEnd = (session: string) => {
     const transfer = new FakeTransfer();
+    dragState.bindDomSource(transfer as unknown as DataTransfer, source(session) as never);
     transfer.setData("application/x-explorer-session", session);
     win.dispatchEvent(domEvent("dragend", under, transfer));
   };
@@ -193,6 +194,44 @@ describe("two drags in a row (the first one's Drop is still owed)", () => {
     nativeEvent("drop", internal(S1));
     await flush();
     expect(drops.mock.calls[0][1]).toBe("/r/row-a");
+  });
+
+  it("a native Leave of drag 2 does not discard drag 1's capture", async () => {
+    nativeEvent("enter", internal(S1));
+    nativeEvent("over", internal(S1));
+    dragEnd(S1);
+    win.dispatchEvent(domEvent("dragstart", under));
+    nativeEvent("enter", internal(S2));
+    nativeEvent("leave");
+    closePeeks();
+    under = named("row-b");
+    nativeEvent("drop", internal(S1));
+    await flush();
+    expect(drops.mock.calls[0][1]).toBe("/r/row-a");
+  });
+
+  it("a Drop that lost its source identity finds its capture by the dropped paths when exactly one matches", async () => {
+    nativeEvent("enter", internal(S1));
+    nativeEvent("over", internal(S1));
+    dragEnd(S1);
+    closePeeks();
+    under = named("row-b");
+    nativeEvent("drop", { externalSource: true, paths: ["/r/f.txt"] });
+    await flush();
+    expect(drops.mock.calls[0][1]).toBe("/r/row-a");
+  });
+
+  it("with several captures for the same paths it cannot tell them apart, and resolves by position", async () => {
+    for (const session of [S1, S2]) {
+      nativeEvent("enter", internal(session));
+      nativeEvent("over", internal(session));
+      dragEnd(session);
+    }
+    closePeeks();
+    under = named("row-b");
+    nativeEvent("drop", { externalSource: true, paths: ["/r/f.txt"] });
+    await flush();
+    expect(drops.mock.calls[0][1]).toBe("/r/row-b");
   });
 
   it("drag 2's own Drop never uses drag 1's capture", async () => {

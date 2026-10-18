@@ -175,7 +175,9 @@ export function resolveDropTargetFromElement(el: Element | null): DropTargetResu
   return null;
 }
 
-/** A delayed DOM fallback belongs to the surface and resources at drop time. */
+/** A delayed DOM fallback belongs to the surface and resources at drop time.
+ * A temporary peek's row unmounts once the drag ends (#1242), so a spring
+ * target is its captured folder in the same, unnavigated pane. */
 export function captureDropDestination(element: Element | null, fallbackExplorer?: ExplorerInstance): () => boolean {
   const target = resolveDropTargetFromElement(element);
   const ancestors: { node: Element; parent: Element | null; attributes: (string | null)[] }[] = [];
@@ -187,6 +189,9 @@ export function captureDropDestination(element: Element | null, fallbackExplorer
   const explorer = paneId ? windowTabsManager.getExplorer(paneId)
     : (!target || (target.type === "background" && !target.path)) ? fallbackExplorer : undefined;
   const lease = explorer?.captureMutation();
+  if (target?.type === "folder" && target.spring) {
+    return () => windowTabsManager.getExplorer(paneId!) === explorer && !!lease?.current() && !isDropOwnerBlocked(null, paneId);
+  }
   // Exact registration identity is its generation; replacement on the same
   // DOM node cannot receive a previous registration's gesture.
   const sameTarget = (current: DropTargetResult) => {

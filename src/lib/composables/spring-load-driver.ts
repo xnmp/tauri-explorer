@@ -8,9 +8,10 @@
  * microtasks between event listeners, so a synchronous close would re-render
  * before a DOM drop's own target handler (or a native Drop's position
  * resolution) has read the row under the pointer. A hold (a DOM drop deferred
- * behind a pending native start) keeps the peeks as they are until released.
+ * behind a pending native start) keeps the peeks as they are until released
+ * (the start settled) or the drag session ends, whichever comes first.
  */
-import { createSpringLoadController, defaultSpringTimer, type SpringObservation, type SpringPaths, type SpringTarget, type SpringTimer } from "$lib/domain/spring-load";
+import { createSpringLoadController, type SpringObservation, type SpringPaths, type SpringTarget, type SpringTimer } from "$lib/domain/spring-load";
 import type { SpringHitElement, SpringRow } from "$lib/domain/spring-rows";
 import type { PeekCapability } from "$lib/domain/folder-peek-flat";
 
@@ -85,14 +86,12 @@ export interface SpringLoadDriverDeps<E> {
   defer?: (run: () => void) => void;
 }
 
-/** A hold outlives a native start that never settles by at most this long. */
-export const SPRING_HOLD_LIMIT_MS = 2000;
-
-
 export interface SpringLoadDriver<E = Element> {
   hover(element: E | null): void;
+  /** The drag session ended: close every temporary peek and release every hold. */
   end(): void;
-  /** Keep the applied peeks until the returned release runs (idempotent). */
+  /** Keep the applied peeks until the returned release runs (idempotent) or
+   * the session ends, so a start that never settles cannot freeze them. */
   hold(): () => void;
 }
 
@@ -102,12 +101,12 @@ export function createSpringLoadDriver<E>(deps: SpringLoadDriverDeps<E>): Spring
   const defer = deps.defer ?? (run => { setTimeout(run, 0); });
   let wanted: readonly SpringTarget[] = [];
   const applied = new Map<string, readonly string[]>();
-  let holds = 0;
+  const holds = new Set<object>();
   let scheduled = false;
 
   function flush(): void {
     scheduled = false;
-    if (holds) return;
+    if (holds.size) return;
     const next = new Map<string, string[]>();
     for (const target of wanted) next.set(target.pane, [...(next.get(target.pane) ?? []), target.path]);
     for (const pane of new Set([...applied.keys(), ...next.keys()])) {
@@ -127,8 +126,6 @@ export function createSpringLoadDriver<E>(deps: SpringLoadDriverDeps<E>): Spring
     apply: open => { wanted = open; schedule(); },
   });
 
-  const timer = deps.timer ?? defaultSpringTimer;
-
   return {
     hover(element) {
       // A pane that replaced its request dropped the peeks applied there
@@ -141,19 +138,15 @@ export function createSpringLoadDriver<E>(deps: SpringLoadDriverDeps<E>): Spring
       }
       controller.hover(deps.observe(element));
     },
-    end() { controller.end(); },
+    end() {
+      holds.clear();
+      controller.end();
+      schedule();
+    },
     hold() {
-      holds++;
-      let released = false;
-      const release = () => {
-        if (released) return;
-        released = true;
-        timer.clear(limit);
-        if (--holds === 0) schedule();
-      };
-      // A native start that never settles cannot freeze every pane's peeks.
-      const limit = timer.set(release, SPRING_HOLD_LIMIT_MS);
-      return release;
+      const token = {};
+      holds.add(token);
+      return () => { if (holds.delete(token) && !holds.size) schedule(); };
     },
   };
 }

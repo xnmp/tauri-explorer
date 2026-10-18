@@ -346,7 +346,11 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
             }
             if (source) deferredDomSources.set(replay, source);
             if (source) dragState.bindDomSource(dataTransfer, source);
-            targetElement?.dispatchEvent(replay);
+            if (target?.type === "folder" && target.spring) {
+              // Its row may have unmounted with the peek: drop by its folder.
+              springEnd();
+              if (targetElement) void dropIntoDirectory(replay, target.path, "folder", { onRefresh: deps.refreshAllPanes });
+            } else targetElement?.dispatchEvent(replay);
           }
         } finally { pendingDomDrops.delete(cancel); release(); releaseSpring?.(); }
       });

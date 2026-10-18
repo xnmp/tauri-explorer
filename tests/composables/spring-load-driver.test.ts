@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("$lib/state/settings.svelte", () => ({ settingsStore: { zoomLevel: 100, folderPeek: true } }));
-import { createSpringLoadDriver, observeSpringHit, SPRING_HOLD_LIMIT_MS, type SpringHitDeps, type SpringHitElement, type SpringPaneView } from "$lib/composables/spring-load-driver";
+import { createSpringLoadDriver, observeSpringHit, type SpringHitDeps, type SpringHitElement, type SpringPaneView } from "$lib/composables/spring-load-driver";
 import { SPRING_LOAD_DELAY_MS, type SpringObservation } from "$lib/domain/spring-load";
 import { springRowOf } from "$lib/domain/spring-rows";
 import { pathComparison } from "$lib/domain/path";
@@ -197,14 +197,14 @@ describe("spring-load driver (fake timers)", () => {
     expect(applied.at(-1)).toEqual(["p2", ["/r/Inbox"]]);
   });
 
-  it("a hold keeps the applied peeks until released, and a release is idempotent", async () => {
+  it("a hold keeps the applied peeks until its start settles, however long that takes, and a release is idempotent", async () => {
     driver.hover(over("p1", "/r/Inbox"));
     await springDelay();
     applied.length = 0;
     const release = driver.hold();
     const other = driver.hold();
-    driver.end();
-    await vi.advanceTimersByTimeAsync(1_000);
+    driver.hover(over("p1", null, ["/r/notes.txt"]));
+    await vi.advanceTimersByTimeAsync(60_000);
     expect(applied).toEqual([]);
     release(); release();
     await nextTask();
@@ -214,15 +214,28 @@ describe("spring-load driver (fake timers)", () => {
     expect(applied).toEqual([["p1", []]]);
   });
 
-  it("a hold a native start never settles is released after its limit", async () => {
+  it("the drag session ending releases every hold, so a start that never settles cannot freeze the peeks", async () => {
     driver.hover(over("p1", "/r/Inbox"));
     await springDelay();
     applied.length = 0;
+    const stale = driver.hold();
     driver.hold();
     driver.end();
-    await vi.advanceTimersByTimeAsync(SPRING_HOLD_LIMIT_MS - 10);
+    await nextTask();
+    expect(applied).toEqual([["p1", []]]);
+    // The next drag springs and holds as usual; a release left over from the
+    // ended session does not release its hold.
+    driver.hover(over("p1", "/r/Inbox"));
+    await springDelay();
+    expect(applied.at(-1)).toEqual(["p1", ["/r/Inbox"]]);
+    applied.length = 0;
+    const release = driver.hold();
+    stale();
+    driver.hover(over("p1", null, ["/r/notes.txt"]));
+    await vi.advanceTimersByTimeAsync(60_000);
     expect(applied).toEqual([]);
-    await vi.advanceTimersByTimeAsync(20);
+    release();
+    await nextTask();
     expect(applied).toEqual([["p1", []]]);
   });
 

@@ -183,6 +183,32 @@ describe("filesystem source to registered native/DOM listener lifecycle", () => 
     expect(toastStore.toasts.some(toast => /drop.*cancel|destination.*chang/i.test(toast.message))).toBe(true);
   });
 
+  it.each(["its row unmounted", "the pane navigated"] as const)("replays a spring-peek drop deferred behind a slow native start by its folder when %s (#1242)", async change => {
+    let reject!: (error: Error) => void;
+    native.start.mockImplementationOnce(() => new Promise<void>((_resolve, fail) => { reject = fail; }));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    let current = true;
+    const explorer = { currentPath: "/destination", springPeeks: ["/destination/Inbox"], isSpringPeek: (path: string) => path === "/destination/Inbox",
+      springDropFolder: () => "/destination/Inbox", captureMutation: () => ({ current: () => current }), entryMeta: new Map() };
+    vi.spyOn(windowTabsManager, "getExplorer").mockReturnValue(explorer as never);
+    hit = dropElement("entry-item", { "data-path": "/destination/Inbox/notes.txt" }, dropElement("explorer-pane", { "data-pane-id": "p" }));
+    hit.dispatchEvent = value => { Object.defineProperty(value, "target", { value: hit }); return win.dispatchEvent(value); };
+    const { source, dt } = begin(); win.dispatchEvent(event("drop", dt)); source.end();
+    // The drag ended: its temporary peek closed and the row it was dropped on unmounted.
+    explorer.springPeeks = [];
+    Object.defineProperty(hit, "isConnected", { value: false });
+    if (change === "the pane navigated") current = false;
+    reject(new Error("native unavailable")); await flush();
+    const cancelled = toastStore.toasts.some(toast => /drop.*cancel|destination.*chang/i.test(toast.message));
+    if (change === "its row unmounted") {
+      expect(transferFiles).toHaveBeenCalledExactlyOnceWith(paths, "/destination/Inbox", false, expect.anything());
+      expect(cancelled).toBe(false);
+    } else {
+      expect(transferFiles).not.toHaveBeenCalled();
+      expect(cancelled).toBe(true);
+    }
+  });
+
   it("does not replay a deferred listing drop into the pane's new directory", async () => {
     let reject!: (error: Error) => void;
     native.start.mockImplementationOnce(() => new Promise<void>((_resolve, fail) => { reject = fail; }));

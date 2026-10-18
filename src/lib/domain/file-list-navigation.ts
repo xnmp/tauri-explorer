@@ -26,6 +26,9 @@ export type FileListMove =
   | { kind: "parent" }
   | { kind: "open"; index: number };
 
+/** PageUp/PageDown distance in visual lines (rows), shared by every grid view. */
+export const PAGE_LINES = 10;
+
 export function resolveFileListMove(
   event: FileListKey,
   layout: { viewMode: ViewMode; columns: number; count: number; cursorIndex: number; directory: boolean; yazi: boolean;
@@ -61,8 +64,8 @@ export function resolveFileListMove(
     index = layout.cursorIndex < 0 ? 0 : layout.cursorIndex + (forward ? step : -step);
     if (index < 0 || index >= layout.count) return null;
   } else if (!modified && (event.key === "PageUp" || event.key === "PageDown")) {
-    index = layout.cursorIndex < 0 ? 0
-      : Math.max(0, Math.min(layout.count - 1, layout.cursorIndex + (event.key === "PageDown" ? 8 : -8)));
+    const page = (event.key === "PageDown" ? PAGE_LINES : -PAGE_LINES) * (layout.viewMode === "details" ? 1 : columns);
+    index = layout.cursorIndex < 0 ? 0 : Math.max(0, Math.min(layout.count - 1, layout.cursorIndex + page));
   } else return null;
   return { kind: "focus", index, selection: event.shiftKey ? "extend" : modified && arrow ? "preserve" : "replace" };
 }

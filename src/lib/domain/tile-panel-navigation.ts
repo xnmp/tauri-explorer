@@ -7,7 +7,7 @@
  * resolver applies (FileList only provides this snapshot while panels exist).
  */
 import type { FileEntry } from "./file";
-import type { FileListKey, FileListMove } from "./file-list-navigation";
+import { PAGE_LINES, type FileListKey, type FileListMove } from "./file-list-navigation";
 import {
   cellX, groupOffsets, PANEL_PAD_FAR, PANEL_PAD_NEAR, PANEL_PAD_X, panelPadTop,
   type EntryLocation, type GroupGeometry, type PanelBox, type TilePanelModel, type TilePanelSpec,
@@ -132,8 +132,8 @@ const topLevelEntries = (model: TilePanelModel): number[] => model.items.flatMap
  * panel, else the nearest item in that direction. Left/Right: within the panel
  * row, else the nearest item on the same visual line, else the next item in
  * reading order within the cursor's level (as the classic grid wraps).
- * Ctrl+Home/End: first/last top-level entry. PageUp/PageDown: eight items
- * within the cursor's level.
+ * Ctrl+Home/End: first/last top-level entry. PageUp/PageDown: ten rows
+ * (of the level's own column count) within the cursor's level.
  */
 export function resolveTileMove(state: TileNavigationState, event: FileListKey, cursorIndex: number): FileListMove | null {
   if (event.altKey) return null;
@@ -151,7 +151,11 @@ export function resolveTileMove(state: TileNavigationState, event: FileListKey, 
   // The cursor's level: its panel's children, or the top-level entries.
   const level = at.kind === "panel" ? model.panels.get(at.path)!.entries : top;
   const position = at.kind === "panel" ? at.offset : top.indexOf(cursorIndex);
-  if (!arrow) return focus(level[Math.max(0, Math.min(level.length - 1, position + (event.key === "PageDown" ? 8 : -8)))]);
+  if (!arrow) {
+    const page = (event.key === "PageDown" ? PAGE_LINES : -PAGE_LINES)
+      * Math.max(1, at.kind === "panel" ? model.panels.get(at.path)!.cols : model.metrics.columns);
+    return focus(level[Math.max(0, Math.min(level.length - 1, position + page))]);
+  }
   const offsets = groupOffsets(state.geometry.map(g => g.height));
   let from: TileRect;
   if (at.kind === "panel") {

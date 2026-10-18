@@ -45,6 +45,7 @@ function createDialogStore() {
   let bulkRenameItems = $state<FileEntry[]>([]);
   let jobsPanelOpen = $state(false);
   let themePickerOpen = $state(false);
+  let themePickerKind = $state<'color' | 'icon'>('color');
   let shortcutsOpen = $state(false);
   let keybindingsOpen = $state(false);
   let pluginsOpen = $state(false);
@@ -150,6 +151,7 @@ function createDialogStore() {
     get isThemePickerOpen() {
       return themePickerOpen;
     },
+    get themePickerKind() { return themePickerKind; },
     get isShortcutsOpen() {
       return shortcutsOpen;
     },
@@ -360,7 +362,8 @@ function createDialogStore() {
       jobsPanelOpen = false;
     },
 
-    openThemePicker(): void {
+    openThemePicker(kind: 'color' | 'icon' = 'color'): void {
+      themePickerKind = kind;
       themePickerOpen = true;
     },
 

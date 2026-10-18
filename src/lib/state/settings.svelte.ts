@@ -43,7 +43,8 @@ export interface NavBarButtons {
   refresh: boolean;
 }
 
-export type IconTheme = "default" | "material" | "minimal";
+export type { IconTheme } from '$lib/domain/icon-themes';
+import type { IconTheme } from '$lib/domain/icon-themes';
 
 // Tile sizes are pure layout data shared by every tile grid; re-exported here
 // for existing importers.
@@ -77,8 +78,8 @@ export interface Settings {
   backgroundImage: string; // absolute path to wallpaper image, empty = none
   backgroundBlur: number; // 0-20, blur in px for custom wallpaper
   columnVisibility: ColumnVisibility;
-  listViewColumns: number; // 0 = auto (based on window width), 1-6 = fixed
-  listColumnMaxWidth: number; // max width per column in px (used when listViewColumns=0)
+  listViewColumns: number; // List column count (0 = auto, 1-6 fixed); classic List only, i.e. when folderPeek is off
+  listColumnMaxWidth: number; // max width per column in px (auto mode); classic List only, i.e. when folderPeek is off
   viewMode: ViewMode; // default view mode for new panes
   defaultFileView: string; // plugin file view id for new panes, "" = built-in view mode
   previewPaneWidth: number; // width in px when docked right, 0 = default (280px)
@@ -110,7 +111,9 @@ export interface Settings {
   floatingIslands: boolean; // island layout on any OS — panels float as rounded islands; composes with native macOS/Windows transparency, plain themed backdrop elsewhere (#277)
   windowsBackdrop: WindowsBackdrop; // Windows: translucent system backdrop (Mica/Acrylic), requires restart
   windowsBackdropOpacity: number; // Windows: acrylic tint opacity 0-100 (lower = more see-through)
-  yaziNavigation: boolean; // left/right arrows navigate up/into folders in details/list view
+  yaziNavigation: boolean; // left/right arrows navigate up/into folders in Details view (and List when folderPeek is off)
+  folderPeek: boolean; // folder peek (inline expansion, List column flow); off = classic views (#1238)
+  folderPeekCarets: boolean; // expand carets beside folders; off = a plain click on a folder toggles its peek (#1248)
   previewFontSize: number; // base font size (px) for text/code/markdown previews
   showPreviewInfo: boolean; // preview pane chrome: file name, type badge, size and modified rows (off = content only, #494)
   autoEnterSingleSubdir: boolean; // when entering a dir with exactly one visible subdir (and nothing else), descend into it recursively
@@ -186,6 +189,8 @@ const DEFAULT_SETTINGS: Settings = {
   windowsBackdrop: "off",
   windowsBackdropOpacity: 65,
   yaziNavigation: true,
+  folderPeek: true,
+  folderPeekCarets: true,
   previewFontSize: 12,
   showPreviewInfo: true,
   autoEnterSingleSubdir: false,
@@ -218,7 +223,7 @@ function persistedSettings(settings: Settings, extras: Record<string, unknown>):
 }
 
 const SETTING_ENUMS: Partial<Record<keyof Settings, readonly string[]>> = {
-  iconTheme: ["default", "material", "minimal"],
+  iconTheme: ["default", "material", "classic", "minimal", "catppuccin"],
   thumbnailSize: ["small", "medium", "large", "xlarge"],
   viewMode: ["details", "list", "tiles"],
   previewPanePosition: ["right", "bottom", "top", "auto"],
@@ -672,6 +677,12 @@ function createSettingsStore() {
     get yaziNavigation() {
       return settings.yaziNavigation;
     },
+    get folderPeek() {
+      return settings.folderPeek;
+    },
+    get folderPeekCarets() {
+      return settings.folderPeekCarets;
+    },
     get previewFontSize() {
       return settings.previewFontSize;
     },
@@ -771,14 +782,6 @@ function createSettingsStore() {
         },
       });
     },
-    /** Effective icon theme: user setting wins; if "default", check --theme-icon-pack CSS var */
-    get effectiveIconTheme(): IconTheme {
-      if (settings.iconTheme !== "default") return settings.iconTheme;
-      if (typeof document === "undefined") return "default";
-      const css = getComputedStyle(document.documentElement).getPropertyValue("--theme-icon-pack").trim().replace(/["']/g, "");
-      if (css === "material" || css === "minimal") return css;
-      return "default";
-    },
     toggleStatusBar(): void {
       update({ showStatusBar: !settings.showStatusBar });
     },
@@ -850,6 +853,8 @@ export const TOGGLE_SETTINGS: ToggleSettingMeta[] = [
   { key: "showRecycleBin", label: "Toggle Recycle Bin in Sidebar" },
   { key: "quickOpenDebug", id: "view.toggleQuickOpenDebug", label: "Toggle Quick Open Debug Scores" },
   { key: "yaziNavigation", label: "Toggle Yazi Navigation" },
+  { key: "folderPeek", id: "view.toggleFolderPeek", label: "Toggle Folder Peek" },
+  { key: "folderPeekCarets", id: "view.toggleFolderPeekCarets", label: "Toggle Folder Peek Carets" },
   { key: "autoEnterSingleSubdir", label: "Toggle Auto-Enter Single Subfolder" },
   { key: "tabTitleGitRoot", label: "Toggle Git Repo Root in Tab Title" },
   { key: "integratedTitleBar", label: "Toggle Integrated Title Bar" },

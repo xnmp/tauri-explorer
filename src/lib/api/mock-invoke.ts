@@ -1132,8 +1132,11 @@ function mockRecoveryPublish(): unknown {
 }
 
 /** Both listing commands reply in the native compact wire format (#868). */
-function mockDirectoryListing(raw: string): CompactDirectoryListing {
+async function mockDirectoryListing(raw: string): Promise<CompactDirectoryListing> {
   const path = raw !== "/" && raw.endsWith("/") ? raw.slice(0, -1) : raw;
+  const override = getMockControl().directoryEntries;
+  if (override) return encodeDirectoryListing({ path, entries: await override(path) });
+  if (path === "/folder-peek/Error") throw new Error("Permission denied");
   const isSynthetic = isPerfHugePath(path) || isPerfImagesPath(path);
   if (!isSynthetic && !(path in mockFiles)) {
     throw new Error(`Path not found: ${path}`);
@@ -1402,6 +1405,16 @@ const mockCommands: Record<string, CommandHandler> = {
       const newPath = `${parentPath}/${newName}`;
       const newEntry: FileEntry = { ...oldEntry, name: newName, path: newPath };
       entries[entryIndex] = newEntry;
+      if (oldEntry.kind === "directory") {
+        for (const [directory, children] of Object.entries(mockFiles)) {
+          if (directory !== path && !directory.startsWith(`${path}/`)) continue;
+          delete mockFiles[directory];
+          mockFiles[newPath + directory.slice(path.length)] = children.map(child => ({ ...child, path: newPath + child.path.slice(path.length) }));
+        }
+        for (const [contentPath, content] of Object.entries(mockFileContent)) {
+          if (contentPath.startsWith(`${path}/`)) { delete mockFileContent[contentPath]; mockFileContent[newPath + contentPath.slice(path.length)] = content; }
+        }
+      }
       return mutationReceipt(newEntry);
     }
     throw new Error("Entry not found");
@@ -3173,6 +3186,7 @@ async function invokeMockCommand<T>(cmd: string, args?: Record<string, unknown>)
     const control = getMockControl();
     control.invokeCounts ??= {};
     control.invokeCounts[cmd] = (control.invokeCounts[cmd] ?? 0) + 1;
+    control.invokeArgs?.[cmd]?.push({ ...args });
   }
 
   await waitForMockLatency(cmd);

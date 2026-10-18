@@ -6,6 +6,8 @@
  * Every handler, interceptor and readiness marker belongs to the page session:
  * aborting `signal` removes them, and nothing publishes afterwards.
  */
+import { settingsStore } from "../lib/state/settings.svelte";
+import { clipboardStore } from "../lib/state/clipboard.svelte";
 import { windowTabsManager } from "../lib/state/window-tabs.svelte";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { NativeFileDragEvent } from "../lib/api/native-file-drag";
@@ -48,13 +50,41 @@ export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise
   })().catch(error => {
     if (!signal.aborted) document.documentElement.dataset.e2eNativeDragReady = `error: ${String(error)}`;
   });
+  createDomRpc<{ token: string; op?: string; path?: string; paths?: string[] }>({
+    event: "e2e-folder-peek", resultKey: "e2eFolderPeekResult", signal,
+    handlers: {
+      toggle: request => windowTabsManager.getActiveExplorer()?.togglePeek(request.path ?? ""),
+      refresh: () => windowTabsManager.getActiveExplorer()?.refresh({ explicit: true }),
+      details: () => windowTabsManager.getActiveExplorer()?.setViewMode("details"),
+      "enable-git-status": () => { settingsStore.update({ showGitStatus: true }); return settingsStore.showGitStatus; },
+      collapse: () => windowTabsManager.getActiveExplorer()?.collapseAllPeeks(),
+      copy: async request => {
+        const explorer = windowTabsManager.getActiveExplorer()!;
+        explorer.selectPaths(request.paths ?? []);
+        await explorer.copyToClipboard(explorer.getSelectedEntries());
+        return clipboardStore.content?.entries.map(entry => entry.path);
+      },
+      delete: async request => {
+        const explorer = windowTabsManager.getActiveExplorer()!;
+        explorer.selectPaths(request.paths ?? []);
+        return explorer.confirmDelete(explorer.getSelectedEntries(), true);
+      },
+      snapshot: () => {
+        const explorer = windowTabsManager.getActiveExplorer();
+        return explorer ? {
+          path: explorer.currentPath, expanded: [...explorer.expandedPaths], watches: explorer.peekWatchSnapshot(),
+          entries: explorer.displayEntries.map(entry => entry.path), selected: [...explorer.selectedPaths],
+        } : null;
+      },
+    },
+  });
   const listen = (name: string, handler: EventListener) => window.addEventListener(name, handler, { signal });
   const readyKey = childReadyKey(windowTabsManager.windowLabel);
   let capturedDelete: { token: string; explorer: ExplorerInstance; entries: FileEntry[] } | null = null;
   signal.addEventListener("abort", () => {
     capturedDelete = null;
     if (windowTabsManager.windowLabel !== "main") localStorage.removeItem(readyKey);
-    for (const key of ["e2eHooksReady", "e2eWindowLabel", "e2eNavigationComplete", "e2eFileOperationResult", "e2eNativeDragDrop", "e2eNativeDragDrops", "e2eNativeDragReady"]) {
+    for (const key of ["e2eHooksReady", "e2eWindowLabel", "e2eNavigationComplete", "e2eFileOperationResult", "e2eNativeDragDrop", "e2eNativeDragDrops", "e2eNativeDragReady", "e2eFolderPeekResult"]) {
       delete document.documentElement.dataset[key];
     }
   }, { once: true });
@@ -160,7 +190,7 @@ export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise
     // and a paint before reporting child readiness.
     const readyPath = () => {
       const explorer = windowTabsManager.getActiveExplorer();
-      return explorer && !explorer.loading && explorer.displayEntries.length > 0 &&
+      return explorer && !explorer.loading && explorer.ownDisplayEntries.length > 0 &&
         document.querySelector(".file-list") ? explorer.currentPath : null;
     };
     const reportReady = () => {

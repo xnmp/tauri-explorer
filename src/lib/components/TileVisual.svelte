@@ -31,11 +31,15 @@
 
 <div class="tile-icon" style:color={iconColor} data-drag-icon>
   {#if isImageFile(entry)}
-    <ThumbnailImage path={entry.path} size={layout.displaySize} genSize={layout.genSize} quality={layout.quality} fallbackColor={iconColor} />
+    <ThumbnailImage path={entry.path} size={layout.displaySize} genSize={layout.genSize} quality={layout.quality} fallbackColor={iconColor}>
+      {#snippet fallback()}<FileIcon {entry} size="large" />{/snippet}
+    </ThumbnailImage>
   {:else if isVideoFile(entry) && !videoUnavailable}
-    <ThumbnailImage kind="video" path={entry.path} size={layout.displaySize} genSize={layout.genSize} quality={layout.quality} fallbackColor={iconColor} onunavailable={onvideounavailable} />
+    <ThumbnailImage kind="video" path={entry.path} size={layout.displaySize} genSize={layout.genSize} quality={layout.quality} fallbackColor={iconColor} onunavailable={onvideounavailable}>
+      {#snippet fallback()}<FileIcon {entry} size="large" />{/snippet}
+    </ThumbnailImage>
   {:else if entry.kind === "directory" && layout.showFolderThumbnails}
-    <FolderThumbnail path={entry.path} modified={entry.modified} size={layout.displaySize} genSize={layout.genSize} quality={layout.quality}>
+    <FolderThumbnail {entry} path={entry.path} modified={entry.modified} size={layout.displaySize} genSize={layout.genSize} quality={layout.quality}>
       <FileIcon {entry} size="large" />
     </FolderThumbnail>
   {:else}

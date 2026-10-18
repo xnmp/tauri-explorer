@@ -64,7 +64,7 @@ describe("marquee probe", () => {
           const shotGeo = await browser.execute((itemSel: string) => {
             const content = document.querySelector(".file-list .content")!.getBoundingClientRect();
             const tiles = Array.from(document.querySelectorAll<HTMLElement>(itemSel)).map((e) => e.getBoundingClientRect());
-            const bg = ["tile-row", "tiles-view", "virtual-viewport", "virtual-item", "content", "list-row", "list-view"];
+            const bg = ["tile-row", "tile-group", "tiles-view", "virtual-viewport", "virtual-item", "content", "list-row", "list-view"];
             let start: { x: number; y: number } | null = null;
             for (let y = Math.round(content.top + 2); y < tiles[0].bottom && !start; y += 2)
               for (let x = Math.round(content.left + 2); x < content.left + 300 && !start; x += 2) {
@@ -109,7 +109,7 @@ describe("marquee probe", () => {
               const content = document.querySelector(".file-list .content")!.getBoundingClientRect();
               const tiles = Array.from(document.querySelectorAll<HTMLElement>(itemSel)).map((e) => e.getBoundingClientRect());
               const first = tiles[0];
-              const bg = ["tile-row", "tiles-view", "virtual-viewport", "virtual-item", "content", "list-row", "list-view"];
+              const bg = ["tile-row", "tile-group", "tiles-view", "virtual-viewport", "virtual-item", "content", "list-row", "list-view"];
               let start: { x: number; y: number } | null = null;
               for (let y = Math.round(content.top + 2); y < first.bottom && !start; y += 2)
                 for (let x = Math.round(content.left + 2); x < content.left + 300 && !start; x += 2) {

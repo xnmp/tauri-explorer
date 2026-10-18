@@ -142,6 +142,29 @@ Rules that bite:
   the previous pass's merge date. Read PR review findings and residual limits;
   a landed intervention expires its active entry. Rename-aware per-file churn
   needs `git log --follow -- <file>`; aggregate counts can differ (#1219).
+- Keep architecture recurrence counts separate from corrections made inside a
+  feature PR. Link existing qualification owners (for example DnD #1225) for
+  platform-evidence gaps; those gaps alone do not establish a new ownership
+  defect or justify a duplicate debt filing (#1251).
+- PR bodies are mutable evidence: attribute post-merge integration results to
+  the commit/PR that actually changed the code. A test readiness/locator fix
+  is not a production ownership recurrence; inspect the producing boundary
+  before counting it against an architecture trigger (#1262).
+- Audit feature completion at the tested interaction: a native folder-hover
+  spring probe plus a successful folder transfer does not prove a drop inside
+  the temporary peek. Check linked follow-up issue state/comments too; a
+  test-only coverage PR can leave its promised perf medians pending (#1277).
+- Recheck closed follow-ups for explicit residuals: #1269 closed while #1283
+  retained late-drop layout changes, and #1272's later comment supplied its
+  missing medians. Destination capture by path set does not grant internal
+  Move authority; inspect that gate before counting a provenance recurrence
+  (#1288).
+- A closed destination follow-up can remove its old revision policy entirely:
+  #1287 routes every ended drop to its capture and excludes external path-set
+  borrowing. Check the source-authority gate separately. Likewise #1296 removes
+  mini-tile sizing, so earlier Tiles perf medians do not measure its larger
+  panels; shared sizing is an intervention already made, not a new extraction
+  to file (#1301).
 - **Start at [docs/code-map/](docs/code-map/)**: [map-feature.md](docs/code-map/map-feature.md) for cross-layer work and bug hunts, [map-playbook.md](docs/code-map/map-playbook.md) recipes for task-shaped changes (new palette command / context-menu action / Tauri command / setting), [map-folder.md](docs/code-map/map-folder.md) as the exhaustive per-file index. For a small localized change you can already name, skip the maps and grep (measured net loss on cheap tasks; prose architecture docs were deleted for the same reason — see [STUDY.md](docs/code-map/STUDY.md)).
 - **Keep the maps current or they turn harmful.** New/moved source file → update `map-folder.md` (+ the `map-feature.md` cluster), then `python3 docs/code-map/validate.py --coverage`. CI runs the same check.
 - [docs/lessons/](docs/lessons/) — gotchas from closed issues, **one file per issue**: write `docs/lessons/<issue>-<slug>.md` when you fix a bug (never append to the frozen [docs/lessons_learnt.md](docs/lessons_learnt.md) archive — shared-file appends conflicted every open PR, #544). When hunting a bug, search both: `grep -ri <term> docs/lessons/ docs/lessons_learnt.md`.
@@ -310,6 +333,18 @@ For Windows native transfer waits, use one renderer-side observer through
 `executeAsync` to correlate the requested operation token or listing mutation.
 Retain failure JSON and screenshots under `e2e-tauri/logs/`, capturing the
 failing window before inspecting unrelated windows.
+
+Native Git-watch readiness probes read `e2eGitWatches` by `directoryKey`, the
+same key published by `api/git.ts`, not by a native `path.join` result. Normalize
+on the runner side before `browser.execute`: its serialized callback cannot
+reference imported helpers. Windows backslashes otherwise reject a successfully
+acknowledged lease (#1254).
+
+A peek without its own directory lease can still refresh through a root
+notification: Windows reports child-directory metadata changes to its watched
+parent. Native overflow tests must assert a causal root receipt and fresh rows,
+not an elapsed interval of staleness. Touch the evicted directory's metadata
+explicitly to exercise that ancestor-notification path on Linux too (#1260).
 
 `createWindowTabsManager().dispose()` is asynchronous: await it in test teardown so
 explorer directory-listener cleanup settles before Vitest closes the worker (#611).
@@ -503,3 +538,14 @@ opens CF_HDROP directly, enumerates UTF-16 paths with DragQueryFileW and closes
 the clipboard in finally. Keep the independent native empty/single/multi-path
 oracle in `clipboard-cross-window.spec.ts`; mocked subprocess output cannot
 qualify the Win32 adapter. Do not extend the timeout or retry an observation.
+
+Tiles Folder Peek motion probes must control both rAF and `performance.now()`
+through Playwright's clock. Six wall-clock frames can outlast the entire 150ms
+motion on loaded WebKit runners. Install before navigation, pause after initial
+layout settles, then advance the clock while the page-side sampler is pending;
+retain the intermediate-height, inert-ghost and reduced-motion assertions (#1275).
+
+Spring peek state becomes observable before its List card finishes opening.
+Synthetic drag probes that target row edges must await populated rows and the
+end of live List motion before reading hit-test coordinates; a bounding box
+can include pixels still clipped by the opening card (#1292).

@@ -10,7 +10,7 @@ const htmlNames = names.slice(0, 3);
 const proof = "screenshots/fix/821-change-icon-for-html-files";
 
 for (const theme of ["light", "dark"] as const) {
-  for (const iconTheme of ["default", "material", "minimal"] as const) {
+  for (const iconTheme of ["default", "material", "classic", "minimal", "catppuccin"] as const) {
     test(`${theme} ${iconTheme} HTML aliases stay legible across views`, async ({ page }) => {
       await page.setViewportSize({ width: 1600, height: 900 });
       const zoomLevel = theme === "light" ? 100 : 150;

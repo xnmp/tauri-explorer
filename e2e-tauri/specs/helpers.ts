@@ -1,11 +1,22 @@
 import { browser, $, $$ } from "@wdio/globals";
 // Keep command types available to standalone fixture-contract tests too.
 import type {} from "webdriverio";
+import { directoryKey } from "../../src/lib/domain/path";
 import { beginFreshWindowLookup, beginFreshWindowSelection } from "../diagnostics/fresh-window";
 import { isWarmWindowUrl, scanWindows, selectWindowByLabel, type WindowScanDriver } from "../owned-windows";
 import {
   waitForWindowOperation, type RendererWaitResult, type WindowOperationResponse, type WindowOperationWaitRequest,
 } from "../window-transfer-waits";
+
+/** Wait for an acknowledged repository lease before mutating Git metadata. */
+export async function waitForGitWatch(repoPath: string): Promise<void> {
+  // gitWatchRepo publishes acknowledgement keys with this same normalization.
+  // Normalize here: WebDriver serializes the callback without its imports.
+  const key = directoryKey(repoPath);
+  await browser.waitUntil(() => browser.execute(target =>
+    (JSON.parse(document.documentElement.dataset.e2eGitWatches ?? "{}")[target] ?? 0) > 0,
+  key), { timeout: 15_000, timeoutMsg: `Git lease was never acknowledged for ${repoPath}` });
+}
 
 /** Exact entry selector for native paths, including Windows `\` and quotes. */
 export function entryPathSelector(

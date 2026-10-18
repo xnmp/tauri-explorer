@@ -4,11 +4,18 @@ import { isTauri } from "$lib/api/common";
 import { getNativeResourceSession } from "$lib/api/native-resource-session";
 import { isVirtualPath } from "$lib/domain/virtual-path";
 import { directoryEvents, type DirectoryChange, type DirectorySubscription } from "./directory-events";
-import { requestRefresh } from "./refresh-manager";
+import { pathComparison } from "$lib/domain/path";
+import { isWindows } from "$lib/domain/platform";
+import { createDirectoryWatch } from "./directory-watch";
+import type { createPeekWatch } from "./pane-peek-watch";
+import { cancelRefreshSubscriber, requestRefresh } from "./refresh-manager";
 
 type Refresh = (options: { silent: boolean }) => void | Promise<void>;
 interface PaneWatchDependencies {
   refresh: Refresh;
+  currentPath?: () => string;
+  refreshPath?: (path: string, options: { silent: boolean; observedAt?: number }) => void | Promise<void>;
+  createWatch?: typeof createDirectoryWatch;
   subscribe?: (callback: (change: DirectoryChange) => void) => DirectorySubscription;
   release?: (lease: DirectoryWatchLease) => Promise<void>;
   prepare?: (path: string, subscription: DirectorySubscription) => Promise<void>;
@@ -39,7 +46,18 @@ function mergeChange(previous: DirectoryChange | undefined, change: DirectoryCha
 export function createPaneWatch(deps: PaneWatchDependencies) {
   const releaseCommand = deps.release ?? unwatchDirectory;
   const schedule = deps.schedule ?? requestRefresh;
-  const key = {};
+  let key = {};
+  let peeks: ReturnType<typeof createPeekWatch> | undefined;
+  function enablePeeks(factory: typeof createPeekWatch): void {
+    peeks ??= factory({
+      blocked: () => destroyed || pending !== null,
+      prepare: path => prepare(path, subscription),
+      refreshPath: deps.refreshPath, createWatch: deps.createWatch, schedule, mergeChange,
+    });
+  }
+  function reconcilePeeks(paths: readonly string[], order: ReadonlyMap<string, number>): void {
+    peeks?.reconcile(destroyed || pending ? [] : paths, order);
+  }
   let committed: { path: string; lease: DirectoryWatchLease | null } | null = null;
   let pending: Navigation | null = null;
   const navigations = new Set<Navigation>();
@@ -65,8 +83,9 @@ export function createPaneWatch(deps: PaneWatchDependencies) {
     dirty.set(change.path, mergeChange(dirty.get(change.path), change));
   }
   function request(change: DirectoryChange): void {
+    const identity = key;
     schedule((options) => {
-      if (destroyed || committed?.path !== change.path) return false;
+      if (destroyed || identity !== key || (committed?.path ?? deps.currentPath?.()) !== change.path) return false;
       if (pending) {
         remember(change);
         return false;
@@ -76,11 +95,12 @@ export function createPaneWatch(deps: PaneWatchDependencies) {
   }
   function flush(path: string | undefined): void {
     const change = path ? dirty.get(path) : undefined;
-    dirty.clear();
+    if (path) dirty.delete(path);
     if (change && !destroyed) request(change);
   }
   function changed(change: DirectoryChange): void {
     if (destroyed) return;
+    if (peeks?.changed(change)) return;
     if (pending) {
       // Observation starts before the listing returns its resolved lease path.
       // Retain unmatched events during that handoff; accept() rekeys the one
@@ -107,6 +127,9 @@ export function createPaneWatch(deps: PaneWatchDependencies) {
   });
 
   function begin(path: string) {
+    reconcilePeeks([], new Map());
+    if (committed) cancelRefreshSubscriber(committed.path, key);
+    key = {};
     if (pending?.staged) release(pending.staged);
     if (pending) pending.staged = undefined;
     for (const oldPath of dirty.keys()) {
@@ -180,6 +203,20 @@ export function createPaneWatch(deps: PaneWatchDependencies) {
   return {
     begin,
     changed,
+    enablePeeks,
+    reconcilePeeks,
+    invalidatePeeks() { reconcilePeeks([], new Map()); },
+    requestPath(path: string) {
+      if (peeks?.requestPath(path)) return;
+      const root = committed?.path ?? deps.currentPath?.();
+      if (root && pathComparison(isWindows).same(root, path)) request({ path: root });
+    },
+    refreshPeeks(explicit: boolean) {
+      peeks?.refresh(explicit);
+    },
+    peekSnapshot() {
+      return peeks?.snapshot() ?? [];
+    },
     allowRefresh(path: string): boolean {
       if (destroyed) return false;
       if (!pending) return true;
@@ -189,6 +226,8 @@ export function createPaneWatch(deps: PaneWatchDependencies) {
     destroy(): Promise<void> {
       if (disposal) return disposal;
       destroyed = true;
+      if (committed) cancelRefreshSubscriber(committed.path, key);
+      reconcilePeeks([], new Map());
       subscription.stop();
       dirty.clear();
       if (committed?.lease) release(committed.lease);
@@ -200,11 +239,14 @@ export function createPaneWatch(deps: PaneWatchDependencies) {
       const attempt = (async () => {
         // An in-flight observed reply still owns a possible lease. Its caller
         // always closes the ticket, including rejected/stale results.
+        const cleanup = await Promise.allSettled([peeks?.destroy()]);
         await Promise.all([...navigations].map((navigation) => navigation.done));
         while (releases.size) await Promise.all([...releases]);
         for (const lease of retired.values()) attemptRelease(lease);
         while (releases.size) await Promise.all([...releases]);
-        if (retired.size) throw new Error("Directory observation release did not complete");
+        if (retired.size || cleanup.some(result => result.status === "rejected")) {
+          throw new Error("Directory or Git observation release did not complete");
+        }
       })();
       disposal = attempt;
       void attempt.catch(() => { if (disposal === attempt) disposal = undefined; });

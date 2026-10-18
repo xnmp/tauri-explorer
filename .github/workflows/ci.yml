@@ -218,7 +218,10 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # ~1.5x the planned ~15 min shard, like webkit's 40 for ~26: runner speed
+    # varies by ~30%, and a 20-minute cap cancelled a shard whose tests passed
+    # in 19.3 min. WebKit sets CI wall time, so this costs none.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:

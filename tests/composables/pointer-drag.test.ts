@@ -4,6 +4,7 @@
  * and cleanup on cancel/escape.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { tick } from "svelte";
 
 vi.mock("$lib/domain/zoom", () => ({
   getZoomFactor: () => 1,
@@ -35,12 +36,14 @@ vi.mock("$lib/composables/use-external-drag.svelte", () => ({
 
 vi.mock("$lib/composables/use-native-drop-target.svelte", () => ({
   resolveDropTargetAtPoint: vi.fn().mockReturnValue(null),
+  elementAtPoint: () => null,
   highlightTargetAtPoint: vi.fn(),
   clearHighlights: vi.fn(),
   captureHighlightCleanup: () => vi.fn(),
 }));
 
 import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
+import { dropHover } from "$lib/state/drop-hover";
 import { dragState } from "$lib/state/drag.svelte";
 import { bookmarksStore } from "$lib/state/bookmarks.svelte";
 import { handleFileDropMany } from "$lib/state/drop-operations";
@@ -51,11 +54,13 @@ function makeEntry(name: string, kind = "file") {
   return { path: `/home/user/${name}`, name, kind, size: 100, modified: 0 } as any;
 }
 
-function makeMockExplorer(entries: any[] = [], selected: any[] = []) {
+/** `listed`: the pane's listing (its root and open peeks); every path by default. */
+function makeMockExplorer(entries: any[] = [], selected: any[] = [], listed?: Set<string>) {
   return {
     currentPath: "/home/user",
     getSelectedEntries: () => selected,
     refresh: vi.fn(),
+    entryMeta: { has: (path: string) => listed?.has(path) ?? true },
   } as any;
 }
 
@@ -180,6 +185,27 @@ describe("usePointerDrag", () => {
     );
   });
 
+  it("reduces a recursive selection at drag start, never on a plain click", () => {
+    const folder = makeEntry("folder", "directory"), child = { ...makeEntry("folder/child.txt"), name: "child.txt" };
+    const explorer = makeMockExplorer([folder, child], [folder, child]);
+    const selected = vi.spyOn(explorer, "getSelectedEntries");
+    const drag = usePointerDrag({ getExplorer: () => explorer, refreshPanes: undefined });
+
+    // A click on a selected row in a large selection does no selection work.
+    drag.handlePointerDown(makeMouseEvent({ clientX: 100, clientY: 100 }), child, true);
+    fireWindowEvent("mouseup", { clientX: 100, clientY: 100 });
+    expect(selected).not.toHaveBeenCalled();
+
+    drag.handlePointerDown(makeMouseEvent({ clientX: 100, clientY: 100 }), child, true);
+    fireWindowEvent("mousemove", { clientX: 103, clientY: 100 });
+    expect(selected).not.toHaveBeenCalled();
+    fireWindowEvent("mousemove", { clientX: 110, clientY: 100 });
+    fireWindowEvent("mousemove", { clientX: 120, clientY: 100 });
+    expect(selected).toHaveBeenCalledTimes(1);
+    // The covered child travels inside its selected folder.
+    expect(dragState.start).toHaveBeenCalledWith(expect.objectContaining({ path: folder.path, paths: undefined }));
+  });
+
   it("triggers native drag when cursor exits window bounds", () => {
     const explorer = makeMockExplorer();
     const drag = usePointerDrag({ getExplorer: () => explorer, refreshPanes: undefined });
@@ -205,6 +231,22 @@ describe("usePointerDrag", () => {
     fireWindowEvent("mousemove", { clientX: 200, clientY: 200 });
 
     expect(highlightTargetAtPoint).toHaveBeenCalledWith(200, 200);
+  });
+
+  it("re-hit-tests a stationary drag after layout changes and releases hover ownership on cancel", () => {
+    const explorer = makeMockExplorer();
+    const drag = usePointerDrag({ getExplorer: () => explorer });
+    drag.handlePointerDown(makeMouseEvent(), makeEntry("file.txt"), false);
+    fireWindowEvent("mousemove", { clientX: 200, clientY: 200 });
+    vi.mocked(resolveDropTargetAtPoint).mockClear();
+    vi.mocked(resolveDropTargetAtPoint).mockReturnValue({ type: "folder", path: "/elsewhere" });
+    dropHover.refresh();
+    expect(resolveDropTargetAtPoint).toHaveBeenCalledExactlyOnceWith(200, 200);
+    expect(highlightTargetAtPoint).toHaveBeenLastCalledWith(200, 200);
+    fireWindowEvent("keydown", { key: "Escape" });
+    vi.mocked(resolveDropTargetAtPoint).mockClear();
+    dropHover.refresh();
+    expect(resolveDropTargetAtPoint).not.toHaveBeenCalled();
   });
 
   it("drops onto folder target on mouseup", async () => {
@@ -332,6 +374,80 @@ describe("usePointerDrag", () => {
     const requested = vi.mocked(handleFileDropMany).mock.calls.flatMap((c) => c[0]);
     expect(requested).toEqual([]); // nothing was asked to transfer
     expect(dragState.clear).not.toHaveBeenCalled();
+  });
+
+  it("an active drag outlives its source row's unmount and still drops (#1242)", async () => {
+    // A spring-loaded peek opening above the source can push its row out of
+    // the virtual window mid-drag; the gesture belongs to the pointer, not the row.
+    vi.mocked(resolveDropTargetAtPoint).mockReturnValue({ type: "folder", path: "/home/user/Documents" });
+    const explorer = makeMockExplorer();
+    const drag = usePointerDrag({ getExplorer: () => explorer, refreshPanes: undefined });
+    drag.handlePointerDown(makeMouseEvent({ clientX: 100, clientY: 100 }), makeEntry("file.txt"), false);
+    fireWindowEvent("mousemove", { clientX: 110, clientY: 100 });
+    drag.dispose();
+    await tick();
+    expect(dragState.clear).not.toHaveBeenCalled();
+    fireWindowEvent("mousemove", { clientX: 150, clientY: 120 });
+    await fireWindowEvent("mouseup", { clientX: 150, clientY: 120 });
+    expect(handleFileDropMany).toHaveBeenCalledWith(["/home/user/file.txt"], "/home/user/Documents", false, expect.anything());
+    expect(registeredListeners["mousemove"] || []).toHaveLength(0);
+    expect(registeredListeners["mouseup"] || []).toHaveLength(0);
+  });
+
+  it("a source that leaves its listing while its row is out of the virtual window cancels at release instead of moving", async () => {
+    vi.mocked(resolveDropTargetAtPoint).mockReturnValue({ type: "folder", path: "/home/user/Documents" });
+    const listed = new Set(["/home/user/file.txt"]);
+    const drag = usePointerDrag({ getExplorer: () => makeMockExplorer([], [], listed), refreshPanes: undefined });
+    drag.handlePointerDown(makeMouseEvent({ clientX: 100, clientY: 100 }), makeEntry("file.txt"), false);
+    fireWindowEvent("mousemove", { clientX: 110, clientY: 100 });
+    drag.dispose(); // scrolled out of the virtual window: still listed, the drag survives
+    await tick();
+    expect(dragState.clear).not.toHaveBeenCalled();
+    listed.delete("/home/user/file.txt"); // deleted or renamed elsewhere
+    fireWindowEvent("mousemove", { clientX: 150, clientY: 120 });
+    await fireWindowEvent("mouseup", { clientX: 150, clientY: 120 });
+    expect(handleFileDropMany).not.toHaveBeenCalled();
+    expect(dragState.clear).toHaveBeenCalled();
+    expect(clearHighlights).toHaveBeenCalled();
+    expect(registeredListeners["mousemove"] || []).toHaveLength(0);
+    expect(registeredListeners["mouseup"] || []).toHaveLength(0);
+  });
+
+  it("a row unmounted because its source left the listing cancels the drag at once", async () => {
+    vi.mocked(resolveDropTargetAtPoint).mockReturnValue({ type: "folder", path: "/home/user/Documents" });
+    const listed = new Set(["/home/user/a.txt", "/home/user/b.txt"]);
+    const [a, b] = [makeEntry("a.txt"), makeEntry("b.txt")];
+    const drag = usePointerDrag({ getExplorer: () => makeMockExplorer([], [a, b], listed), refreshPanes: undefined });
+    drag.handlePointerDown(makeMouseEvent({ clientX: 100, clientY: 100 }), a, true);
+    fireWindowEvent("mousemove", { clientX: 110, clientY: 100 });
+    listed.delete("/home/user/b.txt"); // one of the dragged selection is gone
+    drag.dispose();
+    await tick(); // the listing is read once the update that unmounted the row applies
+    expect(dragState.clear).toHaveBeenCalled();
+    expect(registeredListeners["mousemove"] || []).toHaveLength(0);
+    expect(registeredListeners["keydown"] || []).toHaveLength(0);
+    await fireWindowEvent("mouseup", { clientX: 150, clientY: 120 });
+    expect(handleFileDropMany).not.toHaveBeenCalled();
+  });
+
+  it("a surface that lists other directories decides membership itself (Miller ancestor columns)", async () => {
+    vi.mocked(resolveDropTargetAtPoint).mockReturnValue({ type: "folder", path: "/home/user/Documents" });
+    const columns = new Set(["/home/user/file.txt"]);
+    // The pane's own listing is a descendant directory that does not hold the source.
+    const drag = usePointerDrag({ getExplorer: () => makeMockExplorer([], [], new Set()), refreshPanes: undefined, isListed: path => columns.has(path) });
+    drag.handlePointerDown(makeMouseEvent({ clientX: 100, clientY: 100 }), makeEntry("file.txt"), false);
+    fireWindowEvent("mousemove", { clientX: 110, clientY: 100 });
+    await fireWindowEvent("mouseup", { clientX: 150, clientY: 120 });
+    expect(handleFileDropMany).toHaveBeenCalledWith(["/home/user/file.txt"], "/home/user/Documents", false, expect.anything());
+  });
+
+  it("unmount before the drag threshold releases the press", () => {
+    const drag = usePointerDrag({ getExplorer: () => makeMockExplorer(), refreshPanes: undefined });
+    drag.handlePointerDown(makeMouseEvent({ clientX: 100, clientY: 100 }), makeEntry("file.txt"), false);
+    drag.dispose();
+    expect(registeredListeners["mousemove"] || []).toHaveLength(0);
+    expect(registeredListeners["mouseup"] || []).toHaveLength(0);
+    expect(dragState.start).not.toHaveBeenCalled();
   });
 
   it("cleans up all listeners after drop", async () => {

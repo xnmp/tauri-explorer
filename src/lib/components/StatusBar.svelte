@@ -13,7 +13,7 @@
   import { formatSize } from "$lib/domain/file";
 
   const explorer = $derived(windowTabsManager.getActiveExplorer());
-  const entries = $derived(explorer?.displayEntries ?? []);
+  const entries = $derived(explorer?.ownDisplayEntries ?? []);
   const selectedCount = $derived(explorer?.selectedPaths.size ?? 0);
   const totalCount = $derived(entries.length);
 
@@ -27,7 +27,7 @@
   const selectedEntries = $derived.by(() => {
     if (!explorer || selectedCount === 0) return [];
     const selectedPaths = explorer.selectedPaths;
-    return entries.filter((e) => selectedPaths.has(e.path));
+    return explorer.displayEntries.filter((e) => selectedPaths.has(e.path));
   });
 
   const selectedFiles = $derived(selectedEntries.filter((e) => e.kind === "file").length);

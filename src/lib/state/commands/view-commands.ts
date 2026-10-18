@@ -29,6 +29,16 @@ function setBuiltInView(mode: ViewMode): void {
 /** View commands */
 export const viewCommands: Command[] = [
   {
+    id: "view.peekFolder", scope: "pane", label: "Peek into Folder", category: "view",
+    when: () => !!getActiveExplorer()?.peekCommandTarget,
+    handler: () => { const explorer = getActiveExplorer(); if (explorer?.peekCommandTarget) return explorer.togglePeek(explorer.peekCommandTarget); },
+  },
+  {
+    id: "view.collapseAllPeeks", scope: "pane", label: "Collapse All Peeks", category: "view",
+    when: () => !!getActiveExplorer()?.peekEnabled,
+    handler: () => getActiveExplorer()?.collapseAllPeeks(),
+  },
+  {
     id: "view.details",
     scope: "pane",
     label: "Details View",
@@ -208,6 +218,8 @@ export const viewCommands: Command[] = [
     scope: "pane",
     label: "Set List View Column Count",
     category: "view",
+    // Classic List only: Folder Peek's column flow sizes itself from the pane height.
+    when: () => !settingsStore.folderPeek,
     handler: () => {
       const current = settingsStore.listViewColumns;
       dialogStore.openPicker({
@@ -257,6 +269,13 @@ export const viewCommands: Command[] = [
     label: "Switch Theme...",
     category: "view",
     handler: () => dialogStore.openThemePicker(),
+  },
+  {
+    id: 'view.switchIconTheme',
+    scope: 'window',
+    label: 'Switch Icon Theme...',
+    category: 'view',
+    handler: () => dialogStore.openThemePicker('icon'),
   },
   // Preview pane dock position (#460). Cycling (or jumping to any edge) also
   // reveals the pane when hidden, so the command has a visible effect.

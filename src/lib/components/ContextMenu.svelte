@@ -244,7 +244,7 @@
     const selected = explorer.getSelectedEntries();
     if (selected.length === 0) return;
     recordActioned();
-    await explorer.compressToZip(selected.map((e) => e.path));
+    await explorer.compressToZip(selected);
     contextMenuStore.close();
   }
 
@@ -629,7 +629,27 @@
       <!-- View options -->
       <div class="menu-section-label">View</div>
       {#each viewModes as mode}
-        {#if mode.id === "list"}
+        {#if mode.id === "list" && settingsStore.folderPeek}
+            <button
+              class="menu-item"
+              class:selected={builtInShown(mode.id)}
+              onclick={() => handleSetViewMode(mode.id)}
+              role="menuitemradio"
+              aria-checked={builtInShown(mode.id)}
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <path d="M3 4H4M6 4H13M3 8H4M6 8H13M3 12H4M6 12H13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+              </svg>
+              <span>{mode.label}</span>
+              {#if builtInShown(mode.id)}
+                <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
+                  <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              {/if}
+
+            </button>
+        {:else if mode.id === "list"}
+        <!-- Classic List (Folder Peek off): column-count submenu -->
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div class="submenu-wrapper" class:flip-left={submenuFlip.flipLeft} class:flip-up={submenuFlip.flipUp} onmouseenter={() => listSubmenuOpen = true} onmouseleave={() => listSubmenuOpen = false}>
             <button

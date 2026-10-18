@@ -28,7 +28,7 @@
   const pane: FileViewPane = {
     get paneId() { return paneId; },
     get directory() { return explorer.currentPath; },
-    get entries() { return explorer.displayEntries; },
+    get entries() { return explorer.ownDisplayEntries; },
     get selection() { return explorer.getSelectedEntries(); },
     get focusedPath() {
       const cursor = explorer.state.cursorPath;

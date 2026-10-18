@@ -2,11 +2,11 @@
   DetailsView - Column-based details view with VirtualList and sortable headers.
   Issue: tauri-explorer-9djf.5
 
-  NOTE: unlike List/Tiles this view virtualizes per-ROW-of-one and wires item
-  interactions inside each FileItem, so it deliberately does NOT use the shared
-  useRowGridView composable (which is for the multi-column grid views).
+  This view virtualizes individual rows and wires interactions inside FileItem.
+  Tiles uses useRowGridView; List owns its horizontal column virtualizer.
 -->
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { useColumnResize } from "$lib/composables/use-column-resize.svelte";
@@ -14,7 +14,8 @@
   import { fixedMenuPosition, getZoomFactor, probeSingleScaleFixedOffset } from "$lib/domain/zoom";
   import FileItem from "./FileItem.svelte";
   import VirtualList from "./VirtualList.svelte";
-  import InlineNewFolder, { NEW_FOLDER_SENTINEL, isNewFolderSentinel } from "./InlineNewFolder.svelte";
+  import PeekGuides from "./PeekGuides.svelte";
+  import InlineNewFolder from "./InlineNewFolder.svelte";
 
   import type { FileEntry } from "$lib/domain/file";
   import { isTrashPath } from "$lib/domain/virtual-path";
@@ -33,9 +34,15 @@
   let { explorer, onitemclick, onitemdblclick, scrollToIndex = $bindable(), containsIndex = $bindable(), fallbackTabStop, onviewportscroll, onlayoutchange }: Props = $props();
 
   let rowScrollToIndex = $state<((index: number) => void) | undefined>();
-  scrollToIndex = (index) => rowScrollToIndex?.(index + (explorer.isCreatingFolder ? 1 : 0));
+  const revealIndex = (index: number) => rowScrollToIndex?.(explorer.detailRows.entryToRow[index] ?? -1);
   let rowContainsIndex = $state<((index: number) => boolean) | undefined>();
-  containsIndex = (index) => rowContainsIndex?.(index + (explorer.isCreatingFolder ? 1 : 0)) ?? false;
+  const contains = (index: number) => rowContainsIndex?.(explorer.detailRows.entryToRow[index] ?? -1) ?? false;
+  scrollToIndex = revealIndex;
+  containsIndex = contains;
+  onDestroy(() => {
+    if (scrollToIndex === revealIndex) scrollToIndex = undefined;
+    if (containsIndex === contains) containsIndex = undefined;
+  });
 
   const viewId = $props.id();
   const inTrash = $derived(isTrashPath(explorer.currentPath));
@@ -45,9 +52,7 @@
 
   // The new-folder editor rides INSIDE the virtual list as a sentinel first
   // item (#257) — not as a band above the scroller.
-  const listItems = $derived(
-    explorer.isCreatingFolder ? [NEW_FOLDER_SENTINEL, ...explorer.displayEntries] : explorer.displayEntries,
-  );
+  const listItems = $derived(explorer.detailRows.rows);
 
   // Column header context menu state
   let columnMenuPos = $state<{ x: number; y: number } | null>(null);
@@ -209,29 +214,42 @@
   {/if}
 
   <VirtualList class="file-rows"
-    role="grid" aria-label="Files" aria-multiselectable={true}
+    role={explorer.peekEnabled ? "treegrid" : "grid"} aria-label="Files" aria-multiselectable={true}
     aria-rowcount={listItems.length} aria-colcount={1}
     tabindex={fallbackTabStop ? 0 : -1}
     bind:containsIndex={rowContainsIndex}
     items={listItems}
     itemHeight={32}
-    getKey={(entry) => entry.path}
+    getKey={(row) => row.key}
     {onviewportscroll}
     {onlayoutchange}
     bind:scrollToIndex={rowScrollToIndex}
   >
-    {#snippet children(entry, index)}
-      <div role="row" aria-rowindex={index + 1}>
-      {#if isNewFolderSentinel(entry)}
+    {#snippet children(row, index)}
+      <!-- data-row-path/-kind: the row's identity for a drag's spring-loaded
+           peek (#1242), whose hit test can land on this wrapper at a row's
+           pixel-snapped edge; hover and drop resolve it like the row (spring-rows.ts). -->
+      <div role="row" aria-rowindex={index + 1} data-row-path={row.kind === "entry" ? row.entry.path : row.kind === "peek-state" ? row.parentPath : undefined}
+        data-row-kind={row.kind === "entry" ? (row.entry.kind === "directory" ? "directory" : "file") : row.kind === "peek-state" ? "state" : undefined}
+        aria-level={row.kind === "entry" && explorer.peekEnabled ? row.depth + 1 : undefined}
+        aria-expanded={row.kind === "entry" && explorer.peekEnabled && row.entry.kind === "directory" ? row.expanded : undefined}
+        aria-selected={row.kind === "entry" && explorer.peekEnabled ? explorer.isSelected(row.entry) : undefined}>
+      {#if row.kind === "create"}
         <div role="gridcell"><InlineNewFolder {explorer} variant="details" /></div>
+      {:else if row.kind === "peek-state"}
+        <!-- data-peek-state names the folder: inside a drag's temporary peek
+             this row drops into it (#1242); elsewhere it stays a background row. -->
+        <div role="gridcell" class="peek-state" data-peek-state={row.parentPath} style:padding-left={`${(explorer.peekCaretsShown ? 41 : 29) + row.depth * 22}px`}>
+          <PeekGuides groups={explorer.detailRows.groups} row={index} carets={explorer.peekCaretsShown} />
+          <span role="status">{row.message}</span>
+        </div>
       {:else}
-        <FileItem index={index - (explorer.isCreatingFolder ? 1 : 0)}
-          {entry}
-          {explorer}
-          onclick={(event) => onitemclick(entry, event)}
-          ondblclick={() => onitemdblclick(entry)}
-          selected={explorer.isSelected(entry)}
-        />
+        <FileItem index={row.entryIndex} entry={row.entry} {explorer}
+          depth={row.depth} parentPath={row.parentPath} expanded={row.expanded}
+          peek={explorer.peekEnabled} carets={explorer.peekCaretsShown} canPeek={explorer.peekEnabled && row.entry.kind === "directory"}
+          groups={explorer.detailRows.groups} rowIndex={index}
+          onclick={(event) => onitemclick(row.entry, event)}
+          ondblclick={() => onitemdblclick(row.entry)} selected={explorer.isSelected(row.entry)} />
       {/if}
       </div>
     {/snippet}
@@ -239,6 +257,7 @@
 </div>
 
 <style>
+  .peek-state { position: relative; height: 32px; display: flex; align-items: center; color: var(--text-tertiary); font-size: 13px; box-sizing: border-box; }
   .details-view {
     display: flex;
     flex-direction: column;

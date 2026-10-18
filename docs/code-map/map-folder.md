@@ -37,8 +37,17 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `PreviewImageSurface.svelte` — the Preview pane's image surface (container, image, zoom indicator, fullscreen styles) shared by file images and plugin targets; event handling comes from `use-preview-fullscreen` (#1033).
 - `ImageResolutionCell.svelte` — lazy intrinsic image metadata for mounted Details rows.
 - `DetailsView.svelte` — virtual-scrolled table view (columns, resize, sort headers).
-- `ListView.svelte` — CSS-grid compact list view.
+- `ListColumnsView.svelte` — Folder Peek List: column-major tree (`role=tree`, per-level `aria-posinset`/`setsize` from `peekTreePositionLookup`, arithmetic while nothing is expanded; a listbox without peek) with horizontal windowing and shared reveal/navigation snapshot; an open top-level folder keeps its header row and renders a `ListCard`, and its inert `.list-motion-layer` holds `use-list-motion` ghosts (#1240).
+- `ListCard.svelte` — one List card's descendant scroll area (`role=group`, virtualized rows, nested guides, treeitem pseudo-rows) and "+N more"; its surface is a `.peek-drop-target` for the folder.
+- `ListCardGrip.svelte` — a List card's bottom-edge grip control (separator with arrow/Home/End keys), rendered inside the folder's header treeitem because a tree owns only groups and treeitems; its drag session lives in `use-list-columns`.
+- `ListView.svelte` — classic row-major List (Folder Peek off); `listViewColumns`/`listColumnMaxWidth` apply here only.
 - `TilesView.svelte` — row-virtualized tile view with thumbnails; renders through `TileSurface.svelte`/`TileVisual.svelte`; runs `scroll-jank-monitor.ts` during scroll and logs `tiles-scroll-jank` events only when jank occurred (#593).
+- `TilePanelsView.svelte` — Tiles with Folder Peek on (#1241): row groups (a grid row plus its bands) as variable-height VirtualList items; Tiles carets, open panels (`TilePanel`), closing ghosts (`TilePanelGhost`) and each group's `TilePanelOutlines`; exposes reveal/contains and the spatial `TileNavigationSnapshot`. Classic `TilesView` still renders Tiles with Folder Peek off.
+- `TilePanel.svelte` — one open folder's Tiles panel: a grid of grid-sized tiles (`role=rowgroup`, windowed rows, nested `TileSurface` with the grid's layout) with List-card fades and "+N more", the stacked label (× and scroll-to-parent) and the grip; the whole panel is the folder's `.peek-drop-target` and context-menu surface.
+- `TilePanelGrip.svelte` — a Tiles panel's far-edge resize separator (row > gridcell > separator): pointer preview of the whole band, arrow/Home/End keys, clamped by `tile-panels.ts`.
+- `TilePanelGhost.svelte` — a closing Tiles panel's inert, aria-hidden copy (captured entries, no identity classes/data/ARIA) that collapses with the motion frame.
+- `TilePanelOutlines.svelte` — one row group's SVG tab-and-page outlines, accent gradients and stacked ribbons from `tile-panel-outline.ts`; only the ribbon's hit stroke takes the pointer (hover emphasis), plus a temporary panel's spring bridges (band gap; a stacked panel's ribbon and its 32px channel, #1242).
+- `view-loaders.svelte.ts` — memoised, retryable dynamic imports for every built-in view renderer (Details, List columns, classic List, Tiles); FileList starts the chunk in parallel with the listing, and settled renderers are published reactively so later mounts render them in the same flush.
 - `TileSurface.svelte` — tile-grid root: publishes `domain/tile-layout.ts` as tile CSS variables and owns all `.tile-item` chrome (hover, selected underline, ghosted/cut/drop states, icon scaling) for TilesView and FileTiles.
 - `TileVisual.svelte` — one tile's icon block (image/video thumbnail, folder preview, FileIcon, video marker) and name; the name defaults to `EntryNameLabel`, TilesView passes `EntryName`.
 - `src/lib/components/FileTile.svelte` — SDK module `ui/file-tile` (capability `fileTile`): one standalone gridcell, shared TileSurface/TileVisual, pane rename and clipboard/hidden/empty-folder appearance; the plugin owns rows, grid and keyboard navigation.
@@ -46,13 +55,18 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `FileTiles.svelte` — the SDK module `ui/file-tiles`: non-virtualized Tiles-view tiles for plugin sections, callbacks for select/open/menu, own-width columns, roving focus; size from the `size` prop, else the enclosing plugin view's context, else the global setting.
 - `VirtualList.svelte` — variable-height windowed scroller with persistent extent canvas; publishes scroll/layout settlement for marquee hit testing and cursor reveal. Perf-critical.
 - `MillerColumns.svelte` — column/Miller-columns browsing mode; owner identity and pane-content modality follow both inline and hoisted rendering.
+- `PeekGuides.svelte` — virtual-row segments of continuous unboxed folder-peek guide lines.
 - `FileItem.svelte` — single entry row/tile (icon, name, badges, selection state).
-- `EntryCell.svelte` — shared List/Tiles gridcell with roving focus, selection semantics and drag-drop interactions.
+- `EntryCell.svelte` — shared List option / Tiles gridcell with roving focus, selection semantics and drag-drop interactions.
 - `EntryName.svelte` — shared inline rename input/display across all views.
 - `EntryNameLabel.svelte` — explorer-free displayed name per view variant (and the tile rename placeholder); EntryName and FileTiles render names through it.
-- `FileIcon.svelte` — file/folder icon resolution (Material/nerd-font theme); also renders the linked-folder and git-repo-folder badge overlays (all themes, all 3 view modes since it's the shared icon renderer).
+- `FileIcon.svelte` — shared Material/Classic/Minimal/Catppuccin dispatch; optional pack override supplies stable picker previews across every file view.
+- `MaterialFileIcon.svelte`, `CatppuccinFileIcon.svelte` — pack-specific SVG artwork using the shared file identity/category descriptor and existing tint tokens; Catppuccin uses vendored CSS-variable SVGs and light/dark palettes.
+- `FolderIcon.svelte`, `FolderDecoration.svelte` — shared folder silhouettes and link/repository decoration, including outlined packs and photo-folder previews; preserve compact and tile badge geometry.
+- `icons/icon-theme-options.ts` — lazy dialog labels and descriptions for icon pack choices.
+- `icons/classic-artwork.ts` — legacy language paint data. Material and Catppuccin use external SVG sprites generated by `scripts/build-icon-sprites.mjs` from their canonical SVGs, keeping artwork out of startup JavaScript; Catppuccin originals remain unchanged with their license and pinned source.
 - `KeybindingsDialog.svelte` — dedicated lazy-loaded Keyboard Shortcuts configuration surface; reuses KeybindingsSettings and shared modal ownership, with viewport/zoom bounded card sizing (#758).
-- `ThumbnailImage.svelte` — lazy image/video thumbnail loader w/ cache + intersection. `decoding="async"` on both `<img>`s; no loading spinner (a continuous CSS animation on many concurrently-loading tiles cost a doubled long-frame rate on WebKitGTK, #593 — static SVG placeholder instead). Hot.
+- `ThumbnailImage.svelte` — lazy image/video thumbnail tile: hydrates from the cache, watches `state/thumbnail-loads.ts` while on screen. `decoding="async"` on both `<img>`s; no loading spinner (a continuous CSS animation on many concurrently-loading tiles cost a doubled long-frame rate on WebKitGTK, #593 — static SVG placeholder instead). Hot.
 - `VideoIndicator.svelte` — passive, contrast-backed video type badge shared by Tiles and Preview Pane; remains present during loading and frame extraction failure (#823).
 - `FolderThumbnail.svelte` — Windows-style folder preview tile (up to 3 nested images, #146).
 - `GitStatusBadge.svelte` — per-entry git status letter/color decoration.
@@ -83,7 +97,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `PluginsDialog.svelte`, `PluginSettings.svelte` — lazy Plugins configuration surface; installed packages, contribution toggles and descriptor-driven settings, using shared modal ownership and viewport/zoom bounds.
 - `KeybindingsSettings.svelte` — keybinding customization UI in settings.
 - `ShortcutCheatsheet.svelte` — keyboard shortcut cheatsheet overlay.
-- `ThemePicker.svelte` — theme selection UI.
+- `ThemePicker.svelte` — color/icon theme picker with live preview, commit and rollback; icon options show stable per-pack file samples.
 - `RenameDialog`? see `dialogs.svelte.ts`; dialogs present: `DeleteDialog.svelte`, `ConflictDialog.svelte` (paste conflict overwrite/skip), `BulkRenameDialog.svelte`, `WorkspaceDialog.svelte` (save/restore workspaces), `ProgressDialog.svelte` (copy/move/extract progress), `InlineNewFolder.svelte` (inline new-entry input — folder or file, per `explorer.newEntryKind`), `FilePicker.svelte` (portal file-picker window).
 - `PreviewFolderList.svelte` — folder/ZIP children list in the Preview pane, with the collapsed single-folder indicator; rows go through the shared VirtualList so huge folders render only a windowed slice (#1040).
 - `PreviewPane.svelte` — file preview (image/text/markdown/syntax/CSV table); CSV rows use the shared VirtualList with one shared column template and an outer horizontal scroll surface (#666). Image to image, the previous image stays (spinner over it when slow) until the next is decoded, so a selection change never blanks or re-lays out the pane (`e2e/preview-selection-stability.spec.ts`).
@@ -124,6 +138,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-pr-session.svelte.ts` — mounted GitHub badge, PR detail and CI log requests; immutable snapshots, invocation identities and disposal.
 - `git-branch-status.svelte.ts` — newest-reload-only owner of the graph's trunk-aware branch-status badges (#1081); disposal and superseded reloads cannot publish.
 - `git-graph-branches.svelte.ts` — lazy branch/author metadata and cancellable merge-base jump owner; known-coverage fallback and query/popover request coordination.
+- `git-graph-debounced-reload.ts` — trailing debounce for the path-filter reload; cancelled when a merge-base jump starts (#1281).
 
 - `window-startup.ts` — window-owned settings/theme/plugin startup; disposal prevents late settings from activating plugins.
 - `window-session.ts` — composes page subscriptions, startup, one-shot launch address-bar focus, command readiness and post-readiness warm priming with rollback/teardown.
@@ -146,6 +161,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `terminal-session.ts` — frontend terminal reservation/listener/spawn lifetime; drains late resources and serializes restart/stop. Owns the session's only input path (`domain/terminal-input-queue.ts`): opened at start/restart so typeahead is kept, attached at reservation, closed on stop/exit; `insert` builds text (path insertions) in the spawned shell's dialect and holds it across an exited shell for the next start (#709, #882).
 - `repo-root-cache.svelte.ts` — bounded reactive repository discovery with positive/negative TTL, shared probes and invalidation-safe publication.
 - `owned-registry.ts` — framework-free contribution registration identity; old disposers cannot remove replacements even when values are reused.
+- `reactive-registry.svelte.ts` — owned registry whose `values()` is reactive (revision `$state`, written without reading it); backs the command registry so an open palette sees late plugin commands (#1270).
 - `ordered-registry.ts` — owned contributions sorted by plugin list position, then registration; shared by context-menu items and plugin settings sections.
 - `modal-ownership.svelte.ts` — shared input ownership for mounted and contributed modals; live surface admission precedes DOM suspension; closing releases only the corresponding registration.
 - `src/lib/state/modal-focus.ts` — pane dialog focus restoration tracks actual focus ownership across DOM detachment and releases listeners on cleanup; shared modal focus eligibility.
@@ -175,6 +191,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `pane-resize.ts` — owns captured divider geometry, one coalesced pointer frame, and cancellation on release, blur or component retirement.
 - `pane-watch.ts` — per-pane observed navigation tickets, lease commit/rollback, pending-change replay and refresh admission.
 - `directory-events.ts` — shared native directory event subscription with explicit readiness, retry and late-listener retirement.
+- `folder-peek.svelte.ts` — per-pane facade that loads peek policies and resources on first use.
+- `folder-peek-session.svelte.ts` — lazy expansion membership and independently retired child-listing resources.
+- `pane-peek-watch.ts` — lazy pane-watch extension for capped child-directory and repository observation.
 - `directory-listing.ts` — complete directory snapshots, queued-request supersession, teardown and observation transfer.
 - `navigation.ts` — pure back/forward history utilities.
 - `src/lib/state/pane-pointer-focus.ts` — pointer gesture focus ownership without cancelling native drag acquisition.
@@ -212,6 +231,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `conflict-resolver.svelte.ts` — paste conflict resolution state (overwrite/skip/cancel).
 - `clipboard.svelte.ts` — cross-pane/window revisioned file clipboard state and Cut ownership reconciliation.
 - `src/lib/state/drag-clock.ts` — native process clock calibration with renderer performance.now, IPC uncertainty bounds and runtime identity.
+- `drop-hover.ts` — live drag hover owner; re-hit-tests a stationary drag after List virtualization/layout.
 - `drag.svelte.ts` — shared drag state, cross-window gesture sequence, HTML5 observation history, bounded shared completion receipts and native provenance expiry (dataTransfer is unreliable in Tauri).
 - `undo.svelte.ts` — revisioned native-history projection; queued writes retain their receipts so Undo targets the entry captured at intent.
 - `undo-helpers.ts` — pure completion labels for renderer and native-only history actions.
@@ -263,6 +283,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `media-durations.svelte.ts` — lazy, batched, revision-cached (size+mtime) video-duration resolver for the Details Length column; rendered rows request, listings never carry durations (#995).
 - `manual-hidden.svelte.ts` — per-folder manually-hidden entry registry.
 - `settings.svelte.ts` — global settings store (toggles, defaults). Very hot for feature flags. `reloadFromDisk()` adopts external settings.json edits (#599).
+- `icon-theme.svelte.ts` — transient icon-pack preview and reactive resolution against saved settings and applied color-theme CSS revisions; previews never persist.
 - `window-size.svelte.ts` — reactive `window.innerWidth`/`innerHeight` tracker (`windowSizeStore`); `+page.svelte` syncs on mount/resize. Feeds preview-pane auto-dock (#467).
 - `theme.svelte.ts` — active theme state + CSS var application.
 - `config-watch.ts` — applies `config-file-changed` to the settings/theme stores; `handleConfigFileChanged` is the routing seam (#599).
@@ -271,6 +292,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `toast.svelte.ts` — toast notification store.
 - `rename-suggestion.svelte.ts` — inline-rename autocomplete providers (#215).
 - `thumbnail-cache.ts` — client-side thumbnail cache + in-flight dedupe. Hot for preview perf.
+- `thumbnail-loads.ts` — thumbnail loads shared by cache key: micro/full pools, queued work only for an on-screen watcher (#136), responses that outlive their tile still reach the cache, and a remount joins the load in flight. Hot.
 - `persisted.ts` — localStorage-backed persistent-state utility (SSR/test guards); serialized config-file writer plus `isConfigWritePending`/`lastWrittenConfig`, the echo-suppression facts config autoreload reads (#599).
 - `startup-timing.ts` — boot/list/settings/commands/readiness milestones; main-window report also records app-run-to-ready on the Rust monotonic clock. The main window also mirrors each mark (and a bounded heartbeat) to the native log as `Startup(webview-progress)` while startup is pending (#936).
 - `tab-display.svelte.ts` — computes tab titles/icons: git-root decoration, VS Code-style disambiguation, multi-pane title joining.
@@ -341,7 +363,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-type-ahead.svelte.ts` — type-to-select matching in file lists.
 - `use-column-resize.svelte.ts` — One keyed resize owner with session-local Details widths, visibility projection and ordered retirement.
 - `use-progressive-render.svelte.ts` — chunked render to avoid freeze on huge dirs.
-- `use-drop-target.svelte.ts` — directory-entry drop-target behavior.
+- `use-drop-target.svelte.ts` — directory-entry drop-target behavior; `retireDropFeedback` ends every folder's feedback at once (drop, dragend, leave).
 - `use-native-drop-target.svelte.ts` — position-based drop target detection, shared pane/window owner resolution and live modality admission for deferred destinations.
 - `use-native-drop-handler.ts` — handle native (external) OS file drops.
 - `src/lib/composables/observe-active-directory.svelte.ts` — lifecycle-owned plugin observation of the active workspace directory without polling or cloning its listing.
@@ -361,7 +383,14 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-panel-resize.svelte.ts` — localStorage width preference adapter for Sidebar, SCM, Miller and Git columns.
 - `use-resize-owner.svelte.ts` — shared axis-aware pointer capture, geometry, keyboard and activity lifetime.
 - `use-controlled-size.svelte.ts` — external-source size adapter; transient drafts, final commits and value-based source supersession.
-- `use-row-grid-view.svelte.ts` — shared virtualization wiring (rows, DnD, new-folder sentinel, scrollToIndex) for List + Tiles views.
+- `use-list-columns.svelte.ts` — List column virtualizer over `buildListModel`; synchronous content-box sizing, wheel ownership (a scrollable card first), editor pinning, card scroll offsets, the grip drag session (window-level release, clamped to the card's column) and preview, entry/card reveal and settled callbacks.
+- `spring-load.ts` — eager spring-loaded peek facade (#1242): every drag backend reports the element under the drag (`springHover`), drop/end (`springEnd`) and pending-replay holds (`springHold`); free while Folder Peek is off, lazy-loads the driver with its eager dependencies injected.
+- `spring-load-driver.ts` — lazy spring-load driver: `observeSpringHit` (pane, identity anchors, folder eligibility from the element under the drag) and `createSpringLoadDriver` (controller, per-pane apply one macrotask later, holds).
+- `surface-drop-feedback.ts` — drop feedback for a List card's own surface: target resolution (nested pseudo-row or the card's folder, never a row) and retiring feedback when the pointer reaches a row inside it.
+- `use-list-motion.svelte.ts` — applies `domain/list-motion.ts` plans to the List canvas for user peek toggles only (FLIP, conveyor clip, card growth, sanitized ghosts in an inert layer, finish-on-interrupt).
+- `use-row-grid-view.svelte.ts` — shared virtualization wiring (rows, DnD, new-folder sentinel, scrollToIndex) for Tiles view.
+- `use-tile-panels.svelte.ts` — Tiles panels (#1241): builds `buildTilePanelModel` from the peek rows and the measured scrollport (RO + flushSync), keeps sides, owns panel scroll offsets/windows, grip preview, hover, reveal/contains, the navigation snapshot and the open/close motion (frames from `tile-panel-motion.ts`, ghosts, row anchoring).
+- `use-tile-view-support.svelte.ts` — shared by both Tiles renderers: unavailable video thumbnails (reset per directory) and the `tiles-scroll-jank` diagnostics (#593).
 
 ## src/lib/domain/ — pure logic, no framework deps. Test + reuse here.
 
@@ -369,6 +398,11 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/domain/job-reveal.ts` — pure pane choice, present-file selection, reveal routing and latest-click cancellation policy.
 
 - `src/lib/domain/image-job-progress.ts` — elapsed image-job timing and explicitly estimated progress; median of the latest 20 successful completions with ≥3 samples, keyed cohort → source → 120s, plus overdue estimate wording.
+- `src/lib/domain/folder-peek.ts` — pure preorder expansion, pruning/caps and Details tree row/index geometry.
+- `src/lib/domain/folder-peek-memory.ts` — bounded expansion membership, subtree collapse and deleted-branch pruning shared with the pending restore facade.
+- `src/lib/domain/folder-peek-flat.ts` — flat Details rows and command admission before first peek activation; caret-less click ownership (`rowClickOwnsPeek`: click toggles, double-click refused with a notice, #1298).
+- `src/lib/domain/file-operation-selection.ts` — Explorer recursive batch reduction, symlink-overlap admission, drag-primary remapping, and archive roots (same-basename refusal).
+- `src/lib/domain/bulk-rename.ts` — bulk rename plan: name-part find/replace previews, per-folder collision keys, and descendant-first rename order.
 - `src/lib/domain/file-drop.ts` — validated internal payloads, full path-set verification and explicit DOM/native transport authority.
 - `src/lib/domain/native-drop-paths.ts` — filesystem-only path admission for native drops; excludes blob URLs, relative paths and traversal before any transfer, bookmark or terminal action.
 - `src/lib/domain/file-view-id.ts` — bounded, plugin-scoped file view id format, validated wherever ids are persisted with pane layouts.
@@ -429,8 +463,18 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `file-batch-outcome.ts` — typed successful/failed path receipt and aggregate error formatting for best-effort file mutations.
 - `src/lib/domain/copy-session.ts` — ordered native session event, conflict-decision and positional result contracts, plus the copy and move incomplete-session presentations.
 - `file-history.ts` — shared action, summary, receipt and HistoryPort types for the native history authority.
+- `list-column-flow.ts` — slot-aware column prefix scan, span lookup, the `ListFlowModel` types, card-aware List keyboard movement (`resolveListMove`), wheel mapping (`listWheelStep`: sub-pixel carry, native passthrough) and viewport math.
+- `list-cards.ts` — List cards (#1240): `buildListModel` over peek rows, height clamp, grip snapping/keys, "+N more", scroll-edge fades, card reveal/window/wheel policies and bounded session heights; spring-loaded cards (#1242): `springCardFits` (cards holding a temporary peek keep their place; a temporary card wraps when fewer than two rows fit) and `springWrapBridges`.
+- `spring-load.ts` — spring-loaded peek controller (#1242): `SPRING_LOAD_DELAY_MS`, pure `stepSpringLoad` (pending folder, nested open list, leave cascade, per-pane reset, end) and the timer-injected `createSpringLoadController`.
+- `spring-rows.ts` — `springRowOf`: the one row resolver shared by the spring hover observation and the spring drop redirect (rows, Details row wrappers, peek-state rows, `[data-spring-bridge]` bridges) (#1242).
+- `list-motion.ts` — pure List open/close motion plan (FLIP, conveyor distance with empty slots, card growth, visible-column gating) and easing/clip helpers.
+- `drop-feedback.ts` — pure decision for whether a DOM dragend may retire drop-hover feedback (stale echo vs cancelled drag).
 - `virtual-layout.ts` — variable-height virtual list layout math (VirtualList).
 - `tile-layout.ts` — tile sizes (`THUMBNAIL_SIZE_CONFIG`, re-exported by settings), spacing/row-height `tileLayout()` and grid arrow-key `gridFocusStep()` shared by every tile grid; the SDK's `PaneTileSize`/`TileSizePreset` and `paneTileSize()`; `tileGridMetrics()` exposes minimum width, allocated cell height, gap and grid padding through `ui/file-tile`.
+- `tile-panels.ts` — Tiles panels (#1241, spec §9): band feasibility/splits, below→above→stacked placement with kept sides, panel tile tracks (grid cell + gap) and height clamps, row/tab/segment x geometry, ribbon channels, `buildTilePanelModel` (groups, boxes, entry locations), fades and "+N more".
+- `tile-panel-outline.ts` — Tiles tab-and-page outline paths (flush snap, fillets), ribbon routing geometry and accent gradients per row group.
+- `tile-panel-navigation.ts` — Tiles spatial arrow navigation over grid tiles and visible panel items (enter/leave panels, in-panel grid steps, reading-order wrap) and panel reveal offsets.
+- `tile-panel-motion.ts` — Tiles panel motion: geometry mixing (opening grows from its row, closing collapses), animate/changed predicates, 150ms ease-out.
 - `image-resolution.ts` — source pixel shape, supported raster extensions and display formatting.
 - `detail-columns.ts` — Details column defaults, finite bounds, malformed-width normalization and visible grid projection.
 - `media-duration.ts` — Length-cell formatting (m:ss / h:mm:ss via `mediaTime`, empty when unknown) and the size+mtime cache revision (#995).
@@ -450,7 +494,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `image-viewer-zoom.ts` — pure fullscreen image zoom/pan math: clamped zoom, cursor-anchored zoom, pan, transform and the fullscreen key map (#219, #236, #1033).
 - `image-crop.ts` — full-resolution crop bounds and measured pointer mapping; fixed ICNS canvas projection with transparent padding (#681, crop UI/save implementation pending).
 - `preview-pane-position.ts` — validate/cycle preview dock edge right/bottom/top, plus "auto" mode/heuristic (`resolveAutoDockPosition`, #460, #467).
-- `nerd-icons.ts` — nerd-font icon mappings (Material theme).
+- `nerd-icons.ts` — legacy Nerd Font glyph mappings.
+- `file-icon-identity.ts` — pure file-icon identity and paint-category resolution, including filename precedence, aliases and folder identity.
+- `icon-themes.ts` — icon pack types and explicit-choice versus color-theme-suggestion policy.
 - `syntax-highlight.ts` — highlight.js wrapper for preview.
 - `csv-preview.ts` — quoted CSV parser for PreviewPane table data, bounded to the preview's data-row limit (#666).
 - `pdf-preview.ts` — pure PDF fit, zoom-anchor, measured pointer coordinates, pan bounds and safe-link policy (#728–#730).

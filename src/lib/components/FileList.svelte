@@ -3,11 +3,15 @@
   Issue: tauri-explorer-iw0, tauri-explorer-x25, tauri-explorer-as45, tauri-explorer-1k9k, tauri-explorer-im3m, tauri-explorer-9djf.5
 -->
 <script lang="ts">
-  import { flushSync, tick, onDestroy } from "svelte";
+  import { loadView, loadedView, viewLoadFailed, viewRendererFor } from "./view-loaders.svelte";
+  import { flushSync, tick, onDestroy, untrack } from "svelte";
+  import { settingsStore } from "$lib/state/settings.svelte";
   import { setFileListFocusReturn } from "$lib/state/file-list-focus-context";
   import { createDeferredFocusRequest, type DeferredFocusRequest } from "$lib/state/deferred-focus";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { dropIntoDirectory } from "$lib/composables/use-dom-directory-drop";
+  import { isSpringClaimed } from "$lib/composables/use-native-drop-target.svelte";
+  import { useBackgroundDropFeedback } from "$lib/composables/use-drop-target.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
   import { frecencyStore } from "$lib/state/frecency.svelte";
@@ -20,30 +24,42 @@
   import { parentDir, basename } from "$lib/domain/path";
   import { rectDimToCSS } from "$lib/domain/zoom";
   import { marqueeLayerTransforms } from "$lib/domain/marquee-rect";
-  import DetailsView from "./DetailsView.svelte";
-  import ListView from "./ListView.svelte";
-  import TilesView from "./TilesView.svelte";
   import InlineNewFolder from "./InlineNewFolder.svelte";
   import PluginFileView from "./PluginFileView.svelte";
   import { fileViewRegistry } from "$lib/plugins/file-view-registry.svelte";
   import type { FileViewPresentation } from "$lib/state/file-view-presentation.svelte";
   import { getPaneIdContext } from "$lib/state/pane-context";
+  import { showCaretlessDoubleClickNotice } from "$lib/state/folder-peek.svelte";
+  import { entryIndicesForRows } from "$lib/domain/folder-peek-flat";
+  import { toastStore } from "$lib/state/toast.svelte";
+  import { getCommandShortcut } from "$lib/state/commands.svelte";
   import { clickSelectionEffect } from "$lib/domain/workspace-selection";
 
   import type { FileEntry } from "$lib/domain/file";
   import { isTrashPath } from "$lib/domain/virtual-path";
   import { explainTrashedOpen } from "$lib/state/trash-provider";
 
+  import type { ListNavigationSnapshot } from "$lib/domain/list-column-flow";
+  import type { TileNavigationSnapshot } from "$lib/domain/tile-panel-navigation";
+
   interface Props {
     explorer: ExplorerInstance;
     presentation: FileViewPresentation;
+    getListNavigation?: () => ListNavigationSnapshot | null;
+    /** Tiles spatial navigation while Folder Peek panels are open (#1241). */
+    getTilesNavigation?: () => TileNavigationSnapshot | null;
     /** Scroll a selected entry into view; bound by ExplorerPane's keyboard navigation. */
     scrollToEntry?: (entry: FileEntry) => void;
   }
 
-  let { explorer, presentation, scrollToEntry = $bindable() }: Props = $props();
+  let { explorer, presentation, scrollToEntry = $bindable(), getListNavigation = $bindable(), getTilesNavigation = $bindable() }: Props = $props();
 
   const paneId = getPaneIdContext();
+  // Start the renderer chunk as soon as the view is known, in parallel with the
+  // directory listing; the view branches below render it once it is published.
+  $effect.pre(() => {
+    void loadView(viewRendererFor(explorer.viewMode, settingsStore.folderPeek));
+  });
   // A plugin view replaces the listing only where it applies; elsewhere the
   // pane shows its built-in view while retaining the preference.
   const resolution = $derived(presentation.resolution);
@@ -52,7 +68,7 @@
 
 
   // Drop target state for dropping files into current directory
-  let isDropTarget = $state(false);
+  const listDropFeedback = useBackgroundDropFeedback();
 
   // Defer the loading spinner: a directory that lists in under 150ms shouldn't
   // flash a spinner. While loading but before the spinner shows, the list area
@@ -75,9 +91,30 @@
   // (Details/List/Tiles all virtualize and own their scroll container).
   let viewContainsIndex = $state<((index: number) => boolean) | undefined>();
   const cursorIndex = $derived(explorer.focusedEntry ? explorer.displayEntries.indexOf(explorer.focusedEntry) : -1);
-  const fallbackTabStop = $derived(cursorIndex >= 0 && !(viewContainsIndex?.(cursorIndex) ?? false));
+  let viewMembershipRevision = $state(0);
+  const fallbackTabStop = $derived.by(() => {
+    void viewMembershipRevision;
+    const index = cursorIndex, contains = viewContainsIndex;
+    // Child-owned derived state dies when a view is replaced. Subscribe to its
+    // settled notifications, rather than retaining its reactive dependencies.
+    return index >= 0 && !untrack(() => contains?.(index) ?? false);
+  });
   let pendingFocus: DeferredFocusRequest | undefined;
   onDestroy(() => pendingFocus?.cancel());
+
+  let viewNavigation = $state<(() => ListNavigationSnapshot) | undefined>();
+  getListNavigation = () => {
+    if (explorer.loading || explorer.error || explorer.driveGone || pluginView || holdingView || explorer.viewMode !== "list" || !settingsStore.folderPeek) return null;
+    const snapshot = viewNavigation?.();
+    return snapshot?.entries === explorer.displayEntries && snapshot.directory === explorer.currentPath ? snapshot : null;
+  };
+
+  let viewTilesNavigation = $state<(() => TileNavigationSnapshot | null) | undefined>();
+  getTilesNavigation = () => {
+    if (explorer.loading || explorer.error || explorer.driveGone || pluginView || holdingView || explorer.viewMode !== "tiles" || !settingsStore.folderPeek) return null;
+    const snapshot = viewTilesNavigation?.();
+    return snapshot?.entries === explorer.displayEntries && snapshot.directory === explorer.currentPath ? snapshot : null;
+  };
 
   let viewScrollToIndex = $state<((index: number) => void) | undefined>();
 
@@ -138,7 +175,13 @@
 
   // The virtual view reports settled geometry, including grid-column changes.
   // Its clientHeight observer may run after the outer container's observer.
+  function handleViewportScroll(): void {
+    viewMembershipRevision++;
+    updateMarqueeSelection();
+  }
+
   function handleViewLayoutChange(): void {
+    viewMembershipRevision++;
     const reveal = cursorReveal;
     const entry = explorer.focusedEntry;
     if (!reveal || !entry || entry.path !== reveal.path
@@ -146,7 +189,7 @@
       || explorer.currentPath !== reveal.directory || explorer.viewMode !== reveal.mode) return;
     const focus = document.activeElement;
     if (focus !== document.body && (!fileListRef?.contains(focus)
-      || !focus?.matches('.entry-item, .virtual-viewport[role="grid"]'))) return;
+      || !focus?.matches('.entry-item, .virtual-viewport:is([role="grid"], [role="treegrid"], [role="tree"], [role="listbox"])'))) return;
     scrollToSelected(entry);
   }
 
@@ -162,7 +205,7 @@
 
   // Type-ahead selection composable
   const typeAhead = useTypeAhead(
-    () => explorer.displayEntries,
+    () => explorer.ownDisplayEntries,
     (entry) => {
       explorer.selectEntry(entry, {});
       scrollToSelected(entry);
@@ -237,7 +280,7 @@
       const index = Number(target.dataset.index);
       const entry = explorer.displayEntries[index];
       if (entry?.path === target.dataset.path) explorer.focusEntry(entry);
-    } else if (target.matches('.virtual-viewport[role="grid"]') && explorer.focusedEntry) {
+    } else if (target.matches('.virtual-viewport:is([role="grid"], [role="treegrid"], [role="tree"], [role="listbox"])') && explorer.focusedEntry) {
       scrollToSelected(explorer.focusedEntry);
     } else {
       // Column controls and inline editors own their focus independently.
@@ -245,10 +288,22 @@
     }
   }
 
+  // Where the last primary press began: a click released >= 5px away ended a
+  // pointer drag (the same threshold the drag composable uses), not a plain click.
+  let pressPoint: { x: number; y: number } | null = null;
+  function rememberPress(event: PointerEvent) {
+    pressPoint = { x: event.clientX, y: event.clientY };
+    releaseCursorReveal();
+  }
+  const endedDrag = (event: MouseEvent) => marquee.dragJustEnded
+    || (pressPoint !== null && Math.hypot(event.clientX - pressPoint.x, event.clientY - pressPoint.y) >= 5);
+
   function handleClick(entry: FileEntry, event: MouseEvent): void {
     const effect = clickSelectionEffect(event, paneId ?? "", windowTabsManager.activePaneId);
     retainCursorReveal(entry);
     explorer.selectEntry(entry, effect.selectionModifiers);
+    // Caret-less Folder Peek: the click also toggles (decided in the domain).
+    void explorer.toggleOnRowClick(entry, event, endedDrag(event));
     // Windows/macOS pointer-drag acquisition prevents mousedown's default
     // action, so those engines do not focus the clicked gridcell themselves.
     // Keep DOM focus aligned with the cursor regardless of drag backend.
@@ -259,6 +314,11 @@
     // Trashed items are not openable in place; Restore brings them back (#863).
     if (entry.trash) {
       explainTrashedOpen(entry);
+      return;
+    }
+    // Caret-less peek owns this folder's clicks; Open is the way in (#1298).
+    if (explorer.rowClickOwnsPeek(entry)) {
+      showCaretlessDoubleClickNotice(getCommandShortcut("file.openSelected"));
       return;
     }
     // Follow Windows .lnk shortcuts to their target (no-op for other entries).
@@ -369,7 +429,7 @@
       indices = marquee.getSelectedIndicesFromDOM(contentRef, ".list-item", contentRef.querySelector<HTMLElement>(".virtual-viewport"));
     } else {
       const scrollTop = contentRef.querySelector('.virtual-viewport')?.scrollTop ?? 0;
-      indices = marquee.getSelectedIndices(scrollTop, explorer.displayEntries.length, marqueeHeaderHeight());
+      indices = entryIndicesForRows(explorer.detailRows, marquee.getSelectedIndices(scrollTop, explorer.detailRows.rows.length, marqueeHeaderHeight()));
     }
     if (indicesEqual(indices, lastMarqueeIndices)) return;
     lastMarqueeIndices = indices;
@@ -386,7 +446,9 @@
     if (!dragState.acceptsFileDrag(event.dataTransfer)) return;
 
     const target = event.target as HTMLElement;
-    if (target.closest(".entry-item")) return;
+    // Entries and List card surfaces (their folder) own their drops, and so
+    // does a drag's spring-loaded peek for the rows inside it (#1242).
+    if (target.closest(".entry-item, .peek-drop-target") || isSpringClaimed(event)) return;
 
     // Suppress highlight when all sources are already in this directory
     const dragData = dragState.current ?? crossWindow;
@@ -397,22 +459,22 @@
 
     event.preventDefault();
     if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
-    isDropTarget = true;
+    listDropFeedback.set(true);
   }
 
   function handleListDragLeave(event: DragEvent): void {
     const relatedTarget = event.relatedTarget as HTMLElement | null;
     if (relatedTarget && contentRef?.contains(relatedTarget)) return;
-    isDropTarget = false;
+    listDropFeedback.set(false);
   }
 
   async function handleListDrop(event: DragEvent): Promise<void> {
-    isDropTarget = false;
+    listDropFeedback.set(false);
     // A plugin view owns its surface; the host never turns a drop on it into a move.
     if (pluginView || holdingView) return;
 
     const target = event.target as HTMLElement;
-    if (target.closest(".entry-item")) return;
+    if (target.closest(".entry-item, .peek-drop-target")) return;
 
     if (!event.dataTransfer) return;
 
@@ -434,13 +496,13 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="content"
-    class:drop-target={isDropTarget}
+    class:drop-target={listDropFeedback.active}
     class:marquee-active={marquee.isDragging}
     data-current-path={explorer.currentPath}
     bind:this={contentRef}
     onwheelcapture={releaseCursorReveal}
     ontouchstartcapture={releaseCursorReveal}
-    onpointerdowncapture={releaseCursorReveal}
+    onpointerdowncapture={rememberPress}
     onmousedown={handleMarqueeStart}
     ondragover={handleListDragOver}
     ondragleave={handleListDragLeave}
@@ -499,45 +561,98 @@
           Go back
         </button>
       </div>
-    {:else if explorer.displayEntries.length === 0 && explorer.isCreatingFolder}
+    {:else if explorer.displayEntries.length === 0 && explorer.isCreatingFolder && !(explorer.viewMode === "list" && settingsStore.folderPeek)}
       <div class="empty-create-folder">
         <InlineNewFolder {explorer} variant="details" />
       </div>
     {:else if explorer.viewMode === "details"}
-      <DetailsView
-        {explorer}
-        onitemclick={handleClick}
-        onitemdblclick={handleDoubleClick}
-        onviewportscroll={updateMarqueeSelection}
-        onlayoutchange={handleViewLayoutChange}
-        {fallbackTabStop}
-        bind:containsIndex={viewContainsIndex}
-        bind:scrollToIndex={viewScrollToIndex}
-      />
+      <!-- Every renderer loads on demand (view-loaders) to keep the startup graph bounded. -->
+      {@const DetailsView = loadedView("details")}
+      {#if DetailsView}
+        <DetailsView
+          {explorer}
+          onitemclick={handleClick}
+          onitemdblclick={handleDoubleClick}
+          onviewportscroll={handleViewportScroll}
+          onlayoutchange={() => { updateMarqueeSelection(); handleViewLayoutChange(); }}
+          {fallbackTabStop}
+          bind:containsIndex={viewContainsIndex}
+          bind:scrollToIndex={viewScrollToIndex}
+        />
+      {:else if viewLoadFailed("details")}
+        <div class="status error-state">Unable to load Details view</div>
+      {/if}
+    {:else if explorer.viewMode === "list" && settingsStore.folderPeek}
+      {@const ListColumnsView = loadedView("list-columns")}
+      {#if ListColumnsView}
+        <ListColumnsView
+          {explorer}
+          bind:getNavigation={viewNavigation}
+          onitemclick={handleClick}
+          onitemdblclick={handleDoubleClick}
+          onviewportscroll={handleViewportScroll}
+          onlayoutchange={() => { updateMarqueeSelection(); handleViewLayoutChange(); }}
+          {fallbackTabStop}
+          bind:containsIndex={viewContainsIndex}
+          bind:scrollToIndex={viewScrollToIndex}
+        />
+      {:else if viewLoadFailed("list-columns")}
+        <div class="status error-state">Unable to load List view</div>
+      {/if}
     {:else if explorer.viewMode === "list"}
-      <ListView
-        {explorer}
-        {contentWidth}
-        onitemclick={handleClick}
-        onitemdblclick={handleDoubleClick}
-        onviewportscroll={updateMarqueeSelection}
-        onlayoutchange={handleViewLayoutChange}
-        {fallbackTabStop}
-        bind:containsIndex={viewContainsIndex}
-        bind:scrollToIndex={viewScrollToIndex}
-      />
+      <!-- Classic row-major List (Folder Peek off). -->
+      {@const ListView = loadedView("list")}
+      {#if ListView}
+        <ListView
+          {explorer}
+          {contentWidth}
+          onitemclick={handleClick}
+          onitemdblclick={handleDoubleClick}
+          onviewportscroll={handleViewportScroll}
+          onlayoutchange={() => { updateMarqueeSelection(); handleViewLayoutChange(); }}
+          {fallbackTabStop}
+          bind:containsIndex={viewContainsIndex}
+          bind:scrollToIndex={viewScrollToIndex}
+        />
+      {:else if viewLoadFailed("list")}
+        <div class="status error-state">Unable to load List view</div>
+      {/if}
+    {:else if settingsStore.folderPeek}
+      <!-- Tiles with Folder Peek: panels in bands (#1241). -->
+      {@const TilePanelsView = loadedView("tiles-panels")}
+      {#if TilePanelsView}
+        <TilePanelsView
+          {explorer}
+          {contentWidth}
+          bind:getNavigation={viewTilesNavigation}
+          onitemclick={handleClick}
+          onitemdblclick={handleDoubleClick}
+          onviewportscroll={handleViewportScroll}
+          onlayoutchange={() => { updateMarqueeSelection(); handleViewLayoutChange(); }}
+          {fallbackTabStop}
+          bind:containsIndex={viewContainsIndex}
+          bind:scrollToIndex={viewScrollToIndex}
+        />
+      {:else if viewLoadFailed("tiles-panels")}
+        <div class="status error-state">Unable to load Tiles view</div>
+      {/if}
     {:else}
-      <TilesView
-        {explorer}
-        {contentWidth}
-        onitemclick={handleClick}
-        onitemdblclick={handleDoubleClick}
-        onviewportscroll={updateMarqueeSelection}
-        onlayoutchange={handleViewLayoutChange}
-        {fallbackTabStop}
-        bind:containsIndex={viewContainsIndex}
-        bind:scrollToIndex={viewScrollToIndex}
-      />
+      {@const TilesView = loadedView("tiles")}
+      {#if TilesView}
+        <TilesView
+          {explorer}
+          {contentWidth}
+          onitemclick={handleClick}
+          onitemdblclick={handleDoubleClick}
+          onviewportscroll={handleViewportScroll}
+          onlayoutchange={() => { updateMarqueeSelection(); handleViewLayoutChange(); }}
+          {fallbackTabStop}
+          bind:containsIndex={viewContainsIndex}
+          bind:scrollToIndex={viewScrollToIndex}
+        />
+      {:else if viewLoadFailed("tiles")}
+        <div class="status error-state">Unable to load Tiles view</div>
+      {/if}
     {/if}
 
     <!-- Marquee selection rectangle. Five fixed-size layers moved and scaled
@@ -563,7 +678,10 @@
     position: relative;
   }
 
-  .file-list :global(.entry-item:focus-visible) {
+  /* Explicit selected intersections outrank renderer selection chrome even
+     when an optional view's stylesheet arrives after this one. */
+  .file-list :global(.entry-item:focus-visible),
+  .file-list :global(.entry-item.selected:focus-visible) {
     outline: 2px solid var(--focus-stroke-outer);
     outline-offset: -2px;
     /* Selected rows have a 3px accent edge. The inset outline covers only
@@ -571,7 +689,8 @@
     border-left-color: var(--focus-stroke-outer);
   }
 
-  .file-list :global(.tile-item:focus-visible) {
+  .file-list :global(.tile-item:focus-visible),
+  .file-list :global(.tile-item.selected:focus-visible) {
     /* Tiles put the selected indicator on their 3px bottom edge. */
     border-bottom-color: var(--focus-stroke-outer);
   }

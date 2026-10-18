@@ -28,7 +28,10 @@ const DEFAULT_OPTIONS: Required<MarqueeOptions> = {
     "tiles-view",
     "list-view",
     "tile-row",
+    "tile-group",
     "list-row",
+    "list-canvas",
+    "list-slot",
     "virtual-viewport",
     "virtual-item",
     "virtual-spacer-top",
@@ -156,6 +159,8 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
     cachedItemIndices = null;
     cachedGeometry = null;
     cachedItemElements = null;
+    cachedClipRects = null;
+    cachedClipScroll = null;
 
     // The click that follows this mouseup must not clear the selection the
     // marquee just made — mark it consumed-once (with expiry, in case no
@@ -198,6 +203,10 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
   // NodeList position when the attribute is absent (non-virtualized callers).
   let cachedItemIndices: number[] | null = null;
   let cachedItemElements: HTMLElement[] | null = null;
+  // Items inside an inner scroller (a List card, #1240) are also clipped to it,
+  // so its overscanned or scrolled-out rows are never selected.
+  let cachedClipRects: (DOMRect | null)[] | null = null;
+  let cachedClipScroll: number[] | null = null;
   let cachedGeometry: { scrollLeft: number; scrollTop: number; left: number; top: number; width: number; height: number } | null = null;
 
   function getSelectedIndicesFromDOM(container: HTMLElement, itemSelector: string, scroller?: HTMLElement | null): number[] {
@@ -219,11 +228,21 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
       geometry.width !== cachedGeometry.width || geometry.height !== cachedGeometry.height;
     const rowsChanged = !cachedItemElements || items.length !== cachedItemElements.length ||
       items.some((item, index) => item !== cachedItemElements![index] || indices[index] !== cachedItemIndices![index]);
-    if (geometryChanged || rowsChanged) {
+    const clips = items.map(item => item.parentElement?.closest<HTMLElement>("[data-marquee-clip]") ?? null);
+    const clipScroll = clips.map(clip => clip?.scrollTop ?? 0);
+    const clipsScrolled = !cachedClipScroll || clipScroll.some((top, index) => top !== cachedClipScroll![index]);
+    if (geometryChanged || rowsChanged || clipsScrolled) {
       // Read the live viewport-space rects after scrolling. CSS scroll deltas
       // cannot be subtracted from zoomed rects, and virtualized rows can remount
       // with different global indices while the pointer remains held.
       cachedItemRects = items.map(item => item.getBoundingClientRect());
+      const clipRects = new Map<HTMLElement, DOMRect>();
+      cachedClipRects = clips.map(clip => {
+        if (!clip) return null;
+        if (!clipRects.has(clip)) clipRects.set(clip, clip.getBoundingClientRect());
+        return clipRects.get(clip)!;
+      });
+      cachedClipScroll = clipScroll;
       cachedItemIndices = indices;
       cachedItemElements = items;
       cachedGeometry = geometry;
@@ -231,6 +250,11 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
 
     // marqueeRect is in CSS space; item rects from getBoundingClientRect() are
     // in viewport space on macOS. Scale marquee to viewport for comparison.
+    const scrollRect = scrollEl.getBoundingClientRect();
+    const clipLeft = scrollRect.left + cssToRect(scrollEl.clientLeft);
+    const clipTop = scrollRect.top + cssToRect(scrollEl.clientTop);
+    const clipRight = clipLeft + cssToRect(scrollEl.clientWidth);
+    const clipBottom = clipTop + cssToRect(scrollEl.clientHeight);
     const mLeft = cssToRect(marqueeRect.left) + containerRect.left;
     const mTop = cssToRect(marqueeRect.top) + containerRect.top;
     const mRight = mLeft + cssToRect(marqueeRect.width);
@@ -239,11 +263,12 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
     const selected: number[] = [];
     for (let i = 0; i < cachedItemRects!.length; i++) {
       const rect = cachedItemRects![i];
-      const rLeft = rect.left;
-      const rRight = rect.right;
-      const rTop = rect.top;
-      const rBottom = rect.bottom;
-      if (rRight > mLeft && rLeft < mRight && rBottom > mTop && rTop < mBottom) {
+      const inner = cachedClipRects![i];
+      const rLeft = Math.max(rect.left, clipLeft, inner?.left ?? -Infinity);
+      const rRight = Math.min(rect.right, clipRight, inner?.right ?? Infinity);
+      const rTop = Math.max(rect.top, clipTop, inner?.top ?? -Infinity);
+      const rBottom = Math.min(rect.bottom, clipBottom, inner?.bottom ?? Infinity);
+      if (rRight > rLeft && rBottom > rTop && rRight > mLeft && rLeft < mRight && rBottom > mTop && rTop < mBottom) {
         selected.push(cachedItemIndices![i]);
       }
     }

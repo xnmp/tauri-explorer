@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { buildListModel } from "$lib/domain/list-cards";
+import { flatPeekEntries, flatPeekRows } from "$lib/domain/folder-peek-flat";
 import type { FileEntry, ViewMode } from "$lib/domain/file";
 import {
   resolveFileCursor,
@@ -100,7 +102,7 @@ describe("resolveFileListMove", () => {
     )).toEqual({ kind: "focus", index: 5, selection: "preserve" });
   });
 
-  it("keeps Home, End, and eight-entry page movement behavior", () => {
+  it("keeps Home, End, and ten-line page movement behavior", () => {
     expect(resolveFileListMove(
       key("Home", { ctrlKey: true }),
       layout({ count: 20, cursorIndex: 10 }),
@@ -119,12 +121,16 @@ describe("resolveFileListMove", () => {
     )).toEqual({ kind: "focus", index: 19, selection: "extend" });
     expect(resolveFileListMove(
       key("PageDown"),
-      layout({ count: 20, cursorIndex: 5 }),
-    )).toEqual({ kind: "focus", index: 13, selection: "replace" });
+      layout({ count: 40, cursorIndex: 5 }),
+    )).toEqual({ kind: "focus", index: 15, selection: "replace" });
     expect(resolveFileListMove(
       key("PageUp", { shiftKey: true }),
-      layout({ count: 20, cursorIndex: 12 }),
-    )).toEqual({ kind: "focus", index: 4, selection: "extend" });
+      layout({ count: 40, cursorIndex: 22 }),
+    )).toEqual({ kind: "focus", index: 12, selection: "extend" });
+    expect(resolveFileListMove(
+      key("PageDown", { shiftKey: true }),
+      layout({ count: 40, cursorIndex: 22 }),
+    )).toEqual({ kind: "focus", index: 32, selection: "extend" });
     expect(resolveFileListMove(
       key("PageDown"),
       layout({ count: 20, cursorIndex: 15 }),
@@ -133,7 +139,24 @@ describe("resolveFileListMove", () => {
       key("PageUp"),
       layout({ count: 20, cursorIndex: 4 }),
     )).toEqual({ kind: "focus", index: 0, selection: "replace" });
+    expect(resolveFileListMove(
+      key("PageDown"),
+      layout({ count: 20, cursorIndex: -1 }),
+    )).toEqual({ kind: "focus", index: 0, selection: "replace" });
   });
+
+  it.each(["list", "tiles"] satisfies ViewMode[])(
+    "pages ten rows of columns in classic %s view, clamped to the listing",
+    (viewMode) => {
+      const page = (k: string, cursorIndex: number) => resolveFileListMove(
+        key(k), layout({ viewMode, columns: 3, count: 100, cursorIndex }),
+      );
+      expect(page("PageDown", 4)).toEqual({ kind: "focus", index: 34, selection: "replace" });
+      expect(page("PageUp", 64)).toEqual({ kind: "focus", index: 34, selection: "replace" });
+      expect(page("PageDown", 80)).toEqual({ kind: "focus", index: 99, selection: "replace" });
+      expect(page("PageUp", 20)).toEqual({ kind: "focus", index: 0, selection: "replace" });
+    },
+  );
 
   it.each(["list", "tiles"] satisfies ViewMode[])(
     "uses row and column geometry in %s view without crossing listing edges",
@@ -267,5 +290,38 @@ describe("resolveFileListMove", () => {
       key("ArrowDown"),
       layout({ count, cursorIndex }),
     )).toBeNull();
+  });
+
+  describe("column-flow List (Folder Peek on)", () => {
+    const list = {
+      entries: [], directory: "/files", usableWidth: 500, cardScrollTop: () => 0,
+      model: buildListModel(flatPeekRows(flatPeekEntries("/files", Array.from({ length: 10 }, (_, i) => ({ name: `f${i}`, path: `/files/f${i}`, kind: "file" as const, size: 1, modified: "" }))), false), 4, () => undefined),
+    };
+    const columns = (o: Partial<Layout> = {}) => layout({ viewMode: "list", listLayout: "columns", count: 10, cursorIndex: 5, list, ...o });
+
+    it("moves spatially: Left/Right change column, Up/Down stay in it", () => {
+      expect(resolveFileListMove(key("ArrowLeft"), columns())).toEqual({ kind: "focus", index: 1, selection: "replace" });
+      expect(resolveFileListMove(key("ArrowRight"), columns())).toEqual({ kind: "focus", index: 9, selection: "replace" });
+      expect(resolveFileListMove(key("ArrowDown"), columns())).toEqual({ kind: "focus", index: 6, selection: "replace" });
+    });
+
+    it("never applies Yazi parent/open, even in a single-column listing", () => {
+      expect(resolveFileListMove(key("ArrowLeft"), columns({ yazi: true, columns: 1 }))).toEqual({ kind: "focus", index: 1, selection: "replace" });
+      expect(resolveFileListMove(key("ArrowRight"), columns({ yazi: true, directory: true }))).toEqual({ kind: "focus", index: 9, selection: "replace" });
+    });
+
+    it("yields no move without a settled layout snapshot", () => {
+      expect(resolveFileListMove(key("ArrowDown"), columns({ list: null }))).toBeNull();
+    });
+
+    it("leaves Details walking its flattened visible entries (peeked children included)", () => {
+      // 6 root entries plus 6 peeked children: Details counts all 12 visible entries.
+      const details = (o: Partial<Layout> = {}) => columns({ viewMode: "details", count: 12, cursorIndex: 9, ...o });
+      expect(resolveFileListMove(key("ArrowDown"), details())).toEqual({ kind: "focus", index: 10, selection: "replace" });
+      expect(resolveFileListMove(key("End", { ctrlKey: true }), details())).toEqual({ kind: "focus", index: 11, selection: "replace" });
+      expect(resolveFileListMove(key("ArrowRight"), details())).toBeNull();
+      expect(resolveFileListMove(key("ArrowLeft"), details({ yazi: true }))).toEqual({ kind: "parent" });
+      expect(resolveFileListMove(key("ArrowDown"), details({ list: null, cursorIndex: 11 }))).toBeNull();
+    });
   });
 });

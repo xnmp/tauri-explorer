@@ -154,12 +154,19 @@ function createWindowTabsManager(options: {
   nativeWindow?: () => NativeCloseSource;
 } = {}) {
   const paneReadiness = new SvelteMap<PaneId, boolean>();
+  // Reservations have no explorer yet; preserve their restore seed until activation.
+  const pendingPeeks = new Map<PaneId, readonly string[]>();
+  const panePeeks = (paneId: PaneId): readonly string[] => {
+    const explorer = sessions.get(paneId);
+    return explorer ? [...explorer.expandedPaths] : pendingPeeks.get(paneId) ?? [];
+  };
   const sessions = createPaneSessions<ExplorerInstance>({
     onChange(paneId, ready) {
       if (ready === undefined) paneReadiness.delete(paneId);
       else paneReadiness.set(paneId, ready);
     },
     releasePane(paneId) {
+      pendingPeeks.delete(paneId);
       paneDialogs.releasePane(paneId);
       disposeCommitPanelStore(paneId);
       dropGraphFileHistory(paneId);
@@ -208,7 +215,7 @@ function createWindowTabsManager(options: {
   let activeTabId = $state<string | null>(null);
 
   // Stack of recently closed tabs for Ctrl+Shift+T restoration (persisted)
-  const closedTabs = createClosedTabsStore();
+  const closedTabs = createClosedTabsStore<ReadonlyMap<PaneId, readonly string[]>>();
 
   // Stack of recently closed PANES (#229): Ctrl+Shift+T restores the last
   // closed surface, ghostty-style — a pane back into its split position, or
@@ -223,6 +230,7 @@ function createWindowTabsManager(options: {
     ratio: number;
     /** The pane's view choice (plugin view id, or null for built-in). */
     fileView: string | null | undefined;
+    peeks: readonly string[];
     ts: number;
   }
   const MAX_CLOSED_PANES = 20;
@@ -420,13 +428,14 @@ function createWindowTabsManager(options: {
     sourceExplorer?: ExplorerInstance,
     externalSeed?: ExternalSeed,
     track = true,
+    initialPeeks: readonly string[] = [],
   ): void {
     requireOpenWindow();
     const canSeed = sourceExplorer && sourceExplorer.currentPath === path;
     const seed = canSeed
       ? {
           currentPath: sourceExplorer.currentPath,
-          entries: [...sourceExplorer.displayEntries],
+          entries: [...sourceExplorer.ownDisplayEntries],
           sortBy: sourceExplorer.sortBy,
           sortAscending: sourceExplorer.sortAscending,
           viewMode: sourceExplorer.viewMode,
@@ -436,7 +445,7 @@ function createWindowTabsManager(options: {
         : undefined;
     // Seeded/restored panes must not record duplicate visits.
     sessions.create(paneId, () => {
-      const explorer = createExplorerState(seed);
+      const explorer = createExplorerState(seed, () => !getPaneGitGraph(paneId), initialPeeks);
       if (sourceExplorer?.fileViewChoice !== undefined) explorer.setFileView(sourceExplorer.fileViewChoice);
       return explorer;
     }, async (explorer) => {
@@ -570,7 +579,7 @@ function createWindowTabsManager(options: {
    *  into a window that may already contain the original ids). */
   function reviveTab(
     persisted: PersistedWindowTab,
-    opts: { regenerateIds?: boolean; overridePath?: string } = {},
+    opts: { regenerateIds?: boolean; overridePath?: string; peeks?: ReadonlyMap<PaneId, readonly string[]> } = {},
   ): ManagedTab {
     requireOpenWindow();
     const idMap = new Map<string, string>();
@@ -587,8 +596,11 @@ function createWindowTabsManager(options: {
         const isActiveTarget = node.id === persisted.activePaneId && !!opts.overridePath;
         const path = isActiveTarget ? opts.overridePath! : node.path;
         const fileView = node.fileView;
+        const peeks = opts.peeks?.get(node.id);
+        if (peeks?.length) pendingPeeks.set(paneId, peeks);
         sessions.reserve(paneId, () => {
-          const explorer = createExplorerState();
+          const explorer = createExplorerState(undefined, () => !getPaneGitGraph(paneId), pendingPeeks.get(paneId));
+          pendingPeeks.delete(paneId);
           // Restore the pane's plugin-view choice even before its plugin loads
           // (it shows the built-in view until the view registers). An explicit
           // built-in choice (null) overrides the default view for new panes.
@@ -800,7 +812,7 @@ function createWindowTabsManager(options: {
       }
     }
 
-    closedTabs.push(snapshot);
+    closedTabs.push(snapshot, new Map(Object.keys(tab.panes).map(id => [id, panePeeks(id)])));
   }
 
   /** Close a tab by ID. Closes the window if it's the last tab. */
@@ -873,6 +885,7 @@ function createWindowTabsManager(options: {
     requireOpenWindow();
     // Re-read from localStorage to pick up snapshots from other windows
     closedTabs.refresh();
+    const peeks = closedTabs.peekSession();
     const snapshot = closedTabs.pop();
     if (!snapshot) return false;
 
@@ -883,7 +896,7 @@ function createWindowTabsManager(options: {
 
     const at = Math.min(snapshot.closedAt, tabs.length);
     if (snapshot.tab) {
-      insertTab(reviveTab(snapshot.tab, { regenerateIds: true }), at);
+      insertTab(reviveTab(snapshot.tab, { regenerateIds: true, peeks }), at);
     } else if (snapshot.kind === "git-graph") {
       // Pre-#272 snapshot of a graph TAB: restore as a single-pane explorer
       // tab at the repo path with the graph showing.
@@ -932,7 +945,7 @@ function createWindowTabsManager(options: {
     if (tab?.kind !== "explorer") return;
     setActiveTab(tab.id);
     const paneId = generateId("pane");
-    createAndRegisterExplorer(paneId, snapshot.path, undefined, undefined, false);
+    createAndRegisterExplorer(paneId, snapshot.path, undefined, undefined, false, snapshot.peeks);
     if (snapshot.fileView !== undefined) sessions.get(paneId)?.setFileView(snapshot.fileView);
     const splitId = generateId("split");
     updateActiveExplorerTab((t) => {
@@ -1189,6 +1202,7 @@ function createWindowTabsManager(options: {
         placement: context.placement,
         ratio: context.ratio,
         fileView: paneFileView(tab, target),
+        peeks: panePeeks(target),
         ts: Date.now(),
       });
       if (closedPanes.length > MAX_CLOSED_PANES) closedPanes.shift();

@@ -15,6 +15,7 @@ import {
   type ParsedChord,
 } from "$lib/domain/keybinding-parser";
 import { loadPersisted, savePersisted } from "./persisted";
+import { migrateLegacySidebarBinding } from "$lib/domain/shortcut-import";
 import { shortcutsConflict } from "$lib/domain/shortcut-conflicts";
 import { isModifierKey } from "$lib/domain/keyboard";
 import { CHORD_TIMEOUT_MS } from "$lib/domain/shortcut-recording";
@@ -30,6 +31,7 @@ export interface Keybinding {
 export type UserKeybindings = Record<string, string | null>;
 
 const STORAGE_KEY = "explorer-keybindings";
+const MIGRATION_KEY = "explorer-keybindings-sidebar-migration";
 
 /** Default shortcuts defined by commands */
 let defaultShortcuts = $state<Record<string, string>>({});
@@ -55,7 +57,15 @@ function isSuperKeyEvent(event: KeyboardEvent): boolean {
 }
 
 function loadUserShortcuts(): UserKeybindings {
-  return loadPersisted(STORAGE_KEY, {});
+  const bindings = loadPersisted<UserKeybindings>(STORAGE_KEY, {});
+  if (loadPersisted(MIGRATION_KEY, false)) return bindings;
+  // Before #1218 this separate Files Sidebar command used the terminal's
+  // current default. Old exported/customized bindings can retain it even
+  // after Toggle Sidebar has been rebound (#1309, #1310).
+  const migrated = migrateLegacySidebarBinding(bindings);
+  if (migrated !== bindings) savePersisted(STORAGE_KEY, migrated);
+  savePersisted(MIGRATION_KEY, true);
+  return migrated;
 }
 
 function saveUserShortcuts(): void {

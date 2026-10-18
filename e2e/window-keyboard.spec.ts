@@ -120,3 +120,39 @@ for (const destination of ["dialog", "filter"] as const) {
     }
   });
 }
+
+for (const sidebarShortcut of [undefined, "Ctrl+Alt+I"]) {
+  test(`legacy Files Sidebar binding does not steal terminal chord (${sidebarShortcut ?? "default"})`, async ({ page }) => {
+    await page.addInitScript((sidebarShortcut) => {
+      localStorage.setItem("explorer-keybindings", JSON.stringify({
+        "view.focusFilesSidebar": "Alt+M T",
+        ...(sidebarShortcut ? { "view.toggleSidebar": sidebarShortcut } : {}),
+      }));
+    }, sidebarShortcut);
+    await page.goto(HOME_URL); await waitForEntries(page);
+    const sidebar = page.locator(".sidebar");
+    await expect(sidebar).toBeVisible();
+    await page.keyboard.press(sidebarShortcut ? "Control+Alt+i" : "Alt+m");
+    if (!sidebarShortcut) await page.keyboard.press("b");
+    await expect(sidebar).toBeHidden();
+    await page.keyboard.press("Alt+m"); await page.keyboard.press("t");
+    await expect(page.locator(".terminal-panel .xterm")).toBeVisible();
+    await expect(sidebar).toBeHidden();
+    await page.screenshot({ path: `screenshots/fix/shortcut/terminal-${sidebarShortcut ? "rebound" : "default"}.png` });
+  });
+}
+
+
+test("sidebar migration runs once and preserves later deliberate bindings", async ({ page }) => {
+  await page.goto(HOME_URL); await waitForEntries(page);
+  await page.evaluate(async () => {
+    const { keybindingsStore } = await import("/src/lib/state/keybindings.svelte.ts");
+    keybindingsStore.setShortcut("view.focusFilesSidebar", "Alt+M T");
+    keybindingsStore.setShortcut("general.openTerminal", null);
+  });
+  await page.reload(); await waitForEntries(page);
+  await expect(page.locator(".sidebar")).toBeVisible();
+  await page.keyboard.press("Alt+m"); await page.keyboard.press("t");
+  await expect(page.locator(".sidebar")).toBeHidden();
+  await expect(page.locator(".terminal-panel")).toHaveCount(0);
+});

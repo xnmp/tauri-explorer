@@ -381,9 +381,101 @@ export const mockFiles: Record<string, FileEntry[]> = {
   ],
 };
 
+// Isolated folder-peek contracts; never change the ordinary home fixture counts.
+mockFiles["/folder-peek"] = [dir("Alpha", "/folder-peek/Alpha"), dir("Beta", "/folder-peek/Beta"), dir("Empty", "/folder-peek/Empty"), dir("Error", "/folder-peek/Error"), dir("Large", "/folder-peek/Large"), file("root.txt", "/folder-peek/root.txt", 4)];
+mockFiles["/folder-peek/Alpha"] = [dir("Nested", "/folder-peek/Alpha/Nested"), file("same.txt", "/folder-peek/Alpha/same.txt", 12), file(".hidden", "/folder-peek/Alpha/.hidden", 1)];
+mockFiles["/folder-peek/Alpha/Nested"] = [file("deep.txt", "/folder-peek/Alpha/Nested/deep.txt", 7)];
+mockFiles["/folder-peek/Beta"] = [file("same.txt", "/folder-peek/Beta/same.txt", 20)];
+mockFiles["/folder-peek/Empty"] = [];
+mockFiles["/folder-peek/Large"] = Array.from({ length: 10_000 }, (_, index) => file(`item-${String(index).padStart(5, "0")}.txt`, `/folder-peek/Large/item-${String(index).padStart(5, "0")}.txt`, index));
+
+// List cards (#1240) and Tiles panels (#1241): the spec mock's folders, files
+// and filler, so a List pane has several columns and cards of every size, and
+// a Tiles pane every panel placement (folder-peek-mock.html).
+for (const root of ["/folder-peek-list", "/folder-peek-tiles"]) {
+  const tree: Record<string, readonly (readonly [string, boolean])[]> = {
+    "": [
+      ...["Inbox", "Career", "Codex", "Personal", "Archive", "AI Draft Archive"].map(name => [name, true] as const),
+      ...["freeze-fix-guide.md", "Scrivo Sample.md", "Totality Dividends.xlsx", "Totality Trades History.xlsx", "numbers_backup.md", "bpay-2026-oct-receipt.png", "Revenue NSW.pdf", "bot_pat.txt", "numbers_backup_2.md"].map(name => [name, false] as const),
+      ...Array.from({ length: 75 }, (_, i) => [[
+        `IMG_${2041 + i}.jpg`, `invoice-2026-${String(1 + Math.floor(i / 9) % 12).padStart(2, "0")}-${i}.pdf`,
+        `meeting-notes-${String(412 + i).padStart(4, "0")}.md`, `screenshot-2026-09-${String(30 - Math.floor(i / 9)).padStart(2, "0")}-${i}.png`,
+        `project-backup-${String(i + 1).padStart(3, "0")}.zip`, `sales-export-${String(i + 1).padStart(3, "0")}.csv`,
+        `holiday-clip-${String(i + 1).padStart(3, "0")}.mp4`, `research-notes-${String(i + 1).padStart(3, "0")}.txt`,
+        `budget-review-${String(i + 1).padStart(3, "0")}.xlsx`,
+      ][i % 9], false] as const),
+    ],
+    Inbox: [["to-file", true], ...["scan-0193.pdf", "invoice-oct.pdf", "meeting-notes.md", "screenshot-2026-10-15.png", "quote.txt"].map(name => [name, false] as const)],
+    "Inbox/to-file": [["receipt.pdf", false], ["notes.txt", false]],
+    Career: [...["Applications", "Cover Letters", "Portfolio"].map(name => [name, true] as const), ...["Resume-2026.pdf", "Interview Prep.md", "References.docx", "salary-research.xlsx", "headshot.jpg", "offer-letter.pdf"].map(name => [name, false] as const)],
+    "Career/Applications": [...["Acme Corp", "Globex", "Initech"].map(name => [name, true] as const), ["tracker.xlsx", false], ["follow-ups.md", false]],
+    "Career/Applications/Acme Corp": [["cover-letter.pdf", false], ["notes.md", false]],
+    "Career/Applications/Globex": [["application.pdf", false], ["interview.md", false]],
+    "Career/Applications/Initech": [["resume.pdf", false], ["contacts.txt", false]],
+    "Career/Cover Letters": [["general.pdf", false], ["draft.md", false]],
+    "Career/Portfolio": [],
+    Codex: [...["prompts", "sessions", "skills"].map(name => [name, true] as const), ...["AGENTS.md", "config.toml", "notes.md", "rollout-2026-10-12.jsonl", "auth-flow.png", "todo.txt", "history.jsonl", "README.md", "mcp-servers.json", "rollout-2026-10-14.jsonl", "sandbox.log"].map(name => [name, false] as const)],
+    "Codex/prompts": [["system.md", false], ["review.md", false]],
+    "Codex/sessions": [["session-notes.md", false], ["summary.txt", false]],
+    "Codex/skills": [["workflow.md", false]],
+    Personal: [...["Health", "Travel", "Recipes"].map(name => [name, true] as const), ...Array.from({ length: 20 }, (_, i) => [`personal-${String(i + 1).padStart(2, "0")}.pdf`, false] as const)],
+    Archive: [...["2019", "2020", "2021", "2022", "2023"].map(name => [name, true] as const), ...Array.from({ length: 45 }, (_, i) => [`archive-${String(i + 1).padStart(2, "0")}.pdf`, false] as const)],
+    "AI Draft Archive": [["drafts-2025", true], ...["essay-v3.md", "outline.md", "cover-image.png", "prompts.txt", "essay-v1.md", "essay-v2.md", "notes-chat.md", "references.docx", "figure-1.png", "summary.pdf"].map(name => [name, false] as const)],
+    "AI Draft Archive/drafts-2025": [["essay.md", false], ["outline.txt", false]],
+  };
+  for (const [relative, children] of Object.entries(tree)) {
+    const parent = relative ? `${root}/${relative}` : root;
+    mockFiles[parent] = children.map(([name, folder], index) => folder ? dir(name, `${parent}/${name}`) : file(name, `${parent}/${name}`, 100 + index));
+  }
+  for (const [relative, children] of Object.entries(tree)) {
+    for (const [name, folder] of children) {
+      const path = `${relative ? `${root}/${relative}` : root}/${name}`;
+      if (folder && !mockFiles[path]) mockFiles[path] = [];
+    }
+  }
+}
+// Tiles panels in later grid rows (#1241): folders sort first, so 24 folders
+// fill several rows and leave room above a row for an above band.
+{
+  const root = "/folder-peek-tiles-rows";
+  const folders = Array.from({ length: 24 }, (_, i) => `Folder ${String(i + 1).padStart(2, "0")}`);
+  mockFiles[root] = [...folders.map(name => dir(name, `${root}/${name}`)), ...Array.from({ length: 30 }, (_, i) => file(`note-${String(i + 1).padStart(2, "0")}.txt`, `${root}/note-${String(i + 1).padStart(2, "0")}.txt`, 10 + i))];
+  for (const name of folders) mockFiles[`${root}/${name}`] = Array.from({ length: 8 }, (_, i) => file(`${name.replace(" ", "-").toLowerCase()}-${i + 1}.txt`, `${root}/${name}/${name.replace(" ", "-").toLowerCase()}-${i + 1}.txt`, i + 1));
+}
+// Tiles panels at scale (#1241): 10,000 tiles beside three open-able folders.
+{
+  const root = "/folder-peek-tiles-large";
+  const folders = ["Alpha", "Beta", "Gamma"];
+  mockFiles[root] = [
+    ...folders.map(name => dir(name, `${root}/${name}`)),
+    ...Array.from({ length: 10_000 }, (_, index) => file(`item-${String(index).padStart(5, "0")}.txt`, `${root}/item-${String(index).padStart(5, "0")}.txt`, index)),
+  ];
+  for (const name of folders) {
+    mockFiles[`${root}/${name}`] = Array.from({ length: 400 }, (_, index) => file(`${name.toLowerCase()}-${String(index).padStart(3, "0")}.txt`, `${root}/${name}/${name.toLowerCase()}-${String(index).padStart(3, "0")}.txt`, index));
+  }
+}
+
+// Spring-loaded peeks (#1242): closed folders to hold a drag over, one with a
+// nested folder to spring in turn, an empty one, and loose files to drag.
+{
+  const root = "/folder-peek-spring";
+  mockFiles[root] = [dir("Inbox", `${root}/Inbox`), dir("Archive", `${root}/Archive`), dir("Empty", `${root}/Empty`), dir("Bulk", `${root}/Bulk`),
+    file("drag-me.txt", `${root}/drag-me.txt`, 8), file("other.txt", `${root}/other.txt`, 5), file("zeta.txt", `${root}/zeta.txt`, 3)];
+  mockFiles[`${root}/Inbox`] = [dir("Nested", `${root}/Inbox/Nested`), file("alpha.txt", `${root}/Inbox/alpha.txt`, 2), file("beta.txt", `${root}/Inbox/beta.txt`, 4)];
+  mockFiles[`${root}/Inbox/Nested`] = [file("deep.txt", `${root}/Inbox/Nested/deep.txt`, 6)];
+  mockFiles[`${root}/Archive`] = [file("old.txt", `${root}/Archive/old.txt`, 1)];
+  mockFiles[`${root}/Empty`] = [];
+  // Opening Bulk above drag-me.txt pushes that source row out of the virtual window.
+  mockFiles[`${root}/Bulk`] = Array.from({ length: 40 }, (_, index) => {
+    const name = `bulk-${String(index + 1).padStart(2, "0")}.txt`;
+    return file(name, `${root}/Bulk/${name}`, 1);
+  });
+}
+
 /** Static fake file contents, served by read_text_file and searched by
  *  start_content_search (written files take precedence over these). */
 export const mockFileContent: Record<string, string> = {
+  "/folder-peek/Alpha/same.txt": "Peek preview content",
   "/home/user/Documents/project/index.ts": 'export function greet(name: string): string {\n  return `Hello, ${name}!`;\n}\n',
   "/home/user/Documents/project/main.py": 'def greet(name: str) -> str:\n    return f"Hello, {name}!"\n',
   "/home/user/Documents/project/package.json": '{\n  "name": "project",\n  "version": "1.0.0"\n}\n',

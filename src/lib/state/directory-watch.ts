@@ -34,6 +34,7 @@ export function createPathWatch<L>(commands: PathWatchCommands<L>) {
   }
 
   return {
+    get held() { return held; },
     update(path: string): Promise<void> {
       if (destroyed) return disposal ?? Promise.resolve();
       return transition(!path || isVirtualPath(path) ? null : path);

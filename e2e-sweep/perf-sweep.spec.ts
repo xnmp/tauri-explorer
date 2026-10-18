@@ -309,3 +309,132 @@ test("quick open", async ({ page }) => {
     await page.locator(".quick-open-dialog").waitFor({ state: "hidden" });
   }
 });
+
+test("List column flow: 10,000 entries", async ({ page }) => {
+  await prepare(page);
+  for (let i = 0; i < RUNS; i++) {
+    // Keep startup/scroll/reveal workloads identical across repeated samples.
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await settle(page);
+    const taskStart = await taskSeconds(page);
+    await page.goto('/?path=/perf/huge-10000&viewMode=list');
+    await waitForRows(page);
+    await settle(page);
+    const taskMs = ((await taskSeconds(page)) - taskStart) * 1000;
+    const startup = await page.evaluate(() => {
+      const { longTasks, frames } = window.__sweep;
+      const gaps = frames.slice(1).map((frame, index) => frame - frames[index]);
+      return {
+        wallMs: performance.now(),
+        longTaskMs: longTasks.reduce((sum, task) => sum + task.duration, 0),
+        worstFrameMs: Math.max(0, ...gaps),
+      };
+    });
+    (results['list: 10000-entry startup'] ??= []).push({...startup,taskMs});
+    const viewport = page.locator('.pane-tree:not(.retained) .list-scroller');
+    await measure(page,'list: sustained sideways wheel',async () => {
+      await viewport.evaluate(el => new Promise<void>(resolve => {
+        let n = 0;
+        const next = () => {
+          el.dispatchEvent(new WheelEvent('wheel',{deltaY:180,bubbles:true,cancelable:true}));
+          if (++n === 30) resolve(); else requestAnimationFrame(next);
+        };
+        requestAnimationFrame(next);
+      }));
+    });
+    await viewport.focus();
+    await measure(page,'list: distant reveal',async () => {
+      await page.keyboard.press('End');
+      await page.locator('.list-item[data-index="9999"]').waitFor();
+    });
+    await measure(page,'list: R-changing resize',async () => {
+      await page.setViewportSize({width:1280,height:500});
+      await settle(page);
+    });
+    await measure(page,'list: scroll back',async () => {
+      await viewport.evaluate(el => { el.scrollLeft=0; });
+      await page.locator('.list-item[data-index="0"]').waitFor();
+    });
+    // List cards (#1240): a user toggle of a 5,000-row folder, including its
+    // listing and the ~200ms conveyor motion, until no ghost or motion style remains.
+    const caret = page.locator('.pane-tree:not(.retained) .entry-item[data-path="/perf/huge-10000/folder-00016"] .peek-caret');
+    const motionDone = () => page.waitForFunction(() => {
+      const pane = document.querySelector('.pane-tree:not(.retained)')!;
+      return pane.querySelector('.list-motion-layer')!.childElementCount === 0
+        && ![...pane.querySelectorAll<HTMLElement>('.list-slot')].some(el => el.style.transform);
+    });
+    await measure(page,'list: open 5,000-row card',async () => {
+      await caret.click();
+      await page.locator('.pane-tree:not(.retained) [data-card-scroll] .entry-item').first().waitFor();
+      await motionDone();
+    });
+    await measure(page,'list: close card',async () => {
+      await caret.click();
+      await page.locator('.pane-tree:not(.retained) [data-card-scroll]').waitFor({ state: 'detached' });
+      await motionDone();
+    });
+  }
+});
+
+test("Tiles panels: 10,000 entries", async ({ page }) => {
+  await prepare(page);
+  const pane = '.pane-tree:not(.retained)';
+  const scroller = page.locator(`${pane} .tiles-scroller`);
+  // Older releases ignore the unknown key, so a baseline checkout still runs the classic case.
+  const folderPeek = (on: boolean) => page.evaluate(async value => {
+    const { settingsStore } = await import('/src/lib/state/settings.svelte.ts');
+    settingsStore.update({ folderPeek: value });
+  }, on);
+  // The same 30 frames of programmatic scrolling for every case, so their task time compares.
+  const scrollFrames = () => scroller.evaluate(el => new Promise<void>(resolve => {
+    let n = 0;
+    const next = () => {
+      el.scrollTop += 300;
+      if (++n === 30) resolve(); else requestAnimationFrame(next);
+    };
+    requestAnimationFrame(next);
+  }));
+  const home = async () => { await scroller.evaluate(el => { el.scrollTop = 0; }); await settle(page); };
+  const motionDone = () => page.waitForFunction(selector => {
+    const root = document.querySelector(selector)!;
+    return !root.querySelector('.tile-panel-ghost')
+      && ![...root.querySelectorAll<HTMLElement>('.tile-panel')].some(el => el.style.opacity);
+  }, pane);
+  const caret = page.locator(`${pane} .tile-row .entry-item[data-path="/perf/huge-10000/folder-00016"] .peek-caret`);
+  const classic = async () => {
+    await folderPeek(false);
+    await page.locator(`${pane} .tiles-view:not(.tile-panels-view)`).waitFor();
+    await home();
+    await measure(page, 'tiles: 30 scroll frames (Folder Peek off)', scrollFrames);
+  };
+  const peek = async () => {
+    await folderPeek(true);
+    await page.locator(`${pane} .tile-panels-view`).waitFor();
+    await home();
+    await measure(page, 'tiles: 30 scroll frames (no panel)', scrollFrames);
+    await home();
+    // A user toggle of a 5,000-entry folder, including its listing and the
+    // 150ms band motion, until no ghost or motion opacity remains.
+    await measure(page, 'tiles: open 5,000-entry panel', async () => {
+      await caret.click();
+      await page.locator(`${pane} .tile-panel .entry-item`).first().waitFor();
+      await motionDone();
+    });
+    await measure(page, 'tiles: 30 scroll frames (panel open)', scrollFrames);
+    await home();
+    await measure(page, 'tiles: close panel', async () => {
+      await caret.click();
+      await page.locator(`${pane} .tile-panel`).waitFor({ state: 'detached' });
+      await motionDone();
+    });
+  };
+  for (let i = 0; i < RUNS; i++) {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto('/?path=/perf/huge-10000&viewMode=tiles');
+    await waitForRows(page);
+    // Alternate which renderer runs first: the first case on a fresh page runs
+    // markedly slower (warm-up), and always measuring classic first charged
+    // that to classic alone, understating the peek renderer's cost.
+    if (i % 2 === 0) { await classic(); await peek(); } else { await peek(); await classic(); }
+  }
+});

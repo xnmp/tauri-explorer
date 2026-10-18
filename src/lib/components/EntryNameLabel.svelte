@@ -8,11 +8,12 @@
   interface Props {
     name: string;
     variant: "details" | "list" | "tiles";
+    bold?: boolean;
     /** Invisible copy that holds a tile's height open under the rename box. */
     placeholder?: boolean;
   }
 
-  let { name, variant, placeholder = false }: Props = $props();
+  let { name, variant, placeholder = false, bold = false }: Props = $props();
 </script>
 
 {#if placeholder}
@@ -20,6 +21,7 @@
 {:else}
   <span
     class="entry-name"
+    style:font-weight={bold ? 600 : undefined}
     class:name-details={variant === "details"}
     class:name-list={variant === "list"}
     class:name-tiles={variant === "tiles"}

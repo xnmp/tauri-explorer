@@ -31,6 +31,12 @@
     children: Snippet<[T, number]>;
     getKey?: (item: T, index: number) => string | number;
     scrollToIndex?: (index: number) => void;
+    /** Scroll to an absolute offset (CSS px); the rendered window follows synchronously. */
+    scrollToOffset?: (top: number) => void;
+    /** Reports the scrollport's inner width (fractional CSS px, excluding padding
+     *  and a scrollbar) and its client height, within ResizeObserver delivery and
+     *  so before paint (#1061). Size changes of the content never trigger it. */
+    onviewportsize?: (size: { width: number; height: number }) => void;
     /** Extra class(es) for the scroll viewport (e.g. "list-view" so marquee /
      *  keyboard-nav DOM lookups and view-scoped CSS keep resolving). */
     class?: string;
@@ -62,6 +68,8 @@
     children,
     getKey = (_item: T, index: number) => index,
     scrollToIndex = $bindable(),
+    scrollToOffset = $bindable(),
+    onviewportsize,
     class: className = "",
     itemOverflow = "hidden",
     viewportPadding,
@@ -137,6 +145,31 @@
     scrollTop = viewportRef.scrollTop;
   };
 
+  scrollToOffset = (top: number) => {
+    if (!viewportRef || !Number.isFinite(top)) return;
+    scrollCoalescer.cancel();
+    viewportRef.scrollTop = Math.max(0, top);
+    scrollTop = viewportRef.scrollTop;
+  };
+
+  // A zero-height, normal-flow probe measures the content width (fractional,
+  // without the scrollbar); the viewport's border box gives the height. Neither
+  // depends on the items, so reporting cannot feed back into a resize loop.
+  let probeRef = $state<HTMLElement | null>(null);
+  const reportsSize = $derived(!!onviewportsize);
+  $effect(() => {
+    const viewport = viewportRef, probe = probeRef;
+    if (!viewport || !probe) return;
+    const observer = new ResizeObserver(() => {
+      const width = parseFloat(getComputedStyle(probe).width);
+      // A retained (hidden) tab has no box: keep the last real size.
+      if (width > 0 && viewport.clientHeight > 0) onviewportsize?.({ width, height: viewport.clientHeight });
+    });
+    observer.observe(probe);
+    observer.observe(viewport, { box: "border-box" });
+    return () => observer.disconnect();
+  });
+
   // Derived chain — Svelte 5 memoizes these, so downstream only
   // recomputes when startIndex/endIndex values actually change
   const visibleCount = $derived(Math.ceil(viewportHeight / itemHeight) + BUFFER * 2);
@@ -196,6 +229,7 @@
   aria-label={ariaLabel} aria-rowcount={ariaRowCount} aria-colcount={ariaColCount}
   aria-multiselectable={ariaMultiselectable}
 >
+  {#if reportsSize}<div class="virtual-probe" bind:this={probeRef} aria-hidden="true"></div>{/if}
   <div class="virtual-canvas" style:height="{totalHeight}px">
 
   {#each visibleItems as { item, index, key } (key)}
@@ -223,6 +257,11 @@
   .virtual-canvas {
     position: relative;
     flex-shrink: 0;
+  }
+
+  .virtual-probe {
+    height: 0;
+    pointer-events: none;
   }
 
   .virtual-item {

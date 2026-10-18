@@ -19,3 +19,13 @@ export function planShortcutImport(current: BindingMap, candidates: Readonly<Rec
     conflicts.push(...rejected);
   }
 }
+
+
+/** Retire only the obsolete Files Sidebar default. Other custom bindings,
+ * including the canonical Toggle Sidebar rebind or explicit unbinding, survive.
+ * The store applies this once, so later deliberate reuse remains possible. */
+export function migrateLegacySidebarBinding(bindings: Readonly<Record<string, string | null>>): Record<string, string | null> {
+  if (bindings["view.focusFilesSidebar"] !== "Alt+M T") return bindings;
+  const { ["view.focusFilesSidebar"]: _legacy, ...rest } = bindings;
+  return rest;
+}

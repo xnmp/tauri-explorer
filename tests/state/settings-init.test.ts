@@ -350,3 +350,19 @@ describe("numeric settings consumer contracts", () => {
     expect(saved.listViewColumns).toBe(0);
   });
 });
+
+describe('icon theme settings contract', () => {
+  it.each(['material', 'classic', 'minimal', 'catppuccin', 'default'] as const)('persists and restores %s independently of the color theme', async (iconTheme) => {
+    readConfigFileMock.mockResolvedValue({ ok: false, error: 'not found' });
+    const store = await freshStore();
+    store.update({ iconTheme, theme: 'light' });
+    const restored = await freshStore();
+    expect(restored.iconTheme).toBe(iconTheme);
+    expect(restored.theme).toBe('light');
+  });
+
+  it.each([null, 4, 'missing-pack', {}, ['material']])('rejects malformed icon choice %j', async (iconTheme) => {
+    const { normalizeSettingsInput } = await import('$lib/state/settings.svelte');
+    expect(normalizeSettingsInput({ iconTheme })).toEqual({});
+  });
+});

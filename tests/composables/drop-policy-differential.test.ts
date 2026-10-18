@@ -106,7 +106,7 @@ async function run(c: DropCase): Promise<Outcome[]> {
   const fileSource = c.source.startsWith("listing-") || c.source.startsWith("miller-") || c.source === "recent";
   const entry = { path: sourcePath, name: "item", kind: c.source.endsWith("-folder") || c.source === "recent" ? "directory" : "file", size: 1, modified: "" };
   if (fileSource && c.transport === "dom-only" && c.platform !== "linux") {
-    const drag = c.source === "recent" ? sourceModules.sidebarPointer.useSidebarDrag() : sourceModules.pointer.usePointerDrag({ getExplorer: () => ({ getSelectedEntries: () => [entry], currentPath: destPath }) });
+    const drag = c.source === "recent" ? sourceModules.sidebarPointer.useSidebarDrag() : sourceModules.pointer.usePointerDrag({ getExplorer: () => ({ getSelectedEntries: () => [entry], currentPath: destPath, entryMeta: new Map([[entry.path, { depth: 0 }]]) }) });
     if (c.source === "recent") drag.handlePointerDown({ button: 0, preventDefault() {}, clientX: 10, clientY: 10 } as any, entry.path, entry.name);
     else drag.handlePointerDown({ button: 0, preventDefault() {}, clientX: 10, clientY: 10 } as any, entry, true);
     win.dispatchEvent(Object.assign(new Event("mousemove"), { clientX: 30, clientY: 40 }));
@@ -118,7 +118,7 @@ async function run(c: DropCase): Promise<Outcome[]> {
   if (fileSource && c.source !== "recent" && c.transport === "native-accepted" && c.platform !== "linux") {
     // Actual macOS/Windows source: pointer drag exits the client viewport and
     // hands the same gesture to the native source boundary.
-    const drag = sourceModules.pointer.usePointerDrag({ getExplorer: () => ({ getSelectedEntries: () => [entry], currentPath: destPath }) });
+    const drag = sourceModules.pointer.usePointerDrag({ getExplorer: () => ({ getSelectedEntries: () => [entry], currentPath: destPath, entryMeta: new Map([[entry.path, { depth: 0 }]]) }) });
     drag.handlePointerDown({ button: 0, preventDefault() {}, clientX: 10, clientY: 10 } as any, entry, true);
     win.dispatchEvent(Object.assign(new Event("mousemove"), { clientX: -10, clientY: 40 }));
     await flush();

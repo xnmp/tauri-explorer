@@ -1,24 +1,4 @@
-/**
- * Shared row-grid virtualization wiring for the grid-style views (List, Tiles).
- *
- * ListView and TilesView both render entries as a row-major virtual grid: the
- * entry list (plus an optional new-folder sentinel) is chunked into fixed-height
- * rows of N columns, and each row is one VirtualList item. Everything except the
- * column derivation is identical between the two, so it lives here:
- *   - useItemInteractions (DnD, context menu with select-on-right-click)
- *   - usePointerDrag (only on platforms that need it)
- *   - the new-folder sentinel splice + sentinelOffset (#257)
- *   - chunkIntoRows(gridEntries, columns)
- *   - the displayEntries-index -> row-index scrollToIndex mapping
- *
- * DetailsView deliberately does NOT use this: it wires interactions per-row via
- * FileItem rather than as a single grid, so its needs differ.
- *
- * Reactivity: `getColumns` must stay a lazy getter so the caller's $derived
- * column count re-runs `rows`/`scrollToIndex` on change. Do not snapshot it.
- *
- * Issue: refactor/row-grid-view, #293
- */
+/** Tiles row-grid wiring: interactions, sentinel, virtualization and reveal. */
 
 import type { FileEntry } from "$lib/domain/file";
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";

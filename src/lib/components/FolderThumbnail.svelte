@@ -20,9 +20,14 @@
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { onMount, type Snippet } from "svelte";
   import ThumbnailImage from "./ThumbnailImage.svelte";
+  import type { FileEntry } from '$lib/domain/file';
+  import { getFolderDecoration } from '$lib/domain/file-icon-identity';
+  import { iconThemeStore } from '$lib/state/icon-theme.svelte';
+  import FolderDecoration from './FolderDecoration.svelte';
 
   interface Props {
     path: string;
+    entry?: FileEntry;
     /** Folder mtime from the listing — a changed value re-checks the preview. */
     modified?: string;
     /** Tile display size in px (CSS container dimensions). */
@@ -36,7 +41,9 @@
     children?: Snippet;
   }
 
-  let { path, modified, size = 128, genSize, quality, children }: Props = $props();
+  let { path, entry, modified, size = 128, genSize, quality, children }: Props = $props();
+  const outlinedFolder = $derived(iconThemeStore.effectiveTheme === 'minimal' || iconThemeStore.effectiveTheme === 'catppuccin');
+  const decoration = $derived(entry ? getFolderDecoration(entry) : 'none');
 
   let containerEl: HTMLDivElement | undefined = $state();
   let visible = $state(false);
@@ -126,7 +133,8 @@
   const backSize = $derived(Math.round(size * 0.6));
 </script>
 
-<div class="folder-thumb" bind:this={containerEl} style="--size: {size}px">
+<div class="folder-thumb" class:outlined-folder={outlinedFolder} class:git-repo-folder={imagePaths.length > 0 && decoration==='repository'} class:linked-folder={imagePaths.length > 0 && decoration==='linked'}
+  data-icon-theme={imagePaths.length > 0 ? iconThemeStore.effectiveTheme : undefined} bind:this={containerEl} style="--size: {size}px" style:--folder-outline={'var(--icon-folder, currentColor)'}>
   {#if imagePaths.length === 0}
     {@render children?.()}
   {:else}
@@ -155,7 +163,10 @@
            width and rounded bottom; slim lip (y36) keeps nearly the whole
            interior open so the photos can fill the folder. -->
       <path d="M2 37.5H46V41.25C46 43.3 44.66 45 43 45H5C3.34 45 2 43.3 2 41.25V37.5Z" class="folder-front-fill"/>
-      <path d="M2 37.5H46V39H2V37.5Z" fill="#fff" fill-opacity="0.35"/>
+      {#if !outlinedFolder}<path d="M2 37.5H46V39H2V37.5Z" fill="#fff" fill-opacity="0.35"/>{/if}
+      {#if entry}
+        <FolderDecoration {entry} size="large" arrowColor={outlinedFolder ? 'var(--icon-link-arrow, var(--folder-outline))' : undefined} />
+      {/if}
     </svg>
   {/if}
 </div>
@@ -187,6 +198,9 @@
   .folder-front-fill {
     fill: var(--icon-folder, #e8a800);
   }
+
+  .outlined-folder .folder-back-fill { fill:none; stroke:var(--folder-outline); stroke-width:1.5; }
+  .outlined-folder .folder-front-fill { fill:var(--background-solid); stroke:var(--folder-outline); stroke-width:1.5; }
 
   .photo {
     position: absolute;

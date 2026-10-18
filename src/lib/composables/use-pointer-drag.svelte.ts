@@ -10,17 +10,21 @@
  * coordinates even after the cursor leaves the viewport.
  */
 
-import { onDestroy } from "svelte";
+import { onDestroy, tick } from "svelte";
+import { operationDrag } from "$lib/domain/file-operation-selection";
+import { toastStore } from "$lib/state/toast.svelte";
 import type { FileEntry } from "$lib/domain/file";
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";
 import { basename, pathComparison } from "$lib/domain/path";
+import { dropHover } from "$lib/state/drop-hover";
 import { dragState } from "$lib/state/drag.svelte";
 import { bookmarksStore } from "$lib/state/bookmarks.svelte";
 import { terminalPanelStore } from "$lib/state/terminal.svelte";
 import { handleFileDropMany } from "$lib/state/drop-operations";
 import { startExternalDrag } from "./use-external-drag.svelte";
-import { resolveDropTargetAtPoint, highlightTargetAtPoint, clearHighlights, captureHighlightCleanup } from "./use-native-drop-target.svelte";
+import { elementAtPoint, resolveDropTargetAtPoint, highlightTargetAtPoint, clearHighlights, captureHighlightCleanup } from "./use-native-drop-target.svelte";
 import { dispatchFileDrop, admitFileDrop } from "$lib/state/dispatch-file-drop";
+import { springEnd, springHover } from "./spring-load";
 import { internalDragPaths } from "$lib/domain/file-drop";
 import { isWindows, isCopyModifier } from "$lib/domain/platform";
 import { getZoomFactor } from "$lib/domain/zoom";
@@ -30,6 +34,11 @@ export interface PointerDragDeps {
   /** Refresh every pane that may show an affected directory after a drop.
    *  Defaults to refreshing only the owning pane. */
   refreshPanes?: () => void;
+  /** Whether a dragged path is still in the listing its row came from. The
+   *  default reads the gesture pane's listing (its root and open peeks); a
+   *  surface that lists other directories (Miller ancestor columns) supplies
+   *  its own. */
+  isListed?: (path: string) => boolean;
 }
 
 const THRESHOLD_PX = 5;
@@ -54,39 +63,57 @@ export function usePointerDrag(deps: PointerDragDeps) {
   let startY = 0;
   let ghostEl: HTMLElement | null = null;
   let sourceEl: HTMLElement | null = null;
+  let hoverPoint = { x: 0, y: 0 };
   let entryData: { path: string; name: string; kind: string; paths?: string[] } | null = null;
+  // A mousedown is usually a click. Recursive-root reduction over the whole
+  // selection waits until the pointer crosses the drag threshold.
+  let pending: { entry: FileEntry; isSelected: boolean; source: HTMLElement | null } | null = null;
+  /** The pane the gesture started in, captured at the drag start: the source
+   * row (and its props) can unmount while the drag continues. */
+  let gestureExplorer: ExplorerInstance | null = null;
+  const explorerOf = () => gestureExplorer ?? deps.getExplorer();
 
-  // Window listeners are added on pointerdown; if the owning component is
-  // destroyed mid-drag they would otherwise leak for the rest of the session.
+  const isListed = deps.isListed ?? ((path: string) => explorerOf().entryMeta.has(path));
+  /** A dragged source left its listing (deleted or renamed elsewhere, or its
+   * pane navigated): a drop could only attempt a failing move. */
+  const sourceGone = () => dragPaths.some(path => !isListed(path));
+
+  /** The owning row unmounted. A press that has not become a drag is
+   * released (its window listeners would otherwise leak). An active drag
+   * belongs to the pointer, not the row, whatever the Folder Peek setting: a
+   * spring-loaded peek (#1242), a refresh or a scroll can move its source row
+   * out of the virtual window mid-gesture, and the gesture still ends through
+   * mouseup, Escape or blur. Only a source that is genuinely gone cancels it,
+   * checked after the update: the row's teardown runs before that update's
+   * listing is readable (it still reads the removed entry). */
+  function dispose(): void {
+    if (!dragActive) cleanup(false);
+    else void tick().then(() => { if (dragActive && sourceGone()) onCancel(); });
+  }
   try {
-    onDestroy(() => {
-      if (dragActive) clearHighlights();
-      cleanup(dragActive);
-    });
+    onDestroy(dispose);
   } catch {
     // Not called during component init (e.g. unit tests) — caller manages lifetime.
   }
 
   function refreshPanes(): void {
     if (deps.refreshPanes) deps.refreshPanes();
-    else deps.getExplorer().refresh({ silent: true });
+    else explorerOf().refresh({ silent: true });
   }
 
   function handlePointerDown(event: MouseEvent, entry: FileEntry, isSelected: boolean): void {
     if (event.button !== 0) return;
     event.preventDefault();
 
-    const explorer = deps.getExplorer();
-    const selectedEntries = explorer.getSelectedEntries();
-    const isMulti = selectedEntries.length > 1 && isSelected;
-    dragPaths = isMulti ? selectedEntries.map((e) => e.path) : [entry.path];
-    sourceEl = (event.currentTarget as HTMLElement) || null;
-
+    pending = { entry, isSelected, source: (event.currentTarget as HTMLElement) || null };
+    gestureExplorer = null;
+    dragPaths = [];
+    entryData = null;
+    sourceEl = null;
     startX = event.clientX;
     startY = event.clientY;
     dragActive = false;
     nativeStarted = false;
-    entryData = { path: entry.path, name: entry.name, kind: entry.kind, paths: isMulti ? dragPaths : undefined };
 
     // Use mousemove/mouseup on window — implicit mouse capture ensures events
     // keep firing (with accurate coordinates) even after cursor leaves the viewport.
@@ -103,6 +130,7 @@ export function usePointerDrag(deps: PointerDragDeps) {
     if (!dragActive) {
       const dist = Math.sqrt(dx * dx + dy * dy);
       if (dist < THRESHOLD_PX) return;
+      if (!resolveDragSource()) { cleanup(false); return; }
       dragActive = true;
       dragState.start(entryData!);
       const fallback = dragPaths.length > 1 ? `${dragPaths.length} items` : basename(dragPaths[0]);
@@ -132,15 +160,22 @@ export function usePointerDrag(deps: PointerDragDeps) {
       return;
     }
 
-    if (!nativeStarted) {
-      const target = resolveDropTargetAtPoint(event.clientX, event.clientY);
+    hoverPoint = { x: event.clientX, y: event.clientY };
+    dropHover.set(refreshHover);
+    refreshHover();
+  }
+
+  function refreshHover(): void {
+    if (dragActive && !nativeStarted) {
+      springHover(() => elementAtPoint(hoverPoint.x, hoverPoint.y));
+      const target = resolveDropTargetAtPoint(hoverPoint.x, hoverPoint.y);
       const destDir =
         target?.type === "folder" || target?.type === "tab"
           ? target.path
           : target?.type === "bookmark" && entryData?.kind !== "directory"
             ? target.path
           : target?.type === "background"
-            ? target.path || deps.getExplorer().currentPath
+            ? target.path || explorerOf().currentPath
             : undefined;
       // Don't highlight a destination where the drop would be a no-op (every
       // dragged item is already there, or it's the dragged folder / a descendant).
@@ -148,11 +183,30 @@ export function usePointerDrag(deps: PointerDragDeps) {
         clearHighlights();
         return;
       }
-      highlightTargetAtPoint(event.clientX, event.clientY);
+      highlightTargetAtPoint(hoverPoint.x, hoverPoint.y);
     }
   }
 
+  /** Reduce the gesture's sources once, at the real drag start. */
+  function resolveDragSource(): boolean {
+    if (!pending) return false;
+    const { entry, isSelected, source } = pending;
+    pending = null;
+    const explorer = gestureExplorer = deps.getExplorer();
+    const reduced = operationDrag(isSelected ? explorer.getSelectedEntries() : [entry], entry, isWindows, explorer.displayEntries);
+    if (!reduced.ok) { toastStore.error(reduced.error); return false; }
+    const primary = reduced.primary;
+    dragPaths = reduced.entries.map(e => e.path);
+    sourceEl = primary.path === entry.path ? source : reducedDragSource(source, primary.path);
+    entryData = { path: primary.path, name: primary.name, kind: primary.kind, paths: dragPaths.length > 1 ? dragPaths : undefined };
+    return true;
+  }
+
   function startNativeDrag(): void {
+    // The OS drag owns the gesture now; this window's native receiver springs
+    // peeks again if it comes back.
+    springEnd();
+    dropHover.clear(refreshHover);
     clearHighlights();
     removeListeners();
     if (ghostEl) {
@@ -173,6 +227,8 @@ export function usePointerDrag(deps: PointerDragDeps) {
       return;
     }
 
+    // A source that left its listing after its row unmounted cancels here.
+    if (sourceGone()) { onCancel(); return; }
     if (ghostEl) ghostEl.style.display = "none";
     const target = resolveDropTargetAtPoint(event.clientX, event.clientY);
     const kind = entryData?.kind;
@@ -186,7 +242,7 @@ export function usePointerDrag(deps: PointerDragDeps) {
     if (!lease) return;
     const clear = captureHighlightCleanup();
     const isCopy = !!isCopyModifier(event);
-    const explorer = deps.getExplorer();
+    const explorer = explorerOf();
     try {
       if (!paths.length) return;
       if (target?.type === "terminal") {
@@ -249,6 +305,10 @@ export function usePointerDrag(deps: PointerDragDeps) {
   }
 
   function cleanup(clearDrag: boolean): void {
+    // Mouseup (after resolving its target), Escape, blur and unmount. The
+    // close lands a macrotask later, after the drop has read its target.
+    if (dragActive) springEnd();
+    dropHover.clear(refreshHover);
     removeListeners();
     if (ghostEl) {
       ghostEl.remove();
@@ -260,9 +320,16 @@ export function usePointerDrag(deps: PointerDragDeps) {
     nativeStarted = false;
     dragPaths = [];
     entryData = null;
+    pending = null;
   }
 
-  return { handlePointerDown };
+  return { handlePointerDown, dispose };
+}
+
+/** The primary can become a selected ancestor after recursive reduction. */
+export function reducedDragSource(source: HTMLElement | null, path: string): HTMLElement | null {
+  const rows = source?.closest(".file-list")?.querySelectorAll<HTMLElement>(".entry-item") ?? [];
+  return [...rows].find(row => row.dataset.path === path) ?? null;
 }
 
 export function createDragGhost(

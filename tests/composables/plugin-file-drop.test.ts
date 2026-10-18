@@ -10,6 +10,7 @@ vi.mock("$lib/composables/use-external-drag.svelte", () => ({ startExternalDrag:
 import { useNativeDropHandler } from "$lib/composables/use-native-drop-handler";
 import { useSidebarDrag } from "$lib/composables/use-sidebar-drag.svelte";
 import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
+import { dropHover } from "$lib/state/drop-hover";
 import { dragState } from "$lib/state/drag.svelte";
 import { fileDropTargets } from "$lib/state/file-drop-targets.svelte";
 import { highlightTargetAtPoint, clearHighlights } from "$lib/composables/use-native-drop-target.svelte";
@@ -50,6 +51,28 @@ beforeEach(() => {
 afterEach(() => { disposers.splice(0).reverse().forEach(dispose => dispose()); dragState.clear(); clearHighlights(); vi.unstubAllGlobals(); });
 
 describe("plugin native file drops", () => {
+  it("retires native hover on matching DOM dragend without resurrecting it on layout", async () => {
+    register(); await setup(); start();
+    const source = dragState.current!;
+    nativeEvent("enter", paths);
+    expect(hit.classList.contains("drop-target")).toBe(true);
+    await fire("dragend", dom({ "application/x-explorer-path": source.path, "application/x-explorer-session": source.sessionId! }));
+    expect(hit.classList.contains("drop-target")).toBe(false);
+    dropHover.refresh();
+    expect(hit.classList.contains("drop-target")).toBe(false);
+  });
+
+  it("keeps successor hover when an older DOM dragend arrives", async () => {
+    register(); await setup(); start();
+    const first = dragState.current!;
+    nativeEvent("enter", paths);
+    start(); nativeEvent("enter", paths);
+    await fire("dragend", dom({ "application/x-explorer-path": first.path, "application/x-explorer-session": first.sessionId! }));
+    expect(hit.classList.contains("drop-target")).toBe(true);
+    dropHover.refresh();
+    expect(hit.classList.contains("drop-target")).toBe(true);
+  });
+
   it("snapshots the ordered paths before awaiting a consumer", async () => {
     let finish!: () => void; const received: string[][] = [];
     const handler = register(vi.fn(async (batch: readonly string[]) => {
@@ -204,7 +227,7 @@ describe("plugin pointer drops", () => {
 
   it("delivers two selected files in order without transferring, using raw client coordinates", async () => {
     const handler = register();
-    const explorer = { currentPath: "/source", getSelectedEntries: () => paths.map(entry), refresh: vi.fn() } as any;
+    const explorer = { currentPath: "/source", getSelectedEntries: () => paths.map(entry), refresh: vi.fn(), entryMeta: new Map(paths.map(path => [path, { depth: 0 }])) } as any;
     const drag = usePointerDrag({ getExplorer: () => explorer });
     drag.handlePointerDown({ button: 0, clientX: 10, clientY: 10, preventDefault: vi.fn(), currentTarget: { querySelector: () => null } } as any, entry(paths[1]), true);
     await fire("mousemove", { clientX: 20, clientY: 30 });

@@ -547,6 +547,8 @@ describe("file-entry keyboard commands", () => {
 
   it.each([
     ["mounted gridcell", "BUTTON", ".file-list .entry-item"],
+    ["unmounted List cursor", "DIV", '.file-list .virtual-viewport[role="listbox"]'],
+    ["unmounted List tree cursor", "DIV", '.file-list .virtual-viewport[role="tree"]'],
     ["unmounted-cursor viewport", "DIV", '.file-list .virtual-viewport[role="grid"]'],
   ])("does not redispatch a locally consumed arrow from the %s", (_surface, tagName, selector) => {
     const f = fixture();

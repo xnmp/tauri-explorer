@@ -391,6 +391,10 @@ const turboArgs = (task, dir, access) => [
   "--env-mode=loose",
   "--dangerously-disable-package-manager-check",
   "--ui=stream",
+  // Turbo's auto order groups (buffers) task output on GitHub Actions, which
+  // stamps every Playwright line with the task's end time: e2e-shards.mjs
+  // record then reads zero durations, and a cancelled shard shows no tests.
+  "--log-order=stream",
   "--log-prefix=none",
   "--output-logs=full",
 ];

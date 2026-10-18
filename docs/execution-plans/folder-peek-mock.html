@@ -1,0 +1,1892 @@
+<title>Folder Peek Prototype</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --page-bg: #e9e8ef;
+  --page-text: #25252d;
+  --text: #2a2a33;
+  --text-2: #5d5d6a;
+  --text-3: #8a8a97;
+  --accent: #8a78b0;
+  --hair: #dcd7e4;
+  --tint: rgba(241, 238, 247, 0.85);
+  --folder: #6f6480;
+  --folder-2: #877c9b;
+  --sel: rgba(111, 100, 128, 0.14);
+  --chrome-line: rgba(60, 60, 90, 0.10);
+  --ctl-bg: rgba(255, 255, 255, 0.8);
+  --ctl-line: rgba(60, 60, 90, 0.18);
+  --font: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --white: #fff;
+  --accent-text: #5b4a86;
+  --win-line: rgba(40, 40, 70, 0.22);
+  --win-shadow: rgba(40, 40, 80, 0.18);
+  --glow-left: rgba(170, 182, 200, .55);
+  --glow-right: rgba(160, 176, 198, .5);
+  --glow-center: rgba(205, 212, 226, .6);
+  --win-bg-top: #f1f2f8;
+  --win-bg-mid: #e6e9f1;
+  --win-bg-bottom: #dde2ec;
+  --tab-bg: rgba(225, 226, 236, .6);
+  --tab-active-bg: rgba(250, 250, 253, .85);
+  --side-bg: rgba(236, 238, 247, .6);
+  --side-text: #33333f;
+  --main-bg: rgba(251, 251, 254, .62);
+  --toolbar-text: #3a3a46;
+  --crumb-bg: rgba(255, 255, 255, .45);
+  --files-scrollbar: rgba(70, 60, 100, .28);
+  --panel-scrollbar: rgba(70, 60, 100, .25);
+  --caret-line: #d4cfdf;
+  --caret-shadow: rgba(60, 50, 90, .12);
+  --caret-hover: rgba(111, 100, 128, .16);
+  --grip: rgba(90, 80, 120, .22);
+  --grip-hover: rgba(90, 80, 120, .45);
+  --folder-muted: #8f879f;
+  --folder-front: #857a99;
+  --bookmark-downloads: #1f84e0;
+  --bookmark-documents: #3a5ea8;
+  --bookmark-pictures: #1d9a8c;
+  --bookmark-videos: #a259e6;
+  --bookmark-music: #e5509c;
+  --bookmark-repos: #ee8a1f;
+  --file-md: #2f5fb3;
+  --file-xlsx: #2e8b57;
+  --file-pdf: #d23b3b;
+  --file-image: #1f9aa0;
+  --file-txt: #4a6fb0;
+  --file-docx: #2f6fc4;
+  --file-zip: #d99a1c;
+  --file-code: #6d7480;
+  --clear: transparent;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--page-bg);
+  color: var(--page-text);
+  font-family: var(--font);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 16px 24px;
+}
+.controls {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px;
+  margin-bottom: 12px; font-size: 13px;
+}
+.controls .grp { display: flex; align-items: center; gap: 6px; }
+.controls label { color: var(--text-2); font-weight: 500; }
+.controls button {
+  font: inherit; font-size: 13px; color: var(--text); background: var(--ctl-bg);
+  border: 1px solid var(--ctl-line); border-radius: 7px; padding: 5px 11px; cursor: pointer;
+}
+.controls button:hover:not(:disabled) { background: var(--white); }
+.controls button[aria-pressed="true"] { background: var(--white); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+.controls button:disabled { opacity: .45; cursor: not-allowed; }
+.controls .val { min-width: 18px; text-align: center; font-weight: 600; }
+.controls .hint { color: var(--text-2); flex-basis: 100%; }
+body.shot:not(.notes) .controls { display: none; }
+[hidden] { display: none !important; }
+.controls .legend { color: var(--text-2); white-space: nowrap; font-size: 12px; }
+body.shot { padding-block: 16px; }
+.controls .list-flow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; flex-basis: 100%; font-size: 12px; }
+.list-flow label { display: flex; align-items: center; gap: 4px; }
+.list-flow input[type="number"] { width: 106px; padding: 3px 4px; border: 1px solid var(--ctl-line); border-radius: 5px; font: inherit; color: var(--text); background: var(--ctl-bg); }
+.list-flow select { padding: 3px 4px; border: 1px solid var(--ctl-line); border-radius: 5px; font: inherit; color: var(--text); background: var(--ctl-bg); }
+.list-flow input:focus-visible, .list-flow select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+#list-readout { font-family: ui-monospace, monospace; color: var(--text-2); }
+.list .list-motion-ghost { position: absolute; left: 0; width: 260px; z-index: 4; pointer-events: none; }
+.list .motion-column { position: absolute; top: 0; width: 260px; height: calc(var(--list-r) * 36px); overflow: clip; pointer-events: none; z-index: 4; }
+
+.stage { overflow-x: auto; }
+.win {
+  position: relative; height: 900px; min-width: 1100px; border-radius: 12px; overflow: hidden;
+  border: 1px solid var(--win-line);
+  box-shadow: 0 10px 40px var(--win-shadow);
+  display: grid; grid-template-rows: 42px minmax(0, 1fr);
+  background:
+    radial-gradient(ellipse 60% 40% at 25% 100%, var(--glow-left), var(--clear) 70%),
+    radial-gradient(ellipse 55% 35% at 85% 95%, var(--glow-right), var(--clear) 70%),
+    radial-gradient(ellipse 50% 30% at 55% 70%, var(--glow-center), var(--clear) 70%),
+    linear-gradient(165deg, var(--win-bg-top), var(--win-bg-mid) 55%, var(--win-bg-bottom));
+  font-size: 14px; color: var(--text);
+}
+body.shot .win { height: calc(100vh - 32px); }
+/* List columns fill the window height, so keep its bottom edge and horizontal scrollbar on screen. */
+body:not(.shot) .win:has(.files.list-files) { height: clamp(560px, var(--win-avail, 900px), 900px); }
+.tabs { display: flex; align-items: flex-end; gap: 4px; padding: 6px 8px 0; }
+.tab {
+  display: flex; align-items: center; gap: 9px; height: 34px; padding: 0 14px;
+  border-radius: 10px 10px 0 0; color: var(--text-2); background: var(--tab-bg);
+  font-size: 14px; min-width: 150px;
+}
+.tab.active { background: var(--tab-active-bg); color: var(--text); min-width: 168px; box-shadow: 0 0 0 1px var(--chrome-line); }
+.tab .x { margin-left: auto; color: var(--text-2); font-size: 15px; line-height: 1; }
+.tab svg { width: 18px; height: 14px; }
+.plus { width: 30px; height: 30px; display: grid; place-items: center; color: var(--text-2); font-size: 20px; }
+.body { display: grid; grid-template-columns: 250px minmax(0, 1fr); min-height: 0; }
+.side { background: var(--side-bg); padding: 8px 8px 0 12px; overflow: hidden; border-right: 1px solid var(--chrome-line); }
+.sec { display: flex; align-items: center; gap: 8px; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-2); font-weight: 500; padding: 8px 6px 6px; }
+.sec svg { width: 10px; height: 10px; }
+.sitem { display: flex; align-items: center; gap: 12px; height: 36px; padding: 0 10px; color: var(--side-text); font-size: 14.5px; border-radius: 8px; }
+.sitem svg { width: 16px; height: 16px; flex: none; }
+.sdiv { height: 1px; background: var(--chrome-line); margin: 12px 4px 6px; }
+.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--main-bg); }
+.toolbar { display: flex; align-items: center; gap: 8px; padding: 8px 14px; height: 54px; flex: none; }
+.tbtn { width: 28px; height: 32px; display: grid; place-items: center; color: var(--toolbar-text); }
+.tbtn svg { width: 18px; height: 18px; }
+.crumb {
+  flex: 1; height: 34px; border-radius: 17px; border: 1px solid var(--chrome-line); background: var(--crumb-bg);
+  display: flex; align-items: center; gap: 8px; padding: 0 14px; color: var(--text-2); font-weight: 600; font-size: 14px;
+}
+.crumb svg { width: 16px; height: 16px; }
+.files { overflow-anchor: none; position: relative; flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; scrollbar-color: var(--files-scrollbar) var(--clear); }
+.content { position: relative; padding: 12px 14px 48px; }
+#layer { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 0; overflow: visible; }
+#rows { position: relative; z-index: 1; }
+.rowgroup { position: relative; }
+.row { display: grid; grid-template-columns: repeat(var(--c), minmax(0, 1fr)); }
+.band { position: relative; }
+.band.above { margin-top: 12px; margin-bottom: 12px; }   /* gap between above band and its row: only the owner's tab crosses it */
+.band.below { margin-top: 12px; margin-bottom: 12px; }
+.band.stacked { margin-top: 46px; margin-bottom: 12px; }  /* room for the label tab + whitespace above it */
+
+/* tiles */
+.tiles .row { column-gap: 0; }
+.tiles .cell { height: 118px; display: flex; flex-direction: column; align-items: center; padding: 12px 10px 0; }
+.cell { position: relative; cursor: default; user-select: none; }
+.cell::before { content: ''; position: absolute; inset: 2px 4px; border-radius: 9px; }
+.cell.sel::before { background: var(--sel); }
+.cell > * { position: relative; }
+.tiles .ic { width: 56px; height: 56px; display: grid; place-items: center; flex: none; }
+.ic svg, .mic svg { display: block; }
+.tiles .nm { margin-top: 6px; font-size: 13px; line-height: 1.3; text-align: center; max-width: 100%; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.open .nm { font-weight: 600; }
+.caret { cursor: pointer; color: var(--folder); }
+.tiles .caret { position: absolute; right: -6px; bottom: -3px; width: 20px; height: 20px; border-radius: 50%; background: var(--white); border: 1px solid var(--caret-line); display: grid; place-items: center; box-shadow: 0 1px 2px var(--caret-shadow); }
+.tiles .caret:hover { border-color: var(--accent); }
+.open .caret { border-color: var(--accent); color: var(--accent-text); }
+.caret svg { width: 11px; height: 11px; }
+.caret.right svg { transform: none; }
+.caret.down svg { transform: rotate(90deg); }
+.caret.up svg { transform: rotate(-90deg); }
+
+/* list */
+.files.list-files { overflow-x: auto; overflow-y: hidden; }
+.files.list-files::-webkit-scrollbar { height: 7px; }
+.content.list { width: max-content; min-width: 100%; padding: 12px 14px; }
+.list-columns { position: relative; display: grid; grid-template-columns: repeat(var(--list-columns), 260px); column-gap: 16px; align-items: start; }
+.list-column { position: relative; width: 260px; height: calc(var(--list-r) * 36px); display: grid; grid-template-rows: repeat(var(--list-r), 36px); align-items: start; }
+.list-column.animating, .dragging .list-column { overflow: clip; }
+.list .cell { height: 36px; display: flex; align-items: center; gap: 6px; padding: 0 12px 0 calc(12px + var(--depth) * var(--indent)); }
+.list .caretslot { width: 18px; height: 18px; flex: none; display: grid; place-items: center; }
+.list .caret { width: 18px; height: 18px; padding: 0; border: 0; background: var(--clear); font: inherit; border-radius: 5px; display: grid; place-items: center; position: relative; }
+.list .caret:hover { background: var(--caret-hover); }
+.list .ic { width: 16px; height: 16px; flex: none; display: grid; place-items: center; }
+/* Caret placement variants (reviewer choice). --indent keeps a child's caret under its
+   parent's icon; --guide-x centres the nested guide line under the caret or icon. */
+.content.list { --indent: 22px; --guide-x: 20px; }
+.content.list[data-caret="close"] { --indent: 16px; --guide-x: 18px; }
+.list[data-caret="close"] .caretslot { width: 14px; margin-right: -4px; }
+.list[data-caret="close"] .caret { width: 14px; }
+.list[data-caret="close"] .caret svg { width: 10px; height: 10px; }
+.content.list[data-caret="on"], .content.list[data-caret="badge"] { --indent: 20px; --guide-x: 19px; }
+/* Overlaid variants: the slot takes no width, so folder and file icons share one column. */
+.list[data-caret="on"] .caretslot, .list[data-caret="badge"] .caretslot { width: 16px; margin-right: -22px; position: relative; z-index: 1; }
+.list[data-caret="on"] .caret { width: 16px; height: 16px; border-radius: 4px; color: var(--white); }
+.list[data-caret="on"] .caret svg { width: 10px; height: 10px; margin-top: 3px; }
+.list[data-caret="on"] .caret svg path { stroke-width: 2.6; }
+.list[data-caret="on"] .caret:hover { background: var(--clear); box-shadow: 0 0 0 1.5px var(--caret-line); }
+.list[data-caret="badge"] .caret { position: absolute; right: -5px; bottom: -4px; width: 12px; height: 12px; border-radius: 50%; background: var(--white); border: 1px solid var(--caret-line); box-shadow: 0 1px 2px var(--caret-shadow); }
+.list[data-caret="badge"] .caret::before { content: ''; position: absolute; inset: -4px; }
+.list[data-caret="badge"] .caret svg { width: 7px; height: 7px; }
+.list[data-caret="badge"] .caret:hover { background: var(--white); border-color: var(--accent); }
+#list-caret { padding: 3px 4px; border: 1px solid var(--ctl-line); border-radius: 5px; font: inherit; color: var(--text); background: var(--ctl-bg); }
+.list .nm { font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+/* panels */
+.panel { position: absolute; top: 0; }
+.band.above .panel { top: auto; bottom: 0; }
+.pscroll {
+  position: absolute; inset: 0; border-radius: 10px; overflow-y: auto; overflow-x: hidden; padding: 8px 8px 12px;
+  scrollbar-width: thin; scrollbar-color: var(--panel-scrollbar) var(--clear); display: grid; align-content: start;
+  --fade-top: 0px; --fade-bottom: 0px;
+  mask-image: linear-gradient(to bottom, var(--clear), var(--white) var(--fade-top), var(--white) calc(100% - var(--fade-bottom)), var(--clear));
+  -webkit-mask-image: linear-gradient(to bottom, var(--clear), var(--white) var(--fade-top), var(--white) calc(100% - var(--fade-bottom)), var(--clear));
+}
+.pscroll::-webkit-scrollbar, .files::-webkit-scrollbar { width: 7px; }
+.pscroll::-webkit-scrollbar-thumb, .files::-webkit-scrollbar-thumb { background: var(--panel-scrollbar); border-radius: 4px; }
+.band.above .pscroll { padding: 12px 8px 8px; }
+.mcell { position: relative; height: 86px; display: flex; flex-direction: column; align-items: center; padding: 8px 1px 0; cursor: default; user-select: none; }
+.mcell::before { content: ''; position: absolute; inset: 1px 2px; border-radius: 7px; }
+.mcell.sel::before { background: var(--sel); }
+.mcell > * { position: relative; }
+.mic { width: 38px; height: 38px; display: grid; place-items: center; flex: none; }
+.mnm { margin-top: 4px; padding: 0 3px; font-size: 11px; line-height: 1.25; text-align: center; max-width: 100%; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.grip { position: absolute; left: 0; right: 0; height: 14px; display: grid; place-items: center; cursor: ns-resize; z-index: 3; touch-action: none; }
+.grip i { display: block; width: 38px; height: 4px; border-radius: 2px; background: var(--grip); }
+.grip:hover i, .grip.drag i { background: var(--grip-hover); }
+.band.above .grip { top: -7px; }
+.band.below .grip, .band.stacked .grip { bottom: -7px; }
+
+.more { position: absolute; left: calc(50% + 27px); font-size: 10px; line-height: 14px; color: var(--text-3); white-space: nowrap; pointer-events: none; z-index: 4; }
+.band.above .more { top: -7px; }
+.band.below .more, .band.stacked .more { bottom: -7px; }
+
+/* Details groups are unboxed: indentation plus the fading accent guide line only. */
+.details-head, .drow { display: grid; grid-template-columns: minmax(280px, 1fr) 150px 90px 120px; align-items: center; }
+.details-head { height: 32px; color: var(--text-2); font-size: 10px; letter-spacing: .06em; padding-right: 12px; }
+.details-head > :first-child { padding-left: 54px; }
+.sort-arrow { display: inline-block; margin-left: 4px; font-size: 10px; }
+.dgroup { position: relative; }
+.drow { --row-indent: calc(var(--depth) * 22px); position: relative; isolation: isolate; height: 40px; cursor: default; user-select: none; border-radius: 7px; padding-right: 12px; }
+.drow.sel::after { content: ''; position: absolute; inset: 0; left: calc(var(--depth) * 22px); z-index: -1; border-radius: 7px; background: var(--sel); }
+.drow.sel::before { content: ''; position: absolute; top: 7px; bottom: 7px; left: calc(var(--depth) * 22px); width: 3px; border-radius: 2px; background: var(--accent); }
+.dname { min-width: 0; display: flex; align-items: center; gap: 8px; padding-left: calc(10px + var(--row-indent)); }
+.dname .caretslot { display: grid; place-items: center; width: 18px; height: 20px; flex: none; }
+.details .caret { display: grid; place-items: center; width: 18px; height: 20px; padding: 0; border: 0; border-radius: 4px; background: var(--clear); font: inherit; }
+.details .caret:hover { background: var(--caret-hover); }
+.caret:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dname .ic { display: grid; place-items: center; width: 18px; flex: none; }
+.dname .nm { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 13px; }
+.drow.expanded .nm { font-weight: 600; }
+.dmeta { color: var(--text-2); font-size: 12px; }
+.dguide { position: absolute; left: calc(18px + var(--depth) * 22px); top: 31px; bottom: 12px; width: 1.5px; pointer-events: none; background: linear-gradient(to bottom, var(--accent), var(--hair) var(--guide-fade, 64px)); }
+
+.list .dguide { left: calc(var(--guide-x) + var(--depth) * var(--indent)); top: 27px; }
+/* Top-level List groups keep the panel card (tint, hairline, accent fading into it);
+   nested levels use the Details guide line only. The card adds no padding, so every
+   row stays on the 36px pitch that visual-row virtualization relies on. */
+/* The card's visual box is inset 2px inside its row slots, so stacked cards keep a gap
+   without leaving the 36px pitch. */
+.list .dgroup.card { isolation: isolate; }
+.list .dgroup.card::after { content: ''; position: absolute; inset: 2px 0; z-index: -1; border-radius: 8px; background: var(--tint); box-shadow: inset 0 0 0 1px var(--hair); pointer-events: none; }
+.list .dgroup.card::before { content: ''; position: absolute; inset: 2px 0; z-index: 1; border-radius: 8px; border: 1.5px solid var(--accent); pointer-events: none;
+  -webkit-mask-image: linear-gradient(to bottom, var(--white), var(--clear) var(--guide-fade, 64px)); mask-image: linear-gradient(to bottom, var(--white), var(--clear) var(--guide-fade, 64px)); }
+.list .dgroup.card > .dguide { display: none; }
+.list .list-scroll.pscroll { position: relative; inset: auto; display: block; padding: 0; border-radius: 0 0 8px 8px; overflow-anchor: none; }
+.list .card > .grip, .list .card > .more { bottom: -7px; }
+.list .card > .grip { left: calc(50% - 26px); right: auto; width: 52px; }
+.list .more { font-variant-numeric: tabular-nums; }
+
+#review-pins { position: absolute; inset: 0; pointer-events: none; z-index: 8; overflow: hidden; }
+.review-pin { position: absolute; width: 18px; height: 18px; padding: 0; display: grid; place-items: center; border: 1px solid var(--accent); border-radius: 50%; background: var(--white); color: var(--accent); font: 600 10px var(--font); pointer-events: auto; cursor: help; }
+.review-pin.left::before { right: auto; left: 16px; }
+.review-pin::before { content: ''; position: absolute; height: 1px; width: 24px; right: 16px; top: 8px; background: var(--accent); pointer-events: none; }
+.review-pin.inset::before { display: none; }  /* sits on the card it describes */
+
+/* svg layer */
+g.own { opacity: .78; }
+g.own.hot { opacity: 1; }
+.fill { fill: var(--tint); stroke: none; }
+.hair { fill: none; stroke: var(--hair); stroke-width: 1; }
+.acc { fill: none; stroke-width: 1.5; stroke-linejoin: round; }
+.link-hit { fill: none; stroke: var(--clear); stroke-width: 14; pointer-events: stroke; }
+.plabel { position: absolute; bottom: 100%; width: max-content; height: 30px; display: flex; align-items: center; gap: 7px; padding: 0 14px; white-space: nowrap; font-size: 13px; cursor: pointer; user-select: none; z-index: 2; }
+.plabel svg { flex: none; }
+.plabel b, .plabel span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.plabel b { font-weight: 600; }
+.plabel span { color: var(--text-3); }
+.pclose { flex: none; width: 18px; height: 18px; padding: 0; margin-left: auto; border: 0; border-radius: 4px; background: var(--clear); color: var(--text-3); font: inherit; line-height: 1; cursor: pointer; }
+.pclose:hover { color: var(--text); background: var(--caret-hover); }
+.pclose:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+body.dragging, body.dragging * { cursor: ns-resize !important; user-select: none; }
+</style>
+
+<div class="controls">
+  <div class="grp"><label>View</label>
+    <button id="v-tiles" aria-pressed="true">Tiles</button><button id="v-list" aria-pressed="false">List</button><button id="v-details" aria-pressed="false">Details</button></div>
+  <div class="grp" id="columns-control"><label>Columns</label>
+    <button id="c-dec" aria-label="Fewer columns">&minus;</button><span class="val" id="c-val">7</span><button id="c-inc" aria-label="More columns">+</button></div>
+  <div class="grp" id="list-content-control" hidden><label><input id="list-large" type="checkbox" checked> Large folder</label>
+    <label>Caret <select id="list-caret"><option value="apart">apart</option><option value="close">close</option><option value="on">on icon</option><option value="badge">badge</option></select></label></div>
+  <div class="grp" id="placement-presets">
+    <button id="p-single">One open</button><button id="p-split">Two split</button><button id="p-above">Opens above</button><button id="p-stacked">Stacked</button><button id="p-cards" hidden>Three cards</button><button id="p-reset">Reset</button></div>
+  <button id="p-tree" hidden>Tree</button>
+  <button id="review-notes" aria-pressed="true">Review notes</button>
+  <span class="legend">1 Scroll fade + more count · 2 Open/close motion · 3 Ribbon only · 4 Details tree styling · 5 List: fixed header + scrollable tree · 6 List: column order with sideways scroll; later items shift along the columns</span>
+  <div class="list-flow" id="list-flow" hidden>
+    <label>Rows per column <input id="list-rows" type="number" min="4" max="1000" step="1" placeholder="auto (21)"></label>
+    <label>Shift motion <select id="list-shift"><option value="conveyor">conveyor</option><option value="snap">snap</option></select></label>
+    <output id="list-readout" aria-live="polite"></output>
+  </div>
+  <div class="hint">Click a folder's caret to peek inside. Drag a panel's grip to resize.</div>
+</div>
+
+<div class="stage">
+<div class="win" id="win">
+  <div id="review-pins"></div>
+  <div class="tabs">
+    <div class="tab"><svg viewBox="0 0 40 32"><path d="M3 7a3 3 0 0 1 3-3h9.5l3.5 4H34a3 3 0 0 1 3 3v15a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3z" fill="var(--folder-muted)"/></svg>Downloads</div>
+    <div class="tab active"><svg viewBox="0 0 40 32"><path d="M3 7a3 3 0 0 1 3-3h9.5l3.5 4H34a3 3 0 0 1 3 3v15a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3z" fill="var(--folder)"/></svg>Documents<span class="x">&times;</span></div>
+    <div class="plus">+</div>
+  </div>
+  <div class="body">
+    <div class="side">
+      <div class="sec"><svg viewBox="0 0 10 10"><path d="M1.5 3 5 6.5 8.5 3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>Bookmarks</div>
+      <div class="sitem"><svg viewBox="0 0 16 16" fill="none" stroke="var(--bookmark-downloads)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>Downloads</div>
+      <div class="sitem"><svg viewBox="0 0 16 16" fill="none" stroke="var(--bookmark-documents)" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"><path d="M3.5 1.8h6l3 3v9.4h-9z"/><path d="M5.5 8h5M5.5 10.5h5"/></svg>Documents</div>
+      <div class="sitem"><svg viewBox="0 0 16 16" fill="none" stroke="var(--bookmark-pictures)" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="m2.5 11 3.2-3.5 2.6 2.5 2-2 3 3"/></svg>Pictures</div>
+      <div class="sitem"><svg viewBox="0 0 16 16" fill="none" stroke="var(--bookmark-videos)" stroke-width="1.4" stroke-linejoin="round"><rect x="1.8" y="4" width="8.7" height="8" rx="1.5"/><path d="m10.5 7.5 3.7-2v5l-3.7-2z"/></svg>Videos</div>
+      <div class="sitem"><svg viewBox="0 0 16 16" fill="none" stroke="var(--bookmark-music)" stroke-width="1.4" stroke-linecap="round"><path d="M6 11.5V3.5l6-1.2v8"/><circle cx="4.5" cy="11.8" r="1.6"/><circle cx="10.5" cy="10.6" r="1.6"/></svg>Music</div>
+      <div class="sitem"><svg viewBox="0 0 16 16" fill="none" stroke="var(--bookmark-repos)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m5.5 4.5-3.5 3.5 3.5 3.5M10.5 4.5l3.5 3.5-3.5 3.5M9 3 7 13"/></svg>Repos</div>
+      <div class="sitem"><svg viewBox="0 0 16 16" fill="none" stroke="var(--bookmark-repos)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5h11M6 4.5V2.8h4v1.7M4 4.5l.7 9h6.6l.7-9M6.7 7v4.5M9.3 7v4.5"/></svg>Recycle Bin</div>
+      <div class="sdiv"></div>
+      <div class="sec"><svg viewBox="0 0 10 10"><path d="M1.5 3 5 6.5 8.5 3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>Recent</div>
+      <div class="sitem" data-rf></div><div class="sitem" data-rf></div><div class="sitem" data-rf></div><div class="sitem" data-rf></div><div class="sitem" data-rf></div><div class="sitem" data-rf></div>
+    </div>
+    <div class="main">
+      <div class="toolbar">
+        <div class="tbtn"><svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M11 3.5 5.5 9l5.5 5.5"/></svg></div>
+        <div class="tbtn"><svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 15V3.5M4 8.5 9 3.5l5 5"/></svg></div>
+        <div class="crumb"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M2 7.5 8 2.5l6 5M3.5 6.5v7h9v-7M6.5 13.5v-4h3v4"/></svg><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px"><path d="m6 3.5 4.5 4.5L6 12.5"/></svg>Documents</div>
+      </div>
+      <div class="files" id="files">
+        <div class="content tiles" id="content">
+          <svg id="layer" xmlns="http://www.w3.org/2000/svg"></svg>
+          <div id="rows"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<script>
+/* =====================================================================
+   PURE PLACEMENT (no DOM). Columns are 0-indexed; C = column count.
+   ===================================================================== */
+const MIN_PANEL_COLUMNS = { tiles: 3 };
+
+/* Partition columns 0..C-1 into one contiguous segment per parent (parents sorted
+   ascending), each segment containing its parent and at least minW wide.
+   Prefers the midpoint split, else the nearest feasible boundaries. Returns
+   [{start,end}] or null if infeasible. */
+function splitColumns(parents, C, minW) {
+  const k = parents.length;
+  if (k === 0) return [];
+  const starts = [0];
+  const solve = (i) => {
+    if (i === k - 1) return C - starts[i] >= minW;
+    const lo = Math.max(parents[i] + 1, starts[i] + minW);
+    const hi = Math.min(parents[i + 1], C - minW * (k - 1 - i));
+    const mid = Math.floor((parents[i] + parents[i + 1]) / 2) + 1;
+    const cands = [];
+    for (let s = lo; s <= hi; s++) cands.push(s);
+    cands.sort((a, b) => Math.abs(a - mid) - Math.abs(b - mid) || a - b);
+    for (const s of cands) {
+      starts[i + 1] = s;
+      if (solve(i + 1)) return true;
+    }
+    starts.length = i + 1;
+    return false;
+  };
+  if (!solve(0)) return null;
+  return starts.map((s, i) => ({ start: s, end: i + 1 < k ? starts[i + 1] - 1 : C - 1 }));
+}
+
+/* Tiles segment policy. Input columns are sorted by the band caller. */
+const segmentsFor = (parentCols, C, view) => splitColumns(parentCols, C, MIN_PANEL_COLUMNS[view]);
+const isBandFeasible = (parentCols, C, view) => segmentsFor([...parentCols].sort((a, b) => a - b), C, view) !== null;
+
+/* Which side does a newly opened folder (row,col) go? below -> above -> stacked. */
+function chooseSide(placements, row, col, C, view) {
+  for (const side of ['below', 'above']) {
+    const cols = placements.filter(p => p.row === row && p.side === side).map(p => p.col).concat(col);
+    if (isBandFeasible(cols, C, view)) return side;
+  }
+  return 'stacked';
+}
+
+/* Group placements into bands, each with per-member column segments. */
+function computeBands(placements, C, view) {
+  const bands = [];
+  const rows = [...new Set(placements.map(p => p.row))].sort((a, b) => a - b);
+  for (const row of rows) {
+    for (const side of ['above', 'below']) {
+      const members = placements.filter(p => p.row === row && p.side === side).sort((a, b) => a.col - b.col);
+      if (members.length) bands.push({ key: `${row}-${side}`, row, side, members, segs: segmentsFor(members.map(m => m.col), C, view) });
+    }
+    placements.filter(p => p.row === row && p.side === 'stacked').forEach(p =>
+      bands.push({ key: `${row}-stacked-${p.name}`, row, side: 'stacked', members: [p], segs: [{ start: 0, end: C - 1 }] }));
+  }
+  return bands;
+}
+
+/* Replay an opening order from scratch (used for column-count / view changes and presets). */
+function replay(order, indexOf, C, view) {
+  const placements = [];
+  for (const name of order) {
+    const idx = indexOf(name), row = Math.floor(idx / C), col = idx % C;
+    placements.push({ name, row, col, side: chooseSide(placements, row, col, C, view) });
+  }
+  return placements;
+}
+
+const LIST_ROW = 36, LIST_PREFERRED_ROWS = 6;
+const cardSlots = (contentRows, preferredRows = LIST_PREFERRED_ROWS) =>
+  1 + Math.min(Math.max(0, Math.floor(contentRows)), Math.max(1, Math.round(preferredRows)));
+
+/* Pure prefix scan in column order. A card may leave a tail gap, but never splits. */
+function columnFlow(topItems, R, slotsOf) {
+  if (!Number.isSafeInteger(R) || R < 4) throw new RangeError('Rows per column must be an integer >= 4');
+  const columns = [];
+  let column = 0, row = 0;
+  for (const item of topItems) {
+    const { slots, card } = slotsOf(item);
+    if (!Number.isSafeInteger(slots) || slots < 1 || slots > R || (!card && slots !== 1))
+      throw new RangeError('Entries must fit one column; plain items use one slot');
+    if (row + slots > R) { column++; row = 0; }
+    (columns[column] ??= []).push({ item, slots, card: Boolean(card), offset: row });
+    row += slots;
+    if (row === R) { column++; row = 0; }
+  }
+  return { columns };
+}
+const maxListRows = R => Math.max(1, Math.floor(.7 * R));
+const listVisibleRows = (content, preferred, R) => Math.min(content, Math.max(1, Math.min(Math.round(preferred), maxListRows(R))));
+function listTreeRows(item, expandedSet, kidsOf) {
+  const rows = [], pending = [{ path: item.name, item, depth: 0 }];
+  while (pending.length) {
+    const entry = pending.pop();
+    rows.push(entry);
+    if (entry.item.dir && expandedSet.has(entry.path)) {
+      const kids = kidsOf(entry.path) || [];
+      for (let k = kids.length - 1; k >= 0; k--) {
+        const child = kids[k];
+        pending.push({ path: entry.path + '/' + child.name, item: child, depth: entry.depth + 1 });
+      }
+    }
+  }
+  return rows;
+}
+/* Columns have a fixed height of R slots. Positions are a prefix scan over item
+   slots; cache it per expansion revision (also invalidate for R/content/preferences).
+   Virtualize by column horizontally, with overscan. This mock renders all columns. */
+function listResult(topItems, R, expandedSet, kidsOf, preferredOf = () => LIST_PREFERRED_ROWS) {
+  const trees = new Map(topItems.map(item => [item.name, listTreeRows(item, expandedSet, kidsOf)]));
+  const result = columnFlow(topItems, R, item => {
+    const card = item.dir && expandedSet.has(item.name), content = trees.get(item.name).length - 1;
+    return { card, slots: card ? cardSlots(content, listVisibleRows(content, preferredOf(item.name), R)) : 1 };
+  });
+  return { columns: result.columns.map(col => col.map(entry => ({ ...entry, rows: trees.get(entry.item.name) }))) };
+}
+const listLayout = (...args) => listResult(...args).columns;
+function listColumns(...args) {
+  return listLayout(...args).map(col => col.flatMap(entry => entry.rows));
+}
+const changeListExpansion = (expanded, path) => expanded.has(path)
+  ? new Set([...expanded].filter(value => value !== path)) : new Set([...expanded, path]);
+const listPresetState = paths => new Set(paths);
+
+/* =====================================================================
+   DATA
+   ===================================================================== */
+const D = (name) => ({ name, dir: true });
+const F = (name) => ({ name, dir: false });
+const TOP = [
+  ...['Inbox', 'Career', 'Codex', 'Personal', 'Archive', 'AI Draft Archive'].map(D),
+  ...['freeze-fix-guide.md', 'Scrivo Sample.md', 'Totality Dividends.xlsx', 'Totality Trades History.xlsx', 'numbers_backup.md', 'bpay-2026-oct-receipt.png', 'Revenue NSW.pdf', 'bot_pat.txt', 'numbers_backup_2.md'].map(F),
+];
+// Appended in this deterministic order only in List; TOP stays the original 15.
+const LIST_FILLER = Array.from({ length: 75 }, (_, i) => F([
+  `IMG_${2041 + i}.jpg`, `invoice-2026-${String(1 + Math.floor(i / 9) % 12).padStart(2, '0')}.pdf`,
+  `meeting-notes-${String(412 + i).padStart(4, '0')}.md`, `screenshot-2026-09-${String(30 - Math.floor(i / 9)).padStart(2, '0')}.png`,
+  `project-backup-${String(i + 1).padStart(3, '0')}.zip`, `sales-export-${String(i + 1).padStart(3, '0')}.csv`,
+  `holiday-clip-${String(i + 1).padStart(3, '0')}.mp4`, `research-notes-${String(i + 1).padStart(3, '0')}.txt`,
+  `budget-review-${String(i + 1).padStart(3, '0')}.xlsx`,
+][i % 9]));
+const archiveExtra = [];
+['2018', '2019', '2020', '2021', '2022', '2023'].forEach(y => {
+  ['bank-statements-' + y + '.pdf', 'receipts-' + y + '.zip', 'notes-' + y + '.md', 'budget-' + y + '.xlsx', 'insurance-' + y + '.pdf', 'scan-' + y + '.jpg', 'misc-' + y + '.txt'].forEach(n => archiveExtra.push(n));
+});
+const KIDS = {
+  'Inbox': [D('to-file'), ...['scan-0193.pdf', 'invoice-oct.pdf', 'meeting-notes.md', 'screenshot-2026-10-15.png', 'quote.txt'].map(F)],
+  'Career': [...['Applications', 'Cover Letters', 'Portfolio'].map(D), ...['Resume-2026.pdf', 'Interview Prep.md', 'References.docx', 'salary-research.xlsx', 'headshot.jpg', 'offer-letter.pdf'].map(F)],
+  'Codex': [...['prompts', 'sessions', 'skills'].map(D), ...['AGENTS.md', 'config.toml', 'notes.md', 'rollout-2026-10-12.jsonl', 'auth-flow.png', 'todo.txt', 'history.jsonl', 'README.md', 'mcp-servers.json', 'rollout-2026-10-14.jsonl', 'sandbox.log'].map(F)],
+  'Personal': [...['Health', 'Travel', 'Recipes'].map(D), ...['passport-scan.pdf', 'budget-2026.xlsx', 'car-rego.pdf', 'gift-ideas.md', 'lease-agreement.pdf', 'medicare-card.png', 'tax-return-2025.pdf', 'bank-statement-sep.pdf', 'vaccination-record.pdf', 'insurance-policy.pdf', 'will-draft.docx', 'todo-2026.md', 'birthday-list.txt', 'wifi-passwords.txt', 'flights-bali.pdf', 'phone-bill-oct.pdf', 'drivers-licence.jpg', 'pet-vet-records.pdf', 'resume-old.docx', 'journal-2026.md'].map(F)],
+  'Archive': [...['2019', '2020', '2021', '2022', '2023'].map(D), ...['taxes-2022.pdf', 'old-notes.md', 'scans.zip', ...archiveExtra].map(F)],
+  'AI Draft Archive': [D('drafts-2025'), ...['essay-v3.md', 'outline.md', 'cover-image.png', 'prompts.txt', 'essay-v1.md', 'essay-v2.md', 'notes-chat.md', 'references.docx', 'figure-1.png', 'summary.pdf'].map(F)],
+};
+const TREE_KIDS = {
+  ...KIDS,
+  'Career/Applications': [...['Acme Corp', 'Globex', 'Initech'].map(D), ...['tracker.xlsx', 'follow-ups.md'].map(F)],
+  'Career/Applications/Acme Corp': ['cover-letter.pdf', 'notes.md'].map(F),
+  'Career/Applications/Globex': ['application.pdf', 'interview.md'].map(F),
+  'Career/Applications/Initech': ['resume.pdf', 'contacts.txt'].map(F),
+  'Career/Cover Letters': ['general.pdf', 'draft.md'].map(F),
+  'Career/Portfolio': ['case-study.pdf', 'preview.png'].map(F),
+  'Codex/prompts': ['system.md', 'review.md'].map(F),
+  'Codex/sessions': ['session-notes.md', 'summary.txt'].map(F),
+  'Codex/skills': ['workflow.md'].map(F),
+  'Archive/2023': ['taxes-2023.pdf', 'receipts.zip'].map(F),
+  'Inbox/to-file': ['receipt.pdf', 'notes.txt'].map(F),
+  'Personal/Health': ['checkup.pdf', 'appointments.md'].map(F),
+  'Personal/Travel': ['itinerary.md', 'tickets.pdf'].map(F),
+  'Personal/Recipes': ['pasta.md', 'soup.txt'].map(F),
+  'AI Draft Archive/drafts-2025': ['essay.md', 'outline.txt'].map(F),
+  ...Object.fromEntries(['2019', '2020', '2021', '2022'].map(y => ['Archive/' + y, ['taxes-' + y + '.pdf', 'notes.md'].map(F)])),
+};
+const detailMeta = (it, path) => {
+  const seed = [...path].reduce((n, c) => n + c.charCodeAt(0), 0);
+  const ext = it.name.split('.').pop().toLowerCase();
+  const types = { md: 'Markdown', pdf: 'PDF', xlsx: 'Excel', png: 'Image', jpg: 'Image', txt: 'Text', docx: 'Word', zip: 'ZIP archive', toml: 'Configuration', json: 'JSON', jsonl: 'JSON Lines', log: 'Text' };
+  return { date: ['11h', '1d', '3d', '1w', '2w', '1mo', '2mo', '6mo'][seed % 8], size: it.dir ? '—' : (4 + seed % 940) + ' KB', type: it.dir ? 'File folder' : types[ext] || 'File' };
+};
+const indexOfName = (name) => TOP.findIndex(t => t.name === name);
+
+/* ---------- icons ---------- */
+const EXT_COL = { md: 'var(--file-md)', xlsx: 'var(--file-xlsx)', pdf: 'var(--file-pdf)', png: 'var(--file-image)', jpg: 'var(--file-image)', txt: 'var(--file-txt)', docx: 'var(--file-docx)', zip: 'var(--file-zip)', jsonl: 'var(--file-code)', toml: 'var(--file-code)', json: 'var(--file-code)', log: 'var(--file-code)' };
+const EXT_LABEL = { md: 'MD', xlsx: 'XLSX', pdf: 'PDF', txt: 'TXT', docx: 'W', zip: 'ZIP', jsonl: '{ }', toml: 'TOML', json: '{ }', log: 'LOG' };
+function folderIcon(s) {
+  return `<svg width="${s}" height="${s * 0.8}" viewBox="0 0 40 32"><path d="M3 7a3 3 0 0 1 3-3h9.5l3.5 4H34a3 3 0 0 1 3 3v15a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3z" fill="var(--folder)"/><path d="M3 12.5a3 3 0 0 1 3-3h28a3 3 0 0 1 3 3V26a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3z" fill="var(--folder-front)"/></svg>`;
+}
+function fileIcon(name, s) {
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  const c = EXT_COL[ext] || 'var(--file-code)';
+  if (ext === 'png' || ext === 'jpg') {
+    return `<svg width="${s}" height="${s * 0.82}" viewBox="0 0 40 32"><rect x="3" y="3" width="34" height="26" rx="4" fill="${c}" fill-opacity=".16" stroke="${c}" stroke-width="2"/><path d="m5 25 9-9 7 7 5-5 9 9" fill="none" stroke="${c}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/><circle cx="26" cy="11" r="3.2" fill="${c}"/></svg>`;
+  }
+  const label = s >= 24 ? `<text x="16" y="${ext === 'xlsx' || ext === 'toml' ? 28 : 28}" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-weight="800" font-size="${(EXT_LABEL[ext] || '').length > 3 ? 7.5 : 9.5}" fill="${c}">${EXT_LABEL[ext] || ''}</text>` : '';
+  const lines = ext === 'txt' || ext === 'docx' ? `<path d="M9 16h14M9 20h14M9 24h9" stroke="${c}" stroke-width="1.4" stroke-linecap="round"/>` : '';
+  const zip = ext === 'zip' && s >= 24 ? `<path d="M16 4v10" stroke="${c}" stroke-width="2" stroke-dasharray="2 2"/>` : '';
+  const showLabel = ext === 'txt' ? '' : label;
+  return `<svg width="${s * 0.8}" height="${s}" viewBox="0 0 32 40"><path d="M5 2h15l9 9v25a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z" fill="${c}" fill-opacity=".12" stroke="${c}" stroke-width="2" stroke-linejoin="round"/><path d="M20 2v7a2 2 0 0 0 2 2h7" fill="none" stroke="${c}" stroke-width="1.6"/>${lines}${zip}${showLabel}</svg>`;
+}
+const iconFor = (it, s) => it.dir ? folderIcon(s) : fileIcon(it.name, s);
+const CHEVRON = '<svg viewBox="0 0 16 16"><path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+
+/* =====================================================================
+   STATE
+   ===================================================================== */
+const S = {
+  view: 'tiles',
+  expanded: new Set(),
+  notes: true,
+  recent: null,
+  C: { tiles: 7 },
+  placements: [],
+  heights: {},          // folder -> last dragged height (px)
+  listHeights: {},      // top-level path -> preferred descendant rows
+  listRows: null,       // reviewer override; null uses available height
+  listShift: 'conveyor',
+  listLarge: true,
+  listCaret: 'close',   // reviewer choice: apart | close | on | badge
+  selected: null,
+  hot: null,
+  bands: [],
+};
+const DEFAULT_C = { tiles: 7 };
+const C_RANGE = { tiles: [3, 9] };
+const MINI = { tiles: { row: 86, pad: 20 } };
+const files = document.getElementById('files');
+const content = document.getElementById('content');
+const rowsEl = document.getElementById('rows');
+const layer = document.getElementById('layer');
+
+const curC = () => S.C[S.view];
+let motion = null;
+let listMotion = null;
+const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+const defaultHeight = () => 3.5 * MINI.tiles.row + MINI.tiles.pad;
+const minHeight = () => MINI.tiles.row + MINI.tiles.pad;
+const maxHeight = () => Math.max(minHeight(), Math.round(0.7 * files.clientHeight));
+const clampH = (h) => Math.min(maxHeight(), Math.max(minHeight(), h));
+// clientHeight excludes the horizontal scrollbar. The List padding is 12px each side.
+const autoListRows = () => {
+  const css = getComputedStyle(content);
+  return Math.max(4, Math.floor((files.clientHeight - parseFloat(css.paddingTop) - parseFloat(css.paddingBottom)) / LIST_ROW));
+};
+const listR = () => S.listRows ?? autoListRows();
+const listPreferred = path => S.listHeights[path] ?? LIST_PREFERRED_ROWS;
+const listItems = () => S.listLarge ? [...TOP, ...LIST_FILLER] : TOP;
+const currentListResult = () => listResult(listItems(), listR(), S.expanded, path => TREE_KIDS[path], listPreferred);
+function sizeListCard(card) {
+  const g = card.querySelector('.list-scroll');
+  const visibleRows = listVisibleRows(Number(card.dataset.contentRows), listPreferred(card.dataset.path), listR());
+  g.style.height = visibleRows * LIST_ROW + 'px';
+  card.dataset.visibleRows = visibleRows;
+  const grip = card.querySelector('.grip');
+  grip.hidden = Number(card.dataset.contentRows) === 0;
+  grip.setAttribute('aria-valuenow', visibleRows);
+  grip.setAttribute('aria-valuemax', Math.min(Number(card.dataset.contentRows), maxListRows(listR())));
+}
+/* Cap each member before taking the shared maximum: a short member's preferred
+   height must not enlarge a taller sibling whose own preference is smaller. */
+const bandHeight = (band, preferred) => {
+  const prefs = band.members.map(m => preferred ?? S.heights[m.name] ?? band.sizes?.[m.name]?.preferred ?? defaultHeight());
+  const contents = band.members.map(m => band.sizes?.[m.name]?.content ?? Infinity);
+  return clampH(Math.max(...prefs.map((pref, i) => Math.min(pref, contents[i]))));
+};
+
+/* Keep panel rects content-sized so grips, outlines and hit areas share the same edges. */
+function sizeBand(band, bandEl, height = bandHeight(band)) {
+  bandEl.style.height = height + 'px';
+  band.members.forEach(m => {
+    const panel = bandEl.querySelector(`.panel[data-f="${CSS.escape(m.name)}"]`);
+    panel.style.height = Math.min(height, band.sizes[m.name].content) + 'px';
+  });
+}
+
+function openFolder(name) {
+  const idx = indexOfName(name), C = curC();
+  const row = Math.floor(idx / C), col = idx % C;
+  S.placements.push({ name, row, col, side: chooseSide(S.placements, row, col, C, S.view) });
+  S.expanded.add(name);
+}
+function closeFolder(name) {
+  S.placements = S.placements.filter(p => p.name !== name);
+  S.expanded.delete(name);
+}
+function rebuild(order) { S.placements = replay(order, indexOfName, curC(), S.view); }
+const orderNow = () => [...S.expanded].filter(path => TOP.some(it => it.dir && it.name === path));
+const logPlacements = (why) => console.log('[placements]', why, JSON.stringify(S.placements.map(p => `${p.name}:r${p.row}c${p.col}:${p.side}`)));
+
+/* =====================================================================
+   RENDER
+   ===================================================================== */
+function caretHtml(name, dir) {
+  return `<span class="caret ${dir}" data-f="${esc(name)}" title="${dir === 'right' ? 'Peek inside' : 'Collapse'}">${CHEVRON}</span>`;
+}
+function cellHtml(it) {
+  const pl = S.placements.find(p => p.name === it.name);
+  const dir = !pl ? 'right' : pl.side === 'above' ? 'up' : 'down';
+  const cls = ['cell', pl ? 'open' : '', S.selected === it.name ? 'sel' : ''].join(' ');
+  const fa = it.dir ? ` data-f="${esc(it.name)}"` : '';
+  return `<div class="${cls}" data-id="${esc(it.name)}"${fa}><div class="ic">${iconFor(it, 52)}${it.dir ? caretHtml(it.name, dir) : ''}</div><div class="nm">${esc(it.name)}</div></div>`;
+}
+function panelHtml(name) {
+  const kids = KIDS[name].map(k => {
+    const id = esc(name + '/' + k.name), sel = S.selected === name + '/' + k.name ? ' sel' : '';
+    return `<div class="mcell${sel}" data-id="${id}"><div class="mic">${iconFor(k, 36)}</div><div class="mnm">${esc(k.name)}</div></div>`;
+  }).join('');
+  return `<div class="pscroll">${kids}</div>`;
+}
+
+/* Shared tree name markup keeps the empty file caret slot in both views. */
+function treeNameHtml(it, path, expanded) {
+  return `<span class="caretslot">${it.dir ? `<button class="caret ${expanded ? 'down' : 'right'}" data-path="${esc(path)}" aria-label="${expanded ? 'Collapse' : 'Expand'} ${esc(it.name)}" aria-expanded="${expanded}">${CHEVRON}</button>` : ''}</span><span class="ic">${iconFor(it, 16)}</span><span class="nm">${esc(it.name)}</span>`;
+}
+function renderList() {
+  const scrolls = new Map([...rowsEl.querySelectorAll('.card')].map(card => [card.dataset.path, card.querySelector('.list-scroll').scrollTop]));
+  S.bands = [];
+  layer.innerHTML = '';
+  layer.setAttribute('width', 0); layer.setAttribute('height', 0);
+  const rowHtml = ({ path, item, depth }, gridRow = '') => {
+    const expanded = item.dir && S.expanded.has(path);
+    return `<div class="cell${expanded ? ' open' : ''}${S.selected === path ? ' sel' : ''}" data-id="${esc(path)}" style="--depth:${depth}${gridRow ? `;grid-row:${gridRow}` : ''}">${treeNameHtml(item, path, expanded)}</div>`;
+  };
+  const descendantsHtml = entries => {
+    const html = [], groups = [];
+    entries.forEach(entry => {
+      const { path, item, depth } = entry;
+      while (groups.length && groups.at(-1) >= depth) { html.push('</div>'); groups.pop(); }
+      const expanded = item.dir && S.expanded.has(path);
+      if (expanded) {
+        html.push(`<div class="dgroup" data-path="${esc(path)}" style="--depth:${depth}">`);
+        groups.push(depth);
+      }
+      html.push(rowHtml(entry));
+      if (expanded) html.push('<i class="dguide"></i>');
+    });
+    while (groups.length) { html.push('</div>'); groups.pop(); }
+    return html.join('');
+  };
+  const result = currentListResult();
+  const R = listR();
+  content.style.setProperty('--list-r', R);
+  content.dataset.caret = S.listCaret;
+  content.style.setProperty('--list-columns', Math.max(1, result.columns.length));
+  content.dataset.listR = R;
+  // Header is outside the sole descendant scroller. A card occupies exactly
+  // (1 + visibleRows) integer slots; its edge controls add no layout height.
+  rowsEl.innerHTML = `<div class="list-columns">${result.columns.map((entries, column) => {
+    const html = entries.map(({ item, rows, offset, slots }) => {
+      const gridRow = `${offset + 1} / span ${slots}`;
+      if (!item.dir || !S.expanded.has(item.name)) return rowHtml(rows[0], gridRow);
+      return `<div class="dgroup card" data-path="${esc(item.name)}" data-content-rows="${rows.length - 1}" style="--depth:0;grid-row:${gridRow}">${rowHtml(rows[0])}<div class="list-scroll pscroll">${descendantsHtml(rows.slice(1))}</div><div class="grip" data-list-path="${esc(item.name)}" role="separator" tabindex="0" aria-orientation="horizontal" aria-label="Resize ${esc(item.name)}" aria-valuemin="1"><i></i></div><span class="more" hidden></span></div>`;
+    }).join('');
+    return `<div class="list-column" data-column="${column}">${html}</div>`;
+  }).join('')}</div>`;
+  rowsEl.querySelectorAll('.card').forEach(card => {
+    sizeListCard(card);
+    card.querySelector('.list-scroll').scrollTop = scrolls.get(card.dataset.path) || 0;
+  });
+}
+
+function detailRows(items, prefix = '', depth = 0) {
+  return items.map(it => {
+    const path = prefix ? prefix + '/' + it.name : it.name;
+    const expanded = it.dir && S.expanded.has(path), meta = detailMeta(it, path);
+    const row = `<div class="drow${expanded ? ' expanded' : ''}${S.selected === path ? ' sel' : ''}" data-id="${esc(path)}" style="--depth:${depth}"><span class="dname">${treeNameHtml(it, path, expanded)}</span><span class="dmeta">${meta.date}</span><span class="dmeta">${meta.size}</span><span class="dmeta">${meta.type}</span></div>`;
+    return expanded ? `<div class="dgroup" data-path="${esc(path)}" style="--depth:${depth}">${row}<i class="dguide"></i>${detailRows(TREE_KIDS[path] || [], path, depth + 1)}</div>` : row;
+  }).join('');
+}
+function renderDetails() {
+  S.bands = [];
+  layer.innerHTML = '';
+  layer.setAttribute('width', 0); layer.setAttribute('height', 0);
+  rowsEl.innerHTML = `<div class="details-head"><span>NAME</span><span>DATE MODIFIED <span class="sort-arrow">↓</span></span><span>SIZE</span><span>TYPE</span></div>${detailRows(TOP)}`;
+}
+function render(visualPlacements = S.placements) {
+  const C = curC();
+  content.className = 'content ' + S.view;
+  files.classList.toggle('list-files', S.view === 'list');
+  if (S.view === 'details') { renderDetails(); layout(); syncControls(); return; }
+  content.style.setProperty('--c', C);
+  if (S.view === 'list') { renderList(); layout(); syncControls(); return; }
+  S.bands = computeBands(visualPlacements, C, S.view);
+  const nRows = Math.ceil(TOP.length / C);
+  let html = '';
+  for (let r = 0; r < nRows; r++) {
+    const bands = S.bands.filter(b => b.row === r);
+    const bandHtml = (b) => `<div class="band ${b.side}" data-key="${esc(b.key)}" style="height:${bandHeight(b)}px">${b.members.map(m =>
+      `<div class="panel" data-f="${esc(m.name)}">${b.side === 'stacked' ? `<div class="plabel" data-f="${esc(m.name)}" title="${esc(m.name)} · ${KIDS[m.name].length} items">${folderIcon(18)}<b>${esc(m.name)}</b><span>&middot; ${KIDS[m.name].length} items</span><button class="pclose" data-f="${esc(m.name)}" aria-label="Close ${esc(m.name)}" title="Collapse">&times;</button></div>` : ''}${panelHtml(m.name)}<div class="grip" data-key="${esc(b.key)}"><i></i></div><span class="more" hidden></span></div>`).join('')}</div>`;
+    html += `<div class="rowgroup" data-row="${r}">`;
+    bands.filter(b => b.side === 'above').forEach(b => html += bandHtml(b));
+    html += `<div class="row">` + TOP.slice(r * C, r * C + C).map(cellHtml).join('') + `</div>`;
+    bands.filter(b => b.side === 'below').forEach(b => html += bandHtml(b));
+    bands.filter(b => b.side === 'stacked').forEach(b => html += bandHtml(b));
+    html += `</div>`;
+  }
+  rowsEl.innerHTML = html;
+  layout();
+  syncControls();
+}
+
+/* Position panels over their column segments and size mini grids, then redraw outlines. */
+function layout() {
+  if (motion || listMotion || (S.view === 'list' && document.body.classList.contains('dragging'))) return;
+  if (S.view !== 'tiles') {
+    if (S.view === 'list') {
+      const needsSizing = [...rowsEl.querySelectorAll('.card')].some(card =>
+        Number(card.dataset.visibleRows) !== listVisibleRows(Number(card.dataset.contentRows), listPreferred(card.dataset.path), listR()));
+      if (needsSizing || Number(content.dataset.listR) !== listR()) { renderList(); syncControls(); }
+    }
+    rowsEl.querySelectorAll('.dgroup').forEach(group => group.style.setProperty('--guide-fade', Math.min(64, group.getBoundingClientRect().height * .6) + 'px'));
+    if (S.view === 'list') { updateScrollEdges(); return; }
+    updatePins(); return;
+  }
+  S.bands.forEach(b => {
+    const bandEl = rowsEl.querySelector(`.band[data-key="${CSS.escape(b.key)}"]`);
+    if (!bandEl) return;
+    const rowEl = bandEl.parentElement.querySelector('.row');
+    const cells = [...rowEl.children];
+    const rr = rowEl.getBoundingClientRect(), br = bandEl.getBoundingClientRect();
+    b.members.forEach((m, i) => {
+      const { start, end } = b.segs[i];
+      const parent = cells[m.col].getBoundingClientRect();
+      const left = start === 0 ? rr.left : (cells[start - 1].getBoundingClientRect().right + cells[start].getBoundingClientRect().left) / 2;
+      const right = end === cells.length - 1 || end === curC() - 1 ? rr.right : (cells[end].getBoundingClientRect().right + cells[end + 1].getBoundingClientRect().left) / 2;
+      const p = bandEl.querySelector(`.panel[data-f="${CSS.escape(m.name)}"]`);
+      const insL = start === 0 || m.col === start ? TAB_INSET : PANEL_INSET;
+      const insR = end === curC() - 1 || m.col === end ? TAB_INSET : PANEL_INSET;
+      const segmentLeft = left + insL, segmentRight = right - insR;
+      const kids = KIDS[m.name].length;
+      const maxWidth = segmentRight - segmentLeft;
+      const lab = p.querySelector('.plabel');
+      const g = p.querySelector('.pscroll');
+      let n = 1, width = maxWidth, panelLeft = segmentLeft;
+      // Reserve scrollbar space without ever stretching the 96px mini tracks.
+      const padding = 23, track = 96;
+      const fits = Math.max(1, Math.floor((maxWidth - padding) / track));
+      // Wide-ish widget (~2.5 columns per row): 9 items -> 5x2, 14 -> 7x2, 6 -> 3x2.
+      const rows = Math.max(1, Math.round(Math.sqrt(kids / 2.5)));
+      n = Math.min(fits, Math.max(2, Math.ceil(kids / rows)));
+      width = n * track + padding;
+      // At very wide viewport sizes, the complete parent tab still fits inside.
+      width = Math.min(maxWidth, Math.max(width, parent.width - 2 * TAB_INSET));
+      panelLeft = Math.min(segmentRight - width, Math.max(segmentLeft, (parent.left + parent.right - width) / 2));
+      const tabLeft = parent.left + TAB_INSET, tabRight = parent.right - TAB_INSET;
+      if (tabLeft - panelLeft < R_PANEL + R_FILLET) panelLeft = tabLeft;
+      else if (panelLeft + width - tabRight < R_PANEL + R_FILLET) panelLeft = tabRight - width;
+      panelLeft = Math.min(segmentRight - width, Math.max(segmentLeft, panelLeft));
+      g.style.gridTemplateColumns = `repeat(${n}, ${track}px)`;
+      p.style.left = (panelLeft - br.left) + 'px';
+      p.style.width = width + 'px';
+      if (lab) {
+        lab.style.minWidth = Math.min(width, parent.width - 2 * TAB_INSET) + 'px';
+        lab.style.maxWidth = width + 'px';
+        lab.style.left = '0px';
+        const labelWidth = lab.getBoundingClientRect().width;
+        let labelLeft = Math.min(width - labelWidth, Math.max(0, parent.left + TAB_INSET - panelLeft));
+        if (labelLeft < R_PANEL + R_FILLET) labelLeft = 0;
+        else if (width - labelLeft - labelWidth < R_PANEL + R_FILLET) labelLeft = width - labelWidth;
+        lab.style.left = labelLeft + 'px';
+      }
+      const ch = Math.ceil(kids / n) * MINI.tiles.row + MINI.tiles.pad;
+      if (i === 0) b.sizes = {};
+      b.sizes[m.name] = { content: ch, preferred: Math.min(width, defaultHeight()) };
+    });
+    sizeBand(b, bandEl);
+  });
+  layoutLinkGaps();
+  draw();
+}
+
+/* =====================================================================
+   SVG OUTLINES (geometry computed from measured rects)
+   ===================================================================== */
+const R_PANEL = 10, R_TAB = 8, R_FILLET = 6, TAB_INSET = 4, PANEL_INSET = 12, LINK_HALF = 4.5;  // inner boundaries stay clear of tab sides; outer edges align with tabs
+const f2 = (n) => +n.toFixed(2);
+const P = (x, y) => f2(x) + ' ' + f2(y);
+
+/* Outline of a panel (+ optional attached tab). d=+1 panel below parent, -1 above.
+   yp = parent-facing panel edge, yf = far edge, ty = tab's far end. Returns path strings. */
+function outlinePaths({ x0, x1, yp, yf, d, tab }) {
+  const rp = Math.min(R_PANEL, Math.abs(yf - yp) / 2), rt = Math.min(R_TAB, tab ? Math.abs(yp - tab.ty) / 2 : R_TAB), rf = R_FILLET;
+  const S_ = (v) => d > 0 ? v : 1 - v;
+  const A = (r, sw, x, y) => `A${r} ${r} 0 0 ${S_(sw)} ${P(x, y)}`;
+  let flushL = false, flushR = false, tx0, tx1, ty;
+  if (tab) {
+    ({ tx0, tx1, ty } = tab);
+    flushL = tx0 - x0 < rp + rf; flushR = x1 - tx1 < rp + rf;
+    if (flushL) tx0 = x0;
+    if (flushR) tx1 = x1;
+  }
+  const acc = [];
+  if (!tab || !flushL) acc.push(`M${P(x0, yp + d * rp)}`, A(rp, 1, x0 + rp, yp));
+  if (tab) {
+    if (flushL) acc.push(`M${P(x0, yp)}`);
+    else acc.push(`L${P(tx0 - rf, yp)}`, A(rf, 0, tx0, yp - d * rf));
+    acc.push(`L${P(tx0, ty + d * rt)}`, A(rt, 1, tx0 + rt, ty), `L${P(tx1 - rt, ty)}`, A(rt, 1, tx1, ty + d * rt));
+    if (flushR) acc.push(`L${P(x1, yp)}`);
+    else acc.push(`L${P(tx1, yp - d * rf)}`, A(rf, 0, tx1 + rf, yp), `L${P(x1 - rp, yp)}`, A(rp, 1, x1, yp + d * rp));
+  } else {
+    acc.push(`L${P(x1 - rp, yp)}`, A(rp, 1, x1, yp + d * rp));
+  }
+  const hairSegs = [`L${P(x1, yf - d * rp)}`, A(rp, 1, x1 - rp, yf), `L${P(x0 + rp, yf)}`, A(rp, 1, x0, yf - d * rp), `L${P(x0, tab && flushL ? yp : yp + d * rp)}`];
+  const hairStart = tab && flushR ? P(x1, yp) : P(x1, yp + d * rp);
+  return {
+    acc: acc.join(' '),
+    hair: `M${hairStart} ` + hairSegs.join(' '),
+    fill: [...acc, ...hairSegs, 'Z'].join(' '),
+  };
+}
+
+/* Stacked routes use one vertical channel, excluding every intervening panel
+   and label (12px = 7px clearance + ribbon half-width + stroke, so the 24px gap
+   between neighbouring segments' panels always qualifies as a channel). */
+function stackedRoute(pEl, cEl, rel) {
+  const parent = rel(cEl), label = rel(pEl.querySelector('.plabel'));
+  const targetBand = pEl.closest('.band');
+  const bands = [...targetBand.parentElement.querySelectorAll('.band')];
+  const intervening = bands.filter(el => el !== targetBand &&
+    el.compareDocumentPosition(targetBand) & Node.DOCUMENT_POSITION_FOLLOWING &&
+    el.classList.contains('above') === false);
+  const obstacles = intervening.flatMap(el => [...el.querySelectorAll('.panel, .plabel')].map(rel));
+  const centre = (parent.x0 + parent.x1) / 2;
+  const w = content.getBoundingClientRect().width;
+  let free = [[14, w - 14]];
+  obstacles.forEach(o => {
+    free = free.flatMap(([a, b]) => {
+      const l = o.x0 - 12, r = o.x1 + 12;
+      return r < a || l > b ? [[a, b]] : [[a, Math.min(b, l)], [Math.max(a, r), b]].filter(([x, y]) => y >= x);
+    });
+  });
+  const nearest = ([a, b]) => Math.max(a, Math.min(b, centre));
+  const candidates = free.map(nearest);
+  // Outer padding remains available when panels occupy all columns.
+  const channel = candidates.length ? candidates.sort((a, b) => Math.abs(a - centre) - Math.abs(b - centre))[0]
+    : centre < w / 2 ? 5 : w - 5;
+  const safeX = (x, a, b) => Math.max(a + 20, Math.min(b - 20, x));
+  const sx = safeX(channel, parent.x0 + TAB_INSET, parent.x1 - TAB_INSET);
+  const ex = safeX(channel, label.x0, label.x1);
+  return { sx, sy: parent.y1, ex, ey: label.y0, channel, obstacles, intervening, targetBand };
+}
+
+function layoutLinkGaps() {
+  rowsEl.querySelectorAll('.band').forEach(el => el.style.marginTop = '');
+  const rel = (el) => { const r = el.getBoundingClientRect(); return { x0: r.left, x1: r.right, y0: r.top, y1: r.bottom }; };
+  // Channel selection uses content coordinates; measure again after any gap changes in draw().
+  const cr = content.getBoundingClientRect();
+  const local = el => { const r = rel(el); return { x0: r.x0 - cr.left, x1: r.x1 - cr.left, y0: r.y0 - cr.top, y1: r.y1 - cr.top }; };
+  rowsEl.querySelectorAll('.band.stacked .panel').forEach(p => {
+    const cell = p.closest('.rowgroup').querySelector(`.cell[data-f="${CSS.escape(p.dataset.f)}"]`);
+    const r = stackedRoute(p, cell, local);
+    // A detour needs two 18px bends plus ribbon clearance. Straight routes keep
+    // the original gaps; only the bands bordering a horizontal run gain space.
+    if (r.sx !== r.channel && r.intervening.length) {
+      const first = r.intervening[0];
+      first.style.marginTop = first.classList.contains('stacked') ? '106px' : '76px';
+    }
+    if (r.ex !== r.channel || (!r.intervening.length && r.sx !== r.channel)) r.targetBand.style.marginTop = '106px';
+  });
+}
+
+/* Analytic tangents give parallel ribbon edges; curves are sampled only for the
+   offset contour. The shared centre route itself retains cubic Bezier bends. */
+function linkGeometry(route) {
+  const { sx, sy, ex, ey, channel, obstacles } = route;
+  const samples = [{ x: sx, y: sy, dx: 0, dy: 1 }];
+  let path = `M${P(sx, sy)}`, current = samples[0];
+  const line = (x, y) => {
+    if (x === current.x && y === current.y) return;
+    const dx = x - current.x, dy = y - current.y;
+    path += ` L${P(x, y)}`;
+    samples.push({ x, y, dx, dy }); current = { x, y };
+  };
+  const curve = (x1, y1, x2, y2, x, y) => {
+    const from = current;
+    path += ` C${P(x1, y1)} ${P(x2, y2)} ${P(x, y)}`;
+    for (let i = 1; i <= 32; i++) {
+      const t = i / 32, u = 1 - t;
+      samples.push({
+        x: u*u*u*from.x + 3*u*u*t*x1 + 3*u*t*t*x2 + t*t*t*x,
+        y: u*u*u*from.y + 3*u*u*t*y1 + 3*u*t*t*y2 + t*t*t*y,
+        dx: 3*u*u*(x1-from.x) + 6*u*t*(x2-x1) + 3*t*t*(x-x2),
+        dy: 3*u*u*(y1-from.y) + 6*u*t*(y2-y1) + 3*t*t*(y-y2),
+      });
+    }
+    current = { x, y };
+  };
+  const shift = (x, y0, y1) => {
+    const x0 = current.x, dx = x - x0, mid = (y0 + y1) / 2;
+    line(x0, y0);
+    if (Math.abs(dx) < 36) {
+      curve(x0, mid, x, mid, x, y1);
+    } else {
+      const sign = Math.sign(dx), r = motion ? Math.min(18, Math.max(0, (y1 - y0) / 2)) : 18, k = .55228475;
+      line(x0, mid - r);
+      curve(x0, mid - r + k*r, x0 + sign*(r-k*r), mid, x0 + sign*r, mid);
+      line(x - sign*r, mid);
+      curve(x - sign*(r-k*r), mid, x, mid + r - k*r, x, mid + r);
+      line(x, y1);
+    }
+  };
+  if (sx !== channel) {
+    const firstTop = obstacles.length ? Math.min(...obstacles.map(o => o.y0)) : ey;
+    const gap = Math.max(0, firstTop - sy);
+    const from = motion ? sy + Math.min(6, gap / 4) : sy + 6;
+    const to = motion ? sy + Math.min(66, gap - Math.min(10, gap / 4)) : sy + 66;
+    shift(channel, from, to);
+  }
+  if (ex !== channel) {
+    const lastBottom = obstacles.length ? Math.max(...obstacles.map(o => o.y1)) : sy;
+    const gap = Math.max(0, ey - Math.max(current.y, lastBottom));
+    const fromY = motion ? Math.max(current.y, lastBottom + Math.min(10, gap / 4), ey - 66) : Math.max(current.y, lastBottom + 10, ey - 66);
+    shift(ex, fromY, motion ? ey - Math.min(6, gap / 4) : ey - 6);
+  }
+  line(ex, ey);
+  const edge = (sign) => samples.map(({ x, y, dx, dy }, i) => {
+    // A collapsed bend can have a zero derivative; carry its incoming tangent.
+    if (!Math.hypot(dx, dy)) ({ dx, dy } = samples.slice(0, i).reverse().find(q => Math.hypot(q.dx, q.dy)) || samples[0]);
+    const len = Math.hypot(dx, dy);
+    return { x: x + sign * LINK_HALF * dy / len, y: y - sign * LINK_HALF * dx / len, dx: dx / len, dy: dy / len };
+  });
+  return { path, left: edge(-1), right: edge(1) };
+}
+
+/* Join the panel, neck and parent into one closed contour: no doubled fill,
+   edge across a join, or overlap seam. 6px concave fillets soften both mouths. */
+function ribbonOutline(o, lr, parent, route, geom) {
+  const { sx, sy, ex, ey } = route, rf = R_FILLET, rt = R_TAB;
+  const points = (xs) => xs.map((q, i) => {
+    if (!i) return `L${P(q.x, q.y)}`;
+    const prev = xs[i - 1], h = Math.hypot(q.x - prev.x, q.y - prev.y) / 3;
+    return `C${P(prev.x + prev.dx*h, prev.y + prev.dy*h)} ${P(q.x - q.dx*h, q.y - q.dy*h)} ${P(q.x, q.y)}`;
+  }).join(' ');
+  const left = geom.left.slice(1, -1).reverse().map(q => ({ ...q, dx: -q.dx, dy: -q.dy }));
+  const right = geom.right.slice(1, -1);
+  const a = parent.x0 + TAB_INSET, b = parent.x1 - TAB_INSET, top = parent.y0;
+  const neck = `L${P(ex - LINK_HALF - rf, ey)} Q${P(ex - LINK_HALF, ey)} ${P(ex - LINK_HALF, ey - rf)} ${points(left)}
+    L${P(sx - LINK_HALF, sy + rf)} Q${P(sx - LINK_HALF, sy)} ${P(sx - LINK_HALF - rf, sy)}
+    L${P(a + rt, sy)} A${rt} ${rt} 0 0 1 ${P(a, sy - rt)}
+    L${P(a, top + rt)} A${rt} ${rt} 0 0 1 ${P(a + rt, top)}
+    L${P(b - rt, top)} A${rt} ${rt} 0 0 1 ${P(b, top + rt)}
+    L${P(b, sy - rt)} A${rt} ${rt} 0 0 1 ${P(b - rt, sy)}
+    L${P(sx + LINK_HALF + rf, sy)} Q${P(sx + LINK_HALF, sy)} ${P(sx + LINK_HALF, sy + rf)} ${points(right)}
+    L${P(ex + LINK_HALF, ey - rf)} Q${P(ex + LINK_HALF, ey)} ${P(ex + LINK_HALF + rf, ey)}
+    L${P(lr.x1 - rt, ey)}`;
+  return { ...o, fill: o.fill.replace(`L${P(lr.x1 - rt, ey)}`, neck) };
+}
+
+/* Draw every panel's outline. The whole contour gets a 1px hairline; a second 1.5px stroke uses a
+   vertical gradient (accent at the parent-facing edge, fading to transparent down the sides). */
+function draw() {
+  const cr = content.getBoundingClientRect();
+  const rel = (el) => { const r = el.getBoundingClientRect(); return { x0: r.left - cr.left, x1: r.right - cr.left, y0: r.top - cr.top, y1: r.bottom - cr.top }; };
+  layer.setAttribute('width', cr.width); layer.setAttribute('height', cr.height);
+  let defs = '', out = '', gi = 0;
+  const group = (name, o, yp, d, panelH, extra, neck) => {
+    const id = 'fade' + (gi++), fade = Math.min(64, 0.6 * panelH);
+    defs += `<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="0" x2="0" y1="${f2(yp)}" y2="${f2(yp + d * fade)}" spreadMethod="pad"><stop offset="0" stop-color="var(--accent)" stop-opacity="1"/><stop offset="1" stop-color="var(--accent)" stop-opacity="0"/></linearGradient>`;
+    if (neck) {
+      const end = yp + fade, start = neck.top, span = end - start;
+      const stop = (y, opacity) => `<stop offset="${(y - start) / span}" stop-color="var(--accent)" stop-opacity="${opacity}"/>`;
+      const mid = (neck.sy + neck.ey) / 2;
+      const stops = [[start, 1], [Math.min(neck.sy + 64, mid), 0], [Math.max(neck.ey - 64, mid), 0], [neck.ey, 1], [yp, 1], [end, 0]];
+      defs += `<linearGradient id="${id}-neck" gradientUnits="userSpaceOnUse" x1="0" x2="0" y1="${f2(start)}" y2="${f2(end)}">${stops.map(([y, opacity]) => stop(y, opacity)).join('')}</linearGradient>`;
+    }
+    return `<g class="own" data-f="${esc(name)}"><path class="fill" d="${o.fill}"/><path class="hair" d="${o.fill}"/><path class="acc" d="${o.fill}" stroke="url(#${id}${neck ? '-neck' : ''})"/>${extra || ''}</g>`;
+  };
+  S.bands.forEach(b => {
+    const bandEl = rowsEl.querySelector(`.band[data-key="${CSS.escape(b.key)}"]`);
+    if (!bandEl) return;
+    const rowGroup = bandEl.parentElement;
+    b.members.forEach(m => {
+      const pEl = bandEl.querySelector(`.panel[data-f="${CSS.escape(m.name)}"]`);
+      const cEl = rowGroup.querySelector(`.cell[data-f="${CSS.escape(m.name)}"]`);
+      const pr = rel(pEl), cell = rel(cEl), ph = pr.y1 - pr.y0;
+      const tx0 = cell.x0 + TAB_INSET, tx1 = cell.x1 - TAB_INSET;
+      if (b.side === 'below' || b.side === 'above') {
+        const d = b.side === 'below' ? 1 : -1, yp = d > 0 ? pr.y0 : pr.y1;
+        const o = outlinePaths({ x0: pr.x0, x1: pr.x1, yp, yf: d > 0 ? pr.y1 : pr.y0, d, tab: { tx0, tx1, ty: d > 0 ? cell.y0 : cell.y1 } });
+        out += group(m.name, o, yp, d, ph);
+      } else {
+        // stacked: the panel's own label tab rises from its top edge, aligned with the parent's column
+        const lr = rel(pEl.querySelector('.plabel'));
+        const o = outlinePaths({ x0: pr.x0, x1: pr.x1, yp: pr.y0, yf: pr.y1, d: 1, tab: { tx0: lr.x0, tx1: lr.x1, ty: lr.y0 } });
+
+        const route = stackedRoute(pEl, cEl, rel), geom = linkGeometry(route);
+        const hit = `<path class="link-hit" d="${geom.path}"/>`;
+        const joined = ribbonOutline(o, lr, cell, route, geom);
+        out += group(m.name, joined, pr.y0, 1, ph, hit, { top: cell.y0, sy: route.sy, ey: route.ey });
+      }
+    });
+  });
+  layer.innerHTML = `<defs>${defs}</defs>` + out;
+
+  applyHot();
+  updateScrollEdges();
+}
+function applyHot() {
+  layer.querySelectorAll('g.own').forEach(g => {
+    g.classList.toggle('hot', g.dataset.f === S.hot);
+    if (motion) {
+      const panel = rowsEl.querySelector(`.panel[data-f="${CSS.escape(g.dataset.f)}"]`);
+      g.style.opacity = (g.dataset.f === S.hot ? 1 : .78) * Number(panel?.style.opacity || 0);
+    }
+  });
+}
+
+/* =====================================================================
+   INTERACTION
+   ===================================================================== */
+function rowOf(name) { return rowsEl.querySelector(`.cell[data-f="${CSS.escape(name)}"]`)?.parentElement; }
+function withAnchor(name, fn) {
+  const before = rowOf(name)?.getBoundingClientRect().top;
+  fn();
+  const after = rowOf(name)?.getBoundingClientRect().top;
+  if (before != null && after != null) files.scrollTop += after - before;
+}
+/* Capture only layout geometry; folder placement remains the pure algorithm above. */
+function bandRects() {
+  return new Map([...rowsEl.querySelectorAll('.band')].map(el => {
+    const css = getComputedStyle(el);
+    return [el.dataset.key, {
+      height: el.offsetHeight, top: parseFloat(css.marginTop), bottom: parseFloat(css.marginBottom),
+      panels: new Map([...el.querySelectorAll('.panel')].map(p => [p.dataset.f, {
+        left: parseFloat(p.style.left), width: parseFloat(p.style.width), height: parseFloat(p.style.height),
+        labelLeft: parseFloat(p.querySelector('.plabel')?.style.left || 0),
+        labelHeight: p.querySelector('.plabel')?.offsetHeight || 0,
+      }])),
+    }];
+  }));
+}
+function panelScrolls() {
+  return new Map([...rowsEl.querySelectorAll('.panel')].map(p => [p.dataset.f, p.querySelector('.pscroll').scrollTop]));
+}
+function restorePanelScrolls(scrolls) {
+  rowsEl.querySelectorAll('.panel').forEach(p => { p.querySelector('.pscroll').scrollTop = scrolls.get(p.dataset.f) || 0; });
+}
+function finishMotion() {
+  if (!motion) return;
+  const current = motion, scrolls = panelScrolls();
+  cancelAnimationFrame(current.raf);
+  motion = null;
+  withAnchor(current.name, () => { render(); restorePanelScrolls(scrolls); });
+  updateScrollEdges();
+}
+function toggle(name) {
+  finishMotion();
+  const oldPlacements = [...S.placements], from = bandRects(), scrolls = panelScrolls(), scrollTop = files.scrollTop;
+  const closing = S.placements.some(p => p.name === name);
+  const anchorTop = rowOf(name)?.getBoundingClientRect().top;
+  const side = closing ? S.placements.find(p => p.name === name).side : null;
+  if (closing) closeFolder(name); else { openFolder(name); S.recent = name; }
+  const anchored = (side || S.placements.find(p => p.name === name)?.side) === 'above';
+  const anchor = () => {
+    if (anchored && anchorTop != null) files.scrollTop += rowOf(name).getBoundingClientRect().top - anchorTop;
+  };
+  render();
+  restorePanelScrolls(scrolls);
+  const to = bandRects();
+  if (reducedMotion()) { anchor(); updateScrollEdges(); logPlacements('toggle ' + name); return; }
+  // A closing member remains in the visual band until its final frame.
+  if (closing) { render(oldPlacements); restorePanelScrolls(scrolls); }
+  files.scrollTop = scrollTop;
+  const state = { name, raf: 0 };
+  motion = state;
+  const mix = (a, b, t) => a + (b - a) * t;
+  const frame = t => {
+    rowsEl.querySelectorAll('.band').forEach(el => {
+      const a = from.get(el.dataset.key), b = to.get(el.dataset.key);
+      el.style.height = mix(a?.height || 0, b?.height || 0, t) + 'px';
+      el.style.marginTop = mix(a?.top || 0, b?.top || 0, t) + 'px';
+      el.style.marginBottom = mix(a?.bottom || 0, b?.bottom || 0, t) + 'px';
+      el.querySelectorAll('.panel').forEach(p => {
+        const first = a?.panels.get(p.dataset.f), last = b?.panels.get(p.dataset.f);
+        const start = first || { ...last, height: 0, labelHeight: 0 }, end = last || { ...first, height: 0, labelHeight: 0 };
+        ['left', 'width', 'height'].forEach(k => { p.style[k] = mix(start[k], end[k], t) + 'px'; });
+        const opacity = first && last ? 1 : first ? 1 - t : t;
+        p.style.opacity = opacity;
+        p.style.pointerEvents = opacity < .1 ? 'none' : '';
+        const label = p.querySelector('.plabel');
+        if (label) {
+          label.style.left = mix(start.labelLeft, end.labelLeft, t) + 'px';
+          label.style.height = mix(start.labelHeight, end.labelHeight, t) + 'px';
+          label.style.overflow = 'hidden';
+        }
+      });
+    });
+    anchor();
+    draw();
+  };
+  frame(0);
+  const start = performance.now();
+  const tick = now => {
+    if (motion !== state) return;
+    // rAF timestamps can precede `start` (taken after the first frame); clamp to avoid a backward first frame.
+    const elapsed = Math.max(0, Math.min(1, (now - start) / 150));
+    frame(1 - Math.pow(1 - elapsed, 3));
+    if (elapsed < 1 && !reducedMotion()) state.raf = requestAnimationFrame(tick);
+    else finishMotion();
+  };
+  state.raf = requestAnimationFrame(tick);
+  logPlacements('toggle ' + name);
+}
+/* List FLIP uses column-major distance, including the gaps before wrapped cards.
+   Cross-column halves travel the same signed distance, clipped by their own columns. */
+const listEntries = () => [...rowsEl.querySelectorAll('.list-column > .cell, .list-column > .card')];
+const listEntryPath = el => el.dataset.path || el.dataset.id;
+function listRects() {
+  return new Map(listEntries().map(el => {
+    const scroll = el.querySelector('.list-scroll'), column = el.closest('.list-column');
+    return [listEntryPath(el), {
+      rect: el.getBoundingClientRect(), column: Number(column.dataset.column),
+      row: Number(el.style.gridRowStart) - 1,
+      scrollHeight: scroll?.getBoundingClientRect().height || 0, scrollTop: scroll?.scrollTop || 0,
+      clone: el.cloneNode(true), card: el.classList.contains('card'),
+    }];
+  }));
+}
+const columnVisible = column => {
+  const r = column.getBoundingClientRect(), f = files.getBoundingClientRect();
+  return r.right > f.left + files.clientLeft && r.left < f.left + files.clientLeft + files.clientWidth;
+};
+function revealListCard(path) {
+  const card = [...rowsEl.querySelectorAll('.card')].find(el => el.dataset.path === path);
+  if (!card) return;
+  const r = card.getBoundingClientRect(), f = files.getBoundingClientRect();
+  const left = f.left + files.clientLeft, right = left + files.clientWidth;
+  const dx = r.left < left ? r.left - left - 14 : r.right > right ? r.right - right + 14 : 0;
+  if (dx) files.scrollTo({ left: files.scrollLeft + dx, behavior: reducedMotion() ? 'instant' : 'smooth' });
+}
+function finishListMotion(reveal = false) {
+  if (!listMotion) return;
+  const state = listMotion;
+  cancelAnimationFrame(state.raf);
+  state.entries.forEach(({ el, height }) => {
+    el.style.transform = ''; el.style.visibility = ''; el.style.zIndex = '';
+    const scroll = el.querySelector('.list-scroll');
+    if (scroll) scroll.style.height = height + 'px';
+  });
+  state.ghosts.forEach(el => el.remove());
+  rowsEl.querySelectorAll('.list-column').forEach(el => el.classList.remove('animating'));
+  listMotion = null;
+  updateScrollEdges();
+  if (reveal && state.opened) revealListCard(state.opened);
+}
+function relayoutList(change = () => {}, opened = null) {
+  finishListMotion();
+  const from = listRects(), oldR = Number(content.dataset.listR);
+  change();
+  if (document.body.classList.contains('dragging')) { syncControls(); return; }
+  render();
+  if (reducedMotion()) { if (opened) revealListCard(opened); return; }
+  const columns = [...rowsEl.querySelectorAll('.list-column')], R = listR();
+  const entries = listEntries().map(el => ({
+    el, before: from.get(listEntryPath(el)), rect: el.getBoundingClientRect(),
+    column: Number(el.closest('.list-column').dataset.column), row: Number(el.style.gridRowStart) - 1,
+    height: el.querySelector('.list-scroll')?.getBoundingClientRect().height || 0,
+  }));
+  const state = { entries, ghosts: [], raf: 0, opened };
+  const host = rowsEl.querySelector('.list-columns');
+  const ghostColumn = (c, heightRows = R) => {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'motion-column'; wrapper.style.left = c * 276 + 'px';
+    wrapper.style.height = heightRows * LIST_ROW + 'px';
+    host.append(wrapper); state.ghosts.push(wrapper);
+    return wrapper;
+  };
+  const makeGhost = (snapshot, parent, row) => {
+    const ghost = snapshot.clone.cloneNode(true);
+    ghost.classList.add('list-motion-ghost'); ghost.setAttribute('aria-hidden', 'true'); ghost.inert = true;
+    ghost.style.gridRow = ''; ghost.style.top = row * LIST_ROW + 'px';
+    ghost.style.transform = ''; ghost.style.visibility = '';
+    ghost.querySelectorAll('.grip, .more').forEach(el => el.remove());
+    parent.append(ghost);
+    const scroll = ghost.querySelector('.list-scroll');
+    if (scroll) scroll.scrollTop = snapshot.scrollTop;
+    return ghost;
+  };
+  entries.forEach(entry => {
+    const { el, before, column, row } = entry;
+    entry.visible = columnVisible(columns[column]);
+    const scroll = el.querySelector('.list-scroll');
+    if (scroll && before) scroll.scrollTop = before.scrollTop;
+    if (!before) return;
+    // A grip preview must stay above entries departing from underneath it.
+    el.style.zIndex = before.clone.style.zIndex || '';
+    // Geometry changes (R) use vertical FLIP only within the same column.
+    entry.crossing = before.column !== column && oldR === R && S.listShift === 'conveyor';
+    entry.distance = ((column - before.column) * R + row - before.row) * LIST_ROW;
+    if (entry.crossing) {
+      const wrapper = ghostColumn(before.column, oldR);
+      if (columnVisible(wrapper)) entry.outgoing = makeGhost(before, wrapper, before.row);
+    }
+    if (before.card && !el.classList.contains('card') && entry.visible) {
+      // The final plain row waits under a shrinking visual of its former card.
+      entry.closing = makeGhost(before, ghostColumn(column), row);
+      el.style.visibility = 'hidden';
+    }
+  });
+  columns.forEach(el => { if (columnVisible(el)) el.classList.add('animating'); });
+  listMotion = state;
+  const frame = t => {
+    entries.forEach(({ el, before, rect, height, visible, crossing, distance, outgoing, closing }) => {
+      const scroll = el.querySelector('.list-scroll');
+      if (scroll && visible) scroll.style.height = ((before?.scrollHeight || 0) + (height - (before?.scrollHeight || 0)) * t) + 'px';
+      if (outgoing) {
+        outgoing.style.transform = `translateY(${distance * t}px)`;
+        const oldScroll = outgoing.querySelector('.list-scroll');
+        if (oldScroll) oldScroll.style.height = (before.scrollHeight + (height - before.scrollHeight) * t) + 'px';
+      }
+      if (!visible) return;
+      const dy = crossing ? -distance * (1 - t)
+        : S.listShift === 'conveyor' && before?.column === Number(el.closest('.list-column').dataset.column)
+          ? (before.rect.top - rect.top) * (1 - t) : 0;
+      (closing || el).style.transform = `translateY(${dy}px)`;
+      if (closing) closing.querySelector('.list-scroll').style.height = before.scrollHeight * (1 - t) + 'px';
+    });
+    updateScrollEdges();
+  };
+  frame(0);
+  const start = performance.now();
+  const tick = now => {
+    if (listMotion !== state) return;
+    const elapsed = Math.max(0, Math.min(1, (now - start) / 200));
+    if (elapsed === 1 || reducedMotion()) { finishListMotion(true); layout(); return; }
+    frame(1 - Math.pow(1 - elapsed, 3));
+    state.raf = requestAnimationFrame(tick);
+  };
+  state.raf = requestAnimationFrame(tick);
+}
+function toggleTree(path) {
+  if (S.view === 'list') {
+    const opening = !S.expanded.has(path) && TOP.some(item => item.dir && item.name === path);
+    relayoutList(() => { S.expanded = changeListExpansion(S.expanded, path); }, opening ? path : null);
+    rowsEl.querySelector(`.caret[data-path="${CSS.escape(path)}"]`)?.focus({ preventScroll: true });
+    return;
+  }
+  const expanded = new Set(S.expanded);
+  if (expanded.has(path)) expanded.delete(path); else expanded.add(path);
+  S.expanded = expanded;
+  render();
+  rowsEl.querySelector(`.caret[data-path="${CSS.escape(path)}"]`)?.focus({ preventScroll: true });
+}
+
+function updateScrollEdges() {
+  rowsEl.querySelectorAll('.pscroll').forEach(g => {
+    // Motion ghosts are inert snapshots without edge controls; only live scroll areas track edges.
+    if (g.closest('.list-motion-ghost')) return;
+    const below = g.scrollHeight - g.clientHeight - g.scrollTop > 1;
+    g.style.setProperty('--fade-top', g.scrollTop > 1 ? '28px' : '0px');
+    g.style.setProperty('--fade-bottom', below ? '28px' : '0px');
+    const bottom = g.getBoundingClientRect().top + g.clientTop + g.clientHeight;
+    const children = g.classList.contains('list-scroll') ? [...g.querySelectorAll('.cell')] : [...g.children];
+    const more = below ? children.filter(child => {
+      const r = child.getBoundingClientRect();
+      return r.top + r.height / 2 > bottom;
+    }).length : 0;
+    const label = g.parentElement.querySelector('.more');
+    label.textContent = '+' + more + ' more'; label.hidden = more === 0;
+  });
+  updatePins();
+}
+function updatePins() {
+  const pins = document.getElementById('review-pins');
+  if (!S.notes || (document.body.classList.contains('shot') && !document.body.classList.contains('notes'))) { pins.replaceChildren(); return; }
+  const wr = document.getElementById('win').getBoundingClientRect(), fr = files.getBoundingClientRect();
+  if (S.view === 'list') {
+    // Sit in the empty right end of the first card's parent row, clear of all
+    // row text, icons and carets.
+    pins.replaceChildren();
+    const obstacles = [...rowsEl.querySelectorAll('.cell .caretslot, .cell .ic, .cell .nm, .card > .grip, .card > .more:not([hidden])')].flatMap(el => {
+      const r = el.getBoundingClientRect(), scroller = el.closest('.list-scroll');
+      if (!scroller) return [r];
+      const sr = scroller.getBoundingClientRect();
+      return r.bottom > sr.top && r.top < sr.bottom ? [{ left: r.left, right: r.right, top: Math.max(r.top, sr.top), bottom: Math.min(r.bottom, sr.bottom) }] : [];
+    });
+    const placed = [];
+    const pin = (number, x, y, title) => {
+      const r = { left: x, right: x + 18, top: y - 9, bottom: y + 9 };
+      const overlaps = o => r.left < o.right && r.right > o.left && r.top < o.bottom && r.bottom > o.top;
+      if (r.left < fr.left || r.right > fr.right || r.top < fr.top || r.bottom > fr.bottom || obstacles.some(overlaps)) return;
+      obstacles.push(r);
+      placed.push(`<span class="review-pin inset" style="left:${x - wr.left}px;top:${y - wr.top - 9}px" title="${esc(title)}">${number}</span>`);
+    };
+    const card = rowsEl.querySelector('.dgroup.card');
+    if (card) {
+      const gr = card.getBoundingClientRect();
+      pin(5, gr.right - 26, gr.top + 18, 'List: fixed header + scrollable tree');
+    }
+    const overflow = [...rowsEl.querySelectorAll('.list-scroll')].find(g => g.scrollHeight > g.clientHeight + 1);
+    const more = overflow?.parentElement.querySelector('.more');
+    if (more && !more.hidden) {
+      const r = more.getBoundingClientRect();
+      pin(1, r.right + 6, r.top + r.height / 2, 'Scroll fade + more count');
+    }
+    const title = 'List: column order with sideways scroll; later items shift along the columns';
+    const occupied = listEntries().map(el => el.getBoundingClientRect());
+    const columns = [...rowsEl.querySelectorAll('.list-column')];
+    // Last-column tail first, then wrapped-card gaps and other visible empty slots.
+    const candidates = columns.slice().reverse().flatMap(column => {
+      const r = column.getBoundingClientRect();
+      return Array.from({ length: listR() }, (_, row) => ({ x: r.left + 8, y: r.top + row * LIST_ROW + 18 }));
+    });
+    for (const { x, y } of candidates) {
+      if (occupied.some(r => x < r.right && x + 18 > r.left && y - 9 < r.bottom && y + 9 > r.top)) continue;
+      const count = placed.length;
+      pin(6, x, y, title);
+      if (placed.length > count) break;
+    }
+    // A completely full viewport still has the 16px inter-column gutter. An 18px
+    // pin can sit there only when measured icon/name bounds prove it is clear.
+    if (!placed.some(markup => markup.endsWith('>6</span>'))) {
+      for (const column of columns) {
+        const r = column.getBoundingClientRect(), count = placed.length;
+        pin(6, r.right + 1, r.top + 18, title);
+        if (placed.length > count) break;
+      }
+    }
+    pins.innerHTML = placed.join('');
+    return;
+  }
+  const placed = [];
+  const pin = (number, x, y, title, leftSide = false) => {
+    if (y < fr.top || y > fr.bottom || x < fr.left || x > fr.right) return;
+    // The overlay and its leaders are inert; only each 18px pin receives events.
+    const left = Math.max(25, Math.min(wr.width - 22, x - wr.left + (leftSide ? -42 : 24)));
+    const top = Math.max(0, Math.min(wr.height - 20, y - wr.top - 9));
+    placed.push(`<span class="review-pin${leftSide ? ' left' : ''}" style="left:${left}px;top:${top}px" title="${esc(title)}">${number}</span>`);
+  };
+  const overflow = [...rowsEl.querySelectorAll('.pscroll')].find(g => g.scrollHeight > g.clientHeight + 1);
+  if (overflow) {
+    // Beside the "+N more" label, never on top of it or the grip.
+    const more = overflow.parentElement.querySelector('.more');
+    const r = (more && !more.hidden ? more : overflow).getBoundingClientRect();
+    pin(1, r.right + 2, r.top + r.height / 2, 'Scroll fade + more count');
+  }
+  const recent = S.placements.some(p => p.name === S.recent) ? S.recent : orderNow().at(-1);
+  const parent = S.view === 'details' ? null : rowsEl.querySelector(`.cell[data-f="${CSS.escape(recent || '')}"]`);
+  const caret = rowsEl.querySelector('.caret');
+  const target = parent || caret;
+  // Details carets sit in the row's leading gutter: point at them from the left.
+  if (target) {
+    const r = target.getBoundingClientRect();
+    parent ? pin(2, r.right - 5, r.top + 12, 'Open/close motion') : pin(2, r.left, r.top + r.height / 2, 'Click a caret to see the motion', true);
+  }
+  const ribbon = layer.querySelector('.link-hit');
+  if (ribbon) {
+    // Near the top bend, which crosses the row gap rather than a panel's items.
+    const point = ribbon.getPointAtLength(ribbon.getTotalLength() * 0.1), cr = content.getBoundingClientRect();
+    pin(3, cr.left + point.x, cr.top + point.y, 'Ribbon only');
+  }
+  const guide = rowsEl.querySelector('.dguide');
+  if (S.view === 'details' && guide) { const r = guide.getBoundingClientRect(); pin(4, r.left, r.top + 16, 'Details tree styling', true); }
+  pins.innerHTML = placed.join('');
+}
+const pinsEl = document.getElementById('review-pins');
+['pointerdown', 'click'].forEach(type => pinsEl.addEventListener(type, e => {
+  const pin = e.target.closest('.review-pin');
+  if (!pin) return;
+  pin.style.pointerEvents = 'none';
+  const target = document.elementFromPoint(e.clientX, e.clientY);
+  pin.style.pointerEvents = '';
+  if (!target || pinsEl.contains(target)) return;
+  const EventType = type === 'pointerdown' ? PointerEvent : MouseEvent;
+  target.dispatchEvent(new EventType(type, { bubbles: true, cancelable: true, clientX: e.clientX, clientY: e.clientY,
+    button: e.button, buttons: e.buttons, pointerId: e.pointerId, pointerType: e.pointerType,
+    ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey, metaKey: e.metaKey }));
+}));
+rowsEl.addEventListener('scroll', updateScrollEdges, true);
+files.addEventListener('scroll', () => { updatePins(); if (S.view === 'list') syncListReadout(); }, { passive: true });
+files.addEventListener('wheel', e => {
+  if (S.view !== 'list' || !e.deltaY || e.ctrlKey) return;
+  const scroll = e.target.closest('.list-scroll');
+  const canScroll = scroll && (e.deltaY < 0 ? scroll.scrollTop > 0 : scroll.scrollTop + scroll.clientHeight < scroll.scrollHeight - 1);
+  if (canScroll) return;
+  e.preventDefault();
+  const unit = e.deltaMode === 1 ? LIST_ROW : e.deltaMode === 2 ? files.clientWidth : 1;
+  files.scrollLeft += (e.deltaY + e.deltaX) * unit;
+}, { passive: false });
+// Space from the window's top edge to the viewport bottom, minus the page's bottom padding.
+const controlsBar = document.querySelector('.controls');
+const syncWindowFit = () => {
+  const top = document.getElementById('win').getBoundingClientRect().top + scrollY;
+  document.documentElement.style.setProperty('--win-avail', Math.floor(innerHeight - top - 24) + 'px');
+};
+syncWindowFit();
+new ResizeObserver(syncWindowFit).observe(controlsBar);
+window.addEventListener('resize', syncWindowFit);
+window.addEventListener('resize', () => {
+  finishMotion();
+  if (S.view === 'list') {
+    if (!document.body.classList.contains('dragging')) relayoutList();
+  } else layout();
+});
+
+function select(id) {
+  S.selected = id;
+  rowsEl.querySelectorAll('.sel').forEach(e => e.classList.remove('sel'));
+  rowsEl.querySelectorAll('[data-id]').forEach(e => { if (e.dataset.id === id) e.classList.add('sel'); });
+}
+function scrollToParent(name) {
+  const cell = rowsEl.querySelector(`.cell[data-f="${CSS.escape(name)}"]`);
+  if (!cell) return;
+  const fr = files.getBoundingClientRect(), r = cell.getBoundingClientRect();
+  const top = fr.top + files.clientTop, bottom = top + files.clientHeight;
+  const dy = r.top < top ? r.top - top - 12 : r.bottom > bottom ? r.bottom - bottom + 12 : 0;
+  if (dy) files.scrollTo({ top: files.scrollTop + dy, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+}
+rowsEl.addEventListener('click', (e) => {
+  const close = e.target.closest('.pclose');
+  if (close) {
+    const name = close.dataset.f;
+    toggle(name);
+    const caret = rowsEl.querySelector(`.caret[data-f="${CSS.escape(name)}"]`);
+    if (caret) { caret.tabIndex = -1; caret.focus({ preventScroll: true }); }
+    return;
+  }
+  const lab = e.target.closest('.plabel');
+  if (lab) { scrollToParent(lab.dataset.f); return; }
+  const car = e.target.closest('.caret');
+  if (car) { if (car.dataset.path) toggleTree(car.dataset.path); else toggle(car.dataset.f); return; }
+  const it = e.target.closest('[data-id]');
+  if (it) select(it.dataset.id);
+});
+rowsEl.addEventListener('mouseover', (e) => {
+  const el = e.target.closest('[data-f]'); S.hot = el ? el.dataset.f : null; applyHot();
+});
+// Listen above both DOM and SVG surfaces; empty row/band boxes must not mask
+// the link hit path beneath them.
+content.addEventListener('pointermove', (e) => {
+  let owner = e.target.closest('[data-f]')?.dataset.f;
+  if (!owner) {
+    const cr = content.getBoundingClientRect(), x = e.clientX - cr.left, y = e.clientY - cr.top;
+    owner = [...layer.querySelectorAll('.link-hit')].find(path => path.isPointInStroke(new DOMPoint(x, y)))?.closest('[data-f]')?.dataset.f;
+  }
+  S.hot = owner || null; applyHot();
+});
+content.addEventListener('pointerleave', () => { S.hot = null; applyHot(); });
+
+function resizeListCard(card, preferredRows) {
+  const contentRows = Number(card.dataset.contentRows);
+  S.listHeights = { ...S.listHeights, [card.dataset.path]: listVisibleRows(contentRows, preferredRows, listR()) };
+}
+function previewListCard(card, preferredRows) {
+  // Outer slots stay fixed until release. Only the card's scroll area previews
+  // the pending height; cover its following rows without moving them off-grid.
+  const visible = listVisibleRows(Number(card.dataset.contentRows), preferredRows, listR());
+  card.querySelector('.list-scroll').style.height = visible * LIST_ROW + 'px';
+  card.querySelector('.grip').setAttribute('aria-valuenow', visible);
+  card.style.zIndex = '5';
+  const bottom = card.getBoundingClientRect().bottom;
+  for (let next = card.nextElementSibling; next; next = next.nextElementSibling)
+    next.style.visibility = next.getBoundingClientRect().top < bottom ? 'hidden' : '';
+  updateScrollEdges();
+}
+rowsEl.addEventListener('keydown', e => {
+  const grip = e.target.closest('.grip[data-list-path]');
+  if (!grip || !['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key)) return;
+  e.preventDefault();
+  const card = grip.closest('.card'), rows = Number(card.dataset.visibleRows);
+  relayoutList(() => resizeListCard(card, e.key === 'Home' ? 1 : e.key === 'End' ? maxListRows(listR()) : rows + (e.key === 'ArrowUp' ? -1 : 1)));
+  rowsEl.querySelector(`.grip[data-list-path="${CSS.escape(card.dataset.path)}"]`)?.focus({ preventScroll: true });
+});
+
+/* Grip dragging shares a preferred height; each panel remains capped by its content. */
+rowsEl.addEventListener('pointerdown', (e) => {
+  if (!e.target.closest('.grip')) return;
+  if (motion) { finishMotion(); return; }
+  const grip = e.target.closest('.grip');
+  e.preventDefault();
+  if (grip.dataset.listPath) {
+    finishListMotion();
+    const card = grip.closest('.card'), startY = e.clientY, startRows = Number(card.dataset.visibleRows);
+    grip.classList.add('drag'); document.body.classList.add('dragging');
+    let preferred = startRows;
+    // Preview only the pending card height. The pure layout is committed once,
+    // on release, so all following entries animate from valid original slots.
+    const move = ev => {
+      preferred = startRows + (ev.clientY - startY) / LIST_ROW;
+      previewListCard(card, preferred);
+    };
+    const up = () => {
+      grip.classList.remove('drag'); document.body.classList.remove('dragging');
+      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up);
+      relayoutList(() => resizeListCard(card, preferred));
+    };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
+    return;
+  }
+  const band = S.bands.find(b => b.key === grip.dataset.key);
+  const bandEl = grip.closest('.band');
+  const sign = band.side === 'above' ? -1 : 1;
+  const startY = e.clientY, startH = bandHeight(band), startPref = startH;
+  let lastH = startH;
+  grip.classList.add('drag'); document.body.classList.add('dragging');
+  const row = bandEl.parentElement.querySelector('.row');
+  const move = (ev) => {
+    const pref = clampH(startPref + sign * (ev.clientY - startY));
+    const h = bandHeight(band, pref);
+    band.members.forEach(m => { S.heights[m.name] = pref; });
+    if (h === lastH) return;
+    const before = row.getBoundingClientRect().top;
+    sizeBand(band, bandEl, h);
+    if (band.side === 'above') files.scrollTop += row.getBoundingClientRect().top - before;
+    lastH = h;
+    draw();
+  };
+  const up = () => {
+    grip.classList.remove('drag'); document.body.classList.remove('dragging');
+    window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up);
+  };
+  window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
+});
+
+/* relayout on width changes */
+let raf = 0;
+const relayoutObserver = new ResizeObserver(() => { cancelAnimationFrame(raf); raf = requestAnimationFrame(layout); });
+relayoutObserver.observe(content);
+relayoutObserver.observe(files); // List R follows the files-area height
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => layout());
+
+/* =====================================================================
+   CONTROLS + PRESETS
+   ===================================================================== */
+const ORDERS = {
+  single: () => ['Career'],
+  split: (v) => v === 'tiles' ? ['Career', 'Archive'] : ['Career', 'Personal'],
+  above: (v) => [...ORDERS.split(v), 'Inbox'],
+  many: () => ['Inbox', 'Career', 'Career/Applications', 'Archive', 'Archive/2019', 'Archive/2020'],
+  stacked: () => ['Career', 'Archive', 'Inbox', 'AI Draft Archive', 'Codex'],
+  cards: () => ['Codex', 'Archive', 'Archive/2019', 'Archive/2020', 'AI Draft Archive'],
+  reset: () => [],
+};
+function applyPreset(view, kind, keepC) {
+  finishMotion();
+  finishListMotion();
+  if (view === 'list' && ['above', 'nested'].includes(kind)) kind = 'many';
+  S.recent = null;
+  S.view = view;
+  if (!keepC && view === 'tiles') S.C[view] = DEFAULT_C[view];
+  S.expanded = new Set(ORDERS[kind](view));
+  if (view === 'tiles') rebuild(orderNow());
+  S.selected = null;
+  render();
+  files.scrollTop = 0;
+  if (view === 'list') files.scrollLeft = 0;
+  updatePins();
+  logPlacements(`preset ${view}-${kind}`);
+}
+function setC(n) {
+  finishMotion();
+  if (S.view !== 'tiles') return;
+  const [lo, hi] = C_RANGE[S.view], next = Math.min(hi, Math.max(lo, n));
+  if (next === curC()) return;
+  const order = orderNow(); S.C.tiles = next; rebuild(order); render();
+  logPlacements('columns=' + curC());
+}
+function applyTreePreset() {
+  finishMotion();
+  finishListMotion();
+  S.view = 'details';
+  S.expanded = new Set(['Career', 'Career/Applications']);
+  S.selected = 'Career/Interview Prep.md';
+  render(); files.scrollTop = 0; updatePins();
+}
+function setView(v) {
+  finishMotion();
+  finishListMotion();
+  S.view = v;
+  if (v === 'tiles') rebuild(orderNow());
+  render(); files.scrollTop = 0; files.scrollLeft = 0; updatePins();
+}
+function syncControls() {
+  ['tiles', 'list', 'details'].forEach(v => document.getElementById('v-' + v).setAttribute('aria-pressed', S.view === v));
+  const details = S.view === 'details';
+  document.getElementById('columns-control').hidden = S.view !== 'tiles';
+  document.getElementById('placement-presets').hidden = details;
+  document.getElementById('p-tree').hidden = !details;
+  document.querySelector('.controls .hint').textContent = S.view !== 'tiles' ? 'Click a caret to expand. Click a row to select.' : "Click a folder's caret to peek inside. Drag a panel's grip to resize.";
+  document.getElementById('c-val').textContent = S.view === 'tiles' ? curC() : '—';
+  document.getElementById('review-notes').setAttribute('aria-pressed', S.notes);
+  const list = S.view === 'list';
+  document.getElementById('list-content-control').hidden = !list;
+  document.getElementById('p-split').textContent = list ? 'Two open' : 'Two split';
+  document.getElementById('p-above').textContent = list ? 'Nested' : 'Opens above';
+  document.getElementById('p-stacked').hidden = list;
+  document.getElementById('p-cards').hidden = !list;
+  document.getElementById('list-flow').hidden = !list || !S.notes;
+  if (list) {
+    document.getElementById('list-rows').placeholder = `auto (${autoListRows()})`;
+    document.getElementById('list-shift').value = S.listShift;
+    document.getElementById('list-large').checked = S.listLarge;
+    document.getElementById('list-caret').value = S.listCaret;
+    syncListReadout();
+  }
+}
+function syncListReadout() {
+  const columns = [...rowsEl.querySelectorAll('.list-column')];
+  const offscreen = columns.filter(column => !columnVisible(column)).length;
+  document.getElementById('list-readout').textContent = `column flow · R = ${listR()} · ${columns.length} columns · ${offscreen} off screen`;
+}
+['tiles', 'list', 'details'].forEach(v => { document.getElementById('v-' + v).onclick = () => setView(v); });
+document.getElementById('p-tree').onclick = applyTreePreset;
+document.getElementById('review-notes').onclick = () => { S.notes = !S.notes; syncControls(); updatePins(); };
+document.getElementById('c-dec').onclick = () => setC(curC() - 1);
+document.getElementById('c-inc').onclick = () => setC(curC() + 1);
+['single', 'split', 'above', 'stacked', 'cards', 'reset'].forEach(k => {
+  document.getElementById('p-' + k).onclick = () => applyPreset(S.view, k, false);
+});
+
+document.getElementById('list-rows').addEventListener('input', e => {
+  const input = e.target, value = Number(input.value);
+  if (input.value !== '' && (!input.validity.valid || !Number.isInteger(value))) return;
+  relayoutList(() => { S.listRows = input.value === '' ? null : value; });
+});
+document.getElementById('list-shift').addEventListener('change', e => {
+  finishListMotion(); S.listShift = e.target.value;
+});
+document.getElementById('list-caret').addEventListener('change', e => {
+  S.listCaret = e.target.value; content.dataset.caret = S.listCaret; updatePins();
+});
+document.getElementById('list-large').addEventListener('change', e => {
+  relayoutList(() => { S.listLarge = e.target.checked; });
+});
+
+/* recent folders in the sidebar */
+['Pokemon Red Unreal', 'My Photos', 'Wallpaper', 'Misc', 'Lagoon', 'spike-out'].forEach((n, i) => {
+  document.querySelectorAll('[data-rf]')[i].innerHTML = `<svg viewBox="0 0 40 32"><path d="M3 7a3 3 0 0 1 3-3h9.5l3.5 4H34a3 3 0 0 1 3 3v15a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3z" fill="var(--folder-muted)"/></svg>${n}`;
+});
+
+/* Hash loads and presets never enter the animation path. */
+function applyHash() {
+  let h;
+  try { h = decodeURIComponent(location.hash.slice(1)); } catch { h = ''; }
+  const shot = h.startsWith('shot-'), notes = h.endsWith('-notes');
+  if (shot) h = h.slice(5);
+  if (notes) h = h.slice(0, -6);
+  document.body.classList.toggle('shot', shot);
+  document.body.classList.toggle('notes', notes);
+  if (notes) S.notes = true;
+  if (h === 'details-tree') { applyTreePreset(); return true; }
+  const m = /^(tiles|list)-(single|split|above|stacked|many|nested|cards)$/.exec(h);
+  if (m && (m[1] === 'list' || !['many', 'nested', 'cards'].includes(m[2]))) { applyPreset(m[1], m[2], false); return true; }
+  updatePins();
+  return false;
+}
+window.addEventListener('hashchange', applyHash);
+
+/* =====================================================================
+   SELF TEST: verify Tiles placements, List tree rows, integer slots and column flow
+   ===================================================================== */
+function selfTest() {
+  const EXPECT = {
+    'tiles-single': ['Career:below'],
+    'tiles-split': ['Career:below', 'Archive:below'],
+    'tiles-above': ['Career:below', 'Archive:below', 'Inbox:above'],
+    'tiles-stacked': ['Career:below', 'Archive:below', 'Inbox:above', 'AI Draft Archive:above', 'Codex:stacked'],
+  };
+  const res = {};
+  for (const [k, exp] of Object.entries(EXPECT)) {
+    const [v, kind] = k.split('-');
+    const pl = replay(ORDERS[kind](v), indexOfName, DEFAULT_C[v], v);
+    const got = pl.map(p => `${p.name}:${p.side}`);
+    const bands = computeBands(pl, DEFAULT_C[v], v).map(b => `${b.key}[${b.segs.map(s => s.start + '-' + s.end).join('|')}]`);
+    const sidesOK = JSON.stringify(got) === JSON.stringify(exp);
+    res[k] = { ok: sidesOK, got, bands };
+    console.log(res[k].ok ? 'PASS' : 'FAIL', k, got.join(', '), bands.join(' '));
+  }
+  const check = (name, got, expected) => {
+    res[name] = { ok: JSON.stringify(got) === JSON.stringify(expected), got, expected };
+    console.log(res[name].ok ? 'PASS' : 'FAIL', name);
+  };
+  const paths = entries => entries.map(e => e.path);
+  const kidsOf = path => TREE_KIDS[path];
+  const pref = () => LIST_PREFERRED_ROWS;
+  const stateFor = order => ({ expanded: listPresetState(order) });
+  const layoutFor = (state, preferredOf = pref, R = 6, items = TOP) => listLayout(items, R, state.expanded, kidsOf, preferredOf);
+  const names = cols => cols.map(col => col.map(e => e.item.name));
+  const positions = cols => Object.fromEntries(cols.flatMap((col, c) => col.map(e => [e.item.name, [c, e.offset]])));
+  const basePaths = [
+    ['Inbox', 'Career', 'Codex', 'Personal', 'Archive', 'AI Draft Archive'],
+    ['freeze-fix-guide.md', 'Scrivo Sample.md', 'Totality Dividends.xlsx', 'Totality Trades History.xlsx', 'numbers_backup.md', 'bpay-2026-oct-receipt.png'],
+    ['Revenue NSW.pdf', 'bot_pat.txt', 'numbers_backup_2.md'],
+  ];
+  const careerPaths = [
+    'Career/Applications', 'Career/Cover Letters', 'Career/Portfolio',
+    'Career/Resume-2026.pdf', 'Career/Interview Prep.md', 'Career/References.docx',
+    'Career/salary-research.xlsx', 'Career/headshot.jpg', 'Career/offer-letter.pdf',
+  ];
+  const applicationPaths = [
+    'Career/Applications/Acme Corp', 'Career/Applications/Globex',
+    'Career/Applications/Initech', 'Career/Applications/tracker.xlsx',
+    'Career/Applications/follow-ups.md',
+  ];
+  const careerNested = ['Career', careerPaths[0], ...applicationPaths, ...careerPaths.slice(1)];
+  const inboxPaths = ['Inbox', 'Inbox/to-file', 'Inbox/scan-0193.pdf', 'Inbox/invoice-oct.pdf',
+    'Inbox/meeting-notes.md', 'Inbox/screenshot-2026-10-15.png', 'Inbox/quote.txt'];
+  const archivePaths = ['Archive', 'Archive/2019', 'Archive/2019/taxes-2019.pdf', 'Archive/2019/notes.md',
+    'Archive/2020', 'Archive/2020/taxes-2020.pdf', 'Archive/2020/notes.md', 'Archive/2021', 'Archive/2022', 'Archive/2023',
+    'Archive/taxes-2022.pdf', 'Archive/old-notes.md', 'Archive/scans.zip',
+    ...['2018', '2019', '2020', '2021', '2022', '2023'].flatMap(y => [
+      `Archive/bank-statements-${y}.pdf`, `Archive/receipts-${y}.zip`, `Archive/notes-${y}.md`,
+      `Archive/budget-${y}.xlsx`, `Archive/insurance-${y}.pdf`, `Archive/scan-${y}.jpg`, `Archive/misc-${y}.txt`,
+    ])];
+  check('card-slots', [[48, 6], [3, 6], [0, 6]].map(([n, p]) => cardSlots(n, p)), [7, 4, 1]);
+  check('card-slots-whole-rows', [cardSlots(48, 2.6), cardSlots(3, 0)], [4, 2]);
+  const baseState = stateFor([]), base = layoutFor(baseState);
+  check('list-closed-column-order', names(base), basePaths);
+  check('list-closed-offsets', base.map(col => col.map(e => e.offset)), [[0, 1, 2, 3, 4, 5], [0, 1, 2, 3, 4, 5], [0, 1, 2]]);
+  const careerState = stateFor(['Career']), career = layoutFor(careerState), careerPos = positions(career);
+  const careerCard = career.flat().find(entry => entry.item.name === 'Career');
+  check('list-career-anchor', careerPos.Career, [0, 1]);
+  check('list-career-card-rows', [careerCard.offset, careerCard.slots], [1, 5]);
+  check('list-career-exact-shift', TOP.slice(2).map((item, i) => {
+    const [c, r] = careerPos[item.name]; return c * 6 + r - (i + 2);
+  }), TOP.slice(2).map(() => careerCard.slots - 1));
+  const ai = layoutFor(stateFor(['AI Draft Archive']));
+  check('list-ai-wrap', positions(ai)['AI Draft Archive'], [1, 0]);
+  check('list-ai-tail-gap', ai[0].map(e => [e.item.name, e.offset]), TOP.slice(0, 5).map((item, i) => [item.name, i]));
+  check('list-ai-following-item', positions(ai)['freeze-fix-guide.md'], [1, 5]);
+  const nestedCareer = stateFor(['Career', 'Career/Applications']);
+  check('list-career-nested', paths(listTreeRows(TOP[1], nestedCareer.expanded, kidsOf)), careerNested);
+  const collapsed = { expanded: changeListExpansion(nestedCareer.expanded, 'Career') };
+  check('list-collapsed', names(layoutFor(collapsed)), basePaths);
+  check('list-remembers-nested', [...collapsed.expanded], ['Career/Applications']);
+  const restored = { expanded: changeListExpansion(collapsed.expanded, 'Career') };
+  check('list-restored', layoutFor(restored), layoutFor(nestedCareer));
+
+  // Tree traversal contracts are independent of placement policy.
+  const nested = stateFor(ORDERS.many());
+  check('list-nested-order', [...nested.expanded], ['Inbox', 'Career', 'Career/Applications', 'Archive', 'Archive/2019', 'Archive/2020']);
+  for (const [path, expected] of [['Inbox', inboxPaths], ['Career', careerNested], ['Archive', archivePaths]]) {
+    const rows = listTreeRows(TOP.find(item => item.name === path), nested.expanded, kidsOf);
+    check('list-tree-' + path, paths(rows), expected);
+    check('list-tree-depths-' + path, rows.map(e => e.depth), expected.map(p => p.split('/').length - 1));
+  }
+  const cards = stateFor(ORDERS.cards());
+  check('list-three-cards-order', [...cards.expanded], ['Codex', 'Archive', 'Archive/2019', 'Archive/2020', 'AI Draft Archive']);
+  check('list-presets-order-independent', ['single', 'split', 'many', 'cards'].map(kind => {
+    const order = ORDERS[kind]('list');
+    return JSON.stringify(layoutFor(stateFor(order))) === JSON.stringify(layoutFor(stateFor([...order].reverse())));
+  }), [true, true, true, true]);
+  const empty = listResult([D('Empty'), F('one')], 4, new Set(['Empty']), () => []);
+  check('list-empty-card', empty.columns[0].map(e => [e.item.name, e.offset, e.slots, e.card]), [['Empty', 0, 1, true], ['one', 1, 1, false]]);
+  check('list-empty-directory', columnFlow([], 4, () => ({ slots: 1, card: false })).columns, []);
+  check('list-visible-cap', [4, 6, 9, 21].map(R => listVisibleRows(100, 100, R)), [2, 4, 6, 14]);
+  check('list-filler-count-and-uniqueness', [LIST_FILLER.length, new Set([...TOP, ...LIST_FILLER].map(item => item.name)).size], [75, 90]);
+  const throwsRange = fn => { try { fn(); return false; } catch (e) { return e instanceof RangeError; } };
+  check('list-rejects-invalid-inputs', [
+    () => columnFlow([], 0, () => ({})), () => columnFlow([], NaN, () => ({})),
+    () => columnFlow([], Number.MAX_VALUE, () => ({})),
+    () => columnFlow(TOP, 4, () => ({ slots: 0 })),
+    () => columnFlow(TOP, 4, () => ({ slots: 5, card: true })),
+    () => columnFlow(TOP, 4, () => ({ slots: 2, card: false })),
+  ].map(throwsRange), [true, true, true, true, true, true]);
+
+  // A separate occupied-slot oracle advances one slot at a time; it has no history.
+  const oracle = (items, R, expanded, preferredOf) => {
+    let index = 0;
+    return items.map(item => {
+      const content = listTreeRows(item, expanded, kidsOf).length - 1;
+      const card = Boolean(item.dir && expanded.has(item.name));
+      const slots = card ? 1 + Math.min(content, Math.max(1, Math.min(Math.round(preferredOf(item.name)), Math.floor(.7 * R)))) : 1;
+      while (index % R + slots > R) index++;
+      const position = [item.name, Math.floor(index / R), index % R, slots, card];
+      index += slots;
+      return position;
+    });
+  };
+  const signature = cols => cols.flatMap((col, c) => col.map(e => [e.item.name, c, e.offset, e.slots, e.card]));
+  let seed = 0x51c0ffee;
+  const random = n => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return Math.floor(seed / 0x100000000 * n); };
+  const toggles = Object.keys(TREE_KIDS);
+  for (const R of [4, 6, 9, 21]) for (const large of [false, true]) {
+    const items = large ? [...TOP, ...LIST_FILLER] : TOP;
+    for (const kind of Object.keys(ORDERS)) {
+      let expanded = listPresetState(ORDERS[kind]('list')), heights = {};
+      const preferredOf = path => heights[path] ?? LIST_PREFERRED_ROWS;
+      const failures = [], ensure = (ok, message) => { if (!ok && failures.length < 8) failures.push(message); };
+      const compute = () => listLayout(items, R, expanded, kidsOf, preferredOf);
+      const verify = (cols, step) => {
+        ensure(JSON.stringify(cols.flat().map(e => e.item.name)) === JSON.stringify(items.map(e => e.name)), `order at ${step}`);
+        cols.forEach((col, c) => {
+          let end = 0;
+          col.forEach(e => {
+            ensure(e.offset >= end && e.offset + e.slots <= R, `overlap/overflow at ${step}`);
+            ensure(e.offset === end, `interior gap at ${step}`);
+            end = e.offset + e.slots;
+          });
+          if (end < R && c < cols.length - 1) {
+            const next = cols[c + 1][0];
+            ensure(next.card && next.offset === 0 && next.slots > R - end, `invalid tail gap at ${step}`);
+          }
+        });
+        const fresh = columnFlow(items, R, item => {
+          const content = listTreeRows(item, expanded, kidsOf).length - 1;
+          const card = Boolean(item.dir && expanded.has(item.name));
+          return { card, slots: card ? cardSlots(content, listVisibleRows(content, preferredOf(item.name), R)) : 1 };
+        }).columns;
+        ensure(JSON.stringify(signature(cols)) === JSON.stringify(signature(fresh)), `history at ${step}`);
+        ensure(JSON.stringify(signature(cols)) === JSON.stringify(oracle(items, R, expanded, preferredOf)), `oracle at ${step}`);
+      };
+      let resizeCount = 0, topToggleCount = 0, nestedToggleCount = 0;
+      verify(compute(), 'preset');
+      for (let step = 0; step < 120; step++) {
+        const before = compute(), beforePos = positions(before), resize = random(4) === 0;
+        const path = resize ? TOP[random(6)].name : toggles[random(toggles.length)];
+        const root = path.split('/')[0], rootIndex = items.findIndex(item => item.name === root);
+        const opening = !resize && !expanded.has(path);
+        if (resize) { heights = { ...heights, [root]: 1 + random(R * 3) }; resizeCount++; }
+        else { expanded = changeListExpansion(expanded, path); path === root ? topToggleCount++ : nestedToggleCount++; }
+        const after = compute(), afterPos = positions(after);
+        verify(after, step);
+        for (const item of items.slice(0, rootIndex))
+          ensure(JSON.stringify(beforePos[item.name]) === JSON.stringify(afterPos[item.name]), `earlier item moved at ${step}`);
+        if (opening && path === root) {
+          const entry = after.flat().find(e => e.item.name === root), [c, row] = beforePos[root];
+          const expected = row + entry.slots <= R ? [c, row] : [c + 1, 0];
+          ensure(JSON.stringify(afterPos[root]) === JSON.stringify(expected), `opening anchor at ${step}`);
+        }
+      }
+      ensure(resizeCount > 0 && topToggleCount > 0 && nestedToggleCount > 0, 'missing randomized operation coverage');
+      expanded = new Set();
+      const closed = compute();
+      verify(closed, 'closed');
+      ensure(JSON.stringify(signature(closed)) === JSON.stringify(signature(listLayout(items, R, new Set(), kidsOf))), 'base not restored');
+      check(`list-random-R${R}-${large ? 'large' : 'small'}-${kind}`, failures, []);
+    }
+  }
+  window.__selfTest = res;
+}
+selfTest();
+
+if (!applyHash()) applyPreset('tiles', 'single', false);
+</script>

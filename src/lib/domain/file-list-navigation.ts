@@ -1,4 +1,6 @@
 import type { FileEntry, ViewMode } from "./file";
+import { resolveListMove, type ListNavigationSnapshot } from "./list-column-flow";
+import type { TileNavigationSnapshot } from "./tile-panel-navigation";
 
 /** A keyboard cursor is independent of the selected set and survives sorting. */
 export function resolveFileCursor(
@@ -20,15 +22,28 @@ export interface FileListKey {
 }
 export type FileListMove =
   | { kind: "focus"; index: number; selection: "replace" | "extend" | "preserve" }
+  | { kind: "handled" }
   | { kind: "parent" }
   | { kind: "open"; index: number };
 
+/** PageUp/PageDown distance in visual lines (rows), shared by every grid view. */
+export const PAGE_LINES = 10;
+
 export function resolveFileListMove(
   event: FileListKey,
-  layout: { viewMode: ViewMode; columns: number; count: number; cursorIndex: number; directory: boolean; yazi: boolean },
+  layout: { viewMode: ViewMode; columns: number; count: number; cursorIndex: number; directory: boolean; yazi: boolean;
+    /** "columns" = Folder Peek column flow (needs `list`); "rows" = classic row-major List. */
+    listLayout?: "rows" | "columns"; list?: ListNavigationSnapshot | null;
+    /** Tiles with open Folder Peek panels: spatial arrows (#1241). Null or
+     * absent keeps the classic grid arithmetic. */
+    tiles?: TileNavigationSnapshot | null },
 ): FileListMove | null {
   if (event.altKey || !Number.isSafeInteger(layout.count) || layout.count < 0
     || !Number.isSafeInteger(layout.cursorIndex) || layout.cursorIndex < -1 || layout.cursorIndex >= layout.count) return null;
+  if (layout.viewMode === "list" && layout.listLayout === "columns") {
+    return layout.list ? resolveListMove(event, layout.list.model, layout.cursorIndex, layout.list.usableWidth, layout.list.cardScrollTop) : null;
+  }
+  if (layout.viewMode === "tiles" && layout.tiles) return layout.tiles.resolve(event, layout.cursorIndex);
   const modified = event.ctrlKey || event.metaKey;
   const arrow = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key);
   const columns = Number.isFinite(layout.columns) ? Math.max(1, Math.floor(layout.columns)) : 1;
@@ -49,8 +64,8 @@ export function resolveFileListMove(
     index = layout.cursorIndex < 0 ? 0 : layout.cursorIndex + (forward ? step : -step);
     if (index < 0 || index >= layout.count) return null;
   } else if (!modified && (event.key === "PageUp" || event.key === "PageDown")) {
-    index = layout.cursorIndex < 0 ? 0
-      : Math.max(0, Math.min(layout.count - 1, layout.cursorIndex + (event.key === "PageDown" ? 8 : -8)));
+    const page = (event.key === "PageDown" ? PAGE_LINES : -PAGE_LINES) * (layout.viewMode === "details" ? 1 : columns);
+    index = layout.cursorIndex < 0 ? 0 : Math.max(0, Math.min(layout.count - 1, layout.cursorIndex + page));
   } else return null;
   return { kind: "focus", index, selection: event.shiftKey ? "extend" : modified && arrow ? "preserve" : "replace" };
 }

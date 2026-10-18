@@ -1,0 +1,5 @@
+Catppuccin Icons — https://github.com/catppuccin/vscode-icons
+Revision: b6915da9f6889b683a110aa747de96c2820a537d
+Source directory: icons/css-variables
+Unmodified artwork; filenames follow this app's shared icon identities.
+MIT license: see LICENSE.txt.

@@ -5,12 +5,15 @@
  * Issue: fix/view-component-duplication, refactor/extract-drop-target
  */
 
+import { isWindows } from "$lib/domain/platform";
+import { operationDrag } from "$lib/domain/file-operation-selection";
+import { toastStore } from "$lib/state/toast.svelte";
 import type { FileEntry } from "$lib/domain/file";
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";
 import { clipboardStore } from "$lib/state/clipboard.svelte";
 import { createHtml5FileDrag } from "$lib/state/html5-file-drag.svelte";
 import { useDropTarget } from "./use-drop-target.svelte";
-import { createDragGhost } from "./use-pointer-drag.svelte";
+import { createDragGhost, reducedDragSource } from "./use-pointer-drag.svelte";
 
 interface ItemInteractionsDeps {
   getExplorer: () => ExplorerInstance;
@@ -41,8 +44,12 @@ export function useItemInteractions(deps: ItemInteractionsDeps) {
     if (!transfer) return;
     const explorer = getExplorer();
     const selectedEntries = explorer.getSelectedEntries();
-    const isMulti = selectedEntries.length > 1 && isSelected;
-    const paths = isMulti ? selectedEntries.map((e) => e.path) : [entry.path];
+    const reduced = operationDrag(isSelected ? selectedEntries : [entry], entry, isWindows, explorer.displayEntries);
+    if (!reduced.ok) { event.preventDefault(); toastStore.error(reduced.error); return; }
+    const originalPath = entry.path;
+    entry = reduced.primary;
+    const paths = reduced.entries.map(e => e.path);
+    const isMulti = paths.length > 1;
 
     sourceDrag.start(event, { path: entry.path, name: entry.name, kind: entry.kind, paths: isMulti ? paths : undefined }, () => {
       // Custom drag ghost (#258, #269): the engine's default drag image is an
@@ -54,7 +61,7 @@ export function useItemInteractions(deps: ItemInteractionsDeps) {
       // next tick.
       if (typeof document !== "undefined" && typeof transfer.setDragImage === "function") {
         const ghost = createDragGhost(
-          event.currentTarget as HTMLElement,
+          originalPath === entry.path ? event.currentTarget as HTMLElement : reducedDragSource(event.currentTarget as HTMLElement, entry.path),
           isMulti ? `${paths.length} items` : entry.name,
           isMulti ? paths.length : 1,
         );
@@ -85,8 +92,10 @@ export function useItemInteractions(deps: ItemInteractionsDeps) {
     handleDragEnd,
     trackDragSource: sourceDrag.trackSource,
     handleDragOver: dropTarget.handleDragOver,
+    handleDragEnter: dropTarget.handleDragEnter,
     handleDragLeave: dropTarget.handleDragLeave,
     handleDrop: dropTarget.handleDrop,
+    releaseDropTarget: dropTarget.releaseDropTarget,
     isDropTarget: dropTarget.isDropTarget,
     isCopyDrop: dropTarget.isCopyDrop,
     handleContextMenu,

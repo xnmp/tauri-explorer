@@ -26,11 +26,13 @@ function loadClosedTabs(): ClosedTabSnapshot[] {
 }
 
 /** The stack of recently closed tabs, persisted to localStorage. */
-export interface ClosedTabsStore {
+export interface ClosedTabsStore<Session = never> {
   /** Reload from localStorage (picks up snapshots closed in other windows). */
   refresh(): void;
   /** Push a snapshot onto the stack (enforcing the cap) and persist. */
-  push(snapshot: ClosedTabSnapshot): void;
+  push(snapshot: ClosedTabSnapshot, session?: Session): void;
+  /** Transient data for the top snapshot; never serialized or shared across windows. */
+  peekSession(): Session | undefined;
   /** Pop the most recent snapshot and persist; undefined when empty. */
   pop(): ClosedTabSnapshot | undefined;
   /** Peek the most recent snapshot without removing it. */
@@ -40,8 +42,15 @@ export interface ClosedTabsStore {
 }
 
 /** Create a closed-tab stack backed by localStorage. */
-export function createClosedTabsStore(): ClosedTabsStore {
+export function createClosedTabsStore<Session = never>(): ClosedTabsStore<Session> {
   let stack: ClosedTabSnapshot[] = loadClosedTabs();
+
+  const sessions = new Map<string, Session>();
+  const key = (snapshot: ClosedTabSnapshot) => JSON.stringify([snapshot.tab?.id, snapshot.closedTs, snapshot.path]);
+  function pruneSessions(): void {
+    const retained = new Set(stack.map(key));
+    for (const id of sessions.keys()) if (!retained.has(id)) sessions.delete(id);
+  }
 
   function save(): void {
     savePersisted(CLOSED_TABS_KEY, stack);
@@ -50,17 +59,24 @@ export function createClosedTabsStore(): ClosedTabsStore {
   return {
     refresh(): void {
       stack = loadClosedTabs();
+      pruneSessions();
     },
-    push(snapshot: ClosedTabSnapshot): void {
+    push(snapshot: ClosedTabSnapshot, session?: Session): void {
+      if (session !== undefined) sessions.set(key(snapshot), session);
       stack.push(snapshot);
       if (stack.length > MAX_CLOSED_TABS) {
         stack.shift();
       }
+      pruneSessions();
       save();
+    },
+    peekSession(): Session | undefined {
+      const snapshot = stack.at(-1);
+      return snapshot ? sessions.get(key(snapshot)) : undefined;
     },
     pop(): ClosedTabSnapshot | undefined {
       const snapshot = stack.pop();
-      if (snapshot) save();
+      if (snapshot) { sessions.delete(key(snapshot)); save(); }
       return snapshot;
     },
     peek(): ClosedTabSnapshot | undefined {

@@ -88,6 +88,20 @@ describe("resolveDropTarget", () => {
     expect(result).toBeNull();
   });
 
+  it("treats a List card's own surface or peek pseudo-row as its folder (#1240)", () => {
+    const surface = makeElement("list-peek-state peek-drop-target", { "data-path": "/home/user/Career/Portfolio" });
+    stubElementFromPoint(surface);
+    expect(resolveDropTarget({ x: 10, y: 10 })).toEqual({ type: "folder", path: "/home/user/Career/Portfolio" });
+    highlightTarget({ x: 10, y: 10 });
+    expect(surface.classList.contains("drop-target")).toBe(true);
+  });
+
+  it("keeps file rows inside a List card non-targets", () => {
+    const fileRow = makeElement("entry-item", { "data-path": "/home/user/Career/cv.pdf" }, { classes: "list-card-scroll peek-drop-target", attrs: { "data-path": "/home/user/Career" } });
+    stubElementFromPoint(fileRow);
+    expect(resolveDropTarget({ x: 10, y: 10 })).toBeNull();
+  });
+
   it("returns sidebar target when over .quick-access", () => {
     const el = makeElement("quick-access");
     stubElementFromPoint(el);

@@ -129,6 +129,8 @@ function createThemeState() {
   // currentThemeId during picker live-previews. Consumers that must repaint
   // imperatively on any visual theme change (e.g. the terminal) key on this.
   let appliedThemeId = $state(initialTheme);
+  // Applying new CSS for the same ID is still a new visual theme revision.
+  let appliedThemeRevision = $state.raw<object>({});
   let themes = $state<ThemeInfo[]>([]);
 
   // Apply the saved theme synchronously at store creation. The primary flash
@@ -159,6 +161,7 @@ function createThemeState() {
     const scheme = getComputedStyle(document.documentElement).colorScheme;
     document.documentElement.classList.toggle("hljs-light", scheme === "light");
     document.documentElement.classList.toggle("hljs-dark", scheme !== "light");
+    appliedThemeRevision = {};
     requestAnimationFrame(() => {
       const raw = getComputedStyle(document.body).backgroundColor || "";
       // Raw CSS color string, not JSON — app.html's pre-paint script reads
@@ -237,6 +240,7 @@ function createThemeState() {
     get appliedThemeId() {
       return appliedThemeId;
     },
+    get appliedThemeRevision() { return appliedThemeRevision; },
     get currentTheme() {
       return currentTheme;
     },

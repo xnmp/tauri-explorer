@@ -4,6 +4,7 @@
 -->
 <script lang="ts">
   import { settingsStore, type IconTheme, type ThumbnailSize, type WindowsBackdrop, type PaneLayoutMode } from "$lib/state/settings.svelte";
+  import { ICON_THEMES } from './icons/icon-theme-options';
   import { themeStore } from "$lib/state/theme.svelte";
   import { isMac, isWindows } from "$lib/domain/platform";
   import { TERMINAL_LINE_ACTIONS, defaultTerminalShortcuts } from "$lib/domain/terminal-keys";
@@ -140,7 +141,9 @@
     navRefresh: ["Refresh", "Show the refresh/reload button"],
     showHidden: ["Show Hidden Files", "Show files and folders starting with a dot (Ctrl+H)"],
     millerHideEmpty: ["Hide Empty Folders in Miller View", "Don't show folders that have no visible entries in miller columns"],
-    yaziNavigation: ["Yazi-style Navigation", "Left/right arrows navigate up/into folders in details and list view"],
+    yaziNavigation: ["Yazi-style Navigation", "Left/right arrows navigate up/into folders in Details view (and List view when Folder Peek is off)"],
+    folderPeek: ["Folder Peek", "Expand folders in place with a caret; List view flows into columns that scroll sideways. Off restores the classic views"],
+    folderPeekCarets: ["Show Folder Peek Carets", "Show expand carets beside folders in Details and List. Off: a single click on a folder expands or collapses it"],
     autoEnterSingleSubdir: ["Auto-Enter Single Subfolder", "When a folder contains only one subfolder (and nothing else), descend into it automatically"],
     tabTitleGitRoot: ["Git Repo Root in Tab Title", "When the folder is inside a git repository, show the repo's root folder name in the tab title"],
     defaultPaneLayout: ["New Pane Layout", "How the New Pane command places panes: dwindle splits along the longer axis (Hyprland-style), or always right/down", "split", "pane"],
@@ -175,7 +178,7 @@
   ];
   const navBarRows = [rows.navBack, rows.navForward, rows.navUp, rows.navRefresh];
   const behaviorRows = [
-    rows.showHidden, rows.millerHideEmpty, rows.yaziNavigation, rows.autoEnterSingleSubdir, rows.tabTitleGitRoot, rows.defaultPaneLayout, rows.showManuallyHidden,
+    rows.showHidden, rows.millerHideEmpty, rows.yaziNavigation, rows.folderPeek, rows.folderPeekCarets, rows.autoEnterSingleSubdir, rows.tabTitleGitRoot, rows.defaultPaneLayout, rows.showManuallyHidden,
     rows.gitStatus, rows.f5SyncsLocalBranches, rows.recentItems, rows.recycleBin, rows.quickOpenDebug, rows.warmWindow, rows.confirmDelete,
     rows.backgroundOpacity, rows.backgroundImage, rows.wallpaperBlur, rows.terminalApp,
     rows.previewFontSize, rows.showPreviewInfo, rows.ffmpegPath,
@@ -271,9 +274,9 @@
               value={settingsStore.iconTheme}
               onchange={(e) => settingsStore.update({ iconTheme: e.currentTarget.value as IconTheme })}
             >
-              <option value="default">Default</option>
-              <option value="material">Material</option>
-              <option value="minimal">Minimal</option>
+              {#each ICON_THEMES as pack (pack.id)}
+                <option value={pack.id}>{pack.name}</option>
+              {/each}
             </select>
           </div>
 
@@ -552,13 +555,44 @@
           <div class="setting-row" class:hidden={!matchesSearch(...rows.yaziNavigation)}>
             <div class="setting-info">
               <span class="setting-label">Yazi-style Navigation</span>
-              <span class="setting-description">Left/right arrows navigate up/into folders in details and list view</span>
+              <span class="setting-description">Left/right arrows navigate up/into folders in Details view (and List view when Folder Peek is off)</span>
             </div>
             <label class="toggle">
               <input
                 type="checkbox"
                 checked={settingsStore.yaziNavigation}
                 onchange={() => settingsStore.update({ yaziNavigation: !settingsStore.yaziNavigation })}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.folderPeek)}>
+            <div class="setting-info">
+              <span class="setting-label">Folder Peek</span>
+              <span class="setting-description">Expand folders in place with a caret; List view flows into columns that scroll sideways. Off restores the classic views</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                class="folder-peek-toggle"
+                checked={settingsStore.folderPeek}
+                onchange={() => settingsStore.update({ folderPeek: !settingsStore.folderPeek })}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.folderPeekCarets)}>
+            <div class="setting-info">
+              <span class="setting-label">Show Folder Peek Carets</span>
+              <span class="setting-description">Show expand carets beside folders in Details and List. Off: a single click on a folder expands or collapses it</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                class="folder-peek-carets-toggle"
+                checked={settingsStore.folderPeekCarets}
+                onchange={() => settingsStore.update({ folderPeekCarets: !settingsStore.folderPeekCarets })}
               />
               <span class="toggle-slider"></span>
             </label>

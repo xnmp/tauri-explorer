@@ -16,7 +16,7 @@
  * Run across all three views with ALL_VIEW_MODES=1.
  */
 import { test, expect, type Page } from "./fixtures";
-import { VIEW_MODES, waitForEntries, switchViewMode, pressShortcut } from "./helpers";
+import { VIEW_MODES, VIEW_VARIANTS, waitForEntries, switchViewMode, pressShortcut, seedSettings } from "./helpers";
 
 const HOME = "/?path=/home/user";
 
@@ -34,9 +34,11 @@ function entryByName(page: Page, name: string) {
 // ---------------------------------------------------------------------------
 // Per-view invariants: selection highlight + keyboard navigation.
 // ---------------------------------------------------------------------------
-for (const viewMode of VIEW_MODES) {
-  test.describe(`FileList invariants [${viewMode}]`, () => {
+for (const { name, viewMode, classic } of VIEW_VARIANTS) {
+  test.describe(`FileList invariants [${name}]`, () => {
     test.beforeEach(async ({ page }) => {
+      // Classic List = Folder Peek off (row-major grid).
+      if (classic) await seedSettings(page, { folderPeek: false });
       await page.goto(HOME);
       await waitForEntries(page);
       if (viewMode !== "details") {
@@ -58,14 +60,13 @@ for (const viewMode of VIEW_MODES) {
     });
 
     test("arrow keys move the selection between entries", async ({ page }) => {
-      // Details is a single column (ArrowDown/Up step by 1). List/Tiles are
-      // row-major grids where ArrowDown jumps a whole row (and legitimately
-      // no-ops on the last row), so the reliable single-step keys there are
-      // ArrowRight/Left. Anchor on a file (not a folder) so the yazi-style
-      // "ArrowRight enters the selected folder" branch can't trigger.
-      const forwardKey = viewMode === "details" ? "ArrowDown" : "ArrowRight";
-      const backKey = viewMode === "details" ? "ArrowUp" : "ArrowLeft";
-      const anchor = page.locator(".entry-item:not(.directory)").first();
+      // Details steps by row; column-flow List fills vertically; Tiles and the
+      // classic row-major List step horizontally. Anchor on a file where the
+      // yazi-style "ArrowRight enters the folder" branch could trigger.
+      const horizontal = viewMode === "tiles" || classic;
+      const forwardKey = horizontal ? "ArrowRight" : "ArrowDown";
+      const backKey = horizontal ? "ArrowLeft" : "ArrowUp";
+      const anchor = viewMode === "list" && !classic ? page.locator(".entry-item").first() : page.locator(".entry-item:not(.directory)").first();
 
       await anchor.click();
       await expect(anchor).toHaveClass(/selected/);

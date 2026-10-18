@@ -16,7 +16,7 @@
  */
 import { test, expect, type Page } from "./fixtures";
 import {
-  ALL_VIEW_MODES,
+  ALL_VIEW_VARIANTS,
   BUILT_IN_THEMES as THEMES,
   HOME_URL,
   waitForEntries,
@@ -281,12 +281,12 @@ async function tabToEntry(page: Page): Promise<string | null> {
   return await focusedPath();
 }
 
-async function reloadInView(page: Page, viewMode: ViewMode): Promise<void> {
-  await page.evaluate((mode) => {
+async function reloadInView(page: Page, viewMode: ViewMode, classic = false): Promise<void> {
+  await page.evaluate(({ mode, folderPeek }) => {
     const raw = localStorage.getItem("explorer-settings");
     const settings = raw ? JSON.parse(raw) as Record<string, unknown> : {};
-    localStorage.setItem("explorer-settings", JSON.stringify({ ...settings, viewMode: mode }));
-  }, viewMode);
+    localStorage.setItem("explorer-settings", JSON.stringify({ ...settings, viewMode: mode, folderPeek }));
+  }, { mode: viewMode, folderPeek: !classic });
   await page.goto(HOME_URL);
   await waitForEntries(page);
   await expect(page.getByTestId("file-recovery-notice")).toBeVisible();
@@ -344,15 +344,16 @@ test.describe("Keyboard traversal", () => {
     await expect(page.locator(".explorer-pane .crumb.current")).toHaveText("Videos");
   });
 
-  for (const viewMode of ALL_VIEW_MODES) {
-    test(`arrow keys move the ${viewMode} file-list selection once Tab reaches it`, async ({ page }) => {
-      await openWindow(page, { viewMode });
+  for (const { name, viewMode, classic } of ALL_VIEW_VARIANTS) {
+    test(`arrow keys move the ${name} file-list selection once Tab reaches it`, async ({ page }) => {
+      await openWindow(page, { viewMode, ...(classic ? { folderPeek: false } : {}) });
       // The file list keeps one roving Tab stop among its entries: the cursor,
       // or the first entry before anything has been selected.
       expect(await tabToEntry(page)).toBe("/home/user/Archive");
-      // Tiles can fit every fixture entry in one row, so ArrowDown correctly
-      // has no destination. Use each renderer's guaranteed adjacent axis.
-      await page.keyboard.press(viewMode === "details" ? "ArrowDown" : "ArrowRight");
+      // Tiles and the classic row-major List can fit every fixture entry in
+      // one row, so ArrowDown correctly has no destination. Use each
+      // renderer's guaranteed adjacent axis.
+      await page.keyboard.press(viewMode === "tiles" || classic ? "ArrowRight" : "ArrowDown");
       const focusedPath = () => page.evaluate(() => {
         const el = document.activeElement as HTMLElement;
         return el.matches(".file-list .entry-item") ? el.dataset.path ?? null : null;
@@ -437,8 +438,8 @@ test.describe("Focus indicators", () => {
 
         // List and Tiles are separate virtualized renderers with their own
         // focus CSS. Exercise their roving stop in every theme as well.
-        for (const viewMode of ALL_VIEW_MODES.filter((mode): mode is Exclude<ViewMode, "details"> => mode !== "details")) {
-          await reloadInView(page, viewMode);
+        for (const { name: viewMode, viewMode: mode, classic } of ALL_VIEW_VARIANTS.filter((variant) => variant.viewMode !== "details")) {
+          await reloadInView(page, mode, classic);
           expect(await tabToEntry(page), `${viewMode} did not expose a roving entry Tab stop`).toBeTruthy();
           const indicator = await focusIndicator(page);
           if (indicator.kind === "none" || indicator.kind === "auto" || indicator.clipped

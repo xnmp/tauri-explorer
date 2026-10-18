@@ -28,13 +28,16 @@
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import FileIcon from "./FileIcon.svelte";
   import { tick } from "svelte";
+  import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 
   interface Props {
     explorer: ExplorerInstance;
     variant: "details" | "list" | "tiles";
+    /** Column-flow List slot (Folder Peek): fixed 30px slot, overlaid error. */
+    columns?: boolean;
   }
 
-  let { explorer, variant }: Props = $props();
+  let { explorer, variant, columns = false }: Props = $props();
 
   const isFile = $derived(explorer.newEntryKind === "file");
   // Preview entry used solely to pick the correct icon for the inline row.
@@ -53,7 +56,7 @@
     const base = isFile ? "New File" : "New folder";
     const kind = isFile ? "file" : "directory";
     const existingNames = new Set(
-      explorer.displayEntries
+      explorer.ownDisplayEntries
         .filter((e) => e.kind === kind)
         .map((e) => e.name.toLowerCase())
     );
@@ -69,6 +72,7 @@
       newFolderName = getNextName();
       newFolderError = null;
       tick().then(() => {
+        if (!explorer.isCreatingFolder || windowTabsManager.getActiveExplorer() !== explorer) return;
         newFolderInput?.focus();
         newFolderInput?.select();
       });
@@ -127,7 +131,7 @@
     {/if}
   </div>
 {:else if variant === "list"}
-  <div class="inline-new-folder list-inline-new-folder">
+  <div class="inline-new-folder list-inline-new-folder" class:list-columns-slot={columns}>
     <span class="list-icon">
       <FileIcon entry={iconEntry} size="small" />
     </span>
@@ -207,6 +211,22 @@
   .list-inline-new-folder {
     padding: 4px 8px;
     height: auto;
+  }
+
+  .list-inline-new-folder.list-columns-slot {
+    box-sizing: border-box;
+    padding: 3px 8px;
+    height: 30px;
+    position: relative;
+  }
+
+  .list-columns-slot .new-folder-input { min-width: 0; }
+  .list-columns-slot .new-folder-error {
+    position: absolute;
+    top: 100%;
+    left: 8px;
+    z-index: 3;
+    background: var(--control-fill);
   }
 
   .list-inline-new-folder .list-icon {

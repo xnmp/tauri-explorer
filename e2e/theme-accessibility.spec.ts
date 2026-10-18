@@ -31,6 +31,14 @@
  *   and the highlight at full strength for text lighter than it. The main
  *   scan sees the plain bar; a second scan of the title bar alone sees the
  *   highlight folded into the bar's solid colour.
+ * - A Tiles row group with an open Folder Peek panel (#1241) draws its tab
+ *   and page outline as one SVG layer behind the row and panels. axe treats
+ *   any SVG beneath text as an image and gives up. The outline's strokes run
+ *   along the edges, away from text, but its translucent fill does sit under
+ *   the panel and its parent tile, so the layer is replaced by that fill as
+ *   plain backgrounds: on each panel, and on a patch behind each open parent
+ *   tile. The fill is taken at full strength (an idle outline draws it at
+ *   78%), the stronger tint and so the harder case for contrast.
  *
  * File-type icons draw their extension label as SVG text, or a Nerd Font
  * glyph. Either is part of the icon's picture, which WCAG 1.4.3 exempts, and
@@ -52,6 +60,7 @@ async function prepareForContrast(page: Page) {
     `,
   });
   await paintComposites(page, "active-tab");
+  await paintComposites(page, "tile-outlines");
 }
 
 /**
@@ -62,8 +71,10 @@ async function prepareForContrast(page: Page) {
  *   edges, away from its text).
  * - `titlebar-sheen`: the title bar at its sheen's strongest stop. The sheen is
  *   read from the live rule; the style tag only hides it from axe.
+ * - `tile-outlines`: each Tiles outline layer becomes its fill, painted on the
+ *   panels and on a patch behind each open parent tile (none outside Tiles).
  */
-async function paintComposites(page: Page, target: "active-tab" | "titlebar-sheen") {
+async function paintComposites(page: Page, target: "active-tab" | "titlebar-sheen" | "tile-outlines") {
   await page.evaluate((which) => {
     type Rgba = [number, number, number, number];
     // The first colour in a computed value: rgb()/rgba() in 0-255, or the
@@ -91,6 +102,28 @@ async function paintComposites(page: Page, target: "active-tab" | "titlebar-shee
     if (which === "active-tab") {
       for (const tab of document.querySelectorAll<HTMLElement>(".tab.active")) {
         tab.style.setProperty("background", over(resolve("--background-card", tab), resolve("--background-solid", tab)), "important");
+      }
+      return;
+    }
+    if (which === "tile-outlines") {
+      for (const layer of document.querySelectorAll<SVGElement>(".tile-outlines")) {
+        const group = layer.parentElement;
+        if (!group) continue;
+        const [r, g, b, a] = resolve("--subtle-fill-tertiary", group);
+        const fill = `rgba(${r}, ${g}, ${b}, ${a})`;
+        const origin = group.getBoundingClientRect();
+        for (const caret of group.querySelectorAll('.tile-row .peek-caret[aria-expanded="true"]')) {
+          const tile = caret.closest(".entry-item")?.getBoundingClientRect();
+          if (!tile) continue;
+          const patch = document.createElement("div");
+          Object.assign(patch.style, {
+            position: "absolute", left: `${tile.left - origin.left}px`, top: `${tile.top - origin.top}px`,
+            width: `${tile.width}px`, height: `${tile.height}px`, background: fill, pointerEvents: "none",
+          });
+          group.insertBefore(patch, layer);
+        }
+        for (const panel of group.querySelectorAll<HTMLElement>(".tile-panel")) panel.style.backgroundColor = fill;
+        layer.style.display = "none";
       }
       return;
     }
@@ -135,6 +168,11 @@ for (const viewMode of VIEW_MODES) {
         if (premium) await expect(page.locator("html")).toHaveAttribute("data-premium", "true");
         else await expect(page.locator("html")).not.toHaveAttribute("data-premium");
         if (viewMode !== "details") await switchViewMode(page, viewMode);
+        if (viewMode === "tiles") {
+          // Folder Peek panels (#1241): scan Tiles with a panel open.
+          await page.locator(`.tile-row .entry-item[data-path="/home/user/Documents"] .peek-caret`).click();
+          await expect(page.locator(".tile-panel .entry-item").first()).toBeVisible();
+        }
 
         await page.locator(".entry-item").nth(1).click();
         await expect(page.locator(".entry-item.selected")).toHaveCount(1);

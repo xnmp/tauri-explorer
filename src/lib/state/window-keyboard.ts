@@ -38,13 +38,13 @@ export function startWindowKeyboard(target: EventTarget, dependencies: WindowKey
     const element = event.target as HTMLElement | null;
     return {
       nativeButton: element?.tagName === "BUTTON",
-      fileEntry: element?.matches?.('.file-list .entry-item, .file-list .virtual-viewport[role="grid"]') ?? false,
+      fileEntry: element?.matches?.('.file-list .entry-item, .file-list .virtual-viewport[role="grid"], .file-list .virtual-viewport[role="treegrid"], .file-list .virtual-viewport[role="tree"], .file-list .virtual-viewport[role="listbox"]') ?? false,
       input: element?.tagName === "INPUT" || element?.tagName === "TEXTAREA" || !!element?.isContentEditable,
       terminal: !!element?.closest?.(".terminal-panel"),
       customButton: !!element?.closest?.('[role="button"]'),
       // Composite widgets (e.g. a plugin's ui/file-tiles grid) move focus with
       // arrow keys themselves; the pane's own grid is matched by fileEntry.
-      grid: !!element?.closest?.('[role="grid"]'),
+      grid: !!(element?.closest?.('[role="grid"]') || element?.closest?.('[role="treegrid"]')),
       separator: !!element?.closest?.('[role="separator"]'),
       media: !!element?.closest?.('.video-preview'),
     };

@@ -9,6 +9,7 @@
   Issue: tauri-explorer-9djf.5, #128
 -->
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { useRowGridView } from "$lib/composables/use-row-grid-view.svelte";
@@ -59,8 +60,14 @@
     getColumns: () => effectiveListColumns,
   });
   const { interactions, pointerDrag } = grid;
-  scrollToIndex = grid.scrollToIndex;
-  containsIndex = grid.containsIndex;
+  const revealIndex = grid.scrollToIndex, contains = grid.containsIndex;
+  scrollToIndex = revealIndex;
+  containsIndex = contains;
+  // Folder Peek can swap List renderers live; retire only our own bindings.
+  onDestroy(() => {
+    if (scrollToIndex === revealIndex) scrollToIndex = undefined;
+    if (containsIndex === contains) containsIndex = undefined;
+  });
 </script>
 
 <div class="list-view" data-columns={effectiveListColumns}>
@@ -135,15 +142,18 @@
     color: var(--text-primary);
   }
 
-  .list-view :global(.list-item:focus) {
+  /* View chrome must stay below FileList’s keyboard ring even when this
+     renderer’s styles arrive after the shared surface; pointer-focus resets
+     never match :focus-visible. */
+  .list-view :global(.list-item:where(:focus:not(:focus-visible))) {
     outline: none;
   }
 
-  .list-view :global(.list-item:hover) {
+  .list-view :global(.list-item:where(:hover)) {
     background: var(--subtle-fill-secondary);
   }
 
-  .list-view :global(.list-item.selected) {
+  .list-view :global(.list-item:where(.selected)) {
     background: color-mix(in srgb, var(--accent) 8%, transparent);
     border-color: transparent;
     border-left-color: var(--accent);
@@ -169,7 +179,7 @@
     opacity: 0.5;
   }
 
-  .list-view :global(.list-item.in-clipboard:not(.cut)) {
+  .list-view :global(.list-item:where(.in-clipboard:not(.cut))) {
     outline: 1px dashed var(--accent);
     outline-offset: -1px;
   }

@@ -527,3 +527,9 @@ opens CF_HDROP directly, enumerates UTF-16 paths with DragQueryFileW and closes
 the clipboard in finally. Keep the independent native empty/single/multi-path
 oracle in `clipboard-cross-window.spec.ts`; mocked subprocess output cannot
 qualify the Win32 adapter. Do not extend the timeout or retry an observation.
+
+Tiles Folder Peek motion probes must control both rAF and `performance.now()`
+through Playwright's clock. Six wall-clock frames can outlast the entire 150ms
+motion on loaded WebKit runners. Install before navigation, pause after initial
+layout settles, then advance the clock while the page-side sampler is pending;
+retain the intermediate-height, inert-ghost and reduced-motion assertions (#1275).

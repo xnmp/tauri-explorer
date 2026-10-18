@@ -512,28 +512,39 @@ test("hover emphasis is immediate, with no transition", async ({ page }) => {
 });
 
 test("opening animates with inert ghosts and the reduced-motion path is instant", async ({ page }) => {
+  await page.clock.install();
   await open(page);
   await toggle(page, P("Career"));
-  const sample = () => page.evaluate(async ([selector, path]) => {
-    const pane = document.querySelector(selector)!;
-    (pane.querySelector(`.tile-row .entry-item[data-path="${path}"] .peek-caret`) as HTMLElement).click();
-    const frames: { ghosts: number; ghostIdentity: number; heights: string }[] = [];
-    for (let i = 0; i < 6; i++) {
-      await new Promise(resolve => requestAnimationFrame(resolve));
-      const ghosts = [...pane.querySelectorAll<HTMLElement>(".tile-panel-ghost")];
-      frames.push({
-        ghosts: ghosts.length,
-        ghostIdentity: ghosts.filter(g => g.matches("[data-path], [role], [tabindex]") || g.querySelector(".entry-item, .tile-item, .peek-drop-target, .drop-target, [data-path], [data-index], [role]:not(svg [role]), [tabindex]") || !g.inert || g.getAttribute("aria-hidden") !== "true").length,
-        heights: [...pane.querySelectorAll<HTMLElement>(".tiles-scroller .virtual-item")].slice(0, 2).map(el => el.style.height).join(),
-      });
-    }
-    return frames;
-  }, [shown, P("Career")] as const);
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+  const sample = async () => {
+    const sampling = page.evaluate(async ([selector, path]) => {
+      const pane = document.querySelector(selector)!;
+      (pane.querySelector(`.tile-row .entry-item[data-path="${path}"] .peek-caret`) as HTMLElement).click();
+      const frames: { ghosts: number; ghostIdentity: number; heights: string }[] = [];
+      for (let i = 0; i < 6; i++) {
+        await new Promise(resolve => requestAnimationFrame(resolve));
+        const ghosts = [...pane.querySelectorAll<HTMLElement>(".tile-panel-ghost")];
+        frames.push({
+          ghosts: ghosts.length,
+          ghostIdentity: ghosts.filter(g => g.matches("[data-path], [role], [tabindex]") || g.querySelector(".entry-item, .tile-item, .peek-drop-target, .drop-target, [data-path], [data-index], [role]:not(svg [role]), [tabindex]") || !g.inert || g.getAttribute("aria-hidden") !== "true").length,
+          heights: [...pane.querySelectorAll<HTMLElement>(".tiles-scroller .virtual-item")].slice(0, 2).map(el => el.style.height).join(),
+        });
+      }
+      return frames;
+    }, [shown, P("Career")] as const);
+    // Deliberately stall longer than the 150ms motion. The controlled rAF and
+    // performance clocks must still deliver six intermediate rendered frames.
+    await page.waitForTimeout(200);
+    await page.clock.runFor(100);
+    return sampling;
+  };
   // Closing: a ghost collapses while the group height shrinks frame by frame.
   const closing = await sample();
   expect(closing.some(frame => frame.ghosts === 1)).toBe(true);
   expect(closing.every(frame => frame.ghostIdentity === 0)).toBe(true);
+  expect(closing).toHaveLength(6);
   expect(new Set(closing.map(frame => frame.heights)).size).toBeGreaterThan(2);
+  await page.clock.runFor(200);
   await settled(page);
   // Reduced motion: no ghost or in-between frame. Opening may still change
   // once more when the listing arrives (data, not motion); closing is one step.

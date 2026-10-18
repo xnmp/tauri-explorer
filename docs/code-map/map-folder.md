@@ -160,6 +160,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `terminal-session.ts` — frontend terminal reservation/listener/spawn lifetime; drains late resources and serializes restart/stop. Owns the session's only input path (`domain/terminal-input-queue.ts`): opened at start/restart so typeahead is kept, attached at reservation, closed on stop/exit; `insert` builds text (path insertions) in the spawned shell's dialect and holds it across an exited shell for the next start (#709, #882).
 - `repo-root-cache.svelte.ts` — bounded reactive repository discovery with positive/negative TTL, shared probes and invalidation-safe publication.
 - `owned-registry.ts` — framework-free contribution registration identity; old disposers cannot remove replacements even when values are reused.
+- `reactive-registry.svelte.ts` — owned registry whose `values()` is reactive (revision `$state`, written without reading it); backs the command registry so an open palette sees late plugin commands (#1270).
 - `ordered-registry.ts` — owned contributions sorted by plugin list position, then registration; shared by context-menu items and plugin settings sections.
 - `modal-ownership.svelte.ts` — shared input ownership for mounted and contributed modals; live surface admission precedes DOM suspension; closing releases only the corresponding registration.
 - `src/lib/state/modal-focus.ts` — pane dialog focus restoration tracks actual focus ownership across DOM detachment and releases listeners on cleanup; shared modal focus eligibility.

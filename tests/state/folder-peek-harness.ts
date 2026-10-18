@@ -12,6 +12,7 @@ const exportsFor: Record<string, string> = {
   "folder-peek.svelte": "createFolderPeekState",
   "explorer.svelte": "createExplorerState",
   "settings.svelte": "settingsStore",
+  "reactive-registry.svelte": "createReactiveRegistry",
 };
 
 export async function compileClient(modulePath: string, overrides: Record<string, unknown> = {}): Promise<Record<string, unknown>> {

@@ -9,7 +9,7 @@
 import { admitsCommandDestination, type CommandDestination } from "$lib/domain/command-admission";
 import { dialogStore } from "./dialogs.svelte";
 import { windowTabsManager } from "./window-tabs.svelte";
-import { createOwnedRegistry } from "./owned-registry";
+import { createReactiveRegistry } from "./reactive-registry.svelte";
 import { keybindingsStore } from "./keybindings.svelte";
 import { loadPersisted, savePersisted } from "./persisted";
 import { computeFrecencyScore } from "./frecency.svelte";
@@ -65,7 +65,7 @@ export function getCategoryLabel(category: CommandCategory): string {
 }
 
 /** Internal command registry */
-const commands = createOwnedRegistry<Command>();
+const commands = createReactiveRegistry<Command>();
 
 // --- Frecency tracking (persisted) ---
 
@@ -104,11 +104,12 @@ function trackCommandUsage(id: string): void {
 /** Get commands ranked by frecency score (highest first). */
 export function getCommandsByFrecency(): Command[] {
   const now = Date.now();
+  const byId = new Map(getAllCommands().map((c) => [c.id, c]));
   return frecencyData
     .map((e) => ({ id: e.id, score: computeFrecencyScore(e.accesses, now) }))
     .filter((e) => e.score > 0)
     .sort((a, b) => b.score - a.score)
-    .map((e) => commands.get(e.id))
+    .map((e) => byId.get(e.id))
     .filter(
       (cmd): cmd is Command =>
         cmd !== undefined && !cmd.hidden && (!cmd.when || cmd.when()),

@@ -48,6 +48,7 @@ export interface TileGhost {
   readonly path: string;
   readonly folder: FileEntry;
   readonly cols: number;
+  readonly track: number;
   readonly message: string | null;
   readonly itemCount: number;
   readonly scrollTop: number;
@@ -199,7 +200,7 @@ export function useTilePanels(deps: TilePanelsDeps) {
       const spec = previous.model.panels.get(path);
       const box = spec && previous.model.geometry[spec.row]?.boxes.find(b => b.path === path);
       if (!spec || !box) continue;
-      const window = panelRows(box, spec.contentRows, previous.model.mini.rowHeight, panelScrollTop(path));
+      const window = panelRows(box, spec.contentRows, previous.model.tile.rowHeight, panelScrollTop(path));
       const entryAt = (index: number) => {
         const row = previous.rows.rows[previous.rows.entryToRow[index]];
         return row?.kind === "entry" ? row.entry : null;
@@ -208,7 +209,7 @@ export function useTilePanels(deps: TilePanelsDeps) {
       if (!folder) continue;
       const entries = spec.entries.slice(window.start * spec.cols, window.end * spec.cols).flatMap(index => entryAt(index) ?? []);
       next.set(path, {
-        path, folder, cols: spec.cols, message: spec.message, itemCount: spec.entries.length,
+        path, folder, cols: spec.cols, track: spec.track, message: spec.message, itemCount: spec.entries.length,
         scrollTop: panelScrollTop(path), entries, firstRow: window.start,
       });
     }
@@ -321,7 +322,7 @@ export function useTilePanels(deps: TilePanelsDeps) {
   function panelOffsets(path: string, box: PanelBox): number[] {
     const spec = model.panels.get(path);
     if (!spec) return [];
-    const { start, end } = panelRows(box, spec.contentRows, model.mini.rowHeight, panelScrollTop(path));
+    const { start, end } = panelRows(box, spec.contentRows, model.tile.rowHeight, panelScrollTop(path));
     const offsets: number[] = [];
     for (let i = start * spec.cols; i < Math.min(spec.entries.length, end * spec.cols); i++) offsets.push(i);
     const renaming = dialogStore.renamingEntry?.path;
@@ -372,11 +373,11 @@ export function useTilePanels(deps: TilePanelsDeps) {
     const box = group.boxes.find(b => b.path === at.path);
     if (!box) return;
     const row = Math.floor(at.offset / spec.cols);
-    const scroll = panelRevealTop(box, model.mini.rowHeight, row, panelScrollTop(at.path), spec.contentHeight);
+    const scroll = panelRevealTop(box, model.tile.rowHeight, row, panelScrollTop(at.path), spec.contentHeight);
     setPanelScrollTop(at.path, scroll);
     const panelTop = tops[at.group] + box.top;
-    const itemTop = panelTop + panelRowTop(box, model.mini.rowHeight, row) - scroll;
-    revealRange(Math.max(panelTop, itemTop), Math.min(panelTop + box.height, itemTop + model.mini.rowHeight));
+    const itemTop = panelTop + panelRowTop(box, model.tile.rowHeight, row) - scroll;
+    revealRange(Math.max(panelTop, itemTop), Math.min(panelTop + box.height, itemTop + model.tile.rowHeight));
   }
   function containsEntry(index: number): boolean {
     const at = model.location[index];
@@ -499,7 +500,7 @@ export function useTilePanels(deps: TilePanelsDeps) {
   function gripKey(path: string, key: string): boolean {
     const range = gripRange(path);
     if (!range) return false;
-    const next = gripKeyHeight(key, range.side, range.height, range.content, model.mini, model.bounds);
+    const next = gripKeyHeight(key, range.side, range.height, range.content, model.tile, model.bounds);
     if (next === null) return false;
     if (next !== Math.round(range.height)) { finishMotion(); commitBand(path, next); }
     return true;

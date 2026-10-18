@@ -1,10 +1,10 @@
 <!--
-  An open folder's panel in a Tiles band (#1241, spec §9): its mini-tile grid in
+  An open folder's panel in a Tiles band (#1241, spec §9): its tile grid in
   a scroll area with the List card's fade mask and "+N more", the resize grip
   on the far edge and, for a stacked panel, the label tab. The whole panel is
   the folder's drop and context-menu surface. Geometry (box) and policies are
   pure (tile-panels.ts); scroll offsets, the grip preview and the mounted
-  window live in useTilePanels; the view renders each mini tile.
+  window live in useTilePanels; the view renders each tile.
 -->
 <script lang="ts">
   import type { Snippet } from "svelte";
@@ -13,7 +13,7 @@
   import { LIST_CARD_FADE } from "$lib/domain/list-cards";
   import {
     PANEL_PAD_X, PANEL_PAD_NEAR, panelFades, panelMoreCount, panelPadTop,
-    type MiniTileLayout, type PanelBox, type TilePanelSpec,
+    type PanelBox, type TilePanelSpec,
   } from "$lib/domain/tile-panels";
   import type { useItemInteractions } from "$lib/composables/use-item-interactions.svelte";
   import { createSurfaceDropFeedback, surfaceDropPath } from "$lib/composables/surface-drop-feedback";
@@ -27,8 +27,10 @@
     folder: FileEntry;
     /** The pane's visible entries (spec.entries index into them). */
     entries: readonly FileEntry[];
-    mini: MiniTileLayout;
-    surface: TileLayout;
+    /** The grid's tile layout: panel tiles are the grid's own size. */
+    layout: TileLayout;
+    /** One tile row (PanelTileLayout.rowHeight). */
+    rowHeight: number;
     /** The band's height (the grip's value) and the grip's range. */
     bandHeight: number;
     gripBounds: { min: number; max: number };
@@ -45,12 +47,12 @@
     tile: Snippet<[FileEntry, number]>;
   }
   let {
-    box, spec, folder, entries, mini, surface, bandHeight, gripBounds, offsets, scrollTop, dragging,
+    box, spec, folder, entries, layout, rowHeight, bandHeight, gripBounds, offsets, scrollTop, dragging,
     interactions, onscrolltop, ongripstart, ongripkey, onclose, onlabel, tile,
   }: Props = $props();
 
   const fades = $derived(panelFades(spec.contentHeight, box.height, scrollTop));
-  const more = $derived(panelMoreCount(spec, box.height, mini.rowHeight, scrollTop));
+  const more = $derived(panelMoreCount(spec, box.height, rowHeight, scrollTop));
   const padTop = $derived(panelPadTop(box.side));
   // Mounted rows: plain objects carrying their entries, so a rename blur can
   // still read its entry after a commit has replaced the rows.
@@ -74,7 +76,7 @@
     if (scroller && Math.abs(scroller.scrollTop - top) > 0.5) scroller.scrollTop = top;
   });
 
-  // The panel's own surface (not a mini tile) targets its folder; mini tiles
+  // The panel's own surface (not a tile) targets its folder; its tiles
   // are their own targets (or none), so reaching one retires the surface's
   // feedback (no leave fires for it: the tile is inside).
   const onSurface = (event: Event) => surfaceDropPath(event.target, folder.path) !== null;
@@ -107,22 +109,22 @@
   <!-- The scroll area is the panel's rowgroup: tabindex -1 keeps Chrome from
        making the scroller a Tab stop, and a focusable element inside a grid
        needs a role of its own (the label and grip are rows of the grid). -->
-  <TileSurface layout={surface} class="tile-panel-scroll" data-marquee-clip tabindex={-1}
+  <TileSurface {layout} class="tile-panel-scroll" data-marquee-clip tabindex={-1}
     role="rowgroup" aria-label={`${folder.name} contents`}
     style="--fade-top: {fades.top ? LIST_CARD_FADE : 0}px; --fade-bottom: {fades.bottom ? LIST_CARD_FADE : 0}px"
     bind:element={scroller}
     onscroll={() => { if (scroller) onscrolltop(scroller.scrollTop); }}>
     <div class="tile-panel-content" style:height="{spec.contentHeight}px">
       {#if spec.message !== null && spec.entries.length === 0}
-        <div class="tile-panel-row tile-panel-state" role="row" style:top="{padTop}px" style:left="{PANEL_PAD_NEAR}px" style:width="{Math.max(0, box.width - PANEL_PAD_X)}px" style:height="{mini.rowHeight}px">
+        <div class="tile-panel-row tile-panel-state" role="row" style:top="{padTop}px" style:left="{PANEL_PAD_NEAR}px" style:width="{Math.max(0, box.width - PANEL_PAD_X)}px" style:height="{rowHeight}px">
           <div role="gridcell"><span role="status">{spec.message}</span></div>
         </div>
       {:else}
         {#each rows as row (row.row)}
           <div class="tile-panel-row" role="row"
-            style:top="{padTop + row.row * mini.rowHeight}px" style:left="{PANEL_PAD_NEAR}px"
-            style:width="{Math.max(0, box.width - PANEL_PAD_X)}px" style:height="{mini.rowHeight}px"
-            style:grid-template-columns="repeat({spec.cols}, {mini.track}px)">
+            style:top="{padTop + row.row * rowHeight}px" style:left="{PANEL_PAD_NEAR}px"
+            style:width="{Math.max(0, box.width - PANEL_PAD_X)}px" style:height="{rowHeight}px"
+            style:grid-template-columns="repeat({spec.cols}, {spec.track}px)">
             {#each row.items as item (item.entry.path)}
               <div class="tile-panel-slot" style:grid-column={(item.offset % spec.cols) + 1}>
                 {@render tile(item.entry, item.index)}
@@ -136,7 +138,7 @@
   {#if more > 0}<span class="tile-panel-more" aria-hidden="true">+{more} more</span>{/if}
   {#if spec.entries.length > 0}
     <TilePanelGrip name={folder.name} side={box.side} height={bandHeight} min={gripBounds.min} max={gripBounds.max}
-      rowHeight={mini.rowHeight} {dragging} onstart={ongripstart} onkey={ongripkey} />
+      {rowHeight} {dragging} onstart={ongripstart} onkey={ongripkey} />
   {/if}
 </div>
 
@@ -226,10 +228,9 @@
   }
   .tile-panel-close:hover { color: var(--text-primary); background: var(--subtle-fill-tertiary); }
 
-  /* Mini tiles: the tile at ~70% scale with an 11px name, 1px inside each track. */
-  .tile-panel :global(.tile-item.tile-mini) {
+  /* Panel tiles are grid tiles: half the tile gap inside each side of a track. */
+  .tile-panel :global(.tile-item.tile-panel-item) {
     flex: 1;
-    margin: 1px;
-    font-size: 11px;
+    margin: calc(var(--tile-gap) / 2);
   }
 </style>

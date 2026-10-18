@@ -9,7 +9,7 @@
  * variable-height VirtualList item.
  */
 import type { PeekRows } from "./folder-peek";
-import type { ThumbnailSize, TileLayout } from "./tile-layout";
+import { THUMBNAIL_SIZE_CONFIG, type TileLayout } from "./tile-layout";
 
 /** A band member's column segment is at least this many columns wide. */
 export const MIN_PANEL_COLUMNS = 3;
@@ -38,7 +38,7 @@ export const PANEL_PAD_X = 24;
 export const PANEL_PAD_NEAR = 8;
 export const PANEL_PAD_FAR = 12;
 export const PANEL_PAD_Y = PANEL_PAD_NEAR + PANEL_PAD_FAR;
-/** Default preferred height, in mini rows (plus padding). */
+/** Default preferred height, in tile rows (plus padding). */
 export const PANEL_DEFAULT_ROWS = 3.5;
 
 // ---------------------------------------------------------------------------
@@ -166,22 +166,18 @@ export function computeBands(placements: readonly PanelPlacement[], columns: num
 // ---------------------------------------------------------------------------
 // Sizing (§9.2)
 
-/** Mini tiles: the tile at ~70% scale, on fixed tracks. */
-export interface MiniTileLayout {
-  readonly iconSize: number;
-  /** One grid track (tile plus its 2px gap). */
+/** Panel tiles are the grid's own tiles: a track holds a tile as wide as a grid
+ * cell plus the tile gap (half on each side), and rows advance as the grid's do. */
+export interface PanelTileLayout {
+  /** One panel grid track: a grid cell's width plus the tile gap. */
   readonly track: number;
-  /** One mini row (tile plus its 2px gap). */
+  /** One row: the tile plus the tile gap. */
   readonly rowHeight: number;
 }
-const MINI_TRACK: Record<ThumbnailSize, number> = { small: 80, medium: 96, large: 116, xlarge: 136 };
-/** Two 11px name lines at line-height 1.4. */
-export const MINI_NAME_HEIGHT = 31;
 
-export function miniTileLayout(layout: Pick<TileLayout, "size" | "displaySize">): MiniTileLayout {
-  const iconSize = Math.round(0.7 * layout.displaySize);
-  // 10px padding, 1px + 3px borders, the 4px icon->name gap, the name, a 2px gap.
-  return { iconSize, track: MINI_TRACK[layout.size] ?? MINI_TRACK.medium, rowHeight: iconSize + 20 + MINI_NAME_HEIGHT };
+export function panelTileLayout(m: RowMetrics): PanelTileLayout {
+  const { x0, x1 } = cellX(0, m);
+  return { track: x1 - x0 + m.gap, rowHeight: m.tileHeight + m.gap };
 }
 
 /** Grid columns for n items within `maxWidth`: rows = max(1, round(sqrt(n/2.5))),
@@ -189,7 +185,7 @@ export function miniTileLayout(layout: Pick<TileLayout, "size" | "displaySize">)
 export function panelGridColumns(count: number, maxWidth: number, track: number): number {
   const n = Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
   const room = Number.isFinite(maxWidth) ? maxWidth : 0;
-  const step = Number.isFinite(track) && track > 0 ? track : MINI_TRACK.medium;
+  const step = Number.isFinite(track) && track > 0 ? track : THUMBNAIL_SIZE_CONFIG.medium.gridMinWidth;
   const rows = Math.max(1, Math.round(Math.sqrt(n / 2.5)));
   const fits = Math.max(1, Math.floor((room - PANEL_PAD_X) / step));
   return Math.min(fits, Math.max(2, Math.ceil(n / rows)));
@@ -200,16 +196,16 @@ export const panelContentRows = (count: number, cols: number): number =>
   Math.max(1, Math.ceil((Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0) / Math.max(1, Math.floor(cols) || 1)));
 
 export interface PanelHeightBounds { readonly min: number; readonly max: number }
-/** One mini row up to 70% of the scrollport (never below one row). */
-export function panelHeightBounds(mini: MiniTileLayout, viewportHeight: number): PanelHeightBounds {
-  const min = mini.rowHeight + PANEL_PAD_Y;
+/** One tile row up to 70% of the scrollport (never below one row). */
+export function panelHeightBounds(tile: PanelTileLayout, viewportHeight: number): PanelHeightBounds {
+  const min = tile.rowHeight + PANEL_PAD_Y;
   const viewport = Number.isFinite(viewportHeight) ? viewportHeight : 0;
   return { min, max: Math.max(min, Math.round(0.7 * viewport)) };
 }
 
-/** Default preferred height: min(panel width, 3.5 mini rows + padding). */
-export const defaultPanelHeight = (width: number, mini: MiniTileLayout): number =>
-  Math.min(Number.isFinite(width) ? width : Infinity, PANEL_DEFAULT_ROWS * mini.rowHeight + PANEL_PAD_Y);
+/** Default preferred height: min(panel width, 3.5 tile rows + padding). */
+export const defaultPanelHeight = (width: number, tile: PanelTileLayout): number =>
+  Math.min(Number.isFinite(width) ? width : Infinity, PANEL_DEFAULT_ROWS * tile.rowHeight + PANEL_PAD_Y);
 
 /** Band height = max over members of min(preferred, content), clamped to the bounds.
  * Capping each member first keeps a short member's preference from enlarging a
@@ -226,30 +222,17 @@ export function clampPreferredHeight(height: number, maxContent: number, bounds:
   return Math.round(Math.min(top, Math.max(bounds.min, Number.isNaN(height) ? bounds.min : height)));
 }
 
-/** Grip keys (separator pattern): arrows move the edge one mini row (the edge
+/** Grip keys (separator pattern): arrows move the edge one tile row (the edge
  * moves away from the parent to grow), Home/End set the minimum/maximum. */
-export function gripKeyHeight(key: string, side: BandSide, height: number, maxContent: number, mini: MiniTileLayout, bounds: PanelHeightBounds): number | null {
+export function gripKeyHeight(key: string, side: BandSide, height: number, maxContent: number, tile: PanelTileLayout, bounds: PanelHeightBounds): number | null {
   const grow = side === "above" ? "ArrowUp" : "ArrowDown";
   const shrink = side === "above" ? "ArrowDown" : "ArrowUp";
-  if (key === grow) return clampPreferredHeight(height + mini.rowHeight, maxContent, bounds);
-  if (key === shrink) return clampPreferredHeight(height - mini.rowHeight, maxContent, bounds);
+  if (key === grow) return clampPreferredHeight(height + tile.rowHeight, maxContent, bounds);
+  if (key === shrink) return clampPreferredHeight(height - tile.rowHeight, maxContent, bounds);
   if (key === "Home") return clampPreferredHeight(bounds.min, maxContent, bounds);
   if (key === "End") return clampPreferredHeight(Infinity, maxContent, bounds);
   return null;
 }
-
-/** A mini tile grid's surface: the tile layout at mini scale (TileSurface's CSS
- * variables), keeping the parent's thumbnail generation size and quality. */
-export function miniSurfaceLayout(layout: TileLayout, mini: MiniTileLayout): TileLayout {
-  return {
-    ...layout,
-    displaySize: mini.iconSize, gap: MINI_GAP, padding: "5px 3px 3px", paddingY: 8,
-    nameHeight: MINI_NAME_HEIGHT, rowHeight: mini.rowHeight, iconScale: mini.iconSize / 64,
-    showFolderThumbnails: false,
-  };
-}
-/** Gap between mini tiles (inside each track). */
-export const MINI_GAP = 2;
 
 /** Grid padding at a panel's parent-facing (near) edge and far edge. */
 export const panelPadTop = (side: BandSide): number => side === "above" ? PANEL_PAD_FAR : PANEL_PAD_NEAR;
@@ -316,16 +299,18 @@ export function segmentX(segment: ColumnSegment, col: number, m: RowMetrics): { 
 }
 
 /** Panel x: sized for its grid (at least its tab's width), centred under its tab,
- * clamped to the segment, and flush with a tab side it comes within 16px of. */
-export function panelX(count: number, segment: { x0: number; x1: number }, tab: { x0: number; x1: number }, mini: MiniTileLayout): { x0: number; width: number; cols: number } {
+ * clamped to the segment, and flush with a tab side it comes within 16px of.
+ * A segment too narrow for one whole track (a one-column grid) narrows the track. */
+export function panelX(count: number, segment: { x0: number; x1: number }, tab: { x0: number; x1: number }, tile: PanelTileLayout): { x0: number; width: number; cols: number; track: number } {
   const maxWidth = Math.max(0, segment.x1 - segment.x0);
-  const cols = panelGridColumns(count, maxWidth, mini.track);
-  const width = Math.min(maxWidth, Math.max(cols * mini.track + PANEL_PAD_X, tab.x1 - tab.x0));
+  const track = Math.max(1, Math.min(tile.track, maxWidth - PANEL_PAD_X));
+  const cols = panelGridColumns(count, maxWidth, track);
+  const width = Math.min(maxWidth, Math.max(cols * track + PANEL_PAD_X, tab.x1 - tab.x0));
   const clamp = (x: number) => Math.min(segment.x1 - width, Math.max(segment.x0, x));
   let x0 = clamp((tab.x0 + tab.x1 - width) / 2);
   if (tab.x0 - x0 < TAB_SNAP) x0 = tab.x0;
   else if (x0 + width - tab.x1 < TAB_SNAP) x0 = tab.x1 - width;
-  return { x0: clamp(x0), width, cols };
+  return { x0: clamp(x0), width, cols, track };
 }
 
 /** A stacked label: at least its parent tab's width (or 240px), within the panel,
@@ -403,6 +388,8 @@ export interface TilePanelSpec {
   /** A Loading/Empty/Error label shown instead of children, else null. */
   readonly message: string | null;
   readonly cols: number;
+  /** Its grid track (`PanelTileLayout.track` unless the segment is narrower). */
+  readonly track: number;
   readonly contentRows: number;
   /** Height that shows every content row. */
   readonly contentHeight: number;
@@ -446,7 +433,7 @@ export type EntryLocation =
 
 export interface TilePanelModel {
   readonly metrics: RowMetrics;
-  readonly mini: MiniTileLayout;
+  readonly tile: PanelTileLayout;
   readonly bounds: PanelHeightBounds;
   readonly items: readonly TopItem[];
   readonly groups: readonly TileGroup[];
@@ -464,7 +451,7 @@ export interface TilePanelInput {
   readonly columns: number;
   readonly width: number;
   readonly viewportHeight: number;
-  readonly layout: Pick<TileLayout, "size" | "displaySize" | "gap" | "rowHeight">;
+  readonly layout: Pick<TileLayout, "gap" | "rowHeight">;
   /** Remembered (or previewed) preferred height per folder. */
   readonly preferred: (path: string) => number | undefined;
   /** Sides from the previous placement, kept while feasible. */
@@ -511,8 +498,8 @@ export function buildTilePanelModel(input: TilePanelInput): TilePanelModel {
   const gap = Math.max(0, input.layout.gap);
   const rowHeight = Math.max(1, input.layout.rowHeight);
   const metrics: RowMetrics = { columns: C, width: Math.max(0, Number.isFinite(input.width) ? input.width : 0), gap, tileHeight: Math.max(0, rowHeight - gap) };
-  const mini = miniTileLayout(input.layout);
-  const bounds = panelHeightBounds(mini, input.viewportHeight);
+  const tile = panelTileLayout(metrics);
+  const bounds = panelHeightBounds(tile, input.viewportHeight);
   const { items, itemOf, sources } = readRows(input.rows);
   const requests: PanelRequest[] = [];
   const queued = new Set<string>();
@@ -533,13 +520,13 @@ export function buildTilePanelModel(input: TilePanelInput): TilePanelModel {
     band.members.forEach((member, i) => {
       const source = sources.get(member.path)!;
       const tab = tabX(member.col, metrics);
-      const x = panelX(source.entries.length, segmentX(band.segments[i], member.col, metrics), tab, mini);
+      const x = panelX(source.entries.length, segmentX(band.segments[i], member.col, metrics), tab, tile);
       const contentRows = panelContentRows(source.entries.length, x.cols);
       panels.set(member.path, {
         path: member.path, name: source.name, entryIndex: source.entryIndex,
         row: member.row, col: member.col, side: member.side, bandKey: band.key,
         entries: source.entries, message: source.message,
-        cols: x.cols, contentRows, contentHeight: contentRows * mini.rowHeight + PANEL_PAD_Y,
+        cols: x.cols, track: x.track, contentRows, contentHeight: contentRows * tile.rowHeight + PANEL_PAD_Y,
       });
       xOf.set(member.path, { x0: x.x0, width: x.width, label: band.side === "stacked" ? stackedLabelX(x, tab) : null });
     });
@@ -554,7 +541,7 @@ export function buildTilePanelModel(input: TilePanelInput): TilePanelModel {
   for (let g = 0; g < groupCount; g++) {
     const rowBands = bandsByRow.get(g) ?? [];
     groups.push({ key: g, start: g * C, end: Math.min(items.length, (g + 1) * C), bands: rowBands });
-    const layout = layoutGroup(rowBands, panels, xOf, metrics, mini, bounds, input.preferred, previousTrailing);
+    const layout = layoutGroup(rowBands, panels, xOf, metrics, tile, bounds, input.preferred, previousTrailing);
     geometry.push(layout.geometry);
     previousTrailing = layout.trailing;
   }
@@ -566,14 +553,14 @@ export function buildTilePanelModel(input: TilePanelInput): TilePanelModel {
   for (const panel of panels.values()) {
     panel.entries.forEach((entry, offset) => { location[entry] = { kind: "panel", path: panel.path, group: panel.row, offset }; });
   }
-  return { metrics, mini, bounds, items, groups, geometry, panels, placements, location };
+  return { metrics, tile, bounds, items, groups, geometry, panels, placements, location };
 }
 
 /** Vertical layout of one row group with collapsed margins; computed, never measured. */
 function layoutGroup(
   bands: readonly Band[], panels: ReadonlyMap<string, TilePanelSpec>,
   xOf: ReadonlyMap<string, { x0: number; width: number; label: { x0: number; width: number } | null }>,
-  m: RowMetrics, mini: MiniTileLayout, bounds: PanelHeightBounds, preferredOf: (path: string) => number | undefined, previousTrailing: number,
+  m: RowMetrics, tile: PanelTileLayout, bounds: PanelHeightBounds, preferredOf: (path: string) => number | undefined, previousTrailing: number,
 ): { geometry: GroupGeometry; trailing: number } {
   const above = bands.find(b => b.side === "above");
   const below = bands.find(b => b.side === "below");
@@ -593,7 +580,7 @@ function layoutGroup(
     if (route.ex !== route.channel || (!intervening.length && route.sx !== route.channel)) margin.set(band, DETOUR_STACKED_MARGIN);
   });
   const heightOf = (band: Band) => bandHeight(band.members.map(p => ({
-    preferred: preferredOf(p.path) ?? defaultPanelHeight(xOf.get(p.path)!.width, mini),
+    preferred: preferredOf(p.path) ?? defaultPanelHeight(xOf.get(p.path)!.width, tile),
     content: panels.get(p.path)!.contentHeight,
   })), bounds);
   const boxes: PanelBox[] = [];

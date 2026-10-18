@@ -8,7 +8,7 @@
 -->
 <script lang="ts">
   import type { TileLayout } from "$lib/domain/tile-layout";
-  import { PANEL_PAD_NEAR, PANEL_PAD_X, panelPadTop, type MiniTileLayout, type PanelBox } from "$lib/domain/tile-panels";
+  import { PANEL_PAD_NEAR, PANEL_PAD_X, panelPadTop, type PanelBox } from "$lib/domain/tile-panels";
   import type { TileGhost } from "$lib/composables/use-tile-panels.svelte";
   import FileIcon from "./FileIcon.svelte";
   import TileVisual from "./TileVisual.svelte";
@@ -16,10 +16,10 @@
   interface Props {
     box: PanelBox;
     ghost: TileGhost;
-    mini: MiniTileLayout;
-    surface: TileLayout;
+    layout: TileLayout;
+    rowHeight: number;
   }
-  let { box, ghost, mini, surface }: Props = $props();
+  let { box, ghost, layout, rowHeight }: Props = $props();
   const padTop = $derived(panelPadTop(box.side));
   const rows = $derived(Array.from({ length: Math.ceil(ghost.entries.length / Math.max(1, ghost.cols)) }, (_, i) =>
     ({ row: ghost.firstRow + i, entries: ghost.entries.slice(i * ghost.cols, (i + 1) * ghost.cols) })));
@@ -27,7 +27,8 @@
 
 <div class="tile-panel-ghost" inert aria-hidden="true"
   style:left="{box.x0}px" style:top="{box.top}px" style:width="{box.width}px" style:height="{box.height}px" style:opacity={box.opacity}
-  style:--tile-icon-size="{surface.displaySize}px" style:--tile-icon-scale={surface.iconScale} style:--tile-name-height="{surface.nameHeight}px">
+  style:--tile-icon-size="{layout.displaySize}px" style:--tile-icon-scale={layout.iconScale} style:--tile-name-height="{layout.nameHeight}px"
+  style:--tile-padding={layout.padding} style:--tile-gap="{layout.gap}px">
   {#if box.label}
     <div class="ghost-label" style:left="{box.label.x0 - box.x0}px" style:width="{box.label.width}px" style:height="{box.labelHeight}px">
       <span class="ghost-label-icon"><FileIcon entry={ghost.folder} size="small" /></span>
@@ -38,14 +39,14 @@
   <div class="ghost-scroll">
     <div class="ghost-content" style:transform="translateY({-ghost.scrollTop}px)">
       {#if ghost.message !== null && ghost.entries.length === 0}
-        <div class="ghost-row ghost-state" style:top="{padTop}px" style:left="{PANEL_PAD_NEAR}px" style:width="{Math.max(0, box.width - PANEL_PAD_X)}px" style:height="{mini.rowHeight}px">{ghost.message}</div>
+        <div class="ghost-row ghost-state" style:top="{padTop}px" style:left="{PANEL_PAD_NEAR}px" style:width="{Math.max(0, box.width - PANEL_PAD_X)}px" style:height="{rowHeight}px">{ghost.message}</div>
       {:else}
         {#each rows as row (row.row)}
-          <div class="ghost-row" style:top="{padTop + row.row * mini.rowHeight}px" style:left="{PANEL_PAD_NEAR}px"
-            style:width="{Math.max(0, box.width - PANEL_PAD_X)}px" style:height="{mini.rowHeight}px"
-            style:grid-template-columns="repeat({ghost.cols}, {mini.track}px)">
+          <div class="ghost-row" style:top="{padTop + row.row * rowHeight}px" style:left="{PANEL_PAD_NEAR}px"
+            style:width="{Math.max(0, box.width - PANEL_PAD_X)}px" style:height="{rowHeight}px"
+            style:grid-template-columns="repeat({ghost.cols}, {ghost.track}px)">
             {#each row.entries as entry (entry.path)}
-              <div class="ghost-cell"><TileVisual {entry} layout={surface} /></div>
+              <div class="ghost-cell"><TileVisual {entry} {layout} /></div>
             {/each}
           </div>
         {/each}
@@ -60,17 +61,17 @@
   .ghost-content { position: relative; }
   .ghost-row { position: absolute; display: grid; justify-content: center; align-items: start; }
   .ghost-state { display: flex; align-items: center; justify-content: center; color: var(--text-secondary); font-size: 12px; }
-  /* The mini tile's look (TileSurface's .tile-item chrome at rest), without its identity. */
+  /* A panel tile's look (TileSurface's .tile-item chrome at rest), without its identity. */
   .ghost-cell {
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: 4px;
-    margin: 1px;
-    padding: 5px 3px 3px;
+    margin: calc(var(--tile-gap) / 2);
+    padding: var(--tile-padding);
     border: 1px solid transparent;
     border-bottom-width: var(--selection-indicator-width);
-    font-size: 11px;
+    font-size: 13px;
     color: var(--text-primary);
     text-align: center;
     min-width: 0;

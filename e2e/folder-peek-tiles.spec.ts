@@ -22,7 +22,7 @@ const scroller = (page: Page) => page.locator(`${shown} .tiles-scroller`);
 const tile = (page: Page, path: string) => page.locator(`${shown} .tile-row .entry-item[data-path="${path}"]`);
 const caret = (page: Page, path: string) => tile(page, path).locator(".peek-caret");
 const panel = (page: Page, path: string) => page.locator(`${shown} .tile-panel[data-path="${path}"]`);
-const mini = (page: Page, path: string) => page.locator(`${shown} .tile-panel .entry-item[data-path="${path}"]`);
+const child = (page: Page, path: string) => page.locator(`${shown} .tile-panel .entry-item[data-path="${path}"]`);
 /** The drop-target state class itself (not the .peek-drop-target identity class). */
 const targeted = /(^|\s)drop-target(\s|$)/;
 
@@ -86,8 +86,8 @@ test("opens below, then above, then stacked; opening never moves an existing pan
   expect(await side(page, P("Career"))).toBe("below");
   await expect(page.getByRole("rowgroup", { name: "Career contents" })).toHaveAttribute("tabindex", "-1");
   await expect(caret(page, P("Career"))).toHaveAttribute("aria-label", "Collapse Career");
-  // Its children are entries of the pane, shown as mini tiles; the name is bold.
-  await expect(mini(page, P("Career/Applications"))).toBeVisible();
+  // Its children are entries of the pane, shown as tiles; the name is bold.
+  await expect(child(page, P("Career/Applications"))).toBeVisible();
   expect(await tile(page, P("Career")).locator(".entry-name").evaluate(el => getComputedStyle(el).fontWeight)).toBe("600");
 
   await toggle(page, P("Personal"));
@@ -124,7 +124,7 @@ test("a band splits its columns between members and re-splits when one closes", 
   expect([Math.round(again.x), Math.round(again.width)]).toEqual([Math.round(alone.x), Math.round(alone.width)]);
 });
 
-test("sizes the mini grid by its count and the height by the default preference", async ({ page }) => {
+test("sizes the panel grid by its count and the height by the default preference", async ({ page }) => {
   await open(page);
   const rowsOf = async (path: string) => panel(page, path).locator(".tile-panel-row").evaluateAll(rows => rows.map(row => row.querySelectorAll(".entry-item").length));
   // 9 items: two rows, five columns; content shorter than the default, so content-sized.
@@ -133,16 +133,18 @@ test("sizes the mini grid by its count and the height by the default preference"
   const scroll = panel(page, P("Career")).locator(".tile-panel-scroll");
   expect(await scroll.evaluate(el => el.scrollHeight <= el.clientHeight + 1)).toBe(true);
   await toggle(page, P("Career"));
-  // 50 items: as wide as fits, 3.5 rows tall, with "+N more" and a bottom fade.
+  // 50 items: as wide as fits (grid-sized tiles: six of the grid's seven
+  // columns, less the panel's padding), 3.5 rows tall, with "+N more" and a bottom fade.
   await toggle(page, P("Archive"));
   const archive = panel(page, P("Archive"));
   const counts = await rowsOf(P("Archive"));
-  expect(counts[0]).toBe(7);
-  const metrics = await archive.evaluate(el => {
-    const row = el.querySelector<HTMLElement>(".tile-panel-row")!;
-    return { height: el.getBoundingClientRect().height, row: row.getBoundingClientRect().height };
-  });
-  expect(metrics.height).toBeCloseTo(3.5 * metrics.row + 20, 0);
+  expect(counts[0]).toBe(6);
+  // Polled: `settled` compares rounded rects, so a loaded runner's slow motion
+  // tail (sub-pixel per sample) can still be finishing when it returns.
+  await expect.poll(() => archive.evaluate(el => {
+    const row = el.querySelector<HTMLElement>(".tile-panel-row")!.getBoundingClientRect().height;
+    return Math.abs(el.getBoundingClientRect().height - (3.5 * row + 20));
+  })).toBeLessThan(0.5);
   await expect(archive.locator(".tile-panel-more")).toHaveText(/^\+\d+ more$/);
 });
 
@@ -170,7 +172,7 @@ test("the grip resizes the whole band, is remembered after reopening and is clam
   await toggle(page, P("Personal"));
   await toggle(page, P("Personal"));
   expect(await height()).toBe(resized);
-  // Clamped to one mini row (plus padding) and to the content.
+  // Clamped to one tile row (plus padding) and to the content.
   await drag(-2000);
   const row = await panel(page, P("Personal")).locator(".tile-panel-row").first().evaluate(el => el.getBoundingClientRect().height);
   expect(await height()).toBeCloseTo(row + 20, 0);
@@ -360,7 +362,7 @@ test("arrow keys enter a panel, walk its grid and leave it again", async ({ page
   const focused = () => page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.path ?? null);
   await expect.poll(focused).toBe(P("Career"));
   await page.keyboard.press("ArrowDown");
-  // The mini tile under the parent's centre.
+  // The panel tile under the parent's centre.
   await expect.poll(focused).toBe(P("Career/Portfolio"));
   await page.keyboard.press("ArrowRight");
   await expect.poll(focused).toBe(P("Career/headshot.jpg"));
@@ -405,7 +407,7 @@ test("a drop onto a panel's surface moves the file into its folder", async ({ pa
   await expect(panel(page, P("Career"))).toHaveClass(targeted);
   await expect(tile(page, P("Career"))).toHaveClass(targeted);
   await expect(page.locator(`${shown} .content.drop-target`)).toHaveCount(0);
-  // Over a mini tile the panel's feedback retires (the tile is its own target).
+  // Over a panel tile the panel's feedback retires (the tile is its own target).
   await drag(`${shown} .tile-panel .entry-item[data-path="${P("Career/headshot.jpg")}"]`, ["dragenter", "dragover"]);
   await expect(panel(page, P("Career"))).not.toHaveClass(targeted);
   await expect(tile(page, P("Career"))).not.toHaveClass(targeted);
@@ -418,15 +420,15 @@ test("double-clicking a panel's subfolder navigates into it", async ({ page }) =
   await open(page);
   await toggle(page, P("Career"));
   // Subfolders in a panel have no caret: Tiles peeks top-level folders only.
-  await expect(mini(page, P("Career/Applications")).locator(".peek-caret")).toHaveCount(0);
-  await mini(page, P("Career/Applications")).dblclick();
+  await expect(child(page, P("Career/Applications")).locator(".peek-caret")).toHaveCount(0);
+  await child(page, P("Career/Applications")).dblclick();
   await expect.poll(() => explorerCall<string>(page, "return explorer.currentPath")).toBe(P("Career/Applications"));
 });
 
 test("Peek into Folder on a panel's subfolder acts on its panel and records no hidden expansion", async ({ page }) => {
   await open(page);
   await toggle(page, P("Career"));
-  await mini(page, P("Career/Applications")).click();
+  await child(page, P("Career/Applications")).click();
   await page.keyboard.press("Control+Shift+p");
   const palette = page.locator(".command-palette-dialog");
   await palette.locator(".search-input").fill("Peek into Folder");
@@ -487,9 +489,95 @@ test("outlines paint the contour, accent, fill, ribbon and parent highlight", as
   expect(strokes.top).toBeGreaterThan(20);
   expect(strokes.ribbon).toBeGreaterThan(300);
   expect(strokes.highlight).toBeGreaterThan(50);
-  // The fill is a faint tint: below the panel's last row, every pixel changes a little.
-  const fill: Region = { x: career.x + career.width * 0.3, y: career.y + career.height - 7, width: career.width * 0.3, height: 4 };
+  // The fill is a faint tint: below the panel's last row, every pixel changes a
+  // little. (With five panels open, the panel's bottom edge starts below the viewport.)
+  await panel(page, P("Career")).evaluate(el => el.scrollIntoView({ block: "end" }));
+  await settled(page);
+  const end = await rect(page, P("Career"));
+  const fill: Region = { x: end.x + end.width * 0.3, y: end.y + end.height - 7, width: end.width * 0.3, height: 4 };
   expect((await outlinePaint(page, { fill }, 1)).fill).toBeGreaterThan(fill.width * fill.height * 0.8);
+});
+
+test("panel tiles are the grid's tiles: the same box, icon and name size", async ({ page }) => {
+  await open(page);
+  await toggle(page, P("Career"));
+  const measure = (cell: ReturnType<typeof tile>) => cell.evaluate(el => {
+    const box = el.getBoundingClientRect();
+    return {
+      width: box.width, height: box.height,
+      icon: el.querySelector(".tile-icon")!.getBoundingClientRect().width,
+      font: getComputedStyle(el.querySelector(".entry-name")!).fontSize,
+    };
+  });
+  // Two folders: Codex in the grid, Applications in Career's panel.
+  const grid = await measure(tile(page, P("Codex")));
+  const inPanel = await measure(child(page, P("Career/Applications")));
+  expect(inPanel.width).toBeCloseTo(grid.width, 0);
+  expect(inPanel.height).toBeCloseTo(grid.height, 0);
+  expect(inPanel.icon).toBe(grid.icon);
+  expect(inPanel.font).toBe(grid.font);
+});
+
+const rgb = (css: string): [number, number, number] => (css.match(/\d+(\.\d+)?/g) ?? []).slice(0, 3).map(Number) as [number, number, number];
+/** CSS px² of `color` inside one edge strip (3px deep) of a tile, clear of its corners. */
+async function edgePaint(page: Page, path: string, edge: "top" | "bottom" | "left", color: [number, number, number]): Promise<number> {
+  const box = (await tile(page, path).boundingBox())!;
+  const region: Region = edge === "left"
+    ? { x: box.x, y: box.y + box.height * 0.3, width: 3, height: box.height * 0.4 }
+    : { x: box.x + 10, y: edge === "top" ? box.y : box.y + box.height - 3, width: box.width - 20, height: 3 };
+  const shot = decodePng(await page.screenshot());
+  const scale = shot.width / page.viewportSize()!.width;
+  let matched = 0;
+  for (let y = Math.floor(region.y * scale); y < Math.ceil((region.y + region.height) * scale); y++) {
+    for (let x = Math.floor(region.x * scale); x < Math.ceil((region.x + region.width) * scale); x++) {
+      if (colorDistance(shot.pixel(x, y), color) <= 60) matched++;
+    }
+  }
+  return matched / (scale * scale);
+}
+
+/** Make `path` the cursor with a keyboard-visible ring. WebKit withholds
+ * :focus-visible from focus that script moves after a mouse click, so a Tab
+ * first puts the page in keyboard modality; the cursor then moves by script. */
+async function keyboardFocus(page: Page, path: string): Promise<void> {
+  await tile(page, path).click();
+  await page.keyboard.press("Tab");
+  await tile(page, path).focus();
+  await expect(tile(page, path)).toBeFocused();
+}
+
+test("a selected or focused open folder leaves its tab open toward the panel", async ({ page }) => {
+  await open(page);
+  for (const name of ["Career", "Personal", "Inbox"]) await toggle(page, P(name));
+  expect([await side(page, P("Career")), await side(page, P("Inbox"))]).toEqual(["below", "above"]);
+  // Control: a selected closed folder (Codex) draws its accent underline...
+  await tile(page, P("Codex")).click();
+  await expect(tile(page, P("Codex"))).toHaveClass(/selected/);
+  const accent = rgb(await tile(page, P("Codex")).evaluate(el => getComputedStyle(el).borderBottomColor));
+  expect(await edgePaint(page, P("Codex"), "bottom", accent)).toBeGreaterThan(40);
+  // ...a selected open folder draws none across the mouth of its tab.
+  await tile(page, P("Career")).click();
+  await expect(tile(page, P("Career"))).toHaveClass(/selected/);
+  expect(await edgePaint(page, P("Career"), "bottom", accent)).toBeLessThan(4);
+
+  // Keyboard focus: the control's ring closes its tile on every side...
+  await keyboardFocus(page, P("Career"));
+  await page.keyboard.press("ArrowRight");
+  await expect(tile(page, P("Codex"))).toBeFocused();
+  const ring = rgb(await tile(page, P("Codex")).evaluate(el => getComputedStyle(el).outlineColor));
+  expect(await edgePaint(page, P("Codex"), "bottom", ring)).toBeGreaterThan(40);
+  // ...while an open folder's ring keeps its sides but leaves the panel's side open.
+  await page.keyboard.press("ArrowLeft");
+  await expect(tile(page, P("Career"))).toBeFocused();
+  expect(await edgePaint(page, P("Career"), "left", ring)).toBeGreaterThan(40);
+  expect(await edgePaint(page, P("Career"), "bottom", ring)).toBeLessThan(4);
+  // An above panel's tab opens through the tile's top instead.
+  await keyboardFocus(page, P("Inbox"));
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("ArrowLeft");
+  await expect(tile(page, P("Inbox"))).toBeFocused();
+  expect(await edgePaint(page, P("Inbox"), "bottom", ring)).toBeGreaterThan(40);
+  expect(await edgePaint(page, P("Inbox"), "top", ring)).toBeLessThan(4);
 });
 
 test("hover emphasis is immediate, with no transition", async ({ page }) => {
@@ -619,7 +707,7 @@ const gridAriaProblems = (page: Page) => page.evaluate(selector => {
   for (const cell of grid.querySelectorAll('[role="gridcell"][aria-colindex]')) {
     const index = Number(cell.getAttribute("aria-colindex"));
     if (colCount !== null && index > Number(colCount)) problems.push(`aria-colindex ${index} > ${colCount}: ${cell.getAttribute("data-path")}`);
-    if (cell.closest(".tile-panel")) problems.push(`mini tile with aria-colindex: ${cell.getAttribute("data-path")}`);
+    if (cell.closest(".tile-panel")) problems.push(`panel tile with aria-colindex: ${cell.getAttribute("data-path")}`);
   }
   return { problems, rowCount, colCount, indexedRows: rows.filter(row => row.hasAttribute("aria-rowindex")).length };
 }, shown);
@@ -632,7 +720,7 @@ test("grid counts and indices stay consistent with and without panels", async ({
   expect(plain.colCount).toBe("7");
   expect(Number(plain.rowCount)).toBeGreaterThan(1);
   expect(plain.indexedRows).toBeGreaterThan(1);
-  // Panels make the grid non-uniform (labels, mini rows, grips, side-by-side
+  // Panels make the grid non-uniform (labels, tile rows, grips, side-by-side
   // panels): only consistent attributes remain.
   for (const name of ["Career", "Personal", "Inbox", "Codex"]) await toggle(page, P(name));
   const banded = await gridAriaProblems(page);
@@ -732,10 +820,10 @@ test("closing a panel keeps keyboard focus on its parent tile: caret and Escape"
   expect(new Set(trail)).toEqual(new Set([P("Career")]));
   await settled(page);
   expect(await active()).toBe(P("Career"));
-  // Escape from a mini tile: the first clears the selection, the second
+  // Escape from a panel tile: the first clears the selection, the second
   // steps out, closing the panel with the cursor on its parent.
   await toggle(page, P("Career"));
-  await mini(page, P("Portfolio", P("Career"))).click();
+  await child(page, P("Portfolio", P("Career"))).click();
   await expect.poll(active).toBe(P("Portfolio", P("Career")));
   await page.keyboard.press("Escape");
   await expect(page.locator(`${shown} .entry-item.selected`)).toHaveCount(0);
@@ -787,7 +875,7 @@ test("the grip is a movable separator: bounds are exposed, arrows resize by one 
   await page.keyboard.press(shrink);
   await settled(page);
   expect(await height()).toBeCloseTo(min, 0);
-  // One arrow is one mini row.
+  // One arrow is one tile row.
   await page.keyboard.press(grow);
   await settled(page);
   expect(await height()).toBeCloseTo(min + rowHeight, 0);
@@ -824,7 +912,7 @@ test("with a panel open Ctrl+A selects only the folder's own tiles and typeahead
   // "offer" matches only Career/offer-letter.pdf, a peeked child: nothing moves.
   await page.keyboard.type("offer");
   expect(await explorerCall<string[]>(page, "return [...explorer.selectedPaths]")).toEqual([P("Inbox")]);
-  await expect(mini(page, P("Career/offer-letter.pdf"))).not.toHaveClass(/selected/);
+  await expect(child(page, P("Career/offer-letter.pdf"))).not.toHaveClass(/selected/);
   // A depth-0 name still matches once the type-ahead buffer (800ms) has cleared.
   await page.waitForTimeout(900);
   await page.keyboard.type("cod");

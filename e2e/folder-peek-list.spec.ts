@@ -769,3 +769,38 @@ test("three open 5,000-row cards keep the mounted entries bounded", async ({ pag
   await expect.poll(() => card(page, "/perf/huge-10000/folder-00016").evaluate(el => Math.min(...[...el.querySelectorAll<HTMLElement>(".list-row")].map(r => r.offsetTop)))).toBeGreaterThanOrEqual(2490 * 30);
   expect(await viewport(page).evaluate(el => el.querySelectorAll(".entry-item").length)).toBeLessThanOrEqual((Math.ceil(stats.width / 276) + 5) * R + 3 * (cap + 4));
 });
+
+const selectedPaths = (page: Page) => explorerCall<string[]>(page, "return [...explorer.selectedPaths]");
+
+test("a Shift-range from a depth-0 item into a card's child rows selects exactly the visible range", async ({ page }) => {
+  await open(page);
+  await toggle(page, `${root}/Archive`);
+  await row(page, `${root}/AI Draft Archive`).click();
+  await row(page, `${root}/Archive/2021`).click({ modifiers: ["Shift"] });
+  // Visible order: AI Draft Archive, Archive, then the card's rows 2019, 2020, 2021.
+  expect((await selectedPaths(page)).sort()).toEqual([
+    `${root}/AI Draft Archive`, `${root}/Archive`, `${root}/Archive/2019`, `${root}/Archive/2020`, `${root}/Archive/2021`,
+  ].sort());
+  // Rows beyond the range stay unselected.
+  await expect(row(page, `${root}/Archive/2022`)).not.toHaveClass(/selected/);
+  await expect(row(page, `${root}/Career`)).not.toHaveClass(/selected/);
+});
+
+test("with a card open Ctrl+A selects only the folder's own items and typeahead never lands on a peeked child", async ({ page }) => {
+  await open(page);
+  await toggle(page, `${root}/Career`);
+  await row(page, `${root}/Inbox`).click();
+  await page.keyboard.press("ControlOrMeta+A");
+  const all = await selectedPaths(page);
+  expect(all).toHaveLength(90);
+  expect(all.filter(path => path.startsWith(`${root}/Career/`))).toEqual([]);
+  await row(page, `${root}/Inbox`).click();
+  // "offer" matches only Career/offer-letter.pdf, a peeked child: nothing moves.
+  await page.keyboard.type("offer");
+  expect(await selectedPaths(page)).toEqual([`${root}/Inbox`]);
+  await expect(row(page, `${root}/Career/offer-letter.pdf`)).not.toHaveClass(/selected/);
+  // A depth-0 name still matches once the type-ahead buffer (800ms) has cleared.
+  await page.waitForTimeout(900);
+  await page.keyboard.type("cod");
+  await expect.poll(() => selectedPaths(page)).toEqual([`${root}/Codex`]);
+});

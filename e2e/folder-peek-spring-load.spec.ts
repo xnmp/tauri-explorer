@@ -237,6 +237,10 @@ for (const view of ["details", "list", "tiles"] as const) {
       await dragTo(page, v.folder(P("Inbox")));
       await opened(page, [P("Inbox")]);
       const rows = ["Inbox/Nested", "Inbox/alpha.txt", "Inbox/beta.txt"].map(child => v.child(P(child)));
+      for (const row of rows) await expect(page.locator(row)).toBeVisible();
+      // Spring state precedes the rendered card's opening motion. Hit-test
+      // settled rows: an edge in the final box can still be clipped mid-motion.
+      await expect(page.locator(`${shown} [data-motion-key][style*="transform"], ${shown} [data-motion-key][style*="clip-path"], ${shown} .list-motion-layer > *`)).toHaveCount(0);
       if (view === "tiles") {
         // The band gap between the tile and its panel hit-tests as the panel's bridge.
         expect(await dragTo(page, v.folder(P("Inbox")), { below: 5 })).toBe(`bridge:${P("Inbox")}`);

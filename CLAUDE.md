@@ -538,3 +538,8 @@ through Playwright's clock. Six wall-clock frames can outlast the entire 150ms
 motion on loaded WebKit runners. Install before navigation, pause after initial
 layout settles, then advance the clock while the page-side sampler is pending;
 retain the intermediate-height, inert-ghost and reduced-motion assertions (#1275).
+
+Spring peek state becomes observable before its List card finishes opening.
+Synthetic drag probes that target row edges must await populated rows and the
+end of live List motion before reading hit-test coordinates; a bounding box
+can include pixels still clipped by the opening card (#1292).

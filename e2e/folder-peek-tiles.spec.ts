@@ -753,3 +753,69 @@ test("a panel whose slow listing settles after the motion window is still reveal
   expect(box.y).toBeGreaterThanOrEqual(port!.y - 1);
   expect(box.y + box.height).toBeLessThanOrEqual(port!.y + port!.height + 1);
 });
+
+test("the grip is a movable separator: bounds are exposed, arrows resize by one row, Home/End set the extremes", async ({ page }) => {
+  await open(page);
+  await toggle(page, P("Personal"));
+  const grip = panel(page, P("Personal")).getByRole("separator", { name: "Resize Personal" });
+  const height = async () => (await rect(page, P("Personal"))).height;
+  const value = async (name: string) => Number(await grip.getAttribute(name));
+  const rows = panel(page, P("Personal")).locator(".tile-panel-row");
+  const rowHeight = await Promise.all([rows.nth(0).boundingBox(), rows.nth(1).boundingBox()]).then(([a, b]) => b!.y - a!.y);
+  // The edge moves away from the parent to grow.
+  const [grow, shrink] = await side(page, P("Personal")) === "above" ? ["ArrowUp", "ArrowDown"] : ["ArrowDown", "ArrowUp"];
+  await expect(grip).toHaveAttribute("aria-orientation", "horizontal");
+  await grip.focus();
+  await page.keyboard.press("Home");
+  await settled(page);
+  // Home: the height is the exposed minimum.
+  const min = await value("aria-valuemin");
+  expect(await value("aria-valuenow")).toBe(min);
+  expect(await height()).toBeCloseTo(min, 0);
+  // Shrinking at the minimum is a no-op.
+  await page.keyboard.press(shrink);
+  await settled(page);
+  expect(await height()).toBeCloseTo(min, 0);
+  // One arrow is one mini row.
+  await page.keyboard.press(grow);
+  await settled(page);
+  expect(await height()).toBeCloseTo(min + rowHeight, 0);
+  expect(await value("aria-valuenow")).toBe(Math.round(min + rowHeight));
+  await page.keyboard.press(shrink);
+  await settled(page);
+  expect(await height()).toBeCloseTo(min, 0);
+  // End: the exposed maximum, which no arrow exceeds.
+  await page.keyboard.press("End");
+  await settled(page);
+  const max = await value("aria-valuemax");
+  expect(max).toBeGreaterThan(min + rowHeight);
+  expect(await value("aria-valuenow")).toBe(max);
+  expect(await height()).toBeCloseTo(max, 0);
+  await page.keyboard.press(grow);
+  await settled(page);
+  expect(await height()).toBeCloseTo(max, 0);
+  await page.keyboard.press(shrink);
+  await settled(page);
+  expect(await height()).toBeCloseTo(max - rowHeight, 0);
+  // The value text counts whole rows.
+  await expect(grip).toHaveAttribute("aria-valuetext", /^\d+ rows$/);
+});
+
+test("with a panel open Ctrl+A selects only the folder's own tiles and typeahead never lands on a peeked child", async ({ page }) => {
+  await open(page);
+  await toggle(page, P("Career"));
+  await tile(page, P("Inbox")).click();
+  await page.keyboard.press("ControlOrMeta+A");
+  const all = await explorerCall<string[]>(page, "return [...explorer.selectedPaths]");
+  expect(all).toHaveLength(90);
+  expect(all.filter(path => path.startsWith(`${P("Career")}/`))).toEqual([]);
+  await tile(page, P("Inbox")).click();
+  // "offer" matches only Career/offer-letter.pdf, a peeked child: nothing moves.
+  await page.keyboard.type("offer");
+  expect(await explorerCall<string[]>(page, "return [...explorer.selectedPaths]")).toEqual([P("Inbox")]);
+  await expect(mini(page, P("Career/offer-letter.pdf"))).not.toHaveClass(/selected/);
+  // A depth-0 name still matches once the type-ahead buffer (800ms) has cleared.
+  await page.waitForTimeout(900);
+  await page.keyboard.type("cod");
+  await expect.poll(() => explorerCall<string[]>(page, "return [...explorer.selectedPaths]")).toEqual([P("Codex")]);
+});

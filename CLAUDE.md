@@ -165,6 +165,12 @@ Rules that bite:
   mini-tile sizing, so earlier Tiles perf medians do not measure its larger
   panels; shared sizing is an intervention already made, not a new extraction
   to file (#1301).
+- Closed-tab peek restoration keeps only bounded membership in memory, not
+  listing/watch resources or persisted expansion. Pending lazy sessions must
+  apply collapse/prune through the same membership policies before activation.
+  Count deployed fixes per the ledger's exact paths: explorer at six fixes is
+  below its **more than six** trigger, while Tiles contrast/List chrome changes
+  outside those paths remain evidence without altering that count (#1319).
 - **Start at [docs/code-map/](docs/code-map/)**: [map-feature.md](docs/code-map/map-feature.md) for cross-layer work and bug hunts, [map-playbook.md](docs/code-map/map-playbook.md) recipes for task-shaped changes (new palette command / context-menu action / Tauri command / setting), [map-folder.md](docs/code-map/map-folder.md) as the exhaustive per-file index. For a small localized change you can already name, skip the maps and grep (measured net loss on cheap tasks; prose architecture docs were deleted for the same reason — see [STUDY.md](docs/code-map/STUDY.md)).
 - **Keep the maps current or they turn harmful.** New/moved source file → update `map-folder.md` (+ the `map-feature.md` cluster), then `python3 docs/code-map/validate.py --coverage`. CI runs the same check.
 - [docs/lessons/](docs/lessons/) — gotchas from closed issues, **one file per issue**: write `docs/lessons/<issue>-<slug>.md` when you fix a bug (never append to the frozen [docs/lessons_learnt.md](docs/lessons_learnt.md) archive — shared-file appends conflicted every open PR, #544). When hunting a bug, search both: `grep -ri <term> docs/lessons/ docs/lessons_learnt.md`.

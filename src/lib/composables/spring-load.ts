@@ -35,7 +35,13 @@ const domDeps: SpringDomDeps = {
 let driver: SpringLoadDriver | null = null;
 let loading = false;
 let latest: Element | null = null;
+let latestGesture: string | undefined;
 const noHold = () => {};
+
+/** The drag a hover belongs to: the in-app source's session. Undefined (an
+ * external drag, or a source that vanished mid-drag as its row unmounted)
+ * leaves the current gesture as it is rather than starting a new one. */
+const hoverGesture = () => dragState.latestSource()?.sessionId;
 
 /**
  * A live drag moved: `locate` names the element under it (null: outside every
@@ -45,8 +51,10 @@ const noHold = () => {};
 export function springHover(locate: () => Element | null): void {
   if (!settingsStore.folderPeek) { driver?.hover(null); return; }
   const element = locate();
-  if (driver) { driver.hover(element); return; }
+  const gesture = hoverGesture();
+  if (driver) { driver.hover(element, gesture); return; }
   latest = element;
+  latestGesture = gesture;
   if (!element) return;
   if (loading) return;
   loading = true;
@@ -54,14 +62,41 @@ export function springHover(locate: () => Element | null): void {
     driver = module.createDomSpringLoadDriver(domDeps);
     const replay = latest;
     latest = null;
-    if (replay?.isConnected) driver.hover(replay);
+    if (replay?.isConnected) driver.hover(replay, latestGesture);
   }, () => { loading = false; });
 }
 
-/** The drag dropped, ended or was cancelled: close every temporary peek. */
-export function springEnd(): void {
+/** The live drag's identity, for a later `springEnd` that must not outlive it. */
+export function springGesture(): string {
+  return driver?.gesture ?? "";
+}
+
+/**
+ * The drag dropped, ended or was cancelled: close every temporary peek. With a
+ * `gesture` from `springGesture()`, only if that drag is still the live one: a
+ * replayed drop must not close a newer drag's springs (#1269).
+ */
+export function springEnd(gesture?: string): void {
   latest = null;
-  driver?.end();
+  driver?.end(gesture);
+}
+
+/** The source's dragend while the native receiver may still report the drop:
+ * close the peeks unless its Drop or Leave arrives within a bounded wait. */
+export function springEndSoon(): void {
+  latest = null;
+  driver?.endSoon();
+}
+
+/** Changes whenever the panes' temporary peeks were opened or closed: a drop
+ * target hit-tested at an earlier revision no longer names what is there now. */
+export function springRevision(): number {
+  return driver?.revision ?? 0;
+}
+
+/** The native receiver delivered its Drop or Leave: the fallback is moot. */
+export function springSettle(): void {
+  driver?.settle();
 }
 
 /** Keep the current temporary peeks until the returned release runs. */

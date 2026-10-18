@@ -20,6 +20,18 @@ interface DropTargetDeps {
 let feedbackEpoch = $state(0);
 export function retireDropFeedback(): void { feedbackEpoch++; }
 
+/** The listing background's own drop highlight (`.content.drop-target`),
+ * gated on the same epoch: a folder drop stops at its row, so the background
+ * never sees a drop or leave of its own (#1269). */
+export function useBackgroundDropFeedback() {
+  let on = $state(false);
+  let epoch = $state(feedbackEpoch);
+  return {
+    get active(): boolean { return on && epoch === feedbackEpoch; },
+    set(value: boolean): void { on = value; epoch = feedbackEpoch; },
+  };
+}
+
 export function useDropTarget(deps: DropTargetDeps) {
   let dropTargets = $state<Record<string, boolean>>({});
   let copyDropTargets = $state<Record<string, boolean>>({});

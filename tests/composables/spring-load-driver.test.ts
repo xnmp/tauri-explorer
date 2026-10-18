@@ -274,4 +274,82 @@ describe("spring-load driver (fake timers)", () => {
     await vi.advanceTimersByTimeAsync(5_000);
     expect(applied).toEqual([]);
   });
+
+  it("a replayed drop's scoped end neither closes a newer drag's peeks nor drops its holds (#1269)", async () => {
+    driver.hover(over("p1", "/r/Inbox"), "drag-1");
+    await springDelay();
+    const releaseFirst = driver.hold();
+    const first = driver.gesture;
+    // A second drag springs its own folder while the first drop's start is pending.
+    driver.hover(over("p1", "/r/Archive"), "drag-2");
+    await springDelay();
+    applied.length = 0;
+    const releaseSecond = driver.hold();
+    driver.end(first);
+    releaseFirst();
+    await nextTask();
+    expect(applied).toEqual([]);
+    // The second drag's hold is intact: its peeks stay until it releases.
+    driver.hover(over("p1", null, ["/r/notes.txt"]), "drag-2");
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(applied).toEqual([]);
+    releaseSecond();
+    await nextTask();
+    expect(applied).toEqual([["p1", []]]);
+  });
+
+  it("every change to the applied peeks advances the revision a resolved drop target is checked against", async () => {
+    const start = driver.revision;
+    driver.hover(over("p1", "/r/Inbox"), "drag-1");
+    await springDelay();
+    const opened = driver.revision;
+    expect(opened).toBeGreaterThan(start);
+    driver.hover(over("p1", "/r/Inbox"), "drag-1"); // a repeat changes nothing
+    await nextTask();
+    expect(driver.revision).toBe(opened);
+    driver.endSoon();
+    await vi.advanceTimersByTimeAsync(499);
+    expect(driver.revision).toBe(opened);
+    await vi.advanceTimersByTimeAsync(2);
+    expect(applied.at(-1)).toEqual(["p1", []]);
+    expect(driver.revision).toBeGreaterThan(opened);
+  });
+
+  it("a native Drop just before the deadline ends the peeks itself, once, and the fallback never fires", async () => {
+    driver.hover(over("p1", "/r/Inbox"), "drag-1");
+    await springDelay();
+    applied.length = 0;
+    driver.endSoon();
+    await vi.advanceTimersByTimeAsync(499);
+    driver.end(); // what the native Drop does
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(applied).toEqual([["p1", []]]);
+  });
+
+  it("a pending drop's hold outlives the fallback; the peeks close when it is released (#1269)", async () => {
+    driver.hover(over("p1", "/r/Inbox"), "drag-1");
+    await springDelay();
+    applied.length = 0;
+    const release = driver.hold();
+    driver.endSoon();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(applied).toEqual([]);
+    release();
+    await nextTask();
+    expect(applied).toEqual([["p1", []]]);
+  });
+
+  it("a hold released after a newer drag started ends nothing", async () => {
+    driver.hover(over("p1", "/r/Inbox"), "drag-1");
+    await springDelay();
+    const release = driver.hold();
+    driver.endSoon();
+    await vi.advanceTimersByTimeAsync(600);
+    driver.hover(over("p1", "/r/Archive"), "drag-2");
+    await springDelay();
+    applied.length = 0;
+    release();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(applied).toEqual([]);
+  });
 });

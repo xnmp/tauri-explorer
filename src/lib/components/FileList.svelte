@@ -11,6 +11,7 @@
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { dropIntoDirectory } from "$lib/composables/use-dom-directory-drop";
   import { isSpringClaimed } from "$lib/composables/use-native-drop-target.svelte";
+  import { useBackgroundDropFeedback } from "$lib/composables/use-drop-target.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
   import { frecencyStore } from "$lib/state/frecency.svelte";
@@ -64,7 +65,7 @@
 
 
   // Drop target state for dropping files into current directory
-  let isDropTarget = $state(false);
+  const listDropFeedback = useBackgroundDropFeedback();
 
   // Defer the loading spinner: a directory that lists in under 150ms shouldn't
   // flash a spinner. While loading but before the spinner shows, the list area
@@ -450,17 +451,17 @@
 
     event.preventDefault();
     if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
-    isDropTarget = true;
+    listDropFeedback.set(true);
   }
 
   function handleListDragLeave(event: DragEvent): void {
     const relatedTarget = event.relatedTarget as HTMLElement | null;
     if (relatedTarget && contentRef?.contains(relatedTarget)) return;
-    isDropTarget = false;
+    listDropFeedback.set(false);
   }
 
   async function handleListDrop(event: DragEvent): Promise<void> {
-    isDropTarget = false;
+    listDropFeedback.set(false);
     // A plugin view owns its surface; the host never turns a drop on it into a move.
     if (pluginView || holdingView) return;
 
@@ -487,7 +488,7 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="content"
-    class:drop-target={isDropTarget}
+    class:drop-target={listDropFeedback.active}
     class:marquee-active={marquee.isDragging}
     data-current-path={explorer.currentPath}
     bind:this={contentRef}

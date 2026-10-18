@@ -110,20 +110,40 @@ export interface SpringLoadControllerOptions {
   /** Receives the open temporary peeks whenever they change. */
   readonly apply: (open: readonly SpringTarget[]) => void;
   readonly delay?: number;
+  /** How long `endSoon` waits for the native receiver's Drop or Leave. */
+  readonly lostLeaveMs?: number;
+  /** The gesture ended (an `end`, a lost-Leave fallback or a newer drag). */
+  readonly onEnd?: () => void;
+  /** True while something still needs the peeks as they are (a pending drop's
+   * hold): the lost-Leave fallback then waits for `endDeferred`. */
+  readonly keepOpen?: () => boolean;
   readonly timer?: SpringTimer;
 }
+
+/** Wait for a native Drop or Leave after the source's dragend (#1269): a lost
+ * Leave must not leave a temporary peek open until the next drag. */
+export const SPRING_LOST_LEAVE_MS = 500;
 
 export const defaultSpringTimer: SpringTimer = {
   set: (callback, ms) => setTimeout(callback, ms),
   clear: handle => clearTimeout(handle as ReturnType<typeof setTimeout>),
 };
 
-/** Owns the one spring timer around `stepSpringLoad`. */
+/**
+ * Owns the one spring timer around `stepSpringLoad`, and the identity of the
+ * drag gesture the state belongs to (#1269). A caller that outlives its
+ * gesture (a replayed drop, a lost-Leave fallback) passes the gesture it
+ * captured, so it can only end the springs it saw: a newer drag's hover
+ * retires the older gesture and everything scoped to it.
+ */
 export function createSpringLoadController(options: SpringLoadControllerOptions) {
-  const { paths, apply, delay = SPRING_LOAD_DELAY_MS, timer = defaultSpringTimer } = options;
+  const { paths, apply, delay = SPRING_LOAD_DELAY_MS, lostLeaveMs = SPRING_LOST_LEAVE_MS, timer = defaultSpringTimer, onEnd, keepOpen } = options;
   let state = springIdle;
   let handle: unknown = null;
   let armed: SpringTarget | null = null;
+  let gesture: string | undefined;
+  let fallback: unknown = null;
+  let deferred: string | null = null;
 
   function dispatch(event: SpringEvent): void {
     const previous = state;
@@ -140,10 +160,54 @@ export function createSpringLoadController(options: SpringLoadControllerOptions)
     if (state.open !== previous.open) apply(state.open);
   }
 
+  function cancelFallback(): void {
+    if (fallback !== null) timer.clear(fallback);
+    fallback = null;
+    deferred = null;
+  }
+
+  /** Ends the gesture; false when `scope` names an older one. */
+  function end(scope?: string): boolean {
+    if (scope !== undefined && scope !== gesture) return false;
+    cancelFallback();
+    gesture = undefined;
+    dispatch({ type: "end" });
+    onEnd?.();
+    return true;
+  }
+
   return {
-    hover(observation: SpringObservation): void { dispatch({ type: "hover", observation }); },
+    /** `scope` names the drag: one differing from the last hover's is a new
+     * drag, which ends the earlier one. */
+    hover(observation: SpringObservation, scope?: string): void {
+      const fresh = scope !== undefined && scope !== gesture;
+      if (fresh) { end(); gesture = scope; }
+      dispatch({ type: "hover", observation });
+    },
     reset(pane: string): void { dispatch({ type: "reset", pane }); },
-    end(): void { dispatch({ type: "end" }); },
+    /** End every temporary peek; with `scope`, only if it is still the live gesture. */
+    end,
+    /** The source ended but the native receiver may still report this gesture:
+     * end it unless `settle`, an `end` or a new gesture comes first. */
+    endSoon(): void {
+      cancelFallback();
+      const scope = gesture;
+      if (scope === undefined) return;
+      fallback = timer.set(() => {
+        fallback = null;
+        if (keepOpen?.()) deferred = scope; else end(scope);
+      }, lostLeaveMs);
+    },
+    /** A `keepOpen` reason went away: complete a fallback that was waiting. */
+    endDeferred(): void {
+      const waiting = deferred;
+      if (!waiting || keepOpen?.()) return;
+      deferred = null;
+      end(waiting);
+    },
+    /** The native receiver delivered its Drop or Leave: no fallback needed. */
+    settle(): void { cancelFallback(); },
+    get gesture(): string | undefined { return gesture; },
     get state(): SpringState { return state; },
   };
 }

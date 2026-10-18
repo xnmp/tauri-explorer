@@ -192,6 +192,21 @@ for (const view of ["details", "list", "tiles"] as const) {
       await endDrag(page);
     });
 
+    test("a folder drop after crossing the listing background leaves no background highlight and no peek (#1269)", async ({ page }) => {
+      // A source from another folder, so the pane background accepts it.
+      await startDrag(page, "Inbox/alpha.txt");
+      await dragTo(page, v.folder(P("zeta.txt")), { below: 60 });
+      await expect(page.locator(`${shown} .content.drop-target`)).toHaveCount(1);
+      await dragTo(page, v.folder(P("Archive")));
+      await opened(page, [P("Archive")]);
+      await dropOn(page, v.folder(P("Archive")));
+      await expect.poll(() => listing(page, P("Archive"))).toContain("alpha.txt");
+      await endDrag(page);
+      await opened(page, []);
+      await expect(page.locator(`${shown} .drop-target`)).toHaveCount(0);
+      await expect(page.locator(`${shown} .content.drop-target`)).toHaveCount(0);
+    });
+
     test("WebKit-style leaves (no relatedTarget) inside the window keep the peek; leaving the window closes it", async ({ page }) => {
       await startDrag(page);
       await dragTo(page, v.folder(P("Inbox")));

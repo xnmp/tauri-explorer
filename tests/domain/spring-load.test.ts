@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  createSpringLoadController, springIdle, stepSpringLoad, SPRING_LOAD_DELAY_MS,
+  createSpringLoadController, springIdle, stepSpringLoad, SPRING_LOAD_DELAY_MS, SPRING_LOST_LEAVE_MS,
   type SpringFolder, type SpringObservation, type SpringTarget,
 } from "$lib/domain/spring-load";
 import { pathComparison } from "$lib/domain/path";
@@ -231,5 +231,125 @@ describe("spring-load controller (fake timers)", () => {
     expect(calls.map(([, ms]) => ms)).toEqual([250]);
     calls[0][0]();
     expect(custom.state.open).toEqual([{ pane: "p1", path: "/r/Inbox" }]);
+  });
+});
+
+// Gesture identity and the lost-Leave fallback (#1269).
+describe("spring-load controller gestures", () => {
+  let controller: ReturnType<typeof createSpringLoadController>;
+  let ended: number;
+  const openPaths = () => controller.state.open.map(target => target.path);
+  const openInbox = (scope: string) => {
+    controller.hover(over("/r/Inbox"), scope);
+    vi.advanceTimersByTime(SPRING_LOAD_DELAY_MS);
+  };
+  beforeEach(() => {
+    vi.useFakeTimers();
+    ended = 0;
+    controller = createSpringLoadController({ paths, apply: () => {}, onEnd: () => { ended++; } });
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("a replayed drop's end, scoped to its own gesture, cannot close a newer drag's springs", () => {
+    openInbox("drag-1");
+    const captured = controller.gesture!;
+    // A second drag begins and springs open its own peek before the replay fires.
+    openInbox("drag-2");
+    expect(openPaths()).toEqual(["/r/Inbox"]);
+    expect(controller.end(captured)).toBe(false);
+    expect(openPaths()).toEqual(["/r/Inbox"]);
+    expect(controller.gesture).toBe("drag-2");
+  });
+
+  it("an end scoped to the live gesture closes its springs", () => {
+    openInbox("drag-1");
+    expect(controller.end("drag-1")).toBe(true);
+    expect(openPaths()).toEqual([]);
+    expect(controller.gesture).toBeUndefined();
+  });
+
+  it("an unscoped end always ends the gesture", () => {
+    openInbox("drag-1");
+    controller.end();
+    expect(openPaths()).toEqual([]);
+  });
+
+  it("a hover from a newer drag retires the older one and reports the end (releasing its holds)", () => {
+    openInbox("drag-1");
+    ended = 0;
+    controller.hover(over("/r/notes.txt"), "drag-2");
+    expect(ended).toBe(1);
+    expect(openPaths()).toEqual([]);
+    controller.hover(over("/r/notes.txt"), "drag-2");
+    expect(ended).toBe(1);
+  });
+
+  it("the lost-Leave fallback closes the springs after the bounded wait, and not before", () => {
+    expect(SPRING_LOST_LEAVE_MS).toBe(500);
+    openInbox("drag-1");
+    controller.endSoon();
+    vi.advanceTimersByTime(SPRING_LOST_LEAVE_MS - 1);
+    expect(openPaths()).toEqual(["/r/Inbox"]);
+    vi.advanceTimersByTime(1);
+    expect(openPaths()).toEqual([]);
+  });
+
+  it("a native Drop or Leave just before the deadline cancels the fallback", () => {
+    openInbox("drag-1");
+    controller.endSoon();
+    vi.advanceTimersByTime(SPRING_LOST_LEAVE_MS - 1);
+    controller.settle();
+    vi.advanceTimersByTime(10_000);
+    expect(openPaths()).toEqual(["/r/Inbox"]);
+  });
+
+  it("an end before the deadline leaves no timer to end a later drag", () => {
+    openInbox("drag-1");
+    controller.endSoon();
+    controller.end();
+    openInbox("drag-2");
+    vi.advanceTimersByTime(SPRING_LOST_LEAVE_MS * 2);
+    expect(openPaths()).toEqual(["/r/Inbox"]);
+  });
+
+  it("a newer drag arriving before the deadline is not ended by the older fallback", () => {
+    openInbox("drag-1");
+    controller.endSoon();
+    vi.advanceTimersByTime(SPRING_LOST_LEAVE_MS - 100);
+    openInbox("drag-2");
+    vi.advanceTimersByTime(SPRING_LOST_LEAVE_MS);
+    expect(openPaths()).toEqual(["/r/Inbox"]);
+    expect(controller.gesture).toBe("drag-2");
+  });
+
+  it("the fallback deadline is injectable", () => {
+    const custom = createSpringLoadController({ paths, apply: () => {}, lostLeaveMs: 50 });
+    custom.hover(over("/r/Inbox"), "g");
+    vi.advanceTimersByTime(SPRING_LOAD_DELAY_MS);
+    custom.endSoon();
+    vi.advanceTimersByTime(50);
+    expect(custom.state.open).toEqual([]);
+  });
+
+  it("endSoon with no live gesture arms nothing", () => {
+    controller.endSoon();
+    openInbox("drag-1");
+    vi.advanceTimersByTime(SPRING_LOST_LEAVE_MS * 2);
+    expect(openPaths()).toEqual(["/r/Inbox"]);
+  });
+
+  it("while a reason to keep the peeks open stands, the fallback waits for endDeferred", () => {
+    let held = true;
+    const kept = createSpringLoadController({ paths, apply: () => {}, keepOpen: () => held });
+    kept.hover(over("/r/Inbox"), "g");
+    vi.advanceTimersByTime(SPRING_LOAD_DELAY_MS);
+    kept.endSoon();
+    vi.advanceTimersByTime(SPRING_LOST_LEAVE_MS * 4);
+    expect(kept.state.open).toHaveLength(1);
+    kept.endDeferred();
+    expect(kept.state.open).toHaveLength(1);
+    held = false;
+    kept.endDeferred();
+    expect(kept.state.open).toEqual([]);
   });
 });

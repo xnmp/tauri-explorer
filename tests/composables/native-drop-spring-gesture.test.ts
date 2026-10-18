@@ -202,6 +202,16 @@ describe("a native Drop after layout changes the spring driver never saw (#1283)
     expect(toasts).toHaveBeenCalledTimes(1);
   });
 
+  it("a captured provider location (trash://) is not a filesystem folder to check", async () => {
+    under = Object.assign(dropElement("entry-item directory", { "data-path": "trash://bin" }), { id: "trash" });
+    hoverThenDragEnd();
+    exists.verify.mockResolvedValue({ ok: true, data: false });
+    nativeEvent("drop");
+    await flush();
+    expect(exists.verify).not.toHaveBeenCalled();
+    expect(toasts).not.toHaveBeenCalled();
+  });
+
   it("a Drop with no ended drag still resolves by position and checks nothing", async () => {
     nativeEvent("enter");
     nativeEvent("over");
@@ -268,28 +278,81 @@ describe("two drags in a row (the first one's Drop is still owed)", () => {
     expect(drops.mock.calls[0][1]).toBe("/r/row-a");
   });
 
+  /** A local drag the receiver could not identify: no source at Enter or Drop, not external. */
+  const unidentified = { source: null, externalSource: false, paths: ["/r/f.txt"] };
+  /** The renderer's live source for such a drag; returns its session. */
+  const liveDrag = () => {
+    dragState.start({ path: "/r/f.txt", name: "f.txt", kind: "file" } as never);
+    return dragState.current!.sessionId!;
+  };
+  function unidentifiedDragEnds() {
+    const session = liveDrag();
+    nativeEvent("enter", unidentified);
+    nativeEvent("over", unidentified);
+    dragEnd(session);
+  }
+
   it("a Drop that lost its source identity finds its capture by the dropped paths when exactly one matches", async () => {
-    nativeEvent("enter", internal(S1));
-    nativeEvent("over", internal(S1));
-    dragEnd(S1);
+    unidentifiedDragEnds();
     closePeeks();
     under = named("row-b");
-    nativeEvent("drop", { externalSource: true, paths: ["/r/f.txt"] });
+    nativeEvent("drop", unidentified);
     await flush();
     expect(drops.mock.calls[0][1]).toBe("/r/row-a");
   });
 
   it("with several captures for the same paths it cannot tell them apart, and resolves by position", async () => {
-    for (const session of [S1, S2]) {
-      nativeEvent("enter", internal(session));
-      nativeEvent("over", internal(session));
-      dragEnd(session);
-    }
+    unidentifiedDragEnds();
+    unidentifiedDragEnds();
     closePeeks();
     under = named("row-b");
-    nativeEvent("drop", { externalSource: true, paths: ["/r/f.txt"] });
+    nativeEvent("drop", unidentified);
     await flush();
     expect(drops.mock.calls[0][1]).toBe("/r/row-b");
+  });
+
+  it("a Drop from another application never borrows a cancelled drag's capture of the same files", async () => {
+    // Drag 1 is cancelled: its dragend lands, its Leave is not delivered yet.
+    nativeEvent("enter", internal(S1));
+    nativeEvent("over", internal(S1));
+    dragEnd(S1);
+    // The same file, dragged in from a file manager and dropped on row-b.
+    under = named("row-b");
+    nativeEvent("enter", { externalSource: true, paths: ["/r/f.txt"] });
+    nativeEvent("over", { externalSource: true, paths: ["/r/f.txt"] });
+    nativeEvent("drop", { externalSource: true, paths: ["/r/f.txt"] });
+    await flush();
+    expect(drops).toHaveBeenCalledTimes(1);
+    expect(drops.mock.calls[0][1]).toBe("/r/row-b");
+  });
+
+  it("a drag's native Leave retires its capture, even when the receiver never identified it", async () => {
+    unidentifiedDragEnds();
+    nativeEvent("leave"); // drag 1 was cancelled: its Drop is not coming
+    // A later drag of the same file, dropped (before its own dragend) on row-b.
+    liveDrag();
+    under = named("row-b");
+    nativeEvent("enter", unidentified);
+    nativeEvent("over", unidentified);
+    nativeEvent("drop", unidentified);
+    await flush();
+    expect(drops.mock.calls[0][1]).toBe("/r/row-b");
+  });
+
+  it("a duplicate Drop cannot claim the drag while its captured folder is being checked", async () => {
+    nativeEvent("enter", internal(S1));
+    nativeEvent("over", internal(S1));
+    dragEnd(S1);
+    under = named("row-b");
+    let confirm!: (r: unknown) => void;
+    exists.verify.mockReturnValue(new Promise(resolve => { confirm = resolve; }));
+    nativeEvent("drop", internal(S1));
+    nativeEvent("drop", internal(S1));
+    await flush();
+    confirm({ ok: true, data: true });
+    await flush();
+    expect(drops).toHaveBeenCalledTimes(1);
+    expect(drops.mock.calls[0][1]).toBe("/r/row-a");
   });
 
   it("drag 2's own Drop never uses drag 1's capture", async () => {

@@ -10,7 +10,7 @@ import { useExternalDrop } from "$lib/composables/use-external-drop.svelte";
 import { resolveDropTarget, resolveDropTargetFromElement, captureDropDestination, highlightTarget, highlightTargetAtPoint, highlightTargetElement, elementAtNativePosition, clearHighlights, captureHighlightCleanup, claimSpringEvent, type DropTargetResult } from "$lib/composables/use-native-drop-target.svelte";
 import { dropIntoDirectory } from "$lib/composables/use-dom-directory-drop";
 import { retireDropFeedback } from "$lib/composables/use-drop-target.svelte";
-import { springEnd, springEndSoon, springGesture, springHold, springHover, springRevision, springSettle } from "$lib/composables/spring-load";
+import { springEnd, springEndSoon, springGesture, springHold, springHover, springSettle } from "$lib/composables/spring-load";
 import { dropHover } from "$lib/state/drop-hover";
 import { shouldRetireOnDragEnd } from "$lib/domain/drop-feedback";
 import { dragState, type DragData } from "$lib/state/drag.svelte";
@@ -60,9 +60,13 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
   // that target, so the Drop routes to the capture instead (#1269). Any
   // layout change (navigation, refresh, view mode) does the same, so a
   // Drop after dragend always routes to the capture (#1283). A newer
-  // drag never clears an older one's capture; the map is bounded.
-  const endedDrags = new Map<string, { target: DropTargetResult; revision: number; paths: readonly string[] | null }>();
+  // drag never clears an older one's capture; the map is bounded. A native
+  // gesture's Leave means its Drop is not coming (wry cancels a pending Leave
+  // on Drop), so the Leave retires the capture taken during that gesture,
+  // identified or not.
+  const endedDrags = new Map<string, { target: DropTargetResult; paths: readonly string[] | null }>();
   const MAX_ENDED_DRAGS = 8;
+  let gestureCapture = "";
   const refreshHover = () => { if (hoverPosition) handleNativeOver(hoverPosition); };
   // Receiver-owned snapshot of the live source at native Enter. Source result
   // and destination Drop use different IPC channels and can arrive reordered.
@@ -91,6 +95,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     if (copyModifier != null) copyModifierHeld = copyModifier;
     hoverPosition = null; receiverReports = true;
     endedDrags.delete(""); // an earlier session-less drag's Drop is not this one's
+    gestureCapture = "";
     springSettle();
     // Native context identity outranks path/time inference from a pending renderer source.
     const data = externalSource ? null : nativeSource(rawPaths, source, observedAt, completedGestureSequence, observationClock);
@@ -124,10 +129,11 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     // Only this drag's own capture: a Drop never borrows another drag's.
     let endedKey = dragData?.sessionId ?? "";
     let ended = endedDrags.get(endedKey);
-    if (!ended && !dragData?.sessionId) {
+    if (!ended && !dragData?.sessionId && !externalSource) {
       // A Drop that lost its source identity: its capture is the one ended
       // drag that carried exactly these paths. Several (or none) means it
-      // cannot be told apart: resolve by position, as before.
+      // cannot be told apart: resolve by position, as before. A Drop from
+      // another application is never one of ours, whatever it carries.
       const same = [...endedDrags].filter(([, capture]) => capture.paths && sameDropPathSet(paths, capture.paths, isWindows));
       if (same.length === 1) [endedKey, ended] = same[0];
     }
@@ -159,16 +165,6 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     // Route to it, or cancel rather than guess.
     const target = ended ? ended.target : resolveDropTarget(position);
     nativeGesture = null;
-    // The captured folder may also have been deleted or renamed since dragend.
-    const folder = ended && target ? capturedFolderPath(target) : null;
-    if (ended && (!target || (folder !== null && !(await folderExists(folder))))) {
-      nativeDomSession = undefined;
-      clearHighlights();
-      // Settle the source like a completed drop would, so it is not left as the latest one.
-      dragState.claim(isInternalDrag ? dragData : null)?.finish();
-      toastStore.show("Drop cancelled because its destination could not be confirmed. Drop the files again.");
-      return;
-    }
     if (isInternalDrag) nativeDomSession = dragData?.sessionId;
     const sourcePaths = isInternalDrag ? internalPaths : paths;
     const delivery = dispatchFileDrop(target, sourcePaths, isInternalDrag ? "pane" : "external", isInternalDrag ? dragData : null);
@@ -178,6 +174,14 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     if (!lease) return;
     const clear = captureHighlightCleanup();
     try {
+      // No target was captured, or the captured folder was deleted or renamed
+      // since dragend: cancel, settling the claimed source like a completed
+      // drop. Checked once the drop is claimed, so the first await follows it.
+      const folder = ended && target ? capturedFolderPath(target) : null;
+      if (ended && (!target || (folder !== null && !(await folderExists(folder))))) {
+        toastStore.show("Drop cancelled because its destination could not be confirmed. Drop the files again.");
+        return;
+      }
       if (!sourcePaths.length) return;
       const explorer = deps.getActiveExplorer();
       if (!explorer) return;
@@ -283,7 +287,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     onDrop: handleNativeDrop,
     onEnter: handleNativeEnter,
     onOver: handleNativeOver,
-    onLeave: () => { springHover(() => null); springSettle(); endedDrags.delete(""); retireDropFeedback(); dropHover.clear(refreshHover); hoverPosition = null; receiverReports = false; nativeGesture = null; clearNativeHighlights?.(); clearNativeHighlights = null; },
+    onLeave: () => { springHover(() => null); springSettle(); endedDrags.delete(gestureCapture); retireDropFeedback(); dropHover.clear(refreshHover); hoverPosition = null; receiverReports = false; nativeGesture = null; clearNativeHighlights?.(); clearNativeHighlights = null; },
   });
 
   function trackModifierDown(e: KeyboardEvent) { copyModifierHeld = isCopyMod(e); }
@@ -465,7 +469,8 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     else {
       const key = endedSession || "";
       endedDrags.delete(key);
-      endedDrags.set(key, { target: hoverPosition ? resolveDropTarget(hoverPosition) : null, revision: springRevision(), paths: internalDragPaths(source, isWindows) });
+      endedDrags.set(key, { target: hoverPosition ? resolveDropTarget(hoverPosition) : null, paths: internalDragPaths(source, isWindows) });
+      gestureCapture = key;
       for (const old of endedDrags.keys()) { if (endedDrags.size <= MAX_ENDED_DRAGS) break; endedDrags.delete(old); }
       springEndSoon();
     }

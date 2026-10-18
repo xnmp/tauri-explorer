@@ -15,7 +15,7 @@
 <script lang="ts">
   import { untrack, type Snippet } from "svelte";
   import { getMicroThumbnail, getThumbnailData, getVideoThumbnailData } from "$lib/api/thumbnails";
-  import { getThumbnailCache } from "$lib/state/thumbnail-cache";
+  import { getThumbnailCache, subscribeThumbnailInvalidation } from "$lib/state/thumbnail-cache";
   import { thumbnailLoads, type ThumbnailRequests, type ThumbnailState } from "$lib/state/thumbnail-loads";
 
   /**
@@ -89,6 +89,14 @@
   // The key whose load settled here (success or error): visibility toggles
   // never retry it, and a loaded thumbnail stays through them (#247).
   let loadedKey: string | null = null;
+  // Bumped when this path's cached thumbnails were invalidated (a crop): the
+  // key is unchanged, so the load effect needs another reason to run again.
+  let reloadNonce = $state(0);
+  $effect(() => subscribeThumbnailInvalidation(changed => {
+    if (changed !== path) return;
+    loadedKey = null;
+    reloadNonce++;
+  }));
 
   // Hydrate synchronously from the shared LRU cache at mount: remounts
   // (virtual-list rechunk, fullscreen-preview exit, duplicating a tab) must
@@ -136,6 +144,7 @@
   // still publishes whatever it completes to the shared cache.
   $effect(() => {
     if (!visible) return;
+    void reloadNonce;
     const key = reloadKey;
     if (key === loadedKey) return;
     const loadKind = kind, loadPath = path, loadSize = backendSize, loadQuality = quality;

@@ -7,6 +7,8 @@ import {
   getThumbnailCache,
   setThumbnailCache,
   renameThumbnailCache,
+  invalidateThumbnailCache,
+  subscribeThumbnailInvalidation,
 } from "$lib/state/thumbnail-cache";
 
 const revokeSpy = vi.fn();
@@ -98,5 +100,67 @@ describe("LRU eviction", () => {
     setThumbnailCache("/plain/a.png:64:80", entry("replacement"));
 
     expect(revokeSpy).not.toHaveBeenCalled();
+  });
+});
+
+// Real keys are `${kind}:${path}:${backendSize}:${quality}` (ThumbnailImage.svelte) (#1267).
+describe("invalidateThumbnailCache", () => {
+  it("drops every kind, size and quality of the path, revoking their blob URLs", () => {
+    setThumbnailCache("image:/crop/a.png:64:80", entry("a-small"));
+    setThumbnailCache("image:/crop/a.png:256:90", entry("a-large"));
+    setThumbnailCache("video:/crop/a.png:128:80", entry("a-video"));
+    revokeSpy.mockClear();
+
+    invalidateThumbnailCache("/crop/a.png");
+
+    for (const key of ["image:/crop/a.png:64:80", "image:/crop/a.png:256:90", "video:/crop/a.png:128:80"]) {
+      expect(getThumbnailCache(key)).toBeUndefined();
+    }
+    for (const name of ["a-small", "a-large", "a-video"]) {
+      expect(revokeSpy).toHaveBeenCalledWith(`blob:micro-${name}`);
+      expect(revokeSpy).toHaveBeenCalledWith(`blob:full-${name}`);
+    }
+  });
+
+  it("leaves other paths alone, including ones sharing a prefix or suffix", () => {
+    setThumbnailCache("image:/crop/b.png:64:80", entry("b"));
+    setThumbnailCache("image:/crop/b.png.bak:64:80", entry("b-bak"));
+    setThumbnailCache("image:/crop/sub/crop/b.png:64:80", entry("b-deep"));
+    setThumbnailCache("image:/crop/b.png/inner.png:64:80", entry("b-inner"));
+    revokeSpy.mockClear();
+
+    invalidateThumbnailCache("/crop/b.png");
+
+    expect(getThumbnailCache("image:/crop/b.png:64:80")).toBeUndefined();
+    expect(getThumbnailCache("image:/crop/b.png.bak:64:80")).toEqual(entry("b-bak"));
+    expect(getThumbnailCache("image:/crop/sub/crop/b.png:64:80")).toEqual(entry("b-deep"));
+    expect(getThumbnailCache("image:/crop/b.png/inner.png:64:80")).toEqual(entry("b-inner"));
+    expect(revokeSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("matches a path that itself contains colons (a Windows drive, a stray colon)", () => {
+    setThumbnailCache("image:C:\\pics\\a.png:64:80", entry("win"));
+    setThumbnailCache("image:/odd/a:b.png:64:80", entry("colon"));
+
+    invalidateThumbnailCache("C:\\pics\\a.png");
+    invalidateThumbnailCache("/odd/a:b.png");
+
+    expect(getThumbnailCache("image:C:\\pics\\a.png:64:80")).toBeUndefined();
+    expect(getThumbnailCache("image:/odd/a:b.png:64:80")).toBeUndefined();
+  });
+
+  it("ignores keys of an unexpected shape and unknown paths", () => {
+    setThumbnailCache("garbage", entry("g"));
+    expect(() => invalidateThumbnailCache("/never/cached.png")).not.toThrow();
+    expect(getThumbnailCache("garbage")).toEqual(entry("g"));
+  });
+
+  it("tells subscribers which path was invalidated, until they unsubscribe", () => {
+    const seen: string[] = [];
+    const stop = subscribeThumbnailInvalidation(path => seen.push(path));
+    invalidateThumbnailCache("/crop/c.png");
+    stop();
+    invalidateThumbnailCache("/crop/d.png");
+    expect(seen).toEqual(["/crop/c.png"]);
   });
 });

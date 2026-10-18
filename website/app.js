@@ -101,6 +101,11 @@ in the Rust backend into an on-disk cache, so image-heavy folders scroll at
 
 /* ── The filesystem ─────────────────────────────────────── */
 
+/* A short markdown-style page, for the nested docs/ folder. */
+function note(name, title, body) {
+  return { name, kind: "file", size: "2 KB", content: `<h1>${title}</h1>\n<p>${body}</p>` };
+}
+
 const FS = {
   name: "tauri-explorer",
   kind: "dir",
@@ -262,6 +267,11 @@ columns, so photos show their dimensions and videos their duration without
 opening anything. Preview shows an image's resolution too, loads big photos
 fast, and when a video won't play, it names the codec and offers Download
 instead of shrugging.</p>
+<p><strong>Folder peek</strong> expands a folder in place, so you can look inside
+without leaving the one you are in. Details becomes a tree, List grows a scrollable
+card, and Tiles opens a panel under the row. <strong>Try it here:</strong> click the
+caret beside <code>docs</code>, then the ones inside it. <kbd>Esc</kbd> closes the peek
+your cursor is in.</p>
 <p><strong>Switch views right here:</strong> the four buttons in this toolbar —
 Details, List, Tiles, and Miller Columns. And everything resizes: drag the
 edges of the sidebar, this preview pane, the terminal, the columns.</p>
@@ -381,6 +391,79 @@ provider bills you as usual.
       ],
     },
     {
+      name: "docs", kind: "dir",
+      children: [
+        {
+          name: "guides", kind: "dir",
+          children: [
+            note("getting-started.md", "Getting started", "Install, open a folder, press <kbd>Ctrl+P</kbd>. That is the whole onboarding."),
+            note("keybindings.md", "Keybindings", "Every shortcut is rebindable, including multi-key chords like <kbd>G</kbd> <kbd>H</kbd>."),
+            note("command-palette.md", "The command palette", "<kbd>Ctrl+Shift+P</kbd> runs any command by name. Menus are just a slower way to reach the same list."),
+            note("themes.md", "Writing a theme", "A theme is a plain CSS file of variables. Drop it in the themes folder and it appears in the menu."),
+            note("dual-pane.md", "Dual pane", "Two folders side by side, <kbd>F5</kbd> copies across and <kbd>F6</kbd> moves."),
+            note("git-graph.md", "The Git graph", "A commit graph per repository: cherry-pick, merge, undo, and pull requests through <code>gh</code>."),
+            note("plugins-sdk.md", "Plugin SDK", "Plugins add commands and context-menu actions. AI-backed ones live in a shared submenu."),
+          ],
+        },
+        {
+          name: "adr", kind: "dir",
+          children: [
+            note("0004-config-watch.md", "ADR 0004: config watching", "Settings reload when the file changes, even through symlinks, without losing a nested watch."),
+            note("0005-pr-mutations.md", "ADR 0005: pull-request mutations", "PR actions name their repository explicitly and ask before they run."),
+            note("0006-git-network-ops.md", "ADR 0006: Git network operations", "Fetch, pull and push share one cancellable lifecycle; only the network phase is killable."),
+            note("0013-quick-open-cancel.md", "ADR 0013: Quick Open cancellation", "Cancelling a search reaches the recursive watcher, not just the tree walk."),
+            note("0019-trash-restore.md", "ADR 0019: Recycle Bin restore", "The renderer sends opaque entry IDs. It can never name a payload in the trash."),
+            note("0021-startup-qualification.md", "ADR 0021: startup qualification", "Cold-start timings are measured against a verified binary, with every residual accounted for."),
+            note("0025-linux-mounts.md", "ADR 0025: Linux volume mounts", "Mounting happens only on an explicit open, through one authorised path."),
+            note("0026-git-avatars.md", "ADR 0026: Git author avatars", "Display preference and third-party consent are separate settings."),
+          ],
+        },
+        {
+          name: "lessons", kind: "dir",
+          children: [
+            note("444-state-outside-components.md", "State belongs in a store", "A state machine hidden in a component cannot be unit tested, so it will eventually be wrong unobserved."),
+            note("457-windows-smoke-hang.md", "The Windows smoke hang", "A debug build quietly waited on a dev server. Both E2E hook gates must be on."),
+            note("503-hover-latency.md", "Hover must be instant", "A CSS transition on pointer highlights reads as input latency even when the thread is idle."),
+            note("598-miller-ancestors.md", "Miller ancestor refresh", "Columns cache parent listings, so local mutations publish the parent directory."),
+            note("635-zoomed-preview.md", "Zoomed preview panning", "Scope the compositor hint to the zoomed image only."),
+            note("664-video-frame-size.md", "One frame for preview and fullscreen", "The preview requests a 1024px frame so fullscreen can reuse it."),
+            note("888-linux-drive-events.md", "Pushed drive events", "A 30 second poll stays only as a backstop for mount sources that raise no signal."),
+            note("993-column-menus.md", "Column menus under zoom", "Fixed overlays scale differently per engine. Probe the geometry, do not assume it."),
+            note("1007-recursive-demand.md", "Cancelled recursive watches", "Pending recursive demand is tied to each search flag."),
+            note("1051-marquee-transform.md", "Marquee as five layers", "Only transforms change per frame, so WebKitGTK stops repainting every tile."),
+            note("1061-tile-layout.md", "Tile layout delivery", "Never size painted layout from a measurement committed in a later frame."),
+            note("1082-graph-disclosures.md", "Graph disclosures", "A late scroll notification must not dismiss a menu that was positioned correctly."),
+            note("1100-wayland-drag-intent.md", "Wayland drag copy intent", "Mutter eats keyboard events during a drag, so read modifiers after the grab releases."),
+            note("1173-retained-tabs.md", "Retained tabs", "Recently used tabs stay mounted and hidden, so a tab switch only toggles visibility."),
+            note("1206-preview-content.md", "Preview content ownership", "Replace the whole content object, and keep selection effects from re-triggering a request."),
+            note("1208-recycle-bin-names.md", "Recycle Bin file names", "Read the real file name from the shell item, because the display name can drop the extension."),
+          ],
+        },
+        {
+          name: "design", kind: "dir",
+          children: [
+            {
+              name: "mockups", kind: "dir",
+              children: [
+                note("details.md", "Details mockup", "A tree with guide lines. Open folders are bold, and children follow the current sort."),
+                note("list.md", "List mockup", "Column-major columns. An open folder becomes a scrollable card."),
+                note("tiles.md", "Tiles mockup", "An open folder becomes a panel below its row, with a tab under the folder tile."),
+              ],
+            },
+            {
+              name: "tokens", kind: "dir",
+              children: [
+                note("colors.md", "Color tokens", "One accent, quiet chrome, and every surface read from a theme variable."),
+                note("motion.md", "Motion", "Structural moves animate once. Pointer feedback never transitions."),
+              ],
+            },
+            note("principles.md", "Design principles", "The editor workflow for your filesystem: keyboard first, minimal by default."),
+          ],
+        },
+        note("README.md", "Docs", "Guides, decision records, lessons from closed issues, and design notes. Expand the folders to look around."),
+      ],
+    },
+    {
       name: "screenshots", kind: "dir", view: "tiles", badge: "thumbnails",
       children: [
         shotFile("details-view.png", "32 KB", "Details view — git status column, breadcrumb bar."),
@@ -443,6 +526,7 @@ on Linux, Windows and macOS in CI.</p>
   <li>Resolution and Length columns in Details view; Preview shows resolution
   and loads large images much faster</li>
   <li>Git Graph creates, merges and approves pull requests through <code>gh</code></li>
+  <li>Folder peek: expand folders in place in Details, List and Tiles</li>
   <li>Smoother scrolling and menus on Linux</li>
 </ul>
 <p>Pairs with TraceExplorer 0.3.0 and Image Generation 0.1.0 (see
@@ -643,12 +727,18 @@ function buildList(fl, pathArr, selName, paneIdx) {
   fl.classList.toggle("tiles", mode === "tiles");
   fl.classList.toggle("list", mode === "list");
   fl.classList.toggle("columns", mode === "columns");
+  fl.classList.remove("peek-list"); // folder peek re-adds it for its own List layout
   if (mode === "columns") return buildMiller(fl, pathArr, selName, paneIdx);
   const children = sortChildren(here.children || []);
   const arrow = (k) => (sortKey === k ? `<span class="sort-arrow">${sortAsc ? "▲" : "▼"}</span>` : "");
   fl.innerHTML = mode === "details" ? `<div class="list-head"><span data-sort="name">NAME${arrow("name")}</span><span class="kind" data-sort="kind">KIND${arrow("kind")}</span><span data-sort="size">SIZE${arrow("size")}</span></div>` : "";
   fl.querySelectorAll("[data-sort]").forEach((h) => (h.onclick = () => setSort(h.dataset.sort)));
-  const open = (child) => (paneIdx === 1 ? openEntry2(child) : openEntry(child));
+  const open = (child, rel) => (paneIdx === 1 ? openEntry2(child) : openEntry(child, rel));
+  // folder peek: the main pane expands folders in place (Details, List, Tiles)
+  if (paneIdx === 0 && peekActive(mode)) {
+    peekRender(fl, mode, pathArr, children, { selName, open });
+    return { count: children.length, tiles: mode === "tiles" };
+  }
   for (const child of children) {
     const editing = editingName === child.name && paneIdx === focusedPane;
     if (mode === "tiles") {
@@ -744,17 +834,19 @@ function setPreview(show) {
   $("rsz-preview").hidden = !show;
 }
 
-function openEntry(node) {
+/** `rel` is the entry's path under the current folder when it was opened from a peek. */
+function openEntry(node, rel) {
   focusPane(0);
+  const parts = rel ? rel.split("/") : [node.name];
   if (node.kind === "dir") {
-    navigate([...cwd, node.name]);
+    navigate([...cwd, ...parts]);
     return;
   }
-  selectedName = node.name;
+  selectedName = parts.join("/");
   $("filelist").querySelectorAll("[data-name]").forEach((r) =>
-    r.classList.toggle("selected", r.dataset.name === node.name));
+    r.classList.toggle("selected", r.dataset.name === selectedName));
   setPreview(true);
-  $("preview-name").textContent = [...cwd, node.name].join("/");
+  $("preview-name").textContent = [...cwd, ...parts].join("/");
   $("preview-body").innerHTML = node.content;
   $("preview-body").scrollTop = 0;
   syncTab();
@@ -853,6 +945,10 @@ const COMMANDS = [
   { cat: "VIEW", label: "View: List", run: () => setView("list") },
   { cat: "VIEW", label: "View: Tiles", run: () => setView("tiles") },
   { cat: "VIEW", label: "View: Columns (Miller)", run: () => setView("columns") },
+  { cat: "VIEW", label: "Peek into Folder", run: peekIntoFolder },
+  { cat: "VIEW", label: "Collapse All Peeks", run: peekCollapseAll },
+  { cat: "VIEW", label: "Toggle Folder Peek (Setting)", run: () => peekSetting("on") },
+  { cat: "VIEW", label: "Toggle Folder Peek Carets (Setting)", run: () => peekSetting("carets") },
   { cat: "EDIT", label: "Rename Selected (F2)", run: () => startRename(focusedPane) },
   { cat: "EDIT", label: "AI Rename Selected (Plugin Demo)", run: () => {
     const base = focusedPane === 1 && pane2 ? pane2.cwd : cwd;
@@ -1630,14 +1726,14 @@ function ctxMenu(e, items) {
   el.style.top = Math.min(e.clientY, innerHeight - el.offsetHeight - pad) + "px";
 }
 
-function fileCtx(e, node, paneIdx = 0, baseOverride) {
+function fileCtx(e, node, paneIdx = 0, baseOverride, rel) {
   e.preventDefault();
   const base = baseOverride || (paneIdx === 1 && pane2 ? pane2.cwd : cwd);
   const path = [...base, node.name];
   ctxMenu(e, [
-    { label: "Open", run: () => (paneIdx === 1 ? openEntry2(node) : openEntry(node)) },
+    { label: "Open", run: () => (paneIdx === 1 ? openEntry2(node) : openEntry(node, rel)) },
     { label: "Open in New Tab", run: () => newTab(node.kind === "dir" ? { cwd: path, sel: null } : { cwd: [...base], sel: node.name }) },
-    { label: "Rename (F2)", run: () => { if (paneIdx === 1 && pane2) pane2.sel = node.name; else selectedName = node.name; startRename(paneIdx); } },
+    { label: "Rename (F2)", run: () => { if (paneIdx === 1 && pane2) pane2.sel = node.name; else selectedName = rel || node.name; startRename(paneIdx); } },
     ...(node.kind === "dir" ? [] : [{ label: "AI Rename (plugin demo)", run: () => aiRename(node, paneIdx) }]),
     { sep: true },
     { label: "Copy Path", run: () => { if (navigator.clipboard) navigator.clipboard.writeText("~/tauri-explorer/" + path.join("/")); toast("Path copied — the app's menu also does zip, checksums, open-with…", { ms: 3200 }); } },
@@ -1703,6 +1799,7 @@ function startRename(paneIdx) {
   const base = paneIdx === 1 && pane2 ? pane2.cwd : cwd;
   const sel = paneIdx === 1 && pane2 ? pane2.sel : selectedName;
   if (!sel) { toast("Select a file first, then <kbd>F2</kbd>."); return; }
+  if (sel.includes("/")) { toast("Open that folder to rename its files. Peeked rows are read-only in this demo."); return; }
   const node = findNode([...base, sel]);
   if (!node) return;
   if (node.kind === "dir") {
@@ -1981,6 +2078,7 @@ document.addEventListener("keydown", (e) => {
     if (qo.isOpen || cp.isOpen || ks.isOpen || cs.isOpen || gg.isOpen || ai.isOpen) { closeAll(); return; }
     // full zen: Esc is the panic button — chrome first, preview second
     if (BARS.every((b) => hiddenBars.has(b.id))) { zenMode(); return; }
+    if (peekEscape()) return; // clears the selection first, then closes the peek holding the cursor
     if (!$("preview").hidden) { setPreview(false); selectedName = null; render(); syncTab(); }
     return;
   }
@@ -2009,6 +2107,7 @@ document.addEventListener("keydown", (e) => {
     else if (!inPane2 && cwd.length) navigate(cwd.slice(0, -1));
     return;
   }
+  if (!inPane2 && peekTreeKey(e)) return;
   if (["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Enter"].includes(e.key)) {
     const rows = [...container.querySelectorAll("[data-name]")];
     if (!rows.length) return;
@@ -2342,6 +2441,9 @@ resolveDownloads();
 setTimeout(() => toastOnce("tour-zen",
   `Try <kbd>Ctrl+Shift+P</kbd> → <em>"Toggle Zen Mode"</em> — every bar on this page really hides.`,
   { ms: 8000 }), 9000);
+setTimeout(() => toastOnce("tour-peek",
+  `New: <em>folder peek</em>. Click the caret beside a folder to look inside without navigating. Works in Details, List and Tiles.`,
+  { action: { label: "Try it", run: peekDemo }, ms: 12000 }), 15000);
 setTimeout(() => toastOnce("tour-theme",
   "The palette icon in the toolbar restyles this whole page — 13 themes, Ayu Mirage to Catppuccin.",
   { ms: 8000 }), 24000);

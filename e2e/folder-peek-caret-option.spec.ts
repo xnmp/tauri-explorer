@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
 import { HOME_URL, waitForEntries, runPaletteCommand, pressShortcut } from "./helpers";
 
 // The Show Folder Peek Carets option (#1248): with carets off, a plain click on
@@ -51,6 +52,48 @@ test("a file click never expands anything", async ({ page }) => {
 
 const currentPath = (page: Page) => page.evaluate(async () => (await import("/src/lib/state/window-tabs.svelte.ts")).windowTabsManager.getActiveExplorer()!.currentPath);
 const caretlessToast = (page: Page) => page.locator(".toast.info").filter({ hasText: "Double-click is disabled while peek carets are off" });
+
+for (const mode of ["details", "list"] as const) {
+  test(`${mode}: a hovered folder offers an Open action that navigates without toggling its peek`, async ({ page }) => {
+    await page.evaluate(async mode => (await import("/src/lib/state/window-tabs.svelte.ts")).windowTabsManager.getActiveExplorer()!.setViewMode(mode), mode);
+    const alpha = row(page, `${root}/Alpha`);
+    const open = alpha.getByRole("button", { name: "Open Alpha", exact: true });
+    await row(page, `${root}/root.txt`).click();
+    await page.mouse.move(0, 0);
+    await expect(open).toHaveCSS("opacity", "0");
+    await alpha.focus();
+    await expect(open).toHaveCSS("opacity", "1");
+    await row(page, `${root}/root.txt`).focus();
+    await alpha.hover();
+    await expect(open).toHaveCSS("opacity", "1");
+    await expect(row(page, `${root}/root.txt`).getByRole("button", { name: /^Open / })).toHaveCount(0);
+    await alpha.click();
+    await expect(row(page, `${root}/Alpha/same.txt`)).toBeVisible();
+    const nested = row(page, `${root}/Alpha/Nested`);
+    await nested.hover();
+    expect((await new AxeBuilder({ page }).include(".pane-tree:not(.retained) .file-list")
+      .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze()).violations).toEqual([]);
+    await page.screenshot({ path: `screenshots/fix/peek-navigation/open-${mode}.png` });
+    await nested.getByRole("button", { name: "Open Nested", exact: true }).click();
+    await expect.poll(() => currentPath(page)).toBe(`${root}/Alpha/Nested`);
+    await expect(row(page, `${root}/Alpha/Nested/deep.txt`)).toBeVisible();
+    await expect(caretlessToast(page)).toHaveCount(0);
+    await page.evaluate(async () => (await import("/src/lib/state/window-tabs.svelte.ts")).windowTabsManager.getActiveExplorer()!.goBack());
+    await expect(alpha).toBeVisible();
+    // The Open control did not create an expansion in the old listing.
+    await expect(row(page, `${root}/Alpha/Nested/deep.txt`)).toHaveCount(0);
+    await alpha.click();
+    await page.keyboard.press("F2");
+    await expect(alpha.locator(".rename-input")).toBeVisible();
+    await expect(alpha.getByRole("button", { name: "Open Alpha", exact: true })).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(alpha.locator(".rename-input")).toHaveCount(0);
+    await setting(page, { folderPeekCarets: true });
+    await expect(alpha.getByRole("button", { name: "Open Alpha", exact: true })).toHaveCount(0);
+    await setting(page, { folderPeekCarets: false, folderPeek: false });
+    await expect(alpha.getByRole("button", { name: "Open Alpha", exact: true })).toHaveCount(0);
+  });
+}
 
 // A double-click is two toggles here, so it must not also navigate (#1298).
 test("a folder double-click stays put, leaves it closed and says Enter opens it", async ({ page }) => {

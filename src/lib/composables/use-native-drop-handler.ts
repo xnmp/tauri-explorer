@@ -21,6 +21,7 @@ import { terminalPanelStore } from "$lib/state/terminal.svelte";
 import { pathComparison } from "$lib/domain/path";
 import { dispatchFileDrop, admitFileDrop } from "$lib/state/dispatch-file-drop";
 import { internalDragPaths, sameDropPathSet, domDropPaths, domOwnsFileDrop, isFileTransfer, nativeDragSession, resolveNativeDragPaths } from "$lib/domain/file-drop";
+import { verifyPathsExist } from "$lib/api/files";
 import { toastStore } from "$lib/state/toast.svelte";
 import { dialogStore } from "$lib/state/dialogs.svelte";
 import { windowTabsManager } from "$lib/state/window-tabs.svelte";
@@ -30,6 +31,19 @@ export interface NativeDropDeps {
   refreshAllPanes: () => void;
 }
 const pathsForPlatform = pathComparison(isWindows);
+
+/** The filesystem folder a captured target names, when it names one. */
+function capturedFolderPath(target: DropTargetResult): string | null {
+  if (target?.type !== "folder" && target?.type !== "bookmark") return null;
+  // Provider locations (trash://) are not filesystem folders.
+  return target.path && !target.path.includes("://") ? target.path : null;
+}
+
+/** Fail-closed: an unverifiable check counts as gone. */
+const folderExists = async (path: string) => {
+  const r = await verifyPathsExist([path], "directory");
+  return r.ok && r.data;
+};
 
 export function useNativeDropHandler(deps: NativeDropDeps) {
   let copyModifierHeld = false;
@@ -43,7 +57,9 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
   // or Leave (Linux), by session: the drop target each was over, captured while
   // the layout was still its own. Once the temporary peeks changed since (the
   // lost-Leave fallback, a newer drag, a Leave) a position no longer names
-  // that target, so the Drop routes to the capture instead (#1269). A newer
+  // that target, so the Drop routes to the capture instead (#1269). Any
+  // layout change (navigation, refresh, view mode) does the same, so a
+  // Drop after dragend always routes to the capture (#1283). A newer
   // drag never clears an older one's capture; the map is bounded.
   const endedDrags = new Map<string, { target: DropTargetResult; revision: number; paths: readonly string[] | null }>();
   const MAX_ENDED_DRAGS = 8;
@@ -136,13 +152,16 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
       toastStore.show("Drop cancelled because its gesture identity expired. Drop the files again.");
       return;
     }
-    // Once the temporary peeks changed after the drag ended, the pointer
-    // position names a different row than the drag was over: route to what it
-    // captured, or cancel rather than guess.
-    const stale = !!ended && ended.revision !== springRevision();
-    const target = stale ? ended!.target : resolveDropTarget(position);
+    // The pointer position of a Drop after dragend names whatever the layout
+    // became since: the peeks closing, a navigation, a refresh, a view-mode
+    // change. The capture was hit-tested at dragend against the layout the
+    // user saw, so it is the only trustworthy destination (#1269, #1283).
+    // Route to it, or cancel rather than guess.
+    const target = ended ? ended.target : resolveDropTarget(position);
     nativeGesture = null;
-    if (stale && !target) {
+    // The captured folder may also have been deleted or renamed since dragend.
+    const folder = ended && target ? capturedFolderPath(target) : null;
+    if (ended && (!target || (folder !== null && !(await folderExists(folder))))) {
       nativeDomSession = undefined;
       clearHighlights();
       // Settle the source like a completed drop would, so it is not left as the latest one.

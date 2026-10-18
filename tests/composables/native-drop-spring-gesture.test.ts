@@ -33,6 +33,8 @@ vi.mock("$lib/state/toast.svelte", async importOriginal => {
   const actual = await importOriginal<{ toastStore: object }>();
   return { ...actual, toastStore: { ...actual.toastStore, show: toasts } };
 });
+const exists = vi.hoisted(() => ({ verify: vi.fn() }));
+vi.mock("$lib/api/files", async importOriginal => ({ ...await importOriginal<object>(), verifyPathsExist: exists.verify }));
 vi.mock("$lib/composables/use-dom-directory-drop", () => ({ dropIntoDirectory: vi.fn() }));
 vi.mock("$lib/state/window-tabs.svelte", () => ({
   windowTabsManager: { getExplorer: (id: string) => panes.get(id), tabs: [], getTabPath: () => null, activePaneId: "p1" },
@@ -79,6 +81,7 @@ const domEvent = (type: string, target: unknown, dataTransfer: unknown = new Fak
 
 beforeEach(async () => {
   spring.calls.length = 0; spring.gesture = "g1"; spring.settled = 0; spring.revision = 0;
+  exists.verify.mockReset(); exists.verify.mockResolvedValue({ ok: true, data: true });
   drops.mockClear(); toasts.mockClear(); panes.clear();
   dragState.clear();
   win = new EventTarget();
@@ -122,12 +125,12 @@ describe("a native Drop after the lost-Leave fallback closed the peeks", () => {
     expect(drops.mock.calls[0][1]).toBe("/r/row-a");
   });
 
-  it("before the fallback fires the position stays the authority", async () => {
+  it("before the fallback fires the capture is still the authority (the layout may have changed regardless, #1283)", async () => {
     hoverThenDragEnd();
     under = named("row-b");
     nativeEvent("drop");
     await flush();
-    expect(drops.mock.calls[0][1]).toBe("/r/row-b");
+    expect(drops.mock.calls[0][1]).toBe("/r/row-a");
   });
 
   it("with no captured target it cancels with a toast instead of guessing", async () => {
@@ -152,6 +155,61 @@ describe("a native Drop after the lost-Leave fallback closed the peeks", () => {
     nativeEvent("drop");
     await flush();
     expect(drops.mock.calls[0][1]).toBe("/r/row-c");
+  });
+});
+
+describe("a native Drop after layout changes the spring driver never saw (#1283)", () => {
+  function hoverThenDragEnd() {
+    nativeEvent("enter");
+    nativeEvent("over");
+    win.dispatchEvent(domEvent("dragend", under));
+  }
+
+  it("goes to the captured folder after the pane navigated", async () => {
+    hoverThenDragEnd();
+    // Navigation: a different directory's rows now sit under the pointer; no peek changed.
+    under = named("other-dir-row");
+    nativeEvent("drop");
+    await flush();
+    expect(drops).toHaveBeenCalledTimes(1);
+    expect(drops.mock.calls[0][1]).toBe("/r/row-a");
+  });
+
+  it("goes to the captured folder after a watcher refresh moved another folder under the point", async () => {
+    hoverThenDragEnd();
+    under = named("row-new");
+    nativeEvent("drop");
+    await flush();
+    expect(drops).toHaveBeenCalledTimes(1);
+    expect(drops.mock.calls[0][1]).toBe("/r/row-a");
+  });
+
+  it("cancels with a toast when the captured folder is gone", async () => {
+    hoverThenDragEnd();
+    exists.verify.mockResolvedValue({ ok: true, data: false });
+    nativeEvent("drop");
+    await flush();
+    expect(drops).not.toHaveBeenCalled();
+    expect(toasts).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels rather than guess when existence cannot be verified", async () => {
+    hoverThenDragEnd();
+    exists.verify.mockResolvedValue({ ok: false, error: "io" });
+    nativeEvent("drop");
+    await flush();
+    expect(drops).not.toHaveBeenCalled();
+    expect(toasts).toHaveBeenCalledTimes(1);
+  });
+
+  it("a Drop with no ended drag still resolves by position and checks nothing", async () => {
+    nativeEvent("enter");
+    nativeEvent("over");
+    under = named("row-b");
+    nativeEvent("drop");
+    await flush();
+    expect(drops.mock.calls[0][1]).toBe("/r/row-b");
+    expect(exists.verify).not.toHaveBeenCalled();
   });
 });
 

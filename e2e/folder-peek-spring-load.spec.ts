@@ -174,7 +174,8 @@ for (const view of ["details", "list", "tiles"] as const) {
       // Feedback is on the folder once (its row, card or panel), not the file row.
       await expect(page.locator(`${v.child(P("Inbox/alpha.txt"))}.drop-target`)).toHaveCount(0);
       await expect(page.locator(`${shown} .drop-target[data-path="${P("Inbox")}"]`)).toHaveCount(1);
-      await dropOn(page, v.child(P("Inbox/alpha.txt")));
+      // The drop lands on the row's top edge (Details: its wrapper's snapped band).
+      await dropOn(page, v.child(P("Inbox/alpha.txt")), { fy: 0.02 });
       await expect.poll(() => listing(page, P("Inbox"))).toContain("drag-me.txt");
       expect(await listing(page, root)).not.toContain("drag-me.txt");
       await endDrag(page);

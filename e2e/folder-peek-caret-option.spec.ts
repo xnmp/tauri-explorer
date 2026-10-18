@@ -140,3 +140,47 @@ test("the Settings checkbox switches modes live", async ({ page }) => {
   await row(page, `${root}/Alpha`).click();
   await expect(row(page, `${root}/Alpha/same.txt`)).toHaveCount(0);
 });
+
+
+test("repeated refused double-clicks do not renew or repeat the notice for a minute", async ({ page }) => {
+  await page.clock.install();
+  await row(page, `${root}/Beta`).dblclick();
+  await expect(caretlessToast(page)).toBeVisible();
+  await page.clock.fastForward(3100);
+  await expect(caretlessToast(page)).toHaveCount(0);
+  await row(page, `${root}/Beta`).dblclick();
+  expect(await caretlessToast(page).count()).toBe(0);
+  expect(await currentPath(page)).toBe(root);
+  await page.clock.fastForward(60000);
+  await row(page, `${root}/Beta`).dblclick();
+  await expect(caretlessToast(page)).toBeVisible();
+  await page.screenshot({ path: "screenshots/fix/peek/notice-cooldown.png" });
+});
+
+for (const mode of ["details", "list", "tiles"] as const) {
+  test(`${mode}: restored tabs recover their own peeks and fresh tabs start closed`, async ({ page }) => {
+    await setting(page, { folderPeekCarets: true });
+    await page.evaluate(async ({ root, mode }) => {
+      const { windowTabsManager: manager } = await import("/src/lib/state/window-tabs.svelte.ts");
+      const { settingsStore } = await import("/src/lib/state/settings.svelte.ts");
+      settingsStore.update({ viewMode: mode });
+      const explorer = manager.getActiveExplorer()!;
+      explorer.setViewMode(mode);
+      await explorer.togglePeek(`${root}/Alpha`);
+      await explorer.togglePeek(`${root}/Beta`);
+      await explorer.togglePeek(`${root}/Beta`);
+    }, { root, mode });
+    await expect(row(page, `${root}/Alpha/same.txt`)).toBeVisible();
+    await page.keyboard.press("Control+t");
+    await expect(row(page, `${root}/Beta`)).toBeVisible();
+    await expect(row(page, `${root}/Alpha/same.txt`)).toHaveCount(0);
+    await page.keyboard.press("Control+Shift+Tab");
+    await expect(row(page, `${root}/Alpha/same.txt`)).toBeVisible();
+    await page.keyboard.press("Control+w");
+    await expect(row(page, `${root}/Alpha/same.txt`)).toHaveCount(0);
+    await page.keyboard.press("Control+Shift+t");
+    await expect(row(page, `${root}/Alpha/same.txt`)).toBeVisible();
+    await expect(row(page, `${root}/Beta/same.txt`)).toHaveCount(0);
+    await page.screenshot({ path: `screenshots/fix/peek/restored-${mode}.png` });
+  });
+}

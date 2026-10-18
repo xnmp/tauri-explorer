@@ -4,26 +4,17 @@ import { flatPeekEntries } from "./folder-peek-flat";
 import type { PeekCapability } from "./folder-peek-flat";
 export { canPeekAt, peekCapability, resolvePeekCommandTarget, resolvePeekEscape, entryIndicesForRows, shouldToggleOnRowClick, rowClickOwnsPeek, caretlessDoubleClickNotice } from "./folder-peek-flat";
 export type { PeekCapability, PeekSurface, RowClickInput, RowPeekTarget } from "./folder-peek-flat";
-import { coverageOf, pathComparison } from "./path";
+import { pathComparison } from "./path";
 
-export type ExpandedPaths = ReadonlyMap<string, number>;
+import type { ExpandedPaths } from "./folder-peek-memory";
+export { toggleExpanded, collapseSubtree, pruneExpanded } from "./folder-peek-memory";
+export type { ExpandedPaths } from "./folder-peek-memory";
 export interface PeekMeta { depth: number; parentPath: string }
 export interface PeekListing {
   status: "loading" | "loaded" | "error";
   entries: readonly FileEntry[];
   error?: string;
   showLoading?: boolean;
-}
-
-export function toggleExpanded(expanded: ExpandedPaths, path: string, ordinal: number, cap = 500): Map<string, number> {
-  const next = new Map(expanded);
-  if (next.delete(path)) return next;
-  next.set(path, ordinal);
-  if (next.size > cap) {
-    const oldest = [...next].reduce((a, b) => a[1] < b[1] ? a : b);
-    next.delete(oldest[0]);
-  }
-  return next;
 }
 
 /**
@@ -39,28 +30,6 @@ export function rememberWhileExpanded<V>(previous: ReadonlyMap<string, V>, place
   for (const [path, value] of placed) if (expanded.has(path)) next.set(path, value);
   if (next.size === previous.size && [...next].every(([path, value]) => previous.has(path) && previous.get(path) === value)) return previous;
   return next;
-}
-
-/** Remove every expanded path at or below any of `roots`. */
-export function collapseSubtree(expanded: ExpandedPaths, roots: readonly string[], windows: boolean): Map<string, number> {
-  const covered = coverageOf(roots, windows);
-  return new Map([...expanded].filter(([path]) => !covered(path)));
-}
-
-/** Only a complete raw snapshot can establish that a branch disappeared. */
-export function pruneExpanded(expanded: ExpandedPaths, parent: string, entries: readonly FileEntry[], windows: boolean): Map<string, number> {
-  const paths = pathComparison(windows);
-  const directories = new Set(entries.filter(e => e.kind === "directory" && paths.sameParent(e.path, parent)).map(e => paths.key(e.path)));
-  return new Map([...expanded].filter(([path]) => {
-    if (paths.same(path, parent) || !paths.contains(path, parent)) return true;
-    let child = paths.key(path)!;
-    while (!paths.sameParent(child, parent)) {
-      const above = paths.parent(child);
-      if (!above || above === child) return false;
-      child = above;
-    }
-    return directories.has(paths.key(child));
-  }));
 }
 
 /**

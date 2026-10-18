@@ -11,8 +11,9 @@ import { createDirectoryListing } from "./directory-listing";
 import { gitStatusStore } from "./git-status.svelte";
 import type { RefreshTarget } from "./pane-refresh";
 
-export function createFolderPeekSession(windows: boolean) {
-  let expanded = $state.raw<ReadonlyMap<string, number>>(new Map());
+export function createFolderPeekSession(windows: boolean, initialExpanded: readonly string[] = []) {
+  const initialPaths = [...new Set(initialExpanded)].slice(-500);
+  let expanded = $state.raw<ReadonlyMap<string, number>>(new Map(initialPaths.map((path, index) => [path, index + 1])));
   /** Spring-loaded peeks of a live drag (#1242), outer first: rendered and
    * loaded like expanded folders, never part of `expanded`, heights or storage. */
   let temporary = $state.raw<readonly string[]>([]);
@@ -30,7 +31,7 @@ export function createFolderPeekSession(windows: boolean) {
     expanded = next;
     panelSides = rememberWhileExpanded(panelSides, noSides, next);
   }
-  let ordinal = 0;
+  let ordinal = initialPaths.length;
   let disposed = false;
   const resources = new Map<string, { target: RefreshTarget; retire(): Promise<void> }>();
   const retiring = new Set<Promise<void>>();

@@ -73,7 +73,7 @@ interface NavigationFocusIntent { request: NavigationFocusRequest | null; offere
 // Distinguishes concurrent panes in slow-load diagnostics (#1022).
 let explorerSerial = 0;
 
-function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => boolean = () => true) {
+function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => boolean = () => true, initialPeeks: readonly string[] = []) {
   const pane = ++explorerSerial;
   // Listings are immutable revisions. Deep proxies would create per-entry
   // signals during whole-directory filtering, sorting and status aggregation.
@@ -165,7 +165,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   let onRevealCallback: (() => void) | null = null;
 
   // Filesystem observation ownership
-  const peek = createFolderPeekState(isWindows);
+  const peek = createFolderPeekState(isWindows, initialPeeks);
   const paths = pathComparison(isWindows);
   const watch = createPaneWatch({ refresh: (options) => refresh(options), currentPath: () => coreState.currentPath, refreshPath: (path, options) => refresh(options, path) });
 
@@ -303,6 +303,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
    * and selected children, until it commits; only observation pauses (and
    * pane-watch blocks peek publication) meanwhile. */
   function applyPeekResources(reachable: readonly string[], expanded: ReadonlyMap<string, number>, loading: boolean, git: boolean) {
+    if (peek.watchFactory && expanded.size) watch.enablePeeks(peek.watchFactory);
     if (!loading) peek.reconcile(reachable, git);
     watch.reconcilePeeks(loading ? [] : reachable, expanded);
   }

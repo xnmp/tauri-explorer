@@ -55,7 +55,12 @@ const STARTUP_RAW_BUDGET = 866_617;
 // the old cap. The guard sits in FileList's eager double-click handler and
 // adds +188 bytes gzip (280,623) with its shared peek predicate and notice
 // copy; a lazy module would add the ~100-byte preload wrapper measured above.
-const STARTUP_GZIP_BUDGET = 280_960;
+// Raised 280,960 -> 281,984 (+1 KiB) for #1308. Restored tabs expose
+// their membership before the lazy session finishes, so collapse/prune can
+// apply immediately. Bounded membership policies and closed-tab session
+// metadata add 580 bytes gzip over dev (280,623 -> 281,203); listings,
+// watches and tree projection remain lazy. The raw budget is unchanged.
+const STARTUP_GZIP_BUDGET = 281_984;
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const clientDir = resolve(repoRoot, ".svelte-kit/output/client");

@@ -34,7 +34,11 @@ const pathsForPlatform = pathComparison(isWindows);
 export function useNativeDropHandler(deps: NativeDropDeps) {
   let copyModifierHeld = false;
   let hoverSession: string | undefined;
+  // The receiver's report of the current gesture (Enter until Leave or Drop).
+  // A Leave can be lost, so a new drag session (a native Enter, a DOM
+  // dragstart) clears what an earlier one left behind.
   let hoverPosition: { x: number; y: number } | null = null;
+  let receiverReports = false;
   const refreshHover = () => { if (hoverPosition) handleNativeOver(hoverPosition); };
   // Receiver-owned snapshot of the live source at native Enter. Source result
   // and destination Drop use different IPC channels and can arrive reordered.
@@ -59,6 +63,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
 
   function handleNativeEnter(rawPaths: string[], _position: { x: number; y: number }, source?: DragData | null, copyModifier?: boolean | null, observedAt?: number, completedGestureSequence?: number, observationClock?: string, externalSource?: boolean): void {
     if (copyModifier != null) copyModifierHeld = copyModifier;
+    hoverPosition = null; receiverReports = true;
     // Native context identity outranks path/time inference from a pending renderer source.
     const data = externalSource ? null : nativeSource(rawPaths, source, observedAt, completedGestureSequence, observationClock);
     const paths = resolveNativeDragPaths(rawPaths, data, isWindows);
@@ -82,7 +87,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     springEnd();
     retireDropFeedback();
     dropHover.clear(refreshHover);
-    hoverPosition = null;
+    hoverPosition = null; receiverReports = false;
     if (externalSource) nativeDomSession = undefined;
     const dragData = externalSource ? null : nativeDragSession(rawPaths)
       ? nativeSource(rawPaths, source, observedAt, completedGestureSequence, observationClock)
@@ -224,12 +229,13 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     onDrop: handleNativeDrop,
     onEnter: handleNativeEnter,
     onOver: handleNativeOver,
-    onLeave: () => { springHover(() => null); retireDropFeedback(); dropHover.clear(refreshHover); hoverPosition = null; nativeGesture = null; clearNativeHighlights?.(); clearNativeHighlights = null; },
+    onLeave: () => { springHover(() => null); retireDropFeedback(); dropHover.clear(refreshHover); hoverPosition = null; receiverReports = false; nativeGesture = null; clearNativeHighlights?.(); clearNativeHighlights = null; },
   });
 
   function trackModifierDown(e: KeyboardEvent) { copyModifierHeld = isCopyMod(e); }
   function trackModifierUp(e: KeyboardEvent) { copyModifierHeld = isCopyMod(e); }
   function trackDragModifiers(event: DragEvent): void { copyModifierHeld = isCopyMod(event); }
+  function handleDomDragStart(event: DragEvent): void { trackDragModifiers(event); hoverPosition = null; receiverReports = false; }
 
   // ---- Spring-loaded peeks (#1242) -------------------------------------------
   // A row, row wrapper, peek-state row or bridge inside a drag's temporary
@@ -394,7 +400,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     retireDropFeedback();
     // On Linux a DOM dragend can precede the native Drop, which resolves its
     // target by position: the native Drop or Leave ends spring peeks instead.
-    if (!nativeGesture && !hoverPosition) springEnd();
+    if (!receiverReports && !hoverPosition) springEnd();
     dropHover.clear(refreshHover);
     hoverPosition = null;
     clearHighlights();
@@ -407,7 +413,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     externalDrop.setup();
     window.addEventListener("keydown", trackModifierDown, true);
     window.addEventListener("keyup", trackModifierUp, true);
-    window.addEventListener("dragstart", trackDragModifiers, true);
+    window.addEventListener("dragstart", handleDomDragStart, true);
     window.addEventListener("dragenter", handleDomDragEnter, { capture: true });
     window.addEventListener("dragleave", handleDomDragLeave, { capture: true });
     window.addEventListener("dragover", handleDomDragOver, { capture: true });
@@ -424,14 +430,14 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     externalDrop.cleanup();
     window.removeEventListener("keydown", trackModifierDown, true);
     window.removeEventListener("keyup", trackModifierUp, true);
-    window.removeEventListener("dragstart", trackDragModifiers, true);
+    window.removeEventListener("dragstart", handleDomDragStart, true);
     window.removeEventListener("dragenter", handleDomDragEnter, { capture: true });
     window.removeEventListener("dragleave", handleDomDragLeave, { capture: true });
     window.removeEventListener("dragover", handleDomDragOver, { capture: true });
     window.removeEventListener("drop", handleDomDrop, { capture: true });
     window.removeEventListener("dragend", handleDomDragEnd);
     dropHover.clear(refreshHover);
-    hoverPosition = null;
+    hoverPosition = null; receiverReports = false;
     springEnd();
     clearHighlights();
   }

@@ -92,4 +92,19 @@ describe("spring hover authority", () => {
     win.dispatchEvent(domEvent("dragover", named("dom-row")));
     expect(spring.calls).toEqual(["hover:dom-row"]);
   });
+
+  it("a native Leave lost before the next drag starts leaves that drag's DOM events in charge of the hover and its end", () => {
+    nativeEvent("enter");
+    nativeEvent("over");
+    // The receiver's Leave never arrives; a new drag session starts in the webview.
+    spring.calls.length = 0;
+    win.dispatchEvent(domEvent("dragstart", named("source", "entry-item")));
+    const domRow = named("dom-row");
+    win.dispatchEvent(domEvent("dragenter", domRow));
+    win.dispatchEvent(domEvent("dragover", domRow));
+    expect(spring.calls).toEqual(["hover:dom-row", "hover:dom-row"]);
+    // Cancelled, its dragend closes the temporary peeks.
+    win.dispatchEvent(domEvent("dragend", domRow));
+    expect(spring.calls.at(-1)).toBe("end");
+  });
 });

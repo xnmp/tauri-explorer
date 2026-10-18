@@ -28,9 +28,10 @@ import { toastStore } from "./toast.svelte";
 import { gitStatusStore } from "./git-status.svelte";
 import { archiveRoots, operationRoots } from "$lib/domain/file-operation-selection";
 import { createFolderPeekState } from "./folder-peek.svelte";
-import { flatPeekEntries, flatPeekRows, peekCapability, shouldToggleOnRowClick, resolvePeekCommandTarget, resolvePeekEscape } from "$lib/domain/folder-peek-flat";
+import { canPeekAt, flatPeekEntries, flatPeekRows, peekCapability, shouldToggleOnRowClick, resolvePeekCommandTarget, resolvePeekEscape } from "$lib/domain/folder-peek-flat";
 import type { PeekLevelCache } from "$lib/domain/folder-peek";
 import type { RowClickInput } from "$lib/domain/folder-peek-flat";
+import type { BandSide } from "$lib/domain/tile-panels";
 import { isVirtualPath } from "$lib/domain/virtual-path";
 import { providerFor } from "$lib/plugins/fs-providers";
 import { basename, toNativeSeparators, pathComparison, coverageOf } from "$lib/domain/path";
@@ -263,6 +264,9 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     }
     const entry = displayEntries.find(e => e.path === path);
     if (!peeksAllowed() || entry?.kind !== "directory" || isVirtualPath(path) || providerFor(path)) return;
+    // Never change membership this view does not show: a Tiles panel's
+    // subfolder is a leaf, so toggling it would record a hidden expansion.
+    if (!canPeekAt(capability, peekTree.meta.get(path)?.depth ?? 0)) return;
     if (peek.watchFactory) watch.enablePeeks(peek.watchFactory);
     const before = peekTree;
     peek.toggle(path);
@@ -270,12 +274,14 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     pruneHiddenChildren(before, displayEntries);
     reconcilePeekResources();
   }
-  /** Carets are drawn only while peeking is available and the option is on. */
-  const caretsShown = () => capability !== "none" && settingsStore.folderPeekCarets;
+  /** Carets are drawn only while peeking is available and the option is on;
+   * Tiles always draws them (the option applies to Details and List, #1241). */
+  const caretsOptional = () => settingsStore.folderPeekCarets || coreState.viewMode === "tiles";
+  const caretsShown = () => capability !== "none" && caretsOptional();
   /** Caret-less peek: called after a row click's ordinary selection. */
   async function toggleOnRowClick(entry: FileEntry, modifiers: RowClickInput["modifiers"], wasDrag: boolean) {
     if (!shouldToggleOnRowClick({
-      caretsShown: capability === "none" || settingsStore.folderPeekCarets,
+      caretsShown: capability === "none" || caretsOptional(),
       isDirectory: entry.kind === "directory",
       eligible: capability !== "none" && !isVirtualPath(entry.path) && !providerFor(entry.path),
       modifiers, wasDrag,
@@ -1111,9 +1117,21 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
       if (capability === "none" || peek.cardRows(path) === rows) return;
       peek.setCardRows(path, rows);
     },
+    /** Remembered Tiles panel height (CSS px) for a top-level folder. */
+    tilePanelHeight(path: string) { return peek.panelHeight(path); },
+    setTilePanelHeight(path: string, height: number) {
+      if (capability === "none" || !Number.isFinite(height) || height < 1 || peek.panelHeight(path) === Math.round(height)) return;
+      peek.setPanelHeight(path, height);
+    },
+    /** Tiles panel sides of the expanded folders, from the last Tiles layout (§9.1). */
+    get tilePanelSides() { return peek.panelSides; },
+    /** Merges a Tiles layout's sides; a folder keeps its side until it leaves the expanded set. */
+    rememberTilePanelSides(sides: ReadonlyMap<string, BandSide>) {
+      if (capability !== "none") peek.rememberPanelSides(sides);
+    },
     get peekCaretsShown() { return caretsShown(); },
     collapseAllPeeks,
-    get peekCommandTarget() { return capability !== "none" ? resolvePeekCommandTarget(focusedEntry, peekTree.meta) : null; },
+    get peekCommandTarget() { return resolvePeekCommandTarget(focusedEntry, peekTree.meta, capability); },
     get canEscapePeek() { return capability !== "none" && resolvePeekEscape(focusedEntry, peekTree.meta) !== null; },
     escapeSelectionOrPeek() {
       // A pending lazy renderer has no mounted editor to own its Escape.

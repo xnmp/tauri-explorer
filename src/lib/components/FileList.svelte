@@ -35,16 +35,19 @@
   import { explainTrashedOpen } from "$lib/state/trash-provider";
 
   import type { ListNavigationSnapshot } from "$lib/domain/list-column-flow";
+  import type { TileNavigationSnapshot } from "$lib/domain/tile-panel-navigation";
 
   interface Props {
     explorer: ExplorerInstance;
     presentation: FileViewPresentation;
     getListNavigation?: () => ListNavigationSnapshot | null;
+    /** Tiles spatial navigation while Folder Peek panels are open (#1241). */
+    getTilesNavigation?: () => TileNavigationSnapshot | null;
     /** Scroll a selected entry into view; bound by ExplorerPane's keyboard navigation. */
     scrollToEntry?: (entry: FileEntry) => void;
   }
 
-  let { explorer, presentation, scrollToEntry = $bindable(), getListNavigation = $bindable() }: Props = $props();
+  let { explorer, presentation, scrollToEntry = $bindable(), getListNavigation = $bindable(), getTilesNavigation = $bindable() }: Props = $props();
 
   const paneId = getPaneIdContext();
   // Start the renderer chunk as soon as the view is known, in parallel with the
@@ -98,6 +101,13 @@
   getListNavigation = () => {
     if (explorer.loading || explorer.error || explorer.driveGone || pluginView || holdingView || explorer.viewMode !== "list" || !settingsStore.folderPeek) return null;
     const snapshot = viewNavigation?.();
+    return snapshot?.entries === explorer.displayEntries && snapshot.directory === explorer.currentPath ? snapshot : null;
+  };
+
+  let viewTilesNavigation = $state<(() => TileNavigationSnapshot | null) | undefined>();
+  getTilesNavigation = () => {
+    if (explorer.loading || explorer.error || explorer.driveGone || pluginView || holdingView || explorer.viewMode !== "tiles" || !settingsStore.folderPeek) return null;
+    const snapshot = viewTilesNavigation?.();
     return snapshot?.entries === explorer.displayEntries && snapshot.directory === explorer.currentPath ? snapshot : null;
   };
 
@@ -595,6 +605,25 @@
         />
       {:else if viewLoadFailed("list")}
         <div class="status error-state">Unable to load List view</div>
+      {/if}
+    {:else if settingsStore.folderPeek}
+      <!-- Tiles with Folder Peek: panels in bands (#1241). -->
+      {@const TilePanelsView = loadedView("tiles-panels")}
+      {#if TilePanelsView}
+        <TilePanelsView
+          {explorer}
+          {contentWidth}
+          bind:getNavigation={viewTilesNavigation}
+          onitemclick={handleClick}
+          onitemdblclick={handleDoubleClick}
+          onviewportscroll={handleViewportScroll}
+          onlayoutchange={() => { updateMarqueeSelection(); handleViewLayoutChange(); }}
+          {fallbackTabStop}
+          bind:containsIndex={viewContainsIndex}
+          bind:scrollToIndex={viewScrollToIndex}
+        />
+      {:else if viewLoadFailed("tiles-panels")}
+        <div class="status error-state">Unable to load Tiles view</div>
       {/if}
     {:else}
       {@const TilesView = loadedView("tiles")}

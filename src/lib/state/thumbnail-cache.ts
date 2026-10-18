@@ -8,7 +8,7 @@
  * once the cache exceeds MAX_ENTRIES.
  */
 
-interface CachedThumbnail {
+export interface CachedThumbnail {
   micro: string | null;
   full: string | null;
 }

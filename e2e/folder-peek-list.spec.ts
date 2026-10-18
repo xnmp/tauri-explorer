@@ -522,26 +522,52 @@ test("a card that wraps once its slow listing settles is revealed, though motion
 });
 
 test("an open whose motion a layout change interrupts is still revealed", async ({ page }) => {
+  // Fake time: the motion advances only when the test runs the clock, so the
+  // refresh lands mid-motion however slowly the runner serves it (a wall-clock
+  // bound around the refresh failed on loaded CI WebKit).
+  await page.clock.install();
   await open(page, root, { width: 720, height: 430 });
-  const interrupted = await page.evaluate(async ([selector, path]) => {
+  const path = `${root}/Personal`;
+  await page.evaluate(async () => {
+    await import("/src/lib/api/mock-fixtures.ts");
+    await import("/src/lib/state/window-tabs.svelte.ts");
+  });
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+  const moving = () => page.evaluate(selector => {
     const pane = document.querySelector(selector)!;
-    const moving = () => !!pane.querySelector(".list-motion-layer")!.childElementCount || [...pane.querySelectorAll<HTMLElement>(".list-slot")].some(el => el.style.transform);
-    (pane.querySelector(`.entry-item[data-path="${path}"] .peek-caret`) as HTMLElement).click();
-    for (let i = 0; i < 30 && !moving(); i++) await new Promise(resolve => requestAnimationFrame(resolve));
-    const started = performance.now();
-    // A refresh that adds a file after every folder changes the layout under the motion.
+    return !!pane.querySelector(".list-motion-layer")!.childElementCount || [...pane.querySelectorAll<HTMLElement>(".list-slot")].some(el => el.style.transform);
+  }, shown);
+  await page.evaluate(([selector, target]) => {
+    (document.querySelector(selector)!.querySelector(`.entry-item[data-path="${target}"] .peek-caret`) as HTMLElement).click();
+  }, [shown, path] as const);
+  // Some of the open's work (a lazy import) runs on real time: poll in real
+  // time, stepping fake time 2ms per poll so the motion cannot run out.
+  const step = async <T>(probe: () => Promise<T>) => { await page.clock.runFor(2); return probe(); };
+  await expect.poll(() => step(moving), { intervals: [25], timeout: 10_000 }).toBe(true);
+  const startedAt = await page.evaluate(() => performance.now());
+  // A refresh that adds a file after every folder changes the layout under the motion.
+  await page.evaluate(async target => {
     const { mockFiles } = await import("/src/lib/api/mock-fixtures.ts");
-    const parent = path.slice(0, path.lastIndexOf("/"));
+    const parent = target.slice(0, target.lastIndexOf("/"));
     mockFiles[parent] = [...mockFiles[parent], { ...mockFiles[parent].at(-1)!, name: "zz-late.txt", path: `${parent}/zz-late.txt` }];
     const { windowTabsManager } = await import("/src/lib/state/window-tabs.svelte.ts");
-    await windowTabsManager.getActiveExplorer()!.refresh();
-    await new Promise(resolve => requestAnimationFrame(resolve));
-    return { cut: performance.now() - started < 200, stopped: !moving() };
-  }, [shown, `${root}/Personal`] as const);
-  expect(interrupted).toEqual({ cut: true, stopped: true });
+    const probe = window as unknown as { refreshed?: boolean };
+    probe.refreshed = false;
+    void windowTabsManager.getActiveExplorer()!.refresh().then(() => { probe.refreshed = true; });
+  }, path);
+  const refreshed = () => page.evaluate(() => (window as unknown as { refreshed?: boolean }).refreshed === true);
+  await expect.poll(() => step(refreshed), { intervals: [25], timeout: 10_000 }).toBe(true);
+  const interrupted = await page.evaluate(([selector, started]) => {
+    const pane = document.querySelector(selector)!;
+    const running = !!pane.querySelector(".list-motion-layer")!.childElementCount || [...pane.querySelectorAll<HTMLElement>(".list-slot")].some(el => el.style.transform);
+    // The motion lasts LIST_MOTION_MS (200ms): stopping well before it is a cut, not a natural end.
+    return { refreshed: (window as unknown as { refreshed?: boolean }).refreshed === true, cut: performance.now() - started < 150, stopped: !running };
+  }, [shown, startedAt] as const);
+  expect(interrupted).toEqual({ refreshed: true, cut: true, stopped: true });
+  await page.clock.resume();
   await settled(page);
-  expect((await placements(page))[`${root}/Personal`]).toEqual([1, 0]);
-  await expect.poll(() => inView(page, `${root}/Personal`)).toBe(true);
+  expect((await placements(page))[path]).toEqual([1, 0]);
+  await expect.poll(() => inView(page, path)).toBe(true);
 });
 
 test("only visible columns animate, with sanitized ghosts on the conveyor and an instant reduced-motion path", async ({ page }) => {

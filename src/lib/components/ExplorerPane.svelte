@@ -81,6 +81,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
 
   let paneRef = $state<HTMLElement | null>(null);
   let getListNavigation = $state<(() => import("$lib/domain/list-column-flow").ListNavigationSnapshot | null) | undefined>();
+  let getTilesNavigation = $state<(() => import("$lib/domain/tile-panel-navigation").TileNavigationSnapshot | null) | undefined>();
   let fileListScrollToEntry = $state<((entry: import("$lib/domain/file").FileEntry) => void) | undefined>();
 
   // All keyboard navigation is handled at window level so it works regardless
@@ -314,7 +315,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     const move = resolveFileListMove(event, {
       viewMode: paneExplorer.viewMode, columns: gridColumns(paneExplorer.viewMode),
       count: entries.length, cursorIndex: cursor ? entries.indexOf(cursor) : -1,
-      listLayout: settingsStore.folderPeek ? "columns" : "rows", list: getListNavigation?.(),
+      listLayout: settingsStore.folderPeek ? "columns" : "rows", list: getListNavigation?.(), tiles: getTilesNavigation?.(),
       directory: cursor?.kind === "directory", yazi: settingsStore.yaziNavigation,
     });
     if (!move) return;
@@ -411,7 +412,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
       {#if settingsStore.showGitStatus && paneScmVisible}
         <ScmPanel {reserveInlineWidth} />
       {/if}
-      <FileList explorer={paneExplorer} presentation={fileViewPresentation} bind:scrollToEntry={fileListScrollToEntry} bind:getListNavigation />
+      <FileList explorer={paneExplorer} presentation={fileViewPresentation} bind:scrollToEntry={fileListScrollToEntry} bind:getListNavigation bind:getTilesNavigation />
     </div>
     <ContextMenu explorer={paneExplorer} />
   {/if}

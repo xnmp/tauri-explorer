@@ -68,14 +68,18 @@ it("collapse and re-open inside the watcher interval read immediately", async ()
   expect(sawLoading()).toBe(false);
 });
 
-it("returning from Tiles to Details restores the peek immediately", async () => {
+it("returning from Tiles to Details restores a nested peek immediately", async () => {
+  const nested = entry("/r/a/nested"), deep = entry("/r/a/nested/deep", "file");
+  source.current = async path => ({ ok: true, path, entries: path === a.path ? [child, nested] : path === nested.path ? [deep] : trees[path] ?? [] });
   const pane = create();
   await pane.togglePeek(a.path); await immediate();
+  await pane.togglePeek(nested.path); await immediate();
   pane.setViewMode("tiles"); await immediate();
-  expect(pane.displayEntries).toEqual([a, b]);
+  // Tiles peeks top-level folders only (#1241): the nested peek is dormant.
+  expect(pane.displayEntries).toEqual([a, nested, child, b]);
   rendered.length = 0;
   pane.setViewMode("details"); await immediate();
-  expect(pane.displayEntries).toEqual([a, child, b]);
+  expect(pane.displayEntries).toEqual([a, nested, deep, child, b]);
   expect(sawLoading()).toBe(false);
 });
 

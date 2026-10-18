@@ -10,7 +10,7 @@
 import { untrack, type Component } from "svelte";
 import type { ViewMode } from "$lib/domain/file";
 
-export type ViewRenderer = "details" | "list-columns" | "list" | "tiles";
+export type ViewRenderer = "details" | "list-columns" | "list" | "tiles" | "tiles-panels";
 type ViewModule = { default: Component<any> };
 type Outcome = { component: Component<any> } | { failed: true };
 
@@ -19,6 +19,7 @@ const importers: Record<ViewRenderer, () => Promise<ViewModule>> = {
   "list-columns": () => import("./ListColumnsView.svelte"),
   list: () => import("./ListView.svelte"),
   tiles: () => import("./TilesView.svelte"),
+  "tiles-panels": () => import("./TilePanelsView.svelte"),
 };
 
 const pending = new Map<ViewRenderer, Promise<ViewModule>>();
@@ -60,9 +61,10 @@ export function viewLoadFailed(view: ViewRenderer): boolean {
   return !!outcome && "failed" in outcome;
 }
 
-/** The renderer a pane configuration needs. Folder Peek selects List's column flow. */
+/** The renderer a pane configuration needs. Folder Peek selects List's column
+ * flow and Tiles' panel bands; off keeps the classic renderers untouched. */
 export function viewRendererFor(viewMode: ViewMode, folderPeek: boolean): ViewRenderer {
   if (viewMode === "details") return "details";
   if (viewMode === "list") return folderPeek ? "list-columns" : "list";
-  return "tiles";
+  return folderPeek ? "tiles-panels" : "tiles";
 }

@@ -590,6 +590,72 @@ Screenshots:
     rows inside a card stay non-targets, as everywhere else. Marquee hits are clipped to
     the card's scroll area.
 
+- **Phase 4 (Tiles panels, #1241):**
+  - With peek on, Tiles always renders through `TilePanelsView`, a separate lazy
+    renderer, even with no panel open, so a tile keeps its DOM node across a toggle.
+    Off is the unchanged classic `TilesView`. Adding bands to the classic view was
+    rejected: off must stay exactly as before, and per-row band expressions would cost
+    plain Tiles scrolling.
+  - A VirtualList item is a row group (the grid row plus its above, below and stacked
+    bands), with its height from the computed geometry. Outlines and ribbons join a row
+    only to its own bands, so each group draws its own outlines. A page-wide overlay was
+    rejected: it would need its own virtualization and offsets.
+  - A panel's scroll area is its `role="rowgroup"` labelled "<name> contents", not
+    §10's `group`: the Tiles grid may own only rows and rowgroups. The scroll area has
+    `tabindex="-1"`, because Chrome otherwise makes scrollers Tab stops, and a focusable
+    element in a grid needs a role of its own. The stacked label and the grip are rows
+    holding a gridcell. The whole panel stays the folder's drop and context-menu surface.
+  - With no panel open the grid keeps classic Tiles' `aria-rowcount`/`aria-rowindex`
+    and `aria-colcount`. Once panels are open these are omitted: label, mini and grip
+    rows, and the interleaved rows of side-by-side panels, have no consistent numbering.
+    Mini tiles never take an `aria-colindex`, since a panel's columns are not the grid's.
+    Indexing every row was rejected: two panels sharing a band would need one sequence
+    for rows that sit side by side.
+  - The column count comes from the classic content-width rule, so turning peek on never
+    changes C; panel widths use the probe's inner width, committed in the
+    ResizeObserver delivery (#1061).
+  - Sides are kept on column-count and width changes while feasible; otherwise panels
+    are re-placed in opening order (the spec's rule, not the mock's re-place-all).
+    The pane's peek session holds the sides beside the panel heights, so they survive
+    navigating away and back and a view-mode round trip. Each layout merges its own
+    placements in. A folder keeps its side until it leaves the expanded set, and is
+    then placed afresh when re-opened. Memory local to the view was rejected: it was
+    lost on every remount, and any layout that did not place a folder (another
+    directory) erased that folder's side.
+  - Opening reveals the panel after the motion settles. Revealing a target that is still
+    growing chased a moving bottom edge. Arming and revealing reuse List's
+    `stepMotionArm`, so the reveal outlives the 1.5s motion arm: a slow listing still
+    reveals its panel once it settles.
+  - The grip drag session lives in `useTilePanels`. Window `pointerup`, `pointercancel` and
+    `blur` end it, and unmounting cancels it. A band scrolled out mid-drag still commits on
+    release, and a panel closed mid-drag drops the preview.
+  - A ribbon with no free channel between panels runs in the scroller's 8px side
+    padding rather than crossing a panel.
+  - A stacked label is max(parent tab width, 240px) wide, capped at the panel width, and
+    its name and count ellipsize. Sizing the label to its text would need a measurement.
+  - Arrow keys inside a panel walk its grid. At an edge, Up/Down go to the nearest item in
+    that direction. Left/Right go to the nearest item on the same visual line, otherwise
+    they wrap in reading order within the cursor's level, as the classic grid does.
+  - A panel's subfolder is a leaf, like a file: "Peek into Folder" on it toggles the
+    panel holding it, and toggling it directly is refused, so Tiles never records an
+    expansion it would hide. Making the command unavailable on mini tiles was rejected:
+    on a mini file it already closes the panel, and a subfolder should behave the same.
+  - Renaming a mini tile edits in place and is clipped by the panel's scroll area. The
+    renaming entry stays mounted while scrolled out. Lifting the editor out of the panel
+    was not needed for v1.
+  - The outline layer is an SVG the size of its row group, behind the row and panels,
+    with pointer events off. A zero-size SVG drawing outside itself was rejected:
+    Chromium (and so WebView2) paints nothing for an empty SVG root. axe reads any SVG
+    under text as an image, so the WCAG scan replaces the decorative layer with the fill
+    it composites, rather than the product moving fill and hairline into CSS.
+  - An above panel keeps its clicked row fixed on screen only while the whole panel
+    stays visible. When full compensation would put the panel's top above the viewport
+    (a row near the top of the scroll range), the scroll stops with the panel's top at
+    the viewport's top, clamped to the scroll range, and the row moves down by exactly
+    that shortfall. This is part of every frame of the same 150ms motion, so no reveal
+    scroll follows it. Holding the row and then smooth-scrolling the panel into view
+    was rejected: it moved the page twice, with a visible pause between.
+
 - **Details:** tinted or bordered group boxes were rejected; groups are unboxed.
 - **List layout:**
   - masonry/shortest-column: scattered motion and lone files under cards;

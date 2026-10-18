@@ -26,12 +26,15 @@ beforeEach(async () => {
   vi.useFakeTimers(); loads.length = 0; settingsStore.reset(); source.current = async path => ({ ok: true, path, entries: trees[path] ?? [] }); });
 afterEach(async () => { await Promise.all(panes.splice(0).map(p => p.destroy())); cancelPendingRefreshes(); vi.useRealTimers(); settingsStore.reset(); effects.splice(0).forEach(dispose => dispose()); });
 it("persists membership through navigation/back/view switches, stays pane-local, and drops invisible selection", async () => {
-  const pane = create(); await pane.togglePeek(a.path); await settle();
-  expect(pane.displayEntries).toContain(child);
-  pane.selectEntry(child); pane.setViewMode("tiles");
-  expect([...pane.selectedPaths]).toEqual([]); expect(pane.focusedEntry?.path).toBe(a.path);
-  expect(pane.displayEntries).toEqual([a, b]); expect(pane.peekWatchSnapshot()).toEqual([]);
-  pane.setViewMode("details"); await settle(); expect(pane.displayEntries).toContain(child);
+  const pane = create(); await pane.togglePeek(a.path); await settle(); await pane.togglePeek(nested.path); await settle();
+  const deep = trees[nested.path][0];
+  expect(pane.displayEntries).toContain(deep);
+  // Tiles peeks top-level folders only (#1241): the nested peek goes dormant
+  // and its child's selection with it; the top-level peek stays.
+  pane.selectEntry(deep); pane.setViewMode("tiles");
+  expect([...pane.selectedPaths]).toEqual([]); expect(pane.focusedEntry?.path).toBe(nested.path);
+  expect(pane.displayEntries).toEqual([a, nested, child, b]);
+  pane.setViewMode("details"); await settle(); expect(pane.displayEntries).toContain(deep);
   expect(create().expandedPaths.size).toBe(0);
   await pane.navigateTo("/r"); await pane.navigateTo(a.path); await pane.goBack(); await settle();
   expect(pane.currentPath).toBe("/r"); expect(pane.expandedPaths.has(a.path)).toBe(true); expect(pane.displayEntries).toContain(child);

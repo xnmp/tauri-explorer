@@ -2,7 +2,7 @@
 import type { FileEntry } from "./file";
 import { flatPeekEntries } from "./folder-peek-flat";
 import type { PeekCapability } from "./folder-peek-flat";
-export { peekCapability, resolvePeekCommandTarget, resolvePeekEscape, entryIndicesForRows, shouldToggleOnRowClick } from "./folder-peek-flat";
+export { canPeekAt, peekCapability, resolvePeekCommandTarget, resolvePeekEscape, entryIndicesForRows, shouldToggleOnRowClick } from "./folder-peek-flat";
 export type { PeekCapability, PeekSurface, RowClickInput } from "./folder-peek-flat";
 import { coverageOf, pathComparison } from "./path";
 
@@ -23,6 +23,21 @@ export function toggleExpanded(expanded: ExpandedPaths, path: string, ordinal: n
     const oldest = [...next].reduce((a, b) => a[1] < b[1] ? a : b);
     next.delete(oldest[0]);
   }
+  return next;
+}
+
+/**
+ * Per-folder memory that lives as long as the folder stays expanded (Tiles panel
+ * sides, §9.1): `placed` overrides, a remembered value of a folder still
+ * expanded but not placed this time (another directory is shown, or another view)
+ * is kept, and a folder that left `expanded` is forgotten. Returns `previous`
+ * itself when nothing changed, so a store can skip publishing.
+ */
+export function rememberWhileExpanded<V>(previous: ReadonlyMap<string, V>, placed: ReadonlyMap<string, V>, expanded: ExpandedPaths): ReadonlyMap<string, V> {
+  const next = new Map<string, V>();
+  for (const [path, value] of previous) if (expanded.has(path) && !placed.has(path)) next.set(path, value);
+  for (const [path, value] of placed) if (expanded.has(path)) next.set(path, value);
+  if (next.size === previous.size && [...next].every(([path, value]) => previous.has(path) && previous.get(path) === value)) return previous;
   return next;
 }
 

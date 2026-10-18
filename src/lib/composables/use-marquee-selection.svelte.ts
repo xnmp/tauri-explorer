@@ -28,6 +28,7 @@ const DEFAULT_OPTIONS: Required<MarqueeOptions> = {
     "tiles-view",
     "list-view",
     "tile-row",
+    "tile-group",
     "list-row",
     "list-canvas",
     "list-slot",

@@ -15,8 +15,7 @@
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { autoFillColumns } from "$lib/domain/virtual-layout";
   import { tileLayout, TILE_GRID_PAD_X } from "$lib/domain/tile-layout";
-  import { createScrollJankMonitor } from "$lib/domain/scroll-jank-monitor";
-  import { logFrontendDiagnostic } from "$lib/api/frontend-log";
+  import { useTilesScrollJank, useUnavailableThumbs } from "$lib/composables/use-tile-view-support.svelte";
 
   import { folderTileSize } from "$lib/state/folder-tile-size";
   import EntryName from "./EntryName.svelte";
@@ -70,57 +69,10 @@
     if (containsIndex === contains) containsIndex = undefined;
   });
 
-  // Videos whose thumbnail generation failed (e.g. no ffmpeg) fall back to the
-  // plain icon. Keyed by path; reset on navigation.
-  let unavailableThumbs = $state(new Set<string>());
-  $effect(() => {
-    // Reset when the directory changes.
-    explorer.currentPath;
-    unavailableThumbs = new Set<string>();
-  });
-  function markUnavailable(path: string) {
-    if (unavailableThumbs.has(path)) return;
-    const next = new Set(unavailableThumbs);
-    next.add(path);
-    unavailableThumbs = next;
-  }
+  const thumbs = useUnavailableThumbs(() => explorer.currentPath);
 
-  // Scroll-jank diagnostics (#593): sample rAF gaps while the tiles scroller
-  // is scrolling and report janky windows into the native app log, alongside
-  // the backend's `thumb:` timing lines.
   let rootEl: HTMLDivElement | undefined = $state();
-  $effect(() => {
-    if (!rootEl) return;
-    const monitor = createScrollJankMonitor();
-    let idleTimer: ReturnType<typeof setTimeout> | undefined;
-
-    function onScroll() {
-      monitor.start();
-      clearTimeout(idleTimer);
-      idleTimer = setTimeout(() => {
-        const report = monitor.stop();
-        if (report && report.longFrames > 0) {
-          logFrontendDiagnostic("tiles-scroll-jank", {
-            entries: explorer.displayEntries.length,
-            thumbnailSize: effectiveThumbnailSize,
-            frames: report.frames,
-            longFrames: report.longFrames,
-            worstFrameMs: Math.round(report.worstFrameMs),
-            durationMs: Math.round(report.durationMs),
-          });
-        }
-      }, 400);
-    }
-
-    // Scroll doesn't bubble, but capture-phase listeners on an ancestor still
-    // see descendant scrolls — the VirtualList scroller lives inside rootEl.
-    rootEl.addEventListener("scroll", onScroll, { capture: true, passive: true });
-    return () => {
-      rootEl?.removeEventListener("scroll", onScroll, { capture: true });
-      clearTimeout(idleTimer);
-      monitor.stop();
-    };
-  });
+  useTilesScrollJank(() => rootEl, () => ({ entries: explorer.displayEntries.length, thumbnailSize: effectiveThumbnailSize }));
 </script>
 
 <TileSurface class="tiles-view" fill {layout} bind:element={rootEl} data-columns={tileColumns}>
@@ -146,7 +98,7 @@
             <div role="gridcell"><InlineNewFolder {explorer} variant="tiles" /></div>
           {:else}
           <EntryCell column={col + 1} class="tile-item" index={row.startIndex + col - grid.sentinelOffset} {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
-            <TileVisual {entry} {layout} videoUnavailable={unavailableThumbs.has(entry.path)} onvideounavailable={() => markUnavailable(entry.path)}>
+            <TileVisual {entry} {layout} videoUnavailable={thumbs.has(entry.path)} onvideounavailable={() => thumbs.mark(entry.path)}>
               {#snippet name()}<EntryName {entry} {explorer} variant="tiles" />{/snippet}
             </TileVisual>
             <GitStatusBadge entryName={entry.name} />

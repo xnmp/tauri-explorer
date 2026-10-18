@@ -389,10 +389,10 @@ mockFiles["/folder-peek/Beta"] = [file("same.txt", "/folder-peek/Beta/same.txt",
 mockFiles["/folder-peek/Empty"] = [];
 mockFiles["/folder-peek/Large"] = Array.from({ length: 10_000 }, (_, index) => file(`item-${String(index).padStart(5, "0")}.txt`, `/folder-peek/Large/item-${String(index).padStart(5, "0")}.txt`, index));
 
-// List cards (#1240): the spec mock's folders, files and filler, so a List
-// pane has several columns and cards of every size (folder-peek-mock.html).
-{
-  const root = "/folder-peek-list";
+// List cards (#1240) and Tiles panels (#1241): the spec mock's folders, files
+// and filler, so a List pane has several columns and cards of every size, and
+// a Tiles pane every panel placement (folder-peek-mock.html).
+for (const root of ["/folder-peek-list", "/folder-peek-tiles"]) {
   const tree: Record<string, readonly (readonly [string, boolean])[]> = {
     "": [
       ...["Inbox", "Career", "Codex", "Personal", "Archive", "AI Draft Archive"].map(name => [name, true] as const),
@@ -432,6 +432,26 @@ mockFiles["/folder-peek/Large"] = Array.from({ length: 10_000 }, (_, index) => f
       const path = `${relative ? `${root}/${relative}` : root}/${name}`;
       if (folder && !mockFiles[path]) mockFiles[path] = [];
     }
+  }
+}
+// Tiles panels in later grid rows (#1241): folders sort first, so 24 folders
+// fill several rows and leave room above a row for an above band.
+{
+  const root = "/folder-peek-tiles-rows";
+  const folders = Array.from({ length: 24 }, (_, i) => `Folder ${String(i + 1).padStart(2, "0")}`);
+  mockFiles[root] = [...folders.map(name => dir(name, `${root}/${name}`)), ...Array.from({ length: 30 }, (_, i) => file(`note-${String(i + 1).padStart(2, "0")}.txt`, `${root}/note-${String(i + 1).padStart(2, "0")}.txt`, 10 + i))];
+  for (const name of folders) mockFiles[`${root}/${name}`] = Array.from({ length: 8 }, (_, i) => file(`${name.replace(" ", "-").toLowerCase()}-${i + 1}.txt`, `${root}/${name}/${name.replace(" ", "-").toLowerCase()}-${i + 1}.txt`, i + 1));
+}
+// Tiles panels at scale (#1241): 10,000 tiles beside three open-able folders.
+{
+  const root = "/folder-peek-tiles-large";
+  const folders = ["Alpha", "Beta", "Gamma"];
+  mockFiles[root] = [
+    ...folders.map(name => dir(name, `${root}/${name}`)),
+    ...Array.from({ length: 10_000 }, (_, index) => file(`item-${String(index).padStart(5, "0")}.txt`, `${root}/item-${String(index).padStart(5, "0")}.txt`, index)),
+  ];
+  for (const name of folders) {
+    mockFiles[`${root}/${name}`] = Array.from({ length: 400 }, (_, index) => file(`${name.toLowerCase()}-${String(index).padStart(3, "0")}.txt`, `${root}/${name}/${name.toLowerCase()}-${String(index).padStart(3, "0")}.txt`, index));
   }
 }
 

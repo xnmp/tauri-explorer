@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createPeekLevelCache, flattenPeekEntries, toggleExpanded, collapseSubtree, pruneExpanded, choosePeekWatches, peekCapability, resolvePeekCommandTarget, resolvePeekEscape } from "$lib/domain/folder-peek";
+import { createPeekLevelCache, flattenPeekEntries, toggleExpanded, collapseSubtree, pruneExpanded, choosePeekWatches, peekCapability, rememberWhileExpanded, resolvePeekCommandTarget, resolvePeekEscape } from "$lib/domain/folder-peek";
 import { pathComparison } from "$lib/domain/path";
 import { sortEntries, filterHidden, type FileEntry } from "$lib/domain/file";
 
@@ -83,22 +83,49 @@ describe("folder peek preorder and policies", () => {
       expect(peekCapability({ enabled: true, fileListing: true, builtinView: true, plainLocation: true, mode: "details", ...change })).toBe("none");
     });
   // One case per view mode × Folder Peek setting: column-flow List nests like
-  // Details (#1240); Tiles stays flat until its phase.
+  // Details (#1240); Tiles panels show top-level folders only (#1241).
   it.each([
     ["details", true, "tree"], ["details", false, "none"],
     ["list", true, "tree"], ["list", false, "none"],
-    ["tiles", true, "none"], ["tiles", false, "none"],
+    ["tiles", true, "top-level"], ["tiles", false, "none"],
   ] as const)("%s with Folder Peek %s is %s", (mode, enabled, expected) => {
     expect(peekCapability({ enabled, fileListing: true, builtinView: true, plainLocation: true, mode })).toBe(expected);
   });
   it("disables resources for unsupported views and resolves commands and Escape", () => {
     const surface = { enabled: true, fileListing: true, builtinView: true, plainLocation: true, mode: "details" as const };
     expect(peekCapability(surface)).toBe("tree");
-    expect(peekCapability({ ...surface, mode: "tiles" })).toBe("none");
+    expect(peekCapability({ ...surface, mode: "tiles" })).toBe("top-level");
     const tree = flatten();
     expect(resolvePeekCommandTarget(file, tree.meta)).toBe(nested.path);
     expect(resolvePeekCommandTarget(entry("/r/f", "file"), tree.meta)).toBeNull();
+    // Tiles (top-level) peeks only the directory's own folders: a peeked
+    // subfolder resolves to the peek holding it, like a file; none resolves nothing.
+    expect(resolvePeekCommandTarget(nested, tree.meta, "top-level")).toBe(a.path);
+    expect(resolvePeekCommandTarget(a, tree.meta, "top-level")).toBe(a.path);
+    expect(resolvePeekCommandTarget(nested, tree.meta, "tree")).toBe(nested.path);
+    expect(resolvePeekCommandTarget(a, tree.meta, "none")).toBeNull();
     expect(resolvePeekEscape(file, tree.meta)).toBe(nested.path);
     expect(resolvePeekEscape(a, tree.meta)).toBeNull();
+  });
+});
+
+describe("memory kept while a folder stays expanded (Tiles panel sides)", () => {
+  const expanded = new Map([["/r/a", 1], ["/r/b", 2], ["/r/c", 3]]);
+  it("takes a layout's values and keeps expanded folders that layout did not place", () => {
+    const before = new Map([["/r/a", "above"], ["/r/b", "below"]]);
+    // Another directory's layout placed only c: a and b are still expanded.
+    expect([...rememberWhileExpanded(before, new Map([["/r/c", "stacked"]]), expanded)]).toEqual([["/r/a", "above"], ["/r/b", "below"], ["/r/c", "stacked"]]);
+    expect(rememberWhileExpanded(before, new Map([["/r/a", "below"]]), expanded).get("/r/a")).toBe("below");
+  });
+  it("forgets folders that left the expanded set, from memory or from the layout", () => {
+    const before = new Map([["/r/a", "above"], ["/r/gone", "above"]]);
+    expect([...rememberWhileExpanded(before, new Map([["/r/stale", "below"]]), expanded)]).toEqual([["/r/a", "above"]]);
+    expect(rememberWhileExpanded(before, new Map(), new Map()).size).toBe(0);
+  });
+  it("returns the same map when nothing changed, so a store need not publish", () => {
+    const before = new Map([["/r/a", "above"], ["/r/b", "below"]]);
+    expect(rememberWhileExpanded(before, new Map([["/r/b", "below"]]), expanded)).toBe(before);
+    expect(rememberWhileExpanded(before, new Map(), expanded)).toBe(before);
+    expect(rememberWhileExpanded(before, new Map([["/r/b", "above"]]), expanded)).not.toBe(before);
   });
 });

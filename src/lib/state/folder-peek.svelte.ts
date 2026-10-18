@@ -1,8 +1,10 @@
 /** Per-pane facade; listing resources and tree policies load on the first peek. */
 import type { FileEntry } from "$lib/domain/file";
+import type { BandSide } from "$lib/domain/tile-panels";
 import type { createFolderPeekSession } from "./folder-peek-session.svelte";
 
 const emptyExpanded: ReadonlyMap<string, number> = new Map();
+const emptySides: ReadonlyMap<string, BandSide> = new Map();
 export function createFolderPeekState(windows: boolean) {
   let session = $state.raw<ReturnType<typeof createFolderPeekSession> | null>(null);
   let loading: Promise<void> | undefined;
@@ -24,6 +26,10 @@ export function createFolderPeekState(windows: boolean) {
     listing(path: string) { return session?.listing(path); },
     cardRows(path: string) { return session?.cardRows(path); },
     setCardRows(path: string, rows: number) { session?.setCardRows(path, rows); },
+    panelHeight(path: string) { return session?.panelHeight(path); },
+    setPanelHeight(path: string, height: number) { session?.setPanelHeight(path, height); },
+    get panelSides() { return session?.panelSides ?? emptySides; },
+    rememberPanelSides(placed: ReadonlyMap<string, BandSide>) { session?.rememberPanelSides(placed); },
     target(path: string) { return session?.target(path); },
     reconcile(paths: readonly string[], git = false) { session?.reconcile(paths, git); },
     async dispose() {

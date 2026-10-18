@@ -47,13 +47,13 @@ describe("view loaders", () => {
     expect(attempts).toBe(2);
   });
 
-  it("picks the renderer for a pane configuration; Folder Peek selects List column flow", async () => {
+  it("picks the renderer for a pane configuration; Folder Peek selects List column flow and Tiles panels", async () => {
     const { viewRendererFor } = await loaders();
     expect(viewRendererFor("details", true)).toBe("details");
     expect(viewRendererFor("details", false)).toBe("details");
     expect(viewRendererFor("list", true)).toBe("list-columns");
     expect(viewRendererFor("list", false)).toBe("list");
-    expect(viewRendererFor("tiles", true)).toBe("tiles");
+    expect(viewRendererFor("tiles", true)).toBe("tiles-panels");
     expect(viewRendererFor("tiles", false)).toBe("tiles");
   });
 });

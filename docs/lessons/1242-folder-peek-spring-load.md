@@ -26,11 +26,16 @@ filter it out.
 The observation lists the identities that contain the hit element within its
 pane's `.file-list .content`:
 
+- its row, from `springRowOf` (`domain/spring-rows.ts`): an entry row, a Details
+  row wrapper `[data-row-path]`, a Details `[data-peek-state]` row, or a
+  `[data-spring-bridge]` named by its folder;
 - the nearest `[data-path]`;
-- a Details `[data-peek-state]` row;
-- the Details row wrapper `[data-row-path]`;
 - the nearest `[data-panel-owner]`;
 - the List slot's `data-motion-key`.
+
+The drop redirect resolves its row through the same `springRowOf`. When the two
+had their own selectors, the hover counted a Details row wrapper as the row but
+the drop did not, so a drop on a row's pixel-snapped edge went to the pane folder.
 
 A temporary peek stays open while any of those is its folder or lies below it.
 Rect tests were rejected because zoom coordinate spaces differ by engine (#493).
@@ -46,11 +51,26 @@ Two holes showed up in the browser spec:
    outline group's `[data-panel-owner]`. It is rendered only for temporary
    panels, so ordinary hover emphasis and marquee are unchanged.
 
-A List card would normally wrap to the next column when it does not fit, which
-moves its header out from under the pointer. A temporary card instead shrinks
-to the rows left in its column (`columnFlow` `min` slots), down to header-only
-in the last row. It animates, but is never revealed, because a reveal scroll
-would move it away from the pointer.
+The general rule: a spring open must never move the hovered element out from
+under the pointer. Where it has to (a List card that must wrap), a bridge
+keeps the place it left inside the peek.
+
+- **A List card holding a temporary peek** (a folder springing open inside a
+  user card) keeps its place, shrinking to the rows left in its column
+  (`springCardFits`, `columnFlow` `fit` 1). It used to wrap: the hovered row
+  left the pointer, the peek closed, the card came back and sprang again,
+  forever.
+- **A temporary List card** keeps its place when its header and two rows fit
+  there (`fit` 3). Otherwise it starts the next column as a user card would,
+  and is revealed. The choice does not depend on the listing: a header-only
+  Loading card that fitted would jump once its rows arrived. Its bridges
+  (`springWrapBridges`) cover the folder's vacated rows across both columns
+  and the gap channel up to the card, so a reveal scroll (at most up to the
+  card column's far edge) leaves the pointer on a bridge or the card.
+- **A stacked temporary Tiles panel** is reached along its ribbon. Its 14px
+  hit stroke alone was too narrow to follow, so the ribbon and a 64px-wide
+  channel stroke around it are bridges. The outline SVG sits behind tiles and
+  panels, so the channel only claims the empty space between them.
 
 ## Close a macrotask late
 
@@ -84,10 +104,19 @@ No component owns these rows as drop targets:
 (`{ type: "folder", spring: true }`) through `explorer.springDropFolder`. That
 lets native and pointer drops use the existing folder path and copy intent.
 
-The window capture phase accepts the DOM drags, using `preventDefault`,
-`dropEffect` and `stopImmediatePropagation`. It does this on `dragenter` too,
-because WebKit delivers a drop only to a target whose dragenter was accepted.
-It then routes the drop through `dropIntoDirectory(…, "folder")`.
+The window capture phase accepts the DOM drags, using `preventDefault` and
+`dropEffect`. It does this on `dragenter` too, because WebKit delivers a drop
+only to a target whose dragenter was accepted. It then routes the drop through
+`dropIntoDirectory(…, "folder")`, and only the drop is taken exclusively.
+
+Hover events must keep bubbling. When the capture listener stopped them, the
+card or panel surface under a row never saw the pointer move onto that row, so
+its own folder feedback (`useDropTarget`) stayed lit after the drop: two
+highlighted folders. The capture listener now marks the event as claimed
+(`claimSpringEvent`, a WeakSet) so the FileList background ignores it, and the
+surface's bubbling `dragover` retargets. Every drop, dragend and leave also
+calls `retireDropFeedback()`, an epoch that ends all folder feedback at once,
+including a surface that unmounted before its own leave arrived.
 
 File rows in an ordinary peek stay non-targets, as Phase 3 decided.
 
@@ -106,11 +135,34 @@ dropped nothing.
 
 An unmount now releases only a press that has not crossed the drag threshold.
 An active drag keeps its window listeners, and keeps the explorer captured at
-drag start, until mouseup, Escape or blur. The HTML5 path already handled
+drag start, until mouseup, Escape or blur. This is an intentional cross-cutting
+fix that holds with Folder Peek off as well: a scroll moves the source row out
+of the virtual window just as a spring does.
+
+A source that is genuinely gone (deleted or renamed elsewhere, or its pane
+navigated, so it left the listing) cancels the drag instead of attempting a
+failing move. The check runs at release and after the unmount. It must wait
+for the update (`tick()`): in the row's own teardown the explorer still listed
+the deleted entry, so a synchronous check let the drag survive. Miller columns
+list ancestors outside the pane's listing and pass their own `isListed`. The HTML5 path already handled
 this: the row's owner retires its source as `owner-disposed` (Linux keeps an
 active native handoff alive), and the drop recovers the session from
 unexpired shared drag history (#1095). The browser spec covers both backends
 with a 40-file folder that springs open above the source.
+
+## Bounds and authority
+
+- **Holds are bounded.** A DOM drop waiting on a native start that never
+  settles would hold the peeks open for the rest of the session; a hold now
+  releases itself after `SPRING_HOLD_LIMIT_MS` (2s).
+- **Navigation resets the driver.** A pane that navigates during a drag drops
+  its temporary peeks itself. The driver compares each pane's `springRequest`
+  (by identity) with what it applied, and resets that pane in the controller,
+  so the folder can spring again instead of counting as open but invisible.
+- **One hover authority on Linux.** The webview's DOM drag events and the
+  native receiver report the same gesture and can disagree by a fraction of a
+  pixel at a row's edge. While the receiver reports the drag, its position is
+  the only hover input, because the native Drop resolves its target from it.
 
 ## Keep the driver's imports out of the startup graph
 
@@ -136,14 +188,26 @@ pure controller. The remaining startup cost is +1.2 KB gzip:
 - The pointer-drag backend runs in a separate context whose init script sets
   `navigator.platform` to `MacIntel`. The shared fixture's `defineProperty` is
   not configurable, so it cannot be overridden on that page.
+- Drop tests cross a surface gap and a row edge before dropping, and then
+  check that exactly one folder had feedback and none keeps it.
+- WebKit fires `dragleave` with a null `relatedTarget` inside the window; the
+  spec replays that sequence, so the `enteredThisTask` fallback is exercised.
+- "Stays open" is sampled (`holdsOpen`): a re-layout that moves the hovered
+  row closes and re-springs the peek, which a single check can miss.
+- Wait for a List card's opening motion to settle before hit-testing inside
+  it: mid-motion its rows are clipped and the point hits the card surface.
 
-## Native coverage (deferred)
+## Native coverage
 
-The native receiver path (Linux GTK, `handleNativeOver` → `elementAtNativePosition`)
-is covered only by unit tests and the browser tier, not by a tauri-driver run. A
-spring spec needs input that `e2e-tauri/helpers/native-drag.py` lacks: a hold
-over the folder and a second waypoint into the peek. In Details the first child
-row sits at the folder row + 32px, so `--hold-ms` and `--then X Y` options would
-be enough. Such a spec joins `test:e2e:tauri:dnd --full`, and a failing case
+`e2e-tauri/helpers/native-drag.py` hovers about a second over the destination,
+so with Folder Peek on every `file-drag.spec.ts` gesture springs Inbox open in
+Details, List and Tiles. That spec now requires the peek to be gone after the
+drop or Escape, and the moved entries to be absent until Inbox is opened: a
+peek left open would show them and make its navigation check vacuous.
+
+A dedicated spring spec (a drop inside the peek) is still deferred. It needs a
+second waypoint into the peek after the hover, which `native-drag.py` lacks. In
+Details the first child row sits at the folder row + 32px, so a `--then X Y`
+option would be enough. Such a spec joins `test:e2e:tauri:dnd --full`, and a failing case
 there fails the required native DnD qualification, so it should land only after
 a local run against a `build:native:qualification` binary.

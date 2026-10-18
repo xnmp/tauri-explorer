@@ -672,18 +672,32 @@ Screenshots:
     the facade returns before any hit test.
   - "Inside" is identity, not geometry. The element under the drag gives its pane and
     anchors: rows, a Details row wrapper and peek-state row, a List slot, a Tiles panel
-    or ribbon. A peek stays open while an anchor is its folder or below it, and leaving
-    closes it together with the temporary peeks opened inside it. Rect tests were
-    rejected because zoom coordinate spaces differ by engine (#493). The Tiles band gap
-    gets a transparent bridge in the panel's outline group, for temporary panels only.
-  - A temporary List card shrinks to the rows left in its column, down to header-only,
-    instead of wrapping, and is never revealed: either would move its header out from
-    under the held pointer. Tiles reveals as usual, since the reveal keeps the point
-    over the tile, the bridge or the panel.
-  - File rows, Details peek-state rows and the bridge inside a temporary peek drop into
-    its folder through the existing folder target and copy intent. Ordinary peeks keep
-    file rows as non-targets (phase 3). During a spring the peek fills the space the
-    user aims at, so a file row taking the drop away from the folder would be a trap.
+    or ribbon, a bridge. A peek stays open while an anchor is its folder or below it,
+    and leaving closes it together with the temporary peeks opened inside it. Rect tests
+    were rejected because zoom coordinate spaces differ by engine (#493). One resolver
+    (`springRowOf`) names the row for both the hover and the drop, so they cannot
+    disagree about a row's pixel-snapped edge.
+  - A spring open never moves the hovered element out from under the pointer. A List
+    card holding a temporary peek keeps its place, shrinking to the rows left in its
+    column. A temporary List card does too while its header and two rows fit;
+    otherwise it starts the next column as a user card would and is revealed (a
+    header-only card was rejected as useless). The choice ignores the listing, so a
+    loading card cannot jump. Bridges over its vacated rows (across both columns) and
+    the gap channel keep it open, including after the reveal scroll. Tiles bridges the
+    band gap, and a stacked panel's ribbon with a 32px channel either side; Tiles
+    reveals as usual, since the reveal keeps the point over the tile, a bridge or the
+    panel.
+  - File rows, Details peek-state rows and wrappers, and bridges inside a temporary
+    peek drop into its folder through the existing folder target and copy intent.
+    Ordinary peeks keep file rows as non-targets (phase 3). During a spring the peek
+    fills the space the user aims at, so a file row taking the drop away from the
+    folder would be a trap. Only the drop is taken exclusively in the window capture
+    phase: hover events bubble, claimed, so a card or panel surface retires its own
+    folder feedback, and every drop, dragend and leave retires all feedback (two
+    highlighted folders after a drop was the bug).
+  - Holds release themselves after 2s (a native start that never settles), a pane
+    that navigates mid-drag is reset in the controller, and on Linux the native
+    receiver's position is the only hover input while it reports the drag.
   - Opening and closing apply one macrotask after the controller changes, so a drop's
     target handler, and a native Drop's position resolution, read the peek as it was.
     A DOM drop waiting on a pending native start holds the peeks for its replay; a DOM
@@ -695,10 +709,15 @@ Screenshots:
     folder springing open above the source pushes that row out of the virtual window;
     its unmount used to cancel the gesture. Now an unmount only releases a press below
     the drag threshold, and the drag keeps the pane it started in until mouseup,
-    Escape or blur.
-  - A native (tauri-driver) spring spec is deferred: the XTest helper drags in one
-    straight segment without a hold, and the spec would join the required DnD
-    qualification without a local run (see the lesson).
+    Escape or blur. This is an intentional cross-cutting fix, kept with Folder Peek
+    off too (a scroll unmounts the source row the same way). A source that left its
+    listing (deleted, renamed, or its pane navigated) cancels the drag instead of
+    attempting a failing move.
+  - The native `file-drag.spec.ts` gestures hover about a second over Inbox, so they
+    spring it open; they now require the peek closed after the drop or Escape. A
+    dedicated native spring spec (a drop inside the peek) is deferred: the XTest helper
+    has no second waypoint, and the spec would join the required DnD qualification
+    without a local run (see the lesson).
 
 - **Details:** tinted or bordered group boxes were rejected; groups are unboxed.
 - **List layout:**

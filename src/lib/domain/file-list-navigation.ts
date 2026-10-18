@@ -64,9 +64,8 @@ export function resolveFileListMove(
     index = layout.cursorIndex < 0 ? 0 : layout.cursorIndex + (forward ? step : -step);
     if (index < 0 || index >= layout.count) return null;
   } else if (!modified && (event.key === "PageUp" || event.key === "PageDown")) {
-    const page = PAGE_LINES * (layout.viewMode === "details" ? 1 : columns);
-    index = layout.cursorIndex < 0 ? 0
-      : Math.max(0, Math.min(layout.count - 1, layout.cursorIndex + (event.key === "PageDown" ? page : -page)));
+    const page = (event.key === "PageDown" ? PAGE_LINES : -PAGE_LINES) * (layout.viewMode === "details" ? 1 : columns);
+    index = layout.cursorIndex < 0 ? 0 : Math.max(0, Math.min(layout.count - 1, layout.cursorIndex + page));
   } else return null;
   return { kind: "focus", index, selection: event.shiftKey ? "extend" : modified && arrow ? "preserve" : "replace" };
 }

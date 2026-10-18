@@ -152,9 +152,9 @@ export function resolveTileMove(state: TileNavigationState, event: FileListKey, 
   const level = at.kind === "panel" ? model.panels.get(at.path)!.entries : top;
   const position = at.kind === "panel" ? at.offset : top.indexOf(cursorIndex);
   if (!arrow) {
-    const columns = at.kind === "panel" ? Math.max(1, model.panels.get(at.path)!.cols) : Math.max(1, model.metrics.columns);
-    const page = PAGE_LINES * columns;
-    return focus(level[Math.max(0, Math.min(level.length - 1, position + (event.key === "PageDown" ? page : -page)))]);
+    const page = (event.key === "PageDown" ? PAGE_LINES : -PAGE_LINES)
+      * Math.max(1, at.kind === "panel" ? model.panels.get(at.path)!.cols : model.metrics.columns);
+    return focus(level[Math.max(0, Math.min(level.length - 1, position + page))]);
   }
   const offsets = groupOffsets(state.geometry.map(g => g.height));
   let from: TileRect;

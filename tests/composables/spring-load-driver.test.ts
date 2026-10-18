@@ -298,30 +298,32 @@ describe("spring-load driver (fake timers)", () => {
     expect(applied).toEqual([["p1", []]]);
   });
 
-  it("the lost-Leave fallback closes the peeks, and reports it", async () => {
+  it("every change to the applied peeks advances the revision a resolved drop target is checked against", async () => {
+    const start = driver.revision;
     driver.hover(over("p1", "/r/Inbox"), "drag-1");
     await springDelay();
-    applied.length = 0;
-    const expired = vi.fn();
-    driver.endSoon(expired);
+    const opened = driver.revision;
+    expect(opened).toBeGreaterThan(start);
+    driver.hover(over("p1", "/r/Inbox"), "drag-1"); // a repeat changes nothing
+    await nextTask();
+    expect(driver.revision).toBe(opened);
+    driver.endSoon();
     await vi.advanceTimersByTimeAsync(499);
-    expect(expired).not.toHaveBeenCalled();
+    expect(driver.revision).toBe(opened);
     await vi.advanceTimersByTimeAsync(2);
-    expect(applied).toEqual([["p1", []]]);
-    expect(expired).toHaveBeenCalledTimes(1);
+    expect(applied.at(-1)).toEqual(["p1", []]);
+    expect(driver.revision).toBeGreaterThan(opened);
   });
 
   it("a native Drop just before the deadline ends the peeks itself, once, and the fallback never fires", async () => {
     driver.hover(over("p1", "/r/Inbox"), "drag-1");
     await springDelay();
     applied.length = 0;
-    const expired = vi.fn();
-    driver.endSoon(expired);
+    driver.endSoon();
     await vi.advanceTimersByTimeAsync(499);
     driver.end(); // what the native Drop does
     await vi.advanceTimersByTimeAsync(5_000);
     expect(applied).toEqual([["p1", []]]);
-    expect(expired).not.toHaveBeenCalled();
   });
 
   it("a pending drop's hold outlives the fallback; the peeks close when it is released (#1269)", async () => {
@@ -329,15 +331,12 @@ describe("spring-load driver (fake timers)", () => {
     await springDelay();
     applied.length = 0;
     const release = driver.hold();
-    const expired = vi.fn();
-    driver.endSoon(expired);
+    driver.endSoon();
     await vi.advanceTimersByTimeAsync(5_000);
     expect(applied).toEqual([]);
-    expect(expired).not.toHaveBeenCalled();
     release();
     await nextTask();
     expect(applied).toEqual([["p1", []]]);
-    expect(expired).toHaveBeenCalledTimes(1);
   });
 
   it("a hold released after a newer drag started ends nothing", async () => {

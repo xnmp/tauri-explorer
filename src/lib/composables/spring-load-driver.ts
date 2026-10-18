@@ -96,7 +96,10 @@ export interface SpringLoadDriver<E = Element> {
   end(gesture?: string): void;
   /** The source ended while the native receiver may still deliver its Drop or
    * Leave: end the session unless `settle` or another end comes first. */
-  endSoon(expired?: () => void): void;
+  endSoon(): void;
+  /** Counts the changes made to the panes' temporary peeks. A drop target
+   * resolved from a position is only valid while it is unchanged. */
+  readonly revision: number;
   /** The native receiver delivered its Drop or Leave. */
   settle(): void;
   /** The live drag's identity ("" when none), for a caller that ends it later. */
@@ -114,6 +117,7 @@ export function createSpringLoadDriver<E>(deps: SpringLoadDriverDeps<E>): Spring
   const applied = new Map<string, readonly string[]>();
   const holds = new Set<object>();
   let scheduled = false;
+  let revision = 0;
 
   function flush(): void {
     scheduled = false;
@@ -124,6 +128,7 @@ export function createSpringLoadDriver<E>(deps: SpringLoadDriverDeps<E>): Spring
       const paths = next.get(pane) ?? [];
       if (sameList(paths, applied.get(pane) ?? [])) continue;
       if (paths.length) applied.set(pane, paths); else applied.delete(pane);
+      revision++;
       deps.apply(pane, paths);
     }
   }
@@ -153,7 +158,8 @@ export function createSpringLoadDriver<E>(deps: SpringLoadDriverDeps<E>): Spring
       controller.hover(deps.observe(element), gesture);
     },
     end(gesture) { controller.end(gesture); },
-    endSoon(expired) { controller.endSoon(expired); },
+    endSoon() { controller.endSoon(); },
+    get revision() { return revision; },
     settle() { controller.settle(); },
     get gesture() { return controller.gesture ?? ""; },
     hold() {

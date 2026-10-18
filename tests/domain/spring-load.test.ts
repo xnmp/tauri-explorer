@@ -338,26 +338,12 @@ describe("spring-load controller gestures", () => {
     expect(openPaths()).toEqual(["/r/Inbox"]);
   });
 
-  it("the fallback reports that it closed the peeks, and not when something else ended them", () => {
-    const expired = vi.fn();
-    openInbox("drag-1");
-    controller.endSoon(expired);
-    vi.advanceTimersByTime(SPRING_LOST_LEAVE_MS);
-    expect(expired).toHaveBeenCalledTimes(1);
-    openInbox("drag-2");
-    controller.endSoon(expired);
-    controller.end();
-    vi.advanceTimersByTime(SPRING_LOST_LEAVE_MS * 2);
-    expect(expired).toHaveBeenCalledTimes(1);
-  });
-
   it("while a reason to keep the peeks open stands, the fallback waits for endDeferred", () => {
     let held = true;
     const kept = createSpringLoadController({ paths, apply: () => {}, keepOpen: () => held });
-    const expired = vi.fn();
     kept.hover(over("/r/Inbox"), "g");
     vi.advanceTimersByTime(SPRING_LOAD_DELAY_MS);
-    kept.endSoon(expired);
+    kept.endSoon();
     vi.advanceTimersByTime(SPRING_LOST_LEAVE_MS * 4);
     expect(kept.state.open).toHaveLength(1);
     kept.endDeferred();
@@ -365,6 +351,5 @@ describe("spring-load controller gestures", () => {
     held = false;
     kept.endDeferred();
     expect(kept.state.open).toEqual([]);
-    expect(expired).toHaveBeenCalledTimes(1);
   });
 });

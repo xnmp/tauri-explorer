@@ -17,6 +17,7 @@ vi.mock("$lib/composables/spring-load", () => ({
   springEnd: () => { spring.calls.push("end"); },
   springEndSoon: () => { spring.calls.push("endSoon"); },
   springSettle: () => { spring.settled++; },
+  springRevision: () => 0,
   springGesture: () => "g",
   springHold: () => () => {},
 }));

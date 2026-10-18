@@ -11,12 +11,13 @@ vi.mock("$lib/state/drag-clock", async actual => ({ ...await actual<object>(), d
   stamp: () => ({ clockId: `browser:${performance.timeOrigin}`, at: Math.floor(performance.timeOrigin + performance.now()), uncertainty: 0 }),
 } }));
 const spring = vi.hoisted(() => ({
-  calls: [] as string[], gesture: "g1", settled: 0, expire: undefined as (() => void) | undefined,
+  calls: [] as string[], gesture: "g1", settled: 0, revision: 0,
 }));
 vi.mock("$lib/composables/spring-load", () => ({
   springHover: (locate: () => Element | null) => { spring.calls.push(`hover:${(locate() as unknown as { id?: string } | null)?.id ?? "null"}`); },
   springEnd: (gesture?: string) => { spring.calls.push(gesture === undefined ? "end" : `end:${gesture}`); },
-  springEndSoon: (expired?: () => void) => { spring.calls.push("endSoon"); spring.expire = expired; },
+  springEndSoon: () => { spring.calls.push("endSoon"); },
+  springRevision: () => spring.revision,
   springSettle: () => { spring.settled++; },
   springGesture: () => spring.gesture,
   springHold: () => { spring.calls.push("hold"); return () => { spring.calls.push("release"); }; },
@@ -65,6 +66,8 @@ class FakeDragEvent extends Event {
     this.ctrlKey = !!init.ctrlKey; this.altKey = !!init.altKey; this.shiftKey = !!init.shiftKey; this.metaKey = !!init.metaKey;
   }
 }
+/** The temporary peeks changed (the fallback, a newer drag's end, a Leave). */
+const closePeeks = () => { spring.revision++; };
 const named = (id: string, className = "entry-item directory") => Object.assign(dropElement(className, { "data-path": `/r/${id}` }), { id });
 const nativeEvent = (type: string, extra: object = {}) =>
   native.emit!({ payload: { type, paths: ["/outside/a.txt"], position: { x: 40, y: 60 }, externalSource: true, ...extra } });
@@ -75,7 +78,7 @@ const domEvent = (type: string, target: unknown, dataTransfer: unknown = new Fak
 };
 
 beforeEach(async () => {
-  spring.calls.length = 0; spring.gesture = "g1"; spring.settled = 0; spring.expire = undefined;
+  spring.calls.length = 0; spring.gesture = "g1"; spring.settled = 0; spring.revision = 0;
   drops.mockClear(); toasts.mockClear(); panes.clear();
   dragState.clear();
   win = new EventTarget();
@@ -110,7 +113,7 @@ describe("a native Drop after the lost-Leave fallback closed the peeks", () => {
   it("goes to the folder the drag was over, not the one that moved under the pointer", async () => {
     hoverThenDragEnd();
     // The fallback fires, the peeks close and another folder's row slides under the pointer.
-    spring.expire?.();
+    closePeeks();
     under = named("row-b");
     nativeEvent("drop");
     await flush();
@@ -132,7 +135,7 @@ describe("a native Drop after the lost-Leave fallback closed the peeks", () => {
     nativeEvent("over");
     under = null as never; // nothing under the pointer: no target to capture
     win.dispatchEvent(domEvent("dragend", under));
-    spring.expire?.();
+    closePeeks();
     nativeEvent("drop");
     await flush();
     expect(drops).not.toHaveBeenCalled();
@@ -141,7 +144,7 @@ describe("a native Drop after the lost-Leave fallback closed the peeks", () => {
 
   it("a later gesture does not inherit the captured target", async () => {
     hoverThenDragEnd();
-    spring.expire?.();
+    closePeeks();
     nativeEvent("leave");
     nativeEvent("enter");
     nativeEvent("over");
@@ -149,6 +152,89 @@ describe("a native Drop after the lost-Leave fallback closed the peeks", () => {
     nativeEvent("drop");
     await flush();
     expect(drops.mock.calls[0][1]).toBe("/r/row-c");
+  });
+});
+
+describe("two drags in a row (the first one's Drop is still owed)", () => {
+  // Sessions are claimed once per module: every test gets its own.
+  let n = 0;
+  let S1 = "s1", S2 = "s2";
+  beforeEach(() => { n++; S1 = `s1-${n}`; S2 = `s2-${n}`; });
+  const source = (sessionId: string) => ({ path: "/r/f.txt", name: "f.txt", kind: "file", sessionId });
+  const internal = (session: string) => ({ source: source(session), externalSource: false, paths: ["/r/f.txt"] });
+  const dragEnd = (session: string) => {
+    const transfer = new FakeTransfer();
+    transfer.setData("application/x-explorer-session", session);
+    win.dispatchEvent(domEvent("dragend", under, transfer));
+  };
+  /** Drag 1 hovers row-a (its peek open) and ends; drag 2 starts and its first hover closes drag 1's peeks. */
+  function secondDragStarts() {
+    nativeEvent("enter", internal(S1));
+    nativeEvent("over", internal(S1));
+    dragEnd(S1);
+    expect(spring.calls.at(-1)).toBe("endSoon");
+    win.dispatchEvent(domEvent("dragstart", under));
+    nativeEvent("enter", internal(S2));
+    closePeeks(); // drag 2's first hover ends drag 1's gesture
+    under = named("row-b"); // the layout shifted under the pointer
+  }
+
+  it("drag 1's Drop still goes to the folder it was over, 300ms after the second drag started", async () => {
+    secondDragStarts();
+    nativeEvent("drop", internal(S1));
+    await flush();
+    expect(drops).toHaveBeenCalledTimes(1);
+    expect(drops.mock.calls[0][1]).toBe("/r/row-a");
+  });
+
+  it("and 650ms after, when the fallback has fired as well", async () => {
+    secondDragStarts();
+    closePeeks();
+    nativeEvent("drop", internal(S1));
+    await flush();
+    expect(drops.mock.calls[0][1]).toBe("/r/row-a");
+  });
+
+  it("drag 2's own Drop never uses drag 1's capture", async () => {
+    secondDragStarts();
+    nativeEvent("over", internal(S2));
+    nativeEvent("drop", internal(S2));
+    await flush();
+    expect(drops.mock.calls[0][1]).toBe("/r/row-b");
+  });
+
+  it("captures are bounded: an old drag whose Drop never came is eventually forgotten", async () => {
+    nativeEvent("enter", internal(S1));
+    nativeEvent("over", internal(S1));
+    dragEnd(S1);
+    // Drag 2 ends the same way, ten drags later: the map stays bounded.
+    for (let i = 0; i < 20; i++) {
+      nativeEvent("enter", internal(`x${i}`));
+      nativeEvent("over", internal(`x${i}`));
+      dragEnd(`x${i}`);
+    }
+    closePeeks();
+    under = named("row-b");
+    nativeEvent("enter", internal(S1));
+    nativeEvent("over", internal(S1));
+    nativeEvent("drop", internal(S1));
+    await flush();
+    // The oldest capture was evicted: s1 resolves live.
+    expect(drops.mock.calls[0][1]).toBe("/r/row-b");
+  });
+
+  it("cancelling for an unknown destination settles the dragged source like a completed drop", async () => {
+    const claim = vi.spyOn(dragState, "claim");
+    nativeEvent("enter", internal(S1));
+    nativeEvent("over", internal(S1));
+    under = null as never;
+    dragEnd(S1);
+    closePeeks();
+    nativeEvent("drop", internal(S1));
+    await flush();
+    expect(drops).not.toHaveBeenCalled();
+    expect(toasts).toHaveBeenCalledTimes(1);
+    expect(claim).toHaveBeenCalledWith(expect.objectContaining({ sessionId: S1 }));
   });
 });
 

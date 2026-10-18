@@ -54,6 +54,7 @@ async function drag(source: Entry, destination: Entry, options: { copy?: boolean
     root.dataset.springPeekOpenedAfterEnd = "";
     root.dataset.springPeekEndSignalAt = "";
     root.dataset.springPeekClosedLagMs = "";
+    root.dataset.springPeekPresent = "";
     if (root.dataset.nativeDragProbeInstalled) return;
     root.dataset.nativeDragProbeInstalled = "true";
     document.addEventListener("dragstart", () => {
@@ -67,14 +68,22 @@ async function drag(source: Entry, destination: Entry, options: { copy?: boolean
     new MutationObserver(endSignal).observe(root, { attributes: true, attributeFilter: ["data-e2e-native-drag-drop"] });
     new MutationObserver(() => {
       const watch = root.dataset.springPeekWatch;
-      // How long after the last end signal the peek closed. The lost-Leave
-      // fallback closes it 500ms after dragend, which would hide a broken
-      // native Drop or Leave close: only the receiver may close it that fast.
-      if (watch && root.dataset.springPeekOpened === "true" && !root.dataset.springPeekClosedLagMs && !document.querySelector(watch)) {
-        root.dataset.springPeekClosedLagMs = String(performance.now() - Number(root.dataset.springPeekEndSignalAt || performance.now()));
+      // How long after the last end signal the peek last closed (a close
+      // and reopen during the hover is not the close that matters). The
+      // lost-Leave fallback closes it 500ms after dragend, which would hide a
+      // broken native Drop or Leave close: only the receiver may be that fast.
+      if (watch && root.dataset.springPeekOpened === "true") {
+        const present = !!document.querySelector(watch);
+        const was = root.dataset.springPeekPresent === "true";
+        if (present && !was) { root.dataset.springPeekPresent = "true"; root.dataset.springPeekClosedLagMs = ""; }
+        else if (!present && was) {
+          root.dataset.springPeekPresent = "false";
+          root.dataset.springPeekClosedLagMs = String(performance.now() - Number(root.dataset.springPeekEndSignalAt || performance.now()));
+        }
       }
       if (watch && root.dataset.springPeekOpened !== "true" && document.querySelector(watch)) {
         root.dataset.springPeekOpened = "true";
+        root.dataset.springPeekPresent = "true";
         // Whether the native drag was already over (its dragend, or the
         // receiver's Drop) when the peek appeared: a peek that only shows up
         // after the drop proves nothing about the hover.

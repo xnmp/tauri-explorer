@@ -10,7 +10,7 @@ import { useExternalDrop } from "$lib/composables/use-external-drop.svelte";
 import { resolveDropTarget, resolveDropTargetFromElement, captureDropDestination, highlightTarget, highlightTargetAtPoint, highlightTargetElement, elementAtNativePosition, clearHighlights, captureHighlightCleanup, claimSpringEvent, type DropTargetResult } from "$lib/composables/use-native-drop-target.svelte";
 import { dropIntoDirectory } from "$lib/composables/use-dom-directory-drop";
 import { retireDropFeedback } from "$lib/composables/use-drop-target.svelte";
-import { springEnd, springEndSoon, springGesture, springHold, springHover, springSettle } from "$lib/composables/spring-load";
+import { springEnd, springEndSoon, springGesture, springHold, springHover, springRevision, springSettle } from "$lib/composables/spring-load";
 import { dropHover } from "$lib/state/drop-hover";
 import { shouldRetireOnDragEnd } from "$lib/domain/drop-feedback";
 import { dragState, type DragData } from "$lib/state/drag.svelte";
@@ -39,12 +39,14 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
   // dragstart) clears what an earlier one left behind.
   let hoverPosition: { x: number; y: number } | null = null;
   let receiverReports = false;
-  // The source's dragend, while the native receiver still owes its Drop or
-  // Leave (Linux): the drop target the drag was over, captured while the
-  // layout was still the drag's own. Once the lost-Leave fallback has closed
-  // the temporary peeks that layout is gone, so a Drop arriving after it must
-  // not resolve its target from the pointer position (#1269).
-  let endedDrag: { target: DropTargetResult; expired: boolean } | null = null;
+  // Drags whose source ended while the native receiver still owes their Drop
+  // or Leave (Linux), by session: the drop target each was over, captured while
+  // the layout was still its own. Once the temporary peeks changed since (the
+  // lost-Leave fallback, a newer drag, a Leave) a position no longer names
+  // that target, so the Drop routes to the capture instead (#1269). A newer
+  // drag never clears an older one's capture; the map is bounded.
+  const endedDrags = new Map<string, { target: DropTargetResult; revision: number }>();
+  const MAX_ENDED_DRAGS = 8;
   const refreshHover = () => { if (hoverPosition) handleNativeOver(hoverPosition); };
   // Receiver-owned snapshot of the live source at native Enter. Source result
   // and destination Drop use different IPC channels and can arrive reordered.
@@ -72,7 +74,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
   function handleNativeEnter(rawPaths: string[], _position: { x: number; y: number }, source?: DragData | null, copyModifier?: boolean | null, observedAt?: number, completedGestureSequence?: number, observationClock?: string, externalSource?: boolean): void {
     if (copyModifier != null) copyModifierHeld = copyModifier;
     hoverPosition = null; receiverReports = true;
-    endedDrag = null;
+    endedDrags.delete(""); // an earlier session-less drag's Drop is not this one's
     springSettle();
     // Native context identity outranks path/time inference from a pending renderer source.
     const data = externalSource ? null : nativeSource(rawPaths, source, observedAt, completedGestureSequence, observationClock);
@@ -98,13 +100,15 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     retireDropFeedback();
     dropHover.clear(refreshHover);
     hoverPosition = null; receiverReports = false;
-    const ended = endedDrag;
-    endedDrag = null;
     if (externalSource) nativeDomSession = undefined;
     const dragData = externalSource ? null : nativeDragSession(rawPaths)
       ? nativeSource(rawPaths, source, observedAt, completedGestureSequence, observationClock)
       : source ?? (nativeGesture ? nativeGesture.data : nativeSource(rawPaths, source, observedAt, completedGestureSequence, observationClock));
     const paths = resolveNativeDragPaths(rawPaths, dragData, isWindows);
+    // Only this drag's own capture: a Drop never borrows another drag's.
+    const endedKey = dragData?.sessionId ?? "";
+    const ended = endedDrags.get(endedKey);
+    endedDrags.delete(endedKey);
     if (!paths.length) {
       nativeGesture = null;
       nativeDomSession = undefined;
@@ -125,14 +129,17 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
       toastStore.show("Drop cancelled because its gesture identity expired. Drop the files again.");
       return;
     }
-    // After the fallback closed the peeks the pointer position names a
-    // different row than the drag was over: route to what it captured, or
-    // cancel rather than guess.
-    const target = ended?.expired ? ended.target : resolveDropTarget(position);
+    // Once the temporary peeks changed after the drag ended, the pointer
+    // position names a different row than the drag was over: route to what it
+    // captured, or cancel rather than guess.
+    const stale = !!ended && ended.revision !== springRevision();
+    const target = stale ? ended!.target : resolveDropTarget(position);
     nativeGesture = null;
-    if (ended?.expired && !target) {
+    if (stale && !target) {
       nativeDomSession = undefined;
       clearHighlights();
+      // Settle the source like a completed drop would, so it is not left as the latest one.
+      dragState.claim(isInternalDrag ? dragData : null)?.finish();
       toastStore.show("Drop cancelled because its destination could not be confirmed. Drop the files again.");
       return;
     }
@@ -250,13 +257,13 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     onDrop: handleNativeDrop,
     onEnter: handleNativeEnter,
     onOver: handleNativeOver,
-    onLeave: () => { springHover(() => null); springSettle(); endedDrag = null; retireDropFeedback(); dropHover.clear(refreshHover); hoverPosition = null; receiverReports = false; nativeGesture = null; clearNativeHighlights?.(); clearNativeHighlights = null; },
+    onLeave: () => { springHover(() => null); springSettle(); endedDrags.delete(""); retireDropFeedback(); dropHover.clear(refreshHover); hoverPosition = null; receiverReports = false; nativeGesture = null; clearNativeHighlights?.(); clearNativeHighlights = null; },
   });
 
   function trackModifierDown(e: KeyboardEvent) { copyModifierHeld = isCopyMod(e); }
   function trackModifierUp(e: KeyboardEvent) { copyModifierHeld = isCopyMod(e); }
   function trackDragModifiers(event: DragEvent): void { copyModifierHeld = isCopyMod(event); }
-  function handleDomDragStart(event: DragEvent): void { trackDragModifiers(event); hoverPosition = null; receiverReports = false; endedDrag = null; springSettle(); }
+  function handleDomDragStart(event: DragEvent): void { trackDragModifiers(event); hoverPosition = null; receiverReports = false; springSettle(); }
 
   // ---- Spring-loaded peeks (#1242) -------------------------------------------
   // A row, row wrapper, peek-state row or bridge inside a drag's temporary
@@ -430,9 +437,11 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     // with a bounded fallback for a Leave that never comes (#1269).
     if (!receiverReports && !hoverPosition) springEnd();
     else {
-      const record = { target: hoverPosition ? resolveDropTarget(hoverPosition) : null, expired: false };
-      endedDrag = record;
-      springEndSoon(() => { record.expired = true; });
+      const key = endedSession || "";
+      endedDrags.delete(key);
+      endedDrags.set(key, { target: hoverPosition ? resolveDropTarget(hoverPosition) : null, revision: springRevision() });
+      for (const old of endedDrags.keys()) { if (endedDrags.size <= MAX_ENDED_DRAGS) break; endedDrags.delete(old); }
+      springEndSoon();
     }
     dropHover.clear(refreshHover);
     hoverPosition = null;
@@ -470,7 +479,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     window.removeEventListener("drop", handleDomDrop, { capture: true });
     window.removeEventListener("dragend", handleDomDragEnd);
     dropHover.clear(refreshHover);
-    hoverPosition = null; receiverReports = false; endedDrag = null;
+    hoverPosition = null; receiverReports = false; endedDrags.clear();
     springEnd();
     clearHighlights();
   }

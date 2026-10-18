@@ -7,7 +7,7 @@ const { settings, calls, drag } = vi.hoisted(() => ({
   settings: { folderPeek: true },
   calls: [] as string[],
   /** The in-app drag's session, and the gesture each driver call was given. */
-  drag: { session: undefined as string | undefined, hovered: [] as (string | undefined)[], expired: undefined as (() => void) | undefined },
+  drag: { session: undefined as string | undefined, hovered: [] as (string | undefined)[] },
 }));
 vi.mock("$lib/state/settings.svelte", () => ({ settingsStore: settings }));
 vi.mock("$lib/state/drag.svelte", () => ({
@@ -17,7 +17,8 @@ vi.mock("$lib/composables/spring-load-driver", () => ({
   createDomSpringLoadDriver: () => ({
     hover: (element: { id: string } | null, gesture?: string) => { drag.hovered.push(gesture); calls.push(`hover:${element?.id ?? "null"}`); },
     end: (gesture?: string) => calls.push(gesture === undefined ? "end" : `end:${gesture}`),
-    endSoon: (expired?: () => void) => { drag.expired = expired; calls.push("endSoon"); },
+    endSoon: () => { calls.push("endSoon"); },
+    revision: 7,
     settle: () => calls.push("settle"),
     get gesture() { return drag.hovered.at(-1) ?? ""; },
     hold: () => { calls.push("hold"); return () => calls.push("release"); },
@@ -30,7 +31,7 @@ beforeEach(() => {
   vi.resetModules();
   settings.folderPeek = true;
   calls.length = 0;
-  drag.session = undefined; drag.hovered = []; drag.expired = undefined;
+  drag.session = undefined; drag.hovered = [];
 });
 const load = () => import("$lib/composables/spring-load");
 const settle = () => new Promise(resolve => setTimeout(resolve, 0));
@@ -105,11 +106,17 @@ it("hands the driver the source's session as the drag's identity, and scopes a l
   springHover(() => element("c"));
   expect(springGesture()).toBe("session-8");
   springEnd(captured);
-  const expired = () => {};
-  springEndSoon(expired);
+  springEndSoon();
   springSettle();
   expect(calls).toEqual(["hover:a", "hover:b", "hover:c", "end:session-7", "endSoon", "settle"]);
-  expect(drag.expired).toBe(expired);
+});
+
+it("reports the driver's peek revision, and 0 before it loads", async () => {
+  const { springHover, springRevision } = await load();
+  expect(springRevision()).toBe(0);
+  springHover(() => element("a"));
+  await settle();
+  expect(springRevision()).toBe(7);
 });
 
 it("a drag without an in-app source passes no gesture, leaving the current one alone", async () => {

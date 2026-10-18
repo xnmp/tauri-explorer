@@ -2,7 +2,8 @@ import { expect, test, type Page } from "@playwright/test";
 import { HOME_URL, waitForEntries, runPaletteCommand, pressShortcut } from "./helpers";
 
 // The Show Folder Peek Carets option (#1248): with carets off, a plain click on
-// a folder toggles its peek, in addition to selecting it.
+// a folder toggles its peek, in addition to selecting it, and Enter (not a
+// double-click) navigates into it (#1298).
 const root = "/folder-peek";
 const pane = (page: Page) => page.locator(".pane-tree:not(.retained) .explorer-pane");
 const row = (page: Page, path: string) => pane(page).locator(`.entry-item[data-path="${path}"]`);
@@ -48,10 +49,39 @@ test("a file click never expands anything", async ({ page }) => {
   await expect(row(page, `${root}/Alpha/same.txt`)).toHaveCount(0);
 });
 
-test("a double-click navigates into the folder and leaves it unexpanded on return", async ({ page }) => {
+const currentPath = (page: Page) => page.evaluate(async () => (await import("/src/lib/state/window-tabs.svelte.ts")).windowTabsManager.getActiveExplorer()!.currentPath);
+const caretlessToast = (page: Page) => page.locator(".toast.info").filter({ hasText: "Double-click is disabled while peek carets are off" });
+
+// A double-click is two toggles here, so it must not also navigate (#1298).
+test("a folder double-click stays put, leaves it closed and says Enter opens it", async ({ page }) => {
+  const beta = row(page, `${root}/Beta`);
+  await beta.dblclick();
+  await expect(caretlessToast(page)).toHaveText("Double-click is disabled while peek carets are off. Use Enter to navigate into folders.");
+  expect(await currentPath(page)).toBe(root);
+  await expect(row(page, `${root}/Beta/same.txt`)).toHaveCount(0);
+  await expect(beta).toHaveClass(/selected/);
+  // The toast's advice works: Enter opens the selected folder.
+  await page.keyboard.press("Enter");
+  await expect(row(page, `${root}/Beta/same.txt`)).toBeVisible();
+  expect(await currentPath(page)).toBe(`${root}/Beta`);
+});
+
+test("List refuses a folder double-click too, while a file double-click shows no notice", async ({ page }) => {
+  await page.evaluate(async () => (await import("/src/lib/state/window-tabs.svelte.ts")).windowTabsManager.getActiveExplorer()!.setViewMode("list"));
+  await row(page, `${root}/root.txt`).dblclick();
+  await expect(row(page, `${root}/root.txt`)).toHaveClass(/selected/);
+  await row(page, `${root}/Beta`).dblclick();
+  await expect(caretlessToast(page)).toHaveCount(1);
+  expect(await currentPath(page)).toBe(root);
+  await expect(row(page, `${root}/Beta/same.txt`)).toHaveCount(0);
+});
+
+test("with carets shown a folder double-click navigates and leaves it unexpanded on return", async ({ page }) => {
+  await setting(page, { folderPeekCarets: true });
   await row(page, `${root}/Beta`).dblclick();
   await expect(row(page, `${root}/Beta/same.txt`)).toBeVisible();
-  expect(await page.evaluate(async () => (await import("/src/lib/state/window-tabs.svelte.ts")).windowTabsManager.getActiveExplorer()!.currentPath)).toBe(`${root}/Beta`);
+  expect(await currentPath(page)).toBe(`${root}/Beta`);
+  await expect(caretlessToast(page)).toHaveCount(0);
   await page.evaluate(async () => (await import("/src/lib/state/window-tabs.svelte.ts")).windowTabsManager.getActiveExplorer()!.goBack());
   await expect(row(page, `${root}/Beta`)).toBeVisible();
   await expect(row(page, `${root}/Beta/same.txt`)).toHaveCount(0);

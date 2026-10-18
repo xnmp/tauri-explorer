@@ -28,9 +28,9 @@ import { toastStore } from "./toast.svelte";
 import { gitStatusStore } from "./git-status.svelte";
 import { archiveRoots, operationRoots } from "$lib/domain/file-operation-selection";
 import { createFolderPeekState } from "./folder-peek.svelte";
-import { canPeekAt, flatPeekEntries, flatPeekRows, peekCapability, shouldToggleOnRowClick, resolvePeekCommandTarget, resolvePeekEscape } from "$lib/domain/folder-peek-flat";
+import { canPeekAt, flatPeekEntries, flatPeekRows, peekCapability, rowClickOwnsPeek, shouldToggleOnRowClick, resolvePeekCommandTarget, resolvePeekEscape } from "$lib/domain/folder-peek-flat";
 import type { PeekLevelCache } from "$lib/domain/folder-peek";
-import type { RowClickInput } from "$lib/domain/folder-peek-flat";
+import type { RowClickInput, RowPeekTarget } from "$lib/domain/folder-peek-flat";
 import type { BandSide } from "$lib/domain/tile-panels";
 import { isVirtualPath } from "$lib/domain/virtual-path";
 import { providerFor } from "$lib/plugins/fs-providers";
@@ -281,14 +281,14 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
    * Tiles always draws them (the option applies to Details and List, #1241). */
   const caretsOptional = () => settingsStore.folderPeekCarets || coreState.viewMode === "tiles";
   const caretsShown = () => capability !== "none" && caretsOptional();
+  const rowPeekTarget = (entry: FileEntry): RowPeekTarget => ({
+    caretsShown: capability === "none" || caretsOptional(),
+    isDirectory: entry.kind === "directory",
+    eligible: capability !== "none" && !isVirtualPath(entry.path) && !providerFor(entry.path),
+  });
   /** Caret-less peek: called after a row click's ordinary selection. */
   async function toggleOnRowClick(entry: FileEntry, modifiers: RowClickInput["modifiers"], wasDrag: boolean) {
-    if (!shouldToggleOnRowClick({
-      caretsShown: capability === "none" || caretsOptional(),
-      isDirectory: entry.kind === "directory",
-      eligible: capability !== "none" && !isVirtualPath(entry.path) && !providerFor(entry.path),
-      modifiers, wasDrag,
-    })) return;
+    if (!shouldToggleOnRowClick({ ...rowPeekTarget(entry), modifiers, wasDrag })) return;
     await togglePeek(entry.path);
   }
   function collapseAllPeeks() {
@@ -1168,6 +1168,8 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     peekWatchSnapshot: watch.peekSnapshot,
     togglePeek,
     toggleOnRowClick,
+    /** This folder's clicks toggle its peek, so its double-click must not navigate (#1298). */
+    rowClickOwnsPeek: (entry: FileEntry) => rowClickOwnsPeek(rowPeekTarget(entry)),
     get peekChange() { return peekChange; },
     /** Listing state of an open peek ("loading" until its first listing settles). */
     peekStatus(path: string) { return peek.listing(path)?.status; },

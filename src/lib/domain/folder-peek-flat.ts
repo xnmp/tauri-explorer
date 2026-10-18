@@ -21,24 +21,38 @@ export function peekCapability(surface: PeekSurface): PeekCapability {
   return mode === "details" || mode === "list" ? "tree" : mode === "tiles" ? "top-level" : "none";
 }
 
-export interface RowClickInput {
+export interface RowPeekTarget {
   /** The surface draws expand carets; they own toggling, so a row click never does. */
   caretsShown: boolean;
   isDirectory: boolean;
   /** The pane can peek here (feature on, plain location, supporting view). */
   eligible: boolean;
+}
+export interface RowClickInput extends RowPeekTarget {
   modifiers: { ctrlKey: boolean; shiftKey: boolean; metaKey: boolean; altKey: boolean };
   /** The click ended a pointer drag or marquee. */
   wasDrag: boolean;
 }
 
-/** Caret-less peek (#1248): a plain primary click on a peekable folder row
- * toggles it in addition to the ordinary selection. Modifier clicks stay
- * pure selection gestures; the double-click's two clicks cancel out. */
+/** Caret-less peek (#1248) gives this folder row's mouse clicks to its peek.
+ * A double-click is then two toggles that cancel out, so it does not also
+ * navigate; Open (Enter) is the way into the folder (#1298). */
+export function rowClickOwnsPeek(target: RowPeekTarget): boolean {
+  return !target.caretsShown && target.isDirectory && target.eligible;
+}
+
+/** A plain primary click toggles the folder in addition to the ordinary
+ * selection; modifier clicks and drag ends stay pure selection gestures. */
 export function shouldToggleOnRowClick(input: RowClickInput): boolean {
   const { ctrlKey, shiftKey, metaKey, altKey } = input.modifiers;
-  return !input.caretsShown && input.isDirectory && input.eligible && !input.wasDrag
-    && !(ctrlKey || shiftKey || metaKey || altKey);
+  return rowClickOwnsPeek(input) && !input.wasDrag && !(ctrlKey || shiftKey || metaKey || altKey);
+}
+
+/** The toast a refused folder double-click shows; `openShortcut` is the Open
+ * command's current binding, absent when the user unbound it. */
+export function caretlessDoubleClickNotice(openShortcut: string | undefined): string {
+  const how = openShortcut ? `Use ${openShortcut}` : "Use Open in the context menu";
+  return `Double-click is disabled while peek carets are off. ${how} to navigate into folders.`;
 }
 
 export function flatPeekEntries(root: string, entries: readonly FileEntry[]): PeekTree {

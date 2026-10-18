@@ -29,7 +29,9 @@
   import { fileViewRegistry } from "$lib/plugins/file-view-registry.svelte";
   import type { FileViewPresentation } from "$lib/state/file-view-presentation.svelte";
   import { getPaneIdContext } from "$lib/state/pane-context";
-  import { entryIndicesForRows } from "$lib/domain/folder-peek-flat";
+  import { caretlessDoubleClickNotice, entryIndicesForRows } from "$lib/domain/folder-peek-flat";
+  import { toastStore } from "$lib/state/toast.svelte";
+  import { getCommandShortcut } from "$lib/state/commands.svelte";
   import { clickSelectionEffect } from "$lib/domain/workspace-selection";
 
   import type { FileEntry } from "$lib/domain/file";
@@ -311,6 +313,11 @@
     // Trashed items are not openable in place; Restore brings them back (#863).
     if (entry.trash) {
       explainTrashedOpen(entry);
+      return;
+    }
+    // Caret-less peek owns this folder's clicks; Open is the way in (#1298).
+    if (explorer.rowClickOwnsPeek(entry)) {
+      toastStore.show(caretlessDoubleClickNotice(getCommandShortcut("file.openSelected")), "info");
       return;
     }
     // Follow Windows .lnk shortcuts to their target (no-op for other entries).

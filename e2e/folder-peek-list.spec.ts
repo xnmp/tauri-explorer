@@ -809,3 +809,17 @@ test("with a card open Ctrl+A selects only the folder's own items and typeahead 
   await page.keyboard.type("cod");
   await expect.poll(() => selectedPaths(page)).toEqual([`${root}/Codex`]);
 });
+
+test("peek groups are unboxed while nesting and resize controls remain visible", async ({ page }) => {
+  await open(page);
+  await toggle(page, `${root}/Career`);
+  await toggle(page, `${root}/Career/Applications`);
+  await expect(card(page, `${root}/Career`)).toBeVisible();
+  await expect(row(page, `${root}/Career`)).toHaveAttribute("aria-expanded", "true");
+  const chrome = await slot(page, `${root}/Career`).evaluate(element =>
+    ["::before", "::after"].map(pseudo => getComputedStyle(element, pseudo).content));
+  expect(chrome).toEqual(["none", "none"]);
+  await expect(slot(page, `${root}/Career`).locator(".list-guide").first()).toBeVisible();
+  await expect(slot(page, `${root}/Career`).getByRole("separator")).toBeVisible();
+  await page.screenshot({ path: "screenshots/fix/bounding/unboxed-list-peek.png" });
+});

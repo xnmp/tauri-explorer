@@ -16,6 +16,8 @@ sidebar shortcuts.
   (#1238, #1240, #1241, #1243, #1258, #1265, #1266).
 - Optional peek carets: with carets hidden, click a folder to expand it and
   use Open / Enter to navigate into it (#1248, #1250, #1298, #1300).
+- Hover a folder in caretless Details or List to reveal an Open button for
+  navigating into it (#1316).
 - Spring-loaded folder peeks while dragging, with safe drop routing and
   cleanup when a drag ends or is cancelled (#1242, #1268, #1269, #1282, #1287).
 - Selectable Material, Classic, Minimal and Catppuccin icon themes (#1246).

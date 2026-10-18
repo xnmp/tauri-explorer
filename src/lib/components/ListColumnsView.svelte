@@ -21,6 +21,7 @@
   import EntryCell from "./EntryCell.svelte";
   import ListCard from "./ListCard.svelte";
   import ListCardGrip from "./ListCardGrip.svelte";
+  import PeekOpenButton from "./PeekOpenButton.svelte";
   import type { FileEntry } from "$lib/domain/file";
 
   type EntryRow = Extract<PeekRow, { kind: "entry" }>;
@@ -105,6 +106,9 @@
     {/if}
     <span class="list-icon" data-drag-icon style:color={row.entry.kind !== "directory" ? getFileIconColor(row.entry) : undefined}><FileIcon entry={row.entry} size="small" /></span>
     <span data-drag-name><EntryName entry={row.entry} {explorer} variant="list" bold={row.expanded} /></span>
+    {#if explorer.rowClickOwnsPeek(row.entry) && dialogStore.renamingEntry?.path !== row.entry.path}
+      <PeekOpenButton entry={row.entry} {explorer} />
+    {/if}
     <GitStatusBadge directory={row.parentPath} entryName={row.entry.name} />
     {#if card && card.end > card.start}
       <!-- Inside the folder's treeitem (a tree owns only groups and treeitems),

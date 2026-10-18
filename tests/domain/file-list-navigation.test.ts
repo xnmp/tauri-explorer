@@ -102,7 +102,7 @@ describe("resolveFileListMove", () => {
     )).toEqual({ kind: "focus", index: 5, selection: "preserve" });
   });
 
-  it("keeps Home, End, and eight-entry page movement behavior", () => {
+  it("keeps Home, End, and ten-line page movement behavior", () => {
     expect(resolveFileListMove(
       key("Home", { ctrlKey: true }),
       layout({ count: 20, cursorIndex: 10 }),
@@ -121,12 +121,16 @@ describe("resolveFileListMove", () => {
     )).toEqual({ kind: "focus", index: 19, selection: "extend" });
     expect(resolveFileListMove(
       key("PageDown"),
-      layout({ count: 20, cursorIndex: 5 }),
-    )).toEqual({ kind: "focus", index: 13, selection: "replace" });
+      layout({ count: 40, cursorIndex: 5 }),
+    )).toEqual({ kind: "focus", index: 15, selection: "replace" });
     expect(resolveFileListMove(
       key("PageUp", { shiftKey: true }),
-      layout({ count: 20, cursorIndex: 12 }),
-    )).toEqual({ kind: "focus", index: 4, selection: "extend" });
+      layout({ count: 40, cursorIndex: 22 }),
+    )).toEqual({ kind: "focus", index: 12, selection: "extend" });
+    expect(resolveFileListMove(
+      key("PageDown", { shiftKey: true }),
+      layout({ count: 40, cursorIndex: 22 }),
+    )).toEqual({ kind: "focus", index: 32, selection: "extend" });
     expect(resolveFileListMove(
       key("PageDown"),
       layout({ count: 20, cursorIndex: 15 }),
@@ -135,7 +139,24 @@ describe("resolveFileListMove", () => {
       key("PageUp"),
       layout({ count: 20, cursorIndex: 4 }),
     )).toEqual({ kind: "focus", index: 0, selection: "replace" });
+    expect(resolveFileListMove(
+      key("PageDown"),
+      layout({ count: 20, cursorIndex: -1 }),
+    )).toEqual({ kind: "focus", index: 0, selection: "replace" });
   });
+
+  it.each(["list", "tiles"] satisfies ViewMode[])(
+    "pages ten rows of columns in classic %s view, clamped to the listing",
+    (viewMode) => {
+      const page = (k: string, cursorIndex: number) => resolveFileListMove(
+        key(k), layout({ viewMode, columns: 3, count: 100, cursorIndex }),
+      );
+      expect(page("PageDown", 4)).toEqual({ kind: "focus", index: 34, selection: "replace" });
+      expect(page("PageUp", 64)).toEqual({ kind: "focus", index: 34, selection: "replace" });
+      expect(page("PageDown", 80)).toEqual({ kind: "focus", index: 99, selection: "replace" });
+      expect(page("PageUp", 20)).toEqual({ kind: "focus", index: 0, selection: "replace" });
+    },
+  );
 
   it.each(["list", "tiles"] satisfies ViewMode[])(
     "uses row and column geometry in %s view without crossing listing edges",

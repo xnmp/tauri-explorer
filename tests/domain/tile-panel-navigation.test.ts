@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { nearestInDirection, panelRevealTop, panelStep, resolveTileMove, type TileNavigationState } from "$lib/domain/tile-panel-navigation";
 import type { FileListKey } from "$lib/domain/file-list-navigation";
 import type { PanelBox } from "$lib/domain/tile-panels";
-import { MEDIUM, P, modelFor } from "./tile-panels-fixture";
+import { F, MEDIUM, P, modelFor } from "./tile-panels-fixture";
 
 const key = (k: string, mods: Partial<FileListKey> = {}): FileListKey => ({ key: k, ctrlKey: false, metaKey: false, shiftKey: false, altKey: false, ...mods });
 
@@ -111,7 +111,31 @@ describe("spatial arrows with panels open (§6)", () => {
     expect(move("Career/Applications", "PageDown")).toBe("Career/salary-research.xlsx");
     expect(move("Career/Portfolio", "PageUp")).toBe("Career/Applications");
     expect(move("Career/Portfolio", "PageDown", { shiftKey: true })).toBe("Career/salary-research.xlsx");
-    expect(move("Career", "PageDown")).toBe(top[10]);
+    // Ten rows of seven columns overshoot the 55 top-level entries: clamped.
+    expect(move("Career", "PageDown")).toBe(top.at(-1));
+    expect(move("Career", "PageUp")).toBe(top[0]);
+  });
+
+  it("pages ten rows of the top-level grid's columns", () => {
+    const { move, model, name } = nav(["Career"], {}, { columns: 3 });
+    const top = model.items.map(item => name(item.entryIndex!));
+    expect(model.metrics.columns).toBe(3);
+    expect(move(top[0]!, "PageDown")).toBe(top[30]);
+    expect(move(top[31]!, "PageUp")).toBe(top[1]);
+    expect(move(top[40]!, "PageDown")).toBe(top.at(-1));
+    expect(move(top[0]!, "PageDown", { shiftKey: true })).toBe(top[30]);
+  });
+
+  it("pages ten rows of a panel's own columns without leaving the panel", () => {
+    const files = Array.from({ length: 200 }, (_, i) => F(`Archive/f-${String(i).padStart(3, "0")}.txt`));
+    const listing = (path: string) => path === P("Archive") ? { status: "loaded" as const, entries: files } : undefined;
+    const { move, model } = nav(["Archive"], {}, { listing });
+    const cols = model.panels.get(P("Archive"))!.cols;
+    expect(cols).toBeGreaterThan(1);
+    expect(move("Archive/f-000.txt", "PageDown")).toBe(`Archive/f-${String(10 * cols).padStart(3, "0")}.txt`);
+    expect(move(`Archive/f-${String(10 * cols + 3).padStart(3, "0")}.txt`, "PageUp")).toBe("Archive/f-003.txt");
+    expect(move("Archive/f-199.txt", "PageDown")).toBe("Archive/f-199.txt");
+    expect(move("Archive/f-005.txt", "PageUp")).toBe("Archive/f-000.txt");
   });
 
   it("starts at the first top-level entry without a cursor, and ignores a stale cursor", () => {

@@ -9,7 +9,7 @@
 import { admitsCommandDestination, type CommandDestination } from "$lib/domain/command-admission";
 import { dialogStore } from "./dialogs.svelte";
 import { windowTabsManager } from "./window-tabs.svelte";
-import { createOwnedRegistry } from "./owned-registry";
+import { createReactiveRegistry } from "./reactive-registry.svelte";
 import { keybindingsStore } from "./keybindings.svelte";
 import { loadPersisted, savePersisted } from "./persisted";
 import { computeFrecencyScore } from "./frecency.svelte";
@@ -65,7 +65,7 @@ export function getCategoryLabel(category: CommandCategory): string {
 }
 
 /** Internal command registry */
-const commands = createOwnedRegistry<Command>();
+const commands = createReactiveRegistry<Command>();
 
 // --- Frecency tracking (persisted) ---
 

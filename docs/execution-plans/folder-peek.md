@@ -678,15 +678,22 @@ Screenshots:
     (`springRowOf`) names the row for both the hover and the drop, so they cannot
     disagree about a row's pixel-snapped edge.
   - A spring open never moves the hovered element out from under the pointer. A List
-    card holding a temporary peek keeps its place, shrinking to the rows left in its
-    column. A temporary List card does too while its header and two rows fit;
-    otherwise it starts the next column as a user card would and is revealed (a
-    header-only card was rejected as useless). The choice ignores the listing, so a
-    loading card cannot jump. Bridges over its vacated rows (across both columns) and
-    the gap channel keep it open, including after the reveal scroll. Tiles bridges the
-    band gap, and a stacked panel's ribbon with a 32px channel either side; Tiles
-    reveals as usual, since the reveal keeps the point over the tile, a bridge or the
-    panel.
+    card holding a temporary peek keeps the column it had without it: it wraps exactly
+    when it wrapped before (its `fit` is its pre-spring slot count), and in place it
+    shrinks to the rows left there. A `fit` of 1 was rejected: a card that had started
+    the next column jumped back into the previous column's tail, so the hovered row
+    left the pointer and the spring oscillated. A temporary List card keeps its place
+    while its header and two rows fit; otherwise it starts the next column as a user
+    card would and is revealed (a header-only card was rejected as useless). The choice
+    ignores the listing, so a loading card cannot jump. A wrapped temporary card ends
+    its column, so the items it displaces start the column after it, and its bridges
+    (its vacated rows across both columns and the gap channel) cover only empty space
+    and keep it open, including after the reveal scroll. Bridges over the displaced
+    items were rejected: a displaced row could neither spring nor take its own drop.
+    Tiles bridges the band gap, and a stacked panel's ribbon with a 32px channel
+    either side; Tiles reveals as usual, since the reveal keeps the point over the
+    tile, a bridge or the panel. The channel is accepted as designed although it turns
+    up to 64px of empty band space into the spring folder's drop target.
   - File rows, Details peek-state rows and wrappers, and bridges inside a temporary
     peek drop into its folder through the existing folder target and copy intent.
     Ordinary peeks keep file rows as non-targets (phase 3). During a spring the peek
@@ -695,9 +702,15 @@ Screenshots:
     phase: hover events bubble, claimed, so a card or panel surface retires its own
     folder feedback, and every drop, dragend and leave retires all feedback (two
     highlighted folders after a drop was the bug).
-  - Holds release themselves after 2s (a native start that never settles), a pane
-    that navigates mid-drag is reset in the controller, and on Linux the native
-    receiver's position is the only hover input while it reports the drag.
+  - A DOM drop deferred behind a pending native start holds the peeks until the start
+    settles or the drag session ends, whichever comes first, and is replayed by its
+    captured spring folder in the same unnavigated pane rather than by its row, which
+    unmounts with the peek. A 2s hold limit was rejected: it closed the spring under a
+    legitimately slow start and cancelled the replay. A pane that navigates mid-drag
+    is reset in the controller. On Linux the native receiver's position is the only
+    hover input while it reports the drag; a native Enter or a DOM dragstart clears
+    what an earlier gesture left, since a lost Leave otherwise froze the next drag's
+    DOM hover.
   - Opening and closing apply one macrotask after the controller changes, so a drop's
     target handler, and a native Drop's position resolution, read the peek as it was.
     A DOM drop waiting on a pending native start holds the peeks for its replay; a DOM

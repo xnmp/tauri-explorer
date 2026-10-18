@@ -230,17 +230,11 @@
      selection and focus chrome stay open on the panel's side (square corners,
      no selected underline, no focus edge), so a selected parent runs into its
      panel instead of reading as a box closed off on top of it. These outrank
-     TileSurface's selected edge and FileList's focus ring. */
+     TileSurface's selected edge and FileList's focus ring. The selected tint
+     stays solid: axe cannot measure text contrast over a gradient (#1304). */
   :global(.tile-panels-view .tile-row > .tile-item.tab-below) { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
   :global(.tile-panels-view .tile-row > .tile-item.tab-above) { border-top-left-radius: 0; border-top-right-radius: 0; }
   :global(.file-list .tile-panels-view .tile-row > .tile-item.tab-below:is(.selected, :focus-visible)) { border-bottom-color: transparent; }
-  /* The selected tint fades out toward the panel rather than stopping in a line. */
-  :global(.tile-panels-view .tile-row > .tile-item.tab-below.selected:not(:hover, .drop-target)) {
-    background: linear-gradient(to bottom, color-mix(in srgb, var(--accent) 8%, transparent) 50%, transparent) border-box;
-  }
-  :global(.tile-panels-view .tile-row > .tile-item.tab-above.selected:not(:hover, .drop-target)) {
-    background: linear-gradient(to top, color-mix(in srgb, var(--accent) 8%, transparent) 50%, transparent) border-box;
-  }
   /* The ring is the 1px border plus a 1px inset shadow: FileList's 2px inset outline, less one side. */
   :global(.file-list .tile-panels-view .tile-row > .tile-item.tab-below:focus-visible:not(.drop-target)) {
     outline: none;

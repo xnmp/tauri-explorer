@@ -27,36 +27,57 @@ function entry(name: string) {
 }
 
 describe("renameThumbnailCache", () => {
-  it("re-keys the renamed entry itself", () => {
-    setThumbnailCache("/pics/cat.png:64:80", entry("cat"));
+  // Real keys: `${kind}:${path}:${backendSize}:${quality}` (#1267).
+  it("re-keys the renamed entry itself, every kind and size", () => {
+    setThumbnailCache("image:/pics/cat.png:64:80", entry("cat"));
+    setThumbnailCache("video:/pics/cat.png:256:90", entry("cat-v"));
 
     renameThumbnailCache("/pics/cat.png", "/pics/kitten.png");
 
-    expect(getThumbnailCache("/pics/cat.png:64:80")).toBeUndefined();
-    expect(getThumbnailCache("/pics/kitten.png:64:80")).toEqual(entry("cat"));
+    expect(getThumbnailCache("image:/pics/cat.png:64:80")).toBeUndefined();
+    expect(getThumbnailCache("video:/pics/cat.png:256:90")).toBeUndefined();
+    expect(getThumbnailCache("image:/pics/kitten.png:64:80")).toEqual(entry("cat"));
+    expect(getThumbnailCache("video:/pics/kitten.png:256:90")).toEqual(entry("cat-v"));
   });
 
   it("re-keys entries under a renamed directory", () => {
-    setThumbnailCache("/photos/a.png:64:80", entry("a"));
-    setThumbnailCache("/photos/sub/b.png:128:90", entry("b"));
-    setThumbnailCache("/photos-other/c.png:64:80", entry("c"));
+    setThumbnailCache("image:/photos/a.png:64:80", entry("a"));
+    setThumbnailCache("image:/photos/sub/b.png:128:90", entry("b"));
+    setThumbnailCache("image:/photos-other/c.png:64:80", entry("c"));
+    setThumbnailCache("image:/photos.png:64:80", entry("d"));
 
     renameThumbnailCache("/photos", "/images");
 
-    expect(getThumbnailCache("/images/a.png:64:80")).toEqual(entry("a"));
-    expect(getThumbnailCache("/images/sub/b.png:128:90")).toEqual(entry("b"));
-    expect(getThumbnailCache("/photos/a.png:64:80")).toBeUndefined();
-    // Sibling with a shared name prefix must NOT be re-keyed
-    expect(getThumbnailCache("/photos-other/c.png:64:80")).toEqual(entry("c"));
+    expect(getThumbnailCache("image:/images/a.png:64:80")).toEqual(entry("a"));
+    expect(getThumbnailCache("image:/images/sub/b.png:128:90")).toEqual(entry("b"));
+    expect(getThumbnailCache("image:/photos/a.png:64:80")).toBeUndefined();
+    // Siblings with a shared name prefix must NOT be re-keyed
+    expect(getThumbnailCache("image:/photos-other/c.png:64:80")).toEqual(entry("c"));
+    expect(getThumbnailCache("image:/photos.png:64:80")).toEqual(entry("d"));
   });
 
-  it("does not revoke blob URLs during rename", () => {
-    setThumbnailCache("/docs/x.png:64:80", entry("x"));
+  it("re-keys Windows paths and paths containing colons", () => {
+    setThumbnailCache("image:C:\\pics\\a.png:64:80", entry("w"));
+    setThumbnailCache("image:C:\\pics\\sub\\b.png:64:80", entry("w2"));
+    renameThumbnailCache("C:\\pics", "C:\\images");
+    expect(getThumbnailCache("image:C:\\images\\a.png:64:80")).toEqual(entry("w"));
+    expect(getThumbnailCache("image:C:\\images\\sub\\b.png:64:80")).toEqual(entry("w2"));
+    setThumbnailCache("image:/odd/a:b.png:64:80", entry("c"));
+    renameThumbnailCache("/odd/a:b.png", "/odd/z.png");
+    expect(getThumbnailCache("image:/odd/z.png:64:80")).toEqual(entry("c"));
+  });
+
+  it("does not revoke blob URLs during rename, nor notify invalidation subscribers", () => {
+    setThumbnailCache("image:/docs/x.png:64:80", entry("x"));
     revokeSpy.mockClear();
+    const seen: string[] = [];
+    const stop = subscribeThumbnailInvalidation(path => seen.push(path));
 
     renameThumbnailCache("/docs/x.png", "/docs/y.png");
+    stop();
 
     expect(revokeSpy).not.toHaveBeenCalled();
+    expect(seen).toEqual([]);
   });
 });
 

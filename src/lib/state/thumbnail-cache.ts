@@ -57,16 +57,19 @@ export function setThumbnailCache(key: string, value: CachedThumbnail): void {
 
 /**
  * Re-key cached thumbnails after a rename. Matches both the renamed entry
- * itself (`oldPath:...`) and, for directory renames, everything beneath it
- * (`oldPath/child:...`).
+ * itself and, for directory renames, everything beneath it
+ * (`oldPath/child`), by the key path segment.
  */
 export function renameThumbnailCache(oldPath: string, newPath: string): void {
+  // The pixels are unchanged, so subscribers are not told: not an invalidation.
   for (const [key, value] of [...cache]) {
-    if (key.startsWith(oldPath + ":") || key.startsWith(oldPath + "/")) {
-      const newKey = newPath + key.slice(oldPath.length);
-      cache.delete(key);
-      cache.set(newKey, value);
-    }
+    const path = keyPath(key);
+    if (path === null) continue;
+    if (path !== oldPath && !path.startsWith(oldPath + "/") && !path.startsWith(oldPath + "\\")) continue;
+    const start = key.indexOf(":") + 1;
+    const newKey = key.slice(0, start) + newPath + path.slice(oldPath.length) + key.slice(start + path.length);
+    cache.delete(key);
+    cache.set(newKey, value);
   }
 }
 

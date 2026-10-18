@@ -1,8 +1,13 @@
 # Folder peek: inline folder expansion (spec, 2026-10-17)
 
-Status: design agreed with the user (2026-10-17); being implemented in phases #1238
-(folder-peek-details), #1239 (list-column-flow), #1240 (folder-peek-list), #1241
-(folder-peek-tiles) and #1242 (folder-peek-spring-load).
+Status: implemented and merged to `dev` (2026-10-18).
+- Phases: #1238 (PR #1243, plus the carets option #1248 in PR #1250), #1239 (PR #1258), #1240
+  (PR #1265), #1241 (PR #1266) and #1242 (PR #1268).
+- Follow-ups: #1269 (PR #1282, spring-load gesture identity and late-drop routing) and #1272
+  (PR #1273, the coverage gaps found by the final acceptance audit; `perf:sweep` medians are in
+  #1272).
+- The §12 boxes were ticked against that audit. Every item has an outcome-asserting test, and
+  all 13 screenshots exist under `screenshots/feat/<phase-branch>/`.
 
 ## 0. Assets and terms
 
@@ -464,80 +469,80 @@ Acceptance:
 - [x] Loading, Empty and error rows render. Trash and virtual locations show no carets.
 
 Screenshots:
-- [ ] `details-tree.png`: nested expansion with guide lines and bold names.
-- [ ] `details-selection-across-levels.png`
-- [ ] `details-empty-and-error.png`
+- [x] `details-tree.png`: nested expansion with guide lines and bold names.
+- [x] `details-selection-across-levels.png`
+- [x] `details-empty-and-error.png`
 
 ### Phase 2 — `list-column-flow`: List as sideways-scrolling columns (no peek yet)
 
 Scope: §8.1, §6 List, and the `yaziNavigation` change.
 
 Acceptance:
-- [ ] Items fill top to bottom, then the next column. List scrolls only sideways, and the
+- [x] Items fill top to bottom, then the next column. List scrolls only sideways, and the
       vertical wheel scrolls sideways.
-- [ ] Rows per column follow the window height and update on resize.
-- [ ] Up/Down move within a column and stop at its ends. Left/Right move to the same row
+- [x] Rows per column follow the window height and update on resize.
+- [x] Up/Down move within a column and stop at its ends. Left/Right move to the same row
       in the adjacent column.
-- [ ] Selection reveal, typeahead and `scrollToEntry` scroll sideways to off-screen items.
-- [ ] Only visible columns are rendered (verify with a 10,000-entry folder).
-- [ ] `yaziNavigation` affects Details only.
+- [x] Selection reveal, typeahead and `scrollToEntry` scroll sideways to off-screen items.
+- [x] Only visible columns are rendered (verify with a 10,000-entry folder).
+- [x] `yaziNavigation` affects Details only.
 
 Screenshots:
-- [ ] `list-columns.png`: several columns overflowing sideways.
-- [ ] `list-columns-scrolled.png`: after a sideways scroll, with the selection revealed.
+- [x] `list-columns.png`: several columns overflowing sideways.
+- [x] `list-columns-scrolled.png`: after a sideways scroll, with the selection revealed.
 
 ### Phase 3 — `folder-peek-list`: List cards
 
 Scope: §8.2–§8.4, plus §2–§6 for List.
 
 Acceptance:
-- [ ] Opening a folder shows a card in its column. Later items shift along the columns.
+- [x] Opening a folder shows a card in its column. Later items shift along the columns.
       A card that doesn't fit starts the next column and is scrolled into view.
-- [ ] Nested folders expand inside the card with guide lines and no box. All descendants
+- [x] Nested folders expand inside the card with guide lines and no box. All descendants
       scroll inside the card under a fixed header.
-- [ ] The grip resizes in whole rows, remembers the height per folder, and never exceeds
+- [x] The grip resizes in whole rows, remembers the height per folder, and never exceeds
       one column. "+N more" and the fade masks are correct.
-- [ ] Only visible columns animate. Interrupted toggles leave no stuck animation, ghost
+- [x] Only visible columns animate. Interrupted toggles leave no stuck animation, ghost
       or hidden row (stress test).
-- [ ] Up/Down pass through a card's rows, scrolling the card.
+- [x] Up/Down pass through a card's rows, scrolling the card.
 
 Screenshots:
-- [ ] `list-card.png`
-- [ ] `list-cards-nested.png`
-- [ ] `list-card-wrapped.png`: a card that started the next column.
+- [x] `list-card.png`
+- [x] `list-cards-nested.png`
+- [x] `list-card-wrapped.png`: a card that started the next column.
 
 ### Phase 4 — `folder-peek-tiles`: Tiles panels
 
 Scope: §9, plus §2–§6 for Tiles.
 
 Acceptance:
-- [ ] Panels open below, or above, or stacked, following the feasibility rules. Opening
+- [x] Panels open below, or above, or stacked, following the feasibility rules. Opening
       never moves an existing panel.
-- [ ] Panel sizing follows §9.2. The grip resizes the whole band.
-- [ ] Tab-and-page outlines render, with an accent fade and instant hover emphasis.
-- [ ] A stacked panel has a label with ×, linked to its parent by the ribbon.
-- [ ] Column-count changes keep panels on their side while feasible.
-- [ ] Spatial arrow navigation enters and leaves panels.
-- [ ] A drop onto a panel targets its folder.
+- [x] Panel sizing follows §9.2. The grip resizes the whole band.
+- [x] Tab-and-page outlines render, with an accent fade and instant hover emphasis.
+- [x] A stacked panel has a label with ×, linked to its parent by the ribbon.
+- [x] Column-count changes keep panels on their side while feasible.
+- [x] Spatial arrow navigation enters and leaves panels.
+- [x] A drop onto a panel targets its folder.
 
 Screenshots:
-- [ ] `tiles-single.png`
-- [ ] `tiles-split.png`
-- [ ] `tiles-above.png`
-- [ ] `tiles-stacked.png`
+- [x] `tiles-single.png`
+- [x] `tiles-split.png`
+- [x] `tiles-above.png`
+- [x] `tiles-stacked.png`
 
 ### Phase 5 — `folder-peek-spring-load`: spring-loaded peek
 
 Scope: §5 Drag and drop, spring-loaded part, in all three views.
 
 Acceptance:
-- [ ] Holding a drag over a closed folder for 600ms opens a temporary peek.
-- [ ] A drop inside it targets that folder.
-- [ ] Leaving the folder and its peek, or ending or cancelling the drag, closes it.
-- [ ] Temporary peeks never enter the expanded set.
+- [x] Holding a drag over a closed folder for 600ms opens a temporary peek.
+- [x] A drop inside it targets that folder.
+- [x] Leaving the folder and its peek, or ending or cancelling the drag, closes it.
+- [x] Temporary peeks never enter the expanded set.
 
 Screenshots:
-- [ ] `spring-loaded-peek.png`
+- [x] `spring-loaded-peek.png`
 
 ## 13. Open questions (defaults apply until decided)
 

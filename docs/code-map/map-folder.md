@@ -138,6 +138,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-pr-session.svelte.ts` — mounted GitHub badge, PR detail and CI log requests; immutable snapshots, invocation identities and disposal.
 - `git-branch-status.svelte.ts` — newest-reload-only owner of the graph's trunk-aware branch-status badges (#1081); disposal and superseded reloads cannot publish.
 - `git-graph-branches.svelte.ts` — lazy branch/author metadata and cancellable merge-base jump owner; known-coverage fallback and query/popover request coordination.
+- `git-graph-debounced-reload.ts` — trailing debounce for the path-filter reload; cancelled when a merge-base jump starts (#1281).
 
 - `window-startup.ts` — window-owned settings/theme/plugin startup; disposal prevents late settings from activating plugins.
 - `window-session.ts` — composes page subscriptions, startup, one-shot launch address-bar focus, command readiness and post-readiness warm priming with rollback/teardown.

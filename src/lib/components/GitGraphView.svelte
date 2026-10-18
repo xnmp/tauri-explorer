@@ -7,6 +7,7 @@
 -->
 <script lang="ts">
   import { createGitGraphBranches } from "$lib/state/git-graph-branches.svelte";
+  import { createDebouncedReload } from "$lib/state/git-graph-debounced-reload";
   import { createGitPrSession, type PrSnapshot } from "$lib/state/git-pr-session.svelte";
   import type { GraphCommit as CommitInfo } from "$lib/state/git-graph-cache";
   import { createGitGraphQuerySession } from "$lib/state/git-graph-query.svelte";
@@ -139,18 +140,14 @@
   // Graph-wide commit filter (#529). Kept ephemeral: unlike branch curation,
   // a one-off path lookup should not silently survive reopening the graph.
   let filePathFilter = $state("");
-  let filePathReloadTimer: ReturnType<typeof setTimeout> | null = null;
+  const filePathReload = createDebouncedReload(() => void reload(), 200);
 
   function onFilePathFilterInput(event: Event): void {
     branchSession.cancelMergeBase();
     filePathFilter = (event.target as HTMLInputElement).value;
     closeDetails();
     closePrDetail();
-    if (filePathReloadTimer !== null) clearTimeout(filePathReloadTimer);
-    filePathReloadTimer = setTimeout(() => {
-      filePathReloadTimer = null;
-      void reload();
-    }, 200);
+    filePathReload.schedule();
   }
 
 
@@ -693,6 +690,7 @@
   // reloader. Pagination extends the mounted history without replacing its
   // retained page-zero snapshot or adding a separate refresh policy.
   function reload(): Promise<void> {
+    filePathReload.cancel();
     branchSession.cancelMergeBase();
     return querySession.reload();
   }
@@ -702,10 +700,7 @@
    *  component-local preserves #529's ephemeral graph-search behaviour. */
   function showFileHistory(filePath: string): void {
     branchSession.cancelMergeBase();
-    if (filePathReloadTimer !== null) {
-      clearTimeout(filePathReloadTimer);
-      filePathReloadTimer = null;
-    }
+    filePathReload.cancel();
     closeDetails();
     closePrDetail();
     filePathFilter = filePath;
@@ -774,7 +769,7 @@
       refreshTimer = null;
       unsub?.();
       void watch.destroy();
-      if (filePathReloadTimer !== null) clearTimeout(filePathReloadTimer);
+      filePathReload.cancel();
     };
   });
 
@@ -840,8 +835,6 @@
     await branchSession.jumpToMergeBase(first, second, async (oid, isCurrent) => {
       // Clear curation so an ancestor cannot be hidden. Walking all refs also
       // avoids local/remote shorthand collisions in the branch-filter API.
-      if (filePathReloadTimer !== null) clearTimeout(filePathReloadTimer);
-      filePathReloadTimer = null;
       resetDetails();
       closePrDetail();
       branchFilter = null;
@@ -861,6 +854,9 @@
       if (selected?.oid !== oid) return false;
       scrollRowIntoView(displayCommits.findIndex((row) => row.oid === oid));
       return true;
+    }, filePathReload.defer, (revealed) => {
+      if (revealed) filePathReload.cancel();
+      else filePathReload.releaseDeferred();
     });
     if (branchSession.mergeBaseResult) branchPopoverOpen = false;
   }

@@ -65,10 +65,18 @@ export function createGitGraphBranches(
   async function jumpToMergeBase(
     first: MergeBaseBranch, second: MergeBaseBranch,
     reveal: (oid: string, isCurrent: () => boolean) => Promise<boolean>,
+    /** Runs synchronously once the lookup is accepted, before any await. The
+     *  owner retires pending work whose later reload would cancel this lookup
+     *  (a debounced path-filter reload, #1281). */
+    onStart?: () => void,
+    /** Runs when this lookup finishes still current; `revealed` is whether the
+     *  fork point was selected. Superseded lookups never call it. */
+    onSettled?: (revealed: boolean) => void,
   ): Promise<void> {
     if (disposed || mergeBaseBusy || (first.name === second.name && first.remote === second.remote)) return;
     const request = ++mergeBaseRequest;
     const current = () => !disposed && request === mergeBaseRequest;
+    onStart?.();
     mergeBaseBusy = true;
     mergeBaseError = null;
     mergeBaseResult = null;
@@ -87,7 +95,10 @@ export function createGitGraphBranches(
     } catch (cause) {
       if (current()) mergeBaseError = message(cause, "Could not find the merge-base");
     } finally {
-      if (current()) mergeBaseBusy = false;
+      if (current()) {
+        mergeBaseBusy = false;
+        onSettled?.(mergeBaseResult !== null);
+      }
     }
   }
 

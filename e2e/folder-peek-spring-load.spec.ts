@@ -521,24 +521,66 @@ test.describe("list: spring cards keep the hovered row in place", () => {
     await expect(page.locator(`${shown} .list-view`)).toHaveAttribute("data-rows", String(rows));
   }
 
-  test("a folder springing open inside a user card keeps the card in its column (R=7)", async ({ page }) => {
-    await listAtRows(page, 900, 7);
-    await explorer(page, "return explorer.togglePeek(value)", P("Inbox"));
-    await expect(page.locator(views.list.child(P("Inbox/Nested")))).toBeVisible();
-    // The card's opening motion has settled (it clips and moves the live slots).
-    await expect(page.locator(`${shown} .list-motion-layer > *, ${shown} [data-motion-key][style*="transform"], ${shown} [data-motion-key][style*="clip-path"]`)).toHaveCount(0);
-    const header = await centerOf(page, views.list.folder(P("Inbox")));
-    const nested = await centerOf(page, views.list.child(P("Inbox/Nested")));
+  /** Card motion has settled (it clips and moves the live slots). */
+  const settled = (page: Page) => expect(page.locator(`${shown} .list-motion-layer > *, ${shown} [data-motion-key][style*="transform"], ${shown} [data-motion-key][style*="clip-path"]`)).toHaveCount(0);
+
+  // R=7: Archive, Bulk, Empty, then Inbox in rows 3..6; with Archive open too,
+  // Inbox no longer fits below Empty and starts column 1.
+  for (const [label, user] of [["in its column", ["Inbox"]], ["after it started the next column", ["Archive", "Inbox"]]] as const) {
+    test(`a folder springing open inside a user card keeps the card where it was (R=7, ${label})`, async ({ page }) => {
+      await listAtRows(page, 900, 7);
+      for (const folder of user) await explorer(page, "return explorer.togglePeek(value)", P(folder));
+      await expect(page.locator(views.list.child(P("Inbox/Nested")))).toBeVisible();
+      await settled(page);
+      const header = await centerOf(page, views.list.folder(P("Inbox")));
+      const nested = await centerOf(page, views.list.child(P("Inbox/Nested")));
+      await startDrag(page);
+      expect(await dragTo(page, nested)).toBe(P("Inbox/Nested"));
+      await opened(page, [P("Inbox/Nested")]);
+      // The card grew by Nested's rows: it stayed where it was, shrinking in place.
+      expect(await centerOf(page, views.list.folder(P("Inbox")))).toEqual(header);
+      expect(await centerOf(page, views.list.child(P("Inbox/Nested")))).toEqual(nested);
+      await holdsOpen(page, nested, [P("Inbox/Nested")]);
+      await endDrag(page);
+      await opened(page, []);
+      expect((await explorer<string[]>(page, "return [...explorer.expandedPaths]")).sort()).toEqual(user.map(P).sort());
+    });
+  }
+
+  test("a temporary card that starts the next column ends it, so a displaced row beside its bridge springs and takes its own drop (R=4)", async ({ page }) => {
+    await listAtRows(page, 1200, 4);
+    // Archive, Bulk, Empty, Inbox | drag-me, other, zeta: Empty springs into
+    // column 1, so Inbox and the rows after it start column 2 (in view).
+    const displaced = async () => {
+      await opened(page, [P("Empty")]);
+      await expect(page.locator(`${shown} .list-spring-bridge`)).toHaveCount(3);
+      await settled(page);
+      const card = await centerOf(page, views.list.folder(P("Empty")));
+      const inbox = await centerOf(page, views.list.folder(P("Inbox")));
+      // No bridge covers it.
+      expect(await page.evaluate(point => document.elementFromPoint(point.x, point.y)?.closest("[data-spring-bridge], [data-path]")
+        ?.getAttribute("data-path") ?? "a bridge", inbox)).toBe(P("Inbox"));
+      expect(inbox.y).toBe(card.y);
+      expect(inbox.x).toBeGreaterThan(card.x);
+      return inbox;
+    };
     await startDrag(page);
-    expect(await dragTo(page, nested)).toBe(P("Inbox/Nested"));
-    await opened(page, [P("Inbox/Nested")]);
-    // The card grew by Nested's row: it shrank in place instead of wrapping.
-    expect(await centerOf(page, views.list.folder(P("Inbox")))).toEqual(header);
-    expect(await centerOf(page, views.list.child(P("Inbox/Nested")))).toEqual(nested);
-    await holdsOpen(page, nested, [P("Inbox/Nested")]);
+    await dragTo(page, views.list.folder(P("Empty")));
+    // Hovering Inbox leaves Empty's peek and arms Inbox's own spring.
+    expect(await dragTo(page, await displaced())).toBe(P("Inbox"));
+    await opened(page, [P("Inbox")]);
+    await settled(page);
+    await holdsOpen(page, views.list.folder(P("Inbox")), [P("Inbox")]);
     await endDrag(page);
     await opened(page, []);
-    expect(await explorer<string[]>(page, "return [...explorer.expandedPaths]")).toEqual([P("Inbox")]);
+    // A drop on the displaced row lands in it, not in the bridged folder.
+    await startDrag(page, "zeta.txt");
+    await dragTo(page, views.list.folder(P("Empty")));
+    expect(await dropOn(page, await displaced())).toBe(P("Inbox"));
+    await expect.poll(() => listing(page, P("Inbox"))).toContain("zeta.txt");
+    expect(await listing(page, P("Empty"))).toEqual([]);
+    await endDrag(page);
+    await opened(page, []);
   });
 
   for (const [label, width] of [["the next column in view", 900], ["a reveal scroll to the next column", 600]] as const) {

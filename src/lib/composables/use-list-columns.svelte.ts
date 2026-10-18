@@ -41,7 +41,7 @@ export function useListColumns(deps: ListColumnsDeps) {
   // A row-count change re-sizes and re-flows; only a row-model change rebuilds items.
   const structure = $derived(buildListStructure(deps.getRows()));
   const springPaths = $derived(deps.getSpringPaths?.() ?? []);
-  const model = $derived(sizeListModel(structure, rows, deps.getPreferredRows, springCardFits(structure, deps.getRows(), springPaths)));
+  const model = $derived(sizeListModel(structure, rows, deps.getPreferredRows, springCardFits(structure, deps.getRows(), springPaths, rows, deps.getPreferredRows)));
   const springBridges = $derived(springWrapBridges(model, springPaths));
   const layout = $derived(model.layout);
   const extent = $derived(listExtent(layout.columns.length));

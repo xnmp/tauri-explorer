@@ -72,12 +72,15 @@ export function buildListStructure(rows: PeekRows): ListStructure {
   return { items, cards, rowEntry: rows.rowToEntry, entryItem, entryOffset };
 }
 
+/** A card's `fit` and `alone` (`SlotSpec`). */
+export type ListCardFit = Readonly<{ fit: number; alone?: boolean }>;
+
 /** Sizes a structure's cards for R rows per column and flows it. Plain items are
  * reused as they are (they have no size), so with no open card nothing per item
  * is allocated beyond the flow's placements. `fitOf` gives a card a `fit`
  * (`SlotSpec`): it keeps its place while that many slots are left in its column,
  * shrinking to the rows left there (`springCardFits`). */
-export function sizeListModel(structure: ListStructure, R: number, preferredOf: (path: string) => number | undefined, fitOf?: (path: string) => number | undefined): ListFlowModel {
+export function sizeListModel(structure: ListStructure, R: number, preferredOf: (path: string) => number | undefined, fitOf?: (path: string) => ListCardFit | undefined): ListFlowModel {
   let items: readonly ListTopItem[];
   if (!structure.cards.length) items = structure.items as readonly ListTopItem[]; // every card is null
   else {
@@ -93,7 +96,7 @@ export function sizeListModel(structure: ListStructure, R: number, preferredOf: 
     return fit === undefined ? [] : [[index, fit] as const];
   })) : null;
   const layout = columnFlow(items, R, (item, index) => item.card
-    ? { slots: 1 + item.card.visibleRows, card: true, ...(fits?.has(index) ? { fit: fits.get(index)! } : {}) }
+    ? { slots: 1 + item.card.visibleRows, card: true, ...fits?.get(index) }
     : { slots: 1, card: false });
   if (fits?.size) {
     // A shrunk card shows only the rows its placement holds.
@@ -113,24 +116,33 @@ export const SPRING_CARD_FIT = 3;
 
 /**
  * Spring-loaded peeks (#1242) never move the row a drag holds. A top-level card
- * holding a temporary peek below its header keeps its place (`fit` 1), shrinking
- * to the rows left in its column, so springing a nested folder cannot push the
- * card into the next column. A temporary card opens in place too, unless fewer
- * than two of its rows would show there: then it starts the next column as a
- * user card would (`SPRING_CARD_FIT`), bridged from the slot it left
+ * holding a temporary peek below its header keeps the column it had without it:
+ * its `fit` is the slots it took then, so it wraps exactly when it wrapped, and
+ * in place it shrinks to the rows left in its column. A temporary card opens in
+ * place too, unless fewer than two of its rows would show there: then it starts
+ * the next column as a user card would (`SPRING_CARD_FIT`) and ends it
+ * (`alone`), bridged from the slot it left over empty space only
  * (`springWrapBridges`). Undefined while no temporary peek is open in a card.
  */
-export function springCardFits(structure: ListStructure, rows: PeekRows, temporary: readonly string[]): ((path: string) => number | undefined) | undefined {
+export function springCardFits(structure: ListStructure, rows: PeekRows, temporary: readonly string[], R: number,
+  preferredOf: (path: string) => number | undefined): ((path: string) => ListCardFit | undefined) | undefined {
   if (!temporary.length || !structure.cards.length) return undefined;
   const open = new Set(temporary);
-  const fits = new Map<string, number>();
+  // Temporary subtrees, outer first; nested ones lie inside an earlier span.
+  const spans = rows.groups.filter(group => open.has(group.path)).sort((a, b) => a.startRow - b.startRow);
+  const fits = new Map<string, ListCardFit>();
   for (const index of structure.cards) {
     const card = structure.items[index].card!;
-    if (open.has(card.path)) { fits.set(card.path, SPRING_CARD_FIT); continue; }
-    for (let row = card.start; row < card.end; row++) {
-      const content = rows.rows[row];
-      if (content?.kind === "entry" && open.has(content.entry.path)) { fits.set(card.path, 1); break; }
+    if (open.has(card.path)) { fits.set(card.path, { fit: SPRING_CARD_FIT, alone: true }); continue; }
+    let held = false, hidden = 0, end = card.start;
+    for (const span of spans) {
+      // A span starts the row after its folder's, which must lie in the card.
+      if (span.startRow <= card.start || span.startRow > card.end || span.startRow < end) continue;
+      held = true;
+      end = Math.min(span.endRow, card.end);
+      hidden += end - span.startRow;
     }
+    if (held) fits.set(card.path, { fit: 1 + cardVisibleRows(card.end - card.start - hidden, preferredOf(card.path) ?? LIST_CARD_DEFAULT_ROWS, R) });
   }
   return fits.size ? path => fits.get(path) : undefined;
 }

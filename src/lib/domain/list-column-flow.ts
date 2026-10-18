@@ -11,9 +11,10 @@ export const LIST_PADDING_Y = 6;
 /** `fit`: a card that keeps its place whenever at least `fit` slots are left in
  * its column, shrinking to them if it is taller; with fewer left it starts the
  * next column even when it would fit, so the choice does not change as its
- * listing loads. Spring-loaded peeks (#1242) use it so the row a drag holds
- * stays under the pointer (`springCardFits`). */
-export type SlotSpec = Readonly<{ slots: number; card: boolean; fit?: number }>;
+ * listing loads. `alone`: a card that `fit` moved to the next column ends that
+ * column too, so the rows below it stay empty. Spring-loaded peeks (#1242) use
+ * both so the row a drag holds stays under the pointer (`springCardFits`). */
+export type SlotSpec = Readonly<{ slots: number; card: boolean; fit?: number; alone?: boolean }>;
 export type ListPlacement = Readonly<{ index: number; column: number; row: number; slots: number }>;
 export interface ColumnFlowLayout {
   readonly rows: number;
@@ -33,17 +34,17 @@ export function columnFlow<T>(items: readonly T[], R: number, slotsOf: (item: T,
     if (!spec || !Number.isSafeInteger(spec.slots) || spec.slots < 1 || spec.slots > R || (!spec.card && spec.slots !== 1)) {
       throw new RangeError("Entries must fit one column; plain items use one slot");
     }
-    let slots = spec.slots;
+    let slots = spec.slots, alone = false;
     const fit = spec.card && spec.fit !== undefined && Number.isSafeInteger(spec.fit) && spec.fit >= 1 ? spec.fit : null;
     if (fit !== null) {
-      if (row > 0 && R - row < fit) { column++; row = 0; }
+      if (row > 0 && R - row < fit) { column++; row = 0; alone = spec.alone === true; }
       slots = Math.min(slots, R - row);
     } else if (row + slots > R) { column++; row = 0; }
     const placement = { index, column, row, slots };
     (columns[column] ??= []).push(placement);
     byIndex.push(placement);
     row += slots;
-    if (row === R) { column++; row = 0; }
+    if (row === R || alone) { column++; row = 0; }
   });
   return {
     rows: R, columns, byIndex,

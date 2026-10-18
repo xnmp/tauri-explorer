@@ -27,6 +27,7 @@ vi.mock("$lib/state/explorer.svelte", () => {
   return {
     createExplorerState: vi.fn(() => ({
       state: { currentPath: "" },
+      expandedPaths: new Set<string>(),
       initialLoad: vi.fn(startInitialLoad),
       navigateTo: vi.fn(startInitialLoad),
       destroy: () => {

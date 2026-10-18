@@ -19,3 +19,17 @@ it("normalizes restore metadata and rejects a malformed legacy target", () => {
   expect(normalizeClosedSnapshot({ path: "/valid", closedAt: -1, closedTs: NaN, kind: {} }))
     .toEqual({ path: "/valid", closedAt: 0, fromClosedWindow: false });
 });
+
+
+it("keeps closed-tab session data through refresh, consumes it once, and never persists it", () => {
+  const store = createClosedTabsStore<readonly string[]>();
+  const snapshot = { path: "/r", closedAt: 0, fromClosedWindow: false, closedTs: 123,
+    tab: { id: "closed", kind: "explorer" as const, layout: { type: "leaf" as const, id: "p", path: "/r" }, activePaneId: "p" } };
+  store.push(snapshot, ["/r/Alpha"]);
+  store.refresh();
+  expect(store.peekSession()).toEqual(["/r/Alpha"]);
+  expect(createClosedTabsStore<readonly string[]>().peekSession()).toBeUndefined();
+  expect(localStorage.getItem("explorer-closed-tabs")).not.toContain("Alpha");
+  store.pop();
+  expect(store.peekSession()).toBeUndefined();
+});

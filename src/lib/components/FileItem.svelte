@@ -24,6 +24,7 @@
 
   import { getPaneIdContext } from "$lib/state/pane-context";
   import PeekGuides from "./PeekGuides.svelte";
+  import PeekOpenButton from "./PeekOpenButton.svelte";
   import type { PeekGroup } from "$lib/domain/folder-peek";
 
   interface Props {
@@ -95,7 +96,7 @@
   });
   const lengthText = $derived(formatMediaDuration(mediaDurationResolver.duration(entry)));
 
-  const isPeekControl = (event: Event) => event.target instanceof Element && !!event.target.closest(".peek-caret");
+  const isPeekControl = (event: Event) => event.target instanceof Element && !!event.target.closest(".peek-caret, .peek-open");
   function handleClick(event: MouseEvent) {
     if (isPeekControl(event)) return;
     if (isRenaming) {
@@ -189,6 +190,7 @@
       <FileIcon {entry} size="small" />
     </div>
     <span class="name-text" data-drag-name><EntryName {entry} {explorer} variant="details" bold={expanded} /></span>
+    {#if explorer.rowClickOwnsPeek(entry) && !isRenaming}<PeekOpenButton {entry} {explorer} />{/if}
     <GitStatusBadge directory={parentPath} entryName={entry.name} hideOnRename={isRenaming} />
     {#if entry.is_symlink && !isRenaming && entry.kind !== "directory"}
       <div class="symlink-badge" title={entry.symlink_target ? `Link to ${entry.symlink_target}` : "Symbolic link"}>

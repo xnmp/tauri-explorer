@@ -20,6 +20,8 @@ interface ListColumnsDeps {
   getRows: () => PeekRows;
   /** User-selected top-level folders whose children use ordinary column slots. */
   getFullFlowPaths?: () => ReadonlySet<string>;
+  /** Folders filling one column with a scrollable descendant section. */
+  getColumnPaths?: () => ReadonlySet<string>;
   /** Remembered card height (visible rows) for an open top-level folder. */
   getPreferredRows: (path: string) => number | undefined;
   /** A drag's temporary peeks (#1242): the cards holding them keep their place,
@@ -49,8 +51,12 @@ export function useListColumns(deps: ListColumnsDeps) {
     const paths = deps.getFullFlowPaths?.();
     return paths && springPaths.length ? new Set([...paths].filter(path => !springPaths.includes(path))) : paths;
   });
+  const columnPaths = $derived.by(() => {
+    const paths = deps.getColumnPaths?.();
+    return paths && springPaths.length ? new Set([...paths].filter(path => !springPaths.includes(path))) : paths;
+  });
   const structure = $derived(buildListStructure(deps.getRows(), fullFlowPaths));
-  const model = $derived(sizeListModel(structure, rows, deps.getPreferredRows, springCardFits(structure, deps.getRows(), springPaths, rows, deps.getPreferredRows)));
+  const model = $derived(sizeListModel(structure, rows, deps.getPreferredRows, springCardFits(structure, deps.getRows(), springPaths, rows, deps.getPreferredRows, columnPaths), columnPaths));
   const springBridges = $derived(springWrapBridges(model, springPaths));
   const layout = $derived(model.layout);
   const extent = $derived(listExtent(layout.columns.length));

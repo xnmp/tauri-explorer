@@ -1,6 +1,6 @@
 <!-- List fills fixed-width columns from top to bottom and virtualizes sideways. -->
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, tick } from "svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { useListColumns } from "$lib/composables/use-list-columns.svelte";
   import { useListMotion } from "$lib/composables/use-list-motion.svelte";
@@ -10,7 +10,7 @@
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import type { ListCardSpec, ListNavigationSnapshot } from "$lib/domain/list-column-flow";
   import { LIST_COLUMN_STRIDE, LIST_PADDING_X, LIST_SLOT_HEIGHT } from "$lib/domain/list-column-flow";
-  import { cardMoreCount } from "$lib/domain/list-cards";
+  import { cardMoreCount, listMoreExpansion } from "$lib/domain/list-cards";
   import { peekTreePositionLookup, type PeekRow } from "$lib/domain/folder-peek";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { getPaneIdContext } from "$lib/state/pane-context";
@@ -49,6 +49,7 @@
   const columns = useListColumns({
     getRows: () => explorer.detailRows,
     getFullFlowPaths: () => explorer.listFullFlowPaths,
+    getColumnPaths: () => explorer.listColumnPaths,
     getPreferredRows: path => explorer.listCardRows(path),
     getSpringPaths: () => explorer.springPeeks,
     getPinnedPaths: () => dialogStore.renamingEntry ? [dialogStore.renamingEntry.path] : [],
@@ -71,14 +72,25 @@
     revealCard: (path, smooth) => columns.revealCard(path, smooth),
   });
   const carets = $derived(explorer.peekCaretsShown);
-  const moreCount = (card: ListCardSpec) => cardMoreCount(card.end - card.start,
-    columns.previewRows(card.path) ?? card.visibleRows, columns.cardScrollTop(card.path));
-  function showAll(event: MouseEvent, path: string): void {
+  const moreCount = (card: ListCardSpec) => explorer.listColumnPaths.has(card.path)
+    ? Math.max(0, card.end - card.start - card.visibleRows)
+    : cardMoreCount(card.end - card.start,
+      columns.previewRows(card.path) ?? card.visibleRows, columns.cardScrollTop(card.path));
+  const moreStage = (card: ListCardSpec) => listMoreExpansion(card.end - card.start,
+    columns.rows, explorer.listColumnPaths.has(card.path));
+  async function expandList(event: MouseEvent, path: string, stage: "column" | "full"): Promise<void> {
     if (paneId) windowTabsManager.setActivePane(paneId);
-    // The button disappears with the compact body; its stable header retains
+    // The action changes with its stage; its stable header retains
     // keyboard focus so the next navigation key still belongs to this tree.
     (event.currentTarget as HTMLElement).closest<HTMLElement>(".entry-item")?.focus({ preventScroll: true });
-    explorer.showAllListChildren(path);
+    const directory = explorer.currentPath;
+    if (stage === "full") explorer.showAllListChildren(path);
+    else explorer.showColumnListChildren(path);
+    await tick();
+    if (explorer.currentPath === directory) {
+      const index = explorer.displayEntries.findIndex(entry => entry.path === path);
+      if (index >= 0) columns.revealEntry(index);
+    }
   }
   // With peek on, rows are a tree: levels, expanded folders and caret buttons
   // are not allowed on listbox options (axe aria-allowed-attr, nested-interactive).
@@ -125,14 +137,21 @@
     {#if card && card.end > card.start}
       <!-- Inside the folder's treeitem (a tree owns only groups and treeitems),
            positioned on the card's bottom edge against the slot. -->
-      <ListCardGrip name={row.entry.name} rows={columns.previewRows(card.path) ?? card.visibleRows} max={columns.gripMax(card.path)}
-        dragging={columns.previewRows(card.path) !== null}
-        onstart={(pointer, y) => columns.beginGrip(card.path, pointer, y)} onkey={(key) => columns.gripKey(card.path, key)} />
+      {#if !explorer.listColumnPaths.has(card.path) || explorer.isSpringPeek(card.path)}
+        <ListCardGrip name={row.entry.name} rows={columns.previewRows(card.path) ?? card.visibleRows} max={columns.gripMax(card.path)}
+          dragging={columns.previewRows(card.path) !== null}
+          onstart={(pointer, y) => columns.beginGrip(card.path, pointer, y)} onkey={(key) => columns.gripKey(card.path, key)} />
+      {/if}
       {#if moreCount(card) > 0 && !explorer.isSpringPeek(card.path)}
         <button class="list-card-more" type="button" draggable={false}
-          aria-label={`Show all ${row.entry.name} items`} title="Show all items across columns"
-          onclick={(event) => showAll(event, card.path)}>+{moreCount(card)} more</button>
+          aria-label={moreStage(card) === "column" ? `Expand ${row.entry.name} to one column` : `Show all ${row.entry.name} items`}
+          title={moreStage(card) === "column" ? "Expand to a scrollable column" : "Show all items across columns"}
+          onclick={(event) => expandList(event, card.path, moreStage(card))}>+{moreCount(card)} more</button>
       {/if}
+    {:else if row.depth === 0 && row.expanded && explorer.listFullFlowPaths.has(row.entry.path) && !explorer.isSpringPeek(row.entry.path)}
+      <button class="list-card-more list-card-less" type="button" draggable={false}
+        aria-label={`Show fewer ${row.entry.name} items`} title="Return to a scrollable column"
+        onclick={(event) => expandList(event, row.entry.path, "column")}>Less</button>
     {/if}
   </EntryCell>
 {/snippet}
@@ -390,6 +409,7 @@
   }
   .list-card-more:hover { background: var(--subtle-fill-tertiary); color: var(--text-primary); }
   .list-card-more:focus-visible { outline: 2px solid var(--focus-stroke-outer); outline-offset: 1px; }
+  .list-card-less { position: static; flex-shrink: 0; margin-left: auto; }
 
 
   /* While renaming, let the content-width rename box extend past the item over

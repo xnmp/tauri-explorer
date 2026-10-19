@@ -4,7 +4,7 @@ import { buildPeekRows, flattenPeekEntries, type PeekListing } from "$lib/domain
 import { flatPeekEntries, flatPeekRows } from "$lib/domain/folder-peek-flat";
 import { columnFlow, resolveListMove, LIST_COLUMN_STRIDE, LIST_COLUMN_WIDTH, LIST_SLOT_HEIGHT, type ListFlowModel } from "$lib/domain/list-column-flow";
 import {
-  buildListModel, buildListStructure, sizeListModel, fullFlowGuideSpans, fullFlowGuideSegments, cardFades, cardMaxRows, cardMoreCount, cardRevealTop, cardVisibleRows, cardWheelConsumes,
+  buildListModel, buildListStructure, sizeListModel, listMoreExpansion, listCardVisibleRows, fullFlowGuideSpans, fullFlowGuideSegments, cardFades, cardMaxRows, cardMoreCount, cardRevealTop, cardVisibleRows, cardWheelConsumes,
   cardWindow, gripKeyRows, gripRows, rememberCardRows, springCardFits, springWrapBridges, LIST_CARD_DEFAULT_ROWS,
 } from "$lib/domain/list-cards";
 
@@ -611,4 +611,33 @@ it("full-flow nested guides split across columns without covering later siblings
     { path: "/r/Career/Nested", depth: 1, column: 2, top: -3, height: 85 },
   ]);
   expect(fullFlowGuideSegments(spans, [1], 4)).toHaveLength(1);
+});
+
+
+describe("staged List expansion (#1324)", () => {
+  it("fills one column first only when content exceeds that column", () => {
+    expect(listMoreExpansion(80, 10, false)).toBe("column");
+    expect(listMoreExpansion(80, 10, true)).toBe("full");
+    expect(listMoreExpansion(9, 10, false)).toBe("full");
+    expect(listMoreExpansion(10, 10, false)).toBe("column");
+    expect(listMoreExpansion(Number.NaN, 10, false)).toBe("full");
+  });
+
+  it("reserves the header slot, sizes with the viewport, and bounds malformed counts", () => {
+    expect(listCardVisibleRows(80, 6, 10, true)).toBe(9);
+    expect(listCardVisibleRows(80, 6, 20, true)).toBe(19);
+    expect(listCardVisibleRows(2, 6, 20, true)).toBe(2);
+    expect(listCardVisibleRows(Number.NaN, 6, 20, true)).toBe(0);
+    expect(listCardVisibleRows(80, 6, 10, false)).toBe(6);
+  });
+
+  it("places a scrollable group in one whole column while other groups keep grip heights", () => {
+    const { rows } = rowsFor([F("before.txt"), D("Career"), D("Codex")], ["Career", "Career/Applications", "Codex"]);
+    const model = sizeListModel(buildListStructure(rows), 6, () => 2, undefined, new Set(["/r/Career"]));
+    const index = model.items.findIndex(item => item.card?.path === "/r/Career");
+    expect(model.items[index].card?.visibleRows).toBe(5);
+    expect(model.layout.byIndex[index]).toMatchObject({ row: 0, slots: 6 });
+    expect(model.items.find(item => item.card?.path === "/r/Codex")?.card?.visibleRows).toBe(2);
+    expect(model.entryOffset.filter(offset => offset >= 0).length).toBeGreaterThan(5);
+  });
 });

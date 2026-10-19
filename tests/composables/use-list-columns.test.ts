@@ -70,7 +70,7 @@ function cardRows(children: number, after: number, before = 0): PeekRows {
   return { rows, entryToRow: rows.map((_, i) => i), rowToEntry: rows.map((_, i) => i), groups: [{ path: open.path, depth: 0, startRow: start, endRow: start + children }] };
 }
 
-function mount(items: readonly FileEntry[] | PeekRows, size: { width: number; height: number }, commitCardRows?: (path: string, rows: number) => void, fullFlowPaths: ReadonlySet<string> = new Set(), springPaths: readonly string[] = []) {
+function mount(items: readonly FileEntry[] | PeekRows, size: { width: number; height: number }, commitCardRows?: (path: string, rows: number) => void, fullFlowPaths: ReadonlySet<string> = new Set(), springPaths: readonly string[] = [], columnPaths: ReadonlySet<string> = new Set()) {
   const listeners = new Map<string, (event: unknown) => void>();
   let resize!: (entries: unknown[]) => void;
   vi.stubGlobal("ResizeObserver", class { constructor(cb: typeof resize) { resize = cb; } observe() {} disconnect() {} });
@@ -85,7 +85,7 @@ function mount(items: readonly FileEntry[] | PeekRows, size: { width: number; he
   let columns!: ReturnType<typeof useListColumns>;
   const dispose = client.effect_root(() => {
     const rows = "rows" in items ? items : flatPeekRows(flatPeekEntries("/d", items), false);
-    columns = create({ getRows: () => rows, getFullFlowPaths: () => fullFlowPaths, getSpringPaths: () => springPaths, getPreferredRows: () => undefined, getPinnedPaths: () => [], commitCardRows });
+    columns = create({ getRows: () => rows, getFullFlowPaths: () => fullFlowPaths, getColumnPaths: () => columnPaths, getSpringPaths: () => springPaths, getPreferredRows: () => undefined, getPinnedPaths: () => [], commitCardRows });
     columns.attach(element as unknown as HTMLElement);
   });
   client.flush(() => resize([{ contentRect: { width: size.width, height: size.height } }]));
@@ -95,6 +95,11 @@ function mount(items: readonly FileEntry[] | PeekRows, size: { width: number; he
     scrollTo(left: number) { element.scrollLeft = left; listeners.get("scroll")!({}); },
     wheel: (event: object) => listeners.get("wheel")!(event),
     element,
+    resizeTo(width: number, height: number) {
+      size.width = width; size.height = height;
+      element.clientWidth = width; element.clientHeight = height;
+      client.flush(() => resize([{ contentRect: { width, height } }]));
+    },
   };
 }
 
@@ -376,4 +381,39 @@ it("a remembered full-flow folder still uses the compact spring geometry while o
     expect(view.columns.model.items).toHaveLength(4);
     expect(view.columns.layout.byIndex[3].row).toBe(3);
   } finally { view.unmount(); }
+});
+
+
+describe("one-column expansion", () => {
+  beforeEach(() => {
+    vi.stubGlobal("requestAnimationFrame", () => 1);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+  });
+  afterEach(() => { destroy(); vi.unstubAllGlobals(); });
+
+it("a one-column card follows viewport height and reveals unmounted children within its scroller", () => {
+  const view = mount(cardRows(80, 0, 3), { width: 600, height: 300 }, undefined, new Set(), [], new Set(["/d/open"]));
+  try {
+    const card = () => view.columns.model.items.find(item => item.card?.path === "/d/open")!.card!;
+    expect(card().visibleRows).toBe(9);
+    expect(view.columns.layout.byIndex[3]).toMatchObject({ row: 0, slots: 10 });
+    view.columns.revealEntry(83);
+    client.flush();
+    expect(view.columns.containsEntry(83)).toBe(true);
+    expect(view.columns.cardScrollTop("/d/open")).toBeGreaterThan(0);
+    view.resizeTo(600, 600);
+    expect(card().visibleRows).toBe(19);
+    view.resizeTo(600, 120);
+    expect(card().visibleRows).toBe(3);
+  } finally { view.unmount(); }
+});
+
+it("a remembered column choice still uses compact geometry for a temporary spring peek", () => {
+  const view = mount(cardRows(80, 0, 3), { width: 600, height: 300 }, undefined, new Set(), ["/d/open"], new Set(["/d/open"]));
+  try {
+    expect(view.columns.model.items.find(item => item.card?.path === "/d/open")?.card?.visibleRows).toBe(6);
+    expect(view.columns.layout.byIndex[3].row).toBe(3);
+  } finally { view.unmount(); }
+});
+
 });

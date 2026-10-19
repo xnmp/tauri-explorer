@@ -1,31 +1,33 @@
-# List peek overflow must use the outer column flow (#1324)
+# List peek overflow has explicit expansion stages (#1324)
 
-The compact List peek's `+N more` text was an aria-hidden span. It conveyed
-hidden rows but offered no action. Increasing the inner scroll area's height
-would still leave a large folder inside one card, contrary to the requested
-expansion across normal List columns.
+The compact List peek's `+N more` text originally conveyed hidden rows without
+an action. More now expands in two stages when the descendants exceed a whole
+column: first a one-column scrollable section, then ordinary column flow. The
+second More remains available at either scroll edge. Full flow has a Less
+button that restores the one-column section. Groups already fitting a column
+can move directly to full flow.
 
-A per-pane, session-only bounded set now records folders whose children use
-full flow. `buildListStructure` emits each visible descendant and status as an
-ordinary one-slot item; the existing placement, virtualization, selection and
-keyboard maps remain the authority. Compact cards retain their saved grip
-heights. A status slot needs its own row identity even though it has no entry
-index, or the renderer mistakes it for the creation sentinel. Horizontal
-navigation skips status slots by choosing the nearest selectable row.
+A per-pane, session-only bounded map records the column or full-flow choice,
+keeping those stages mutually exclusive. The column stage reserves one slot
+for its header and sizes its remaining rows from the current viewport; compact
+cards retain their separate saved grip heights. Only compact cards expose the
+grip. `buildListStructure` emits full-flow descendants and statuses as ordinary
+one-slot items, sharing the existing placement, virtualization, selection and
+keyboard maps. Status slots retain row identity without an entry index, and
+horizontal navigation chooses the nearest selectable entry.
 
-The accessible More button belongs inside the folder header treeitem and uses
-the existing independent-control admission in `EntryCell`. On activation its
-stable header takes focus before the button unmounts. Mouse, Enter and Space
-all use the same action. Nested guides split at column boundaries and only
-mount for visible or editor-pinned columns.
+More and Less belong inside the folder header treeitem and use EntryCell's
+independent-control admission. The stable header takes focus before an action
+changes, then its new placement is revealed after layout. Mouse, Enter and
+Space share the action. Nested guides split at column boundaries and mount
+only for visible or editor-pinned columns.
 
-A saved full-flow choice must not change a later temporary drag peek's geometry.
-Temporary paths are excluded from full flow so the existing spring card-fit and
-bridge policies keep the held row stable; permanent reopening restores the
-saved choice. Shared status markup retains `data-peek-state` for drop routing,
-and full-flow slot wrappers expose row identity for pixel-edge hit tests.
+Remembered column and full-flow choices must not alter temporary drag geometry.
+Temporary paths use compact sizing and the existing spring fit/bridge policies;
+a permanent ancestor still reserves its column when a nested temporary peek
+opens. Permanent reopening restores the saved stage. Shared status and slot
+markup retain their identities for drop routing and pixel-edge hit tests.
 
-Regression coverage asserts all children reach later columns, End reveals a
-previously unmounted final child, nested status and guides survive resize and
-carets-off mode, mixed compact/full-flow mappings remain valid, and per-pane
-choices survive collapse/navigation without exceeding the session cap.
+Regression coverage verifies both More stages, Less, scroll-edge availability,
+column sizing across viewport changes, End revealing unmounted descendants,
+nested status/guides, keyboard activation and bounded pane-local stage memory.

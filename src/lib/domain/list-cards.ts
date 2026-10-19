@@ -14,7 +14,7 @@ export const LIST_CARD_ROWS_CAP = 500;
 
 const wholeRows = (value: number) => (Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0);
 
-/** A card never takes more than 70% of a column (so it always fits one). */
+/** A compact, grip-sized card takes at most 70% of a column. */
 export const cardMaxRows = (R: number): number => Math.max(1, Math.floor(0.7 * (Number.isFinite(R) ? R : 4)));
 
 /** Visible rows = min(content, preferred) with preferred clamped to 1..floor(0.7R);
@@ -23,6 +23,19 @@ export function cardVisibleRows(content: number, preferred: number, R: number): 
   const rows = wholeRows(content);
   const wanted = Number.isFinite(preferred) ? Math.round(preferred) : LIST_CARD_DEFAULT_ROWS;
   return Math.min(rows, Math.max(1, Math.min(wanted, cardMaxRows(R))));
+}
+
+/** More first fills one column when the descendants would overflow it. A
+ * second More releases the group into the ordinary multi-column flow. */
+export function listMoreExpansion(content: number, R: number, column: boolean): "column" | "full" {
+  return !column && wholeRows(content) > columnCardRows(R) ? "column" : "full";
+}
+
+const columnCardRows = (R: number): number => Math.max(1, (Number.isFinite(R) ? Math.floor(R) : 4) - 1);
+
+/** The column stage includes its folder header in the column's height. */
+export function listCardVisibleRows(content: number, preferred: number, R: number, column: boolean): number {
+  return column ? Math.min(wholeRows(content), columnCardRows(R)) : cardVisibleRows(content, preferred, R);
 }
 
 /** A top-level item before sizing: a card's span without its visible rows. */
@@ -124,14 +137,14 @@ export type ListCardFit = Readonly<{ fit: number; alone?: boolean }>;
  * is allocated beyond the flow's placements. `fitOf` gives a card a `fit`
  * (`SlotSpec`): it keeps its place while that many slots are left in its column,
  * shrinking to the rows left there (`springCardFits`). */
-export function sizeListModel(structure: ListStructure, R: number, preferredOf: (path: string) => number | undefined, fitOf?: (path: string) => ListCardFit | undefined): ListFlowModel {
+export function sizeListModel(structure: ListStructure, R: number, preferredOf: (path: string) => number | undefined, fitOf?: (path: string) => ListCardFit | undefined, columnPaths: ReadonlySet<string> = new Set()): ListFlowModel {
   let items: readonly ListTopItem[];
   if (!structure.cards.length) items = structure.items as readonly ListTopItem[]; // every card is null
   else {
     const sized = structure.items.slice() as ListTopItem[];
     for (const index of structure.cards) {
       const item = structure.items[index], span = item.card!;
-      sized[index] = { ...item, card: { ...span, visibleRows: cardVisibleRows(span.end - span.start, preferredOf(span.path) ?? LIST_CARD_DEFAULT_ROWS, R) } };
+      sized[index] = { ...item, card: { ...span, visibleRows: listCardVisibleRows(span.end - span.start, preferredOf(span.path) ?? LIST_CARD_DEFAULT_ROWS, R, columnPaths.has(span.path)) } };
     }
     items = sized;
   }
@@ -169,7 +182,7 @@ export const SPRING_CARD_FIT = 3;
  * (`springWrapBridges`). Undefined while no temporary peek is open in a card.
  */
 export function springCardFits(structure: ListStructure, rows: PeekRows, temporary: readonly string[], R: number,
-  preferredOf: (path: string) => number | undefined): ((path: string) => ListCardFit | undefined) | undefined {
+  preferredOf: (path: string) => number | undefined, columnPaths: ReadonlySet<string> = new Set()): ((path: string) => ListCardFit | undefined) | undefined {
   if (!temporary.length || !structure.cards.length) return undefined;
   const open = new Set(temporary);
   // Temporary subtrees, outer first; nested ones lie inside an earlier span.
@@ -186,7 +199,7 @@ export function springCardFits(structure: ListStructure, rows: PeekRows, tempora
       end = Math.min(span.endRow, card.end);
       hidden += end - span.startRow;
     }
-    if (held) fits.set(card.path, { fit: 1 + cardVisibleRows(card.end - card.start - hidden, preferredOf(card.path) ?? LIST_CARD_DEFAULT_ROWS, R) });
+    if (held) fits.set(card.path, { fit: 1 + listCardVisibleRows(card.end - card.start - hidden, preferredOf(card.path) ?? LIST_CARD_DEFAULT_ROWS, R, columnPaths.has(card.path)) });
   }
   return fits.size ? path => fits.get(path) : undefined;
 }

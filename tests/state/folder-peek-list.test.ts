@@ -1,4 +1,4 @@
-import { rememberFullFlowPath } from "$lib/domain/folder-peek-memory";
+import { rememberListExpansion } from "$lib/domain/folder-peek-memory";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import * as client from "svelte/internal/client";
 import type { FileEntry } from "$lib/domain/file";
@@ -215,14 +215,34 @@ it("full-flow accepts only an open, permanent top-level List folder", async () =
 });
 
 
-it("bounds full-flow session choices and retains the most recently chosen folders", () => {
-  const before = new Set(["/r/a", "/r/b"]);
-  const refreshed = rememberFullFlowPath(before, "/r/a", 2);
-  expect([...rememberFullFlowPath(refreshed, "/r/c", 2)]).toEqual(["/r/a", "/r/c"]);
-  expect([...before]).toEqual(["/r/a", "/r/b"]);
-  expect(rememberFullFlowPath(before, "/r/c", 0).size).toBe(0);
-  let many: ReadonlySet<string> = new Set();
-  for (let index = 0; index < 1000; index++) many = rememberFullFlowPath(many, `/r/${index}`);
+it("keeps column and full-flow stages mutually exclusive and pane-local", async () => {
+  const left = create("list"), right = create("list");
+  await left.togglePeek(a.path); await settle();
+  left.showColumnListChildren(a.path);
+  expect(left.listColumnPaths.has(a.path)).toBe(true);
+  expect(left.listFullFlowPaths.has(a.path)).toBe(false);
+  expect(right.listColumnPaths.size).toBe(0);
+  left.showAllListChildren(a.path);
+  expect(left.listColumnPaths.has(a.path)).toBe(false);
+  expect(left.listFullFlowPaths.has(a.path)).toBe(true);
+  left.showColumnListChildren(a.path);
+  await left.togglePeek(a.path); await left.togglePeek(a.path); await settle();
+  expect(left.listColumnPaths.has(a.path)).toBe(true);
+  expect(left.listFullFlowPaths.has(a.path)).toBe(false);
+  left.setViewMode("details"); await settle();
+  left.showAllListChildren(a.path);
+  expect(left.listColumnPaths.has(a.path)).toBe(true);
+});
+
+it("bounds session stages and retains the most recently chosen folders", () => {
+  const before = new Map([["/r/a", "column"], ["/r/b", "full"]] as const);
+  const refreshed = rememberListExpansion(before, "/r/a", "full", 2);
+  expect([...rememberListExpansion(refreshed, "/r/c", "column", 2)])
+    .toEqual([["/r/a", "full"], ["/r/c", "column"]]);
+  expect([...before]).toEqual([["/r/a", "column"], ["/r/b", "full"]]);
+  expect(rememberListExpansion(before, "/r/c", "column", 0).size).toBe(0);
+  let many: ReadonlyMap<string, "column" | "full"> = new Map();
+  for (let index = 0; index < 1000; index++) many = rememberListExpansion(many, `/r/${index}`, "column");
   expect(many.size).toBe(500);
   expect(many.has("/r/499")).toBe(false);
   expect(many.has("/r/999")).toBe(true);

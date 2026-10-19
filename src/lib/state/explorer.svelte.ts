@@ -1181,6 +1181,12 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
           || peek.temporary.includes(path) || peekTree.meta.get(path)?.depth !== 0) return;
       peek.showAllListChildren(path);
     },
+    get listColumnPaths() { return peek.columnPaths; },
+    showColumnListChildren(path: string) {
+      if (coreState.viewMode !== "list" || capability === "none" || !peek.expanded.has(path)
+          || peek.temporary.includes(path) || peekTree.meta.get(path)?.depth !== 0) return;
+      peek.showColumnListChildren(path);
+    },
     /** Remembered List card height (visible rows) for a top-level folder. */
     listCardRows(path: string) { return peek.cardRows(path); },
     setListCardRows(path: string, rows: number) {

@@ -194,11 +194,19 @@ test("assistive technology reads the List as a tree, with sibling positions, ins
   await page.keyboard.press("Tab");
   await expect(slot(page, `${root}/Career`).getByRole("separator", { name: "Resize Career" })).toBeFocused();
   await page.keyboard.press("Tab");
-  const more = slot(page, `${root}/Career`).getByRole("button", { name: "Show all Career items" });
+  const more = slot(page, `${root}/Career`).getByRole("button", { name: /Expand Career to one column|Show all Career items/ });
   await expect(more).toBeFocused();
   await page.keyboard.press("Enter");
+  await expect(row(page, `${root}/Career`)).toBeFocused();
+  const all = slot(page, `${root}/Career`).getByRole("button", { name: "Show all Career items" });
+  if (await all.count()) { await all.focus(); await page.keyboard.press("Enter"); }
   await expect(card(page, `${root}/Career`)).toHaveCount(0);
   await expect(row(page, `${root}/Career`)).toBeFocused();
+  const less = row(page, `${root}/Career`).getByRole("button", { name: "Show fewer Career items" });
+  await less.focus(); await page.keyboard.press("Enter");
+  await expect(card(page, `${root}/Career`)).toHaveCount(1);
+  await expect(row(page, `${root}/Career`)).toBeFocused();
+  expect(await violations()).toEqual([]);
 });
 
 test("a rename inside a card commits in place and the card keeps its rows", async ({ page }) => {
@@ -830,7 +838,7 @@ test("peek groups are unboxed while nesting and resize controls remain visible",
 
 
 for (const activation of ["click", "Enter", "Space"] as const) {
-  test(`+N more ${activation} flows all children across normal columns`, async ({ page }) => {
+  test(`+N more ${activation} fills a scrollable column before flowing all children`, async ({ page }) => {
     await open(page, root, { width: 720, height: 430 });
     const base = "/list-full-flow";
     const folder = `${base}/Archive`;
@@ -841,13 +849,25 @@ for (const activation of ["click", "Enter", "Space"] as const) {
     }), [base, folder] as const);
     await explorerCall(page, "return explorer.navigateTo(value)", base);
     await toggle(page, folder);
-    const more = slot(page, folder).getByRole("button", { name: "Show all Archive items" });
+    const more = slot(page, folder).getByRole("button", { name: /Expand Archive to one column|Show all Archive items/ });
     await expect(more).toBeVisible();
     if (activation === "click") {
       await page.screenshot({ path: "evidence/1324-list-full-flow-more-button.png" });
       await more.click();
     }
     else { await more.focus(); await page.keyboard.press(activation); }
+    await expect(card(page, folder)).toHaveCount(1);
+    const R = Number(await page.locator(`${shown} .list-view`).getAttribute("data-rows"));
+    await expect.poll(() => card(page, folder).evaluate(el => el.clientHeight)).toBe((R - 1) * 30);
+    expect(await card(page, folder).evaluate(el => el.scrollHeight > el.clientHeight)).toBe(true);
+    const all = slot(page, folder).getByRole("button", { name: "Show all Archive items" });
+    await expect(all).toBeVisible();
+    // The second-stage action stays available even at the scroll area's end.
+    await card(page, folder).evaluate(el => { el.scrollTop = el.scrollHeight; });
+    await expect(all).toBeVisible();
+    if (activation === "click") await page.screenshot({ path: "evidence/1324-list-column-scroll.png" });
+    if (activation === "click") await all.click();
+    else { await all.focus(); await page.keyboard.press(activation); }
     await expect(card(page, folder)).toHaveCount(0);
     await expect(row(page, folder)).toHaveAttribute("aria-expanded", "true");
     // End must reveal and select a previously unmounted child through FileList,
@@ -859,15 +879,30 @@ for (const activation of ["click", "Enter", "Space"] as const) {
     await expect(row(page, last)).toHaveClass(/selected/);
     expect(Number(await slot(page, last).getAttribute("data-column"))).toBeGreaterThan(1);
     const geometry = await slot(page, last).evaluate(el => ({ top: (el as HTMLElement).offsetTop, height: (el as HTMLElement).offsetHeight }));
-    const R = Number(await page.locator(`${shown} .list-view`).getAttribute("data-rows"));
     expect(geometry.top + geometry.height).toBeLessThanOrEqual(R * 30);
     expect(await viewport(page).evaluate(el => el.scrollLeft)).toBeGreaterThan(0);
     expect(await viewport(page).locator(".entry-item").count()).toBeLessThan(80);
     expect(await explorerCall(page, "return explorer.currentPath")).toBe(base);
     if (activation === "click") await page.screenshot({ path: "evidence/1324-list-full-flow-last-children.png" });
+    await page.keyboard.press("Home");
+    const less = row(page, folder).getByRole("button", { name: "Show fewer Archive items" });
+    await expect(less).toHaveText("Less");
+    if (activation === "click") await page.screenshot({ path: "evidence/1324-list-full-flow-less.png" });
+    await less.click();
+    await expect(card(page, folder)).toHaveCount(1);
+    await expect.poll(() => card(page, folder).evaluate(el => el.clientHeight)).toBe((R - 1) * 30);
+    await expect(slot(page, folder).getByRole("button", { name: "Show all Archive items" })).toBeVisible();
+    await expect(less).toHaveCount(0);
   });
 }
 
+
+async function fullyExpand(page: Page, path: string): Promise<void> {
+  const name = path.split("/").at(-1)!;
+  const column = row(page, path).getByRole("button", { name: `Expand ${name} to one column` });
+  if (await column.count()) await column.click();
+  await row(page, path).getByRole("button", { name: `Show all ${name} items` }).click();
+}
 
 test("full-flow nesting keeps status rows and guides through resize and carets-off mode", async ({ page }) => {
   await open(page, root, { width: 720, height: 430 });
@@ -875,7 +910,7 @@ test("full-flow nesting keeps status rows and guides through resize and carets-o
   await toggle(page, career);
   await toggle(page, `${career}/Applications`);
   await toggle(page, `${career}/Portfolio`);
-  await slot(page, career).getByRole("button", { name: "Show all Career items" }).click();
+  await fullyExpand(page, career);
   const state = page.locator(`${shown} .list-peek-state[data-peek-state="${career}/Portfolio"]`);
   await expect(state).toHaveText("Empty folder");
   await expect(state).toHaveAttribute("aria-level", "3");
@@ -917,7 +952,7 @@ test("full-flow preserves nested selection and keyboard outcomes across narrow a
   const selected = `${nested}/child-000.txt`;
   await expect(row(page, selected)).toBeVisible();
   await explorerCall(page, "explorer.selectPaths([value], value)", selected);
-  await row(page, folder).getByRole("button", { name: "Show all Outer items" }).click();
+  await fullyExpand(page, folder);
   await expect(page.locator(`${shown} [data-card-scroll]`)).toHaveCount(0);
   await expect(row(page, selected)).toHaveClass(/selected/);
   await expect(row(page, selected)).toHaveAttribute("aria-level", "3");
@@ -941,7 +976,7 @@ test("full-flow preserves nested selection and keyboard outcomes across narrow a
 
 test("a saved full-flow choice uses a compact temporary peek and restores full flow on permanent reopen", async ({ page }) => {
   const { folder, nested } = await openFullFlowTree(page);
-  await row(page, folder).getByRole("button", { name: "Show all Outer items" }).click();
+  await fullyExpand(page, folder);
   await toggle(page, folder);
   await expect(row(page, nested)).toHaveCount(0);
   await explorerCall(page, "return explorer.setSpringPeeks([value])", folder);

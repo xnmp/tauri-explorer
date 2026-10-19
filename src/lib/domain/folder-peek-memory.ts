@@ -38,13 +38,17 @@ export function pruneExpanded(expanded: ExpandedPaths, parent: string, entries: 
 }
 
 
-/** Session-only full-flow choices, most recently chosen last, with the same
- * bounded path memory as expansion membership. Collapsing does not reset a choice. */
-export function rememberFullFlowPath(paths: ReadonlySet<string>, path: string, cap = 500): ReadonlySet<string> {
-  const next = new Set(paths);
+export type ListPeekExpansion = "column" | "full";
+
+/** Session-only List presentation choices, most recently chosen last. A single
+ * bounded map keeps the column and full-flow stages mutually exclusive. */
+export function rememberListExpansion(
+  choices: ReadonlyMap<string, ListPeekExpansion>, path: string, mode: ListPeekExpansion, cap = 500,
+): ReadonlyMap<string, ListPeekExpansion> {
+  const next = new Map(choices);
   next.delete(path);
-  next.add(path);
+  next.set(path, mode);
   const limit = Number.isFinite(cap) ? Math.max(0, Math.floor(cap)) : 500;
-  while (next.size > limit) next.delete(next.values().next().value!);
+  while (next.size > limit) next.delete(next.keys().next().value!);
   return next;
 }

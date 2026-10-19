@@ -194,7 +194,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `pane-watch.ts` — per-pane observed navigation tickets, lease commit/rollback, pending-change replay and refresh admission.
 - `directory-events.ts` — shared native directory event subscription with explicit readiness, retry and late-listener retirement.
 - `folder-peek.svelte.ts` — per-pane facade that loads peek policies and resources on first use.
-- `folder-peek-session.svelte.ts` — lazy expansion membership and independently retired child-listing resources.
+- `folder-peek-session.svelte.ts` — lazy expansion membership, bounded List column/full-flow stage choices, and independently retired child-listing resources.
 - `pane-peek-watch.ts` — lazy pane-watch extension for capped child-directory and repository observation.
 - `directory-listing.ts` — complete directory snapshots, queued-request supersession, teardown and observation transfer.
 - `navigation.ts` — pure back/forward history utilities.
@@ -401,7 +401,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `src/lib/domain/image-job-progress.ts` — elapsed image-job timing and explicitly estimated progress; median of the latest 20 successful completions with ≥3 samples, keyed cohort → source → 120s, plus overdue estimate wording.
 - `src/lib/domain/folder-peek.ts` — pure preorder expansion, pruning/caps and Details tree row/index geometry.
-- `src/lib/domain/folder-peek-memory.ts` — bounded expansion membership, subtree collapse and deleted-branch pruning shared with the pending restore facade.
+- `src/lib/domain/folder-peek-memory.ts` — bounded expansion membership and List stage choices, subtree collapse and deleted-branch pruning shared with the pending restore facade.
 - `src/lib/domain/folder-peek-flat.ts` — flat Details rows and command admission before first peek activation; caret-less click ownership (`rowClickOwnsPeek`: click toggles, double-click refused with a notice, #1298).
 - `src/lib/domain/file-operation-selection.ts` — Explorer recursive batch reduction, symlink-overlap admission, drag-primary remapping, and archive roots (same-basename refusal).
 - `src/lib/domain/bulk-rename.ts` — bulk rename plan: name-part find/replace previews, per-folder collision keys, and descendant-first rename order.

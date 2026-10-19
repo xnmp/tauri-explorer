@@ -6,8 +6,9 @@ All notable changes to Tauri Explorer.
 
 ### Changed
 
-- Click “+N more” in a List peek to show all children across the normal List
-  columns, including nested folders and keyboard navigation (#1324).
+- List peek “+N more” first fills a scrollable column for large groups; click
+  it again to flow all children across columns. “Less” returns to the scrollable
+  column, preserving nested folders and keyboard navigation (#1324).
 - With peek carets hidden, the hovered Open action sits immediately beside
   the folder title in Details and List (#1325).
 

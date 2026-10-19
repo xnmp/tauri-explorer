@@ -142,7 +142,9 @@ for (const view of ["details", "list", "tiles"] as const) {
         await expect(page.locator(`${shown} [data-motion-key][style*="transform"], ${shown} [data-motion-key][style*="clip-path"], ${shown} .list-motion-layer > *`)).toHaveCount(0);
         await startDrag(page);
         await dragTo(page, hit);
-        await expect.poll(() => page.locator(`${shown} .drop-target[data-path="${folder}"]`).count()).toBeGreaterThan(0);
+        const targets = page.locator(`${shown} .drop-target[data-path="${folder}"]`);
+        if (target === "file") await expect(targets).toHaveCount(1);
+        else await expect.poll(() => targets.count()).toBeGreaterThan(0);
         await dropOn(page, hit);
         await expect.poll(() => listing(page, folder)).toContain("drag-me.txt");
         expect(await listing(page, root)).not.toContain("drag-me.txt");

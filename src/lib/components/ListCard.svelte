@@ -14,7 +14,6 @@
   import { LIST_SLOT_HEIGHT, type ListCardSpec } from "$lib/domain/list-column-flow";
   import { cardFades, LIST_CARD_FADE } from "$lib/domain/list-cards";
   import type { useItemInteractions } from "$lib/composables/use-item-interactions.svelte";
-  import { isPeekClaimed, resolveDropTargetFromElement } from "$lib/composables/use-native-drop-target.svelte";
   import { createSurfaceDropFeedback, surfaceDropPath } from "$lib/composables/surface-drop-feedback";
 
   import ListPeekState from "./ListPeekState.svelte";
@@ -82,10 +81,6 @@
 
   /** The folder a drop or menu on the card's own surface (not a row) targets. */
   function surfaceTarget(event: Event): FileEntry | null {
-    if (isPeekClaimed(event)) {
-      const target = resolveDropTargetFromElement(event.target as Element | null);
-      return target?.type === "folder" ? folders.get(target.path) ?? null : null;
-    }
     const path = surfaceDropPath(event.target, entry.path);
     return path === null ? null : folders.get(path) ?? entry;
   }

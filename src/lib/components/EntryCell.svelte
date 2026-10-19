@@ -4,6 +4,7 @@
   Issue: #109
 -->
 <script lang="ts">
+  import { positionDropFeedback } from "$lib/state/file-drop-targets.svelte";
   import type { Snippet } from "svelte";
   import type { FileEntry } from "$lib/domain/file";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
@@ -76,6 +77,7 @@
   // dragstart targets the draggable row itself, not where the press began, so
   // a press on a control is noted when it starts.
   let pressedControl = false;
+  let rowElement = $state<HTMLElement>();
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -- Roving composite focus is managed by FileList. -->
@@ -100,7 +102,8 @@
   class:in-clipboard={appearance.inClipboard}
   class:hidden-entry={appearance.hidden}
   class:empty-folder={appearance.emptyFolder}
-  class:drop-target={interactions.isDropTarget(entry.path)}
+  class:drop-target={interactions.isDropTarget(entry.path) || positionDropFeedback.matches(rowElement)}
+  bind:this={rowElement}
   class:copy-drop={interactions.isCopyDrop(entry.path)}
   use:interactions.trackDragSource
   draggable={usesHtml5Drag}

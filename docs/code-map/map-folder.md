@@ -227,7 +227,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/state/sidebar-navigation.ts` — sidebar mouse/keyboard navigation through the active pane's modal ownership gate.
 - `src/lib/state/quick-open-navigation.ts` — Quick Open directory/path navigation: closes Quick Open, then admits the destination pane via `admitsCommandDestination` (#1096).
 - `src/lib/state/plugin-dom-ownership.ts` — host-issued component/root identities and nearest-root plugin ownership, shared by mounted contributions and file-drop API admission.
-- `src/lib/state/file-drop-targets.svelte.ts` — plugin element registrations, terminal disabled/modal resolution and idempotent teardown.
+- `src/lib/state/file-drop-targets.svelte.ts` — plugin element registrations, terminal disabled/modal resolution and idempotent teardown; reactive position-feedback identity shared with row/panel class bindings.
 - `src/lib/state/dispatch-file-drop.ts` — shared native/DOM/pointer completion admission, immutable plugin delivery and gesture-scoped async cleanup.
 - `drop-operations.ts` — drop source-path extraction and dispatch to the copy or move session.
 - `conflict-resolver.svelte.ts` — paste conflict resolution state (overwrite/skip/cancel).

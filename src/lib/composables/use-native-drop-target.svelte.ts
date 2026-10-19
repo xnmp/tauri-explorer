@@ -8,7 +8,7 @@
 
 import { getZoomFactor } from "$lib/domain/zoom";
 import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-import { fileDropTargets, type RegisteredDropTarget } from "$lib/state/file-drop-targets.svelte";
+import { fileDropTargets, positionDropFeedback, type RegisteredDropTarget } from "$lib/state/file-drop-targets.svelte";
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";
 import { dialogStore } from "$lib/state/dialogs.svelte";
 import { modalOwnership } from "$lib/state/modal-ownership.svelte";
@@ -91,8 +91,9 @@ function peekRowDropTarget(el: Element): DropTargetResult {
 }
 
 /** DOM drag events whose peek redirect the window capture accepted. They
- * still bubble, so a card or panel can share its declarative folder feedback;
- * the pane background, which would claim them, leaves them alone. */
+ * still bubble, so a card or panel retires its own path-based feedback;
+ * concrete position ownership preserves the highlight on that surface.
+ * The pane background, which would claim them, leaves them alone. */
 const peekClaims = new WeakSet<Event>();
 export function claimPeekEvent(event: Event): void { peekClaims.add(event); }
 export function isPeekClaimed(event: Event): boolean { return peekClaims.has(event); }
@@ -306,6 +307,7 @@ export function highlightTargetElement(el: Element | null): void {
 }
 
 function setHighlightedElement(element: HTMLElement | null): void {
+  positionDropFeedback.set(element);
   if (element !== highlightedElement) {
     highlightedElement?.classList.remove("drop-target");
     highlightedElement = element;
@@ -331,6 +333,7 @@ function clearSidebarHighlight(): void {
 
 export function clearHighlights(): void {
   highlightRevision++;
+  positionDropFeedback.set(null);
   if (highlightedElement) {
     highlightedElement.classList.remove("drop-target");
     highlightedElement = null;

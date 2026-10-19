@@ -10,3 +10,9 @@ The shared capture handler owns redirected DOM drops and folder feedback.
 Keep the unmounted-target lifetime exception exclusive to temporary peeks;
 permanent delayed fallbacks must still reject navigation, collapse or replacement.
 Regression coverage includes native filesystem moves in Details, List and Tiles.
+
+Position feedback is a reactive concrete-element identity shared with row and
+panel class bindings. Imperatively adding the same class that Svelte owns can
+be erased by a surface's dragleave update. Forwarding that hover through a
+folder-path store instead lights both the header and panel. Keep position
+ownership on one surface; ordinary surface hover retains its existing feedback.

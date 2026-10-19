@@ -3,6 +3,7 @@
   Issue: tauri-explorer-iw0, tauri-explorer-bae, tauri-explorer-h3n, tauri-explorer-x25
 -->
 <script lang="ts">
+  import { positionDropFeedback } from "$lib/state/file-drop-targets.svelte";
   import ImageResolutionCell from "./ImageResolutionCell.svelte";
   import type { FileEntry } from "$lib/domain/file";
   import { formatSize } from "$lib/domain/file";
@@ -115,6 +116,7 @@
     }
     ondblclick();
   }
+  let rowElement = $state<HTMLElement>();
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events -- FileList owns cursor navigation; the window command router owns configurable Open/Preview and selection commands. -->
@@ -135,7 +137,8 @@
   class:cut={isCut}
   class:in-clipboard={entryInClipboard}
   class:selected
-  class:drop-target={interactions.isDropTarget(entry.path)}
+  class:drop-target={interactions.isDropTarget(entry.path) || positionDropFeedback.matches(rowElement)}
+  bind:this={rowElement}
   class:copy-drop={interactions.isCopyDrop(entry.path)}
   onfocus={(event) => {
     // Native keyboard entry can reveal trailing columns and clip the file

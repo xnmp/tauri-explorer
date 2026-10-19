@@ -105,6 +105,71 @@ describe("spring redirect in resolveDropTargetFromElement", () => {
   });
 });
 
+/** Permanent peeks expose the same folder destination as temporary peeks (#1323).
+ * The metadata is the existing explorer projection, not a filesystem path guess. */
+describe("permanently expanded peek drop destinations", () => {
+  function permanent() {
+    const folder = "/r/Career";
+    const nested = `${folder}/Portfolio`;
+    const file = `${nested}/resume.md`;
+    panes.set("p1", {
+      ...explorer([]), peekEnabled: true, peekCapability: "tree",
+      expandedPaths: new Set([folder, nested]),
+      isPeekExpanded: (path: string) => path === folder || path === nested,
+      entryMeta: new Map([
+        [folder, { depth: 0, parentPath: "/r" }],
+        [nested, { depth: 1, parentPath: folder }],
+        [file, { depth: 2, parentPath: nested }],
+        ["/r/root.txt", { depth: 0, parentPath: "/r" }],
+      ]),
+    });
+    return { ...listing(), folder, nested, file };
+  }
+
+  it("a nested Details file targets its immediate peek folder", () => {
+    const { content, nested, file } = permanent();
+    const row = dropElement("entry-item file-item", { "data-path": file }, content);
+    expect(resolveDropTargetFromElement(dropElement("name", {}, row)))
+      .toMatchObject({ type: "folder", path: nested });
+  });
+
+  it("a Details file wrapper targets the same immediate peek folder", () => {
+    const { content, nested, file } = permanent();
+    const wrapper = dropElement("", { "data-row-path": file, "data-row-kind": "file" }, content);
+    expect(resolveDropTargetFromElement(wrapper)).toMatchObject({ type: "folder", path: nested });
+  });
+
+  it("an empty Details peek targets its folder", () => {
+    const { content, nested } = permanent();
+    const state = dropElement("peek-state", { "data-peek-state": nested }, content);
+    expect(resolveDropTargetFromElement(state)).toMatchObject({ type: "folder", path: nested });
+  });
+
+  it.each(["list-card-scroll", "tile-panel"])("a file inside a permanent %s targets its folder", className => {
+    const { content, folder } = permanent();
+    const surface = dropElement(`${className} peek-drop-target`, { "data-path": folder }, content);
+    const file = `${folder}/notes.md`;
+    (panes.get("p1") as { entryMeta: Map<string, unknown> }).entryMeta.set(file, { depth: 1, parentPath: folder });
+    const row = dropElement("entry-item", { "data-path": file }, surface);
+    expect(resolveDropTargetFromElement(row)).toMatchObject({ type: "folder", path: folder });
+  });
+
+  it("a nested List file targets its immediate folder rather than the outer card", () => {
+    const { content, folder, nested, file } = permanent();
+    const card = dropElement("list-card-scroll peek-drop-target", { "data-path": folder }, content);
+    const row = dropElement("entry-item", { "data-path": file }, card);
+    expect(resolveDropTargetFromElement(row)).toMatchObject({ type: "folder", path: nested });
+  });
+
+  it("keeps actual directory rows and classic root file rows unchanged", () => {
+    const { content, nested } = permanent();
+    const directory = dropElement("entry-item directory", { "data-path": nested }, content);
+    expect(resolveDropTargetFromElement(directory)).toEqual({ type: "folder", path: nested });
+    const rootFile = dropElement("entry-item", { "data-path": "/r/root.txt" }, content);
+    expect(resolveDropTargetFromElement(rootFile)).toEqual({ type: "background", path: "/r", domDisabled: true });
+  });
+});
+
 describe("spring redirect feedback", () => {
   it("highlights the folder's own surface around the row when there is one", () => {
     panes.set("p1", explorer(["/r/Inbox"]));

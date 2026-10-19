@@ -194,6 +194,64 @@ async function assertNativeTransport(requireDrop = true): Promise<void> {
     });
   }
 
+  // Open the peek before acquisition: a successful spring-loaded drop alone
+  // cannot prove that permanently expanded file/status rows target their parent.
+  for (const view of ["Details", "List", "Tiles"]) {
+    for (const target of ["file", "empty"] as const) {
+      it(`[dnd:permanent-peek-${target}-${view.toLowerCase()}] moves into the already open peek and keeps it open`, async () => {
+        await command("Miller Columns: Off");
+        await command(`${view} View`);
+        const scratch = createNativeFixtureDirectory("tauri-explorer-permanent-peek-drag-");
+        const source = path.join(scratch, "root-source.txt");
+        const destination = path.join(scratch, "Career");
+        const existing = path.join(destination, "resume.md");
+        const moved = path.join(destination, "root-source.txt");
+        fs.mkdirSync(destination);
+        fs.writeFileSync(source, "permanent peek move proof");
+        if (target === "file") fs.writeFileSync(existing, "existing peek contents");
+        await navigateTo(scratch);
+        const sourceRow = $(entryPathSelector(source, shown + ".entry-item"));
+        const folderRow = $(entryPathSelector(destination, shown + ".entry-item"));
+        await folderRow.waitForDisplayed();
+        // A modifier click selects without toggling a caret-less peek.
+        await browser.performActions([{ type: "key", id: "peek-selection-control", actions: [{ type: "keyDown", value: "\uE009" }] }]);
+        try { await folderRow.click(); }
+        finally { await browser.releaseActions(); }
+        await command("Peek into Folder");
+        const destinationSelector = target === "file"
+          ? entryPathSelector(existing, shown + ".entry-item")
+          : view === "Details"
+            ? entryPathSelector(destination, shown + ".peek-state").replace("[data-path=", "[data-peek-state=")
+            : view === "List"
+              ? entryPathSelector(destination, shown + ".list-peek-state")
+              : `${entryPathSelector(destination, shown + ".tile-panel")} .tile-panel-state`;
+        const targetRow = $(destinationSelector);
+        await targetRow.waitForDisplayed();
+        await browser.waitUntil(() => browser.execute(() => !document.querySelector(
+          '.pane-tree:not(.retained) .list-motion-layer > *, .pane-tree:not(.retained) [data-motion-key][style*="transform"], .pane-tree:not(.retained) [data-motion-key][style*="clip-path"]',
+        )), { timeout: 5_000, timeoutMsg: "permanent peek motion never settled before native hit testing" });
+        await sourceRow.click();
+        await drag(sourceRow, targetRow);
+        await assertNativeTransport();
+        await browser.waitUntil(() => !fs.existsSync(source) && fs.existsSync(moved), {
+          timeout: 10_000, timeoutMsg: "native Drop did not move the root file into the permanently expanded peek",
+        });
+        assert.equal(fs.readFileSync(moved, "utf8"), "permanent peek move proof");
+        if (target === "file") assert.equal(fs.readFileSync(existing, "utf8"), "existing peek contents");
+        // Both identities must remain visible in the root listing: the folder
+        // and its moved child. Navigating into Career would hide the folder row.
+        await folderRow.waitForDisplayed();
+        await $(entryPathSelector(moved, shown + ".entry-item")).waitForDisplayed();
+        await sourceRow.waitForExist({ reverse: true });
+        if (process.env.TAURI_DND_EVIDENCE_DIRECTORY) {
+          fs.mkdirSync(process.env.TAURI_DND_EVIDENCE_DIRECTORY, { recursive: true });
+          await browser.saveScreenshot(path.resolve(process.env.TAURI_DND_EVIDENCE_DIRECTORY,
+            `native-permanent-peek-${target}-${view.toLowerCase()}.png`));
+        }
+      });
+    }
+  }
+
   for (const mode of ["move", "copy", "copy-after-start"] as const) {
     const copy = mode !== "move";
     it(`[dnd:miller-${mode}] Miller ${mode} preserves the requested source/destination outcome`, async () => {

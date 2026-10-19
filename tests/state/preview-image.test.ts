@@ -7,15 +7,17 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { isTauri, readImageAsBlobUrl, getPreviewImage, convertFileSrc } = vi.hoisted(() => ({
+const { isTauri, readImageAsBlobUrl, getPreviewImage, getImageResolution, convertFileSrc } = vi.hoisted(() => ({
   isTauri: vi.fn(),
   readImageAsBlobUrl: vi.fn(),
   getPreviewImage: vi.fn(),
+  getImageResolution: vi.fn(),
   convertFileSrc: vi.fn((path: string) => `asset://localhost${path}`),
 }));
 vi.mock("$lib/api/common", () => ({ isTauri }));
 vi.mock("$lib/api/files", () => ({ readImageAsBlobUrl }));
 vi.mock("$lib/api/thumbnails", () => ({ getPreviewImage }));
+vi.mock("$lib/api/image-resolution", () => ({ getImageResolution }));
 vi.mock("$lib/api/frontend-log", () => ({ logFrontendDiagnostic: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ convertFileSrc }));
 
@@ -54,6 +56,7 @@ function owner(current = () => true) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  getImageResolution.mockResolvedValue(null);
   undecodable.clear();
   decoded.length = 0;
   vi.stubGlobal("Image", FakeImage);
@@ -139,13 +142,43 @@ describe("loadPreviewImage", () => {
 });
 
 describe("loadPreviewImage with a rendition", () => {
+  it("retains source pixels separately from the decoded display rendition", async () => {
+    isTauri.mockReturnValue(true);
+    getPreviewImage.mockResolvedValue({ ok: true, data: { kind: "rendition", path: RENDITION } });
+    getImageResolution.mockResolvedValue({ width: 7680, height: 4320 });
+    const result = await loadPreviewImage("/w/wallpaper.jpg", "v", owner().value, withRendition);
+    expect(result).toMatchObject({ status: "ready", resolution: "rendition", sourceSize: { width: 7680, height: 4320 } });
+    expect(getImageResolution).toHaveBeenCalledWith("/w/wallpaper.jpg");
+  });
+
+  it("discards source metadata resolved after the owner advances to a new file revision", async () => {
+    isTauri.mockReturnValue(true);
+    let current = true;
+    let finish!: (size: { width: number; height: number }) => void;
+    getPreviewImage.mockResolvedValue({ ok: true, data: { kind: "rendition", path: RENDITION } });
+    getImageResolution.mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    const pending = loadPreviewImage("/w/wallpaper.jpg", "old-revision", owner(() => current).value, withRendition);
+    await vi.waitFor(() => expect(getImageResolution).toHaveBeenCalled());
+    current = false;
+    finish({ width: 7680, height: 4320 });
+    expect(await pending).toEqual({ status: "stale" });
+  });
+
+  it("keeps a valid rendition when source metadata is unavailable", async () => {
+    isTauri.mockReturnValue(true);
+    getPreviewImage.mockResolvedValue({ ok: true, data: { kind: "rendition", path: RENDITION } });
+    getImageResolution.mockRejectedValue(new Error("source was removed"));
+    const result = await loadPreviewImage("/w/wallpaper.jpg", "v", owner().value, withRendition);
+    expect(result).toMatchObject({ status: "ready", resolution: "rendition", sourceSize: null });
+  });
+
   it("in Tauri, shows the backend's rendition through the asset protocol and never decodes the original", async () => {
     isTauri.mockReturnValue(true);
     getPreviewImage.mockResolvedValue({ ok: true, data: { kind: "rendition", path: RENDITION } });
     const result = await loadPreviewImage("/w/huge.png", "1-2", owner().value, withRendition);
 
     expect(getPreviewImage).toHaveBeenCalledWith("/w/huge.png", 2048);
-    expect(result).toEqual({ status: "ready", url: `asset://localhost${RENDITION}?v=1-2`, viaBackend: false, resolution: "rendition", decoded: decodedFrom(`asset://localhost${RENDITION}?v=1-2`) });
+    expect(result).toEqual({ status: "ready", url: `asset://localhost${RENDITION}?v=1-2`, viaBackend: false, resolution: "rendition", sourceSize: null, decoded: decodedFrom(`asset://localhost${RENDITION}?v=1-2`) });
     // The rendition itself is shown: neither the original nor the backend
     // read is touched (a blocked rendition must not pass as success).
     expect(decoded).toEqual([`asset://localhost${RENDITION}?v=1-2`]);
@@ -230,7 +263,7 @@ describe("loadPreviewImage with a rendition", () => {
     readImageAsBlobUrl.mockResolvedValue({ ok: true, data: "blob:rendition" });
     const result = await loadPreviewImage("/w/huge.png", "v", owner().value, withRendition);
     expect(readImageAsBlobUrl).toHaveBeenCalledWith(RENDITION);
-    expect(result).toEqual({ status: "ready", url: "blob:rendition", viaBackend: true, resolution: "rendition", decoded: decodedFrom("blob:rendition") });
+    expect(result).toEqual({ status: "ready", url: "blob:rendition", viaBackend: true, resolution: "rendition", sourceSize: null, decoded: decodedFrom("blob:rendition") });
   });
 
   it("never asks for a rendition of a format that cannot have one, or of a virtual path", async () => {

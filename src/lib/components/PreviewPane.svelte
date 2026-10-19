@@ -160,12 +160,14 @@ import { openFile } from "$lib/api/open";
     pdf: async () => (await import("./PdfPreview.svelte")).default,
     video: async () => (await import("./VideoPreview.svelte")).default,
   });
-  // Natural size is DOM measurement, keyed by URL so held/replaced images
-  // cannot show another file's resolution (#1118).
+  // Audio-cover dimensions remain DOM measurements, keyed by URL. File images
+  // carry source pixels with their versioned content, including renditions.
   let previewImageSize = $state<{ url: string; width: number; height: number } | null>(null);
   const previewResolution = $derived(
-    (content.kind === "image" || content.kind === "audio-cover") && previewImageSize?.url === content.url
-      ? formatResolution(previewImageSize.width, previewImageSize.height) : "",
+    content.kind === "image" && !content.held && content.sourceSize
+      ? formatResolution(content.sourceSize.width, content.sourceSize.height)
+      : content.kind === "audio-cover" && !content.held && previewImageSize?.url === content.url
+        ? formatResolution(previewImageSize.width, previewImageSize.height) : "",
   );
   let previewContentWidth = $state(0);
   let previewContentHeight = $state(0);
@@ -1078,7 +1080,7 @@ import { openFile } from "$lib/api/open";
   .preview-text {
     padding: 16px;
     font-family: "Cascadia Code", "Fira Code", "Consolas", monospace;
-    font-size: var(--preview-font-size, 11px);
+    font-size: var(--preview-font-size, 12px);
     line-height: 1.6;
     color: var(--text-secondary);
     white-space: pre-wrap;
@@ -1098,7 +1100,7 @@ import { openFile } from "$lib/api/open";
     min-height: 0;
     overflow-x: auto;
     overflow-y: hidden;
-    font-size: var(--preview-font-size, 11px);
+    font-size: var(--preview-font-size, 12px);
     color: var(--text-secondary);
   }
 
@@ -1180,10 +1182,10 @@ import { openFile } from "$lib/api/open";
     margin: 14px 0 6px;
   }
 
-  .preview-markdown :global(h1) { font-size: 17px; padding-bottom: 4px; border-bottom: 1px solid var(--divider); }
-  .preview-markdown :global(h2) { font-size: 15px; padding-bottom: 3px; border-bottom: 1px solid var(--divider); }
-  .preview-markdown :global(h3) { font-size: 13px; }
-  .preview-markdown :global(h4) { font-size: 12px; }
+  .preview-markdown :global(h1) { font-size: 1.416667em; padding-bottom: 4px; border-bottom: 1px solid var(--divider); }
+  .preview-markdown :global(h2) { font-size: 1.25em; padding-bottom: 3px; border-bottom: 1px solid var(--divider); }
+  .preview-markdown :global(h3) { font-size: 1.083333em; }
+  .preview-markdown :global(h4) { font-size: 1em; }
 
   .preview-markdown :global(h1:first-child),
   .preview-markdown :global(h2:first-child),
@@ -1269,7 +1271,7 @@ import { openFile } from "$lib/api/open";
 
   .preview-markdown :global(code) {
     font-family: "Cascadia Code", "Fira Code", "Consolas", monospace;
-    font-size: 11px;
+    font-size: 1em;
     background: var(--subtle-fill-secondary);
     padding: 1px 4px;
     border-radius: 3px;
@@ -1320,7 +1322,7 @@ import { openFile } from "$lib/api/open";
   .preview-markdown :global(table) {
     border-collapse: collapse;
     margin: 8px 0;
-    font-size: 11px;
+    font-size: inherit;
     display: block;
     overflow-x: auto;
   }

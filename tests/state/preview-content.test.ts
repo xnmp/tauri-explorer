@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { PreviewImageOptions } from "$lib/state/preview-image";
 import type { FileEntry } from "$lib/domain/file";
 const mocks = vi.hoisted(() => ({ readTextFile: vi.fn(), fetchDirectory: vi.fn(), listArchiveContents: vi.fn(), loadPreviewImage: vi.fn(), decodeImage: vi.fn(), getVideoThumbnailData: vi.fn() }));
 vi.mock("$lib/api/files", () => ({ readTextFile: mocks.readTextFile, fetchDirectory: mocks.fetchDirectory }));
@@ -15,11 +16,26 @@ function surface(viewers = { pdf: vi.fn(async () => Pdf), video: vi.fn(async () 
   let content: PreviewContent<typeof Pdf, typeof Video> = { kind: "empty" };
   const revoked = vi.fn();
   const loader = createPreviewContentLoader(revoked, viewers);
-  return { loader, revoked, viewers, get content() { return content; }, load: (entry: FileEntry, revision = 0) => loader.load(entry, content, { localRevision: revision, imageOptions: {} }, next => { content = next; }) };
+  return { loader, revoked, viewers, get content() { return content; }, load: (entry: FileEntry, revision = 0, imageOptions: PreviewImageOptions = {}) => loader.load(entry, content, { localRevision: revision, imageOptions }, next => { content = next; }) };
 }
 beforeEach(() => { vi.resetAllMocks(); });
 
 describe("preview content dispatch and replacement", () => {
+  it.each(["LICENSE", "notes.txt", "output.log"])("keeps %s prose literal instead of guessing a code language", async name => {
+    const s = surface();
+    const text = 'MIT License\nCopyright (c) 2026 <xnmp> & contributors\nPermission is hereby granted, free of charge, to any person.';
+    mocks.readTextFile.mockResolvedValue({ ok: true, data: text });
+    await s.load(file(name));
+    expect(s.content).toEqual({ kind: "text", text, truncatedLines: 0, truncatedLabel: "lines" });
+  });
+
+  it("keeps explicit shell syntax highlighting even when the icon category is not code", async () => {
+    const s = surface();
+    mocks.readTextFile.mockResolvedValue({ ok: true, data: "#!/bin/sh\necho hello" });
+    await s.load(file("run.sh"));
+    expect(s.content).toMatchObject({ kind: "code", html: expect.stringContaining('class="hljs-built_in"') });
+  });
+
   it("replaces image content and its hold with the next format, without leftover metadata", async () => {
     const s = surface();
     mocks.loadPreviewImage.mockResolvedValue(ready("blob:photo"));
@@ -58,6 +74,25 @@ describe("preview content dispatch and replacement", () => {
     expect(mocks.loadPreviewImage).toHaveBeenCalledTimes(2);
   });
 
+  it("rejects an old same-path image revision and reuses source pixels on an unchanged revisit", async () => {
+    const s = surface();
+    const entry = file("a.jpg");
+    let finish!: (value: unknown) => void;
+    mocks.loadPreviewImage.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    const old = s.load(entry);
+    mocks.loadPreviewImage.mockResolvedValueOnce({ ...ready("blob:new", "rendition"), sourceSize: { width: 7680, height: 4320 } });
+    const updated = { ...entry, size: entry.size + 1, modified: "tomorrow" };
+    await s.load(updated, 0, { rendition: { maxEdge: 2048 } });
+    expect(s.content).toMatchObject({ sourceSize: { width: 7680, height: 4320 }, url: "blob:new" });
+    finish({ ...ready("blob:old", "rendition"), sourceSize: { width: 1000, height: 500 } });
+    await old;
+    expect(s.content).toMatchObject({ sourceSize: { width: 7680, height: 4320 }, url: "blob:new" });
+    await s.load(file("unsupported.exe"));
+    await s.load(updated, 0, { rendition: { maxEdge: 2048 } });
+    expect(s.content).toMatchObject({ sourceSize: { width: 7680, height: 4320 }, url: "blob:new" });
+    expect(mocks.loadPreviewImage).toHaveBeenCalledTimes(2);
+  });
+
   it("owns audio art through decoding and releases it on a non-image selection", async () => {
     const s = surface(); mocks.getVideoThumbnailData.mockResolvedValue({ ok: true, data: "blob:cover" });
     await s.load(file("a.mp3"));
@@ -86,7 +121,7 @@ describe("preview content dispatch and replacement", () => {
     expect(s.content).toMatchObject({ kind: "csv", csv: { rows: expect.arrayContaining([["line1\nline2", "c"]]) }, truncatedLabel: "rows", truncatedLines: 203 });
     mocks.readTextFile.mockResolvedValueOnce({ ok: true, data: "hello\n".repeat(205) });
     await s.load(file("a.txt"));
-    expect(s.content).toMatchObject({ kind: "code", truncatedLabel: "lines", truncatedLines: 206 });
+    expect(s.content).toMatchObject({ kind: "text", truncatedLabel: "lines", truncatedLines: 206 });
     expect(mocks.readTextFile).toHaveBeenLastCalledWith("/a.txt", 524288);
   });
 
@@ -126,7 +161,7 @@ describe("preview content dispatch and replacement", () => {
     mocks.readTextFile.mockResolvedValue({ ok: true, data: "replacement" });
     await s.load(file("a.txt"));
     resolve(Pdf); await pending;
-    expect(s.content).toMatchObject({ kind: "code", html: expect.stringContaining("replacement") });
+    expect(s.content).toMatchObject({ kind: "text", text: "replacement" });
   });
 
   it("upgrades renditions while rejecting an upgrade superseded by a new selection", async () => {
@@ -173,11 +208,11 @@ describe("preview content dispatch and replacement", () => {
     expect(s.content).toEqual({ kind: "error", message: "Cannot preview video" });
   });
 
-  it("keeps malformed CSV on the highlighted path and large text on plain text", async () => {
+  it("keeps malformed CSV as readable text and large text on plain text", async () => {
     const s = surface();
     mocks.readTextFile.mockResolvedValueOnce({ ok: true, data: 'a,b\n"unterminated' });
     await s.load(file("a.csv"));
-    expect(s.content).toMatchObject({ kind: "code", html: expect.stringContaining("unterminated"), truncatedLabel: "lines" });
+    expect(s.content).toMatchObject({ kind: "text", text: expect.stringContaining("unterminated"), truncatedLabel: "lines" });
     const text = "a".repeat(50_000);
     mocks.readTextFile.mockResolvedValueOnce({ ok: true, data: text });
     await s.load(file("a.txt"));
@@ -194,8 +229,8 @@ describe("preview content dispatch and replacement", () => {
     mocks.readTextFile.mockResolvedValue({ ok: true, data: "new contents" });
     await s.load(file("new.txt"));
     decoded(); await pending;
-    expect(s.content.kind).toBe("code");
-    if (s.content.kind === "code") expect(s.content.html.replace(/<[^>]+>/g, "")).toBe("new contents");
+    expect(s.content.kind).toBe("text");
+    if (s.content.kind === "text") expect(s.content.text).toBe("new contents");
     expect(s.revoked).toHaveBeenCalledWith("blob:old-cover");
   });
 

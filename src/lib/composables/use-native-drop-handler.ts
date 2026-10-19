@@ -7,7 +7,7 @@
 
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";
 import { useExternalDrop } from "$lib/composables/use-external-drop.svelte";
-import { resolveDropTarget, resolveDropTargetFromElement, captureDropDestination, highlightTarget, highlightTargetAtPoint, highlightTargetElement, elementAtNativePosition, clearHighlights, captureHighlightCleanup, claimSpringEvent, type DropTargetResult } from "$lib/composables/use-native-drop-target.svelte";
+import { resolveDropTarget, resolveDropTargetFromElement, captureDropDestination, highlightTarget, highlightTargetAtPoint, highlightTargetElement, elementAtNativePosition, clearHighlights, captureHighlightCleanup, claimPeekEvent, type DropTargetResult } from "$lib/composables/use-native-drop-target.svelte";
 import { dropIntoDirectory } from "$lib/composables/use-dom-directory-drop";
 import { retireDropFeedback } from "$lib/composables/use-drop-target.svelte";
 import { springEnd, springEndSoon, springGesture, springHold, springHover, springSettle } from "$lib/composables/spring-load";
@@ -295,25 +295,25 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
   function trackDragModifiers(event: DragEvent): void { copyModifierHeld = isCopyMod(event); }
   function handleDomDragStart(event: DragEvent): void { trackDragModifiers(event); hoverPosition = null; receiverReports = false; springSettle(); }
 
-  // ---- Spring-loaded peeks (#1242) -------------------------------------------
-  // A row, row wrapper, peek-state row or bridge inside a drag's temporary
-  // peek drops into that peek's folder. No component owns those rows as
+  // ---- Peek row drops (#1242, #1323) ---------------------------------------
+  // Files and status rows inside a peek target their containing folder.
+  // A temporary peek also exposes transparent bridges. No component owns those rows as
   // targets, so the window capture phase accepts them (dragenter too: WebKit
   // delivers a drop only to a target whose dragenter was accepted). Hover
   // events still bubble, claimed, so the card or panel surface under them
   // retires its own folder feedback; only the drop is taken exclusively.
-  let clearSpringHighlight: (() => void) | null = null;
+  let clearPeekHighlight: (() => void) | null = null;
   let enteredThisTask = false;
-  function acceptSpringTarget(event: DragEvent, target: DropTargetResult): boolean {
-    if (target?.type !== "folder" || !target.spring) {
-      clearSpringHighlight?.(); clearSpringHighlight = null;
+  function acceptPeekTarget(event: DragEvent, target: DropTargetResult): boolean {
+    if (target?.type !== "folder" || !(target.spring || target.peek)) {
+      clearPeekHighlight?.(); clearPeekHighlight = null;
       return false;
     }
     event.preventDefault();
-    claimSpringEvent(event);
+    claimPeekEvent(event);
     if (event.dataTransfer) event.dataTransfer.dropEffect = isCopyMod(event) ? "copy" : "move";
     highlightTargetElement(event.target as Element | null);
-    clearSpringHighlight = captureHighlightCleanup();
+    clearPeekHighlight = captureHighlightCleanup();
     return true;
   }
 
@@ -331,7 +331,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     if (!enteredThisTask) { enteredThisTask = true; setTimeout(() => { enteredThisTask = false; }, 0); }
     if (!dragState.acceptsFileDrag(event.dataTransfer)) return;
     domSpringHover(event.target as Element | null);
-    acceptSpringTarget(event, resolveDropTargetFromElement(event.target as Element | null));
+    acceptPeekTarget(event, resolveDropTargetFromElement(event.target as Element | null));
   }
 
   function handleDomDragLeave(event: DragEvent): void {
@@ -339,7 +339,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     // The drag left the window (or was cancelled outside every element).
     domSpringHover(null);
     retireDropFeedback();
-    clearSpringHighlight?.(); clearSpringHighlight = null;
+    clearPeekHighlight?.(); clearPeekHighlight = null;
   }
 
   function handleDomDragOver(event: DragEvent): void {
@@ -353,7 +353,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
       highlightTargetAtPoint(event.clientX, event.clientY);
       return;
     }
-    acceptSpringTarget(event, target);
+    acceptPeekTarget(event, target);
   }
 
   function handleDomDrop(event: DragEvent): void {
@@ -416,8 +416,9 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
             }
             if (source) deferredDomSources.set(replay, source);
             if (source) dragState.bindDomSource(dataTransfer, source);
-            if (target?.type === "folder" && target.spring) {
-              // Its row may have unmounted with the peek: drop by its folder.
+            if (target?.type === "folder" && (target.spring || target.peek)) {
+              // Capture already validated the destination lifetime; route the
+              // redirected row directly, without redispatching to a non-target.
               springEnd(springGestureAtDrop);
               if (targetElement) void dropIntoDirectory(replay, target.path, "folder", { onRefresh: deps.refreshAllPanes });
             } else targetElement?.dispatchEvent(replay);
@@ -432,10 +433,10 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
       event.stopImmediatePropagation();
       return;
     }
-    if (target?.type === "folder" && target.spring) {
-      // A row inside a temporary peek: the existing folder drop, same intent.
+    if (target?.type === "folder" && (target.spring || target.peek)) {
+      // A redirected peek row uses the existing folder drop and intent.
       event.stopImmediatePropagation();
-      clearSpringHighlight?.(); clearSpringHighlight = null;
+      clearPeekHighlight?.(); clearPeekHighlight = null;
       void dropIntoDirectory(event, target.path, "folder", { onRefresh: deps.refreshAllPanes });
       return;
     }

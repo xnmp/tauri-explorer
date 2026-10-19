@@ -38,7 +38,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `ImageResolutionCell.svelte` — lazy intrinsic image metadata for mounted Details rows.
 - `DetailsView.svelte` — virtual-scrolled table view (columns, resize, sort headers).
 - `ListColumnsView.svelte` — Folder Peek List: column-major tree (`role=tree`, per-level `aria-posinset`/`setsize` from `peekTreePositionLookup`, arithmetic while nothing is expanded; a listbox without peek) with horizontal windowing and shared reveal/navigation snapshot; an open top-level folder keeps its header row and renders a `ListCard`, and its inert `.list-motion-layer` holds `use-list-motion` ghosts (#1240).
-- `ListCard.svelte` — one List card's descendant scroll area (`role=group`, virtualized rows, nested guides, treeitem pseudo-rows) and "+N more"; its surface is a `.peek-drop-target` for the folder.
+- `ListPeekState.svelte` — shared loading/empty/error treeitem for compact List cards and full-flow columns; preserves parent identity for drops.
+- `ListCard.svelte` — one List card's descendant scroll area (`role=group`, virtualized rows, nested guides, treeitem pseudo-rows) ; the header owns the clickable “+N more” action; its surface is a `.peek-drop-target` for the folder.
 - `ListCardGrip.svelte` — a List card's bottom-edge grip control (separator with arrow/Home/End keys), rendered inside the folder's header treeitem because a tree owns only groups and treeitems; its drag session lives in `use-list-columns`.
 - `ListView.svelte` — classic row-major List (Folder Peek off); `listViewColumns`/`listColumnMaxWidth` apply here only.
 - `TilesView.svelte` — row-virtualized tile view with thumbnails; renders through `TileSurface.svelte`/`TileVisual.svelte`; runs `scroll-jank-monitor.ts` during scroll and logs `tiles-scroll-jank` events only when jank occurred (#593).

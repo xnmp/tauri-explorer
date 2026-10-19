@@ -17,6 +17,7 @@
   } from "$lib/domain/tile-panels";
   import type { useItemInteractions } from "$lib/composables/use-item-interactions.svelte";
   import { createSurfaceDropFeedback, surfaceDropPath } from "$lib/composables/surface-drop-feedback";
+  import { isPeekClaimed, resolveDropTargetFromElement } from "$lib/composables/use-native-drop-target.svelte";
   import FileIcon from "./FileIcon.svelte";
   import TilePanelGrip from "./TilePanelGrip.svelte";
   import TileSurface from "./TileSurface.svelte";
@@ -80,7 +81,15 @@
   // are their own targets (or none), so reaching one retires the surface's
   // feedback (no leave fires for it: the tile is inside).
   const onSurface = (event: Event) => surfaceDropPath(event.target, folder.path) !== null;
-  const surfaceDrop = createSurfaceDropFeedback(() => interactions, event => onSurface(event) ? folder : null);
+  const surfaceDrop = createSurfaceDropFeedback(() => interactions, event => {
+    // Captured file rows share the panel's declarative feedback. Retiring it
+    // here would erase the capture highlight on the same DOM element.
+    if (isPeekClaimed(event)) {
+      const target = resolveDropTargetFromElement(event.target as Element | null);
+      return target?.type === "folder" && target.path === folder.path ? folder : null;
+    }
+    return onSurface(event) ? folder : null;
+  });
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -- a pointer drop and context-menu surface spanning the label, scroll area (the rowgroup) and grip; the folder's own tile is its keyboard path. -->

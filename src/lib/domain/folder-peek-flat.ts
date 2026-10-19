@@ -90,6 +90,16 @@ export function resolvePeekEscape(entry: FileEntry | null | undefined, meta: Rea
   return placement && placement.depth > 0 ? placement.parentPath : null;
 }
 
+/** Drop redirects use the live projection, never a guessed path parent. Root
+ * files retain their ordinary behaviour; nested files target their open peek. */
+export function permanentPeekDropFolder(path: string, kind: "directory" | "file" | "state",
+  meta: ReadonlyMap<string, PeekMeta>, expanded: ReadonlySet<string>): string | null {
+  const placement = meta.get(path);
+  if (kind === "state") return expanded.has(path) ? path : null;
+  if (!placement || placement.depth < 1 || !expanded.has(placement.parentPath)) return null;
+  return kind === "directory" ? path : placement.parentPath;
+}
+
 export function entryIndicesForRows(layout: PeekRows, rows: readonly number[]): number[] {
   return rows.flatMap(row => layout.rowToEntry[row] == null ? [] : [layout.rowToEntry[row]!]);
 }

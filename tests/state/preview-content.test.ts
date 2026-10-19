@@ -93,6 +93,47 @@ describe("preview content dispatch and replacement", () => {
     expect(mocks.loadPreviewImage).toHaveBeenCalledTimes(2);
   });
 
+  it.each(["mtime", "size", "local-revision", "selection"] as const)("rejects delayed source pixels when %s alone changes", async change => {
+    const s = surface();
+    const entry = file("a.jpg");
+    const rendition = (width: number) => ({
+      ...ready(`blob:${width}`, "rendition"), sourceSize: { width, height: 500 },
+    });
+    let finish!: (value: unknown) => void;
+    mocks.loadPreviewImage.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    const old = s.load(entry, 0, { rendition: { maxEdge: 2048 } });
+    const updated = change === "mtime" ? { ...entry, modified: "tomorrow" }
+      : change === "size" ? { ...entry, size: entry.size + 1 }
+      : change === "selection" ? file("b.jpg") : entry;
+    mocks.loadPreviewImage.mockResolvedValueOnce(rendition(8000));
+    await s.load(updated, change === "local-revision" ? 1 : 0, { rendition: { maxEdge: 2048 } });
+    finish(rendition(1000));
+    await old;
+    expect(s.content).toMatchObject({ sourceSize: { width: 8000, height: 500 }, url: "blob:8000", held: false });
+    s.loader.dispose();
+  });
+
+  it("removes source pixel metadata when a held rendition's replacement fails", async () => {
+    const s = surface();
+    mocks.loadPreviewImage.mockResolvedValueOnce({
+      ...ready("blob:old-rendition", "rendition"), sourceSize: { width: 8000, height: 4000 },
+    }).mockResolvedValueOnce({ status: "failed" });
+    await s.load(file("a.jpg"));
+    expect(s.content).toMatchObject({ sourceSize: { width: 8000, height: 4000 } });
+    await s.load(file("broken.jpg"));
+    expect(s.content).toEqual({ kind: "error", message: "Cannot preview image" });
+    s.loader.dispose();
+  });
+
+  it.each(["LICENSE", "notes.txt", "server.log", "CHANGELOG.txt"])("preserves literal markup and ampersands in %s", async name => {
+    const s = surface();
+    const text = "<script>alert(1)</script> & plain = 123";
+    mocks.readTextFile.mockResolvedValue({ ok: true, data: text });
+    await s.load(file(name));
+    expect(s.content).toMatchObject({ kind: "text", text });
+    s.loader.dispose();
+  });
+
   it("owns audio art through decoding and releases it on a non-image selection", async () => {
     const s = surface(); mocks.getVideoThumbnailData.mockResolvedValue({ ok: true, data: "blob:cover" });
     await s.load(file("a.mp3"));

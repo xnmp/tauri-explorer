@@ -131,6 +131,32 @@ for (const view of ["details", "list", "tiles"] as const) {
   test.describe(`${view}`, () => {
     test.beforeEach(async ({ page }) => open(page, view));
 
+    for (const target of ["file", "empty"] as const) {
+      test(`permanent peek ${target}: drops move into the open folder and retain its peek (#1323)`, async ({ page }) => {
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        const folder = P(target === "file" ? "Inbox" : "Empty");
+        await explorer(page, "return explorer.togglePeek(value)", folder);
+        const hit = target === "file" ? v.child(P("Inbox/alpha.txt")) : v.surface(folder);
+        await expect(page.locator(hit)).toBeVisible();
+        // Wait for structural motion before using elementFromPoint.
+        await expect(page.locator(`${shown} [data-motion-key][style*="transform"], ${shown} [data-motion-key][style*="clip-path"], ${shown} .list-motion-layer > *`)).toHaveCount(0);
+        await startDrag(page);
+        await dragTo(page, hit);
+        await expect.poll(() => page.locator(`${shown} .drop-target[data-path="${folder}"]`).count()).toBeGreaterThan(0);
+        await dropOn(page, hit);
+        await expect.poll(() => listing(page, folder)).toContain("drag-me.txt");
+        expect(await listing(page, root)).not.toContain("drag-me.txt");
+        // Native sessions publish this mutation notification; the browser
+        // mock does not run the native watcher (same seam as interactions).
+        await explorer(page, "explorer.directoryChanged({path:value,origin:'mutation'})", folder);
+        await endDrag(page);
+        expect(await explorer(page, "return explorer.isPeekExpanded(value)", folder)).toBe(true);
+        await expect(page.locator(v.child(`${folder}/drag-me.txt`))).toBeVisible();
+        await expect(page.locator(`${shown} .drop-target`)).toHaveCount(0);
+        if (target === "file") await page.screenshot({ path: `screenshots/fix/peek/permanent-peek-drop-${view}.png` });
+      });
+    }
+
     test("opens after 600ms and not before, without touching the expanded set or stored heights", async ({ page }) => {
       // A first spring loads the lazy driver and peek session in real time.
       await startDrag(page);

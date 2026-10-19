@@ -361,6 +361,10 @@
     flex: 1;
   }
 
+  .name-cell:has(:global(.peek-open)) .name-text {
+    flex: 0 1 auto;
+  }
+
   /* Icon container */
   .icon {
     display: flex;

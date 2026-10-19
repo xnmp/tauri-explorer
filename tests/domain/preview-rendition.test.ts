@@ -9,6 +9,7 @@ import {
   mayHaveRendition,
   needsFullResolution,
   renditionMaxEdge,
+  previewSourceSize,
 } from "$lib/domain/preview-rendition";
 
 describe("renditionMaxEdge", () => {
@@ -77,5 +78,20 @@ describe("mayHaveRendition", () => {
 
   it("is false for virtual paths, which the backend cannot read", () => {
     expect(mayHaveRendition("zip:///home/u/a.zip/huge.png")).toBe(false);
+  });
+});
+
+describe("previewSourceSize", () => {
+  const source = { width: 7680, height: 4320 };
+  const decoded = { width: 1024, height: 577 };
+  it("uses source headers for renditions, decoded pixels for originals", () => {
+    expect(previewSourceSize("rendition", source, decoded)).toEqual(source);
+    expect(previewSourceSize("original", null, decoded)).toEqual(decoded);
+  });
+  it("never presents rendition pixels as source metadata when the header is unavailable", () => {
+    expect(previewSourceSize("rendition", null, decoded)).toBeNull();
+  });
+  it.each([0, -1, NaN, Infinity, 2.5, Number.MAX_VALUE])("ignores malformed source dimensions %s", width => {
+    expect(previewSourceSize("rendition", { width, height: 10 }, decoded)).toBeNull();
   });
 });

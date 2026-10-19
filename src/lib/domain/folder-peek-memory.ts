@@ -36,3 +36,19 @@ export function pruneExpanded(expanded: ExpandedPaths, parent: string, entries: 
     return directories.has(paths.key(child));
   }));
 }
+
+
+export type ListPeekExpansion = "column" | "full";
+
+/** Session-only List presentation choices, most recently chosen last. A single
+ * bounded map keeps the column and full-flow stages mutually exclusive. */
+export function rememberListExpansion(
+  choices: ReadonlyMap<string, ListPeekExpansion>, path: string, mode: ListPeekExpansion, cap = 500,
+): ReadonlyMap<string, ListPeekExpansion> {
+  const next = new Map(choices);
+  next.delete(path);
+  next.set(path, mode);
+  const limit = Number.isFinite(cap) ? Math.max(0, Math.floor(cap)) : 500;
+  while (next.size > limit) next.delete(next.keys().next().value!);
+  return next;
+}

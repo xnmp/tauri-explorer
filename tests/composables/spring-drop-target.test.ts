@@ -9,7 +9,7 @@ vi.mock("$lib/state/settings.svelte", () => ({ settingsStore: { zoomLevel: 100 }
 vi.mock("$lib/state/window-tabs.svelte", () => ({
   windowTabsManager: { getExplorer: (id: string) => panes.get(id), tabs: [], getTabPath: () => null },
 }));
-import { clearHighlights, highlightTargetElement, resolveDropTargetFromElement } from "$lib/composables/use-native-drop-target.svelte";
+import { captureDropDestination, clearHighlights, highlightTargetElement, resolveDropTargetFromElement } from "$lib/composables/use-native-drop-target.svelte";
 import { dropElement } from "../helpers/drop-element";
 
 const spring = { folder: "/r/Inbox" as string | null, calls: [] as [string, string][] };
@@ -102,6 +102,125 @@ describe("spring redirect in resolveDropTargetFromElement", () => {
     const { content } = listing();
     expect(resolveDropTargetFromElement(dropElement("entry-item", { "data-path": "/r/Inbox/a.txt" }, content)))
       .toEqual({ type: "background", path: "/r", domDisabled: true });
+  });
+});
+
+/** Permanent peeks expose the same folder destination as temporary peeks (#1323).
+ * The metadata is the existing explorer projection, not a filesystem path guess. */
+describe("permanently expanded peek drop destinations", () => {
+  function permanent() {
+    const folder = "/r/Career";
+    const nested = `${folder}/Portfolio`;
+    const file = `${nested}/resume.md`;
+    panes.set("p1", {
+      ...explorer([]), peekEnabled: true, peekCapability: "tree",
+      expandedPaths: new Set([folder, nested]),
+      isPeekExpanded: (path: string) => path === folder || path === nested,
+      entryMeta: new Map([
+        [folder, { depth: 0, parentPath: "/r" }],
+        [nested, { depth: 1, parentPath: folder }],
+        [file, { depth: 2, parentPath: nested }],
+        ["/r/root.txt", { depth: 0, parentPath: "/r" }],
+      ]),
+    });
+    return { ...listing(), folder, nested, file };
+  }
+
+  it("a nested Details file targets its immediate peek folder", () => {
+    const { content, nested, file } = permanent();
+    const row = dropElement("entry-item file-item", { "data-path": file }, content);
+    expect(resolveDropTargetFromElement(dropElement("name", {}, row)))
+      .toMatchObject({ type: "folder", path: nested });
+  });
+
+  it("a Details file wrapper targets the same immediate peek folder", () => {
+    const { content, nested, file } = permanent();
+    const wrapper = dropElement("", { "data-row-path": file, "data-row-kind": "file" }, content);
+    expect(resolveDropTargetFromElement(wrapper)).toMatchObject({ type: "folder", path: nested });
+  });
+
+  it("an empty Details peek targets its folder", () => {
+    const { content, nested } = permanent();
+    const state = dropElement("peek-state", { "data-peek-state": nested }, content);
+    expect(resolveDropTargetFromElement(state)).toMatchObject({ type: "folder", path: nested });
+  });
+
+  it.each(["list-card-scroll", "tile-panel"])("a file inside a permanent %s targets its folder", className => {
+    const { content, folder } = permanent();
+    const surface = dropElement(`${className} peek-drop-target`, { "data-path": folder }, content);
+    const file = `${folder}/notes.md`;
+    (panes.get("p1") as { entryMeta: Map<string, unknown> }).entryMeta.set(file, { depth: 1, parentPath: folder });
+    const row = dropElement("entry-item", { "data-path": file }, surface);
+    expect(resolveDropTargetFromElement(row)).toMatchObject({ type: "folder", path: folder });
+  });
+
+  it("a nested List file targets its immediate folder rather than the outer card", () => {
+    const { content, folder, nested, file } = permanent();
+    const card = dropElement("list-card-scroll peek-drop-target", { "data-path": folder }, content);
+    const row = dropElement("entry-item", { "data-path": file }, card);
+    expect(resolveDropTargetFromElement(row)).toMatchObject({ type: "folder", path: nested });
+  });
+
+  it("keeps actual directory rows and classic root file rows unchanged", () => {
+    const { content, nested } = permanent();
+    const directory = dropElement("entry-item directory", { "data-path": nested }, content);
+    expect(resolveDropTargetFromElement(directory)).toEqual({ type: "folder", path: nested });
+    const rootFile = dropElement("entry-item", { "data-path": "/r/root.txt" }, content);
+    expect(resolveDropTargetFromElement(rootFile)).toEqual({ type: "background", path: "/r", domDisabled: true });
+  });
+});
+
+describe("permanent peek drop destination lifetime", () => {
+  function destination() {
+    const folder = "/r/parent/nested";
+    const path = `${folder}/a.txt`;
+    const navigation = { current: true };
+    const owner = {
+      ...explorer([]), peekEnabled: true,
+      expandedPaths: new Set(["/r/parent", folder]),
+      entryMeta: new Map([[path, { depth: 2, parentPath: folder }]]),
+      captureMutation: () => ({ current: () => navigation.current }),
+    };
+    panes.set("p1", owner);
+    const attributes: Record<string, string> = { "data-pane-id": "p1" };
+    const root = dropElement("explorer-pane", attributes);
+    const content = dropElement("content", { "data-current-path": "/r" }, root);
+    const row = dropElement("entry-item", { "data-path": path }, content);
+    return { owner, navigation, attributes, row, folder };
+  }
+
+  it("rejects a deferred drop after its containing permanent peek collapses", () => {
+    const { row, owner, folder } = destination();
+    const current = captureDropDestination(row);
+    expect(current()).toBe(true);
+    owner.expandedPaths.delete(folder);
+    expect(current()).toBe(false);
+  });
+
+  it("does not guess a file's parent when its live projection disappears", () => {
+    const { row, owner } = destination();
+    owner.entryMeta.clear();
+    expect(resolveDropTargetFromElement(row)).toEqual({ type: "background", path: "/r", domDisabled: true });
+  });
+
+  it.each(["inert", "hidden"])("blocks a permanent peek beneath %s, including deferred drops", attribute => {
+    const { row, attributes } = destination();
+    const current = captureDropDestination(row);
+    expect(current()).toBe(true);
+    attributes[attribute] = "";
+    expect(resolveDropTargetFromElement(row)).toEqual({ type: "blocked" });
+    expect(current()).toBe(false);
+  });
+
+  it.each(["disconnected", "navigation", "replacement", "disabled"] as const)("rejects a deferred permanent drop after %s", change => {
+    const { row, owner, navigation } = destination();
+    const current = captureDropDestination(row);
+    expect(current()).toBe(true);
+    if (change === "disconnected") Object.assign(row, { isConnected: false });
+    if (change === "navigation") navigation.current = false;
+    if (change === "replacement") panes.set("p1", { ...owner });
+    if (change === "disabled") owner.peekEnabled = false;
+    expect(current()).toBe(false);
   });
 });
 

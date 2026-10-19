@@ -9,6 +9,7 @@
  * need detail the rendition lacks, so they use the original.
  */
 
+import type { ImageResolution } from "./image-resolution";
 import { isVirtualPath } from "./virtual-path";
 
 /** The backend's answer: show the file itself, or a cached rendition file. */
@@ -82,4 +83,15 @@ export interface PreviewViewState {
 /** Whether the viewer needs the original rather than a rendition. */
 export function needsFullResolution(view: PreviewViewState): boolean {
   return view.fullscreen || view.zoom > 1;
+}
+
+/** A display rendition's decoded dimensions never describe the source file. */
+export function previewSourceSize(
+  resolution: PreviewImageResolution,
+  source: ImageResolution | null,
+  decoded: ImageResolution,
+): ImageResolution | null {
+  const size = resolution === "rendition" ? source : decoded;
+  return size && Number.isSafeInteger(size.width) && size.width > 0
+    && Number.isSafeInteger(size.height) && size.height > 0 ? size : null;
 }

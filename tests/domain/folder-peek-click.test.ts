@@ -61,3 +61,28 @@ describe("caretlessDoubleClickNotice", () => {
     expect(caretlessDoubleClickNotice("")).toContain("Use Open in the context menu");
   });
 });
+
+
+describe("permanent peek drop destinations (#1323)", () => {
+  const meta = new Map([
+    ["/root.txt", { depth: 0, parentPath: "/" }],
+    ["/Open/file", { depth: 1, parentPath: "/Open" }],
+    ["/Open/Nested", { depth: 1, parentPath: "/Open" }],
+    ["/Open/Nested/file", { depth: 2, parentPath: "/Open/Nested" }],
+  ]);
+  const expanded = new Set(["/Open", "/Open/Nested"]);
+  it("targets the immediate open parent without inferring ancestry from paths", async () => {
+    const { permanentPeekDropFolder: folder } = await import("$lib/domain/folder-peek-flat");
+    expect(folder("/Open/file", "file", meta, expanded)).toBe("/Open");
+    expect(folder("/Open/Nested/file", "file", meta, expanded)).toBe("/Open/Nested");
+    expect(folder("/Open/Nested", "directory", meta, expanded)).toBe("/Open/Nested");
+    expect(folder("/Open/Nested", "state", meta, expanded)).toBe("/Open/Nested");
+  });
+  it("rejects root, removed, unprojected and collapsed file/status rows", async () => {
+    const { permanentPeekDropFolder: folder } = await import("$lib/domain/folder-peek-flat");
+    expect(folder("/root.txt", "file", meta, expanded)).toBeNull();
+    expect(folder("/Open/missing", "file", meta, expanded)).toBeNull();
+    expect(folder("/Open/file", "file", meta, new Set())).toBeNull();
+    expect(folder("/Closed", "state", meta, expanded)).toBeNull();
+  });
+});

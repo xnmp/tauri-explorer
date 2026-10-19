@@ -38,7 +38,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `ImageResolutionCell.svelte` — lazy intrinsic image metadata for mounted Details rows.
 - `DetailsView.svelte` — virtual-scrolled table view (columns, resize, sort headers).
 - `ListColumnsView.svelte` — Folder Peek List: column-major tree (`role=tree`, per-level `aria-posinset`/`setsize` from `peekTreePositionLookup`, arithmetic while nothing is expanded; a listbox without peek) with horizontal windowing and shared reveal/navigation snapshot; an open top-level folder keeps its header row and renders a `ListCard`, and its inert `.list-motion-layer` holds `use-list-motion` ghosts (#1240).
-- `ListCard.svelte` — one List card's descendant scroll area (`role=group`, virtualized rows, nested guides, treeitem pseudo-rows) and "+N more"; its surface is a `.peek-drop-target` for the folder.
+- `ListPeekState.svelte` — shared loading/empty/error treeitem for compact List cards and full-flow columns; preserves parent identity for drops.
+- `ListCard.svelte` — one List card's descendant scroll area (`role=group`, virtualized rows, nested guides, treeitem pseudo-rows) ; the header owns the clickable “+N more” action; its surface is a `.peek-drop-target` for the folder.
 - `ListCardGrip.svelte` — a List card's bottom-edge grip control (separator with arrow/Home/End keys), rendered inside the folder's header treeitem because a tree owns only groups and treeitems; its drag session lives in `use-list-columns`.
 - `ListView.svelte` — classic row-major List (Folder Peek off); `listViewColumns`/`listColumnMaxWidth` apply here only.
 - `TilesView.svelte` — row-virtualized tile view with thumbnails; renders through `TileSurface.svelte`/`TileVisual.svelte`; runs `scroll-jank-monitor.ts` during scroll and logs `tiles-scroll-jank` events only when jank occurred (#593).
@@ -193,7 +194,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `pane-watch.ts` — per-pane observed navigation tickets, lease commit/rollback, pending-change replay and refresh admission.
 - `directory-events.ts` — shared native directory event subscription with explicit readiness, retry and late-listener retirement.
 - `folder-peek.svelte.ts` — per-pane facade that loads peek policies and resources on first use.
-- `folder-peek-session.svelte.ts` — lazy expansion membership and independently retired child-listing resources.
+- `folder-peek-session.svelte.ts` — lazy expansion membership, bounded List column/full-flow stage choices, and independently retired child-listing resources.
 - `pane-peek-watch.ts` — lazy pane-watch extension for capped child-directory and repository observation.
 - `directory-listing.ts` — complete directory snapshots, queued-request supersession, teardown and observation transfer.
 - `navigation.ts` — pure back/forward history utilities.
@@ -226,7 +227,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/state/sidebar-navigation.ts` — sidebar mouse/keyboard navigation through the active pane's modal ownership gate.
 - `src/lib/state/quick-open-navigation.ts` — Quick Open directory/path navigation: closes Quick Open, then admits the destination pane via `admitsCommandDestination` (#1096).
 - `src/lib/state/plugin-dom-ownership.ts` — host-issued component/root identities and nearest-root plugin ownership, shared by mounted contributions and file-drop API admission.
-- `src/lib/state/file-drop-targets.svelte.ts` — plugin element registrations, terminal disabled/modal resolution and idempotent teardown.
+- `src/lib/state/file-drop-targets.svelte.ts` — plugin element registrations, terminal disabled/modal resolution and idempotent teardown; reactive position-feedback identity shared with row/panel class bindings.
 - `src/lib/state/dispatch-file-drop.ts` — shared native/DOM/pointer completion admission, immutable plugin delivery and gesture-scoped async cleanup.
 - `drop-operations.ts` — drop source-path extraction and dispatch to the copy or move session.
 - `conflict-resolver.svelte.ts` — paste conflict resolution state (overwrite/skip/cancel).
@@ -400,7 +401,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `src/lib/domain/image-job-progress.ts` — elapsed image-job timing and explicitly estimated progress; median of the latest 20 successful completions with ≥3 samples, keyed cohort → source → 120s, plus overdue estimate wording.
 - `src/lib/domain/folder-peek.ts` — pure preorder expansion, pruning/caps and Details tree row/index geometry.
-- `src/lib/domain/folder-peek-memory.ts` — bounded expansion membership, subtree collapse and deleted-branch pruning shared with the pending restore facade.
+- `src/lib/domain/folder-peek-memory.ts` — bounded expansion membership and List stage choices, subtree collapse and deleted-branch pruning shared with the pending restore facade.
 - `src/lib/domain/folder-peek-flat.ts` — flat Details rows and command admission before first peek activation; caret-less click ownership (`rowClickOwnsPeek`: click toggles, double-click refused with a notice, #1298).
 - `src/lib/domain/file-operation-selection.ts` — Explorer recursive batch reduction, symlink-overlap admission, drag-primary remapping, and archive roots (same-basename refusal).
 - `src/lib/domain/bulk-rename.ts` — bulk rename plan: name-part find/replace previews, per-folder collision keys, and descendant-first rename order.

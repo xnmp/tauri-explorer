@@ -179,6 +179,10 @@ import { openFile } from "$lib/api/open";
   });
   const previewLoading = $derived(content.kind === "loading" ||
     ((content.kind === "image" || content.kind === "audio-cover") && content.held));
+  // Reserve the selected image's metadata geometry while it loads, without
+  // attributing a held image's source dimensions to the new selection.
+  const showResolutionRow = $derived(!!previewResolution ||
+    (previewLoading && (selectedKind === "image" || selectedKind === "audio-cover")));
   // Defer the spinner: a preview that resolves in under 150ms shouldn't flash
   // a spinner. Show it only once loading has been pending long enough to read.
   let showPreviewSpinner = $state(false);
@@ -648,12 +652,12 @@ import { openFile } from "$lib/api/open";
             <span class="info-value">{formatSize(selectedFile.size)}</span>
           </div>
         {/if}
-        {#if previewResolution}
+        {#if showResolutionRow}
           <div class="info-row">
             <!-- Short label: vertical docks give the metadata column ~80px, and a
                longer one squeezes the figures to a sliver (#1118). -->
             <span class="info-label">Pixels</span>
-            <span class="info-value">{previewResolution}</span>
+            <span class="info-value">{previewResolution || "—"}</span>
           </div>
         {/if}
         <div class="info-row">

@@ -1,3 +1,4 @@
+import { rememberFullFlowPath } from "$lib/domain/folder-peek-memory";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import * as client from "svelte/internal/client";
 import type { FileEntry } from "$lib/domain/file";
@@ -179,4 +180,50 @@ it("remembers Tiles panel heights per pane for the session, without counting as 
   settingsStore.update({ folderPeek: false });
   left.setTilePanelHeight(a.path, 400);
   expect(left.tilePanelHeight(a.path)).toBe(240);
+});
+
+
+it("full-flow choice is per pane and survives collapse, refresh, navigation and view changes", async () => {
+  const left = create("list"), right = create("list");
+  await left.togglePeek(a.path); await settle();
+  left.showAllListChildren(a.path);
+  expect([...left.listFullFlowPaths]).toEqual([a.path]);
+  expect(right.listFullFlowPaths.size).toBe(0);
+  await left.togglePeek(a.path); await left.togglePeek(a.path); await settle();
+  await left.refresh({ silent: true }); await settle();
+  left.setViewMode("details"); await settle();
+  left.setViewMode("list"); await settle();
+  await left.navigateTo(a.path); await settle();
+  await left.navigateTo("/r"); await settle();
+  expect(left.listFullFlowPaths.has(a.path)).toBe(true);
+  expect(left.expandedPaths.has(a.path)).toBe(true);
+});
+
+it("full-flow accepts only an open, permanent top-level List folder", async () => {
+  const pane = create("list");
+  pane.showAllListChildren(a.path);
+  expect(pane.listFullFlowPaths.size).toBe(0);
+  await pane.setSpringPeeks([a.path]); await settle();
+  pane.showAllListChildren(a.path);
+  expect(pane.listFullFlowPaths.size).toBe(0);
+  await pane.setSpringPeeks([]); await pane.togglePeek(a.path); await settle();
+  pane.showAllListChildren(big.path);
+  expect(pane.listFullFlowPaths.size).toBe(0);
+  pane.setViewMode("details"); await settle();
+  pane.showAllListChildren(a.path);
+  expect(pane.listFullFlowPaths.size).toBe(0);
+});
+
+
+it("bounds full-flow session choices and retains the most recently chosen folders", () => {
+  const before = new Set(["/r/a", "/r/b"]);
+  const refreshed = rememberFullFlowPath(before, "/r/a", 2);
+  expect([...rememberFullFlowPath(refreshed, "/r/c", 2)]).toEqual(["/r/a", "/r/c"]);
+  expect([...before]).toEqual(["/r/a", "/r/b"]);
+  expect(rememberFullFlowPath(before, "/r/c", 0).size).toBe(0);
+  let many: ReadonlySet<string> = new Set();
+  for (let index = 0; index < 1000; index++) many = rememberFullFlowPath(many, `/r/${index}`);
+  expect(many.size).toBe(500);
+  expect(many.has("/r/499")).toBe(false);
+  expect(many.has("/r/999")).toBe(true);
 });

@@ -6,6 +6,7 @@ import type { FileEntry } from "$lib/domain/file";
 import * as policies from "$lib/domain/folder-peek";
 import { toggleExpanded, collapseSubtree, pruneExpanded, rememberWhileExpanded, withTemporaryPeeks, type ExpandedPaths, type PeekListing } from "$lib/domain/folder-peek";
 import type { BandSide } from "$lib/domain/tile-panels";
+import { rememberFullFlowPath } from "$lib/domain/folder-peek-memory";
 import { rememberCardRows } from "$lib/domain/list-cards";
 import { createDirectoryListing } from "./directory-listing";
 import { gitStatusStore } from "./git-status.svelte";
@@ -21,6 +22,8 @@ export function createFolderPeekSession(windows: boolean, initialExpanded: reado
   let snapshots = $state.raw<ReadonlyMap<string, PeekListing>>(new Map());
   /** List card heights (visible rows) per top-level path, for the session. */
   let cardRows = $state.raw<ReadonlyMap<string, number>>(new Map());
+  /** Explicit full-flow List choices; independent of compact card heights. */
+  let fullFlowPaths = $state.raw<ReadonlySet<string>>(new Set());
   /** Tiles panel heights (CSS px) per top-level path, for the session. */
   let panelHeights = $state.raw<ReadonlyMap<string, number>>(new Map());
   /** Tiles panel sides of the expanded folders, kept while feasible (§9.1). Unlike
@@ -111,6 +114,8 @@ export function createFolderPeekSession(windows: boolean, initialExpanded: reado
       if (next.size !== expanded.size) setExpanded(next);
     },
     listing(path: string) { return snapshots.get(path); },
+    get fullFlowPaths() { return fullFlowPaths; },
+    showAllListChildren(path: string) { if (!disposed) fullFlowPaths = rememberFullFlowPath(fullFlowPaths, path); },
     cardRows(path: string) { return cardRows.get(path); },
     setCardRows(path: string, rows: number) { if (!disposed) cardRows = rememberCardRows(cardRows, path, rows); },
     panelHeight(path: string) { return panelHeights.get(path); },

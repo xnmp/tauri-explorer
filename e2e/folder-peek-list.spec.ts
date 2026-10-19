@@ -188,13 +188,17 @@ test("assistive technology reads the List as a tree, with sibling positions, ins
   await expect(globex).toHaveAttribute("aria-setsize", "5");
   await expect(row(page, `${root}/Career/Applications/follow-ups.md`)).not.toHaveAttribute("aria-expanded");
   expect(await violations()).toEqual([]);
-  // An open card adds one Tab stop, its grip (the separator's only keyboard
-  // path); its scroll area is not one, since the tree's cursor reaches every row.
+  // The grip and More are independent keyboard controls inside the header.
+  // The scroll area is not a Tab stop: the tree cursor reaches every row.
   await row(page, `${root}/Career`).click();
   await page.keyboard.press("Tab");
   await expect(slot(page, `${root}/Career`).getByRole("separator", { name: "Resize Career" })).toBeFocused();
   await page.keyboard.press("Tab");
-  expect(await page.evaluate(() => !!document.activeElement?.closest(".list-slot"))).toBe(false);
+  const more = slot(page, `${root}/Career`).getByRole("button", { name: "Show all Career items" });
+  await expect(more).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(card(page, `${root}/Career`)).toHaveCount(0);
+  await expect(row(page, `${root}/Career`)).toBeFocused();
 });
 
 test("a rename inside a card commits in place and the card keeps its rows", async ({ page }) => {
@@ -822,4 +826,130 @@ test("peek groups are unboxed while nesting and resize controls remain visible",
   await expect(slot(page, `${root}/Career`).locator(".list-guide").first()).toBeVisible();
   await expect(slot(page, `${root}/Career`).getByRole("separator")).toBeVisible();
   await page.screenshot({ path: "screenshots/fix/bounding/unboxed-list-peek.png" });
+});
+
+
+for (const activation of ["click", "Enter", "Space"] as const) {
+  test(`+N more ${activation} flows all children across normal columns`, async ({ page }) => {
+    await open(page, root, { width: 720, height: 430 });
+    const base = "/list-full-flow";
+    const folder = `${base}/Archive`;
+    await page.evaluate(([base, folder]) => import("/src/lib/api/mock-fixtures.ts").then(({ mockFiles }) => {
+      const entry = (path: string, kind: "file" | "directory") => ({ path, name: path.split("/").at(-1)!, kind, size: 1, modified: "" });
+      mockFiles[base] = [entry(folder, "directory")];
+      mockFiles[folder] = Array.from({ length: 80 }, (_, index) => entry(`${folder}/item-${String(index).padStart(3, "0")}.txt`, "file"));
+    }), [base, folder] as const);
+    await explorerCall(page, "return explorer.navigateTo(value)", base);
+    await toggle(page, folder);
+    const more = slot(page, folder).getByRole("button", { name: "Show all Archive items" });
+    await expect(more).toBeVisible();
+    if (activation === "click") {
+      await page.screenshot({ path: "evidence/1324-list-full-flow-more-button.png" });
+      await more.click();
+    }
+    else { await more.focus(); await page.keyboard.press(activation); }
+    await expect(card(page, folder)).toHaveCount(0);
+    await expect(row(page, folder)).toHaveAttribute("aria-expanded", "true");
+    // End must reveal and select a previously unmounted child through FileList,
+    // proving that column virtualization and keyboard navigation share the model.
+    await row(page, folder).focus();
+    await page.keyboard.press("End");
+    const last = `${folder}/item-079.txt`;
+    await expect(row(page, last)).toBeVisible();
+    await expect(row(page, last)).toHaveClass(/selected/);
+    expect(Number(await slot(page, last).getAttribute("data-column"))).toBeGreaterThan(1);
+    const geometry = await slot(page, last).evaluate(el => ({ top: (el as HTMLElement).offsetTop, height: (el as HTMLElement).offsetHeight }));
+    const R = Number(await page.locator(`${shown} .list-view`).getAttribute("data-rows"));
+    expect(geometry.top + geometry.height).toBeLessThanOrEqual(R * 30);
+    expect(await viewport(page).evaluate(el => el.scrollLeft)).toBeGreaterThan(0);
+    expect(await viewport(page).locator(".entry-item").count()).toBeLessThan(80);
+    expect(await explorerCall(page, "return explorer.currentPath")).toBe(base);
+    if (activation === "click") await page.screenshot({ path: "evidence/1324-list-full-flow-last-children.png" });
+  });
+}
+
+
+test("full-flow nesting keeps status rows and guides through resize and carets-off mode", async ({ page }) => {
+  await open(page, root, { width: 720, height: 430 });
+  const career = `${root}/Career`;
+  await toggle(page, career);
+  await toggle(page, `${career}/Applications`);
+  await toggle(page, `${career}/Portfolio`);
+  await slot(page, career).getByRole("button", { name: "Show all Career items" }).click();
+  const state = page.locator(`${shown} .list-peek-state[data-peek-state="${career}/Portfolio"]`);
+  await expect(state).toHaveText("Empty folder");
+  await expect(state).toHaveAttribute("aria-level", "3");
+  await expect(page.locator(`${shown} .new-folder-input`)).toHaveCount(0);
+  await expect(page.locator(`${shown} .list-flow-guide`).first()).toBeVisible();
+  // Status identity and its indentation survive the root zoom/viewport model;
+  // a resize changes the row count and therefore every following column.
+  await page.setViewportSize({ width: 1024, height: 640 });
+  await expect(state).toBeVisible();
+  const withCarets = await state.evaluate(el => parseFloat(getComputedStyle(el).paddingLeft));
+  await setting(page, { folderPeekCarets: false });
+  await expect(state).not.toHaveClass(/carets/);
+  expect(await state.evaluate(el => parseFloat(getComputedStyle(el).paddingLeft))).toBe(withCarets - 16);
+  await expect(page.locator(`${shown} .list-flow-guide`).first()).toBeVisible();
+  const violations = (await new AxeBuilder({ page }).include(`${shown} .list-view`)
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+    .disableRules(["color-contrast", "scrollable-region-focusable"]).analyze()).violations;
+  expect(violations).toEqual([]);
+});
+
+async function openFullFlowTree(page: Page) {
+  await open(page);
+  const base = "/list-full-flow-nesting", folder = `${base}/Outer`, nested = `${folder}/Nested`;
+  await page.evaluate(async ({ base, folder, nested }) => {
+    const { mockFiles } = await import("/src/lib/api/mock-fixtures.ts");
+    const entry = (path: string, kind: "file" | "directory") => ({ path, name: path.split("/").at(-1)!, kind, size: 1, modified: "" });
+    mockFiles[base] = [entry(folder, "directory")];
+    mockFiles[folder] = [entry(nested, "directory"), ...Array.from({ length: 80 }, (_, i) => entry(`${folder}/file-${String(i).padStart(3, "0")}.txt`, "file"))];
+    mockFiles[nested] = Array.from({ length: 30 }, (_, i) => entry(`${nested}/child-${String(i).padStart(3, "0")}.txt`, "file"));
+  }, { base, folder, nested });
+  await explorerCall(page, "return explorer.navigateTo(value)", base);
+  await toggle(page, folder);
+  return { base, folder, nested };
+}
+
+test("full-flow preserves nested selection and keyboard outcomes across narrow and tall viewports", async ({ page }) => {
+  const { base, folder, nested } = await openFullFlowTree(page);
+  await toggle(page, nested);
+  const selected = `${nested}/child-000.txt`;
+  await expect(row(page, selected)).toBeVisible();
+  await explorerCall(page, "explorer.selectPaths([value], value)", selected);
+  await row(page, folder).getByRole("button", { name: "Show all Outer items" }).click();
+  await expect(page.locator(`${shown} [data-card-scroll]`)).toHaveCount(0);
+  await expect(row(page, selected)).toHaveClass(/selected/);
+  await expect(row(page, selected)).toHaveAttribute("aria-level", "3");
+  await expect(page.locator(`${shown} .list-flow-guide`).first()).toBeVisible();
+  await row(page, folder).focus();
+  await page.keyboard.press("End");
+  const last = `${folder}/file-079.txt`;
+  await expect(row(page, last)).toBeVisible();
+  await expect(row(page, last)).toHaveClass(/selected/);
+  for (const size of [{ width: 650, height: 420 }, { width: 1100, height: 850 }]) {
+    await page.setViewportSize(size);
+    await row(page, last).focus();
+    await page.keyboard.press("Home");
+    await expect(row(page, folder)).toBeVisible();
+    await page.keyboard.press("End");
+    await expect(row(page, last)).toBeVisible();
+    await expect(row(page, last)).toHaveClass(/selected/);
+  }
+  expect(await explorerCall(page, "return explorer.currentPath")).toBe(base);
+});
+
+test("a saved full-flow choice uses a compact temporary peek and restores full flow on permanent reopen", async ({ page }) => {
+  const { folder, nested } = await openFullFlowTree(page);
+  await row(page, folder).getByRole("button", { name: "Show all Outer items" }).click();
+  await toggle(page, folder);
+  await expect(row(page, nested)).toHaveCount(0);
+  await explorerCall(page, "return explorer.setSpringPeeks([value])", folder);
+  await expect(page.locator(`${shown} [data-card-scroll]`)).toHaveCount(1);
+  await expect(row(page, folder).getByRole("button", { name: "Show all Outer items" })).toHaveCount(0);
+  await explorerCall(page, "return explorer.setSpringPeeks([])");
+  await expect(row(page, nested)).toHaveCount(0);
+  await toggle(page, folder);
+  await expect(row(page, nested)).toBeVisible();
+  await expect(page.locator(`${shown} [data-card-scroll]`)).toHaveCount(0);
 });

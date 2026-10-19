@@ -10,6 +10,7 @@
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import type { ListCardSpec, ListNavigationSnapshot } from "$lib/domain/list-column-flow";
   import { LIST_COLUMN_STRIDE, LIST_PADDING_X, LIST_SLOT_HEIGHT } from "$lib/domain/list-column-flow";
+  import { cardMoreCount } from "$lib/domain/list-cards";
   import { peekTreePositionLookup, type PeekRow } from "$lib/domain/folder-peek";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { getPaneIdContext } from "$lib/state/pane-context";
@@ -20,6 +21,7 @@
   import InlineNewFolder from "./InlineNewFolder.svelte";
   import EntryCell from "./EntryCell.svelte";
   import ListCard from "./ListCard.svelte";
+  import ListPeekState from "./ListPeekState.svelte";
   import ListCardGrip from "./ListCardGrip.svelte";
   import PeekOpenButton from "./PeekOpenButton.svelte";
   import type { FileEntry } from "$lib/domain/file";
@@ -46,6 +48,7 @@
   const cardGroupId = (entryIndex: number) => `${uid}-card-${entryIndex}`;
   const columns = useListColumns({
     getRows: () => explorer.detailRows,
+    getFullFlowPaths: () => explorer.listFullFlowPaths,
     getPreferredRows: path => explorer.listCardRows(path),
     getSpringPaths: () => explorer.springPeeks,
     getPinnedPaths: () => dialogStore.renamingEntry ? [dialogStore.renamingEntry.path] : [],
@@ -68,6 +71,15 @@
     revealCard: (path, smooth) => columns.revealCard(path, smooth),
   });
   const carets = $derived(explorer.peekCaretsShown);
+  const moreCount = (card: ListCardSpec) => cardMoreCount(card.end - card.start,
+    columns.previewRows(card.path) ?? card.visibleRows, columns.cardScrollTop(card.path));
+  function showAll(event: MouseEvent, path: string): void {
+    if (paneId) windowTabsManager.setActivePane(paneId);
+    // The button disappears with the compact body; its stable header retains
+    // keyboard focus so the next navigation key still belongs to this tree.
+    (event.currentTarget as HTMLElement).closest<HTMLElement>(".entry-item")?.focus({ preventScroll: true });
+    explorer.showAllListChildren(path);
+  }
   // With peek on, rows are a tree: levels, expanded folders and caret buttons
   // are not allowed on listbox options (axe aria-allowed-attr, nested-interactive).
   const tree = $derived(explorer.peekEnabled ? peekTreePositionLookup(explorer.detailRows) : null);
@@ -116,6 +128,11 @@
       <ListCardGrip name={row.entry.name} rows={columns.previewRows(card.path) ?? card.visibleRows} max={columns.gripMax(card.path)}
         dragging={columns.previewRows(card.path) !== null}
         onstart={(pointer, y) => columns.beginGrip(card.path, pointer, y)} onkey={(key) => columns.gripKey(card.path, key)} />
+      {#if moreCount(card) > 0 && !explorer.isSpringPeek(card.path)}
+        <button class="list-card-more" type="button" draggable={false}
+          aria-label={`Show all ${row.entry.name} items`} title="Show all items across columns"
+          onclick={(event) => showAll(event, card.path)}>+{moreCount(card)} more</button>
+      {/if}
     {/if}
   </EntryCell>
 {/snippet}
@@ -129,11 +146,22 @@
     <div class="list-canvas" bind:this={canvas} style:width="{columns.extent - LIST_PADDING_X * 2}px" style:height="{columns.rows * LIST_SLOT_HEIGHT}px">
       <!-- Plain each items, not {@const}/destructured deriveds: a rename input's
            blur can read its row after a commit has destroyed the slot. -->
+      {#each columns.fullFlowGuides as guide (`${guide.path}:${guide.column}`)}
+        <span class="list-flow-guide" aria-hidden="true"
+          style:left={`${guide.column * LIST_COLUMN_STRIDE + (carets ? 17.25 : 18.25) + guide.depth * 16}px`}
+          style:top={`${guide.top}px`} style:height={`${guide.height}px`}
+          style:background-image={`linear-gradient(to bottom, var(--accent), var(--divider) ${Math.min(64, guide.height * 0.6)}px)`}></span>
+      {/each}
       {#each columns.visibleItems as slot (slot.item.key)}
         <div class="list-slot list-place" class:list-card-box={!!slot.item.card} class:covered={columns.isCovered(slot.item.key)}
           data-motion-key={slot.item.key} data-column={slot.placement.column}
-          style:left="{slot.placement.column * LIST_COLUMN_STRIDE}px" style:top="{slot.placement.row * LIST_SLOT_HEIGHT}px">
-          {#if !slot.header}
+          data-row-path={slot.header?.entry.path ?? slot.state?.parentPath}
+          data-row-kind={slot.header ? slot.header.entry.kind === "directory" ? "directory" : "file" : slot.state ? "state" : undefined}
+          style:left="{slot.placement.column * LIST_COLUMN_STRIDE}px" style:top="{slot.placement.row * LIST_SLOT_HEIGHT}px"
+          style:--depth={slot.header?.depth ?? 0}>
+          {#if slot.state}
+            <ListPeekState row={slot.state} {carets} />
+          {:else if !slot.header}
             <InlineNewFolder {explorer} variant="list" columns />
           {:else}
             {@render entryRow(slot.header, slot.item.card)}
@@ -183,6 +211,7 @@
      live query can reach them. */
   .list-place { position: absolute; width: 260px; height: 30px; }
   .list-place.covered { visibility: hidden; }
+  .list-flow-guide { position: absolute; width: 1.5px; pointer-events: none; }
   .list-spring-bridge { position: absolute; z-index: 3; }
   .list-motion-layer { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
   /* Idle, the layer must not exist for hit testing: axe reads an empty
@@ -224,7 +253,7 @@
     outline: none;
   }
 
-  .list-view :global(.list-entry:where(:hover:not(:has(.list-card-grip:hover)))) {
+  .list-view :global(.list-entry:where(:hover:not(:has(.list-card-grip:hover, .list-card-more:hover)))) {
     background: var(--subtle-fill-secondary);
   }
 
@@ -336,6 +365,32 @@
     flex: 1;
     min-width: 0;
   }
+
+  .list-view :global(.list-entry:has(.peek-open) > [data-drag-name]) {
+    flex: 0 1 auto;
+  }
+
+  .list-card-more {
+    position: absolute;
+    bottom: -7px;
+    left: calc(50% + 30px);
+    height: 18px;
+    padding: 0 4px;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 10px;
+    line-height: 14px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    cursor: pointer;
+    z-index: 4;
+  }
+  .list-card-more:hover { background: var(--subtle-fill-tertiary); color: var(--text-primary); }
+  .list-card-more:focus-visible { outline: 2px solid var(--focus-stroke-outer); outline-offset: 1px; }
+
 
   /* While renaming, let the content-width rename box extend past the item over
      neighbouring columns instead of being clipped to its grid cell. The parent

@@ -36,3 +36,15 @@ export function pruneExpanded(expanded: ExpandedPaths, parent: string, entries: 
     return directories.has(paths.key(child));
   }));
 }
+
+
+/** Session-only full-flow choices, most recently chosen last, with the same
+ * bounded path memory as expansion membership. Collapsing does not reset a choice. */
+export function rememberFullFlowPath(paths: ReadonlySet<string>, path: string, cap = 500): ReadonlySet<string> {
+  const next = new Set(paths);
+  next.delete(path);
+  next.add(path);
+  const limit = Number.isFinite(cap) ? Math.max(0, Math.floor(cap)) : 500;
+  while (next.size > limit) next.delete(next.values().next().value!);
+  return next;
+}

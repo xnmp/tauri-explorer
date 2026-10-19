@@ -70,7 +70,7 @@ function cardRows(children: number, after: number, before = 0): PeekRows {
   return { rows, entryToRow: rows.map((_, i) => i), rowToEntry: rows.map((_, i) => i), groups: [{ path: open.path, depth: 0, startRow: start, endRow: start + children }] };
 }
 
-function mount(items: readonly FileEntry[] | PeekRows, size: { width: number; height: number }, commitCardRows?: (path: string, rows: number) => void) {
+function mount(items: readonly FileEntry[] | PeekRows, size: { width: number; height: number }, commitCardRows?: (path: string, rows: number) => void, fullFlowPaths: ReadonlySet<string> = new Set(), springPaths: readonly string[] = []) {
   const listeners = new Map<string, (event: unknown) => void>();
   let resize!: (entries: unknown[]) => void;
   vi.stubGlobal("ResizeObserver", class { constructor(cb: typeof resize) { resize = cb; } observe() {} disconnect() {} });
@@ -85,7 +85,7 @@ function mount(items: readonly FileEntry[] | PeekRows, size: { width: number; he
   let columns!: ReturnType<typeof useListColumns>;
   const dispose = client.effect_root(() => {
     const rows = "rows" in items ? items : flatPeekRows(flatPeekEntries("/d", items), false);
-    columns = create({ getRows: () => rows, getPreferredRows: () => undefined, getPinnedPaths: () => [], commitCardRows });
+    columns = create({ getRows: () => rows, getFullFlowPaths: () => fullFlowPaths, getSpringPaths: () => springPaths, getPreferredRows: () => undefined, getPinnedPaths: () => [], commitCardRows });
     columns.attach(element as unknown as HTMLElement);
   });
   client.flush(() => resize([{ contentRect: { width: size.width, height: size.height } }]));
@@ -351,4 +351,29 @@ describe("useListColumns scroll windowing", () => {
       mounted.dispose();
     });
   });
+});
+
+
+it("full-flow children virtualize sideways and reveal a previously unmounted entry", () => {
+  const view = mount(cardRows(5000, 0), { width: 600, height: 300 }, undefined, new Set(["/d/open"]));
+  try {
+    expect(view.columns.containsEntry(5000)).toBe(false);
+    expect(view.columns.visibleItems.length).toBeLessThan(100);
+    view.columns.revealEntry(5000);
+    client.flush();
+    expect(view.columns.containsEntry(5000)).toBe(true);
+    expect(view.element.scrollLeft).toBeGreaterThan(0);
+    expect(view.columns.visibleItems.some(slot => slot.header?.entryIndex === 5000)).toBe(true);
+    expect(view.columns.model.items.every(item => item.card === null)).toBe(true);
+  } finally { view.unmount(); }
+});
+
+
+it("a remembered full-flow folder still uses the compact spring geometry while only temporarily open", () => {
+  const view = mount(cardRows(80, 0, 3), { width: 600, height: 300 }, undefined, new Set(["/d/open"]), ["/d/open"]);
+  try {
+    expect(view.columns.model.items.find(item => item.card?.path === "/d/open")?.card).not.toBeNull();
+    expect(view.columns.model.items).toHaveLength(4);
+    expect(view.columns.layout.byIndex[3].row).toBe(3);
+  } finally { view.unmount(); }
 });

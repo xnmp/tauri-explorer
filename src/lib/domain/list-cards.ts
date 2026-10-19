@@ -4,7 +4,7 @@
  * scroll-edge and reveal policies shared by rendering, keyboard and motion.
  */
 import type { PeekRows } from "./folder-peek";
-import { columnFlow, LIST_COLUMN_GAP, LIST_COLUMN_STRIDE, LIST_COLUMN_WIDTH, LIST_SLOT_HEIGHT, type ListCardSpec, type ListFlowModel, type ListTopItem } from "./list-column-flow";
+import { columnFlow, LIST_COLUMN_GAP, LIST_COLUMN_STRIDE, LIST_COLUMN_WIDTH, LIST_SLOT_HEIGHT, type ListCardSpec, type ListFlowModel, type ListTopItem, type ListPlacement } from "./list-column-flow";
 
 export const LIST_CARD_DEFAULT_ROWS = 6;
 /** Scroll-edge fade mask height (CSS px). */
@@ -43,9 +43,10 @@ export interface ListStructure {
  * Top-level items in row order: the creation row, every depth-0 entry and, for an
  * expanded one, a card over its depth-0 group's rows (nested entries and Loading/
  * Empty/Error rows). Any entry row outside a card is a plain top-level item, so
- * every entry always has a slot owner.
+ * every entry always has a slot owner. Explicit full-flow groups emit their
+ * descendants, with depth and status identities intact, as ordinary slots.
  */
-export function buildListStructure(rows: PeekRows): ListStructure {
+export function buildListStructure(rows: PeekRows, fullFlowPaths: ReadonlySet<string> = new Set()): ListStructure {
   const entryCount = rows.entryToRow.length;
   const entryItem = new Int32Array(entryCount).fill(-1);
   const entryOffset = new Int32Array(entryCount).fill(-1);
@@ -55,10 +56,12 @@ export function buildListStructure(rows: PeekRows): ListStructure {
   for (let i = 0; i < rows.rows.length;) {
     const row = rows.rows[i];
     if (row.kind === "create") { items.push({ key: row.key, entryIndex: null, card: null }); i++; continue; }
-    if (row.kind !== "entry") { i++; continue; }
+    if (row.kind === "peek-state") {
+      items.push({ key: row.key, entryIndex: null, rowIndex: i, card: null }); i++; continue;
+    }
     const itemIndex = items.length;
     entryItem[row.entryIndex] = itemIndex;
-    const group = row.depth === 0 && row.expanded ? groups.get(row.entry.path) : undefined;
+    const group = row.depth === 0 && row.expanded && !fullFlowPaths.has(row.entry.path) ? groups.get(row.entry.path) : undefined;
     if (!group || group.startRow !== i + 1) { items.push({ key: row.key, entryIndex: row.entryIndex, card: null }); i++; continue; }
     const start = group.startRow, end = Math.max(start, Math.min(rows.rows.length, group.endRow));
     for (let j = start; j < end; j++) {
@@ -70,6 +73,47 @@ export function buildListStructure(rows: PeekRows): ListStructure {
     i = end;
   }
   return { items, cards, rowEntry: rows.rowToEntry, entryItem, entryOffset };
+}
+
+/** Nested guides in full flow span ordinary items and split at each column. */
+export interface ListFlowGuideSpan {
+  readonly path: string;
+  readonly depth: number;
+  readonly first: ListPlacement;
+  readonly last: ListPlacement;
+}
+export interface ListFlowGuide {
+  readonly path: string;
+  readonly depth: number;
+  readonly column: number;
+  readonly top: number;
+  readonly height: number;
+}
+
+/** Build once per model, never during a horizontal scroll. Compact descendants
+ * have no own slot and therefore cannot acquire a second guide here. */
+export function fullFlowGuideSpans(rows: PeekRows, model: ListFlowModel): readonly ListFlowGuideSpan[] {
+  const rowItem = new Int32Array(rows.rows.length).fill(-1);
+  model.items.forEach((item, index) => {
+    const row = item.entryIndex === null ? item.rowIndex : rows.entryToRow[item.entryIndex];
+    if (row !== undefined) rowItem[row] = index;
+  });
+  return rows.groups.flatMap(group => {
+    if (group.depth === 0 || group.endRow <= group.startRow) return [];
+    const first = rowItem[group.startRow], last = rowItem[group.endRow - 1];
+    if (first < 0 || last < 0) return [];
+    return [{ path: group.path, depth: group.depth, first: model.layout.byIndex[first], last: model.layout.byIndex[last] }];
+  });
+}
+
+/** Only mounted columns get guide DOM, including pinned editor columns. */
+export function fullFlowGuideSegments(spans: readonly ListFlowGuideSpan[], columns: readonly number[], R: number): readonly ListFlowGuide[] {
+  return spans.flatMap(span => columns.flatMap(column => {
+    if (column < span.first.column || column > span.last.column) return [];
+    const start = column === span.first.column ? span.first.row : 0;
+    const end = column === span.last.column ? span.last.row + span.last.slots : R;
+    return [{ path: span.path, depth: span.depth, column, top: start * LIST_SLOT_HEIGHT - 3, height: (end - start) * LIST_SLOT_HEIGHT - 5 }];
+  }));
 }
 
 /** A card's `fit` and `alone` (`SlotSpec`). */

@@ -1,15 +1,16 @@
 import { flushSync, getAbortSignal, onDestroy, tick, untrack } from "svelte";
 import { listColumnRange, listExtent, listRows, listWheelStep, LIST_COLUMN_STRIDE, LIST_COLUMN_WIDTH, LIST_PADDING_X, LIST_PADDING_Y, LIST_SLOT_HEIGHT, type ListCardSpec, type ListPlacement, type ListTopItem } from "$lib/domain/list-column-flow";
-import { buildListStructure, cardMaxRows, cardRevealTop, cardWheelConsumes, cardWindow, gripKeyRows, gripRows, sizeListModel, springCardFits, springCardWrapped, springWrapBridges } from "$lib/domain/list-cards";
+import { buildListStructure, fullFlowGuideSpans, fullFlowGuideSegments, cardMaxRows, cardRevealTop, cardWheelConsumes, cardWindow, gripKeyRows, gripRows, sizeListModel, springCardFits, springCardWrapped, springWrapBridges } from "$lib/domain/list-cards";
 import { rectDimToCSS } from "$lib/domain/zoom";
 import type { PeekRow, PeekRows } from "$lib/domain/folder-peek";
 
-/** One mounted top-level slot: its placement, item and (unless it is the
- * creation row) its header row. */
+/** One mounted column slot: its placement/item and its entry or status row.
+ * Only the creation sentinel has neither row. */
 export interface ListVisibleItem {
   readonly placement: ListPlacement;
   readonly item: ListTopItem;
   readonly header: Extract<PeekRow, { kind: "entry" }> | null;
+  readonly state: Extract<PeekRow, { kind: "peek-state" }> | null;
 }
 import { dropHover } from "$lib/state/drop-hover";
 import { createRafCoalescer } from "$lib/domain/raf-coalesce";
@@ -17,6 +18,8 @@ import { createRafCoalescer } from "$lib/domain/raf-coalesce";
 interface ListColumnsDeps {
   /** The pane's peek row model (`explorer.detailRows`): entries, pseudo-rows, creation row. */
   getRows: () => PeekRows;
+  /** User-selected top-level folders whose children use ordinary column slots. */
+  getFullFlowPaths?: () => ReadonlySet<string>;
   /** Remembered card height (visible rows) for an open top-level folder. */
   getPreferredRows: (path: string) => number | undefined;
   /** A drag's temporary peeks (#1242): the cards holding them keep their place,
@@ -39,8 +42,14 @@ export function useListColumns(deps: ListColumnsDeps) {
   let width = $state(0), height = $state(0), left = $state(0);
   const rows = $derived(listRows(height));
   // A row-count change re-sizes and re-flows; only a row-model change rebuilds items.
-  const structure = $derived(buildListStructure(deps.getRows()));
   const springPaths = $derived(deps.getSpringPaths?.() ?? []);
+  // A closed folder remembered as full-flow still springs into a compact card:
+  // only the drag's explicit temporary geometry can keep its held row stable.
+  const fullFlowPaths = $derived.by(() => {
+    const paths = deps.getFullFlowPaths?.();
+    return paths && springPaths.length ? new Set([...paths].filter(path => !springPaths.includes(path))) : paths;
+  });
+  const structure = $derived(buildListStructure(deps.getRows(), fullFlowPaths));
   const model = $derived(sizeListModel(structure, rows, deps.getPreferredRows, springCardFits(structure, deps.getRows(), springPaths, rows, deps.getPreferredRows)));
   const springBridges = $derived(springWrapBridges(model, springPaths));
   const layout = $derived(model.layout);
@@ -69,6 +78,8 @@ export function useListColumns(deps: ListColumnsDeps) {
     for (const index of pinnedEntries) columns.add(layout.byIndex[model.entryItem[index]].column);
     return [...columns].sort((a, b) => a - b);
   });
+  const guideSpans = $derived(fullFlowGuideSpans(deps.getRows(), model));
+  const guides = $derived(fullFlowGuideSegments(guideSpans, mountedColumns, rows));
   // One object per placement for the layout's lifetime: when sideways scrolling
   // changes the mounted range, slots that stay mounted keep their identity, so
   // the keyed each updates nothing but the columns that enter or leave. A new
@@ -81,7 +92,9 @@ export function useListColumns(deps: ListColumnsDeps) {
       if (!visible) {
         const item = model.items[placement.index];
         const header = item.entryIndex === null ? null : peekRows.rows[peekRows.entryToRow[item.entryIndex]] as ListVisibleItem["header"];
-        visible = { placement, item, header };
+        const row = item.rowIndex === undefined ? null : peekRows.rows[item.rowIndex];
+        const state = row?.kind === "peek-state" ? row : null;
+        visible = { placement, item, header, state };
         visibleObjects.set(placement, visible);
       }
       return visible;
@@ -353,6 +366,7 @@ export function useListColumns(deps: ListColumnsDeps) {
     get rows() { return rows; },
     get extent() { return extent; },
     get visibleItems() { return visibleItems; },
+    get fullFlowGuides() { return guides; },
     /** Regions inside a temporary card that started the next column (#1242). */
     get springBridges() { return springBridges; },
     /** Whether temporary card `path` started the next column. */

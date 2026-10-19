@@ -1174,6 +1174,13 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     get peekChange() { return peekChange; },
     /** Listing state of an open peek ("loading" until its first listing settles). */
     peekStatus(path: string) { return peek.listing(path)?.status; },
+    /** List folders explicitly expanded across the normal column flow. */
+    get listFullFlowPaths() { return peek.fullFlowPaths; },
+    showAllListChildren(path: string) {
+      if (coreState.viewMode !== "list" || capability === "none" || !peek.expanded.has(path)
+          || peek.temporary.includes(path) || peekTree.meta.get(path)?.depth !== 0) return;
+      peek.showAllListChildren(path);
+    },
     /** Remembered List card height (visible rows) for a top-level folder. */
     listCardRows(path: string) { return peek.cardRows(path); },
     setListCardRows(path: string, rows: number) {

@@ -4,7 +4,7 @@ import { buildPeekRows, flattenPeekEntries, type PeekListing } from "$lib/domain
 import { flatPeekEntries, flatPeekRows } from "$lib/domain/folder-peek-flat";
 import { columnFlow, resolveListMove, LIST_COLUMN_STRIDE, LIST_COLUMN_WIDTH, LIST_SLOT_HEIGHT, type ListFlowModel } from "$lib/domain/list-column-flow";
 import {
-  buildListModel, buildListStructure, sizeListModel, cardFades, cardMaxRows, cardMoreCount, cardRevealTop, cardVisibleRows, cardWheelConsumes,
+  buildListModel, buildListStructure, sizeListModel, fullFlowGuideSpans, fullFlowGuideSegments, cardFades, cardMaxRows, cardMoreCount, cardRevealTop, cardVisibleRows, cardWheelConsumes,
   cardWindow, gripKeyRows, gripRows, rememberCardRows, springCardFits, springWrapBridges, LIST_CARD_DEFAULT_ROWS,
 } from "$lib/domain/list-cards";
 
@@ -540,4 +540,75 @@ describe("List moves with cards", () => {
     const empty = buildListModel(flatPeekRows(flatPeekEntries(ROOT, []), false), 4, () => undefined);
     expect(resolveListMove(key, empty, -1, 500)).toEqual({ kind: "handled" });
   });
+});
+
+
+describe("full-flow List peeks (#1324)", () => {
+  it("flows every descendant into normal columns and keeps nested entry mappings", () => {
+    const { tree, rows } = rowsFor([D("Career"), F("after.txt")], ["Career", "Career/Applications"]);
+    const structure = buildListStructure(rows, new Set(["/r/Career"]));
+    const model = sizeListModel(structure, 6, () => 2);
+    expect(model.items).toHaveLength(rows.rows.length);
+    expect(model.items.every(item => item.card === null)).toBe(true);
+    expect(model.layout.columns.length).toBeGreaterThan(2);
+    tree.entries.forEach((_entry, index) => {
+      const item = model.items[model.entryItem[index]];
+      expect(item.entryIndex).toBe(index);
+      expect(model.entryOffset[index]).toBe(-1);
+    });
+    const deep = tree.indices.get("/r/Career/Applications/tracker.xlsx")!;
+    expect(model.items[model.entryItem[deep]].entryIndex).toBe(deep);
+    expect(model.layout.byIndex[model.entryItem[tree.entries.length - 2]].column).toBeGreaterThan(0);
+    expect(resolveListMove({ key: "End", ctrlKey: false, metaKey: false, shiftKey: false, altKey: false }, model, 0, 500)).toMatchObject({ kind: "focus", index: tree.entries.length - 1 });
+  });
+
+  it("retains empty/error status rows as ordinary identified slots in full flow", () => {
+    const listing = (path: string): PeekListing => path === "/r/Career"
+      ? { status: "loaded", entries: [D("Career/Empty"), D("Career/Denied")] }
+      : path.endsWith("Denied") ? { status: "error", entries: [], error: "permission denied" }
+      : { status: "loaded", entries: [] };
+    const { rows } = rowsFor([D("Career"), F("after.txt")], ["Career", "Career/Empty", "Career/Denied"], listing);
+    const model = sizeListModel(buildListStructure(rows, new Set(["/r/Career"])), 4, () => 1);
+    expect(model.items.map(item => item.key)).toEqual(rows.rows.map(row => row.key));
+    for (const [index, row] of rows.rows.entries()) {
+      if (row.kind !== "peek-state") continue;
+      expect(model.items[index]).toMatchObject({ rowIndex: index, entryIndex: null, card: null });
+      expect(model.layout.byIndex[index].slots).toBe(1);
+    }
+  });
+
+  it("full flow applies to the chosen top-level group while other cards retain their grip height", () => {
+    const { rows } = rowsFor([D("Career"), D("Codex")], ["Career", "Codex"]);
+    const model = sizeListModel(buildListStructure(rows, new Set(["/r/Career"])), 10, () => 3);
+    expect(model.items.filter(item => item.card).map(item => [item.card!.path, item.card!.visibleRows]))
+      .toEqual([["/r/Codex", 3]]);
+    expect(model.items.filter(item => item.key.startsWith("entry:/r/Career/")).length).toBe(KIDS.Career.length);
+  });
+});
+
+
+it("horizontal navigation over a full-flow status chooses the nearest selectable row", () => {
+  const listing = (path: string): PeekListing => ({ status: "loaded", entries: path === "/r/Career"
+    ? [D("Career/Empty"), F("Career/after.txt")] : [] });
+  const { rows } = rowsFor([F("a"), F("b"), F("c"), F("d"), D("Career")], ["Career", "Career/Empty"], listing);
+  const model = sizeListModel(buildListStructure(rows, new Set(["/r/Career"])), 4, () => 1);
+  expect(resolveListMove({ key: "ArrowRight", ctrlKey: false, metaKey: false, shiftKey: false, altKey: false }, model, 2, 500))
+    .toMatchObject({ kind: "focus", index: 5 });
+});
+
+
+it("full-flow nested guides split across columns without covering later siblings", () => {
+  const listing = (path: string): PeekListing => ({ status: "loaded", entries: path === "/r/Career"
+    ? [D("Career/Nested"), F("Career/after.txt")]
+    : path === "/r/Career/Nested" ? Array.from({ length: 9 }, (_, index) => F(`Career/Nested/${index}`)) : [] });
+  const { rows } = rowsFor([D("Career"), D("Codex")], ["Career", "Career/Nested", "Codex"], listing);
+  const model = sizeListModel(buildListStructure(rows, new Set(["/r/Career"])), 4, () => 2);
+  const spans = fullFlowGuideSpans(rows, model);
+  expect(spans.map(span => span.path)).toEqual(["/r/Career/Nested"]);
+  expect(fullFlowGuideSegments(spans, [0, 1, 2], 4)).toEqual([
+    { path: "/r/Career/Nested", depth: 1, column: 0, top: 57, height: 55 },
+    { path: "/r/Career/Nested", depth: 1, column: 1, top: -3, height: 115 },
+    { path: "/r/Career/Nested", depth: 1, column: 2, top: -3, height: 85 },
+  ]);
+  expect(fullFlowGuideSegments(spans, [1], 4)).toHaveLength(1);
 });

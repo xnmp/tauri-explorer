@@ -179,10 +179,12 @@ import { openFile } from "$lib/api/open";
   });
   const previewLoading = $derived(content.kind === "loading" ||
     ((content.kind === "image" || content.kind === "audio-cover") && content.held));
-  // Reserve the selected image's metadata geometry while it loads, without
-  // attributing a held image's source dimensions to the new selection.
-  const showResolutionRow = $derived(!!previewResolution ||
-    (previewLoading && (selectedKind === "image" || selectedKind === "audio-cover")));
+  // Image metadata keeps its geometry while loading and when source pixels
+  // are unavailable, without attributing held dimensions to the new selection.
+  const showResolutionRow = $derived(
+    (selectedKind === "image" || selectedKind === "audio-cover") &&
+    (previewLoading || content.kind === "image" || content.kind === "audio-cover"),
+  );
   // Defer the spinner: a preview that resolves in under 150ms shouldn't flash
   // a spinner. Show it only once loading has been pending long enough to read.
   let showPreviewSpinner = $state(false);

@@ -407,10 +407,17 @@ test("a drop onto a panel's surface moves the file into its folder", async ({ pa
   await expect(panel(page, P("Career"))).toHaveClass(targeted);
   await expect(tile(page, P("Career"))).toHaveClass(targeted);
   await expect(page.locator(`${shown} .content.drop-target`)).toHaveCount(0);
-  // Over a panel tile the panel's feedback retires (the tile is its own target).
+  // Files now target their permanent peek parent (#1323), with one panel
+  // highlight. Directory tiles retain their own destination.
   await drag(`${shown} .tile-panel .entry-item[data-path="${P("Career/headshot.jpg")}"]`, ["dragenter", "dragover"]);
+  await expect(panel(page, P("Career"))).toHaveClass(targeted);
+  await expect(tile(page, P("Career"))).not.toHaveClass(targeted);
+  await expect(child(page, P("Career/headshot.jpg"))).not.toHaveClass(targeted);
+  await expect(page.locator(`${shown} .drop-target[data-path="${P("Career")}"]`)).toHaveCount(1);
+  await drag(`${shown} .tile-panel .entry-item[data-path="${P("Career/Applications")}"]`, ["dragenter", "dragover"]);
   await expect(panel(page, P("Career"))).not.toHaveClass(targeted);
   await expect(tile(page, P("Career"))).not.toHaveClass(targeted);
+  await expect(child(page, P("Career/Applications"))).toHaveClass(targeted);
   await drag(surface, ["dragover", "drop"]);
   await expect(page.locator(".toast").filter({ hasText: /Moved/ })).toHaveCount(1);
   expect(await page.evaluate(async () => (await import("/src/lib/api/mock-fixtures.ts")).mockFiles["/folder-peek-tiles/Career"].map(entry => entry.name))).toContain("bot_pat.txt");

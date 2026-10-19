@@ -104,12 +104,14 @@ export function listWheelStep(
   return { consume: true, apply, carry: total - apply };
 }
 
-/** One top-level slot owner: a plain row, the creation sentinel, or a card. */
+/** One column-slot owner: an entry, a status/creation row, or a compact card. */
 export interface ListTopItem {
   /** Stable identity across layouts (the row-model key). */
   readonly key: string;
-  /** The header entry's index; null for the creation sentinel. */
+  /** The entry's index; null for status and creation rows. */
   readonly entryIndex: number | null;
+  /** Peek row identity for a full-flow status slot (no selectable entry). */
+  readonly rowIndex?: number;
   /** Present for an open top-level folder. */
   readonly card: ListCardSpec | null;
 }
@@ -129,7 +131,7 @@ export interface ListFlowModel {
   readonly rowEntry: readonly (number | null)[];
   /** Entry index -> top-level item index. */
   readonly entryItem: Int32Array;
-  /** Entry index -> offset within its card's content, or -1 for a top-level row. */
+  /** Entry index -> offset within its compact card, or -1 for an ordinary slot. */
   readonly entryOffset: Int32Array;
 }
 
@@ -168,9 +170,11 @@ function entryAtSlot(model: ListFlowModel, column: number, row: number, scrollTo
   const owner = model.layout.atSlot(column, clamped) ?? last;
   const item = model.items[owner.index];
   if (item.entryIndex === null) {
-    // The creation sentinel holds a slot but is not an entry.
-    const next = spans.find(span => model.items[span.index].entryIndex !== null);
-    return next ? model.items[next.index].entryIndex : null;
+    // Creation/status rows hold a slot but cannot be selected. Choose the
+    // nearest entry in this column rather than jumping to its first entry.
+    const nearest = spans.filter(span => model.items[span.index].entryIndex !== null)
+      .reduce<ListPlacement | undefined>((best, span) => !best || Math.abs(span.row - clamped) < Math.abs(best.row - clamped) ? span : best, undefined);
+    return nearest ? model.items[nearest.index].entryIndex : null;
   }
   const card = item.card;
   if (!card || clamped === owner.row || card.visibleRows <= 0) return item.entryIndex;

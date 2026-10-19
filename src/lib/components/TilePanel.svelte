@@ -17,6 +17,7 @@
   } from "$lib/domain/tile-panels";
   import type { useItemInteractions } from "$lib/composables/use-item-interactions.svelte";
   import { createSurfaceDropFeedback, surfaceDropPath } from "$lib/composables/surface-drop-feedback";
+  import { positionDropFeedback } from "$lib/state/file-drop-targets.svelte";
   import FileIcon from "./FileIcon.svelte";
   import TilePanelGrip from "./TilePanelGrip.svelte";
   import TileSurface from "./TileSurface.svelte";
@@ -81,12 +82,14 @@
   // feedback (no leave fires for it: the tile is inside).
   const onSurface = (event: Event) => surfaceDropPath(event.target, folder.path) !== null;
   const surfaceDrop = createSurfaceDropFeedback(() => interactions, event => onSurface(event) ? folder : null);
+  let panelElement = $state<HTMLElement>();
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -- a pointer drop and context-menu surface spanning the label, scroll area (the rowgroup) and grip; the folder's own tile is its keyboard path. -->
 <div class="tile-panel peek-drop-target" data-path={folder.path} data-panel-owner={folder.path}
   class:above={box.side === "above"} class:stacked={box.side === "stacked"}
-  class:drop-target={interactions.isDropTarget(folder.path)}
+  class:drop-target={interactions.isDropTarget(folder.path) || positionDropFeedback.matches(panelElement)}
+  bind:this={panelElement}
   style:left="{box.x0}px" style:top="{box.top}px" style:width="{box.width}px" style:height="{box.height}px"
   style:opacity={box.opacity < 1 ? box.opacity : undefined}
   ondragenter={surfaceDrop.over} ondragover={surfaceDrop.over} ondragleave={surfaceDrop.leave} ondrop={surfaceDrop.drop}

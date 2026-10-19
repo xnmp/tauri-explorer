@@ -8,6 +8,7 @@ import type { createFolderPeekSession } from "./folder-peek-session.svelte";
 
 const emptySides: ReadonlyMap<string, BandSide> = new Map();
 const noPaths: readonly string[] = [];
+const noFullFlow: ReadonlySet<string> = new Set();
 export function createFolderPeekState(windows: boolean, initialExpanded: readonly string[] = []) {
   let session = $state.raw<ReturnType<typeof createFolderPeekSession> | null>(null);
   let loading: Promise<void> | undefined;
@@ -52,6 +53,10 @@ export function createFolderPeekState(windows: boolean, initialExpanded: readonl
       else remembered = pruneExpanded(remembered, parent, entries, windows);
     },
     listing(path: string) { return session?.listing(path); },
+    get fullFlowPaths() { return session?.fullFlowPaths ?? noFullFlow; },
+    get columnPaths() { return session?.columnPaths ?? noFullFlow; },
+    showAllListChildren(path: string) { if (!disposed) session?.showAllListChildren(path); },
+    showColumnListChildren(path: string) { if (!disposed) session?.showColumnListChildren(path); },
     cardRows(path: string) { return session?.cardRows(path); },
     setCardRows(path: string, rows: number) { session?.setCardRows(path, rows); },
     panelHeight(path: string) { return session?.panelHeight(path); },

@@ -12,9 +12,11 @@
   import type { FileEntry } from "$lib/domain/file";
   import type { PeekGroup, PeekRow } from "$lib/domain/folder-peek";
   import { LIST_SLOT_HEIGHT, type ListCardSpec } from "$lib/domain/list-column-flow";
-  import { cardFades, cardMoreCount, LIST_CARD_FADE } from "$lib/domain/list-cards";
+  import { cardFades, LIST_CARD_FADE } from "$lib/domain/list-cards";
   import type { useItemInteractions } from "$lib/composables/use-item-interactions.svelte";
   import { createSurfaceDropFeedback, surfaceDropPath } from "$lib/composables/surface-drop-feedback";
+
+  import ListPeekState from "./ListPeekState.svelte";
 
   type EntryRow = Extract<PeekRow, { kind: "entry" }>;
 
@@ -42,7 +44,6 @@
   const content = $derived(card.end - card.start);
   const visible = $derived(previewRows ?? card.visibleRows);
   const fades = $derived(cardFades(content, visible, scrollTop));
-  const more = $derived(cardMoreCount(content, visible, scrollTop));
   // Nested levels get only a guide line, centred under their header's caret
   // (or, with carets off, its folder icon).
   const guides = $derived(groups.filter(group => group.depth > 0 && group.startRow >= card.start && group.endRow <= card.end && group.endRow > group.startRow));
@@ -108,16 +109,12 @@
           {#if slot.row.kind === "entry"}
             {@render row(slot.row)}
           {:else if slot.row.kind === "peek-state"}
-            <!-- A tree group owns only treeitems (Details wraps this status in a gridcell). -->
-            <div class="list-peek-state peek-drop-target" class:carets data-path={slot.row.parentPath} role="treeitem" aria-level={slot.row.depth + 1} aria-selected="false">
-              <span role="status">{slot.row.message}</span>
-            </div>
+            <ListPeekState row={slot.row} {carets} />
           {/if}
         </div>
       {/each}
     </div>
   </div>
-  {#if more > 0}<span class="list-card-more" aria-hidden="true">+{more} more</span>{/if}
 </div>
 
 <style>
@@ -136,30 +133,4 @@
   .list-card-content { position: relative; }
   .list-row { position: absolute; left: 0; right: 0; height: 30px; }
   .list-guide { position: absolute; width: 1.5px; pointer-events: none; }
-  .list-peek-state {
-    height: 26px;
-    margin: 2px 0;
-    display: flex;
-    align-items: center;
-    padding-left: calc(11px + var(--depth) * 16px);
-    color: var(--text-tertiary);
-    font-size: 13px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  /* Aligned with the icons of the rows at its depth. */
-  .list-peek-state.carets { padding-left: calc(27px + var(--depth) * 16px); }
-  .list-card-more {
-    position: absolute;
-    bottom: -5px;
-    left: calc(50% + 30px);
-    font-size: 10px;
-    line-height: 14px;
-    color: var(--text-tertiary);
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-    pointer-events: none;
-    z-index: 4;
-  }
 </style>

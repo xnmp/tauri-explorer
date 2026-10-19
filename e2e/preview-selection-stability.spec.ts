@@ -8,31 +8,38 @@
  */
 import { test, expect, type Page } from "./fixtures";
 import { applySettingsAndReload, waitForEntries } from "./helpers";
+import type { MockControl } from "../src/lib/api/mock-control";
 
 type Dock = "right" | "bottom" | "top";
 
 /** photo1 and photo2 get distinct 3:2 images; photo2's read takes `delay` ms or fails. */
-async function installImages(page: Page, delay: number, failSecond = false): Promise<void> {
-  await page.addInitScript(({ delay, failSecond }) => {
-    const image = (color: string) => {
+async function installImages(page: Page, delay: number, failSecond = false, options: { firstDelay?: number; secondSize?: [number, number]; unknownSource?: boolean } = {}): Promise<void> {
+  const { firstDelay = 0, secondSize = [1536, 1024], unknownSource = false } = options;
+  await page.addInitScript(({ delay, failSecond, firstDelay, secondSize, unknownSource }) => {
+    const image = (color: string, width = 1536, height = 1024) => {
       const canvas = document.createElement("canvas");
-      canvas.width = 1536;
-      canvas.height = 1024;
+      canvas.width = width;
+      canvas.height = height;
       const context = canvas.getContext("2d")!;
       context.fillStyle = color;
       context.fillRect(0, 0, canvas.width, canvas.height);
       return canvas.toDataURL("image/png");
     };
     const first = image("#4a7cff");
-    const second = image("#ff7c4a");
-    ((globalThis as { __mockControl?: { previewReadImage?: (path: string) => string | Promise<string> } }).__mockControl ??= {}).previewReadImage = (path) => {
-      if (!path.includes("photo2")) return first;
+    const second = image("#ff7c4a", secondSize[0], secondSize[1]);
+    const control = ((globalThis as { __mockControl?: MockControl }).__mockControl ??= {});
+    if (unknownSource) {
+      control.previewImageSource = path => path.includes("photo2") ? { kind: "rendition", path } : { kind: "original" };
+      control.imageResolution = () => null;
+    }
+    control.previewReadImage = (path) => {
+      if (!path.includes("photo2")) return firstDelay ? new Promise<string>(resolve => setTimeout(() => resolve(first), firstDelay)) : first;
       return new Promise((resolve, reject) => setTimeout(() => (failSecond ? reject(new Error("unreadable")) : resolve(second)), delay));
     };
-  }, { delay, failSecond });
+  }, { delay, failSecond, firstDelay, secondSize, unknownSource });
 }
 
-async function open(page: Page, dock: Dock): Promise<void> {
+async function configurePreview(page: Page, dock: Dock): Promise<void> {
   await page.setViewportSize({ width: 1280, height: 1000 });
   await page.goto("/?path=/home/user/Pictures");
   await applySettingsAndReload(page, {
@@ -44,6 +51,10 @@ async function open(page: Page, dock: Dock): Promise<void> {
     pluginsEnabled: { demo: true },
   });
   await waitForEntries(page);
+}
+
+async function open(page: Page, dock: Dock): Promise<void> {
+  await configurePreview(page, dock);
   await page.locator(".entry-item", { hasText: "photo1.jpg" }).first().click();
   await expect(page.locator(".preview-pane img.preview-image")).toBeVisible();
   await expect.poll(() => page.locator(".preview-pane img.preview-image").evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(1536);
@@ -79,7 +90,42 @@ test.describe("Preview stability when the selection changes", () => {
       await expect(page.locator(".preview-pane img.preview-image")).not.toHaveAttribute("src", before!);
       await expect(page.locator(".preview-pane .preview-content")).toHaveAttribute("aria-busy", "false");
     });
+
+    test(`an unavailable source header keeps image geometry in the ${dock} dock`, async ({ page }) => {
+      await installImages(page, 120, false, { unknownSource: true });
+      await open(page, dock);
+      const pane = page.locator(".preview-pane");
+      const before = await pane.locator("img.preview-image").getAttribute("src");
+      const frames = await framesWhileSelectingSecond(page);
+      expect(frames.filter(frame => frame === null), `frames without an image: ${JSON.stringify(frames)}`).toEqual([]);
+      expect(new Set(frames).size, `image boxes: ${JSON.stringify([...new Set(frames)])}`).toBe(1);
+      await expect(pane.locator("img.preview-image")).not.toHaveAttribute("src", before!);
+      await expect(pane.locator(".preview-content")).toHaveAttribute("aria-busy", "false");
+      await expect(pane.locator(".info-row", { hasText: "Pixels" }).locator(".info-value")).toHaveText("—");
+    });
   }
+
+  test("pending images reserve pixel metadata without showing the previous selection's dimensions", async ({ page }) => {
+    await installImages(page, 1200, false, { firstDelay: 1200, secondSize: [300, 400] });
+    await configurePreview(page, "right");
+    const pane = page.locator(".preview-pane");
+    const pixels = pane.locator(".info-row", { hasText: "Pixels" }).locator(".info-value");
+    await page.locator(".entry-item", { hasText: "photo1.jpg" }).first().click();
+    await expect(pane.locator(".preview-content")).toHaveAttribute("aria-busy", "true");
+    await expect(pixels).toHaveText("—");
+    await expect(pane.locator("img.preview-image")).toHaveCount(0);
+    await expect(pixels).toHaveText("1536 × 1024");
+    const before = await pane.locator("img.preview-image").getAttribute("src");
+
+    await page.locator(".entry-item", { hasText: "photo2.jpg" }).first().click();
+    await expect(pane.locator(".preview-filename")).toHaveText("photo2.jpg");
+    await expect(pane.locator(".preview-content")).toHaveAttribute("aria-busy", "true");
+    await expect(pixels).toHaveText("—");
+    await expect(pane.locator("img.preview-image")).toHaveAttribute("src", before!);
+    if (process.env.CAPTURE_EVIDENCE) await page.screenshot({ path: "screenshots/fix/peek/1299-pending-source-pixels.png" });
+    await expect(pixels).toHaveText("300 × 400");
+    await expect(pane.locator(".preview-content")).toHaveAttribute("aria-busy", "false");
+  });
 
   test("a slow next image shows the spinner over the previous one", async ({ page }) => {
     await installImages(page, 1200);
@@ -101,6 +147,7 @@ test.describe("Preview stability when the selection changes", () => {
     const pane = page.locator(".preview-pane");
     await expect(pane.locator(".preview-error-text")).toHaveText("Cannot preview image");
     await expect(pane.locator("img.preview-image")).toHaveCount(0);
+    await expect(pane.locator(".info-row", { hasText: "Pixels" })).toHaveCount(0);
   });
 
   test("switching from an image to a text file does not keep the image", async ({ page }) => {
@@ -116,6 +163,7 @@ test.describe("Preview stability when the selection changes", () => {
     await page.locator(".entry-item", { hasText: "itinerary.txt" }).first().click();
     await expect(page.locator(".preview-pane .preview-text")).toContainText("Day 1: beach");
     await expect(page.locator(".preview-pane img.preview-image")).toHaveCount(0);
+    await expect(page.locator(".preview-pane .info-row", { hasText: "Pixels" })).toHaveCount(0);
   });
 });
 

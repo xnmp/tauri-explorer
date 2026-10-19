@@ -50,3 +50,16 @@ export function createFileDropTargets() {
 }
 
 export const fileDropTargets = createFileDropTargets();
+
+/** Position-based feedback owns one concrete surface. Components include this
+ * identity in their class binding so local drag state cannot erase it during
+ * a reactive update, or light up other surfaces naming the same folder. */
+export function createPositionDropFeedback() {
+  let element = $state.raw<HTMLElement | null>(null);
+  return {
+    matches(candidate: HTMLElement | null | undefined): boolean { return !!candidate && candidate === element; },
+    set(next: HTMLElement | null): void { element = next; },
+  };
+}
+
+export const positionDropFeedback = createPositionDropFeedback();

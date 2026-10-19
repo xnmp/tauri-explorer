@@ -2,7 +2,7 @@
 import type { FileEntry } from "$lib/domain/file";
 import { classifyPreview, shouldHoldPreviewImage, type PreviewKind } from "$lib/domain/preview-kind";
 import { parseCsvPreview, type CsvPreview } from "$lib/domain/csv-preview";
-import { highlightCode } from "$lib/domain/syntax-highlight";
+import { highlightCode, hasLanguageSupport } from "$lib/domain/syntax-highlight";
 import { renderMarkdown } from "$lib/domain/markdown";
 import { readTextFile, fetchDirectory } from "$lib/api/files";
 import { listArchiveContents } from "$lib/api/archive";
@@ -10,6 +10,8 @@ import { getVideoThumbnailData } from "$lib/api/thumbnails";
 import { extractError } from "$lib/api/common";
 import { logFrontendDiagnostic } from "$lib/api/frontend-log";
 import { decodeImage, loadPreviewImage, type PreviewImageOptions, type PreviewImageReady } from "./preview-image";
+import { previewSourceSize } from "$lib/domain/preview-rendition";
+import type { ImageResolution } from "$lib/domain/image-resolution";
 import { createPreviewLifetime, type PreviewRequest } from "./preview-lifetime";
 import { createPreviewImageCache } from "./preview-image-cache";
 import { createFullResolutionUpgrade, type ShownRendition } from "./preview-resolution";
@@ -19,6 +21,7 @@ interface Rendition extends ShownRendition { readonly request: PreviewRequest; r
 export type ImageContent = {
   readonly kind: "image" | "audio-cover";
   readonly url: string;
+  readonly sourceSize: ImageResolution | null;
   readonly note: string | null;
   readonly held: boolean;
   readonly rendition: Rendition | null;
@@ -60,7 +63,7 @@ function textContent(file: FileEntry, kind: PreviewKind, text: string): TextCont
     try { return { kind: "markdown", html: renderMarkdown(displayText), ...truncation }; }
     catch { /* Keep the existing highlighted/plain-text fallback. */ }
   }
-  if (displayText.length < 50_000) {
+  if (displayText.length < 50_000 && hasLanguageSupport(file.name)) {
     try { return { kind: "code", html: highlightCode(displayText, file.name), ...truncation }; }
     catch { /* Plain text remains previewable if highlighting fails. */ }
   }
@@ -93,6 +96,7 @@ export function createPreviewContentLoader<PdfViewer, VideoViewer>(
       ? { path: file.path, cacheBust: bust, owner: imageOwner(request), request, file } : null;
     fullResolution.showing(rendition);
     return { kind: "image", url: image.url, held: false, rendition,
+      sourceSize: previewSourceSize(image.resolution, image.sourceSize ?? null, { width: image.decoded.naturalWidth, height: image.decoded.naturalHeight }),
       note: image.viaBackend && /\.avif$/i.test(file.name) ? "AVIF fallback preview shows the first frame." : null };
   }
   function remember(request: PreviewRequest, file: FileEntry, bust: string, options: PreviewImageOptions, image: PreviewImageReady): ImageContent | null {
@@ -161,7 +165,7 @@ export function createPreviewContentLoader<PdfViewer, VideoViewer>(
         if (!lifetime.adoptBlob(request, result.data)) return null;
         try {
           await decodeImage(result.data);
-          return { kind, url: result.data, note: null, held: false, rendition: null };
+          return { kind, url: result.data, sourceSize: null, note: null, held: false, rendition: null };
         } catch (error) {
           if (!lifetime.isCurrent(request)) return null;
           lifetime.releaseBlob(request, result.data);

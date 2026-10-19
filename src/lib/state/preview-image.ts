@@ -21,6 +21,8 @@
 import { isTauri } from "$lib/api/common";
 import { readImageAsBlobUrl } from "$lib/api/files";
 import { logFrontendDiagnostic } from "$lib/api/frontend-log";
+import { getImageResolution } from "$lib/api/image-resolution";
+import type { ImageResolution } from "$lib/domain/image-resolution";
 import { getPreviewImage } from "$lib/api/thumbnails";
 import { SKIPPED, type LatestOnlyRunner } from "$lib/domain/latest-only";
 import { mayHaveRendition, type PreviewImageResolution } from "$lib/domain/preview-rendition";
@@ -43,6 +45,8 @@ export interface PreviewImageReady {
   readonly resolution: PreviewImageResolution;
   /** The off-screen element that decoded it; a cache keeps it referenced (#1014). */
   readonly decoded: HTMLImageElement;
+  /** Original source header pixels; absent for original loads, null if unavailable. */
+  readonly sourceSize?: ImageResolution | null;
 }
 
 export type PreviewImageLoad =
@@ -182,7 +186,12 @@ async function loadRendition(
     return null;
   }
   if (answer.data.kind === "original") return null;
-  return loadRenditionFile(answer.data.path, cacheBust, owner);
+  const [image, sourceSize] = await Promise.all([
+    loadRenditionFile(answer.data.path, cacheBust, owner),
+    getImageResolution(path).catch(() => null),
+  ]);
+  if (!owner.isCurrent()) return STALE;
+  return image?.status === "ready" ? { ...image, sourceSize } : image;
 }
 
 /**

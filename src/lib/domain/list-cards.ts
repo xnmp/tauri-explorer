@@ -4,7 +4,7 @@
  * scroll-edge and reveal policies shared by rendering, keyboard and motion.
  */
 import type { PeekRows } from "./folder-peek";
-import { columnFlow, LIST_COLUMN_GAP, LIST_COLUMN_STRIDE, LIST_COLUMN_WIDTH, LIST_SLOT_HEIGHT, type ListCardSpec, type ListFlowModel, type ListTopItem } from "./list-column-flow";
+import { columnFlow, LIST_COLUMN_GAP, LIST_COLUMN_STRIDE, LIST_COLUMN_WIDTH, LIST_SLOT_HEIGHT, type ListCardSpec, type ListFlowModel, type ListTopItem, type ListPlacement } from "./list-column-flow";
 
 export const LIST_CARD_DEFAULT_ROWS = 6;
 /** Scroll-edge fade mask height (CSS px). */
@@ -14,7 +14,7 @@ export const LIST_CARD_ROWS_CAP = 500;
 
 const wholeRows = (value: number) => (Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0);
 
-/** A card never takes more than 70% of a column (so it always fits one). */
+/** A compact, grip-sized card takes at most 70% of a column. */
 export const cardMaxRows = (R: number): number => Math.max(1, Math.floor(0.7 * (Number.isFinite(R) ? R : 4)));
 
 /** Visible rows = min(content, preferred) with preferred clamped to 1..floor(0.7R);
@@ -23,6 +23,19 @@ export function cardVisibleRows(content: number, preferred: number, R: number): 
   const rows = wholeRows(content);
   const wanted = Number.isFinite(preferred) ? Math.round(preferred) : LIST_CARD_DEFAULT_ROWS;
   return Math.min(rows, Math.max(1, Math.min(wanted, cardMaxRows(R))));
+}
+
+/** More first fills one column when the descendants would overflow it. A
+ * second More releases the group into the ordinary multi-column flow. */
+export function listMoreExpansion(content: number, R: number, column: boolean): "column" | "full" {
+  return !column && wholeRows(content) > columnCardRows(R) ? "column" : "full";
+}
+
+const columnCardRows = (R: number): number => Math.max(1, (Number.isFinite(R) ? Math.floor(R) : 4) - 1);
+
+/** The column stage includes its folder header in the column's height. */
+export function listCardVisibleRows(content: number, preferred: number, R: number, column: boolean): number {
+  return column ? Math.min(wholeRows(content), columnCardRows(R)) : cardVisibleRows(content, preferred, R);
 }
 
 /** A top-level item before sizing: a card's span without its visible rows. */
@@ -43,9 +56,10 @@ export interface ListStructure {
  * Top-level items in row order: the creation row, every depth-0 entry and, for an
  * expanded one, a card over its depth-0 group's rows (nested entries and Loading/
  * Empty/Error rows). Any entry row outside a card is a plain top-level item, so
- * every entry always has a slot owner.
+ * every entry always has a slot owner. Explicit full-flow groups emit their
+ * descendants, with depth and status identities intact, as ordinary slots.
  */
-export function buildListStructure(rows: PeekRows): ListStructure {
+export function buildListStructure(rows: PeekRows, fullFlowPaths: ReadonlySet<string> = new Set()): ListStructure {
   const entryCount = rows.entryToRow.length;
   const entryItem = new Int32Array(entryCount).fill(-1);
   const entryOffset = new Int32Array(entryCount).fill(-1);
@@ -55,10 +69,12 @@ export function buildListStructure(rows: PeekRows): ListStructure {
   for (let i = 0; i < rows.rows.length;) {
     const row = rows.rows[i];
     if (row.kind === "create") { items.push({ key: row.key, entryIndex: null, card: null }); i++; continue; }
-    if (row.kind !== "entry") { i++; continue; }
+    if (row.kind === "peek-state") {
+      items.push({ key: row.key, entryIndex: null, rowIndex: i, card: null }); i++; continue;
+    }
     const itemIndex = items.length;
     entryItem[row.entryIndex] = itemIndex;
-    const group = row.depth === 0 && row.expanded ? groups.get(row.entry.path) : undefined;
+    const group = row.depth === 0 && row.expanded && !fullFlowPaths.has(row.entry.path) ? groups.get(row.entry.path) : undefined;
     if (!group || group.startRow !== i + 1) { items.push({ key: row.key, entryIndex: row.entryIndex, card: null }); i++; continue; }
     const start = group.startRow, end = Math.max(start, Math.min(rows.rows.length, group.endRow));
     for (let j = start; j < end; j++) {
@@ -72,6 +88,47 @@ export function buildListStructure(rows: PeekRows): ListStructure {
   return { items, cards, rowEntry: rows.rowToEntry, entryItem, entryOffset };
 }
 
+/** Nested guides in full flow span ordinary items and split at each column. */
+export interface ListFlowGuideSpan {
+  readonly path: string;
+  readonly depth: number;
+  readonly first: ListPlacement;
+  readonly last: ListPlacement;
+}
+export interface ListFlowGuide {
+  readonly path: string;
+  readonly depth: number;
+  readonly column: number;
+  readonly top: number;
+  readonly height: number;
+}
+
+/** Build once per model, never during a horizontal scroll. Compact descendants
+ * have no own slot and therefore cannot acquire a second guide here. */
+export function fullFlowGuideSpans(rows: PeekRows, model: ListFlowModel): readonly ListFlowGuideSpan[] {
+  const rowItem = new Int32Array(rows.rows.length).fill(-1);
+  model.items.forEach((item, index) => {
+    const row = item.entryIndex === null ? item.rowIndex : rows.entryToRow[item.entryIndex];
+    if (row !== undefined) rowItem[row] = index;
+  });
+  return rows.groups.flatMap(group => {
+    if (group.depth === 0 || group.endRow <= group.startRow) return [];
+    const first = rowItem[group.startRow], last = rowItem[group.endRow - 1];
+    if (first < 0 || last < 0) return [];
+    return [{ path: group.path, depth: group.depth, first: model.layout.byIndex[first], last: model.layout.byIndex[last] }];
+  });
+}
+
+/** Only mounted columns get guide DOM, including pinned editor columns. */
+export function fullFlowGuideSegments(spans: readonly ListFlowGuideSpan[], columns: readonly number[], R: number): readonly ListFlowGuide[] {
+  return spans.flatMap(span => columns.flatMap(column => {
+    if (column < span.first.column || column > span.last.column) return [];
+    const start = column === span.first.column ? span.first.row : 0;
+    const end = column === span.last.column ? span.last.row + span.last.slots : R;
+    return [{ path: span.path, depth: span.depth, column, top: start * LIST_SLOT_HEIGHT - 3, height: (end - start) * LIST_SLOT_HEIGHT - 5 }];
+  }));
+}
+
 /** A card's `fit` and `alone` (`SlotSpec`). */
 export type ListCardFit = Readonly<{ fit: number; alone?: boolean }>;
 
@@ -80,14 +137,14 @@ export type ListCardFit = Readonly<{ fit: number; alone?: boolean }>;
  * is allocated beyond the flow's placements. `fitOf` gives a card a `fit`
  * (`SlotSpec`): it keeps its place while that many slots are left in its column,
  * shrinking to the rows left there (`springCardFits`). */
-export function sizeListModel(structure: ListStructure, R: number, preferredOf: (path: string) => number | undefined, fitOf?: (path: string) => ListCardFit | undefined): ListFlowModel {
+export function sizeListModel(structure: ListStructure, R: number, preferredOf: (path: string) => number | undefined, fitOf?: (path: string) => ListCardFit | undefined, columnPaths: ReadonlySet<string> = new Set()): ListFlowModel {
   let items: readonly ListTopItem[];
   if (!structure.cards.length) items = structure.items as readonly ListTopItem[]; // every card is null
   else {
     const sized = structure.items.slice() as ListTopItem[];
     for (const index of structure.cards) {
       const item = structure.items[index], span = item.card!;
-      sized[index] = { ...item, card: { ...span, visibleRows: cardVisibleRows(span.end - span.start, preferredOf(span.path) ?? LIST_CARD_DEFAULT_ROWS, R) } };
+      sized[index] = { ...item, card: { ...span, visibleRows: listCardVisibleRows(span.end - span.start, preferredOf(span.path) ?? LIST_CARD_DEFAULT_ROWS, R, columnPaths.has(span.path)) } };
     }
     items = sized;
   }
@@ -125,7 +182,7 @@ export const SPRING_CARD_FIT = 3;
  * (`springWrapBridges`). Undefined while no temporary peek is open in a card.
  */
 export function springCardFits(structure: ListStructure, rows: PeekRows, temporary: readonly string[], R: number,
-  preferredOf: (path: string) => number | undefined): ((path: string) => ListCardFit | undefined) | undefined {
+  preferredOf: (path: string) => number | undefined, columnPaths: ReadonlySet<string> = new Set()): ((path: string) => ListCardFit | undefined) | undefined {
   if (!temporary.length || !structure.cards.length) return undefined;
   const open = new Set(temporary);
   // Temporary subtrees, outer first; nested ones lie inside an earlier span.
@@ -142,7 +199,7 @@ export function springCardFits(structure: ListStructure, rows: PeekRows, tempora
       end = Math.min(span.endRow, card.end);
       hidden += end - span.startRow;
     }
-    if (held) fits.set(card.path, { fit: 1 + cardVisibleRows(card.end - card.start - hidden, preferredOf(card.path) ?? LIST_CARD_DEFAULT_ROWS, R) });
+    if (held) fits.set(card.path, { fit: 1 + listCardVisibleRows(card.end - card.start - hidden, preferredOf(card.path) ?? LIST_CARD_DEFAULT_ROWS, R, columnPaths.has(card.path)) });
   }
   return fits.size ? path => fits.get(path) : undefined;
 }

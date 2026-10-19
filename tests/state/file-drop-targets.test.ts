@@ -103,3 +103,23 @@ describe("file drop target resolution and feedback", () => {
     clearHighlights(); expect(target.classList.contains("drop-target")).toBe(false);
   });
 });
+
+
+describe("position feedback ownership", () => {
+  it("highlights only the concrete surface even when another names the same folder", async () => {
+    const { createPositionDropFeedback } = await import("$lib/state/file-drop-targets.svelte");
+    const feedback = createPositionDropFeedback();
+    const row = dropElement("entry-item directory", { "data-path": "/same" });
+    const panel = dropElement("peek-drop-target", { "data-path": "/same" });
+    feedback.set(panel);
+    expect(feedback.matches(panel)).toBe(true);
+    expect(feedback.matches(row)).toBe(false);
+    feedback.set(row);
+    expect(feedback.matches(panel)).toBe(false);
+    expect(feedback.matches(row)).toBe(true);
+    feedback.set(null);
+    expect(feedback.matches(row)).toBe(false);
+    expect(feedback.matches(null)).toBe(false);
+    expect(feedback.matches(undefined)).toBe(false);
+  });
+});

@@ -2,6 +2,27 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.13.1 — 2026-10-19
+
+### Changed
+
+- List peek “+N more” first fills a scrollable column for large groups; click
+  it again to flow all children across columns. “Less” returns to the scrollable
+  column, preserving nested folders and keyboard navigation (#1324).
+- With peek carets hidden, the hovered Open action sits immediately beside
+  the folder title in Details and List (#1325).
+
+### Fixed
+
+- Dragging onto files or empty rows inside an open peek targets that peek's
+  folder in Details, List and Tiles; nested files target their immediate
+  parent, and the peek stays open after the move (#1323).
+- Image preview pixel counts describe the original image rather than its
+  smaller display rendition (#1299).
+- Plain text and extensionless prose retain ordinary text colours (#1244).
+- Markdown code, tables and headings follow the configured preview font size
+  consistently with text and source-code previews (#1245).
+
 ## v1.13.0 — 2026-10-19
 
 Folder Peek lets you browse folders inline in Details, List and Tiles, with

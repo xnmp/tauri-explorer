@@ -46,4 +46,3 @@ test("nested List peeks show lineage guides like Details", async ({ page }) => {
   await page.mouse.move(1100, 650);
   await page.screenshot({ path: "evidence/ac-1-list-peek-lineage.png" });
 });
-

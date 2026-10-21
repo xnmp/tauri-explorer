@@ -86,6 +86,23 @@ test("opening shows a card in its column and shifts every later item by its rows
   await expect(page.locator(".status-bar").first()).toContainText("90 items");
 });
 
+test("with peek carets off, the hovered folder Open action sits at the row edge and navigates", async ({ page }) => {
+  await open(page);
+  await setting(page, { folderPeek: true, folderPeekCarets: false });
+  const folder = row(page, `${root}/Career`);
+  const openButton = folder.getByRole("button", { name: "Open Career", exact: true });
+  await folder.hover();
+  await expect(openButton).toHaveCSS("opacity", "1");
+  await expect(folder.locator(":scope > .peek-caret")).toHaveCount(0);
+  await expect.poll(async () => {
+    const [buttonBox, rowBox] = await Promise.all([openButton.boundingBox(), folder.boundingBox()]);
+    return buttonBox && rowBox ? rowBox.x + rowBox.width - buttonBox.x - buttonBox.width : Number.POSITIVE_INFINITY;
+  }).toBeLessThanOrEqual(9);
+  await page.screenshot({ path: "evidence/1328-list-peek-open-right-edge.png" });
+  await openButton.click();
+  await expect.poll(() => explorerCall<string>(page, "return explorer.currentPath")).toBe(`${root}/Career`);
+});
+
 test("a card that does not fit starts the next column, leaving a gap, and is scrolled into view", async ({ page }) => {
   const R = await open(page, root, { width: 720, height: 430 });
   expect(R).toBeLessThan(12);

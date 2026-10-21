@@ -44,9 +44,9 @@
   const content = $derived(card.end - card.start);
   const visible = $derived(previewRows ?? card.visibleRows);
   const fades = $derived(cardFades(content, visible, scrollTop));
-  // Nested levels get only a guide line, centred under their header's caret
-  // (or, with carets off, its folder icon).
-  const guides = $derived(groups.filter(group => group.depth > 0 && group.startRow >= card.start && group.endRow <= card.end && group.endRow > group.startRow));
+  // Every open lineage inside the card gets a guide, including the card's
+  // own folder. Details keeps that outer guide visible alongside nested ones.
+  const guides = $derived(groups.filter(group => group.startRow >= card.start && group.endRow <= card.end && group.endRow > group.startRow));
   // Plain each items (no {@const}): handlers may read a row after its block is gone.
   const mounted = $derived(offsets.flatMap(offset => {
     const item = rows[card.start + offset];

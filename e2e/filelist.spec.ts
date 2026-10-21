@@ -16,7 +16,6 @@
  * Run across all three views with ALL_VIEW_MODES=1.
  */
 import { test, expect, type Page } from "./fixtures";
-import { mkdirSync } from "node:fs";
 import { VIEW_MODES, VIEW_VARIANTS, waitForEntries, switchViewMode, pressShortcut, seedSettings } from "./helpers";
 
 const HOME = "/?path=/home/user";
@@ -65,16 +64,21 @@ for (const { name, viewMode, classic } of VIEW_VARIANTS) {
       const item = page.locator(".entry-item").first();
       await item.click();
       await expect(item).toHaveClass(/selected/);
+      await item.evaluate((el) => (el as HTMLElement).blur());
 
-      const borderColors = await item.evaluate((el) => {
+      const { borderColors, accentColor } = await item.evaluate((el) => {
         const style = getComputedStyle(el);
-        return [style.borderTopColor, style.borderRightColor, style.borderBottomColor, style.borderLeftColor];
+        const probe = document.createElement("span");
+        probe.style.color = "var(--accent)";
+        el.append(probe);
+        const accentColor = getComputedStyle(probe).color;
+        probe.remove();
+        return {
+          accentColor,
+          borderColors: [style.borderTopColor, style.borderRightColor, style.borderBottomColor, style.borderLeftColor],
+        };
       });
-      expect(borderColors.every((color) => color !== "rgba(0, 0, 0, 0)")).toBe(true);
-      if (viewMode === "details") {
-        mkdirSync("evidence", { recursive: true });
-        await page.screenshot({ path: "evidence/issue-1334-selected-row.png" });
-      }
+      expect(borderColors).toEqual([accentColor, accentColor, accentColor, accentColor]);
     });
 
     test("arrow keys move the selection between entries", async ({ page }) => {

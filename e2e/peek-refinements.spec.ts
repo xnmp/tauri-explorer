@@ -18,11 +18,11 @@ for (const mode of ["details", "list"] as const) {
     const row = page.locator(`${shown} .entry-item[data-path="/folder-peek/Alpha"]`);
     await row.hover();
     await expect(row.getByRole("button", { name: "Open Alpha", exact: true })).toHaveCSS("opacity", "1");
-    const rightGap = await row.evaluate(element => {
-      const rowRight = element.getBoundingClientRect().right;
+    const rightGap = await row.evaluate((element, mode) => {
+      const rowRight = (mode === "details" ? element.querySelector(".name-cell")! : element).getBoundingClientRect().right;
       const openRight = element.querySelector(".peek-open")!.getBoundingClientRect().right;
       return rowRight - openRight;
-    });
+    }, mode);
     expect(rightGap).toBeGreaterThanOrEqual(0);
     expect(rightGap).toBeLessThanOrEqual(16);
     await page.screenshot({ path: `screenshots/fix/peek/open-at-row-edge-${mode}.png` });

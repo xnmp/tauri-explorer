@@ -14,3 +14,10 @@ relative assets are intentionally outside this preview's scope.
 Browser regression tests assert actual headings and computed style inside the
 opaque-origin frame, literal non-HTML source, and selection/navigation during a
 held HTML read. State tests cover bounded transport and stale completion.
+
+WebKit does not report CSP-blocked images through Playwright's `requestfailed`
+event. Check the image's completed/zero-natural-width result and zero routed
+requests instead. Fulfill the forbidden URL with a known valid image if reached,
+so missing CSP fails the test rather than passing through a DNS/network error.
+Do not wait for event callbacks or timers injected into the script-disabled
+sandbox; WebKit also prevents those callbacks from executing.

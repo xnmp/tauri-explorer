@@ -568,3 +568,7 @@ highlighting and its 200-line truncation (which can cut document structure).
 Remote/relative assets and scripts are intentionally unavailable; inline styles
 and embedded data images remain supported. Assert rendered content through the
 browser frame, not Explorer's DOM (`e2e/html-preview.spec.ts`, #1332).
+For HTML preview CSP browser tests, route the forbidden image to a valid fixture
+and assert it never reaches the route plus completed/zero-natural-width image
+state. WebKit omits `requestfailed` events for CSP and blocks asynchronous
+callbacks injected into a script-disabled sandbox; neither is a portable oracle.

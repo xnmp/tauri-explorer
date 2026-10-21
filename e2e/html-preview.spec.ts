@@ -34,8 +34,11 @@ test.beforeEach(async ({ page }) => {
 
 for (const name of ["page.html", "page.HTM"]) {
   test(`renders ${name} as an isolated document and preserves text source`, async ({ page }) => {
-    const requests: string[] = [];
-    page.on("requestfailed", request => { if (request.url().includes("example.invalid")) requests.push(request.failure()?.errorText ?? "unknown"); });
+    let remoteImageRequests = 0;
+    await page.route("https://example.invalid/preview-tracker", async route => {
+      remoteImageRequests++;
+      await route.fulfill({ contentType: "image/svg+xml", body: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="red"/></svg>' });
+    });
     await page.locator(`[data-path="/home/html-preview/${name}"]`).click();
     const frame = page.frameLocator('iframe[title="HTML preview"]');
     await expect(frame.locator("h1")).toHaveText("Project overview");
@@ -44,8 +47,13 @@ for (const name of ["page.html", "page.HTM"]) {
     await expect(page.locator(".preview-text")).toHaveCount(0);
     await expect(page.locator("body")).not.toHaveAttribute("data-html-escaped");
     expect(await page.locator("iframe").evaluate((element: HTMLIFrameElement) => element.contentDocument === null)).toBe(true);
-    await expect.poll(() => requests.length).toBeGreaterThan(0);
-    expect(requests.every(reason => /csp/i.test(reason))).toBe(true);
+    // Assert the image's actual blocked result. WebKit omits requestfailed
+    // events for CSP; a fulfilled route makes a missing CSP load successfully
+    // instead of accidentally passing because example.invalid cannot resolve.
+    await expect.poll(() => frame.locator('img').evaluate((image: HTMLImageElement) => ({
+      complete: image.complete, width: image.naturalWidth,
+    }))).toEqual({ complete: true, width: 0 });
+    expect(remoteImageRequests).toBe(0);
     if (name === "page.html") await page.screenshot({ path: "evidence/1332-html-preview.png" });
     await page.locator('[data-path="/home/html-preview/source.txt"]').click();
     await expect(page.locator(".preview-text")).toHaveText("<h1>Keep this as source</h1>");

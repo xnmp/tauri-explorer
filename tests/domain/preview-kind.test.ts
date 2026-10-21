@@ -13,6 +13,7 @@ describe("preview classification", () => {
     ["a.png", "file", "image"], ["a.svg", "file", "image"],
     ["a.mp3", "file", "audio-cover"], ["a.flac", "file", "audio-cover"],
     ["a.csv", "file", "csv"], ["a.md", "file", "markdown"],
+    ["a.html", "file", "html"], ["a.HTM", "file", "html"],
     ["a.ts", "file", "code"], ["a.txt", "file", "text"],
     ["LICENSE", "file", "text"], ["a.exe", "file", "unsupported"],
   ] as const)("%s (%s) dispatches to %s", (name, kind, expected) => {

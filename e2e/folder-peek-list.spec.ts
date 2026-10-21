@@ -115,12 +115,12 @@ test("nested folders open inside the card with guide lines, the close caret and 
   expect((await placements(page))[`${root}/Codex`]).toEqual(codex);
   await expect(acme).toHaveAttribute("aria-level", "3");
   await expect(row(page, `${root}/Career/Applications`)).toHaveAttribute("aria-expanded", "true");
-  await expect(slot(page, `${root}/Career`).locator(".list-guide")).toHaveCount(1);
+  await expect(slot(page, `${root}/Career`).locator(".list-guide")).toHaveCount(2);
   // Close caret: 14px slot, 10px chevron, 16px per level, a child's caret under its parent's icon.
   const geometry = await page.evaluate(([parent, child]) => {
     const rect = (selector: string) => document.querySelector(selector)!.getBoundingClientRect();
     const p = `.pane-tree:not(.retained) .entry-item[data-path="${parent}"]`, c = `.pane-tree:not(.retained) .entry-item[data-path="${child}"]`;
-    const guide = document.querySelector(".pane-tree:not(.retained) .list-guide")!.getBoundingClientRect();
+    const guide = document.querySelectorAll(".pane-tree:not(.retained) .list-guide")[1]!.getBoundingClientRect();
     // The chevron is the caret button's centred ::before.
     const chevron = (row: string) => {
       const button = document.querySelector(`${row} .peek-caret`)!;

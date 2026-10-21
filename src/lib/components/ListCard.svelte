@@ -10,9 +10,9 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import type { FileEntry } from "$lib/domain/file";
-  import type { PeekGroup, PeekRow } from "$lib/domain/folder-peek";
+  import { peekGuideFade, type PeekGroup, type PeekRow } from "$lib/domain/folder-peek";
   import { LIST_SLOT_HEIGHT, type ListCardSpec } from "$lib/domain/list-column-flow";
-  import { cardFades, LIST_CARD_FADE } from "$lib/domain/list-cards";
+  import { cardFades, listGuideLeft, LIST_CARD_FADE } from "$lib/domain/list-cards";
   import type { useItemInteractions } from "$lib/composables/use-item-interactions.svelte";
   import { createSurfaceDropFeedback, surfaceDropPath } from "$lib/composables/surface-drop-feedback";
 
@@ -44,9 +44,10 @@
   const content = $derived(card.end - card.start);
   const visible = $derived(previewRows ?? card.visibleRows);
   const fades = $derived(cardFades(content, visible, scrollTop));
-  // Nested levels get only a guide line, centred under their header's caret
-  // (or, with carets off, its folder icon).
-  const guides = $derived(groups.filter(group => group.depth > 0 && group.startRow >= card.start && group.endRow <= card.end && group.endRow > group.startRow));
+  // Every level, the card's own folder included, gets a lineage guide line as
+  // in Details (#1330), centred under its header's caret (or, with carets off,
+  // its folder icon).
+  const guides = $derived(groups.filter(group => group.startRow >= card.start && group.endRow <= card.end && group.endRow > group.startRow));
   // Plain each items (no {@const}): handlers may read a row after its block is gone.
   const mounted = $derived(offsets.flatMap(offset => {
     const item = rows[card.start + offset];
@@ -58,7 +59,7 @@
       const top = group.startRow - card.start, bottom = group.endRow - card.start;
       if (bottom <= first || top > last + 1) return [];
       const height = (bottom - top) * LIST_SLOT_HEIGHT;
-      return [{ path: group.path, top: top * LIST_SLOT_HEIGHT - 3, height: height - 5, depth: group.depth, fade: Math.min(64, height * 0.6) }];
+      return [{ path: group.path, top: top * LIST_SLOT_HEIGHT - 3, height: height - 5, depth: group.depth, fade: peekGuideFade(height) }];
     });
   });
   // Directories inside the card, for drops on their pseudo-rows.
@@ -99,9 +100,9 @@
     oncontextmenu={(event) => { const folder = surfaceTarget(event); if (folder) interactions.handleContextMenu(event, folder); }}>
     <div class="list-card-content" style:height={`${content * LIST_SLOT_HEIGHT}px`}>
       {#each shownGuides as guide (guide.path)}
-        <span class="list-guide" aria-hidden="true"
+        <span class="list-guide" aria-hidden="true" data-guide-path={guide.path}
           style:top={`${guide.top}px`} style:height={`${guide.height}px`}
-          style:left={`${(carets ? 17.25 : 18.25) + guide.depth * 16}px`}
+          style:left={`${listGuideLeft(guide.depth, carets)}px`}
           style:background-image={`linear-gradient(to bottom, var(--accent), var(--divider) ${guide.fade}px)`}></span>
       {/each}
       {#each mounted as slot (slot.row.key)}

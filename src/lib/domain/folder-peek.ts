@@ -138,6 +138,9 @@ export type PeekRow = ({ kind: "entry"; key: string; entry: FileEntry; entryInde
   | { kind: "peek-state"; key: string; parentPath: string; depth: number; message: string }
   | { kind: "create"; key: string };
 export interface PeekGroup { path: string; depth: number; startRow: number; endRow: number }
+/** A lineage guide's accent-to-divider fade length (CSS px) for a guide of
+ * `height` px: shared by Details and List so every view draws the same line. */
+export const peekGuideFade = (height: number): number => Math.min(64, (Number.isFinite(height) ? Math.max(0, height) : 0) * 0.6);
 export interface PeekRows { rows: PeekRow[]; entryToRow: number[]; rowToEntry: (number | null)[]; groups: PeekGroup[] }
 
 export function buildPeekRows(tree: PeekTree, listing: (path: string) => PeekListing | undefined, creating = false): PeekRows {

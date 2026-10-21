@@ -260,7 +260,9 @@ scrolling sideways.
 - The folder's own row is a fixed header. All descendants, nested levels included, scroll
   inside the card.
 - Nested levels inside a card get no box and no scroll of their own, only the Details
-  guide line, a 16px indent per level and carets.
+  guide line, a 16px indent per level and carets. Every open folder draws that lineage
+  guide, the card's own top-level folder included, in compact, column and full-flow
+  stages alike (#1330).
 - Caret placement in List (decided 2026-10-17, the mock's "close" variant):
   - a 14px caret slot with a 10px chevron, about 4px from the icon;
   - file rows keep the blank 14px slot, so names align;
@@ -278,6 +280,10 @@ scrolling sideways.
   - A 28px fade mask sits on whichever edge has content scrolled out of view.
   - A muted "+N more" (rows whose centre is below the visible area) sits by the grip,
     hidden when 0.
+  - "+N more" first fills one scrollable column, then flows every descendant across
+    ordinary columns. A flowed run offers "Less" both on its header and in one slot
+    after its last descendant, so the scrollable column is reachable from either end
+    of the run (#1329).
 
 ### 8.4 Motion (List)
 

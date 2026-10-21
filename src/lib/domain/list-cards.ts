@@ -66,7 +66,13 @@ export function buildListStructure(rows: PeekRows, fullFlowPaths: ReadonlySet<st
   const groups = new Map(rows.groups.filter(group => group.depth === 0).map(group => [group.path, group]));
   const items: ListStructureItem[] = [];
   const cards: number[] = [];
+  // Open full-flow groups by end row: a group's run is followed by its Less
+  // control, so the scrollable column stays reachable from the run's far end
+  // after its header has scrolled away (#1329).
+  const lessAt = new Map<number, Readonly<{ path: string; entryIndex: number }>>();
   for (let i = 0; i < rows.rows.length;) {
+    const less = lessAt.get(i);
+    if (less !== undefined) { lessAt.delete(i); items.push({ key: `less:${less.path}`, entryIndex: null, lessFor: less, card: null }); }
     const row = rows.rows[i];
     if (row.kind === "create") { items.push({ key: row.key, entryIndex: null, card: null }); i++; continue; }
     if (row.kind === "peek-state") {
@@ -74,8 +80,13 @@ export function buildListStructure(rows: PeekRows, fullFlowPaths: ReadonlySet<st
     }
     const itemIndex = items.length;
     entryItem[row.entryIndex] = itemIndex;
-    const group = row.depth === 0 && row.expanded && !fullFlowPaths.has(row.entry.path) ? groups.get(row.entry.path) : undefined;
-    if (!group || group.startRow !== i + 1) { items.push({ key: row.key, entryIndex: row.entryIndex, card: null }); i++; continue; }
+    const top = row.depth === 0 && row.expanded ? groups.get(row.entry.path) : undefined;
+    const group = top && top.startRow === i + 1 ? top : undefined;
+    if (group && fullFlowPaths.has(row.entry.path)) {
+      if (group.endRow > group.startRow) lessAt.set(Math.min(rows.rows.length, group.endRow), { path: row.entry.path, entryIndex: row.entryIndex });
+      items.push({ key: row.key, entryIndex: row.entryIndex, card: null }); i++; continue;
+    }
+    if (!group) { items.push({ key: row.key, entryIndex: row.entryIndex, card: null }); i++; continue; }
     const start = group.startRow, end = Math.max(start, Math.min(rows.rows.length, group.endRow));
     for (let j = start; j < end; j++) {
       const entry = rows.rowToEntry[j];
@@ -85,10 +96,16 @@ export function buildListStructure(rows: PeekRows, fullFlowPaths: ReadonlySet<st
     items.push({ key: row.key, entryIndex: row.entryIndex, card: { path: row.entry.path, start, end } });
     i = end;
   }
+  for (const less of lessAt.values()) items.push({ key: `less:${less.path}`, entryIndex: null, lessFor: less, card: null });
   return { items, cards, rowEntry: rows.rowToEntry, entryItem, entryOffset };
 }
 
-/** Nested guides in full flow span ordinary items and split at each column. */
+/** A List lineage guide's x offset within its column (CSS px): centred under
+ * its folder's caret, or with carets off its folder icon, 16px per level. */
+export const listGuideLeft = (depth: number, carets: boolean): number => (carets ? 17.25 : 18.25) + Math.max(0, depth) * 16;
+
+/** Lineage guides in full flow (a top-level group's and every nested one's,
+ * as in Details, #1330) span ordinary items and split at each column. */
 export interface ListFlowGuideSpan {
   readonly path: string;
   readonly depth: number;
@@ -104,7 +121,8 @@ export interface ListFlowGuide {
 }
 
 /** Build once per model, never during a horizontal scroll. Compact descendants
- * have no own slot and therefore cannot acquire a second guide here. */
+ * have no own slot and therefore cannot acquire a second guide here; a compact
+ * card draws its own (ListCard). */
 export function fullFlowGuideSpans(rows: PeekRows, model: ListFlowModel): readonly ListFlowGuideSpan[] {
   const rowItem = new Int32Array(rows.rows.length).fill(-1);
   model.items.forEach((item, index) => {
@@ -112,7 +130,7 @@ export function fullFlowGuideSpans(rows: PeekRows, model: ListFlowModel): readon
     if (row !== undefined) rowItem[row] = index;
   });
   return rows.groups.flatMap(group => {
-    if (group.depth === 0 || group.endRow <= group.startRow) return [];
+    if (group.endRow <= group.startRow) return [];
     const first = rowItem[group.startRow], last = rowItem[group.endRow - 1];
     if (first < 0 || last < 0) return [];
     return [{ path: group.path, depth: group.depth, first: model.layout.byIndex[first], last: model.layout.byIndex[last] }];

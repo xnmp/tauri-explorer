@@ -112,6 +112,10 @@ export interface ListTopItem {
   readonly entryIndex: number | null;
   /** Peek row identity for a full-flow status slot (no selectable entry). */
   readonly rowIndex?: number;
+  /** A full-flow group's trailing Less control (#1329): the folder (path and
+   * entry index) it restores to its scrollable column. Holds a slot but no
+   * selectable entry. */
+  readonly lessFor?: Readonly<{ path: string; entryIndex: number }>;
   /** Present for an open top-level folder. */
   readonly card: ListCardSpec | null;
 }

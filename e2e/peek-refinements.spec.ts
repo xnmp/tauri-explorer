@@ -4,7 +4,7 @@ import { HOME_URL, waitForEntries } from "./helpers";
 const shown = ".pane-tree:not(.retained)";
 
 for (const mode of ["details", "list"] as const) {
-  test(`${mode}: caretless Open action sits immediately after the folder title`, async ({ page }) => {
+  test(`${mode}: caretless Open action sits at the row's far right edge (#1328)`, async ({ page }) => {
     await page.goto(HOME_URL);
     await waitForEntries(page);
     await page.evaluate(async mode => {
@@ -18,15 +18,20 @@ for (const mode of ["details", "list"] as const) {
     const row = page.locator(`${shown} .entry-item[data-path="/folder-peek/Alpha"]`);
     await row.hover();
     await expect(row.getByRole("button", { name: "Open Alpha", exact: true })).toHaveCSS("opacity", "1");
-    const gap = await row.evaluate(element => {
-      const name = element.querySelector(".entry-name")!;
+    const geometry = await row.evaluate(element => {
+      // Details: the Name cell's right edge; List: the row's content edge.
+      const container = element.querySelector(".name-cell") ?? element;
+      const style = getComputedStyle(container);
+      const edge = container.getBoundingClientRect().right - parseFloat(style.paddingRight) - parseFloat(style.borderRightWidth);
       const text = document.createRange();
-      text.selectNodeContents(name);
-      return element.querySelector(".peek-open")!.getBoundingClientRect().left - text.getBoundingClientRect().right;
+      text.selectNodeContents(element.querySelector(".entry-name")!);
+      const button = element.querySelector(".peek-open")!.getBoundingClientRect();
+      return { fromEdge: edge - button.right, gap: button.left - text.getBoundingClientRect().right };
     });
-    expect(gap).toBeGreaterThanOrEqual(4);
-    expect(gap).toBeLessThanOrEqual(12);
-    await page.screenshot({ path: `screenshots/fix/peek/open-beside-title-${mode}.png` });
+    expect(Math.abs(geometry.fromEdge)).toBeLessThanOrEqual(1);
+    // A short title leaves the action well away from the name.
+    expect(geometry.gap).toBeGreaterThan(40);
+    await page.screenshot({ path: `screenshots/fix/list-view-peek/1328-open-far-right-${mode}.png` });
     await row.getByRole("button", { name: "Open Alpha", exact: true }).click();
     await expect(page.locator(`${shown} .entry-item[data-path="/folder-peek/Alpha/same.txt"]`)).toBeVisible();
   });
@@ -55,9 +60,14 @@ for (const mode of ["details", "list"] as const) {
       const button = element.querySelector(".peek-open")!.getBoundingClientRect();
       const text = document.createRange();
       text.selectNodeContents(element.querySelector(".entry-name")!);
-      return { clipped: text.getBoundingClientRect().width > title.getBoundingClientRect().width + 1, outside: button.right > element.getBoundingClientRect().right + 1 };
+      return {
+        clipped: text.getBoundingClientRect().width > title.getBoundingClientRect().width + 1,
+        outside: button.right > element.getBoundingClientRect().right + 1,
+        overlaps: title.getBoundingClientRect().right > button.left + 0.5,
+        width: Math.round(button.width),
+      };
     });
-    expect(geometry).toEqual({ clipped: true, outside: false });
+    expect(geometry).toEqual({ clipped: true, outside: false, overlaps: false, width: 22 });
     await button.click();
     await expect.poll(() => page.evaluate(async () => (await import("/src/lib/state/window-tabs.svelte.ts")).windowTabsManager.getActiveExplorer()!.currentPath)).toBe(path);
   });

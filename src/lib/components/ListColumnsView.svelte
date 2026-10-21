@@ -10,8 +10,8 @@
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import type { ListCardSpec, ListNavigationSnapshot } from "$lib/domain/list-column-flow";
   import { LIST_COLUMN_STRIDE, LIST_PADDING_X, LIST_SLOT_HEIGHT } from "$lib/domain/list-column-flow";
-  import { cardMoreCount, listMoreExpansion } from "$lib/domain/list-cards";
-  import { peekTreePositionLookup, type PeekRow } from "$lib/domain/folder-peek";
+  import { cardMoreCount, listGuideLeft, listMoreExpansion } from "$lib/domain/list-cards";
+  import { peekGuideFade, peekTreePositionLookup, type PeekRow } from "$lib/domain/folder-peek";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { getPaneIdContext } from "$lib/state/pane-context";
   import { getFileIconColor } from "$lib/domain/file-types";
@@ -78,19 +78,26 @@
       columns.previewRows(card.path) ?? card.visibleRows, columns.cardScrollTop(card.path));
   const moreStage = (card: ListCardSpec) => listMoreExpansion(card.end - card.start,
     columns.rows, explorer.listColumnPaths.has(card.path));
-  async function expandList(event: MouseEvent, path: string, stage: "column" | "full"): Promise<void> {
+  const headerRow = (path: string) => canvas?.querySelector<HTMLElement>(`.entry-item[data-path="${CSS.escape(path)}"]`) ?? null;
+  async function expandList(path: string, stage: "column" | "full"): Promise<void> {
     if (paneId) windowTabsManager.setActivePane(paneId);
     // The action changes with its stage; its stable header retains
     // keyboard focus so the next navigation key still belongs to this tree.
-    (event.currentTarget as HTMLElement).closest<HTMLElement>(".entry-item")?.focus({ preventScroll: true });
+    // A full flow's trailing Less (#1329) can be far from an unmounted
+    // header: the header takes focus once its new placement is revealed.
+    const header = headerRow(path);
+    header?.focus({ preventScroll: true });
     const directory = explorer.currentPath;
     if (stage === "full") explorer.showAllListChildren(path);
     else explorer.showColumnListChildren(path);
     await tick();
-    if (explorer.currentPath === directory) {
-      const index = explorer.displayEntries.findIndex(entry => entry.path === path);
-      if (index >= 0) columns.revealEntry(index);
-    }
+    if (explorer.currentPath !== directory) return;
+    const index = explorer.displayEntries.findIndex(entry => entry.path === path);
+    if (index < 0) return;
+    columns.revealEntry(index);
+    if (header?.isConnected) return;
+    await tick();
+    if (explorer.currentPath === directory) headerRow(path)?.focus({ preventScroll: true });
   }
   // With peek on, rows are a tree: levels, expanded folders and caret buttons
   // are not allowed on listbox options (axe aria-allowed-attr, nested-interactive).
@@ -146,12 +153,12 @@
         <button class="list-card-more" type="button" draggable={false}
           aria-label={moreStage(card) === "column" ? `Expand ${row.entry.name} to one column` : `Show all ${row.entry.name} items`}
           title={moreStage(card) === "column" ? "Expand to a scrollable column" : "Show all items across columns"}
-          onclick={(event) => expandList(event, card.path, moreStage(card))}>+{moreCount(card)} more</button>
+          onclick={() => expandList(card.path, moreStage(card))}>+{moreCount(card)} more</button>
       {/if}
     {:else if row.depth === 0 && row.expanded && explorer.listFullFlowPaths.has(row.entry.path) && !explorer.isSpringPeek(row.entry.path)}
       <button class="list-card-more list-card-less" type="button" draggable={false}
         aria-label={`Show fewer ${row.entry.name} items`} title="Return to a scrollable column"
-        onclick={(event) => expandList(event, row.entry.path, "column")}>Less</button>
+        onclick={() => expandList(row.entry.path, "column")}>Less</button>
     {/if}
   </EntryCell>
 {/snippet}
@@ -166,20 +173,30 @@
       <!-- Plain each items, not {@const}/destructured deriveds: a rename input's
            blur can read its row after a commit has destroyed the slot. -->
       {#each columns.fullFlowGuides as guide (`${guide.path}:${guide.column}`)}
-        <span class="list-flow-guide" aria-hidden="true"
-          style:left={`${guide.column * LIST_COLUMN_STRIDE + (carets ? 17.25 : 18.25) + guide.depth * 16}px`}
+        <span class="list-flow-guide" aria-hidden="true" data-guide-path={guide.path}
+          style:left={`${guide.column * LIST_COLUMN_STRIDE + listGuideLeft(guide.depth, carets)}px`}
           style:top={`${guide.top}px`} style:height={`${guide.height}px`}
-          style:background-image={`linear-gradient(to bottom, var(--accent), var(--divider) ${Math.min(64, guide.height * 0.6)}px)`}></span>
+          style:background-image={`linear-gradient(to bottom, var(--accent), var(--divider) ${peekGuideFade(guide.height)}px)`}></span>
       {/each}
       {#each columns.visibleItems as slot (slot.item.key)}
         <div class="list-slot list-place" class:list-card-box={!!slot.item.card} class:covered={columns.isCovered(slot.item.key)}
           data-motion-key={slot.item.key} data-column={slot.placement.column}
-          data-row-path={slot.header?.entry.path ?? slot.state?.parentPath}
-          data-row-kind={slot.header ? slot.header.entry.kind === "directory" ? "directory" : "file" : slot.state ? "state" : undefined}
+          data-row-path={slot.header?.entry.path ?? slot.state?.parentPath ?? slot.item.lessFor?.path}
+          data-row-kind={slot.header ? slot.header.entry.kind === "directory" ? "directory" : "file" : slot.state || slot.item.lessFor ? "state" : undefined}
           style:left="{slot.placement.column * LIST_COLUMN_STRIDE}px" style:top="{slot.placement.row * LIST_SLOT_HEIGHT}px"
           style:--depth={slot.header?.depth ?? 0}>
           {#if slot.state}
             <ListPeekState row={slot.state} {carets} />
+          {:else if slot.item.lessFor}
+            {@const folder = slot.item.lessFor.path}
+            {@const name = explorer.displayEntries[slot.item.lessFor.entryIndex]?.name ?? folder}
+            <!-- The end of a full-flow run (#1329): the run's own way back to its
+                 scrollable column once the header Less has scrolled away. -->
+            <div class="list-flow-end peek-drop-target" class:carets data-path={folder} role="treeitem" aria-level={2} aria-selected="false">
+              <button class="list-card-more list-card-less list-flow-less" type="button" draggable={false}
+                aria-label={`Show fewer ${name} items`} title="Return to a scrollable column"
+                onclick={() => expandList(folder, "column")}>Less</button>
+            </div>
           {:else if !slot.header}
             <InlineNewFolder {explorer} variant="list" columns />
           {:else}
@@ -385,10 +402,6 @@
     min-width: 0;
   }
 
-  .list-view :global(.list-entry:has(.peek-open) > [data-drag-name]) {
-    flex: 0 1 auto;
-  }
-
   .list-card-more {
     position: absolute;
     bottom: -7px;
@@ -410,6 +423,10 @@
   .list-card-more:hover { background: var(--subtle-fill-tertiary); color: var(--text-primary); }
   .list-card-more:focus-visible { outline: 2px solid var(--focus-stroke-outer); outline-offset: 1px; }
   .list-card-less { position: static; flex-shrink: 0; margin-left: auto; }
+  /* Aligned under the run's names (the guide's column), at its children's depth. */
+  .list-flow-end { display: flex; align-items: center; height: 26px; margin: 2px 0; padding-left: 27px; }
+  .list-flow-end.carets { padding-left: 43px; }
+  .list-flow-less { margin-left: 0; font-size: 12px; height: 22px; padding: 0 8px; border: 1px solid var(--control-stroke); }
 
 
   /* While renaming, let the content-width rename box extend past the item over

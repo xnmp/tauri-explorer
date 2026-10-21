@@ -115,12 +115,13 @@ test("nested folders open inside the card with guide lines, the close caret and 
   expect((await placements(page))[`${root}/Codex`]).toEqual(codex);
   await expect(acme).toHaveAttribute("aria-level", "3");
   await expect(row(page, `${root}/Career/Applications`)).toHaveAttribute("aria-expanded", "true");
-  await expect(slot(page, `${root}/Career`).locator(".list-guide")).toHaveCount(1);
+  // The card's own lineage guide plus the nested folder's (#1330).
+  await expect(slot(page, `${root}/Career`).locator(".list-guide")).toHaveCount(2);
   // Close caret: 14px slot, 10px chevron, 16px per level, a child's caret under its parent's icon.
   const geometry = await page.evaluate(([parent, child]) => {
     const rect = (selector: string) => document.querySelector(selector)!.getBoundingClientRect();
     const p = `.pane-tree:not(.retained) .entry-item[data-path="${parent}"]`, c = `.pane-tree:not(.retained) .entry-item[data-path="${child}"]`;
-    const guide = document.querySelector(".pane-tree:not(.retained) .list-guide")!.getBoundingClientRect();
+    const guide = document.querySelector(`.pane-tree:not(.retained) .list-guide[data-guide-path="${parent}"]`)!.getBoundingClientRect();
     // The chevron is the caret button's centred ::before.
     const chevron = (row: string) => {
       const button = document.querySelector(`${row} .peek-caret`)!;
@@ -987,4 +988,120 @@ test("a saved full-flow choice uses a compact temporary peek and restores full f
   await toggle(page, folder);
   await expect(row(page, nested)).toBeVisible();
   await expect(page.locator(`${shown} [data-card-scroll]`)).toHaveCount(0);
+});
+
+
+async function openWideFlow(page: Page) {
+  await open(page, root, { width: 720, height: 430 });
+  const base = "/list-full-flow-less", folder = `${base}/Archive`;
+  await page.evaluate(([base, folder]) => import("/src/lib/api/mock-fixtures.ts").then(({ mockFiles }) => {
+    const entry = (path: string, kind: "file" | "directory") => ({ path, name: path.split("/").at(-1)!, kind, size: 1, modified: "" });
+    mockFiles[base] = [entry(folder, "directory"), entry(`${base}/after.txt`, "file")];
+    mockFiles[folder] = Array.from({ length: 80 }, (_, index) => entry(`${folder}/item-${String(index).padStart(3, "0")}.txt`, "file"));
+  }), [base, folder] as const);
+  await explorerCall(page, "return explorer.navigateTo(value)", base);
+  await toggle(page, folder);
+  await fullyExpand(page, folder);
+  await expect(card(page, folder)).toHaveCount(0);
+  return { base, folder };
+}
+
+for (const activation of ["click", "Enter"] as const) {
+  test(`a flowed run ends with a reachable Less that restores the scrollable column (${activation}, #1329)`, async ({ page }) => {
+    const { base, folder } = await openWideFlow(page);
+    const R = Number(await page.locator(`${shown} .list-view`).getAttribute("data-rows"));
+    // Scroll to the run's far end: its header (and the header's Less) is gone.
+    await viewport(page).evaluate(el => { el.scrollLeft = el.scrollWidth; });
+    await expect(row(page, `${folder}/item-079.txt`)).toBeVisible();
+    await expect(row(page, folder)).toHaveCount(0);
+    const less = page.locator(`${shown} .list-flow-less`);
+    await expect(less).toHaveCount(1);
+    await expect(less).toHaveAccessibleName("Show fewer Archive items");
+    // Inside the scrollport, directly after the last child and before the next sibling.
+    const inView = await less.evaluate(button => {
+      const box = button.getBoundingClientRect(), port = button.closest(".list-scroller")!.getBoundingClientRect();
+      return box.left >= port.left && box.right <= port.right && box.top >= port.top && box.bottom <= port.bottom;
+    });
+    expect(inView).toBe(true);
+    const order = await page.locator(`${shown} .list-slot`).evaluateAll(slots => slots
+      .map(el => el as HTMLElement).sort((a, b) => Number(a.dataset.column) - Number(b.dataset.column) || a.offsetTop - b.offsetTop)
+      .map(el => el.dataset.motionKey));
+    const at = order.indexOf(`less:${folder}`);
+    expect(order[at - 1]).toBe(`entry:${folder}/item-079.txt`);
+    expect(order[at + 1]).toBe(`entry:${base}/after.txt`);
+    if (activation === "click") {
+      await page.screenshot({ path: "screenshots/fix/list-view-peek/1329-flow-end-less.png" });
+      await less.click();
+    } else {
+      await less.focus();
+      await page.keyboard.press("Enter");
+    }
+    // Back to the scrollable column, revealed, with keyboard focus on its header.
+    await expect(card(page, folder)).toHaveCount(1);
+    await expect.poll(() => card(page, folder).evaluate(el => el.clientHeight)).toBe((R - 1) * 30);
+    await expect(row(page, folder)).toBeVisible();
+    await expect(row(page, folder)).toBeFocused();
+    await expect(page.locator(`${shown} .list-flow-less`)).toHaveCount(0);
+    await expect(slot(page, folder).getByRole("button", { name: "Show all Archive items" })).toBeVisible();
+    if (activation === "click") await page.screenshot({ path: "screenshots/fix/list-view-peek/1329-less-restored-column.png" });
+    // The column stage still reaches its last child.
+    await card(page, folder).evaluate(el => { el.scrollTop = el.scrollHeight; });
+    await expect(row(page, `${folder}/item-079.txt`)).toBeVisible();
+    // The run's Less is an action, never a keyboard stop between entries.
+    await fullyExpand(page, folder);
+    await row(page, folder).focus();
+    await page.keyboard.press("End");
+    await expect(row(page, `${base}/after.txt`)).toHaveClass(/selected/);
+    const sameColumn = await slot(page, `${base}/after.txt`).getAttribute("data-column") === await slot(page, `${folder}/item-079.txt`).getAttribute("data-column");
+    await page.keyboard.press("ArrowUp");
+    await expect(row(page, sameColumn ? `${folder}/item-079.txt` : `${base}/after.txt`)).toHaveClass(/selected/);
+    await expect(page.locator(`${shown} .list-flow-less`)).not.toBeFocused();
+  });
+}
+
+test("List peeks draw Details' lineage guides for every open level, in cards and across flowed columns (#1330)", async ({ page }) => {
+  await open(page);
+  const career = `${root}/Career`, applications = `${career}/Applications`;
+  await toggle(page, career);
+  await toggle(page, applications);
+  const guide = (path: string) => page.locator(`${shown} [data-guide-path="${path}"]`).first();
+  await expect(guide(career)).toBeVisible();
+  await expect(guide(applications)).toBeVisible();
+  const geometry = async (guideSelector: string) => page.evaluate(([career, applications, guideSelector]) => {
+    const q = (selector: string) => document.querySelector(`.pane-tree:not(.retained) ${selector}`)!;
+    const centre = (rect: DOMRect) => rect.left + rect.width / 2;
+    const rect = (selector: string) => q(selector).getBoundingClientRect();
+    const own = rect(`${guideSelector}[data-guide-path="${career}"]`), nested = rect(`${guideSelector}[data-guide-path="${applications}"]`);
+    return {
+      ownUnderCaret: Math.abs(centre(own) - centre(rect(`.entry-item[data-path="${career}"] .peek-caret`))),
+      nestedUnderCaret: Math.abs(centre(nested) - centre(rect(`.entry-item[data-path="${applications}"] .peek-caret`))),
+      // The own guide starts at the first child and runs past the nested group.
+      ownTop: own.top - rect(`.entry-item[data-path="${applications}"]`).top,
+      nestedInside: nested.top >= own.top && nested.bottom <= own.bottom + 1,
+      colour: getComputedStyle(q(`${guideSelector}[data-guide-path="${career}"]`)).backgroundImage,
+    };
+  }, [career, applications, guideSelector] as const);
+  const card = await geometry(".list-guide");
+  expect(card.ownUnderCaret).toBeLessThanOrEqual(1);
+  expect(card.nestedUnderCaret).toBeLessThanOrEqual(1);
+  expect(Math.abs(card.ownTop)).toBeLessThanOrEqual(6);
+  expect(card.nestedInside).toBe(true);
+  expect(card.colour).toContain("linear-gradient");
+  await page.screenshot({ path: "screenshots/fix/list-view-peek/1330-list-lineage-guides.png" });
+  // Full flow keeps both levels' guides, split per column.
+  await fullyExpand(page, career);
+  await expect(page.locator(`${shown} .list-flow-guide[data-guide-path="${career}"]`).first()).toBeVisible();
+  await expect(page.locator(`${shown} .list-flow-guide[data-guide-path="${applications}"]`).first()).toBeVisible();
+  const flow = await geometry(".list-flow-guide");
+  expect(flow.ownUnderCaret).toBeLessThanOrEqual(1);
+  expect(flow.nestedUnderCaret).toBeLessThanOrEqual(1);
+  expect(Math.abs(flow.ownTop)).toBeLessThanOrEqual(6);
+  // Carets off: guides follow the folder icons.
+  await setting(page, { folderPeekCarets: false });
+  const iconCentre = await page.evaluate(([career, applications]) => {
+    const rect = (selector: string) => document.querySelector(`.pane-tree:not(.retained) ${selector}`)!.getBoundingClientRect();
+    const centre = (r: DOMRect) => r.left + r.width / 2;
+    return [career, applications].map(path => Math.abs(centre(rect(`.list-flow-guide[data-guide-path="${path}"]`)) - centre(rect(`.entry-item[data-path="${path}"] .list-icon`))));
+  }, [career, applications] as const);
+  for (const offset of iconCentre) expect(offset).toBeLessThanOrEqual(1);
 });

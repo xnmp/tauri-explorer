@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { FileEntry } from "$lib/domain/file";
-import { buildPeekRows, flattenPeekEntries, type PeekListing } from "$lib/domain/folder-peek";
+import { buildPeekRows, flattenPeekEntries, peekGuideFade, type PeekListing } from "$lib/domain/folder-peek";
 import { flatPeekEntries, flatPeekRows } from "$lib/domain/folder-peek-flat";
 import { columnFlow, resolveListMove, LIST_COLUMN_STRIDE, LIST_COLUMN_WIDTH, LIST_SLOT_HEIGHT, type ListFlowModel } from "$lib/domain/list-column-flow";
 import {
-  buildListModel, buildListStructure, sizeListModel, listMoreExpansion, listCardVisibleRows, fullFlowGuideSpans, fullFlowGuideSegments, cardFades, cardMaxRows, cardMoreCount, cardRevealTop, cardVisibleRows, cardWheelConsumes,
+  buildListModel, buildListStructure, sizeListModel, listGuideLeft, listMoreExpansion, listCardVisibleRows, fullFlowGuideSpans, fullFlowGuideSegments, cardFades, cardMaxRows, cardMoreCount, cardRevealTop, cardVisibleRows, cardWheelConsumes,
   cardWindow, gripKeyRows, gripRows, rememberCardRows, springCardFits, springWrapBridges, LIST_CARD_DEFAULT_ROWS,
 } from "$lib/domain/list-cards";
 
@@ -548,7 +548,8 @@ describe("full-flow List peeks (#1324)", () => {
     const { tree, rows } = rowsFor([D("Career"), F("after.txt")], ["Career", "Career/Applications"]);
     const structure = buildListStructure(rows, new Set(["/r/Career"]));
     const model = sizeListModel(structure, 6, () => 2);
-    expect(model.items).toHaveLength(rows.rows.length);
+    // Every row plus the run's trailing Less slot (#1329).
+    expect(model.items).toHaveLength(rows.rows.length + 1);
     expect(model.items.every(item => item.card === null)).toBe(true);
     expect(model.layout.columns.length).toBeGreaterThan(2);
     tree.entries.forEach((_entry, index) => {
@@ -569,7 +570,8 @@ describe("full-flow List peeks (#1324)", () => {
       : { status: "loaded", entries: [] };
     const { rows } = rowsFor([D("Career"), F("after.txt")], ["Career", "Career/Empty", "Career/Denied"], listing);
     const model = sizeListModel(buildListStructure(rows, new Set(["/r/Career"])), 4, () => 1);
-    expect(model.items.map(item => item.key)).toEqual(rows.rows.map(row => row.key));
+    const after = rows.rows.findIndex(row => row.key === "entry:/r/after.txt");
+    expect(model.items.map(item => item.key)).toEqual([...rows.rows.slice(0, after).map(row => row.key), "less:/r/Career", ...rows.rows.slice(after).map(row => row.key)]);
     for (const [index, row] of rows.rows.entries()) {
       if (row.kind !== "peek-state") continue;
       expect(model.items[index]).toMatchObject({ rowIndex: index, entryIndex: null, card: null });
@@ -604,13 +606,15 @@ it("full-flow nested guides split across columns without covering later siblings
   const { rows } = rowsFor([D("Career"), D("Codex")], ["Career", "Career/Nested", "Codex"], listing);
   const model = sizeListModel(buildListStructure(rows, new Set(["/r/Career"])), 4, () => 2);
   const spans = fullFlowGuideSpans(rows, model);
-  expect(spans.map(span => span.path)).toEqual(["/r/Career/Nested"]);
-  expect(fullFlowGuideSegments(spans, [0, 1, 2], 4)).toEqual([
+  // The top-level folder's own lineage guide spans its whole run (#1330).
+  expect(spans.map(span => span.path)).toEqual(["/r/Career", "/r/Career/Nested"]);
+  const nested = fullFlowGuideSegments(spans, [0, 1, 2], 4).filter(guide => guide.path === "/r/Career/Nested");
+  expect(nested).toEqual([
     { path: "/r/Career/Nested", depth: 1, column: 0, top: 57, height: 55 },
     { path: "/r/Career/Nested", depth: 1, column: 1, top: -3, height: 115 },
     { path: "/r/Career/Nested", depth: 1, column: 2, top: -3, height: 85 },
   ]);
-  expect(fullFlowGuideSegments(spans, [1], 4)).toHaveLength(1);
+  expect(fullFlowGuideSegments(spans, [1], 4)).toHaveLength(2);
 });
 
 
@@ -639,5 +643,72 @@ describe("staged List expansion (#1324)", () => {
     expect(model.layout.byIndex[index]).toMatchObject({ row: 0, slots: 6 });
     expect(model.items.find(item => item.card?.path === "/r/Codex")?.card?.visibleRows).toBe(2);
     expect(model.entryOffset.filter(offset => offset >= 0).length).toBeGreaterThan(5);
+  });
+});
+
+
+describe("full-flow Less and lineage guides (#1329, #1330)", () => {
+  const nestedListing = (path: string): PeekListing => ({ status: "loaded", entries: path === "/r/Career"
+    ? [D("Career/Nested"), ...Array.from({ length: 12 }, (_, index) => F(`Career/f-${index}`))]
+    : path === "/r/Career/Nested" ? Array.from({ length: 5 }, (_, index) => F(`Career/Nested/${index}`)) : [] });
+
+  it("ends a flowed run with one Less slot that names its folder and selects nothing", () => {
+    const { tree, rows } = rowsFor([D("Career"), F("after.txt")], ["Career", "Career/Nested"], nestedListing);
+    const model = sizeListModel(buildListStructure(rows, new Set(["/r/Career"])), 4, () => 2);
+    const less = model.items.findIndex(item => item.lessFor);
+    expect(model.items.filter(item => item.lessFor)).toHaveLength(1);
+    expect(model.items[less]).toMatchObject({ key: "less:/r/Career", entryIndex: null, card: null, lessFor: { path: "/r/Career", entryIndex: tree.indices.get("/r/Career") } });
+    // Directly after the run's last descendant and before the next sibling.
+    expect(model.items[less - 1].entryIndex).toBe(tree.indices.get("/r/Career/f-11"));
+    expect(model.items[less + 1].entryIndex).toBe(tree.indices.get("/r/after.txt"));
+    // Keyboard navigation never stops on it: End and Down step entries only.
+    const down = { key: "ArrowDown", ctrlKey: false, metaKey: false, shiftKey: false, altKey: false };
+    const lastChild = tree.indices.get("/r/Career/f-11")!;
+    const move = resolveListMove(down, model, lastChild, 500);
+    if (move?.kind === "focus") expect(move.index).toBe(tree.indices.get("/r/after.txt"));
+    expect(Array.from(model.entryItem).includes(less)).toBe(false);
+  });
+
+  it("emits a Less slot at the end of the listing, and none for compact or column-stage groups", () => {
+    const { rows } = rowsFor([D("Career")], ["Career"], nestedListing);
+    const flowed = sizeListModel(buildListStructure(rows, new Set(["/r/Career"])), 4, () => 2);
+    expect(flowed.items.at(-1)?.lessFor?.path).toBe("/r/Career");
+    expect(flowed.layout.byIndex).toHaveLength(flowed.items.length);
+    const compact = sizeListModel(buildListStructure(rows), 4, () => 2);
+    expect(compact.items.some(item => item.lessFor)).toBe(false);
+    const column = sizeListModel(buildListStructure(rows), 4, () => 2, undefined, new Set(["/r/Career"]));
+    expect(column.items.some(item => item.lessFor)).toBe(false);
+  });
+
+  it("emits no Less for a full-flow choice whose folder is closed or has no rows", () => {
+    const { rows: closed } = rowsFor([D("Career"), F("after.txt")], []);
+    expect(buildListStructure(closed, new Set(["/r/Career"])).items.some(item => item.lessFor)).toBe(false);
+  });
+
+  it("places guides under each level's caret or icon in the List column", () => {
+    expect(listGuideLeft(0, true)).toBe(17.25);
+    expect(listGuideLeft(2, true)).toBe(49.25);
+    expect(listGuideLeft(0, false)).toBe(18.25);
+    expect(listGuideLeft(-1, false)).toBe(18.25);
+  });
+
+  it("splits the top-level guide at column boundaries around nested runs", () => {
+    const { rows } = rowsFor([D("Career")], ["Career", "Career/Nested"], nestedListing);
+    const model = sizeListModel(buildListStructure(rows, new Set(["/r/Career"])), 4, () => 2);
+    const spans = fullFlowGuideSpans(rows, model);
+    const top = fullFlowGuideSegments(spans, model.layout.columns.map((_, column) => column), 4).filter(guide => guide.path === "/r/Career");
+    // Header in row 0 of column 0; 18 descendants then fill rows 1-3 and later columns.
+    expect(top[0]).toMatchObject({ column: 0, depth: 0, top: 27, height: 85 });
+    expect(top.slice(1, -1).every(guide => guide.top === -3 && guide.height === 115)).toBe(true);
+    expect(top.map(guide => guide.column)).toEqual(top.map((_, index) => index));
+  });
+});
+
+describe("shared guide fade", () => {
+  it("fades over 60% of short guides, caps at 64px and bounds malformed heights", () => {
+    expect(peekGuideFade(100)).toBe(60);
+    expect(peekGuideFade(1000)).toBe(64);
+    expect(peekGuideFade(-5)).toBe(0);
+    expect(peekGuideFade(Number.NaN)).toBe(0);
   });
 });

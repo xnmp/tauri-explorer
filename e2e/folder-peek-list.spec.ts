@@ -887,7 +887,10 @@ for (const activation of ["click", "Enter", "Space"] as const) {
     await page.keyboard.press("Home");
     const less = row(page, folder).getByRole("button", { name: "Show fewer Archive items" });
     await expect(less).toHaveText("Less");
-    if (activation === "click") await page.screenshot({ path: "evidence/1324-list-full-flow-less.png" });
+    if (activation === "click") {
+      await page.screenshot({ path: "evidence/1329-list-full-flow-less.png" });
+      await page.screenshot({ path: "screenshots/fix/list-view-peek/list-full-flow-less.png" });
+    }
     await less.click();
     await expect(card(page, folder)).toHaveCount(1);
     await expect.poll(() => card(page, folder).evaluate(el => el.clientHeight)).toBe((R - 1) * 30);

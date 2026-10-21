@@ -385,10 +385,6 @@
     min-width: 0;
   }
 
-  .list-view :global(.list-entry:has(.peek-open) > [data-drag-name]) {
-    flex: 0 1 auto;
-  }
-
   .list-card-more {
     position: absolute;
     bottom: -7px;

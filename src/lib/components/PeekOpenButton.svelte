@@ -28,6 +28,7 @@
     align-items: center;
     justify-content: center;
     flex: 0 0 22px;
+    margin-left: auto;
     width: 22px;
     height: 22px;
     padding: 0;

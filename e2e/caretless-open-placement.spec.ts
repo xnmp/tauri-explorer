@@ -29,5 +29,32 @@ test("List places a caretless folder Open control at the row's far right", async
 
   await open.click();
   await expect(page.locator(`${shown} .entry-item[data-path="/folder-peek/Alpha/same.txt"]`)).toBeVisible();
-  await page.screenshot({ path: "evidence/ac-2-list-caretless-open-navigates.png" });
+  await page.screenshot({ path: "evidence/ac-3-list-caretless-open-navigates.png" });
 });
+
+for (const mode of ["details", "list"] as const) {
+  test(`${mode} keeps the caretless Open control trailing when a Git badge renders`, async ({ page }) => {
+    await page.goto(HOME_URL);
+    await waitForEntries(page);
+    await page.evaluate(async mode => {
+      const { windowTabsManager } = await import("/src/lib/state/window-tabs.svelte.ts");
+      const { settingsStore } = await import("/src/lib/state/settings.svelte.ts");
+      settingsStore.update({ folderPeek: true, folderPeekCarets: false, showGitStatus: true });
+      const explorer = windowTabsManager.getActiveExplorer()!;
+      explorer.setViewMode(mode);
+      await explorer.navigateTo("/home/user/Documents/project", { autoEnterSingleSubdir: false });
+    }, mode);
+
+    const row = page.locator(`${shown} .entry-item[data-path="/home/user/Documents/project/src"]`);
+    const open = row.getByRole("button", { name: "Open src", exact: true });
+    await row.hover();
+    await expect(row.locator(".git-indicator")).toHaveText("M");
+    const rightGap = await row.evaluate((element, mode) => {
+      const edge = (mode === "details" ? element.querySelector(".name-cell")! : element).getBoundingClientRect().right;
+      return edge - element.querySelector(".peek-open")!.getBoundingClientRect().right;
+    }, mode);
+    expect(rightGap).toBeGreaterThanOrEqual(0);
+    expect(rightGap).toBeLessThanOrEqual(16);
+    if (mode === "details") await page.screenshot({ path: "evidence/ac-2-details-caretless-open-far-right.png" });
+  });
+}

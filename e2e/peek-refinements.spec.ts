@@ -4,7 +4,7 @@ import { HOME_URL, waitForEntries } from "./helpers";
 const shown = ".pane-tree:not(.retained)";
 
 for (const mode of ["details", "list"] as const) {
-  test(`${mode}: caretless Open action sits immediately after the folder title`, async ({ page }) => {
+  test(`${mode}: caretless Open action sits at the folder row's far edge`, async ({ page }) => {
     await page.goto(HOME_URL);
     await waitForEntries(page);
     await page.evaluate(async mode => {
@@ -18,15 +18,14 @@ for (const mode of ["details", "list"] as const) {
     const row = page.locator(`${shown} .entry-item[data-path="/folder-peek/Alpha"]`);
     await row.hover();
     await expect(row.getByRole("button", { name: "Open Alpha", exact: true })).toHaveCSS("opacity", "1");
-    const gap = await row.evaluate(element => {
-      const name = element.querySelector(".entry-name")!;
-      const text = document.createRange();
-      text.selectNodeContents(name);
-      return element.querySelector(".peek-open")!.getBoundingClientRect().left - text.getBoundingClientRect().right;
+    const rightGap = await row.evaluate(element => {
+      const rowRight = element.getBoundingClientRect().right;
+      const openRight = element.querySelector(".peek-open")!.getBoundingClientRect().right;
+      return rowRight - openRight;
     });
-    expect(gap).toBeGreaterThanOrEqual(4);
-    expect(gap).toBeLessThanOrEqual(12);
-    await page.screenshot({ path: `screenshots/fix/peek/open-beside-title-${mode}.png` });
+    expect(rightGap).toBeGreaterThanOrEqual(0);
+    expect(rightGap).toBeLessThanOrEqual(16);
+    await page.screenshot({ path: `screenshots/fix/peek/open-at-row-edge-${mode}.png` });
     await row.getByRole("button", { name: "Open Alpha", exact: true }).click();
     await expect(page.locator(`${shown} .entry-item[data-path="/folder-peek/Alpha/same.txt"]`)).toBeVisible();
   });

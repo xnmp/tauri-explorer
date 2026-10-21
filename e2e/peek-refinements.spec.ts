@@ -4,7 +4,7 @@ import { HOME_URL, waitForEntries } from "./helpers";
 const shown = ".pane-tree:not(.retained)";
 
 for (const mode of ["details", "list"] as const) {
-  test(`${mode}: caretless Open action sits immediately after the folder title`, async ({ page }) => {
+  test(`${mode}: caretless Open action placement`, async ({ page }) => {
     await page.goto(HOME_URL);
     await waitForEntries(page);
     await page.evaluate(async mode => {
@@ -18,15 +18,24 @@ for (const mode of ["details", "list"] as const) {
     const row = page.locator(`${shown} .entry-item[data-path="/folder-peek/Alpha"]`);
     await row.hover();
     await expect(row.getByRole("button", { name: "Open Alpha", exact: true })).toHaveCSS("opacity", "1");
-    const gap = await row.evaluate(element => {
-      const name = element.querySelector(".entry-name")!;
+    const placement = await row.evaluate(element => {
+      const title = element.querySelector(".entry-name")!;
       const text = document.createRange();
-      text.selectNodeContents(name);
-      return element.querySelector(".peek-open")!.getBoundingClientRect().left - text.getBoundingClientRect().right;
+      text.selectNodeContents(title);
+      const titleGap = element.querySelector(".peek-open")!.getBoundingClientRect().left - text.getBoundingClientRect().right;
+      const rowRect = element.getBoundingClientRect();
+      const buttonRect = element.querySelector(".peek-open")!.getBoundingClientRect();
+      return { titleGap, rowRightGap: rowRect.right - buttonRect.right };
     });
-    expect(gap).toBeGreaterThanOrEqual(4);
-    expect(gap).toBeLessThanOrEqual(12);
-    await page.screenshot({ path: `screenshots/fix/peek/open-beside-title-${mode}.png` });
+    if (mode === "list") {
+      expect(placement.rowRightGap).toBeGreaterThanOrEqual(7);
+      expect(placement.rowRightGap).toBeLessThanOrEqual(10);
+    } else {
+      expect(placement.titleGap).toBeGreaterThanOrEqual(4);
+      expect(placement.titleGap).toBeLessThanOrEqual(12);
+    }
+    const placementName = mode === "list" ? "at-row-edge" : "beside-title";
+    await page.screenshot({ path: `screenshots/fix/peek/open-${placementName}-${mode}.png` });
     await row.getByRole("button", { name: "Open Alpha", exact: true }).click();
     await expect(page.locator(`${shown} .entry-item[data-path="/folder-peek/Alpha/same.txt"]`)).toBeVisible();
   });

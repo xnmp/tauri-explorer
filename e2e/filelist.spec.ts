@@ -16,6 +16,7 @@
  * Run across all three views with ALL_VIEW_MODES=1.
  */
 import { test, expect, type Page } from "./fixtures";
+import { mkdirSync } from "node:fs";
 import { VIEW_MODES, VIEW_VARIANTS, waitForEntries, switchViewMode, pressShortcut, seedSettings } from "./helpers";
 
 const HOME = "/?path=/home/user";
@@ -57,6 +58,23 @@ for (const { name, viewMode, classic } of VIEW_VARIANTS) {
         return c.backgroundColor !== "rgba(0, 0, 0, 0)" || c.borderColor !== "rgba(0, 0, 0, 0)";
       });
       expect(highlighted).toBe(true);
+    });
+
+    test("selected rows show a full accent border", async ({ page }) => {
+      test.skip(viewMode === "tiles", "Tiles are cards, not rows");
+      const item = page.locator(".entry-item").first();
+      await item.click();
+      await expect(item).toHaveClass(/selected/);
+
+      const borderColors = await item.evaluate((el) => {
+        const style = getComputedStyle(el);
+        return [style.borderTopColor, style.borderRightColor, style.borderBottomColor, style.borderLeftColor];
+      });
+      expect(borderColors.every((color) => color !== "rgba(0, 0, 0, 0)")).toBe(true);
+      if (viewMode === "details") {
+        mkdirSync("evidence", { recursive: true });
+        await page.screenshot({ path: "evidence/issue-1334-selected-row.png" });
+      }
     });
 
     test("arrow keys move the selection between entries", async ({ page }) => {

@@ -193,8 +193,8 @@
       <FileIcon {entry} size="small" />
     </div>
     <span class="name-text" data-drag-name><EntryName {entry} {explorer} variant="details" bold={expanded} /></span>
-    {#if explorer.rowClickOwnsPeek(entry) && !isRenaming}<PeekOpenButton {entry} {explorer} />{/if}
     <GitStatusBadge directory={parentPath} entryName={entry.name} hideOnRename={isRenaming} />
+    {#if explorer.rowClickOwnsPeek(entry) && !isRenaming}<PeekOpenButton {entry} {explorer} />{/if}
     {#if entry.is_symlink && !isRenaming && entry.kind !== "directory"}
       <div class="symlink-badge" title={entry.symlink_target ? `Link to ${entry.symlink_target}` : "Symbolic link"}>
         <svg width="10" height="10" viewBox="0 0 10 10" fill="none">

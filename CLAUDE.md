@@ -555,3 +555,8 @@ Spring peek state becomes observable before its List card finishes opening.
 Synthetic drag probes that target row edges must await populated rows and the
 end of live List motion before reading hit-test coordinates; a bounding box
 can include pixels still clipped by the opening card (#1292).
+
+List peek lineage includes the card's outer folder as well as nested groups.
+Geometry assertions must select the guide for the intended depth; the first
+`.list-guide` now belongs to the card root. Scroll nested children into the card's
+viewport before capturing lineage evidence (#1330).

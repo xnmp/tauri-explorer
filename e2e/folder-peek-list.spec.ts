@@ -86,6 +86,23 @@ test("opening shows a card in its column and shifts every later item by its rows
   await expect(page.locator(".status-bar").first()).toContainText("90 items");
 });
 
+test("with peek carets off, the hovered folder Open action sits at the row edge and navigates", async ({ page }) => {
+  await open(page);
+  await setting(page, { folderPeek: true, folderPeekCarets: false });
+  const folder = row(page, `${root}/Career`);
+  const openButton = folder.getByRole("button", { name: "Open Career", exact: true });
+  await folder.hover();
+  await expect(openButton).toHaveCSS("opacity", "1");
+  await expect(folder.locator(":scope > .peek-caret")).toHaveCount(0);
+  await expect.poll(async () => {
+    const [buttonBox, rowBox] = await Promise.all([openButton.boundingBox(), folder.boundingBox()]);
+    return buttonBox && rowBox ? rowBox.x + rowBox.width - buttonBox.x - buttonBox.width : Number.POSITIVE_INFINITY;
+  }).toBeLessThanOrEqual(9);
+  await page.screenshot({ path: "evidence/1328-list-peek-open-right-edge.png" });
+  await openButton.click();
+  await expect.poll(() => explorerCall<string>(page, "return explorer.currentPath")).toBe(`${root}/Career`);
+});
+
 test("a card that does not fit starts the next column, leaving a gap, and is scrolled into view", async ({ page }) => {
   const R = await open(page, root, { width: 720, height: 430 });
   expect(R).toBeLessThan(12);
@@ -115,12 +132,12 @@ test("nested folders open inside the card with guide lines, the close caret and 
   expect((await placements(page))[`${root}/Codex`]).toEqual(codex);
   await expect(acme).toHaveAttribute("aria-level", "3");
   await expect(row(page, `${root}/Career/Applications`)).toHaveAttribute("aria-expanded", "true");
-  await expect(slot(page, `${root}/Career`).locator(".list-guide")).toHaveCount(1);
+  await expect(slot(page, `${root}/Career`).locator(".list-guide")).toHaveCount(2);
   // Close caret: 14px slot, 10px chevron, 16px per level, a child's caret under its parent's icon.
   const geometry = await page.evaluate(([parent, child]) => {
     const rect = (selector: string) => document.querySelector(selector)!.getBoundingClientRect();
     const p = `.pane-tree:not(.retained) .entry-item[data-path="${parent}"]`, c = `.pane-tree:not(.retained) .entry-item[data-path="${child}"]`;
-    const guide = document.querySelector(".pane-tree:not(.retained) .list-guide")!.getBoundingClientRect();
+    const guide = document.querySelectorAll(".pane-tree:not(.retained) .list-guide")[1]!.getBoundingClientRect();
     // The chevron is the caret button's centred ::before.
     const chevron = (row: string) => {
       const button = document.querySelector(`${row} .peek-caret`)!;
@@ -887,7 +904,10 @@ for (const activation of ["click", "Enter", "Space"] as const) {
     await page.keyboard.press("Home");
     const less = row(page, folder).getByRole("button", { name: "Show fewer Archive items" });
     await expect(less).toHaveText("Less");
-    if (activation === "click") await page.screenshot({ path: "evidence/1324-list-full-flow-less.png" });
+    if (activation === "click") {
+      await page.screenshot({ path: "evidence/1329-list-full-flow-less.png" });
+      await page.screenshot({ path: "screenshots/fix/list-view-peek/list-full-flow-less.png" });
+    }
     await less.click();
     await expect(card(page, folder)).toHaveCount(1);
     await expect.poll(() => card(page, folder).evaluate(el => el.clientHeight)).toBe((R - 1) * 30);

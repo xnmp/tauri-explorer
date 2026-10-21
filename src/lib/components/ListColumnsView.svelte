@@ -130,10 +130,10 @@
     {/if}
     <span class="list-icon" data-drag-icon style:color={row.entry.kind !== "directory" ? getFileIconColor(row.entry) : undefined}><FileIcon entry={row.entry} size="small" /></span>
     <span data-drag-name><EntryName entry={row.entry} {explorer} variant="list" bold={row.expanded} /></span>
+    <GitStatusBadge directory={row.parentPath} entryName={row.entry.name} />
     {#if explorer.rowClickOwnsPeek(row.entry) && dialogStore.renamingEntry?.path !== row.entry.path}
       <PeekOpenButton entry={row.entry} {explorer} />
     {/if}
-    <GitStatusBadge directory={row.parentPath} entryName={row.entry.name} />
     {#if card && card.end > card.start}
       <!-- Inside the folder's treeitem (a tree owns only groups and treeitems),
            positioned on the card's bottom edge against the slot. -->
@@ -278,8 +278,7 @@
 
   .list-view :global(.list-entry:where(.selected)) {
     background: color-mix(in srgb, var(--accent) 8%, transparent);
-    border-color: transparent;
-    border-left-color: var(--accent);
+    border-color: var(--accent);
   }
 
   /* Ghosted entries (hidden, empty folder, cut) dim their icon and quiet
@@ -383,6 +382,10 @@
   .list-view :global(.list-entry > [data-drag-name]) {
     flex: 1;
     min-width: 0;
+  }
+
+  .list-view:not(.carets) :global(.list-entry > .peek-open) {
+    margin-left: auto;
   }
 
   .list-view :global(.list-entry:has(.peek-open) > [data-drag-name]) {

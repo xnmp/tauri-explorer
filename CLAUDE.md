@@ -555,3 +555,20 @@ Spring peek state becomes observable before its List card finishes opening.
 Synthetic drag probes that target row edges must await populated rows and the
 end of live List motion before reading hit-test coordinates; a bounding box
 can include pixels still clipped by the opening card (#1292).
+
+List peek lineage includes the card's outer folder as well as nested groups.
+Geometry assertions must select the guide for the intended depth; the first
+`.list-guide` now belongs to the card root. Scroll nested children into the card's
+viewport before capturing lineage evidence (#1330).
+
+HTML previews use a sandboxed `srcdoc` iframe in `PreviewPane.svelte`, with no
+script or same-origin permission and a restrictive CSP before file content.
+Keep HTML on the bounded async reader in `preview-content.ts`, bypassing source
+highlighting and its 200-line truncation (which can cut document structure).
+Remote/relative assets and scripts are intentionally unavailable; inline styles
+and embedded data images remain supported. Assert rendered content through the
+browser frame, not Explorer's DOM (`e2e/html-preview.spec.ts`, #1332).
+For HTML preview CSP browser tests, route the forbidden image to a valid fixture
+and assert it never reaches the route plus completed/zero-natural-width image
+state. WebKit omits `requestfailed` events for CSP and blocks asynchronous
+callbacks injected into a script-disabled sandbox; neither is a portable oracle.

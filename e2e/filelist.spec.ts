@@ -59,6 +59,28 @@ for (const { name, viewMode, classic } of VIEW_VARIANTS) {
       expect(highlighted).toBe(true);
     });
 
+    test("selected rows show a full accent border", async ({ page }) => {
+      test.skip(viewMode === "tiles", "Tiles are cards, not rows");
+      const item = page.locator(".entry-item").first();
+      await item.click();
+      await expect(item).toHaveClass(/selected/);
+      await item.evaluate((el) => (el as HTMLElement).blur());
+
+      const { borderColors, accentColor } = await item.evaluate((el) => {
+        const style = getComputedStyle(el);
+        const probe = document.createElement("span");
+        probe.style.color = "var(--accent)";
+        el.append(probe);
+        const accentColor = getComputedStyle(probe).color;
+        probe.remove();
+        return {
+          accentColor,
+          borderColors: [style.borderTopColor, style.borderRightColor, style.borderBottomColor, style.borderLeftColor],
+        };
+      });
+      expect(borderColors).toEqual([accentColor, accentColor, accentColor, accentColor]);
+    });
+
     test("arrow keys move the selection between entries", async ({ page }) => {
       // Details steps by row; column-flow List fills vertically; Tiles and the
       // classic row-major List step horizontally. Anchor on a file where the

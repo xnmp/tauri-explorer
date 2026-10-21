@@ -21,6 +21,27 @@ function surface(viewers = { pdf: vi.fn(async () => Pdf), video: vi.fn(async () 
 beforeEach(() => { vi.resetAllMocks(); });
 
 describe("preview content dispatch and replacement", () => {
+  it("loads HTML without syntax highlighting or the source preview line limit", async () => {
+    const s = surface();
+    const document = "<!doctype html>\n" + "\n".repeat(220) + "<h1>Last heading</h1>";
+    mocks.readTextFile.mockResolvedValue({ ok: true, data: document });
+    await s.load(file("page.html"));
+    expect(mocks.readTextFile).toHaveBeenCalledWith("/page.html", 524288);
+    expect(s.content).toEqual({ kind: "html", document });
+  });
+
+  it("discards HTML that finishes after the user selects text", async () => {
+    const s = surface();
+    let finish!: (value: unknown) => void;
+    mocks.readTextFile.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    const pending = s.load(file("slow.html"));
+    mocks.readTextFile.mockResolvedValueOnce({ ok: true, data: "Current selection" });
+    await s.load(file("current.txt"));
+    finish({ ok: true, data: "<h1>Obsolete</h1>" });
+    await pending;
+    expect(s.content).toEqual({ kind: "text", text: "Current selection", truncatedLines: 0, truncatedLabel: "lines" });
+  });
+
   it.each(["LICENSE", "notes.txt", "output.log"])("keeps %s prose literal instead of guessing a code language", async name => {
     const s = surface();
     const text = 'MIT License\nCopyright (c) 2026 <xnmp> & contributors\nPermission is hereby granted, free of charge, to any person.';

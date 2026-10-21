@@ -80,6 +80,11 @@ export const mockFiles: Record<string, FileEntry[]> = {
     file("many-people.csv", "/home/csv-preview/many-people.csv", 8192),
     file("wide.csv", "/home/csv-preview/wide.csv", 1024),
   ],
+  // Dedicated HTML preview fixture so browser contracts do not alter the
+  // shared home-directory listings used by unrelated tests.
+  "/home/html-preview": [
+    file("preview.html", "/home/html-preview/preview.html", 256),
+  ],
   // Fullscreen preview exit (#1061): the reported folder shape. Its entries span
   // several tile rows whose chunking differs between the docked and fullscreen
   // Files widths.
@@ -486,6 +491,7 @@ export const mockFileContent: Record<string, string> = {
   "/home/csv-preview/broken.csv": 'name,note\nAda,"unterminated',
   "/home/csv-preview/many-people.csv": ["name,note", ...Array.from({ length: 250 }, (_, index) => `Person ${index + 1},record ${index + 1}`)].join("\n"),
   "/home/csv-preview/wide.csv": "first,description,final\nA,This is a deliberately long value that makes the table scroll horizontally,reachable final value\n",
+  "/home/html-preview/preview.html": "<!doctype html><html><head><style>body { font-family: sans-serif; padding: 24px; color: #234; } h1 { color: #c50; }</style></head><body><h1>Rendered HTML preview</h1><p>This document is rendered, not displayed as source.</p></body></html>",
   "/home/preview-containment/long-line.ts": `export const unbroken = "${"a".repeat(3000)}";\nexport const spaced = "${"word ".repeat(600)}";\n`,
   "/home/preview-containment/unbroken.txt": `${"x".repeat(3000)}\n${"y ".repeat(1500)}\n`,
   "/home/preview-containment/wide.csv": [

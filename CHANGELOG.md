@@ -2,6 +2,28 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.13.2 — 2026-10-22
+
+### Added
+
+- HTML files render in the preview pane instead of showing their source. The
+  page runs in a sandboxed frame: scripts and remote resources are blocked,
+  while inline styles and embedded images still display (#1332).
+
+### Changed
+
+- With peek carets hidden, the hovered Open action in List view sits at the far
+  right of the folder row again (#1328).
+
+### Fixed
+
+- List folder peeks show the outer folder's lineage guide alongside nested
+  guides, matching Details view (#1330).
+- Selected rows on Linux (WebKitGTK) show the full accent border on all four
+  sides, as on macOS, instead of only an underline (#1334).
+- A fully expanded List peek keeps a reachable "Less" control that restores the
+  scrollable column (#1329).
+
 ## v1.13.1 — 2026-10-19
 
 ### Changed

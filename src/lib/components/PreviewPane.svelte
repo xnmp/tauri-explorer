@@ -632,6 +632,11 @@ import { openFile } from "$lib/api/open";
         </div>
       {:else if content.kind === "markdown"}
         <div class="preview-markdown" class:hljs-light={isLightTheme} class:hljs-dark={!isLightTheme}>{@html content.html}</div>
+      {:else if content.kind === "html"}
+        <!-- Keep file-provided markup out of Explorer's document while letting
+          the browser render it as a real page. The empty sandbox blocks script,
+          same-origin, navigation and parent-document access. -->
+        <iframe class="preview-html" title={`HTML preview: ${selectedFile.name}`} sandbox="" referrerpolicy="no-referrer" srcdoc={content.document}></iframe>
       {:else if content.kind === "code"}
         <pre class="preview-text preview-code" class:hljs-light={isLightTheme} class:hljs-dark={!isLightTheme}><code class="hljs">{@html content.html}</code></pre>
       {:else if content.kind === "text"}
@@ -980,6 +985,14 @@ import { openFile } from "$lib/api/open";
     display: flex;
     flex-direction: column;
     min-height: 0;
+  }
+
+  .preview-html {
+    width: 100%;
+    min-height: 0;
+    flex: 1;
+    border: 0;
+    background: white;
   }
 
   .video-preview-marker {

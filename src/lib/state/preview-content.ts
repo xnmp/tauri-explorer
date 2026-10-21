@@ -29,6 +29,7 @@ export type ImageContent = {
 type TextContent =
   | ({ readonly kind: "csv"; readonly csv: CsvPreview } & Truncation)
   | ({ readonly kind: "markdown" | "code"; readonly html: string } & Truncation)
+  | ({ readonly kind: "html"; readonly document: string } & Truncation)
   | ({ readonly kind: "text"; readonly text: string } & Truncation);
 
 /** Viewers are supplied by the UI layer; state does not import components. */
@@ -59,6 +60,10 @@ function textContent(file: FileEntry, kind: PreviewKind, text: string): TextCont
   const lines = text.split("\n");
   const displayText = lines.length > 200 ? lines.slice(0, 200).join("\n") : text;
   const truncation = { truncatedLines: lines.length > 200 ? lines.length : 0, truncatedLabel: "lines" as const };
+  // A document can legitimately contain more than 200 lines; trimming it can
+  // remove a closing tag or stylesheet and produce a misleading preview.
+  // `readTextFile` already bounds the source read to 512 KiB.
+  if (kind === "html") return { kind, document: text, truncatedLines: 0, truncatedLabel: "lines" };
   if (kind === "markdown" && displayText.length < 200_000) {
     try { return { kind: "markdown", html: renderMarkdown(displayText), ...truncation }; }
     catch { /* Keep the existing highlighted/plain-text fallback. */ }
@@ -173,7 +178,7 @@ export function createPreviewContentLoader<PdfViewer, VideoViewer>(
           return { kind: "error", message: "Cannot preview video" };
         }
       }
-      case "csv": case "markdown": case "code": case "text": {
+      case "csv": case "markdown": case "html": case "code": case "text": {
         const result = await readTextFile(file.path, 524288);
         if (!lifetime.isCurrent(request)) return null;
         return result.ok ? textContent(file, kind, result.data) : { kind: "error", message: result.error };

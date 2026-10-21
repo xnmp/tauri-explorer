@@ -77,6 +77,9 @@ Rules that bite:
   image holds/cache ownership and rendition upgrades live in `state/preview-content.ts`;
   replace `PreviewContent` as a whole. Keep selection-effect reads of content and
   geometry untracked so publishing a preview cannot start another request (#1206).
+- HTML previews use a sandboxed `srcdoc` iframe in `PreviewPane.svelte`: render
+  document markup inside that isolated surface, never through the Explorer document's
+  `{@html}` boundary (#1332).
   Supply lazy PDF/video viewer factories from the component; even type-only
   component imports in state violate the architecture boundary (`bun run lint:arch`).
 - Rust test modules included with `#[path]` from production modules belong in `src-tauri/test_support/`, not Cargo's auto-discovered `src-tauri/tests/`. Keeping source-included modules under `tests/` makes `cargo clippy --all-targets` compile them again as standalone integration crates, where their `super`/`crate` imports are invalid.

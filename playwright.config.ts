@@ -1,6 +1,14 @@
 import { defineConfig, devices } from "@playwright/test";
+import { existsSync } from "node:fs";
 
 const executablePath = process.env.PLAYWRIGHT_EXECUTABLE_PATH;
+// Nix hosts may have a wrapped Chromium with the required shared libraries
+// while Playwright's downloaded shell cannot start. CI has no such path and
+// continues to use the bundled browser.
+const chromiumExecutablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+  ?? (existsSync("/run/current-system/sw/bin/google-chrome")
+    ? "/run/current-system/sw/bin/google-chrome"
+    : undefined);
 
 export default defineConfig({
   testDir: "./e2e",
@@ -25,8 +33,8 @@ export default defineConfig({
       // Chromium cannot load the host's shared libraries. CI leaves this unset.
       use: {
         ...devices["Desktop Chrome"],
-        launchOptions: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
-          ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
+        launchOptions: chromiumExecutablePath
+          ? { executablePath: chromiumExecutablePath }
           : undefined,
       },
     },

@@ -44,6 +44,7 @@ export type PreviewContent<PdfViewer = unknown, VideoViewer = unknown> =
   | { readonly kind: "directory" | "zip"; readonly entries: readonly FileEntry[]; readonly collapsedRoot: string | null; readonly collapsedNote: string | null }
   | { readonly kind: "pdf"; readonly path: string; readonly key: string; readonly component: PdfViewer }
   | { readonly kind: "video"; readonly path: string; readonly name: string; readonly key: string; readonly component: VideoViewer }
+  | { readonly kind: "html"; readonly document: string }
   | TextContent;
 
 export interface PreviewContentOptions {
@@ -173,10 +174,13 @@ export function createPreviewContentLoader<PdfViewer, VideoViewer>(
           return { kind: "error", message: "Cannot preview video" };
         }
       }
-      case "csv": case "markdown": case "code": case "text": {
+      case "html": case "csv": case "markdown": case "code": case "text": {
         const result = await readTextFile(file.path, 524288);
         if (!lifetime.isCurrent(request)) return null;
-        return result.ok ? textContent(file, kind, result.data) : { kind: "error", message: result.error };
+        if (!result.ok) return { kind: "error", message: result.error };
+        // HTML is already bounded by the reader. Do not truncate its structure
+        // at the source-preview line limit or syntax-highlight it on the UI thread.
+        return kind === "html" ? { kind, document: result.data } : textContent(file, kind, result.data);
       }
       case "unsupported": return { kind };
     }

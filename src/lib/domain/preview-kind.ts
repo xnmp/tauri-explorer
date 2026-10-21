@@ -2,7 +2,7 @@
 import type { FileEntry } from "./file";
 import { getFileIconCategory, isImageFile, isSvgFile, isPdfFile, isVideoMediaFile, isVideoFile, isZipFile, isTextFile } from "./file-types";
 
-export type PreviewKind = "directory" | "zip" | "pdf" | "video" | "image" | "audio-cover" | "csv" | "markdown" | "code" | "text" | "unsupported";
+export type PreviewKind = "directory" | "zip" | "pdf" | "video" | "image" | "audio-cover" | "csv" | "html" | "markdown" | "code" | "text" | "unsupported";
 
 export function classifyPreview(file: FileEntry): PreviewKind {
   if (file.kind === "directory") return "directory";
@@ -12,6 +12,7 @@ export function classifyPreview(file: FileEntry): PreviewKind {
   if (isImageFile(file) || isSvgFile(file)) return "image";
   if (isVideoFile(file)) return "audio-cover";
   if (isTextFile(file)) {
+    if (/\.html?$/i.test(file.name)) return "html";
     if (/\.csv$/i.test(file.name)) return "csv";
     if (/\.(md|markdown)$/i.test(file.name)) return "markdown";
     return getFileIconCategory(file) === "code" ? "code" : "text";

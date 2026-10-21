@@ -630,6 +630,12 @@ import { openFile } from "$lib/api/open";
             </VirtualList>
           </div>
         </div>
+      {:else if content.kind === "html"}
+        <!-- No scripts or same-origin access: file markup must never reach the
+             Explorer document or IPC. CSP also prevents remote subresources;
+             inline styles and embedded images keep self-contained pages useful. -->
+        <iframe class="preview-html" title="HTML preview" sandbox="" referrerpolicy="no-referrer"
+          srcdoc={`<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; base-uri 'none'; form-action 'none'">${content.document}`}></iframe>
       {:else if content.kind === "markdown"}
         <div class="preview-markdown" class:hljs-light={isLightTheme} class:hljs-dark={!isLightTheme}>{@html content.html}</div>
       {:else if content.kind === "code"}
@@ -980,6 +986,14 @@ import { openFile } from "$lib/api/open";
     display: flex;
     flex-direction: column;
     min-height: 0;
+  }
+
+  .preview-html {
+    flex: 1;
+    width: 100%;
+    min-height: 0;
+    border: 0;
+    background: white;
   }
 
   .video-preview-marker {

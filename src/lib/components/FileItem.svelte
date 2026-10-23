@@ -130,6 +130,7 @@
   data-index={index}
   style:--peek-indent={peek ? `${depth * 22}px` : undefined}
   class:peek-row={peek}
+  class:caretless={peek && !carets}
   aria-colindex={1}
   class:directory={entry.kind === "directory"}
   class:hidden-entry={entry.name.startsWith(".") || isManuallyHidden}
@@ -366,6 +367,15 @@
 
   .name-cell:has(:global(.peek-open)) .name-text {
     flex: 0 1 auto;
+  }
+
+  /* Caretless rows keep Open at the right end of the Name column, like List's
+     row edge (#1328, #1359): it follows column resizing, the name truncates
+     before it, and being in the first column it never leaves the viewport. */
+  .file-item.caretless .name-cell > :global(.peek-open) {
+    order: 99;
+    margin-left: auto;
+    margin-right: 4px;
   }
 
   /* Icon container */

@@ -2,24 +2,25 @@
  * HTML preview magnification (#1352).
  *
  * The preview iframe is sandboxed without scripts or same-origin access, so the
- * document's intrinsic width cannot be measured. Zoom therefore follows browser
- * page-zoom semantics instead: the frame lays out at `pane / scale` CSS pixels
- * and is painted scaled by `scale`, so it always covers the pane and the
- * document scrolls inside it. "Fit" emulates a desktop viewport of
- * HTML_FIT_LAYOUT_WIDTH pixels in a narrower pane, and never magnifies.
+ * document's intrinsic width cannot be measured. The frame instead lays out a
+ * desktop page of HTML_FIT_LAYOUT_WIDTH CSS pixels and zoom only scales its
+ * paint, like an image: "Fit" shows that page in full (never magnifying),
+ * zooming in magnifies it and the pane scrolls horizontally, and zooming out
+ * past Fit widens the layout to fill the pane. Re-laying the page out at
+ * `pane / scale` instead (browser page zoom) made responsive pages reflow at
+ * every step, so zooming never revealed more of them (#1361). Height needs no
+ * model: the frame is sized in CSS to exactly the pane's visible height and
+ * scrolls vertically inside itself.
  */
 
 export type HtmlZoom = "fit" | number;
 
-export interface Size {
-  readonly width: number;
-  readonly height: number;
-}
-
 export interface HtmlPreviewFrame {
   readonly scale: number;
+  /** Layout width of the frame in document CSS pixels. */
   readonly width: number;
-  readonly height: number;
+  /** Width the scaled frame occupies in the pane. */
+  readonly paintedWidth: number;
 }
 
 /** Layout width "Fit" shows in full: a common desktop browser viewport. */
@@ -45,11 +46,16 @@ export function htmlPreviewScale(zoom: HtmlZoom, paneWidth: number): number {
   return Math.max(HTML_FIT_MIN_SCALE, Math.min(1, paneWidth / HTML_FIT_LAYOUT_WIDTH));
 }
 
-/** Frame layout size and paint scale that exactly cover the pane. */
-export function htmlPreviewFrame(zoom: HtmlZoom, pane: Size): HtmlPreviewFrame {
-  const scale = htmlPreviewScale(zoom, pane.width);
-  const extent = (value: number) => (positive(value) ? value / scale : 0);
-  return { scale, width: extent(pane.width), height: extent(pane.height) };
+/**
+ * Frame layout width and paint scale. The layout is the Fit layout (the desktop
+ * width, or the whole pane when wider) at every magnification, so zooming in
+ * never reflows the page; zooming out past Fit widens it to fill the pane.
+ */
+export function htmlPreviewFrame(zoom: HtmlZoom, paneWidth: number): HtmlPreviewFrame {
+  const scale = htmlPreviewScale(zoom, paneWidth);
+  if (!positive(paneWidth)) return { scale, width: 0, paintedWidth: 0 };
+  const width = Math.max(HTML_FIT_LAYOUT_WIDTH, paneWidth, paneWidth / scale);
+  return { scale, width, paintedWidth: width * scale };
 }
 
 /** Next zoom stop strictly beyond the current painted scale, or null at the limit. */

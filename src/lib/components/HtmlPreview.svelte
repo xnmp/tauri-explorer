@@ -1,9 +1,11 @@
 <script lang="ts">
   /**
    * Sandboxed HTML document preview with page zoom (#1332, #1352).
-   * The frame is laid out at pane / scale and painted scaled, so it always
-   * fills the pane and the document scrolls inside it; see html-preview-zoom.
+   * The frame lays out a desktop-width page and zoom scales its paint; the pane
+   * scrolls horizontally when it is magnified past the pane width, the
+   * document scrolls vertically inside the frame; see html-preview-zoom.
    */
+  import { tick } from "svelte";
   import { htmlPreviewFrame, htmlZoomLabel, stepHtmlZoom, type HtmlZoom } from "$lib/domain/html-preview-zoom";
 
   interface Props {
@@ -18,32 +20,46 @@
 
   // PreviewPane owns the zoom so a reload remount of the same file keeps it.
   let paneWidth = $state(0);
-  let paneHeight = $state(0);
+  let viewport = $state<HTMLElement | null>(null);
 
-  const frame = $derived(htmlPreviewFrame(zoom, { width: paneWidth, height: paneHeight }));
+  const frame = $derived(htmlPreviewFrame(zoom, paneWidth));
   const zoomOut = $derived(stepHtmlZoom(zoom, paneWidth, -1));
   const zoomIn = $derived(stepHtmlZoom(zoom, paneWidth, 1));
   // No scripts or same-origin access: file markup must never reach the
   // Explorer document or IPC. CSP also prevents remote subresources; inline
   // styles and embedded images keep self-contained pages useful.
+  /** Zoom about the visible centre, as magnifiers do, instead of the left edge. */
+  async function zoomTo(next: HtmlZoom): Promise<void> {
+    const before = viewport;
+    const centre = before && before.scrollWidth > 0 ? (before.scrollLeft + before.clientWidth / 2) / before.scrollWidth : 0;
+    onzoom(next);
+    await tick();
+    if (viewport) viewport.scrollLeft = centre * viewport.scrollWidth - viewport.clientWidth / 2;
+  }
+
   const srcdoc = $derived(`<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; base-uri 'none'; form-action 'none'">${source}`);
 </script>
 
 <div class="html-preview">
   <div class="html-controls" role="group" aria-label="HTML viewing controls">
     <div class="html-control-group">
-      <button type="button" aria-label="Zoom HTML out" disabled={zoomOut === null} onclick={() => { if (zoomOut !== null) onzoom(zoomOut); }}>−</button>
+      <button type="button" aria-label="Zoom HTML out" disabled={zoomOut === null} onclick={() => { if (zoomOut !== null) void zoomTo(zoomOut); }}>−</button>
       <output class="html-zoom" aria-label="HTML magnification">{htmlZoomLabel(zoom, paneWidth)}</output>
-      <button type="button" aria-label="Zoom HTML in" disabled={zoomIn === null} onclick={() => { if (zoomIn !== null) onzoom(zoomIn); }}>+</button>
-      <button type="button" class="text-button" aria-pressed={zoom === "fit"} onclick={() => onzoom("fit")}>Fit</button>
-      <button type="button" class="text-button" aria-pressed={zoom === 1} onclick={() => onzoom(1)}>100%</button>
+      <button type="button" aria-label="Zoom HTML in" disabled={zoomIn === null} onclick={() => { if (zoomIn !== null) void zoomTo(zoomIn); }}>+</button>
+      <button type="button" class="text-button" aria-pressed={zoom === "fit"} onclick={() => void zoomTo("fit")}>Fit</button>
+      <button type="button" class="text-button" aria-pressed={zoom === 1} onclick={() => void zoomTo(1)}>100%</button>
     </div>
     <button type="button" aria-label={fullscreen ? "Exit HTML fullscreen" : "View HTML fullscreen"} onclick={ontogglefullscreen}>⛶</button>
   </div>
-  <div class="html-viewport" bind:clientWidth={paneWidth} bind:clientHeight={paneHeight}>
-    <iframe class="preview-html" class:measured={paneWidth > 0} title="HTML preview" sandbox="" referrerpolicy="no-referrer"
-      style:width={`${frame.width}px`} style:height={`${frame.height}px`} style:transform={`scale(${frame.scale})`}
-      {srcdoc}></iframe>
+  <div class="html-viewport" bind:this={viewport} bind:clientWidth={paneWidth}>
+    <!-- Heights stay in CSS: the canvas fills the visible height (excluding a
+         horizontal scrollbar), and the frame lays out at that height / scale. -->
+    <!-- Floored: a fractional Fit width must not raise a 1px scrollbar. -->
+    <div class="html-canvas" style:width={`${Math.floor(frame.paintedWidth)}px`}>
+      <iframe class="preview-html" class:measured={paneWidth > 0} title="HTML preview" sandbox="" referrerpolicy="no-referrer"
+        style:width={`${frame.width}px`} style:height={`calc(100% / ${frame.scale})`} style:transform={`scale(${frame.scale})`}
+        {srcdoc}></iframe>
+    </div>
   </div>
 </div>
 
@@ -58,8 +74,9 @@
   button:focus-visible { outline: 2px solid var(--focus-stroke-outer); outline-offset: -2px; }
   .text-button { font-size: 11px; }
   .html-zoom { min-width: 38px; font-size: 11px; color: var(--text-secondary); font-variant-numeric: tabular-nums; text-align: center; }
-  .html-viewport { position: relative; flex: 1; min-height: 0; overflow: hidden; background: white; }
-  /* Laid out at pane / scale, painted at scale: exactly covers the viewport. */
+  .html-viewport { position: relative; flex: 1; min-height: 0; overflow-x: auto; overflow-y: hidden; background: white; }
+  /* The canvas reserves the scaled frame's painted box for horizontal scrolling. */
+  .html-canvas { position: relative; height: 100%; overflow: hidden; }
   .preview-html { position: absolute; left: 0; top: 0; border: 0; background: white; transform-origin: 0 0; visibility: hidden; }
   .preview-html.measured { visibility: visible; }
 </style>

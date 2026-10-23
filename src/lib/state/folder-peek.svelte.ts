@@ -57,6 +57,7 @@ export function createFolderPeekState(windows: boolean, initialExpanded: readonl
     get columnPaths() { return session?.columnPaths ?? noFullFlow; },
     showAllListChildren(path: string) { if (!disposed) session?.showAllListChildren(path); },
     showColumnListChildren(path: string) { if (!disposed) session?.showColumnListChildren(path); },
+    showCompactListCard(path: string) { if (!disposed) session?.showCompactListCard(path); },
     cardRows(path: string) { return session?.cardRows(path); },
     setCardRows(path: string, rows: number) { session?.setCardRows(path, rows); },
     panelHeight(path: string) { return session?.panelHeight(path); },

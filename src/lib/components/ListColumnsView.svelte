@@ -78,14 +78,21 @@
       columns.previewRows(card.path) ?? card.visibleRows, columns.cardScrollTop(card.path));
   const moreStage = (card: ListCardSpec) => listMoreExpansion(card.end - card.start,
     columns.rows, explorer.listColumnPaths.has(card.path));
-  async function expandList(event: MouseEvent, path: string, stage: "column" | "full"): Promise<void> {
+  /** Where this top-level header's Less leads: full flow → column → compact card (#1360). */
+  function lessStage(row: EntryRow): "column" | "card" | null {
+    const path = row.entry.path;
+    if (row.depth !== 0 || !row.expanded || explorer.isSpringPeek(path)) return null;
+    return explorer.listFullFlowPaths.has(path) ? "column" : explorer.listColumnPaths.has(path) ? "card" : null;
+  }
+  async function expandList(event: MouseEvent, path: string, stage: "card" | "column" | "full"): Promise<void> {
     if (paneId) windowTabsManager.setActivePane(paneId);
     // The action changes with its stage; its stable header retains
     // keyboard focus so the next navigation key still belongs to this tree.
     (event.currentTarget as HTMLElement).closest<HTMLElement>(".entry-item")?.focus({ preventScroll: true });
     const directory = explorer.currentPath;
     if (stage === "full") explorer.showAllListChildren(path);
-    else explorer.showColumnListChildren(path);
+    else if (stage === "column") explorer.showColumnListChildren(path);
+    else explorer.showCompactListCard(path);
     await tick();
     if (explorer.currentPath === directory) {
       const index = explorer.displayEntries.findIndex(entry => entry.path === path);
@@ -134,6 +141,16 @@
     {#if explorer.rowClickOwnsPeek(row.entry) && dialogStore.renamingEntry?.path !== row.entry.path}
       <PeekOpenButton entry={row.entry} {explorer} />
     {/if}
+    {#if lessStage(row) === "column"}
+      <button class="list-card-more list-card-less" type="button" draggable={false}
+        aria-label={`Show fewer ${row.entry.name} items`} title="Return to a scrollable column"
+        onclick={(event) => expandList(event, row.entry.path, "column")}>Less</button>
+    {:else if lessStage(row) === "card"}
+      <!-- The column stage has no grip: Less is its way back to the card (#1360). -->
+      <button class="list-card-more list-card-less" type="button" draggable={false}
+        aria-label={`Shrink ${row.entry.name} to a card`} title="Return to a resizable card"
+        onclick={(event) => expandList(event, row.entry.path, "card")}>Less</button>
+    {/if}
     {#if card && card.end > card.start}
       <!-- Inside the folder's treeitem (a tree owns only groups and treeitems),
            positioned on the card's bottom edge against the slot. -->
@@ -148,10 +165,6 @@
           title={moreStage(card) === "column" ? "Expand to a scrollable column" : "Show all items across columns"}
           onclick={(event) => expandList(event, card.path, moreStage(card))}>+{moreCount(card)} more</button>
       {/if}
-    {:else if row.depth === 0 && row.expanded && explorer.listFullFlowPaths.has(row.entry.path) && !explorer.isSpringPeek(row.entry.path)}
-      <button class="list-card-more list-card-less" type="button" draggable={false}
-        aria-label={`Show fewer ${row.entry.name} items`} title="Return to a scrollable column"
-        onclick={(event) => expandList(event, row.entry.path, "column")}>Less</button>
     {/if}
   </EntryCell>
 {/snippet}

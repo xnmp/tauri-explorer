@@ -239,6 +239,9 @@ for (const view of ["details", "list", "tiles"] as const) {
       await startDrag(page);
       await dragTo(page, v.folder(P("Inbox")));
       await opened(page, [P("Inbox")]);
+      // Spring state precedes the List card's rows and opening motion (#1292).
+      for (const child of ["Inbox/alpha.txt", "Inbox/beta.txt"]) await expect(page.locator(v.child(P(child)))).toBeVisible();
+      await expect(page.locator(`${shown} [data-motion-key][style*="transform"], ${shown} [data-motion-key][style*="clip-path"], ${shown} .list-motion-layer > *`)).toHaveCount(0);
       for (const child of ["Inbox/alpha.txt", "Inbox/beta.txt"]) await dragTo(page, v.child(P(child)), { related: false });
       await dragTo(page, v.folder(P("Inbox")), { related: false });
       await page.waitForTimeout(100);

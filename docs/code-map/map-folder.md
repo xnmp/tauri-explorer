@@ -103,6 +103,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `RenameDialog`? see `dialogs.svelte.ts`; dialogs present: `DeleteDialog.svelte`, `ConflictDialog.svelte` (paste conflict overwrite/skip), `BulkRenameDialog.svelte`, `WorkspaceDialog.svelte` (save/restore workspaces), `ProgressDialog.svelte` (copy/move/extract progress), `InlineNewFolder.svelte` (inline new-entry input — folder or file, per `explorer.newEntryKind`), `FilePicker.svelte` (portal file-picker window).
 - `PreviewFolderList.svelte` — folder/ZIP children list in the Preview pane, with the collapsed single-folder indicator; rows go through the shared VirtualList so huge folders render only a windowed slice (#1040).
 - `PreviewPane.svelte` — file preview (image/text/markdown/syntax/CSV table); CSV rows use the shared VirtualList with one shared column template and an outer horizontal scroll surface (#666). Image to image, the previous image stays (spinner over it when slow) until the next is decoded, so a selection change never blanks or re-lays out the pane (`e2e/preview-selection-stability.spec.ts`).
+- `HtmlPreview.svelte` — sandboxed no-script `srcdoc` HTML preview with browser-style page zoom: Fit (default) / stops / 100% controls and fullscreen toggle (#1332, #1352).
 - `PdfPreview.svelte` — lazy canvas PDF surface with centered fit/zoom, pointer-captured pan, annotation links, compact page controls and fullscreen keyboard ownership (#728–#730).
 - `TerminalPanel.svelte` — embedded xterm.js terminal panel (#139).
 - `StatusBar.svelte` — bottom status bar (selection count, size, path).
@@ -501,6 +502,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `icon-themes.ts` — icon pack types and explicit-choice versus color-theme-suggestion policy.
 - `syntax-highlight.ts` — highlight.js wrapper for preview.
 - `csv-preview.ts` — quoted CSV parser for PreviewPane table data, bounded to the preview's data-row limit (#666).
+- `html-preview-zoom.ts` — pure HTML preview page-zoom model: unmeasurable sandboxed frame laid out at pane/scale, 1280px desktop Fit, zoom stops and labels (#1352).
 - `pdf-preview.ts` — pure PDF fit, zoom-anchor, measured pointer coordinates, pan bounds and safe-link policy (#728–#730).
 - `markdown.ts` — safe markdown render for preview.
 - `marquee-rect.ts` — marquee band geometry as compositor-only `transform`s for five container-sized layers (fill + four 1px edges sized to the client box, scaled down so fractional zoom rasterises exactly); a resized band element repainted its layer over every image tile per frame on WebKitGTK (#1051).

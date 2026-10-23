@@ -22,11 +22,24 @@
  * This fixture pins `navigator.platform` to a non-Windows value for every
  * page, matching CI's Linux Chromium behavior regardless of the host OS the
  * suite actually runs on. Spec files import `test`/`expect` from here
- * instead of "@playwright/test" so the pin applies uniformly.
+ * instead of "@playwright/test" so the pin applies uniformly (and so the
+ * impact-coverage collector sees every spec: tests/e2e-fixture-imports.test.ts).
  */
 import { test as base, expect } from "@playwright/test";
+import { collectImpactCoverage, impactCoverageEnabled } from "./impact-coverage";
 
-export const test = base.extend({
+// E2E_COVERAGE=1 records which source files each test executes, for the
+// test-impact map (#1368). An auto fixture, so tests that use only `browser`
+// are recorded too. Unset, specs get exactly the fixtures below.
+const recorded = impactCoverageEnabled
+  ? base.extend<{ impactCoverage: void }>({
+    impactCoverage: [async ({ browser, context }, use, testInfo) => {
+      await collectImpactCoverage(browser, context, testInfo, () => use());
+    }, { auto: true }],
+  })
+  : base;
+
+export const test = recorded.extend({
   page: async ({ page }, use) => {
     await page.addInitScript(() => {
       Object.defineProperty(window.navigator, "platform", {
@@ -38,6 +51,12 @@ export const test = base.extend({
     await use(page);
   },
 });
+
+/**
+ * Playwright's own `test` without the platform pin, for specs that set up
+ * another platform's contexts themselves; still recorded under E2E_COVERAGE.
+ */
+export const unpinnedTest = recorded;
 
 export { expect };
 export type { Page } from "@playwright/test";

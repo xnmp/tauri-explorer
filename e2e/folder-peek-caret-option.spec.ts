@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures";
 import AxeBuilder from "@axe-core/playwright";
 import { HOME_URL, waitForEntries, runPaletteCommand, pressShortcut } from "./helpers";
 

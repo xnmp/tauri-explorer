@@ -251,3 +251,31 @@ test("details: with peek carets on there is no Open action and the caret stays b
   await expect(alpha.locator(".peek-open")).toHaveCount(0);
   await expect(alpha.locator(".peek-caret")).toBeVisible();
 });
+
+test("details: with columns overflowing the pane the hovered Open action stays inside the visible scroller before and after scrolling", async ({ page }) => {
+  await page.setViewportSize({ width: 640, height: 600 });
+  const alpha = row(page, `${root}/Alpha`);
+  const open = alpha.getByRole("button", { name: "Open Alpha", exact: true });
+  // The horizontal scroller is whichever ancestor of the row scrolls sideways.
+  const scroller = alpha.locator("xpath=ancestor::*[contains(concat(' ', @class, ' '), ' content ')][1]");
+  const visibleGap = async () => {
+    const [b, sc] = await Promise.all([open.boundingBox(), scroller.evaluate(el => { const r = el.getBoundingClientRect(); return { left: r.left, right: r.left + el.clientWidth, scrollW: el.scrollWidth, clientW: el.clientWidth }; })]);
+    return b ? { gap: sc.right - b.x - b.width, inside: b.x >= sc.left } : { gap: Number.POSITIVE_INFINITY, inside: false };
+  };
+  const overflow = await scroller.evaluate(el => el.scrollWidth - el.clientWidth);
+  expect(overflow).toBeGreaterThan(0);
+  for (const left of [0, overflow / 2, overflow]) {
+    await scroller.evaluate((el, x) => { el.scrollLeft = x; }, left);
+    await alpha.hover();
+    await expect(open).toHaveCSS("opacity", "1");
+    await expect.poll(async () => (await visibleGap()).gap).toBeGreaterThanOrEqual(0);
+    await expect.poll(async () => (await visibleGap()).gap).toBeLessThanOrEqual(12);
+    expect((await visibleGap()).inside).toBe(true);
+    if (left === 0) await page.screenshot({ path: "screenshots/fix/peek-carets-details-navigate/details-open-narrow-scroll-start.png" });
+  }
+  await page.screenshot({ path: "screenshots/fix/peek-carets-details-navigate/details-open-narrow-scroll-end.png" });
+  await scroller.evaluate(el => { el.scrollLeft = 0; });
+  await alpha.hover();
+  await open.click();
+  await expect.poll(() => currentPath(page)).toBe(`${root}/Alpha`);
+});

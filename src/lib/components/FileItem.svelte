@@ -369,14 +369,20 @@
     flex: 0 1 auto;
   }
 
-  /* Caretless rows pin Open to the row's far-right edge, as List does (#1328,
-     #1359). The row is the containing block (.name-cell is unpositioned, so its
-     overflow clip does not apply); it stays out of the name column's flow. */
+  /* Caretless rows pin Open to the row's far-right edge like List (#1328,
+     #1359). A sticky item cannot do this: the virtual list's own scroller is
+     the nearest scrollport, and it never scrolls sideways. DetailsView instead
+     publishes how much of the row's right end is scrolled out of view
+     (--details-hidden-right) so Open stays at the visible edge. The row-matching
+     hover fill keeps it legible over the last column. The name cell is
+     unpositioned, so its overflow clip does not apply. */
   .file-item.caretless .name-cell > :global(.peek-open) {
     position: absolute;
-    right: 8px;
+    right: calc(8px + var(--details-hidden-right, 0px));
     top: 50%;
     transform: translateY(-50%);
+    z-index: 1;
+    background: linear-gradient(var(--subtle-fill-secondary), var(--subtle-fill-secondary)), var(--background-solid);
   }
 
   /* Icon container */

@@ -19,6 +19,7 @@
 
   import type { FileEntry } from "$lib/domain/file";
   import { isTrashPath } from "$lib/domain/virtual-path";
+  import { hiddenRight } from "$lib/domain/details-hidden-right";
 
   interface Props {
     explorer: ExplorerInstance;
@@ -32,6 +33,24 @@
   }
 
   let { explorer, onitemclick, onitemdblclick, scrollToIndex = $bindable(), containsIndex = $bindable(), fallbackTabStop, onviewportscroll, onlayoutchange }: Props = $props();
+
+  // Publishes how much of the rows' right end is scrolled out of view, so a
+  // caretless folder's Open action (FileItem) stays at the visible right edge
+  // (#1359). The horizontal scroller is an ancestor; the virtual list's own
+  // viewport never scrolls sideways.
+  function trackHiddenRight(root: HTMLElement) {
+    let scroller: HTMLElement | null = root.parentElement;
+    while (scroller && !/(auto|scroll)/.test(getComputedStyle(scroller).overflowX)) scroller = scroller.parentElement;
+    if (!scroller) return;
+    const host = scroller;
+    const update = () => root.style.setProperty("--details-hidden-right", `${hiddenRight(host.scrollWidth, host.scrollLeft, host.clientWidth)}px`);
+    update();
+    host.addEventListener("scroll", update, { passive: true });
+    const observer = new ResizeObserver(update);
+    observer.observe(host);
+    observer.observe(root);
+    return { destroy() { host.removeEventListener("scroll", update); observer.disconnect(); } };
+  }
 
   let rowScrollToIndex = $state<((index: number) => void) | undefined>();
   const revealIndex = (index: number) => rowScrollToIndex?.(explorer.detailRows.entryToRow[index] ?? -1);
@@ -96,7 +115,7 @@
     onkeydown={event => columnResize.keydown(column, event)}></div>
 {/snippet}
 
-<div id={viewId} class="details-view" class:resizing={columnResize.isResizing} style="--col-name: {columnResize.columnWidths.name}px; --col-date: {columnResize.columnWidths.date}px; --col-type: {columnResize.columnWidths.type}px; --col-size: {columnResize.columnWidths.size}px; --col-length: {columnResize.columnWidths.length}px; --col-resolution: {columnResize.columnWidths.resolution}px; --details-grid-columns: {columnResize.gridTemplateColumns};">
+<div id={viewId} class="details-view" use:trackHiddenRight class:resizing={columnResize.isResizing} style="--col-name: {columnResize.columnWidths.name}px; --col-date: {columnResize.columnWidths.date}px; --col-type: {columnResize.columnWidths.type}px; --col-size: {columnResize.columnWidths.size}px; --col-length: {columnResize.columnWidths.length}px; --col-resolution: {columnResize.columnWidths.resolution}px; --details-grid-columns: {columnResize.gridTemplateColumns};">
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="column-headers" style="grid-template-columns: {columnResize.gridTemplateColumns};" oncontextmenu={handleColumnHeaderContextMenu}>
     <div class="column-header-wrapper">

@@ -1,5 +1,6 @@
 /** Bounded expansion membership, available while the lazy peek session loads. */
-import type { FileEntry } from "./file";
+import type { FileEntry, ViewMode } from "./file";
+import type { PeekCapability } from "./folder-peek-flat";
 import { coverageOf, pathComparison } from "./path";
 
 export type ExpandedPaths = ReadonlyMap<string, number>;
@@ -39,6 +40,37 @@ export function pruneExpanded(expanded: ExpandedPaths, parent: string, entries: 
 
 
 export type ListPeekExpansion = "column" | "full";
+
+export const isListPeekExpansion = (value: unknown): value is ListPeekExpansion => value === "column" || value === "full";
+
+/** What a pane knows about a folder when asked to remember a presentation
+ * choice (List grip rows, Tiles panel height, List stage) for it. */
+export interface PeekPresentationTarget {
+  capability: PeekCapability;
+  /** A drag's spring-loaded peek: compact, transient, never remembered (#1242). */
+  temporary: boolean;
+}
+
+/** Admission shared by every remembered presentation choice. Each writer keeps
+ * its own value validation on top of this. */
+export function canRememberPeekPresentation(target: PeekPresentationTarget): boolean {
+  return target.capability !== "none" && !target.temporary;
+}
+
+export interface ListStageTarget extends PeekPresentationTarget {
+  viewMode: ViewMode;
+  /** In the user's expanded set. */
+  permanent: boolean;
+  /** Projected tree depth; undefined when the folder is not projected. */
+  depth: number | undefined;
+}
+
+/** The one eligibility policy for List column/full-flow stages: an open,
+ * permanent, top-level folder of a peeking List view. */
+export function canAcquireListStage(target: ListStageTarget, stage: unknown): stage is ListPeekExpansion {
+  return isListPeekExpansion(stage) && canRememberPeekPresentation(target)
+    && target.viewMode === "list" && target.permanent && target.depth === 0;
+}
 
 /** Session-only List presentation choices, most recently chosen last. A single
  * bounded map keeps the column and full-flow stages mutually exclusive. */

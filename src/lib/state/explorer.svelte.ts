@@ -30,6 +30,7 @@ import { archiveRoots, operationRoots } from "$lib/domain/file-operation-selecti
 import { createFolderPeekState } from "./folder-peek.svelte";
 import { canPeekAt, flatPeekEntries, flatPeekRows, peekCapability, rowClickOwnsPeek, shouldToggleOnRowClick, resolvePeekCommandTarget, resolvePeekEscape } from "$lib/domain/folder-peek-flat";
 import type { PeekLevelCache } from "$lib/domain/folder-peek";
+import { canAcquireListStage, canRememberPeekPresentation, type ListPeekExpansion, type PeekPresentationTarget } from "$lib/domain/folder-peek-memory";
 import type { RowClickInput, RowPeekTarget } from "$lib/domain/folder-peek-flat";
 import type { BandSide } from "$lib/domain/tile-panels";
 import { isVirtualPath } from "$lib/domain/virtual-path";
@@ -257,6 +258,8 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   };
   // A function, not a narrowed read: capability is live across the lazy load.
   const peeksAllowed = () => capability !== "none";
+  /** Shared admission context for remembered presentation choices. */
+  const presentationTarget = (path: string): PeekPresentationTarget => ({ capability, temporary: peek.temporary.includes(path) });
   async function togglePeek(path: string) {
     if (!peeksAllowed()) return;
     if (!peek.policies) {
@@ -1176,27 +1179,24 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     peekStatus(path: string) { return peek.listing(path)?.status; },
     /** List folders explicitly expanded across the normal column flow. */
     get listFullFlowPaths() { return peek.fullFlowPaths; },
-    showAllListChildren(path: string) {
-      if (coreState.viewMode !== "list" || capability === "none" || !peek.expanded.has(path)
-          || peek.temporary.includes(path) || peekTree.meta.get(path)?.depth !== 0) return;
-      peek.showAllListChildren(path);
-    },
     get listColumnPaths() { return peek.columnPaths; },
-    showColumnListChildren(path: string) {
-      if (coreState.viewMode !== "list" || capability === "none" || !peek.expanded.has(path)
-          || peek.temporary.includes(path) || peekTree.meta.get(path)?.depth !== 0) return;
-      peek.showColumnListChildren(path);
+    /** Moves an open List card to its scrollable column or full-flow stage
+     * (the two are exclusive); ineligible targets and stages are ignored. */
+    setListPeekStage(path: string, stage: ListPeekExpansion) {
+      const target = { ...presentationTarget(path), viewMode: coreState.viewMode,
+        permanent: peek.expanded.has(path), depth: peekTree.meta.get(path)?.depth };
+      if (canAcquireListStage(target, stage)) peek.setListStage(path, stage);
     },
     /** Remembered List card height (visible rows) for a top-level folder. */
     listCardRows(path: string) { return peek.cardRows(path); },
     setListCardRows(path: string, rows: number) {
-      if (capability === "none" || peek.temporary.includes(path) || peek.cardRows(path) === rows) return;
+      if (!canRememberPeekPresentation(presentationTarget(path)) || peek.cardRows(path) === rows) return;
       peek.setCardRows(path, rows);
     },
     /** Remembered Tiles panel height (CSS px) for a top-level folder. */
     tilePanelHeight(path: string) { return peek.panelHeight(path); },
     setTilePanelHeight(path: string, height: number) {
-      if (capability === "none" || peek.temporary.includes(path) || !Number.isFinite(height) || height < 1 || peek.panelHeight(path) === Math.round(height)) return;
+      if (!canRememberPeekPresentation(presentationTarget(path)) || !Number.isFinite(height) || height < 1 || peek.panelHeight(path) === Math.round(height)) return;
       peek.setPanelHeight(path, height);
     },
     /** Tiles panel sides of the expanded folders, from the last Tiles layout (§9.1). */

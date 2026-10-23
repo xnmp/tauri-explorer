@@ -2,6 +2,36 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.13.3 — 2026-10-23
+
+### Added
+
+- HTML previews fit wide documents to the pane by default, showing a
+  desktop-width page in full. Zoom out/in, Fit, 100% and fullscreen controls sit
+  above the preview, and the chosen zoom survives reloads of the same file. The
+  document stays sandboxed (#1352).
+
+### Fixed
+
+- Selected rows show only the accent edge again on every platform. The full
+  border seen on macOS was the keyboard focus ring, which clicked rows inherited
+  after keyboard navigation; #1334's full selection border is reverted (#1351).
+- Zooming an HTML preview scales the page as laid out instead of reflowing it
+  at a narrower width, and wide zoomed pages scroll horizontally around their
+  visible centre instead of leaving stuck scrollbars (#1361).
+
+### Changed
+
+- List peeks open in place: clicking a folder always opens its compact card at
+  its own row, shrinking to fit near the bottom of a column instead of jumping
+  to the next one. "+N more" spills the folder's rows into the rest of that
+  column and the next, then a final "+N more" shows them all. The folder's
+  header never moves, and Less or closing returns to the compact card (#1360,
+  #1365).
+- In Details view the folder peek Open control sits at the right end of the Name
+  column without a caret, following column resizes; long names truncate before
+  it (#1359).
+
 ## v1.13.2 — 2026-10-22
 
 ### Added

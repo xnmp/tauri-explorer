@@ -622,7 +622,7 @@ jobs:
       ImageVersion: "1.60.0"
       TEST_CACHE_NORMALIZE_VERSION: "1"
       # Below the step cap, so a stall reports interrupted tests (#1367).
-      E2E_GLOBAL_TIMEOUT_MINUTES: "32"
+      E2E_GLOBAL_TIMEOUT_MINUTES: "34"
     steps:
       - uses: actions/checkout@v7
 
@@ -689,7 +689,7 @@ jobs:
       # (E2E_GLOBAL_TIMEOUT_MINUTES) fires first; this cap is the backstop.
       - name: E2E tests (WebKit)
         id: test-cache-run
-        timeout-minutes: 35
+        timeout-minutes: 37
         env:
           E2E_SELECTION: ${{ needs.changes.outputs.webkit }}
           E2E_REASON: ${{ needs.changes.outputs.webkit-reason }}

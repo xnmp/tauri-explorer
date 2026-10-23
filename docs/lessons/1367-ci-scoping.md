@@ -36,3 +36,10 @@ cancelled as a whole. The auto-rerun therefore acts only on a run concluded
 `failure`, first attempt, whose failed non-gate jobs all stopped at setup.
 `workflow_run` workflows execute the default branch's copy, so a change to the
 re-run workflow cannot be exercised by the PR that introduces it.
+
+The Playwright image resolves `monospace` to a different font than the hosted
+runner. `text-preview-fullscreen.spec.ts` measured one glyph's range height,
+which follows the font's rounded ascent/descent: at 115% zoom it went 16 to
+17 px instead of 18.4 in the container. A layout assertion about zoom should
+measure a CSS-derived length (here the line pitch over ten lines), not a glyph
+box whose size depends on the resolved font.

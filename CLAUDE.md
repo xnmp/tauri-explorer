@@ -556,6 +556,12 @@ Synthetic drag probes that target row edges must await populated rows and the
 end of live List motion before reading hit-test coordinates; a bounding box
 can include pixels still clipped by the opening card (#1292).
 
+List peek stages never move a folder's header (#1365): every open header uses
+the `SPRING_CARD_FIT` rule in `sizeListModel`, "+N more" spills rows (cut while
+flowing, never in `buildListStructure`, which must not depend on R) before full
+flow, Less always returns to the compact card, and closing forgets the stage.
+Spilled rows hidden behind "+N more" have no slot (`entryItem` -1).
+
 List peek lineage includes the card's outer folder as well as nested groups.
 Geometry assertions must select the guide for the intended depth; the first
 `.list-guide` now belongs to the card root. Scroll nested children into the card's

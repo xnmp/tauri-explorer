@@ -195,7 +195,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `pane-watch.ts` — per-pane observed navigation tickets, lease commit/rollback, pending-change replay and refresh admission.
 - `directory-events.ts` — shared native directory event subscription with explicit readiness, retry and late-listener retirement.
 - `folder-peek.svelte.ts` — per-pane facade that loads peek policies and resources on first use.
-- `folder-peek-session.svelte.ts` — lazy expansion membership, bounded List column/full-flow stage choices, and independently retired child-listing resources.
+- `folder-peek-session.svelte.ts` — lazy expansion membership, bounded List spill/full-flow/column stage choices (forgotten when a folder closes, #1365), and independently retired child-listing resources.
 - `pane-peek-watch.ts` — lazy pane-watch extension for capped child-directory and repository observation.
 - `directory-listing.ts` — complete directory snapshots, queued-request supersession, teardown and observation transfer.
 - `navigation.ts` — pure back/forward history utilities.
@@ -466,8 +466,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `file-batch-outcome.ts` — typed successful/failed path receipt and aggregate error formatting for best-effort file mutations.
 - `src/lib/domain/copy-session.ts` — ordered native session event, conflict-decision and positional result contracts, plus the copy and move incomplete-session presentations.
 - `file-history.ts` — shared action, summary, receipt and HistoryPort types for the native history authority.
-- `list-column-flow.ts` — slot-aware column prefix scan, span lookup, the `ListFlowModel` types, card-aware List keyboard movement (`resolveListMove`), wheel mapping (`listWheelStep`: sub-pixel carry, native passthrough) and viewport math.
-- `list-cards.ts` — List cards (#1240): `buildListModel` over peek rows, height clamp, grip snapping/keys, "+N more", scroll-edge fades, card reveal/window/wheel policies and bounded session heights; spring-loaded cards (#1242): `springCardFits` (cards holding a temporary peek keep their place; a temporary card wraps when fewer than two rows fit) and `springWrapBridges`.
+- `list-column-flow.ts` (eager, via keyboard navigation) — the `SlotSpec`/`ListFlowModel` types, card-aware List keyboard movement (`resolveListMove`), wheel mapping (`listWheelStep`: sub-pixel carry, native passthrough) and viewport math.
+- `list-cards.ts` — the slot-aware column flow (`columnFlow`, incremental `columnFlowCursor` with span lookup; kept here, off the startup graph, #1365); List cards (#1240): `buildListModel` over peek rows, height clamp, grip snapping/keys, "+N more", scroll-edge fades, card reveal/window/wheel policies and bounded session heights; every open header keeps its place (`SPRING_CARD_FIT`); spill stage (#1365): `listSpillCap`/`listSpillCut`, cut while flowing in `sizeListModel` with a trailing `more` item; spring-loaded cards (#1242): `springCardFits` (a temporary card that starts the next column ends it) and `springWrapBridges`.
 - `spring-load.ts` — spring-loaded peek controller (#1242): `SPRING_LOAD_DELAY_MS`, pure `stepSpringLoad` (pending folder, nested open list, leave cascade, per-pane reset, end) and the timer-injected `createSpringLoadController`.
 - `spring-rows.ts` — `springRowOf`: the one row resolver shared by the spring hover observation and the spring drop redirect (rows, Details row wrappers, peek-state rows, `[data-spring-bridge]` bridges) (#1242).
 - `list-motion.ts` — pure List open/close motion plan (FLIP, conveyor distance with empty slots, card growth, visible-column gating) and easing/clip helpers.

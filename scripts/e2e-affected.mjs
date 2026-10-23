@@ -61,6 +61,9 @@ import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, posix } from "node:path";
 import { allOf, gitBlobReader, gitChangedFiles, parseArgs, sharedEscalation, versionOnlyChange } from "./test-selection.mjs";
+import { loadImpactMap } from "./impact-coverage.mjs";
+import { gatherChanged, namespaceTargets } from "./impact-git.mjs";
+import { selectFromImpact } from "./impact-select.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const MAP_REL = "docs/code-map/map-feature.md";
@@ -547,6 +550,140 @@ export function unionSelections(selections, changedCount) {
   return { mode: "selected", reason: `${items.length} spec(s) from ${changedCount} changed file(s), with the base and head code maps`, items };
 }
 
+// --- coverage-based selection (#1368) ------------------------------------
+
+/**
+ * Trigger kinds the test-impact map replaces: keyword clusters and hubs
+ * (coverage places every src/ file), and e2e support modules (the static
+ * import graph places them).
+ */
+const IMPACT_REPLACES = new Set(["strict", "hub", "unmapped", "no-spec", "shared-e2e"]);
+
+/** @param {string} file */
+const isMockBackend = (file) => /^src\/lib\/api\/mock-[\w.-]+\.ts$/.test(file);
+
+/**
+ * Specs that import a changed e2e support module, directly or through other
+ * support modules (relative `./x` imports). Null when a changed e2e/ file is
+ * not a TypeScript module the graph can follow.
+ * @param {string[]} changedSupport e2e/ files that are not specs
+ * @param {SpecEntry[]} specs
+ * @param {SpecEntry[]} support
+ * @returns {string[] | null}
+ */
+export function e2eImporters(changedSupport, specs, support) {
+  if (changedSupport.some((f) => !/^e2e\/[\w.-]+\.ts$/.test(f))) return null;
+  /** @param {string} content */
+  const imports = (content) => new Set([...content.matchAll(/(?:from\s*|import\s*\(\s*|import\s+)["']\.\/([\w.-]+?)(?:\.ts)?["']/g)]
+    .map((m) => `e2e/${m[1]}.ts`));
+  const supportImports = new Map(support.map((m) => [m.rel, imports(m.content)]));
+  /** @type {Set<string>} */
+  const reached = new Set(changedSupport);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const [rel, deps] of supportImports) {
+      if (!reached.has(rel) && [...deps].some((d) => reached.has(d))) { reached.add(rel); grew = true; }
+    }
+  }
+  return specs.filter((s) => [...imports(s.content)].some((d) => reached.has(d))).map((s) => s.rel);
+}
+
+/**
+ * @typedef {import("./impact-select.mjs").ImpactSelection} ImpactSelection
+ * @typedef {SelectionInput & { impact: import("./impact-coverage.mjs").ImpactMap,
+ *   impactSelection: ImpactSelection }} CoverageInput
+ *   impactSelection: selectFromImpact over the changed src/ files (minus the
+ *   mock backend, which escalates on its own).
+ */
+
+/**
+ * Chromium on PRs with a test-impact map (#1368). Every shared escalation of
+ * the strict selector still selects ALL (mock backend, config and lockfiles,
+ * dev-server scripts, selection inputs, unknown files); a changed spec
+ * selects itself; a changed e2e support module selects the specs importing
+ * it; a changed src/ file selects what the map says reaches it
+ * (impact-select.mjs). Specs the map has no coverage for are added to any
+ * selection a src/ change makes.
+ * @param {CoverageInput} input
+ * @returns {Selection}
+ */
+export function selectCoverage({ changed, map, specs, devServerInputs = new Set(), support = [], impact, impactSelection }) {
+  const strict = classify(changed, map, specs, devServerInputs, { strict: true });
+  const blocking = strict.triggers.filter((t) => !IMPACT_REPLACES.has(t.kind));
+  if (blocking.length > 0) return allOf(blocking.map((t) => t.reason));
+  const changedSupport = changed.filter((f) => f.startsWith("e2e/") && !/\.spec\.ts$/.test(f));
+  const importers = e2eImporters(changedSupport, specs, support);
+  if (importers === null) return allOf(changedSupport.map((f) => `e2e support file outside the import graph: ${f}`));
+  if (impactSelection.all.length > 0) return allOf(impactSelection.all);
+  const present = new Set(specs.map((s) => s.rel));
+  const selected = new Set([...strict.selected, ...importers, ...impactSelection.specs]);
+  if (changed.some((f) => f.startsWith("src/"))) {
+    const mapped = new Set(impact.specs);
+    for (const s of present) if (!mapped.has(s)) selected.add(s);
+  }
+  const items = [...selected].filter((s) => present.has(s)).sort();
+  return listed(items, changed.length, "coverage-mapped spec(s)");
+}
+
+/**
+ * Engine detection in app code: Chromium coverage records only the branch
+ * Chromium takes.
+ */
+export const ENGINE_DETECTION = /navigator\.(userAgent|vendor)|CSS\.supports\(|\bis(WebKit|Webkit|Safari|Chromium)(Engine)?\b/;
+
+/**
+ * WebKit on PRs with a test-impact map: the coverage selection plus the
+ * curated engine-specific specs. Every spec for a WKWebView-sensitive change,
+ * component styling, a file that detects the engine, or a change no Chromium
+ * test executed (its WebKit-only branch never ran under Chromium coverage).
+ * @param {CoverageInput} input
+ * @returns {Selection}
+ */
+export function selectWebkitCoverage(input) {
+  const { changed, specs, read = () => null, impactSelection } = input;
+  const coverage = selectCoverage(input);
+  if (coverage.mode === "all") return coverage;
+  const sensitive = changed.flatMap((f) => {
+    const label = webkitSensitivity(f, read) ??
+      (f.startsWith("src/") && [read("base", f), read("head", f)].some((t) => t !== null && ENGINE_DETECTION.test(t)) ? "engine detection" : null);
+    return label ? [`WKWebView-sensitive change (${label}): ${f}`] : [];
+  });
+  if (sensitive.length > 0) return allOf(sensitive);
+  if (impactSelection.zeroCoverage.length > 0) {
+    return allOf(impactSelection.zeroCoverage.map((h) => `change no Chromium test executed (may be WebKit-only): ${h}`));
+  }
+  if (coverage.mode === "none") return coverage;
+  const curated = specs.filter((s) => WEBKIT_CURATED.test(s.content)).map((s) => s.rel);
+  const items = [...new Set([...coverage.items, ...curated])].sort();
+  return listed(items, changed.length, "coverage-mapped or curated WebKit spec(s)");
+}
+
+/**
+ * ALL_VIEW_MODES=1 on PRs with a test-impact map: the view-mode specs among
+ * the coverage selection (the map is recorded with ALL_VIEW_MODES=1, so it
+ * sees List and Tiles code); every view-mode spec for a global trigger or an
+ * app-wide presentation change. When coverage cannot place the change, the
+ * component-based selection (selectViewModes) decides, as without a map.
+ * @param {CoverageInput} input
+ * @returns {Selection}
+ */
+export function selectViewModesCoverage(input) {
+  const { changed, map, specs, devServerInputs = new Set(), support = [] } = input;
+  const loose = classify(changed, map, specs, devServerInputs, { strict: false });
+  const global = loose.triggers.filter((t) => GLOBAL_KINDS.has(t.kind) && !IMPACT_REPLACES.has(t.kind));
+  if (global.length > 0) return allOf(global.map((t) => t.reason));
+  const presentation = changed.flatMap((f) => {
+    const hit = VIEW_MODE_GLOBAL.find(([pattern]) => pattern.test(f));
+    return hit ? [`app-wide presentation change (${hit[1]}): ${f}`] : [];
+  });
+  if (presentation.length > 0) return allOf(presentation);
+  const coverage = selectCoverage(input);
+  if (coverage.mode === "all") return selectViewModes(input);
+  const vm = new Set(viewModeSpecs(specs, support));
+  return listed(coverage.items.filter((s) => vm.has(s)), changed.length, "coverage-mapped view-mode spec(s)");
+}
+
 /** Non-spec TypeScript modules under e2e/ (helpers, fixtures, page objects). */
 export function loadSupport() {
   return readdirSync(E2E_DIR)
@@ -556,7 +693,7 @@ export function loadSupport() {
 
 // --- main ----------------------------------------------------------------
 
-function main() {
+async function main() {
   const { base, head, maxFiles, flags } = parseArgs(process.argv.slice(2));
   if (flags.has("--list-view-mode-specs")) {
     process.stdout.write(viewModeSpecs(loadSpecs(), loadSupport()).join("\n") + "\n");
@@ -620,8 +757,11 @@ function main() {
   }
   const specs = loadSpecs();
   const common = { changed, specs, devServerInputs: devServerScripts(), read, support: loadSupport() };
+  const coverage = await impactInputs(flags, { base, head, changed, read });
   /** @type {(input: SelectionInput) => Selection} */
-  const select = engine === "webkit" ? selectWebkit
+  const select = coverage && engine !== "local"
+    ? (input) => (engine === "webkit" ? selectWebkitCoverage : engine === "view-modes" ? selectViewModesCoverage : selectCoverage)({ ...input, ...coverage })
+    : engine === "webkit" ? selectWebkit
     : engine === "view-modes" ? selectViewModes
     : engine === "chromium" ? selectChromium
     : (input) => {
@@ -632,7 +772,49 @@ function main() {
   emit(unionSelections(maps.map((text) => select({ ...common, map: parseMap(text) })), changed.length));
 }
 
+/**
+ * The test-impact map inputs for selection, or null to select without it.
+ * `--impact-map=<path>` names the map (CI downloads the latest nightly one);
+ * `--impact-level=file|hunk` picks the layer (default hunk). A missing,
+ * unreadable, malformed or stale map falls back to the selection without a
+ * map, with a warning.
+ * @param {Set<string>} flags
+ * @param {{ base: string, head: string, changed: string[], read: import("./version-only.mjs").BlobReader }} diff
+ */
+async function impactInputs(flags, { base, head, changed, read }) {
+  const path = [...flags].find((f) => f.startsWith("--impact-map="))?.slice("--impact-map=".length);
+  if (!path) return null;
+  const levelFlag = [...flags].find((f) => f.startsWith("--impact-level="))?.slice("--impact-level=".length) ?? "hunk";
+  const level = levelFlag === "file" ? "file" : "hunk";
+  let text = null;
+  try { text = readFileSync(path, "utf8"); } catch { /* reported below */ }
+  const loaded = loadImpactMap(text);
+  if ("error" in loaded) {
+    warn(`impact map unusable (${loaded.error}); selecting without it`);
+    return null;
+  }
+  const impact = loaded.map;
+  /** @type {any} */
+  let ts = null;
+  try { ts = (await import("typescript")).default; } catch { warn("typescript unavailable; hunk-level proofs disabled"); }
+  const files = changed.filter((f) => f.startsWith("src/") && !isMockBackend(f));
+  const { targets, exists } = namespaceTargets(head, ROOT);
+  const impactSelection = selectFromImpact({
+    impact, level, ts, namespaceTargets: targets, exists,
+    changed: gatherChanged({ base, head, files, root: ROOT, read, impact }),
+  });
+  warn(`impact map ${impact.commit.slice(0, 12)} (${impact.generatedAt}), ${level} level: ` +
+    `${impactSelection.hunkLevel.length} file(s) by hunk, ${impactSelection.fileLevel.length} by file, ` +
+    `${impactSelection.tests.size}/${impact.tests.length} test(s)` +
+    (impactSelection.zeroCoverage.length ? `, unexecuted: ${impactSelection.zeroCoverage.join(", ")}` : ""));
+  return { impact, impactSelection };
+}
+
 // Run only when invoked directly (not when imported by tests).
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  main();
+  main().catch((e) => {
+    warn(`selection failed: ${e instanceof Error ? e.stack ?? e.message : String(e)}`);
+    const result = { mode: "all", reason: "selection failed", items: [] };
+    process.stdout.write(process.argv.includes("--json") ? JSON.stringify(result) + "\n" : "ALL\n");
+  });
 }

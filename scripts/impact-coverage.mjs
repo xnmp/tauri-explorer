@@ -2,33 +2,47 @@
 // impact-coverage.mjs — the browser E2E test-impact map (#1368).
 //
 // The Chromium fixture (e2e/impact-coverage.ts, E2E_COVERAGE=1) records V8
-// precise coverage for every page a test opens and reduces it, per test, to
-// two sets of repo source files:
-//   loaded     — the module was evaluated in the page (imported, statically
-//                or lazily). Its top-level code ran.
-//   exercised  — some function other than the module's top-level script ran
-//                at least once: a component was rendered, a store method or
-//                event handler was called. Being imported at startup does not
-//                count, which keeps startup modules from mapping every spec.
-// `merge` unions those per spec into the map that PR selection reads:
-//   { version, commit, generatedAt, specs: [...],
-//     files:  { "src/x.ts": [specs that exercised it] },
-//     loaded: { "src/x.ts": [specs that loaded it] } }
-// A spec in `specs` recorded coverage; a spec absent from `specs` (new, or its
-// coverage was lost) is always selected for a src/ change.
+// block coverage for every page a test opens and writes one record per test
+// (scripts/impact-collect.mjs). `merge` combines the records of a full run
+// into the map PR selection reads:
+//
+//   { version, commit, generatedAt,
+//     specs:     [spec files that recorded coverage],
+//     tests:     [{ id, spec, title, location }]     index = test number
+//     files:     { "src/x.ts": [specs that loaded it] }      (file level)
+//     exercised: { "src/x.ts": [specs where a function in it ran] }
+//     assets:    { "static/x.png": [specs whose pages fetched it] }
+//     lines:     { "src/x.ts": { blob, aligned, mapped, blocks, tests, cover } }
+//     sets:      [test sets, encoded by encodeSet] }
+//
+// files/exercised/assets are the file-level layer the selector uses today.
+// lines is the per-test, original-line layer (hunk/test-level selection):
+//   blob     git blob id of the file the run served (line numbers hold only
+//            for that version), aligned: its source map embedded that text
+//   mapped   original lines with any generated code, as [start, end] runs
+//   blocks   V8 function/block spans in original lines
+//   tests    set index: tests that loaded the file
+//   cover    [[start, end, set index], ...]: tests that covered those lines
+// A loaded module counts on every spec that evaluated it, including at
+// startup; `exercised` excludes modules whose only code that ran was their
+// top level.
 //
 // Usage:
-//   node scripts/impact-coverage.mjs merge --out map.json [--commit SHA] <dir|file.json>...
-//     Reads every *.json coverage record under the inputs (the fixture's
-//     per-test records or earlier partial maps) and writes the merged map.
+//   node scripts/impact-coverage.mjs merge --out map.json [--commit SHA] <record dir>...
 //   node scripts/impact-coverage.mjs stats <map.json>
-//     Prints how many specs each file maps to under each rule.
 
 import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const MAP_VERSION = 1;
+
+/**
+ * The oldest map PR selection trusts. The map is regenerated nightly on dev;
+ * 72 hours tolerates two failed nightlies. Dev pushes still run every spec,
+ * so a dependency that a stale map misses is caught when the PR lands.
+ */
+export const MAX_MAP_AGE_HOURS = 72;
 
 /**
  * Repo path of a script the Vite dev server served, or null for anything that
@@ -52,8 +66,7 @@ export function repoPathFromUrl(url) {
     if (at < 0) return null;
     path = path.slice(at);
   }
-  if (!path.startsWith("/src/")) return null;
-  if (path.includes("/node_modules/")) return null;
+  if (!path.startsWith("/src/") || path.includes("/node_modules/") || path.includes("/../")) return null;
   return path.slice(1);
 }
 
@@ -83,69 +96,187 @@ export function scriptExercised(script) {
   return fns.some((fn, i) => i !== topLevel && (fn.ranges?.[0]?.count ?? 0) > 0);
 }
 
-/**
- * Reduce one test's coverage (every page it opened) to repo file sets.
- * @param {ScriptCoverage[]} scripts
- * @returns {{ loaded: string[], exercised: string[] }}
- */
-export function summarizeCoverage(scripts) {
-  /** @type {Set<string>} */
-  const loaded = new Set();
-  /** @type {Set<string>} */
-  const exercised = new Set();
-  for (const script of scripts) {
-    const path = repoPathFromUrl(script.url);
-    if (!path) continue;
-    const top = script.functions?.find((fn) => fn.ranges?.[0]?.startOffset === 0);
-    // A script whose top level never ran was not evaluated (V8 can report a
-    // compiled-but-unrun script with count 0).
-    if (top && (top.ranges[0].count ?? 0) === 0 && !scriptExercised(script)) continue;
-    loaded.add(path);
-    if (scriptExercised(script)) exercised.add(path);
+// --- line runs and test sets ---------------------------------------------
+
+/** @param {Iterable<number>} lines @returns {Array<[number, number]>} */
+export function toRuns(lines) {
+  const sorted = [...new Set(lines)].sort((a, b) => a - b);
+  /** @type {Array<[number, number]>} */
+  const runs = [];
+  for (const n of sorted) {
+    const last = runs[runs.length - 1];
+    if (last && last[1] + 1 === n) last[1] = n;
+    else runs.push([n, n]);
   }
-  return { loaded: [...loaded].sort(), exercised: [...exercised].sort() };
+  return runs;
 }
 
+/** @param {Array<[number, number]>} runs @returns {number[]} */
+export function fromRuns(runs) {
+  const out = [];
+  for (const [a, b] of runs) for (let n = a; n <= b; n++) out.push(n);
+  return out;
+}
+
+
 /**
- * @typedef {{ spec: string, loaded: string[], exercised: string[] }} SpecRecord
+ * Encode a set of test indices: "l" + comma list when short, else "b" +
+ * base64 bitset over `size` tests.
+ * @param {number[]} indices
+ * @param {number} size
+ */
+export function encodeSet(indices, size) {
+  const sorted = [...new Set(indices)].sort((a, b) => a - b);
+  const list = "l" + sorted.join(",");
+  const bits = Buffer.alloc(Math.ceil(size / 8));
+  for (const i of sorted) bits[i >> 3] |= 1 << (i & 7);
+  const bitset = "b" + bits.toString("base64");
+  return list.length <= bitset.length ? list : bitset;
+}
+
+/** @param {string} encoded @returns {number[]} */
+export function decodeSet(encoded) {
+  if (typeof encoded !== "string") throw new Error("test set is not a string");
+  if (encoded.startsWith("l")) return encoded.length === 1 ? [] : encoded.slice(1).split(",").map(Number);
+  if (encoded.startsWith("b")) {
+    const bits = Buffer.from(encoded.slice(1), "base64");
+    const out = [];
+    for (let i = 0; i < bits.length * 8; i++) if (bits[i >> 3] & (1 << (i & 7))) out.push(i);
+    return out;
+  }
+  throw new Error("unknown test set encoding");
+}
+
+// --- merge ----------------------------------------------------------------
+
+/**
+ * @typedef {{ v?: number, id: string, spec: string, title?: string[], location?: string,
+ *   loaded: string[], exercised: string[], lines?: Record<string, Array<[number, number]>>,
+ *   requests?: string[] }} TestRecord
+ * @typedef {import("./impact-collect.mjs").FileMeta} FileMeta
+ * @typedef {{ blob: string | null, aligned: boolean, mapped: Array<[number, number]>,
+ *   blocks: Array<[number, number]>, tests: number, cover: Array<[number, number, number]> }} FileLines
  * @typedef {{ version: number, commit: string, generatedAt: string, specs: string[],
- *   files: Record<string, string[]>, loaded: Record<string, string[]> }} ImpactMap
+ *   tests: Array<{ id: string, spec: string, title: string[], location: string }>,
+ *   files: Record<string, string[]>, exercised: Record<string, string[]>, assets: Record<string, string[]>,
+ *   lines: Record<string, FileLines>, sets: string[] }} ImpactMap
  */
 
 /**
- * Union per-test records (and/or partial maps) into one map.
- * @param {Array<SpecRecord | ImpactMap>} inputs
+ * Merge per-test records (every attempt of every test) and per-file metas.
+ * A file served in more than one version during the run keeps line data only
+ * when all versions agree; otherwise its lines entry is dropped (file level
+ * still applies).
+ * @param {TestRecord[]} records
+ * @param {FileMeta[]} metas
  * @param {{ commit?: string, generatedAt?: string }} [meta]
  * @returns {ImpactMap}
  */
-export function mergeImpact(inputs, { commit = "unknown", generatedAt = new Date().toISOString() } = {}) {
-  /** @type {Set<string>} */
-  const specs = new Set();
-  /** @type {Map<string, Set<string>>} */
-  const files = new Map();
-  /** @type {Map<string, Set<string>>} */
-  const loaded = new Map();
-  /** @param {Map<string, Set<string>>} into @param {string} file @param {string} spec */
-  const add = (into, file, spec) => {
-    let set = into.get(file);
-    if (!set) into.set(file, (set = new Set()));
+export function mergeImpact(records, metas, { commit = "unknown", generatedAt = new Date().toISOString() } = {}) {
+  /** @type {Map<string, number>} */
+  const testIndex = new Map();
+  /** @type {ImpactMap["tests"]} */
+  const tests = [];
+  for (const r of records) {
+    if (testIndex.has(r.id)) continue;
+    testIndex.set(r.id, tests.length);
+    tests.push({ id: r.id, spec: r.spec, title: r.title ?? [], location: r.location ?? r.spec });
+  }
+  /** @type {Map<string, Map<string, Set<string>>>} */
+  const layers = new Map([["files", new Map()], ["exercised", new Map()], ["assets", new Map()]]);
+  /** @param {string} layer @param {string} file @param {string} spec */
+  const add = (layer, file, spec) => {
+    const m = /** @type {Map<string, Set<string>>} */ (layers.get(layer));
+    let set = m.get(file);
+    if (!set) m.set(file, (set = new Set()));
     set.add(spec);
   };
-  for (const input of inputs) {
-    if ("spec" in input) {
-      specs.add(input.spec);
-      for (const f of input.loaded) add(loaded, f, input.spec);
-      for (const f of input.exercised) { add(files, f, input.spec); add(loaded, f, input.spec); }
-    } else {
-      for (const s of input.specs) specs.add(s);
-      for (const [f, list] of Object.entries(input.files)) for (const s of list) add(files, f, s);
-      for (const [f, list] of Object.entries(input.loaded)) for (const s of list) add(loaded, f, s);
+  /** @type {Map<string, Set<number>>} */
+  const fileTests = new Map();
+  /** @type {Map<string, Map<number, Set<number>>>} */
+  const lineTests = new Map();
+  for (const r of records) {
+    const t = /** @type {number} */ (testIndex.get(r.id));
+    for (const f of r.loaded) {
+      add("files", f, r.spec);
+      let s = fileTests.get(f);
+      if (!s) fileTests.set(f, (s = new Set()));
+      s.add(t);
     }
+    for (const f of r.exercised) add("exercised", f, r.spec);
+    for (const f of r.requests ?? []) add("assets", f, r.spec);
+    for (const [f, runs] of Object.entries(r.lines ?? {})) {
+      let byLine = lineTests.get(f);
+      if (!byLine) lineTests.set(f, (byLine = new Map()));
+      for (const [a, b] of runs) for (let n = a; n <= b; n++) {
+        let s = byLine.get(n);
+        if (!s) byLine.set(n, (s = new Set()));
+        s.add(t);
+      }
+    }
+  }
+
+  /** @type {Map<string, number>} */
+  const setIndex = new Map();
+  /** @type {string[]} */
+  const sets = [];
+  /** @param {Iterable<number>} members */
+  const intern = (members) => {
+    const enc = encodeSet([...members], tests.length);
+    let i = setIndex.get(enc);
+    if (i === undefined) { i = sets.length; sets.push(enc); setIndex.set(enc, i); }
+    return i;
+  };
+
+  /** @type {Map<string, FileMeta[]>} */
+  const metasByPath = new Map();
+  for (const m of metas) {
+    const list = metasByPath.get(m.path) ?? [];
+    list.push(m);
+    metasByPath.set(m.path, list);
+  }
+  /** @type {Record<string, FileLines>} */
+  const lines = {};
+  for (const file of [...lineTests.keys()].sort()) {
+    const versions = metasByPath.get(file) ?? [];
+    const blobs = new Set(versions.map((m) => m.blob));
+    if (versions.length === 0 || blobs.size !== 1) continue;
+    const meta = versions[0];
+    const byLine = /** @type {Map<number, Set<number>>} */ (lineTests.get(file));
+    /** @type {Array<[number, number, number]>} */
+    const cover = [];
+    let run = null;
+    for (const n of [...byLine.keys()].sort((a, b) => a - b)) {
+      const idx = intern(/** @type {Set<number>} */ (byLine.get(n)));
+      if (run && run[1] + 1 === n && run[2] === idx) run[1] = n;
+      else { run = [n, n, idx]; cover.push(run); }
+    }
+    lines[file] = {
+      blob: meta.blob,
+      aligned: versions.every((m) => m.aligned),
+      mapped: meta.mapped,
+      blocks: meta.blocks,
+      tests: intern(fileTests.get(file) ?? []),
+      cover,
+    };
   }
   /** @param {Map<string, Set<string>>} m */
   const plain = (m) => Object.fromEntries([...m.keys()].sort().map((k) => [k, [...(m.get(k) ?? [])].sort()]));
-  return { version: MAP_VERSION, commit, generatedAt, specs: [...specs].sort(), files: plain(files), loaded: plain(loaded) };
+  return {
+    version: MAP_VERSION,
+    commit,
+    generatedAt,
+    specs: [...new Set(tests.map((t) => t.spec))].sort(),
+    tests,
+    files: plain(/** @type {Map<string, Set<string>>} */ (layers.get("files"))),
+    exercised: plain(/** @type {Map<string, Set<string>>} */ (layers.get("exercised"))),
+    assets: plain(/** @type {Map<string, Set<string>>} */ (layers.get("assets"))),
+    lines,
+    sets,
+  };
 }
+
+// --- load ------------------------------------------------------------------
 
 /** @param {unknown} v */
 const isStringArray = (v) => Array.isArray(v) && v.every((s) => typeof s === "string");
@@ -154,22 +285,23 @@ const isListRecord = (v) =>
   typeof v === "object" && v !== null && !Array.isArray(v) && Object.values(v).every(isStringArray);
 
 /**
- * Parse and validate a map for selection. Returns the map, or an error string
- * explaining why selection must fall back.
- * @param {string | null} text
+ * Parse and validate a map for selection. Returns the map, or the reason
+ * selection must fall back without it.
+ * @param {string | null | undefined} text
  * @param {{ now?: Date, maxAgeHours?: number }} [options]
  * @returns {{ map: ImpactMap } | { error: string }}
  */
 export function loadImpactMap(text, { now = new Date(), maxAgeHours = MAX_MAP_AGE_HOURS } = {}) {
-  if (text === null || text === undefined) return { error: "no impact map" };
+  if (text === null || text === undefined || text === "") return { error: "no impact map" };
   let data;
   try { data = JSON.parse(text); } catch { return { error: "impact map is not valid JSON" }; }
-  if (typeof data !== "object" || data === null) return { error: "impact map is not an object" };
+  if (typeof data !== "object" || data === null || Array.isArray(data)) return { error: "impact map is not an object" };
   if (data.version !== MAP_VERSION) return { error: `impact map version ${data.version} is not ${MAP_VERSION}` };
-  if (!isStringArray(data.specs) || !isListRecord(data.files) || !isListRecord(data.loaded)) {
+  if (!isStringArray(data.specs) || !isListRecord(data.files) || !isListRecord(data.exercised) || !isListRecord(data.assets)) {
     return { error: "impact map is malformed" };
   }
-  if (data.specs.length === 0 || Object.keys(data.loaded).length === 0) return { error: "impact map is empty" };
+  if (data.specs.length === 0 || Object.keys(data.files).length === 0) return { error: "impact map is empty" };
+  if (typeof data.generatedAt !== "string") return { error: "impact map has no valid generatedAt" };
   const generated = Date.parse(data.generatedAt);
   if (Number.isNaN(generated)) return { error: "impact map has no valid generatedAt" };
   const ageHours = (now.getTime() - generated) / 3_600_000;
@@ -178,12 +310,7 @@ export function loadImpactMap(text, { now = new Date(), maxAgeHours = MAX_MAP_AG
   return { map: data };
 }
 
-/**
- * The oldest map PR selection trusts. The map is regenerated nightly on dev;
- * 72 hours tolerates two failed nightlies. Dev pushes still run every spec,
- * so a dependency that a stale map misses is caught when the PR lands.
- */
-export const MAX_MAP_AGE_HOURS = 72;
+// --- CLI -------------------------------------------------------------------
 
 /** @param {string} p @returns {string[]} */
 function jsonFiles(p) {
@@ -191,13 +318,16 @@ function jsonFiles(p) {
   return p.endsWith(".json") ? [p] : [];
 }
 
-/** @param {ImpactMap} map */
+/**
+ * How many specs each file maps to under each file-level rule.
+ * @param {Pick<ImpactMap, "specs" | "files" | "exercised">} map
+ */
 export function mapStats(map) {
   const specCount = map.specs.length;
   /** @param {Record<string, string[]>} rec */
   const dist = (rec) => {
     const counts = Object.values(rec).map((l) => l.length).sort((a, b) => a - b);
-    const pick = (q) => counts.length ? counts[Math.min(counts.length - 1, Math.floor(q * counts.length))] : 0;
+    const pick = (/** @type {number} */ q) => counts.length ? counts[Math.min(counts.length - 1, Math.floor(q * counts.length))] : 0;
     return {
       files: counts.length,
       median: pick(0.5),
@@ -206,8 +336,8 @@ export function mapStats(map) {
       nearlyAll: counts.filter((c) => c >= 0.9 * specCount).length,
     };
   };
-  const loadedOnly = Object.keys(map.loaded).filter((f) => !map.files[f]);
-  return { specs: specCount, exercised: dist(map.files), loaded: dist(map.loaded), loadedOnlyFiles: loadedOnly.length };
+  const loadedOnly = Object.keys(map.files).filter((f) => !map.exercised[f]);
+  return { specs: specCount, loaded: dist(map.files), exercised: dist(map.exercised), loadedOnlyFiles: loadedOnly.length };
 }
 
 function main() {
@@ -221,12 +351,20 @@ function main() {
       else if (rest[i] === "--commit") commit = rest[++i];
       else inputs.push(rest[i]);
     }
-    if (!out || inputs.length === 0) throw new Error("usage: merge --out map.json [--commit SHA] <dir|file>...");
-    const records = inputs.flatMap(jsonFiles).map((f) => JSON.parse(readFileSync(f, "utf8")));
-    const map = mergeImpact(records, { commit });
-    if (map.specs.length === 0) throw new Error("no coverage records found");
+    if (!out || inputs.length === 0) throw new Error("usage: merge --out map.json [--commit SHA] <record dir>...");
+    /** @type {TestRecord[]} */
+    const records = [];
+    /** @type {FileMeta[]} */
+    const metas = [];
+    for (const file of inputs.flatMap(jsonFiles)) {
+      const data = JSON.parse(readFileSync(file, "utf8"));
+      if (typeof data.path === "string" && "blob" in data) metas.push(data);
+      else if (typeof data.spec === "string" && typeof data.id === "string") records.push(data);
+    }
+    if (records.length === 0) throw new Error("no coverage records found");
+    const map = mergeImpact(records, metas, { commit });
     writeFileSync(out, JSON.stringify(map) + "\n");
-    process.stderr.write(`[impact-coverage] ${JSON.stringify(mapStats(map))}\n`);
+    process.stderr.write(`[impact-coverage] ${records.length} records, ${map.tests.length} tests, ${map.sets.length} test sets: ${JSON.stringify(mapStats(map))}\n`);
     return;
   }
   if (cmd === "stats") {

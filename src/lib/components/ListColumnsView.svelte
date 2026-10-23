@@ -84,8 +84,7 @@
     // keyboard focus so the next navigation key still belongs to this tree.
     (event.currentTarget as HTMLElement).closest<HTMLElement>(".entry-item")?.focus({ preventScroll: true });
     const directory = explorer.currentPath;
-    if (stage === "full") explorer.showAllListChildren(path);
-    else explorer.showColumnListChildren(path);
+    explorer.setListPeekStage(path, stage);
     await tick();
     if (explorer.currentPath === directory) {
       const index = explorer.displayEntries.findIndex(entry => entry.path === path);

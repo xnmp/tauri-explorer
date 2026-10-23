@@ -576,3 +576,9 @@ HTML preview zoom cannot measure the sandboxed document, so it uses browser
 page-zoom semantics (`domain/html-preview-zoom.ts`): lay the frame out at
 pane / scale and paint it scaled, with Fit emulating a 1280px viewport. Do not
 add `allow-same-origin` to measure content width (#1352).
+
+Startup bundle accounting is sensitive even to internal refactors: #1346's
+List peek admission consolidation pushed gzip to 281,985 bytes against the
+281,984-byte cap. Reproduce with `bun run check:bundle` on the locked dependencies;
+unit tests alone cannot verify this contract. #1357 reverts that refactor rather
+than increasing the budget.

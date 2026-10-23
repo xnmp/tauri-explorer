@@ -155,7 +155,8 @@
 
   .list-view :global(.list-item:where(.selected)) {
     background: color-mix(in srgb, var(--accent) 8%, transparent);
-    border-color: var(--accent);
+    border-color: transparent;
+    border-left-color: var(--accent);
   }
 
   /* Ghosted entries (hidden, empty folder, cut) dim their icon and quiet

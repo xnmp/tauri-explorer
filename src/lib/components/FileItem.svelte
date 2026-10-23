@@ -258,6 +258,8 @@
   .peek-caret { display: flex; align-items: center; justify-content: center; width: 22px; height: 24px; padding: 0; border: 0; background: transparent; color: var(--text-secondary); cursor: pointer; border-radius: var(--radius-sm); }
   .peek-caret:hover { background: var(--subtle-fill-tertiary); color: var(--text-primary); }
   .peek-caret:focus-visible { outline: 2px solid var(--focus-stroke-outer); outline-offset: -2px; }
+  .file-item.peek-row.selected::after { content: ""; position: absolute; left: calc(16px + var(--peek-indent)); top: 0; bottom: 0; width: 3px; background: var(--accent); pointer-events: none; }
+
   .file-item {
     display: grid;
     grid-template-columns: var(--details-grid-columns, var(--col-name, 300px) var(--col-date, 180px) var(--col-type, 120px) var(--col-size, 90px) var(--col-length, 90px) var(--col-resolution, 160px));
@@ -293,8 +295,15 @@
   /* Selected state - accent-tinted background */
   .file-item.selected {
     background: color-mix(in srgb, var(--accent) 8%, transparent);
-    border-color: var(--accent);
+    border-color: transparent;
+    border-left-color: var(--accent);
     border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  }
+
+  /* The tree's bar sits at the row's indent instead. Same specificity as the
+     rule above (later wins); FileList's keyboard focus edge still overrides. */
+  .file-item.peek-row:where(.selected) {
+    border-left-color: transparent;
   }
 
   .file-item.selected:hover {

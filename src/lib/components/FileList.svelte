@@ -307,7 +307,9 @@
     // Windows/macOS pointer-drag acquisition prevents mousedown's default
     // action, so those engines do not focus the clicked gridcell themselves.
     // Keep DOM focus aligned with the cursor regardless of drag backend.
-    if (effect.focusPane) (event.currentTarget as HTMLElement | null)?.focus({ preventScroll: true });
+    // Script focus inherits :focus-visible from a keyboard-focused row, which
+    // drew the full keyboard ring around clicked rows there (#1351).
+    if (effect.focusPane) (event.currentTarget as HTMLElement | null)?.focus({ preventScroll: true, focusVisible: false });
   }
 
   async function handleDoubleClick(entry: FileEntry): Promise<void> {

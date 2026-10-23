@@ -502,7 +502,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `icon-themes.ts` — icon pack types and explicit-choice versus color-theme-suggestion policy.
 - `syntax-highlight.ts` — highlight.js wrapper for preview.
 - `csv-preview.ts` — quoted CSV parser for PreviewPane table data, bounded to the preview's data-row limit (#666).
-- `html-preview-zoom.ts` — pure HTML preview page-zoom model: unmeasurable sandboxed frame laid out at pane/scale, 1280px desktop Fit, zoom stops and labels (#1352).
+- `html-preview-zoom.ts` — pure HTML preview page-zoom model: unmeasurable sandboxed frame scales a fixed ≥1280px desktop layout like an image (#1361), Fit, zoom stops and labels (#1352).
 - `pdf-preview.ts` — pure PDF fit, zoom-anchor, measured pointer coordinates, pan bounds and safe-link policy (#728–#730).
 - `markdown.ts` — safe markdown render for preview.
 - `marquee-rect.ts` — marquee band geometry as compositor-only `transform`s for five container-sized layers (fill + four 1px edges sized to the client box, scaled down so fractional zoom rasterises exactly); a resized band element repainted its layer over every image tile per frame on WebKitGTK (#1051).

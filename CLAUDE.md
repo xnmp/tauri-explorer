@@ -572,10 +572,13 @@ For HTML preview CSP browser tests, route the forbidden image to a valid fixture
 and assert it never reaches the route plus completed/zero-natural-width image
 state. WebKit omits `requestfailed` events for CSP and blocks asynchronous
 callbacks injected into a script-disabled sandbox; neither is a portable oracle.
-HTML preview zoom cannot measure the sandboxed document, so it uses browser
-page-zoom semantics (`domain/html-preview-zoom.ts`): lay the frame out at
-pane / scale and paint it scaled, with Fit emulating a 1280px viewport. Do not
-add `allow-same-origin` to measure content width (#1352).
+HTML preview zoom cannot measure the sandboxed document, so it scales a fixed
+desktop layout like an image (`domain/html-preview-zoom.ts`): the frame lays out
+at least 1280px wide and zoom only scales its paint; Fit shows it whole, zooming
+in scrolls the pane horizontally, and the frame's height stays in CSS
+(`calc(100% / scale)`) because `bind:clientHeight` misses scrollbar changes.
+Re-laying out at pane / scale (browser zoom) reflowed responsive pages at every
+step (#1361). Do not add `allow-same-origin` to measure content width (#1352).
 
 Startup bundle accounting is sensitive even to internal refactors: #1346's
 List peek admission consolidation pushed gzip to 281,985 bytes against the

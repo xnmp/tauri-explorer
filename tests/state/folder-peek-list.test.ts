@@ -186,7 +186,7 @@ it("remembers Tiles panel heights per pane for the session, without counting as 
 it("full-flow choice is per pane and survives collapse, refresh, navigation and view changes", async () => {
   const left = create("list"), right = create("list");
   await left.togglePeek(a.path); await settle();
-  left.setListPeekStage(a.path, "full");
+  left.showAllListChildren(a.path);
   expect([...left.listFullFlowPaths]).toEqual([a.path]);
   expect(right.listFullFlowPaths.size).toBe(0);
   await left.togglePeek(a.path); await left.togglePeek(a.path); await settle();
@@ -201,16 +201,16 @@ it("full-flow choice is per pane and survives collapse, refresh, navigation and 
 
 it("full-flow accepts only an open, permanent top-level List folder", async () => {
   const pane = create("list");
-  pane.setListPeekStage(a.path, "full");
+  pane.showAllListChildren(a.path);
   expect(pane.listFullFlowPaths.size).toBe(0);
   await pane.setSpringPeeks([a.path]); await settle();
-  pane.setListPeekStage(a.path, "full");
+  pane.showAllListChildren(a.path);
   expect(pane.listFullFlowPaths.size).toBe(0);
   await pane.setSpringPeeks([]); await pane.togglePeek(a.path); await settle();
-  pane.setListPeekStage(big.path, "full");
+  pane.showAllListChildren(big.path);
   expect(pane.listFullFlowPaths.size).toBe(0);
   pane.setViewMode("details"); await settle();
-  pane.setListPeekStage(a.path, "full");
+  pane.showAllListChildren(a.path);
   expect(pane.listFullFlowPaths.size).toBe(0);
 });
 
@@ -218,19 +218,19 @@ it("full-flow accepts only an open, permanent top-level List folder", async () =
 it("keeps column and full-flow stages mutually exclusive and pane-local", async () => {
   const left = create("list"), right = create("list");
   await left.togglePeek(a.path); await settle();
-  left.setListPeekStage(a.path, "column");
+  left.showColumnListChildren(a.path);
   expect(left.listColumnPaths.has(a.path)).toBe(true);
   expect(left.listFullFlowPaths.has(a.path)).toBe(false);
   expect(right.listColumnPaths.size).toBe(0);
-  left.setListPeekStage(a.path, "full");
+  left.showAllListChildren(a.path);
   expect(left.listColumnPaths.has(a.path)).toBe(false);
   expect(left.listFullFlowPaths.has(a.path)).toBe(true);
-  left.setListPeekStage(a.path, "column");
+  left.showColumnListChildren(a.path);
   await left.togglePeek(a.path); await left.togglePeek(a.path); await settle();
   expect(left.listColumnPaths.has(a.path)).toBe(true);
   expect(left.listFullFlowPaths.has(a.path)).toBe(false);
   left.setViewMode("details"); await settle();
-  left.setListPeekStage(a.path, "full");
+  left.showAllListChildren(a.path);
   expect(left.listColumnPaths.has(a.path)).toBe(true);
 });
 
@@ -238,40 +238,42 @@ it("no closed, nested, temporary, disabled or non-List target acquires either Li
   const nested = entry("/r/a/nested");
   source.current = async path => ({ ok: true, path, entries: path === a.path ? [nested, big] : path === nested.path ? [] : trees[path] ?? [] });
   const pane = create("list");
+  const setStage = (path: string, stage: "column" | "full") => {
+    if (stage === "full") pane.showAllListChildren(path);
+    else pane.showColumnListChildren(path);
+  };
   const staged = () => [...pane.listColumnPaths, ...pane.listFullFlowPaths];
   for (const stage of ["column", "full"] as const) {
     // Closed.
-    pane.setListPeekStage(a.path, stage);
+    setStage(a.path, stage);
     // Temporary (a drag's spring peek).
     await pane.setSpringPeeks([a.path]); await settle();
-    pane.setListPeekStage(a.path, stage);
+    setStage(a.path, stage);
     await pane.setSpringPeeks([]); await settle();
     // Nested, although permanently expanded.
     await pane.togglePeek(a.path); await settle(); await pane.togglePeek(nested.path); await settle();
     expect(pane.isPeekExpanded(nested.path)).toBe(true);
-    pane.setListPeekStage(nested.path, stage);
+    setStage(nested.path, stage);
     // A file row is not a folder card.
-    pane.setListPeekStage(big.path, stage);
+    setStage(big.path, stage);
     expect(staged()).toEqual([]);
     // Non-List views keep the expansion but cannot stage it.
     for (const mode of ["details", "tiles"] as const) {
       pane.setViewMode(mode); await settle();
-      pane.setListPeekStage(a.path, stage);
+      setStage(a.path, stage);
     }
     pane.setViewMode("list"); await settle();
     // Folder Peek off.
     settingsStore.update({ folderPeek: false }); await settle();
-    pane.setListPeekStage(a.path, stage);
+    setStage(a.path, stage);
     settingsStore.update({ folderPeek: true }); await settle();
     expect(staged()).toEqual([]);
     await pane.togglePeek(nested.path); await pane.togglePeek(a.path); await settle();
   }
-  // The same target is admitted once it is eligible; malformed stages neither
-  // store anything nor displace the folder's current stage.
+  // The same target is admitted once it is eligible.
   await pane.togglePeek(a.path); await settle();
-  pane.setListPeekStage(a.path, "column");
+  pane.showColumnListChildren(a.path);
   expect(staged()).toEqual([a.path]);
-  for (const bogus of ["", "compact", null, undefined, 1]) pane.setListPeekStage(a.path, bogus as never);
   expect([...pane.listColumnPaths]).toEqual([a.path]);
   expect(pane.listFullFlowPaths.size).toBe(0);
 });
@@ -279,11 +281,11 @@ it("no closed, nested, temporary, disabled or non-List target acquires either Li
 it("a remembered stage survives a later spring peek of the closed folder without changing", async () => {
   const pane = create("list");
   await pane.togglePeek(a.path); await settle();
-  pane.setListPeekStage(a.path, "full");
+  pane.showAllListChildren(a.path);
   await pane.togglePeek(a.path); await settle();
   await pane.setSpringPeeks([a.path]); await settle();
   // Temporary peeks neither restage nor clear the user's choice.
-  pane.setListPeekStage(a.path, "column");
+  pane.showColumnListChildren(a.path);
   expect(pane.listFullFlowPaths.has(a.path)).toBe(true);
   expect(pane.listColumnPaths.has(a.path)).toBe(false);
   await pane.setSpringPeeks([]); await pane.togglePeek(a.path); await settle();

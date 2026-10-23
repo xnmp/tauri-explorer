@@ -118,8 +118,8 @@ export function createFolderPeekSession(windows: boolean, initialExpanded: reado
     listing(path: string) { return snapshots.get(path); },
     get fullFlowPaths() { return fullFlowPaths; },
     get columnPaths() { return columnPaths; },
-    /** The single List stage write path; admission belongs to the explorer. */
-    setListStage(path: string, stage: ListPeekExpansion) { if (!disposed) listExpansion = rememberListExpansion(listExpansion, path, stage); },
+    showAllListChildren(path: string) { if (!disposed) listExpansion = rememberListExpansion(listExpansion, path, "full"); },
+    showColumnListChildren(path: string) { if (!disposed) listExpansion = rememberListExpansion(listExpansion, path, "column"); },
     cardRows(path: string) { return cardRows.get(path); },
     setCardRows(path: string, rows: number) { if (!disposed) cardRows = rememberCardRows(cardRows, path, rows); },
     panelHeight(path: string) { return panelHeights.get(path); },

@@ -1,5 +1,5 @@
 /** Per-pane facade; listing resources and tree policies load on the first peek. */
-import { toggleExpanded, collapseSubtree, pruneExpanded, type ExpandedPaths, type ListPeekExpansion } from "$lib/domain/folder-peek-memory";
+import { toggleExpanded, collapseSubtree, pruneExpanded, type ExpandedPaths } from "$lib/domain/folder-peek-memory";
 import { toastStore } from "./toast.svelte";
 import { caretlessDoubleClickNotice } from "$lib/domain/folder-peek-flat";
 import type { FileEntry } from "$lib/domain/file";
@@ -55,7 +55,8 @@ export function createFolderPeekState(windows: boolean, initialExpanded: readonl
     listing(path: string) { return session?.listing(path); },
     get fullFlowPaths() { return session?.fullFlowPaths ?? noFullFlow; },
     get columnPaths() { return session?.columnPaths ?? noFullFlow; },
-    setListStage(path: string, stage: ListPeekExpansion) { if (!disposed) session?.setListStage(path, stage); },
+    showAllListChildren(path: string) { if (!disposed) session?.showAllListChildren(path); },
+    showColumnListChildren(path: string) { if (!disposed) session?.showColumnListChildren(path); },
     cardRows(path: string) { return session?.cardRows(path); },
     setCardRows(path: string, rows: number) { session?.setCardRows(path, rows); },
     panelHeight(path: string) { return session?.panelHeight(path); },

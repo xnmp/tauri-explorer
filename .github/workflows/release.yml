@@ -8,12 +8,33 @@ permissions:
   contents: write
 
 jobs:
-  # PRs into main do not run CI (#1367); the code's dev push did. Refuse to
-  # read the version, tag or build unless a dev commit with this exact tree
-  # has a successful dev push CI run and native smoke. Waits for a dev run
-  # still in progress. A tree that never reached dev (a direct main commit)
-  # cannot be released.
+  version-check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      tag_exists: ${{ steps.check.outputs.exists }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: ver
+        run: echo "version=v$(jq -r .version package.json)" >> "$GITHUB_OUTPUT"
+      - id: check
+        run: |
+          if git ls-remote --tags origin "${{ steps.ver.outputs.version }}" | grep -q .; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # PRs into main do not run CI (#1367); the code's dev push did. Before
+  # anything is built or tagged, require a dev commit with this exact tree to
+  # have a successful dev push CI run and native smoke (waiting for a dev run
+  # still in progress). Runs only when a release would happen: a push to main
+  # whose version is already tagged builds nothing. A tree that never reached
+  # dev (a direct main commit) cannot be released. release-gate.yml runs the
+  # same check on the PR into main.
   dev-ci-gate:
+    needs: version-check
+    if: needs.version-check.outputs.tag_exists == 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 75
     permissions:
@@ -31,26 +52,8 @@ jobs:
           git fetch --no-tags origin +refs/heads/dev:refs/remotes/origin/dev
           node scripts/release-ci-gate.mjs --wait-minutes 60
 
-  version-check:
-    needs: dev-ci-gate
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.ver.outputs.version }}
-      tag_exists: ${{ steps.check.outputs.exists }}
-    steps:
-      - uses: actions/checkout@v7
-      - id: ver
-        run: echo "version=v$(jq -r .version package.json)" >> "$GITHUB_OUTPUT"
-      - id: check
-        run: |
-          if git ls-remote --tags origin "${{ steps.ver.outputs.version }}" | grep -q .; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-
   build:
-    needs: version-check
+    needs: [version-check, dev-ci-gate]
     if: needs.version-check.outputs.tag_exists == 'false'
     strategy:
       fail-fast: false
@@ -128,7 +131,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: [version-check, build]
+    needs: [version-check, dev-ci-gate, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

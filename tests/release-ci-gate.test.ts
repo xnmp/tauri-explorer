@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
-import { candidateCommits, combine, judgeCommit, NATIVE_REQUIRED_JOB } from "../scripts/release-ci-gate.mjs";
+import { candidateCommits, combine, fetchJsonWithRetry, judgeCommit, NATIVE_REQUIRED_JOB } from "../scripts/release-ci-gate.mjs";
 
 const REPO = "xnmp/tauri-explorer";
 const run = (id: number, path: string, over: Record<string, unknown> = {}) => ({
@@ -57,14 +57,56 @@ describe("combine", () => {
   });
 });
 
+describe("fetchJsonWithRetry", () => {
+  const ok = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
+  const status = (code: number) => new Response("{}", { status: code });
+  const sequence = (...outcomes: (Response | Error)[]) => {
+    const calls: string[] = [];
+    const fetchApi = (async (url: string) => {
+      calls.push(url);
+      const next = outcomes.shift();
+      if (!next) throw new Error("no more responses");
+      if (next instanceof Error) throw next;
+      return next;
+    }) as unknown as typeof fetch;
+    return { calls, fetchApi };
+  };
+  const options = (fetchApi: typeof fetch) => ({ fetchApi, delayMs: 1, wait: async () => {} });
+
+  it("retries transient 5xx responses and network errors, then returns the data", async () => {
+    const { calls, fetchApi } = sequence(status(502), new TypeError("fetch failed"), ok({ runs: 1 }));
+    await expect(fetchJsonWithRetry("u", {}, options(fetchApi))).resolves.toEqual({ runs: 1 });
+    expect(calls).toHaveLength(3);
+  });
+
+  it("fails closed after the last transient failure", async () => {
+    const { calls, fetchApi } = sequence(status(503), status(500), status(504), ok({}));
+    await expect(fetchJsonWithRetry("u", {}, options(fetchApi))).rejects.toThrow(/\(504\)/);
+    expect(calls).toHaveLength(3);
+  });
+
+  it("never retries a client error such as 404 or 403", async () => {
+    const { calls, fetchApi } = sequence(status(404), ok({}));
+    await expect(fetchJsonWithRetry("u", {}, options(fetchApi))).rejects.toThrow(/\(404\)/);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("propagates a persistent network error", async () => {
+    const { fetchApi } = sequence(new TypeError("a"), new TypeError("b"), new TypeError("c"));
+    await expect(fetchJsonWithRetry("u", {}, options(fetchApi))).rejects.toThrow("c");
+  });
+});
+
 describe("release.yml", () => {
   const release = parse(readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8"));
 
-  it("gates reading the version, tagging and building on the dev CI gate", () => {
-    expect(release.jobs["version-check"].needs).toBe("dev-ci-gate");
-    expect(release.jobs.build.needs).toBe("version-check");
-    expect(release.jobs.release.needs).toEqual(["version-check", "build"]);
+  it("gates building and tagging on the dev CI gate, which runs only when a release would happen", () => {
+    expect(release.jobs["version-check"].needs).toBeUndefined();
     const gate = release.jobs["dev-ci-gate"];
+    expect(gate.needs).toBe("version-check");
+    expect(gate.if).toBe("needs.version-check.outputs.tag_exists == 'false'");
+    expect(release.jobs.build.needs).toEqual(["version-check", "dev-ci-gate"]);
+    expect(release.jobs.release.needs).toEqual(["version-check", "dev-ci-gate", "build"]);
     expect(gate.permissions).toEqual({ contents: "read", actions: "read" });
     expect(gate.steps.at(-1).run).toContain("node scripts/release-ci-gate.mjs");
     expect(gate.steps.at(-1).run).toContain("refs/remotes/origin/dev");
@@ -73,5 +115,25 @@ describe("release.yml", () => {
   it("keeps the main-push trigger and the tag/version flow", () => {
     expect(release.on).toEqual({ push: { branches: ["main"] } });
     expect(release.jobs.build.if).toBe("needs.version-check.outputs.tag_exists == 'false'");
+    // No job that publishes runs without the gate: every job but the version
+    // read and the gate itself depends on dev-ci-gate.
+    for (const [id, job] of Object.entries(release.jobs as Record<string, { needs?: string | string[] }>)) {
+      if (id === "version-check" || id === "dev-ci-gate") continue;
+      expect([job.needs ?? []].flat()).toContain("dev-ci-gate");
+    }
+  });
+});
+
+describe("release-gate.yml", () => {
+  const workflow = parse(readFileSync(new URL("../.github/workflows/release-gate.yml", import.meta.url), "utf8"));
+
+  it("runs the same gate on PRs into main as a read-only `release-gate` check", () => {
+    expect(workflow.on).toEqual({ pull_request: { branches: ["main"] } });
+    expect(Object.keys(workflow.jobs)).toEqual(["release-gate"]);
+    expect(workflow.permissions).toEqual({ contents: "read", actions: "read" });
+    const steps = workflow.jobs["release-gate"].steps;
+    expect(steps[0].with["fetch-depth"]).toBe(0);
+    expect(steps.at(-1).run).toContain("refs/remotes/origin/dev");
+    expect(steps.at(-1).run).toContain("node scripts/release-ci-gate.mjs");
   });
 });

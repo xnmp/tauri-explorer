@@ -28,6 +28,9 @@ permissions:
   actions: read
 
 env:
+  # bun inside the Playwright container (the host jobs use setup-bun). Exact
+  # version, released at least two weeks before it is pinned.
+  CONTAINER_BUN_VERSION: "1.4.3"
   TEST_CACHE_WRITE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
   TEST_CACHE_READ: ${{ vars.TEST_CACHE != 'off' && github.event_name != 'schedule' && !(github.event_name == 'workflow_dispatch' && !inputs.test_cache) }}
 
@@ -88,7 +91,9 @@ jobs:
             code:
               - '**'
               - '!docs/**'
-              - '!**/*.md'
+              # Root-level Markdown only: Markdown under e2e/, src/, tests/ and
+              # elsewhere can be a fixture or a text contract, so it stays code.
+              - '!*.md'
               - '!output/**'
               # Written by browser specs as issue/acceptance proof; no test,
               # build or script reads them (#1367).
@@ -246,7 +251,7 @@ jobs:
     # 117 MB from a mirror that was sometimes ~54 kB/s). Its tag must equal
     # bun.lock's @playwright/test version (tests/ci-playwright-container.test.ts).
     container:
-      image: mcr.microsoft.com/playwright:v1.60.0-noble
+      image: mcr.microsoft.com/playwright:v1.60.0-noble@sha256:9bd26ad900bb5e0f4dee75839e957a89ae89c2b7ab1e76050e559790e946b948
       # Chromium needs more shared memory than Docker's 64 MB default.
       options: --ipc=host
     # Steps use bash features (here-strings); do not fall back to sh.
@@ -264,7 +269,7 @@ jobs:
     env:
       E2E_ENGINE: chromium
       ImageOS: playwright_noble
-      ImageVersion: "1.60.0"
+      ImageVersion: "1.60.0_9bd26ad900bb5e0f4dee75839e957a89ae89c2b7ab1e76050e559790e946b948"
       TEST_CACHE_NORMALIZE_VERSION: "1"
       # Below the step cap, so a stall reports interrupted tests (#1367).
       E2E_GLOBAL_TIMEOUT_MINUTES: "24"
@@ -303,11 +308,16 @@ jobs:
             echo "No affected chromium specs in this shard." >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      # setup-bun extracts with unzip, which the image lacks; the npm package
-      # installs bun's prebuilt binary from the registry, not from apt.
+      # setup-bun extracts with unzip, which the image lacks. The platform
+      # package is bun's prebuilt binary; --ignore-scripts runs no install
+      # script. CONTAINER_BUN_VERSION (workflow env) is the single pin.
       - name: Install bun
         if: steps.plan.outputs.run == 'true'
-        run: npm install --global bun@latest
+        run: |
+          npm install --global --ignore-scripts "@oven/bun-linux-x64@${CONTAINER_BUN_VERSION}"
+          ln -sf "$(npm root --global)/@oven/bun-linux-x64/bin/bun" /usr/local/bin/bun
+          ln -sf /usr/local/bin/bun /usr/local/bin/bunx
+          test "$(bun --version)" = "$CONTAINER_BUN_VERSION"
 
       - name: Install dependencies
         if: steps.plan.outputs.run == 'true'
@@ -390,7 +400,7 @@ jobs:
     # 117 MB from a mirror that was sometimes ~54 kB/s). Its tag must equal
     # bun.lock's @playwright/test version (tests/ci-playwright-container.test.ts).
     container:
-      image: mcr.microsoft.com/playwright:v1.60.0-noble
+      image: mcr.microsoft.com/playwright:v1.60.0-noble@sha256:9bd26ad900bb5e0f4dee75839e957a89ae89c2b7ab1e76050e559790e946b948
       # Chromium needs more shared memory than Docker's 64 MB default.
       options: --ipc=host
     # Steps use bash features (here-strings); do not fall back to sh.
@@ -409,7 +419,7 @@ jobs:
       E2E_ENGINE: chromium
       ALL_VIEW_MODES: "1"
       ImageOS: playwright_noble
-      ImageVersion: "1.60.0"
+      ImageVersion: "1.60.0_9bd26ad900bb5e0f4dee75839e957a89ae89c2b7ab1e76050e559790e946b948"
       TEST_CACHE_NORMALIZE_VERSION: "1"
       # Below the step cap, so a stall reports interrupted tests (#1367).
       E2E_GLOBAL_TIMEOUT_MINUTES: "24"
@@ -454,11 +464,16 @@ jobs:
             echo "No affected chromium specs in this shard." >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      # setup-bun extracts with unzip, which the image lacks; the npm package
-      # installs bun's prebuilt binary from the registry, not from apt.
+      # setup-bun extracts with unzip, which the image lacks. The platform
+      # package is bun's prebuilt binary; --ignore-scripts runs no install
+      # script. CONTAINER_BUN_VERSION (workflow env) is the single pin.
       - name: Install bun
         if: steps.plan.outputs.run == 'true'
-        run: npm install --global bun@latest
+        run: |
+          npm install --global --ignore-scripts "@oven/bun-linux-x64@${CONTAINER_BUN_VERSION}"
+          ln -sf "$(npm root --global)/@oven/bun-linux-x64/bin/bun" /usr/local/bin/bun
+          ln -sf /usr/local/bin/bun /usr/local/bin/bunx
+          test "$(bun --version)" = "$CONTAINER_BUN_VERSION"
 
       - name: Install dependencies
         if: steps.plan.outputs.run == 'true'
@@ -599,14 +614,18 @@ jobs:
     # 117 MB from a mirror that was sometimes ~54 kB/s). Its tag must equal
     # bun.lock's @playwright/test version (tests/ci-playwright-container.test.ts).
     container:
-      image: mcr.microsoft.com/playwright:v1.60.0-noble
+      image: mcr.microsoft.com/playwright:v1.60.0-noble@sha256:9bd26ad900bb5e0f4dee75839e957a89ae89c2b7ab1e76050e559790e946b948
       # Chromium needs more shared memory than Docker's 64 MB default.
       options: --ipc=host
     # Steps use bash features (here-strings); do not fall back to sh.
     defaults:
       run:
         shell: bash
-    timeout-minutes: 40
+    # Shards are planned at ~24 min, but container runs of the same plan took
+    # 22-30 min. Headroom rather than a sixth shard: browser, Rust and smoke
+    # jobs already queue for runners on a full PR run, and each extra shard
+    # adds its own setup (#1367).
+    timeout-minutes: 46
     strategy:
       fail-fast: false
       matrix:
@@ -619,10 +638,10 @@ jobs:
       WEBKIT: "1"
       PW_VIDEO_HEADED: "1"
       ImageOS: playwright_noble
-      ImageVersion: "1.60.0"
+      ImageVersion: "1.60.0_9bd26ad900bb5e0f4dee75839e957a89ae89c2b7ab1e76050e559790e946b948"
       TEST_CACHE_NORMALIZE_VERSION: "1"
       # Below the step cap, so a stall reports interrupted tests (#1367).
-      E2E_GLOBAL_TIMEOUT_MINUTES: "34"
+      E2E_GLOBAL_TIMEOUT_MINUTES: "40"
     steps:
       - uses: actions/checkout@v7
 
@@ -658,11 +677,16 @@ jobs:
             echo "No affected webkit specs in this shard." >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      # setup-bun extracts with unzip, which the image lacks; the npm package
-      # installs bun's prebuilt binary from the registry, not from apt.
+      # setup-bun extracts with unzip, which the image lacks. The platform
+      # package is bun's prebuilt binary; --ignore-scripts runs no install
+      # script. CONTAINER_BUN_VERSION (workflow env) is the single pin.
       - name: Install bun
         if: steps.plan.outputs.run == 'true'
-        run: npm install --global bun@latest
+        run: |
+          npm install --global --ignore-scripts "@oven/bun-linux-x64@${CONTAINER_BUN_VERSION}"
+          ln -sf "$(npm root --global)/@oven/bun-linux-x64/bin/bun" /usr/local/bin/bun
+          ln -sf /usr/local/bin/bun /usr/local/bin/bunx
+          test "$(bun --version)" = "$CONTAINER_BUN_VERSION"
 
       - name: Install dependencies
         if: steps.plan.outputs.run == 'true'
@@ -689,7 +713,7 @@ jobs:
       # (E2E_GLOBAL_TIMEOUT_MINUTES) fires first; this cap is the backstop.
       - name: E2E tests (WebKit)
         id: test-cache-run
-        timeout-minutes: 37
+        timeout-minutes: 43
         env:
           E2E_SELECTION: ${{ needs.changes.outputs.webkit }}
           E2E_REASON: ${{ needs.changes.outputs.webkit-reason }}

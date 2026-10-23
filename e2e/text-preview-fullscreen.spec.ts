@@ -38,7 +38,11 @@ const linePitch = (page: Page) =>
       return range.getBoundingClientRect().top;
     };
     let offset = 0;
-    for (let line = 0; line < lines; line++) offset = text.textContent!.indexOf("\n", offset) + 1;
+    for (let line = 0; line < lines; line++) {
+      const next = text.textContent!.indexOf("\n", offset);
+      if (next < 0) throw new Error(`preview text has fewer than ${lines + 1} lines`);
+      offset = next + 1;
+    }
     return (top(offset) - top(0)) / lines;
   }, LINE_SPAN);
 
@@ -58,6 +62,8 @@ test.describe("Fullscreen text preview", () => {
       await page.locator(".entry-item").filter({ hasText: "itinerary.txt" }).first().click();
       await expect(page.locator(".preview-text")).toBeVisible();
       const docked = await linePitch(page);
+      // A 12px font at line-height 1.6: a degenerate measurement cannot pass.
+      expect(docked).toBeGreaterThan(10);
 
       await fullscreenText(page);
       expect(await linePitch(page)).toBeCloseTo(docked, 0);
@@ -68,6 +74,7 @@ test.describe("Fullscreen text preview", () => {
     await open(page, 100);
     await fullscreenText(page);
     const base = await linePitch(page);
+    expect(base).toBeGreaterThan(10);
     const pane = page.locator(".preview-pane");
     await expect(pane.locator(".fs-text-zoom-indicator")).toHaveText("100%");
 

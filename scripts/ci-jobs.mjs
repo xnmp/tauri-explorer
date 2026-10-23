@@ -117,6 +117,33 @@ export function rerunDecision({ conclusion, runAttempt, jobs, maxAttempt = 1 }) 
 }
 
 /**
+ * @typedef {{ id: number, event: string, head_sha: string, head_branch?: string | null,
+ *   workflow_id?: number, pull_requests?: { number: number }[] }} RunInfo
+ */
+
+/**
+ * Why re-running a pull_request run would be wrong, or null when it is still
+ * the PR's current run. A re-run joins the PR's cancel-in-progress
+ * concurrency group, so re-running a superseded run would cancel the newer
+ * run for the PR's latest commit. Push runs use unique groups and are never
+ * stale here.
+ * @param {RunInfo} run the failed run
+ * @param {{ newerRuns: { id: number }[], prHeads: string[] }} context
+ *   newerRuns: the same workflow's pull_request runs for run.head_branch;
+ *   prHeads: the current head SHA of each PR the run belongs to
+ * @returns {string | null}
+ */
+export function staleRunReason(run, { newerRuns, prHeads }) {
+  if (run.event !== "pull_request") return null;
+  const newer = newerRuns.filter((r) => r.id > run.id);
+  if (newer.length > 0) return `run ${newer[0].id} is a newer run of this workflow for ${run.head_branch ?? "the PR branch"}`;
+  if (prHeads.length === 0) return "no open pull request is associated with the run, so it cannot be confirmed current";
+  const moved = prHeads.find((sha) => sha !== run.head_sha);
+  if (moved) return `the pull request's head moved from ${run.head_sha} to ${moved}`;
+  return null;
+}
+
+/**
  * @param {string} path
  * @param {{ method?: string, fetchApi?: typeof fetch, env?: NodeJS.ProcessEnv }} [options]
  */
@@ -166,6 +193,25 @@ async function report(/** @type {string[]} */ needed) {
   }
 }
 
+/**
+ * Evidence for staleRunReason: newer pull_request runs of the same workflow on
+ * the run's head branch, and the live head SHA of each associated PR.
+ * @param {RunInfo} run
+ */
+async function currentness(run) {
+  if (run.event !== "pull_request") return { newerRuns: [], prHeads: [] };
+  const branch = encodeURIComponent(run.head_branch ?? "");
+  const { workflow_runs: newerRuns } =
+    await github(`/actions/workflows/${run.workflow_id}/runs?event=pull_request&branch=${branch}&per_page=20`);
+  /** @type {string[]} */
+  const prHeads = [];
+  for (const pr of run.pull_requests ?? []) {
+    const live = await github(`/pulls/${pr.number}`);
+    if (live.state === "open") prHeads.push(live.head.sha);
+  }
+  return { newerRuns, prHeads };
+}
+
 async function autoRerun() {
   const runId = numeric(process.env.RUN_ID ?? "");
   const attempt = numeric(process.env.RUN_ATTEMPT ?? "");
@@ -175,6 +221,10 @@ async function autoRerun() {
     runAttempt: Number(run.run_attempt),
     jobs: await attemptJobs(runId, attempt),
   });
+  if (decision.rerun) {
+    const stale = staleRunReason(run, await currentness(run));
+    if (stale) Object.assign(decision, { rerun: false, reason: `${decision.reason}, but ${stale}` });
+  }
   console.log(`${run.name ?? "run"} ${runId} attempt ${attempt}: ${decision.rerun ? "re-running failed jobs" : "no re-run"} (${decision.reason})`);
   if (process.env.GITHUB_STEP_SUMMARY) {
     appendFileSync(process.env.GITHUB_STEP_SUMMARY, `Run ${runId} attempt ${attempt}: ${decision.rerun ? "re-ran failed jobs" : "not re-run"} — ${decision.reason}\n`);

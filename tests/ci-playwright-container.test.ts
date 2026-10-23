@@ -35,12 +35,35 @@ describe("Playwright container pin", () => {
     expect(runsPlaywright).toEqual([...BROWSER_JOBS].sort());
   });
 
-  it.each(BROWSER_JOBS)("runs %s in the image for bun.lock's Playwright version", (id) => {
+  const IMAGE = /^mcr\.microsoft\.com\/playwright:v(\d+\.\d+\.\d+)-noble@sha256:([0-9a-f]{64})$/;
+
+  it.each(BROWSER_JOBS)("runs %s in the digest-pinned image for bun.lock's Playwright version", (id) => {
     const job = ci.jobs[id];
-    expect(job.container.image).toBe(`mcr.microsoft.com/playwright:v${version}-noble`);
-    // The test-result cache's platform identity names the container.
+    const [, tagVersion, digest] = IMAGE.exec(job.container.image) ?? [];
+    expect(tagVersion).toBe(version);
+    // The test-result cache's platform identity names the container, digest included.
     expect(job.env.ImageOS).toBe("playwright_noble");
-    expect(job.env.ImageVersion).toBe(version);
+    expect(job.env.ImageVersion).toBe(`${version}_${digest}`);
+  });
+
+  it("pins one image across every browser job", () => {
+    expect(new Set(BROWSER_JOBS.map((id) => ci.jobs[id].container.image)).size).toBe(1);
+  });
+
+  describe("container bun", () => {
+    const pinned = String(ci.env.CONTAINER_BUN_VERSION);
+
+    it("is one exact version from the workflow env", () => {
+      expect(pinned).toMatch(/^\d+\.\d+\.\d+$/);
+    });
+
+    it.each(BROWSER_JOBS)("installs and verifies that version in %s, without install scripts", (id) => {
+      const install = (ci.jobs[id].steps as { name?: string; run?: string }[]).find((s) => s.name === "Install bun");
+      const run = install?.run ?? "";
+      expect(run).toContain('npm install --global --ignore-scripts "@oven/bun-linux-x64@${CONTAINER_BUN_VERSION}"');
+      expect(run).toContain('test "$(bun --version)" = "$CONTAINER_BUN_VERSION"');
+      expect(run).not.toMatch(/bun@latest|@oven\/bun-linux-x64@\d/);
+    });
   });
 
   it.each(BROWSER_JOBS)("never installs browsers or system packages in %s", (id) => {

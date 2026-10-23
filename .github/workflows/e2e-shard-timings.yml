@@ -1,19 +1,22 @@
 name: Refresh E2E shard timings
 
 # Weekly: re-record scripts/e2e-shard-timings.json from the logs of recent
-# successful dev push CI runs (scripts/e2e-shards.mjs record, #1123/#1367) and
-# open a PR when it changed. Cache-replayed shards and the ALL_VIEW_MODES job
-# are not timed; specs they leave untimed keep their previous timing.
-# A PR opened with GITHUB_TOKEN does not trigger CI itself: close and reopen it
-# (or push to it) to run the required checks.
+# successful dev push CI runs (scripts/e2e-shards.mjs record, #1123/#1367).
+# Cache-replayed shards and the ALL_VIEW_MODES job are not timed; specs they
+# leave untimed keep their previous timing.
+#
+# The workflow pushes no branch and opens no PR: the repository does not let
+# GITHUB_TOKEN create pull requests, and a token-created PR would not run CI.
+# It uploads the regenerated file as the `e2e-shard-timings` artifact and
+# writes the drift to the job summary. To apply it, download the artifact,
+# copy it over scripts/e2e-shard-timings.json on a branch and open a PR.
 on:
   schedule:
     - cron: "41 4 * * 1"
   workflow_dispatch:
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
   actions: read
 
 jobs:
@@ -33,25 +36,24 @@ jobs:
           mkdir -p "$logs"
           gh run list --workflow ci.yml --branch dev --event push --status success --limit 5 \
             --json databaseId --jq '.[].databaseId' > "$RUNNER_TEMP/runs.txt"
+          if [ ! -s "$RUNNER_TEMP/runs.txt" ]; then
+            echo "::error title=No CI runs to record::no successful dev push ci.yml run found; shard timings were not refreshed"
+            exit 1
+          fi
+          cp scripts/e2e-shard-timings.json "$RUNNER_TEMP/timings.before.json"
           while read -r id; do
             gh run view "$id" --log > "$logs/$id.log"
           done < "$RUNNER_TEMP/runs.txt"
           node scripts/e2e-shards.mjs record "$logs"/*.log
+          {
+            echo "Recorded from dev push runs: $(paste -sd ' ' "$RUNNER_TEMP/runs.txt")"
+            echo
+            node scripts/e2e-shards.mjs drift "$RUNNER_TEMP/timings.before.json"
+          } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Open a pull request when the timings changed
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if git diff --quiet -- scripts/e2e-shard-timings.json; then
-            echo "Shard timings unchanged."
-            exit 0
-          fi
-          head="chore/refresh-shard-timings-$(date -u +%Y%m%d)"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git switch -c "$head"
-          git commit -m "chore: refresh E2E shard timings" -- scripts/e2e-shard-timings.json
-          git push origin "$head"
-          gh pr create --base dev --head "$head" \
-            --title "chore: refresh E2E shard timings" \
-            --body "Re-recorded by the weekly e2e-shard-timings workflow from recent successful dev push CI runs. Close and reopen this PR to run CI (a GITHUB_TOKEN PR does not trigger workflows)."
+      - uses: actions/upload-artifact@v7
+        with:
+          name: e2e-shard-timings
+          path: scripts/e2e-shard-timings.json
+          if-no-files-found: error
+          retention-days: 30

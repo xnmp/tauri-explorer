@@ -31,6 +31,9 @@
 //     executed (not cache replays) count; specs they did not time keep their
 //     previous timing, and deleted specs are dropped. The weekly
 //     e2e-shard-timings.yml workflow runs this against recent dev pushes.
+//   node scripts/e2e-shards.mjs drift before.json
+//     Prints a Markdown summary of how scripts/e2e-shard-timings.json differs
+//     from before.json: per-engine totals and the largest per-spec changes.
 
 import { spawnSync } from "node:child_process";
 import { readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
@@ -223,6 +226,44 @@ export function mergeTimings(previous, recorded, discovered) {
   return merged;
 }
 
+/**
+ * How a recorded timings file differs from the previous one, per engine: the
+ * summed minutes before and after, and the specs whose timing moved most.
+ * @param {Record<string, Record<string, number>>} before
+ * @param {Record<string, Record<string, number>>} after
+ * @param {number} [top] specs listed per engine
+ */
+export function timingDrift(before, after, top = 10) {
+  const minutes = (/** @type {Record<string, number>} */ files) =>
+    Math.round(Object.values(files).reduce((sum, s) => sum + s, 0) / 6) / 10;
+  return [...new Set([...Object.keys(before), ...Object.keys(after)])].sort().map((engine) => {
+    const a = before[engine] ?? {};
+    const b = after[engine] ?? {};
+    const changes = [...new Set([...Object.keys(a), ...Object.keys(b)])]
+      .map((file) => ({ file, before: a[file] ?? null, after: b[file] ?? null }))
+      .filter((c) => c.before !== c.after)
+      .sort((x, y) => Math.abs((y.after ?? 0) - (y.before ?? 0)) - Math.abs((x.after ?? 0) - (x.before ?? 0)));
+    return { engine, beforeMinutes: minutes(a), afterMinutes: minutes(b), changed: changes.length, largest: changes.slice(0, top) };
+  });
+}
+
+/**
+ * @param {ReturnType<typeof timingDrift>} drift
+ * @returns {string}
+ */
+export function formatDrift(drift) {
+  const lines = ["### E2E shard timing drift", ""];
+  for (const d of drift) {
+    lines.push(`**${d.engine}**: ${d.beforeMinutes} → ${d.afterMinutes} recorded minutes, ${d.changed} spec timing(s) changed`);
+    if (d.largest.length > 0) {
+      lines.push("", "| spec | before (s) | after (s) |", "|---|---|---|");
+      for (const c of d.largest) lines.push(`| ${c.file} | ${c.before ?? "—"} | ${c.after ?? "—"} |`);
+    }
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
 /** Spec files Playwright discovers under `dir`, relative to it, '/'-separated. */
 export function discoverSpecs(dir = E2E_DIR) {
   return readdirSync(dir, { recursive: true, withFileTypes: true })
@@ -367,7 +408,13 @@ function main(argv) {
     }
     return;
   }
-  throw new Error("usage: e2e-shards.mjs plan --engine <name> --shard i/n --out <file> [--only <file>] [--verify] | verify --engine <name> --list <file> | record <log...>");
+  if (command === "drift" && args.length === 1) {
+    const before = JSON.parse(readFileSync(args[0], "utf8"));
+    const after = JSON.parse(readFileSync(TIMINGS_PATH, "utf8"));
+    process.stdout.write(`${formatDrift(timingDrift(before, after))}\n`);
+    return;
+  }
+  throw new Error("usage: e2e-shards.mjs plan --engine <name> --shard i/n --out <file> [--only <file>] [--verify] | verify --engine <name> --list <file> | record <log...> | drift <before.json>");
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

@@ -383,17 +383,27 @@ export const MANIFEST_VERSION_PLACEHOLDER = "0.0.0-test-cache";
  * The root package.json text with its top-level `version` value replaced by a
  * fixed placeholder and every other byte kept, so Turborepo (which always
  * hashes the root manifest) gives a release bump the same hash (#1367).
- * Throws when the rewrite would touch anything but the top-level version.
+ * When that rewrite would touch anything else (the first `"version":` line is
+ * not the top-level one) or the manifest does not parse, it returns the text
+ * unchanged and warns: the shard then hashes the real version and only loses
+ * cache hits across release bumps.
  * @param {string} text
+ * @param {(message: string) => void} [warn]
  */
-export function versionBlindManifest(text) {
-  const parsed = JSON.parse(text);
+export function versionBlindManifest(text, warn = (m) => console.warn(`::warning title=test-cache::${m}`)) {
+  let parsed;
+  try { parsed = JSON.parse(text); } catch {
+    warn("package.json does not parse; hashing it unchanged");
+    return text;
+  }
   if (typeof parsed !== "object" || parsed === null || typeof parsed.version !== "string") return text;
   const out = text.replace(/^(\s*"version"\s*:\s*)"[^"\\\n]*"/m, `$1"${MANIFEST_VERSION_PLACEHOLDER}"`);
-  const check = JSON.parse(out);
-  if (check.version !== MANIFEST_VERSION_PLACEHOLDER ||
+  let check;
+  try { check = JSON.parse(out); } catch { check = null; }
+  if (check?.version !== MANIFEST_VERSION_PLACEHOLDER ||
       JSON.stringify({ ...check, version: parsed.version }) !== JSON.stringify(parsed)) {
-    throw new Error("test-cache: package.json version is not a plain top-level string");
+    warn("package.json version is not the first \"version\" line; hashing the manifest with its real version");
+    return text;
   }
   return out;
 }

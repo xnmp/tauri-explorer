@@ -5,16 +5,21 @@ name: CI auto-rerun
 # scripts/ci-jobs.mjs auto-rerun; it reads job metadata only and never checks
 # out or runs the triggering run's code. workflow_run uses this file from the
 # default branch (dev), so changes here take effect after they merge.
+# A pull_request run is re-run only while it is the newest run of its
+# workflow for the branch and the PR head is still its head_sha.
 on:
   workflow_run:
     workflows: [CI, "Tauri binary E2E (smoke)"]
     types: [completed]
 
 # actions: write for the re-run request; contents: read only to check out
-# scripts/ from the default branch.
+# scripts/ from the default branch; pull-requests: read to confirm a PR run is
+# still the PR's current run (a re-run joins the PR's cancel-in-progress group
+# and would otherwise cancel the run for a newer commit).
 permissions:
   actions: write
   contents: read
+  pull-requests: read
 
 jobs:
   rerun:

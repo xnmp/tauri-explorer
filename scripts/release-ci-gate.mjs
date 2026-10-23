@@ -85,17 +85,45 @@ export function combine(results) {
 /** @param {string[]} args */
 const git = (...args) => execFileSync("git", args, { encoding: "utf8" }).trim();
 
+/**
+ * Fetch JSON, retrying transient failures: a 5xx response or a network error
+ * (including a timeout) is retried up to `attempts` times in all. Any other
+ * non-OK response, or the last transient failure, throws, so the gate still
+ * fails closed.
+ * @param {string} url
+ * @param {RequestInit} init
+ * @param {{ fetchApi?: typeof fetch, attempts?: number, delayMs?: number, timeoutMs?: number,
+ *   wait?: (ms: number) => Promise<unknown> }} [options] each attempt gets its own timeoutMs
+ */
+export async function fetchJsonWithRetry(url, init,
+  { fetchApi = fetch, attempts = 3, delayMs = 5_000, timeoutMs = 30_000, wait = sleep } = {}) {
+  /** @type {unknown} */
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    let response;
+    try {
+      response = await fetchApi(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) await wait(delayMs * attempt);
+      continue;
+    }
+    if (response.ok) return response.json();
+    lastError = new Error(`GitHub API ${url} failed (${response.status})`);
+    if (response.status < 500) throw lastError;
+    if (attempt < attempts) await wait(delayMs * attempt);
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
 /** @param {string} path */
 async function github(path) {
   const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
   if (!token || !process.env.GITHUB_REPOSITORY) throw new Error("GH_TOKEN and GITHUB_REPOSITORY are required");
   const api = process.env.GITHUB_API_URL || "https://api.github.com";
-  const response = await fetch(`${api}/repos/${process.env.GITHUB_REPOSITORY}${path}`, {
+  return fetchJsonWithRetry(`${api}/repos/${process.env.GITHUB_REPOSITORY}${path}`, {
     headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" },
-    signal: AbortSignal.timeout(30_000),
   });
-  if (!response.ok) throw new Error(`GitHub API ${path} failed (${response.status})`);
-  return response.json();
 }
 
 async function evaluate(/** @type {string} */ releaseSha) {

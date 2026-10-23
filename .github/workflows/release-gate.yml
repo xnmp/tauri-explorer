@@ -1,0 +1,39 @@
+name: Release gate
+
+# Pre-merge signal for PRs into main (#1367). PRs into main run no CI; the
+# release (release.yml's dev-ci-gate) instead requires a dev commit with the
+# released tree to have a green dev push CI run and native smoke. This job
+# runs the same check on the PR's merge commit, whose tree is what a merge
+# commit into main will release, so a PR that the release would refuse shows
+# a red `release-gate` check before it merges. Repository admins add
+# `release-gate` as a required check on the main branch ruleset; a workflow
+# cannot change that itself.
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # GITHUB_SHA is the PR's merge commit (checked out above). The gate
+      # waits up to an hour for a dev push run of that tree still in progress.
+      - name: Require a successful dev push CI run for the merged tree
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch --no-tags origin +refs/heads/dev:refs/remotes/origin/dev
+          node scripts/release-ci-gate.mjs --wait-minutes 60

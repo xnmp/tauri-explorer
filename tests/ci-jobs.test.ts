@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
-import { AGGREGATE_JOBS, describeJobs, failingStep, rerunDecision } from "../scripts/ci-jobs.mjs";
+import { AGGREGATE_JOBS, describeJobs, failingStep, rerunDecision, staleRunReason } from "../scripts/ci-jobs.mjs";
 
 type Step = { name: string; status?: string; conclusion: string | null };
 const step = (name: string, conclusion: string | null = "success", status = "completed"): Step => ({ name, status, conclusion });
@@ -96,6 +96,32 @@ describe("rerunDecision", () => {
   });
 });
 
+describe("staleRunReason", () => {
+  const prRun = { id: 100, event: "pull_request", head_sha: "aaa", head_branch: "feat/x", workflow_id: 7, pull_requests: [{ number: 5 }] };
+
+  it("allows the PR's latest run while its head is unchanged", () => {
+    expect(staleRunReason(prRun, { newerRuns: [{ id: 100 }, { id: 90 }], prHeads: ["aaa"] })).toBeNull();
+  });
+
+  it("refuses when a newer run of the workflow exists for the branch (its re-run would cancel it)", () => {
+    expect(staleRunReason(prRun, { newerRuns: [{ id: 101 }, { id: 100 }], prHeads: ["aaa"] }))
+      .toMatch(/run 101 is a newer run/);
+  });
+
+  it("refuses when the PR head moved, even before the newer run is listed", () => {
+    expect(staleRunReason(prRun, { newerRuns: [{ id: 100 }], prHeads: ["bbb"] })).toMatch(/head moved from aaa to bbb/);
+  });
+
+  it("refuses when no open PR can confirm the run is current (closed, or a fork run without PR data)", () => {
+    expect(staleRunReason({ ...prRun, pull_requests: [] }, { newerRuns: [], prHeads: [] }))
+      .toMatch(/cannot be confirmed current/);
+  });
+
+  it("never treats a push run as stale: dev pushes do not share a cancelling group", () => {
+    expect(staleRunReason({ ...prRun, event: "push" }, { newerRuns: [{ id: 999 }], prHeads: [] })).toBeNull();
+  });
+});
+
 describe("workflow wiring", () => {
   const workflows = new URL("../.github/workflows/", import.meta.url);
   const load = (file: string) => parse(readFileSync(new URL(file, workflows), "utf8"));
@@ -103,7 +129,7 @@ describe("workflow wiring", () => {
   it("re-runs only failed first attempts of CI and native smoke, with minimal permissions", () => {
     const rerun = load("ci-auto-rerun.yml");
     expect(rerun.on).toEqual({ workflow_run: { workflows: ["CI", "Tauri binary E2E (smoke)"], types: ["completed"] } });
-    expect(rerun.permissions).toEqual({ actions: "write", contents: "read" });
+    expect(rerun.permissions).toEqual({ actions: "write", contents: "read", "pull-requests": "read" });
     expect(rerun.jobs.rerun.if).toBe("github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.run_attempt == 1");
     expect(load("ci.yml").name).toBe("CI");
     expect(load("e2e-tauri.yml").name).toBe("Tauri binary E2E (smoke)");

@@ -43,3 +43,13 @@ which follows the font's rounded ascent/descent: at 115% zoom it went 16 to
 17 px instead of 18.4 in the container. A layout assertion about zoom should
 measure a CSS-derived length (here the line pitch over ten lines), not a glyph
 box whose size depends on the resolved font.
+
+Review follow-ups. The repository forbids GITHUB_TOKEN from creating PRs, so a
+scheduled "open a refresh PR" workflow fails after pushing an orphan branch;
+publish an artifact and a job-summary diff instead. A re-run of a PR run
+joins that PR's cancel-in-progress concurrency group, so an automatic re-run
+of a superseded run cancels the newer run: check that it is still the
+newest run for the branch and that the PR head is unchanged. Container
+WebKit shards planned at ~24 min ran 22-30 min across two runs with the same
+plan; timing noise of that size needs headroom in the time limits, and a
+sixth shard would add queueing on a run that already waits for runners.

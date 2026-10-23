@@ -59,7 +59,9 @@ jobs:
             code:
               - '**'
               - '!docs/**'
-              - '!**/*.md'
+              # Root-level Markdown only: Markdown under e2e/, src/, tests/ and
+              # elsewhere can be a fixture or a text contract, so it stays code.
+              - '!*.md'
               - '!output/**'
               # Written by specs as issue/acceptance proof, never read (#1367).
               - '!screenshots/**'

@@ -1,6 +1,7 @@
 # CI trigger policy
 
-Only `ci.yml` and the Linux matrix entry in `e2e-tauri.yml` run on PRs.
+Only `ci.yml` and the Linux matrix entry in `e2e-tauri.yml` run on PRs into
+dev; PRs into main run only `release-gate.yml`.
 The heavy suites listed in `tests/ci-trigger-policy.test.ts` run on every dev
 push without path filters and retain manual dispatch. Existing schedules stay.
 
@@ -19,11 +20,17 @@ change branch protection.
 Run `bunx vitest run tests/ci-trigger-policy.test.ts` to validate admission.
 
 PRs into `main` run no CI (#1367): their code already passed its dev push.
-`release.yml`'s `dev-ci-gate` (`scripts/release-ci-gate.mjs`) refuses to read
-the version, tag or build unless a dev commit with the released commit's exact
+`release.yml`'s `dev-ci-gate` (`scripts/release-ci-gate.mjs`) refuses to
+tag or build unless a dev commit with the released commit's exact
 tree has a successful dev-push `ci.yml` run and `smoke (ubuntu-latest)`. Merge
 to main only after dev CI for that tree is green (the gate waits up to an hour
 for a run in progress); a commit made directly on main cannot be released.
+The gate runs only when a release would happen (the version is not yet
+tagged), and retries transient API 5xx responses before failing closed.
+`release-gate.yml` runs the same gate on PRs into main as the `release-gate`
+check, against the PR's merge commit (the tree a merge commit will release).
+A workflow cannot make it required: an admin adds `release-gate` as a required
+check on the "Main branch" ruleset.
 Pushes to main still run `ci.yml`. `ci.yml` also runs nightly (`schedule`,
 default branch dev) with the test-result cache bypassed.
 
@@ -31,17 +38,27 @@ default branch dev) with the test-result cache bypassed.
 failed first attempt's failed jobs once, only when every failed non-gate job
 stopped at an install/setup step (`SETUP_STEP` in `scripts/ci-jobs.mjs`). Gate
 jobs print each upstream shard's result and failing step first; the report is
-`continue-on-error` and never decides the gate.
+`continue-on-error` and never decides the gate. A pull_request run is re-run
+only while it is the newest run of its workflow for the branch and the open
+PR's head is still its `head_sha` (`staleRunReason`): a re-run joins the PR's
+cancel-in-progress group and would otherwise cancel the newer run.
+
+`e2e-shard-timings.yml` (weekly) pushes nothing: the repository does not let
+GITHUB_TOKEN open PRs. It uploads the regenerated timings as the
+`e2e-shard-timings` artifact and writes the drift to the job summary; apply it
+in an ordinary PR. It fails with an error when no successful dev run exists.
 
 # Browser jobs in the Playwright container (#1367)
 
 `chromium`, `chromium-view-modes` and `webkit-tests` run in
-`mcr.microsoft.com/playwright:v<version>-noble`, whose tag must equal bun.lock's
-`@playwright/test` (`tests/ci-playwright-container.test.ts`). Bumping
-Playwright means bumping the three `container.image` tags and `ImageVersion`
-in the same PR. The image has browsers, GStreamer, fonts and xvfb but no
-unzip, jq or gh: bun comes from `npm install --global bun` (setup-bun needs
-unzip), the test cache extracts artifacts with `python3 -m zipfile`, and paths
+`mcr.microsoft.com/playwright:v<version>-noble@sha256:<digest>`, whose tag must
+equal bun.lock's `@playwright/test` (`tests/ci-playwright-container.test.ts`).
+Bumping Playwright means bumping the three `container.image` references (tag
+and digest, from `docker buildx imagetools inspect`) and `ImageVersion`
+(`<version>_<digest hex>`, the cache identity) in the same PR. The image has browsers, GStreamer, fonts and xvfb but no
+unzip, jq or gh: bun comes from the `@oven/bun-linux-x64` npm package at
+`CONTAINER_BUN_VERSION` (ci.yml's workflow env, the single pin), installed with
+`--ignore-scripts` and checked with `bun --version` (setup-bun needs unzip), the test cache extracts artifacts with `python3 -m zipfile`, and paths
 an action reads must come from `$RUNNER_TEMP` inside the container (exported
 to `GITHUB_ENV`), not `${{ runner.temp }}`, which names the host path. Git
 needs `safe.directory` because the container runs as root.
@@ -62,7 +79,8 @@ the Chromium selection when narrow, else cluster-mapped plus the curated
 `browserName`/`@webkit` specs, or ALL for a `WEBKIT_SENSITIVE` path, component
 styling, or anything the clusters cannot place) and `view-modes`
 (`--view-modes`: specs iterating `VIEW_MODES` reached through a view-mode
-component or spec, run with `ALL_VIEW_MODES=1`; ALL = every such spec). A
+component or spec, run with `ALL_VIEW_MODES=1`; ALL = every such spec, also
+selected by stylesheets, themes and global markup). A
 browser job whose selection is `NONE` is skipped and its gate accepts that
 only for `NONE`. A version-only diff (`scripts/version-only.mjs`) selects e2e
 NONE, rust NONE and only the unit tests that read the bumped files.
@@ -70,7 +88,10 @@ NONE, rust NONE and only the unit tests that read the bumped files.
 `ALL` for that tier: a selector failure, an unknown file type, an unusual path,
 or more than `TEST_SELECTION_MAX_FILES` (50, set on the `changes` job) changed
 files. A Rust `NONE` also skips the toolchain, fmt and clippy steps; the
-dorny/paths-filter docs-only gate is unchanged and runs first.
+dorny/paths-filter docs-only gate runs first. It treats only `docs/**`,
+root-level `*.md`, `output/**`, `screenshots/**` and `evidence/**` as
+documentation: Markdown under `e2e/`, `src/`, `tests/` or elsewhere can be a
+fixture or text contract and counts as code.
 
 `vitest related` follows imports only. Tests that read files as text are found
 by the selector's text scan (path or basename, or the directory for tests that

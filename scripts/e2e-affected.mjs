@@ -380,6 +380,18 @@ export const WEBKIT_SENSITIVE = [
  */
 export const VIEW_MODE_COMPONENT = /file-?list|file-?item|tile|list-?(view|card|columns)|details-?view|peek|view-?mode/i;
 
+/**
+ * App-wide presentation inputs: stylesheets, themes and the global document
+ * markup restyle every view mode without naming one, so a PR touching them
+ * runs every view-mode spec.
+ * @type {[RegExp, string][]}
+ */
+export const VIEW_MODE_GLOBAL = [
+  [/^(?!website\/).*\.css$/, "stylesheet"],
+  [/^src\/lib\/themes\//, "theme"],
+  [/^(src\/app\.html|index\.html|src\/routes\/\+layout\.(svelte|ts))$/, "global markup"],
+];
+
 /** Specs that branch on the engine or carry an explicit `@webkit` tag. */
 const WEBKIT_CURATED = /browsername|@webkit\b/;
 
@@ -493,7 +505,8 @@ export function selectWebkit({ changed, map, specs, devServerInputs = new Set(),
 /**
  * ALL_VIEW_MODES=1 Chromium on PRs: the view-mode specs reached through a
  * changed view-mode component (FileList, FileItem, List, Tiles, peek) or a
- * changed view-mode spec. "all" means every view-mode spec.
+ * changed view-mode spec; every view-mode spec ("all") for a global trigger
+ * or an app-wide presentation change (VIEW_MODE_GLOBAL).
  * @param {SelectionInput} input
  * @returns {Selection}
  */
@@ -501,6 +514,11 @@ export function selectViewModes({ changed, map, specs, devServerInputs = new Set
   const loose = classify(changed, map, specs, devServerInputs, { strict: false });
   const global = loose.triggers.filter((t) => GLOBAL_KINDS.has(t.kind));
   if (global.length > 0) return allOf(global.map((t) => t.reason));
+  const presentation = changed.flatMap((f) => {
+    const hit = VIEW_MODE_GLOBAL.find(([pattern]) => pattern.test(f));
+    return hit ? [`app-wide presentation change (${hit[1]}): ${f}`] : [];
+  });
+  if (presentation.length > 0) return allOf(presentation);
   const vm = new Set(viewModeSpecs(specs, support));
   const components = changed.filter((f) => f.startsWith("src/") && VIEW_MODE_COMPONENT.test(f));
   const reached = new Set(changed.filter((f) => vm.has(f)));

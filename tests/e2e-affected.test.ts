@@ -296,6 +296,24 @@ describe("per-engine PR selections (#1367)", () => {
       expect(selectViewModes(input(["src/lib/components/NewTileThing.svelte"])).mode).toBe("all");
     });
 
+    it.each([
+      ["stylesheet", "src/lib/components/modal.css"],
+      ["stylesheet", "src/lib/themes/nord.css"],
+      ["theme", "src/lib/themes/index.ts"],
+      ["global markup", "src/app.html"],
+      ["global markup", "src/routes/+layout.ts"],
+    ])("runs every view-mode spec for an app-wide %s change (%s)", (label, file) => {
+      expect(selectViewModes(input([file]))).toMatchObject({
+        mode: "all", reason: `app-wide presentation change (${label}): ${file}`,
+      });
+      // Even next to an otherwise narrow change.
+      expect(selectViewModes(input(["src/lib/components/QuickOpen.svelte", file])).mode).toBe("all");
+    });
+
+    it("does not treat the website's stylesheets as app presentation", () => {
+      expect(selectViewModes(input(["website/fixture-only.css"])).reason).not.toMatch(/app-wide presentation/);
+    });
+
     it.each(["src/lib/api/mock-invoke.ts", "e2e/helpers.ts", "playwright.config.ts", "bun.lock", ".github/workflows/ci.yml"])(
       "runs every view-mode spec for %s",
       (file) => { expect(selectViewModes(input([file])).mode).toBe("all"); },

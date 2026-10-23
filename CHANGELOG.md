@@ -2,6 +2,26 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.13.3 — 2026-10-23
+
+### Added
+
+- HTML previews fit wide documents to the pane by default, showing a
+  desktop-width page in full. Zoom out/in, Fit, 100% and fullscreen controls sit
+  above the preview, and the chosen zoom survives reloads of the same file. The
+  document stays sandboxed (#1352).
+
+### Fixed
+
+- Selected rows show only the accent edge again on every platform. The full
+  border seen on macOS was the keyboard focus ring, which clicked rows inherited
+  after keyboard navigation; #1334's full selection border is reverted (#1351).
+
+### Changed
+
+- List peek column/full-flow stage changes share one eligibility policy and
+  write path; malformed stage requests are now ignored (#1346).
+
 ## v1.13.2 — 2026-10-22
 
 ### Added

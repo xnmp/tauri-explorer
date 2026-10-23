@@ -574,7 +574,7 @@ state. WebKit omits `requestfailed` events for CSP and blocks asynchronous
 callbacks injected into a script-disabled sandbox; neither is a portable oracle.
 HTML preview zoom cannot measure the sandboxed document, so it scales a fixed
 desktop layout like an image (`domain/html-preview-zoom.ts`): the frame lays out
-at least 1280px wide and zoom only scales its paint; Fit shows it whole, zooming
+the Fit width (max(1280, pane)) at every magnification and zoom only scales its paint; Fit shows it whole, zooming
 in scrolls the pane horizontally, and the frame's height stays in CSS
 (`calc(100% / scale)`) because `bind:clientHeight` misses scrollbar changes.
 Re-laying out at pane / scale (browser zoom) reflowed responsive pages at every

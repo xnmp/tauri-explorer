@@ -43,6 +43,12 @@ describe("HTML preview explicit zoom", () => {
     expect(new Set(layouts)).toEqual(new Set([HTML_FIT_LAYOUT_WIDTH]));
   });
 
+  it("keeps a wide pane's Fit layout when zooming in, so breakpoints never switch", () => {
+    const layouts = [1, 1.1, 1.25, 2, 3].map(zoom => htmlPreviewFrame(zoom, 1600).width);
+    expect(new Set(layouts)).toEqual(new Set([1600]));
+    expect(htmlPreviewFrame(2, 1600).paintedWidth).toBe(3200);
+  });
+
   it("reveals more of the page as it zooms out and scrolls horizontally when magnified", () => {
     const painted = [2, 1, 0.75, 0.5].map(zoom => htmlPreviewFrame(zoom, 460).paintedWidth);
     expect(painted).toEqual([2560, 1280, 960, 640]);

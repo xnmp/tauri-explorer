@@ -17,7 +17,8 @@ const wideDocumentSource = `<!doctype html><html><body style="margin:0">
 
 // A responsive page: three columns at desktop widths, fewer when narrow.
 const cardsDocumentSource = `<!doctype html><html><body style="margin:0;font:16px sans-serif">
-<main style="max-width:1100px;margin:0 auto;padding:24px"><h1>Shortlist</h1>
+<style>.wide-only{display:none}@media (min-width:1500px){.wide-only{display:block}}</style>
+<main style="max-width:1100px;margin:0 auto;padding:24px"><h1>Shortlist</h1><p class="wide-only">Wide layout</p>
 <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px">
 ${[1, 2, 3, 4, 5, 6].map(n => `<section class="card" style="height:200px;background:#e8eefc">Card ${n}</section>`).join("")}
 </div>${"<p>Paragraph text.</p>".repeat(60)}</main></body></html>`;
@@ -176,4 +177,33 @@ test("HTML zoom magnifies a responsive page without reflowing it (#1361)", async
   }
   await page.getByRole("button", { name: "100%" }).click();
   await page.screenshot({ path: "evidence/1361-html-zoom-no-reflow.png" });
+});
+
+test("zooming in a wide pane magnifies the same layout without switching breakpoints (#1361)", async ({ page }) => {
+  await page.setViewportSize({ width: 2200, height: 900 });
+  await page.locator('[data-path="/home/html-preview/cards.html"]').click();
+  const frame = page.frameLocator('iframe[title="HTML preview"]');
+  await expect(frame.locator("h1")).toHaveText("Shortlist");
+  await page.getByRole("button", { name: "View HTML fullscreen" }).click();
+  const viewport = page.locator(".html-viewport");
+  await expect.poll(() => viewport.evaluate((el) => el.clientWidth)).toBeGreaterThan(1500);
+  await expect(frame.locator(".wide-only")).toBeVisible();
+  const zoomLabel = page.getByLabel("HTML magnification");
+  await expect(zoomLabel).toHaveText("100%");
+  while ((await zoomLabel.textContent()) !== "200%") await page.getByRole("button", { name: "Zoom HTML in" }).click();
+  // Still the >=1500px layout, now magnified: the page scrolls instead of reflowing.
+  await expect(frame.locator(".wide-only")).toBeVisible();
+  await expect.poll(() => viewport.evaluate((el) => el.scrollWidth / el.clientWidth)).toBeCloseTo(2, 1);
+});
+
+test("zooming in keeps the visible centre of the page (#1361)", async ({ page }) => {
+  await page.locator('[data-path="/home/html-preview/wide.html"]').click();
+  await expect(page.frameLocator('iframe[title="HTML preview"]').locator("h1")).toHaveText("Quarterly report");
+  const viewport = page.locator(".html-viewport");
+  await page.getByRole("button", { name: "100%" }).click();
+  const { scrollLeft, clientWidth, scrollWidth } = await viewport.evaluate((el) => ({
+    scrollLeft: el.scrollLeft, clientWidth: el.clientWidth, scrollWidth: el.scrollWidth,
+  }));
+  // Fit showed the whole page, so its centre is the page centre.
+  expect(Math.abs(scrollLeft + clientWidth / 2 - scrollWidth / 2)).toBeLessThan(3);
 });

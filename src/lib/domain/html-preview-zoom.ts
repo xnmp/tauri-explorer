@@ -47,12 +47,14 @@ export function htmlPreviewScale(zoom: HtmlZoom, paneWidth: number): number {
 }
 
 /**
- * Frame layout width and paint scale: at least the desktop layout width (never
- * reflowed narrower by zooming in) and at least as wide as the pane.
+ * Frame layout width and paint scale. The layout is the Fit layout (the desktop
+ * width, or the whole pane when wider) at every magnification, so zooming in
+ * never reflows the page; zooming out past Fit widens it to fill the pane.
  */
 export function htmlPreviewFrame(zoom: HtmlZoom, paneWidth: number): HtmlPreviewFrame {
   const scale = htmlPreviewScale(zoom, paneWidth);
-  const width = positive(paneWidth) ? Math.max(HTML_FIT_LAYOUT_WIDTH, paneWidth / scale) : 0;
+  if (!positive(paneWidth)) return { scale, width: 0, paintedWidth: 0 };
+  const width = Math.max(HTML_FIT_LAYOUT_WIDTH, paneWidth, paneWidth / scale);
   return { scale, width, paintedWidth: width * scale };
 }
 

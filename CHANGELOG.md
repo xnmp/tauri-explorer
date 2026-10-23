@@ -16,11 +16,19 @@ All notable changes to Tauri Explorer.
 - Selected rows show only the accent edge again on every platform. The full
   border seen on macOS was the keyboard focus ring, which clicked rows inherited
   after keyboard navigation; #1334's full selection border is reverted (#1351).
+- Zooming an HTML preview scales the page as laid out instead of reflowing it
+  at a narrower width, and wide zoomed pages scroll horizontally around their
+  visible centre instead of leaving stuck scrollbars (#1361).
+- Less on a full-height List peek now steps back through the column stage
+  before shrinking to a card, and columns show their own Less control (#1360).
 
 ### Changed
 
 - List peek column/full-flow stage changes share one eligibility policy and
   write path; malformed stage requests are now ignored (#1346).
+- In Details view the folder peek Open control sits at the right end of the Name
+  column without a caret, following column resizes; long names truncate before
+  it (#1359).
 
 ## v1.13.2 — 2026-10-22
 

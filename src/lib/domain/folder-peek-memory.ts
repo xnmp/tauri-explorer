@@ -38,10 +38,13 @@ export function pruneExpanded(expanded: ExpandedPaths, parent: string, entries: 
 }
 
 
-export type ListPeekExpansion = "column" | "full";
+/** A List folder's expanded stages: its rows spilled below its header (capped,
+ * #1365), every row in full flow, or the legacy scrollable column (#1324). */
+export type ListPeekExpansion = "column" | "spill" | "full";
 
 /** Session-only List presentation choices, most recently chosen last. A single
- * bounded map keeps the column and full-flow stages mutually exclusive. */
+ * bounded map keeps the expanded stages mutually exclusive; the compact card is
+ * the absence of a choice. */
 export function rememberListExpansion(
   choices: ReadonlyMap<string, ListPeekExpansion>, path: string, mode: ListPeekExpansion, cap = 500,
 ): ReadonlyMap<string, ListPeekExpansion> {

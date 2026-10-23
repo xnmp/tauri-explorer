@@ -1184,6 +1184,9 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     showColumnListChildren(path: string) { if (listStageAllowed(path)) peek.showColumnListChildren(path); },
     /** Back from the column stage to the compact, grip-sized card (#1360). */
     showCompactListCard(path: string) { if (listStageAllowed(path)) peek.showCompactListCard(path); },
+    /** List folders whose rows spill below their header, capped (#1365). */
+    get listSpillPaths() { return peek.spillPaths; },
+    showSpillListChildren(path: string) { if (listStageAllowed(path)) peek.showSpillListChildren(path); },
     /** Remembered List card height (visible rows) for a top-level folder. */
     listCardRows(path: string) { return peek.cardRows(path); },
     setListCardRows(path: string, rows: number) {

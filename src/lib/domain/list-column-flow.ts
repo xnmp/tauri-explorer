@@ -8,12 +8,14 @@ export const LIST_COLUMN_STRIDE = LIST_COLUMN_WIDTH + LIST_COLUMN_GAP;
 export const LIST_PADDING_X = 8;
 export const LIST_PADDING_Y = 6;
 
-/** `fit`: a card that keeps its place whenever at least `fit` slots are left in
- * its column, shrinking to them if it is taller; with fewer left it starts the
- * next column even when it would fit, so the choice does not change as its
- * listing loads. `alone`: a card that `fit` moved to the next column ends that
- * column too, so the rows below it stay empty. Spring-loaded peeks (#1242) use
- * both so the row a drag holds stays under the pointer (`springCardFits`). */
+/** `fit`: an item that keeps its place whenever at least `fit` slots are left in
+ * its column, a card shrinking to them if it is taller; with fewer left it
+ * starts the next column even when it would fit, so the choice does not change
+ * as its listing loads. Every open folder's header uses it, whether it heads a
+ * card or a spilled/full-flow group, so changing its stage never moves it
+ * (#1365). `alone`: an item that `fit` moved to the next column ends that column
+ * too, so the rows below it stay empty. Spring-loaded peeks (#1242) use both so
+ * the row a drag holds stays under the pointer (`springCardFits`). */
 export type SlotSpec = Readonly<{ slots: number; card: boolean; fit?: number; alone?: boolean }>;
 export type ListPlacement = Readonly<{ index: number; column: number; row: number; slots: number }>;
 export interface ColumnFlowLayout {
@@ -21,47 +23,6 @@ export interface ColumnFlowLayout {
   readonly columns: readonly (readonly ListPlacement[])[];
   readonly byIndex: readonly ListPlacement[];
   readonly atSlot: (column: number, row: number) => ListPlacement | undefined;
-}
-
-/** Stateless prefix scan. Storage follows entries, never the number of available slots. */
-export function columnFlow<T>(items: readonly T[], R: number, slotsOf: (item: T, index: number) => SlotSpec): ColumnFlowLayout {
-  if (!Number.isSafeInteger(R) || R < 4) throw new RangeError("Rows per column must be an integer >= 4");
-  const columns: ListPlacement[][] = [];
-  const byIndex: ListPlacement[] = [];
-  let column = 0, row = 0;
-  items.forEach((item, index) => {
-    const spec = slotsOf(item, index);
-    if (!spec || !Number.isSafeInteger(spec.slots) || spec.slots < 1 || spec.slots > R || (!spec.card && spec.slots !== 1)) {
-      throw new RangeError("Entries must fit one column; plain items use one slot");
-    }
-    let slots = spec.slots, alone = false;
-    const fit = spec.card && spec.fit !== undefined && Number.isSafeInteger(spec.fit) && spec.fit >= 1 ? spec.fit : null;
-    if (fit !== null) {
-      if (row > 0 && R - row < fit) { column++; row = 0; alone = spec.alone === true; }
-      slots = Math.min(slots, R - row);
-    } else if (row + slots > R) { column++; row = 0; }
-    const placement = { index, column, row, slots };
-    (columns[column] ??= []).push(placement);
-    byIndex.push(placement);
-    row += slots;
-    if (row === R || alone) { column++; row = 0; }
-  });
-  return {
-    rows: R, columns, byIndex,
-    atSlot: (column, row) => {
-      if (!Number.isSafeInteger(column) || !Number.isSafeInteger(row) || row < 0 || row >= R) return undefined;
-      const spans = columns[column];
-      if (!spans) return undefined;
-      let low = 0, high = spans.length;
-      while (low < high) {
-        const mid = Math.floor((low + high) / 2);
-        if (spans[mid].row + spans[mid].slots <= row) low = mid + 1;
-        else high = mid;
-      }
-      const span = spans[low];
-      return span && span.row <= row ? span : undefined;
-    },
-  };
 }
 
 // Pane minima and preview allocation stay unchanged. Shorter scrollports retain
@@ -114,6 +75,15 @@ export interface ListTopItem {
   readonly rowIndex?: number;
   /** Present for an open top-level folder. */
   readonly card: ListCardSpec | null;
+  /** The last slot of a spilled folder (#1365): `count` of its rows are hidden
+   * until "+N more" moves the folder to full flow. */
+  readonly more?: ListSpillMore;
+}
+export interface ListSpillMore {
+  readonly path: string;
+  readonly count: number;
+  /** Peek row of the first hidden row (the one that takes this slot in full flow). */
+  readonly rowIndex: number;
 }
 export interface ListCardSpec {
   readonly path: string;
@@ -129,7 +99,7 @@ export interface ListFlowModel {
   readonly items: readonly ListTopItem[];
   /** Entry index of each row-model row (null for pseudo and creation rows). */
   readonly rowEntry: readonly (number | null)[];
-  /** Entry index -> top-level item index. */
+  /** Entry index -> top-level item index, or -1 for a row a spill hides. */
   readonly entryItem: Int32Array;
   /** Entry index -> offset within its compact card, or -1 for an ordinary slot. */
   readonly entryOffset: Int32Array;
@@ -205,11 +175,21 @@ export function resolveListMove(event: FileListKey, model: ListFlowModel, cursor
   const columnOf = (entry: number) => model.layout.byIndex[model.entryItem[entry]]?.column;
   let target: number;
   if (event.key === "Home") target = 0;
-  else if (event.key === "End") target = count - 1;
+  else if (event.key === "End") {
+    // A spill can hide the last entries; End selects the last one shown.
+    target = count - 1;
+    while (target > 0 && model.entryItem[target] < 0) target--;
+  }
   else if (cursorIndex < 0) target = 0;
   else {
     const column = columnOf(cursorIndex);
-    if (column === undefined) return null;
+    if (column === undefined) {
+      // A cursor a spill hid (#1365) resumes on the nearest row shown before it.
+      let shown = cursorIndex;
+      while (shown > 0 && model.entryItem[shown] < 0) shown--;
+      return model.entryItem[shown] < 0 ? null
+        : { kind: "focus", index: shown, selection: event.shiftKey ? "extend" : "replace" };
+    }
     const forward = event.key === "ArrowDown" || event.key === "ArrowRight" || event.key === "PageDown";
     if (event.key === "ArrowUp" || event.key === "ArrowDown") {
       target = cursorIndex + (forward ? 1 : -1);

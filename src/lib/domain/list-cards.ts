@@ -4,7 +4,66 @@
  * scroll-edge and reveal policies shared by rendering, keyboard and motion.
  */
 import type { PeekRows } from "./folder-peek";
-import { columnFlow, LIST_COLUMN_GAP, LIST_COLUMN_STRIDE, LIST_COLUMN_WIDTH, LIST_SLOT_HEIGHT, type ListCardSpec, type ListFlowModel, type ListTopItem, type ListPlacement } from "./list-column-flow";
+import { LIST_COLUMN_GAP, LIST_COLUMN_STRIDE, LIST_COLUMN_WIDTH, LIST_SLOT_HEIGHT, type ColumnFlowLayout, type ListCardSpec, type ListFlowModel, type ListTopItem, type ListPlacement, type SlotSpec } from "./list-column-flow";
+
+// The column flow lives with its only production caller, outside the startup
+// graph (list-column-flow.ts is eager through keyboard navigation).
+/** An incremental column flow: `place` appends one item and returns its
+ * placement at once, so a caller can decide what follows from where an item
+ * landed (a List spill's cap, #1365) in the same single pass. */
+export interface ColumnFlowCursor {
+  place(spec: SlotSpec): ListPlacement;
+  layout(): ColumnFlowLayout;
+}
+
+export function columnFlowCursor(R: number): ColumnFlowCursor {
+  if (!Number.isSafeInteger(R) || R < 4) throw new RangeError("Rows per column must be an integer >= 4");
+  const columns: ListPlacement[][] = [];
+  const byIndex: ListPlacement[] = [];
+  let column = 0, row = 0;
+  return {
+    place(spec) {
+      if (!spec || !Number.isSafeInteger(spec.slots) || spec.slots < 1 || spec.slots > R || (!spec.card && spec.slots !== 1)) {
+        throw new RangeError("Entries must fit one column; plain items use one slot");
+      }
+      let slots = spec.slots, alone = false;
+      const fit = spec.fit !== undefined && Number.isSafeInteger(spec.fit) && spec.fit >= 1 ? spec.fit : null;
+      if (fit !== null) {
+        if (row > 0 && R - row < fit) { column++; row = 0; alone = spec.alone === true; }
+        slots = Math.min(slots, R - row);
+      } else if (row + slots > R) { column++; row = 0; }
+      const placement = { index: byIndex.length, column, row, slots };
+      (columns[column] ??= []).push(placement);
+      byIndex.push(placement);
+      row += slots;
+      if (row === R || alone) { column++; row = 0; }
+      return placement;
+    },
+    layout: () => ({
+      rows: R, columns, byIndex,
+      atSlot: (column, row) => {
+        if (!Number.isSafeInteger(column) || !Number.isSafeInteger(row) || row < 0 || row >= R) return undefined;
+        const spans = columns[column];
+        if (!spans) return undefined;
+        let low = 0, high = spans.length;
+        while (low < high) {
+          const mid = Math.floor((low + high) / 2);
+          if (spans[mid].row + spans[mid].slots <= row) low = mid + 1;
+          else high = mid;
+        }
+        const span = spans[low];
+        return span && span.row <= row ? span : undefined;
+      },
+    }),
+  };
+}
+
+/** Stateless prefix scan. Storage follows entries, never the number of available slots. */
+export function columnFlow<T>(items: readonly T[], R: number, slotsOf: (item: T, index: number) => SlotSpec): ColumnFlowLayout {
+  const cursor = columnFlowCursor(R);
+  items.forEach((item, index) => cursor.place(slotsOf(item, index)));
+  return cursor.layout();
+}
 
 export const LIST_CARD_DEFAULT_ROWS = 6;
 /** Scroll-edge fade mask height (CSS px). */
@@ -25,10 +84,26 @@ export function cardVisibleRows(content: number, preferred: number, R: number): 
   return Math.min(rows, Math.max(1, Math.min(wanted, cardMaxRows(R))));
 }
 
-/** More first fills one column when the descendants would overflow it. A
- * second More releases the group into the ordinary multi-column flow. */
-export function listMoreExpansion(content: number, R: number, column: boolean): "column" | "full" {
-  return !column && wholeRows(content) > columnCardRows(R) ? "column" : "full";
+/** Where "+N more" leads (#1365): the compact card spills its rows into the
+ * column flow below its header; the spill's own "+N more" slot (and the legacy
+ * scrollable column's) releases every row into full flow. */
+export function listMoreExpansion(stage: "card" | "column" | "spill" | "full"): "spill" | "full" {
+  return stage === "card" ? "spill" : "full";
+}
+
+/** Slots a spilled folder's rows may take (#1365), its "+N more" slot included:
+ * the rest of its header's column plus the whole next column, or only the next
+ * column for a header on the last row. Wholly derived from R and the header's
+ * row, so it must be computed while flowing, never in `buildListStructure`. */
+export function listSpillCap(R: number, headerRow: number): number {
+  return 2 * R - 1 - Math.max(0, Math.min(R - 1, headerRow | 0));
+}
+
+/** How a spilled group of `content` rows is cut at `cap` slots: the rows shown,
+ * and the rows a final "+N more" slot stands for (0: everything fits, no slot). */
+export function listSpillCut(content: number, cap: number): Readonly<{ shown: number; hidden: number }> {
+  const rows = wholeRows(content), slots = Math.max(1, wholeRows(cap));
+  return rows <= slots ? { shown: rows, hidden: 0 } : { shown: slots - 1, hidden: rows - (slots - 1) };
 }
 
 const columnCardRows = (R: number): number => Math.max(1, (Number.isFinite(R) ? Math.floor(R) : 4) - 1);
@@ -41,12 +116,27 @@ export function listCardVisibleRows(content: number, preferred: number, R: numbe
 /** A top-level item before sizing: a card's span without its visible rows. */
 export type ListStructureItem = Omit<ListTopItem, "card"> & { readonly card: Omit<ListCardSpec, "visibleRows"> | null };
 
+/** An open top-level folder whose rows are ordinary slots: items
+ * `[start, end)` follow its plain `header` item. A `spill` group is cut to
+ * `listSpillCap` slots while flowing (#1365); a full-flow group never is. */
+export interface ListFlowGroup {
+  readonly path: string;
+  readonly header: number;
+  readonly start: number;
+  readonly end: number;
+  /** Peek row of item `start`: each item of the group owns one row, in order. */
+  readonly startRow: number;
+  readonly spill: boolean;
+}
+
 /** The rows-per-column-independent part of the List model, so a resize that
  * changes R re-sizes cards and re-flows, but never rebuilds every item. */
 export interface ListStructure {
   readonly items: readonly ListStructureItem[];
   /** Indices of card items (empty while nothing is open). */
   readonly cards: readonly number[];
+  /** Spilled and full-flow groups, in item order. */
+  readonly flows: readonly ListFlowGroup[];
   readonly rowEntry: ListFlowModel["rowEntry"];
   readonly entryItem: Int32Array;
   readonly entryOffset: Int32Array;
@@ -56,26 +146,40 @@ export interface ListStructure {
  * Top-level items in row order: the creation row, every depth-0 entry and, for an
  * expanded one, a card over its depth-0 group's rows (nested entries and Loading/
  * Empty/Error rows). Any entry row outside a card is a plain top-level item, so
- * every entry always has a slot owner. Explicit full-flow groups emit their
+ * every entry always has a slot owner. Full-flow and spilled groups emit their
  * descendants, with depth and status identities intact, as ordinary slots.
  */
-export function buildListStructure(rows: PeekRows, fullFlowPaths: ReadonlySet<string> = new Set()): ListStructure {
+export function buildListStructure(rows: PeekRows, fullFlowPaths: ReadonlySet<string> = new Set(), spillPaths: ReadonlySet<string> = new Set()): ListStructure {
   const entryCount = rows.entryToRow.length;
   const entryItem = new Int32Array(entryCount).fill(-1);
   const entryOffset = new Int32Array(entryCount).fill(-1);
   const groups = new Map(rows.groups.filter(group => group.depth === 0).map(group => [group.path, group]));
   const items: ListStructureItem[] = [];
   const cards: number[] = [];
+  const flows: ListFlowGroup[] = [];
+  let flow: { path: string; header: number; startRow: number; endRow: number; spill: boolean } | null = null;
+  const closeFlow = () => {
+    if (flow) flows.push({ path: flow.path, header: flow.header, start: flow.header + 1, end: items.length, startRow: flow.startRow, spill: flow.spill });
+    flow = null;
+  };
   for (let i = 0; i < rows.rows.length;) {
     const row = rows.rows[i];
+    if (flow && (i >= flow.endRow || (row.kind === "entry" && row.depth === 0))) closeFlow();
     if (row.kind === "create") { items.push({ key: row.key, entryIndex: null, card: null }); i++; continue; }
     if (row.kind === "peek-state") {
       items.push({ key: row.key, entryIndex: null, rowIndex: i, card: null }); i++; continue;
     }
     const itemIndex = items.length;
     entryItem[row.entryIndex] = itemIndex;
-    const group = row.depth === 0 && row.expanded && !fullFlowPaths.has(row.entry.path) ? groups.get(row.entry.path) : undefined;
-    if (!group || group.startRow !== i + 1) { items.push({ key: row.key, entryIndex: row.entryIndex, card: null }); i++; continue; }
+    const group = row.depth === 0 && row.expanded ? groups.get(row.entry.path) : undefined;
+    const flowing = fullFlowPaths.has(row.entry.path) || spillPaths.has(row.entry.path);
+    if (!group || group.startRow !== i + 1 || flowing) {
+      items.push({ key: row.key, entryIndex: row.entryIndex, card: null });
+      if (group && group.startRow === i + 1 && flowing) {
+        flow = { path: row.entry.path, header: itemIndex, startRow: i + 1, endRow: Math.min(rows.rows.length, group.endRow), spill: spillPaths.has(row.entry.path) && !fullFlowPaths.has(row.entry.path) };
+      }
+      i++; continue;
+    }
     const start = group.startRow, end = Math.max(start, Math.min(rows.rows.length, group.endRow));
     for (let j = start; j < end; j++) {
       const entry = rows.rowToEntry[j];
@@ -85,7 +189,8 @@ export function buildListStructure(rows: PeekRows, fullFlowPaths: ReadonlySet<st
     items.push({ key: row.key, entryIndex: row.entryIndex, card: { path: row.entry.path, start, end } });
     i = end;
   }
-  return { items, cards, rowEntry: rows.rowToEntry, entryItem, entryOffset };
+  closeFlow();
+  return { items, cards, flows, rowEntry: rows.rowToEntry, entryItem, entryOffset };
 }
 
 /** Nested guides in full flow span ordinary items and split at each column. */
@@ -113,8 +218,15 @@ export function fullFlowGuideSpans(rows: PeekRows, model: ListFlowModel): readon
   });
   return rows.groups.flatMap(group => {
     if (group.depth === 0 || group.endRow <= group.startRow) return [];
-    const first = rowItem[group.startRow], last = rowItem[group.endRow - 1];
-    if (first < 0 || last < 0) return [];
+    const first = rowItem[group.startRow];
+    if (first < 0) return [];
+    // A spill can cut a nested group (#1365): its guide closes at the last row
+    // shown rather than reaching into hidden rows. A group the cut hides from
+    // its first row has no guide at all.
+    let lastRow = Math.min(rows.rows.length, group.endRow) - 1;
+    while (lastRow > group.startRow && rowItem[lastRow] < 0) lastRow--;
+    const last = rowItem[lastRow];
+    if (last < 0) return [];
     return [{ path: group.path, depth: group.depth, first: model.layout.byIndex[first], last: model.layout.byIndex[last] }];
   });
 }
@@ -132,11 +244,23 @@ export function fullFlowGuideSegments(spans: readonly ListFlowGuideSpan[], colum
 /** A card's `fit` and `alone` (`SlotSpec`). */
 export type ListCardFit = Readonly<{ fit: number; alone?: boolean }>;
 
+/** Slots an open folder needs left in its column to open in place (#1242,
+ * #1365): its header and two rows. With fewer left it starts the next column;
+ * in place it shrinks to the rows left there. */
+export const SPRING_CARD_FIT = 3;
+
+/** Every open folder's header keeps its place across stages and listing loads. */
+const OPEN_FIT: ListCardFit = { fit: SPRING_CARD_FIT };
+
 /** Sizes a structure's cards for R rows per column and flows it. Plain items are
- * reused as they are (they have no size), so with no open card nothing per item
- * is allocated beyond the flow's placements. `fitOf` gives a card a `fit`
- * (`SlotSpec`): it keeps its place while that many slots are left in its column,
- * shrinking to the rows left there (`springCardFits`). */
+ * reused as they are (they have no size), so with no open folder nothing per
+ * item is allocated beyond the flow's placements. Every open folder's header —
+ * a card's, or a spilled or full-flow group's — keeps its place while
+ * `SPRING_CARD_FIT` slots are left in its column, a card shrinking to the rows
+ * left there (#1365), except the legacy scrollable column, which still wraps
+ * whole. `fitOf` overrides a card's fit (`springCardFits`). A
+ * spilled group is cut to `listSpillCap` for the row its header lands on, with
+ * a final "+N more" item for the rows it hides. */
 export function sizeListModel(structure: ListStructure, R: number, preferredOf: (path: string) => number | undefined, fitOf?: (path: string) => ListCardFit | undefined, columnPaths: ReadonlySet<string> = new Set()): ListFlowModel {
   let items: readonly ListTopItem[];
   if (!structure.cards.length) items = structure.items as readonly ListTopItem[]; // every card is null
@@ -148,58 +272,70 @@ export function sizeListModel(structure: ListStructure, R: number, preferredOf: 
     }
     items = sized;
   }
-  const fits = fitOf && structure.cards.length ? new Map(structure.cards.flatMap(index => {
-    const fit = fitOf(items[index].card!.path);
-    return fit === undefined ? [] : [[index, fit] as const];
-  })) : null;
-  const layout = columnFlow(items, R, (item, index) => item.card
-    ? { slots: 1 + item.card.visibleRows, card: true, ...fits?.get(index) }
-    : { slots: 1, card: false });
-  if (fits?.size) {
+  const headers = structure.flows.length ? new Set(structure.flows.map(flow => items[flow.header].key)) : null;
+  // The legacy scrollable column (#1324) still fills a whole column: no fit.
+  const specOf = (item: ListTopItem): SlotSpec => item.card
+    ? { slots: 1 + item.card.visibleRows, card: true, ...(fitOf?.(item.card.path) ?? (columnPaths.has(item.card.path) ? null : OPEN_FIT)) }
+    : headers?.has(item.key) ? { slots: 1, card: false, ...OPEN_FIT } : { slots: 1, card: false };
+  let { entryItem } = structure, layout: ColumnFlowLayout;
+  if (structure.flows.some(flow => flow.spill)) ({ items, entryItem, layout } = cutSpills(items, structure, R, specOf));
+  else layout = columnFlow(items, R, specOf);
+  if (structure.cards.length) {
     // A shrunk card shows only the rows its placement holds.
-    const shrunk = [...fits.keys()].filter(index => layout.byIndex[index].slots !== 1 + items[index].card!.visibleRows);
-    if (shrunk.length) {
-      const sized = items.slice() as ListTopItem[];
-      for (const index of shrunk) sized[index] = { ...items[index], card: { ...items[index].card!, visibleRows: layout.byIndex[index].slots - 1 } };
-      items = sized;
-    }
+    let sized: ListTopItem[] | null = null;
+    items.forEach((item, index) => {
+      const slots = layout.byIndex[index].slots;
+      if (!item.card || slots === 1 + item.card.visibleRows) return;
+      sized ??= items.slice() as ListTopItem[];
+      sized[index] = { ...item, card: { ...item.card, visibleRows: slots - 1 } };
+    });
+    if (sized) items = sized;
   }
-  return { layout, items, rowEntry: structure.rowEntry, entryItem: structure.entryItem, entryOffset: structure.entryOffset };
+  return { layout, items, rowEntry: structure.rowEntry, entryItem, entryOffset: structure.entryOffset };
 }
 
-/** Slots a drag's own temporary card needs left in its column to open in place:
- * its header and two rows. */
-export const SPRING_CARD_FIT = 3;
+/** Cuts each spilled group, in order, to the cap for the row its header lands
+ * on, flowing as it goes: one pass, since a header's row depends only on the
+ * (already cut) items before it. Hidden rows lose their slot owner (-1). */
+function cutSpills(items: readonly ListTopItem[], structure: ListStructure, R: number, specOf: (item: ListTopItem) => SlotSpec) {
+  const spills = new Map(structure.flows.filter(flow => flow.spill).map(flow => [flow.header, flow]));
+  const out: ListTopItem[] = [];
+  const moved = new Int32Array(items.length).fill(-1);
+  const flow = columnFlowCursor(R);
+  const push = (item: ListTopItem, from: number) => {
+    if (from >= 0) moved[from] = out.length;
+    out.push(item);
+    return flow.place(specOf(item));
+  };
+  for (let index = 0; index < items.length;) {
+    const spill = spills.get(index);
+    const header = push(items[index], index);
+    if (!spill) { index++; continue; }
+    const { shown, hidden } = listSpillCut(spill.end - spill.start, listSpillCap(R, header.row));
+    for (let child = spill.start; child < spill.start + shown; child++) push(items[child], child);
+    if (hidden) push({ key: `more:${spill.path}`, entryIndex: null, card: null, more: { path: spill.path, count: hidden, rowIndex: spill.startRow + shown } }, -1);
+    index = spill.end;
+  }
+  const entryItem = structure.entryItem.map(old => old < 0 ? -1 : moved[old]);
+  return { items: out as readonly ListTopItem[], entryItem, layout: flow.layout() };
+}
 
 /**
- * Spring-loaded peeks (#1242) never move the row a drag holds. A top-level card
- * holding a temporary peek below its header keeps the column it had without it:
- * its `fit` is the slots it took then, so it wraps exactly when it wrapped, and
- * in place it shrinks to the rows left in its column. A temporary card opens in
- * place too, unless fewer than two of its rows would show there: then it starts
- * the next column as a user card would (`SPRING_CARD_FIT`) and ends it
- * (`alone`), bridged from the slot it left over empty space only
- * (`springWrapBridges`). Undefined while no temporary peek is open in a card.
+ * Spring-loaded peeks (#1242) never move the row a drag holds. Every open
+ * folder's header already keeps its place (`SPRING_CARD_FIT` in
+ * `sizeListModel`), so a card holding a temporary peek below its header neither
+ * wraps nor moves; it shrinks to the rows left in its column. A temporary card
+ * that starts the next column also ends it (`alone`), bridged from the slot it
+ * left over empty space only (`springWrapBridges`). Undefined while no
+ * temporary card is open.
  */
-export function springCardFits(structure: ListStructure, rows: PeekRows, temporary: readonly string[], R: number,
-  preferredOf: (path: string) => number | undefined, columnPaths: ReadonlySet<string> = new Set()): ((path: string) => ListCardFit | undefined) | undefined {
+export function springCardFits(structure: ListStructure, temporary: readonly string[]): ((path: string) => ListCardFit | undefined) | undefined {
   if (!temporary.length || !structure.cards.length) return undefined;
   const open = new Set(temporary);
-  // Temporary subtrees, outer first; nested ones lie inside an earlier span.
-  const spans = rows.groups.filter(group => open.has(group.path)).sort((a, b) => a.startRow - b.startRow);
   const fits = new Map<string, ListCardFit>();
   for (const index of structure.cards) {
     const card = structure.items[index].card!;
-    if (open.has(card.path)) { fits.set(card.path, { fit: SPRING_CARD_FIT, alone: true }); continue; }
-    let held = false, hidden = 0, end = card.start;
-    for (const span of spans) {
-      // A span starts the row after its folder's, which must lie in the card.
-      if (span.startRow <= card.start || span.startRow > card.end || span.startRow < end) continue;
-      held = true;
-      end = Math.min(span.endRow, card.end);
-      hidden += end - span.startRow;
-    }
-    if (held) fits.set(card.path, { fit: 1 + listCardVisibleRows(card.end - card.start - hidden, preferredOf(card.path) ?? LIST_CARD_DEFAULT_ROWS, R, columnPaths.has(card.path)) });
+    if (open.has(card.path)) fits.set(card.path, { fit: SPRING_CARD_FIT, alone: true });
   }
   return fits.size ? path => fits.get(path) : undefined;
 }

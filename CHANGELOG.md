@@ -19,11 +19,15 @@ All notable changes to Tauri Explorer.
 - Zooming an HTML preview scales the page as laid out instead of reflowing it
   at a narrower width, and wide zoomed pages scroll horizontally around their
   visible centre instead of leaving stuck scrollbars (#1361).
-- Less on a full-height List peek now steps back through the column stage
-  before shrinking to a card, and columns show their own Less control (#1360).
 
 ### Changed
 
+- List peeks open in place: clicking a folder always opens its compact card at
+  its own row, shrinking to fit near the bottom of a column instead of jumping
+  to the next one. "+N more" spills the folder's rows into the rest of that
+  column and the next, then a final "+N more" shows them all. The folder's
+  header never moves, and Less or closing returns to the compact card (#1360,
+  #1365).
 - In Details view the folder peek Open control sits at the right end of the Name
   column without a caret, following column resizes; long names truncate before
   it (#1359).

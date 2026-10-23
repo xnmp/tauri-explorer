@@ -18,6 +18,37 @@ change branch protection.
 
 Run `bunx vitest run tests/ci-trigger-policy.test.ts` to validate admission.
 
+PRs into `main` run no CI (#1367): their code already passed its dev push.
+`release.yml`'s `dev-ci-gate` (`scripts/release-ci-gate.mjs`) refuses to read
+the version, tag or build unless a dev commit with the released commit's exact
+tree has a successful dev-push `ci.yml` run and `smoke (ubuntu-latest)`. Merge
+to main only after dev CI for that tree is green (the gate waits up to an hour
+for a run in progress); a commit made directly on main cannot be released.
+Pushes to main still run `ci.yml`. `ci.yml` also runs nightly (`schedule`,
+default branch dev) with the test-result cache bypassed.
+
+`ci-auto-rerun.yml` (`workflow_run`, so the default-branch copy runs) re-runs a
+failed first attempt's failed jobs once, only when every failed non-gate job
+stopped at an install/setup step (`SETUP_STEP` in `scripts/ci-jobs.mjs`). Gate
+jobs print each upstream shard's result and failing step first; the report is
+`continue-on-error` and never decides the gate.
+
+# Browser jobs in the Playwright container (#1367)
+
+`chromium`, `chromium-view-modes` and `webkit-tests` run in
+`mcr.microsoft.com/playwright:v<version>-noble`, whose tag must equal bun.lock's
+`@playwright/test` (`tests/ci-playwright-container.test.ts`). Bumping
+Playwright means bumping the three `container.image` tags and `ImageVersion`
+in the same PR. The image has browsers, GStreamer, fonts and xvfb but no
+unzip, jq or gh: bun comes from `npm install --global bun` (setup-bun needs
+unzip), the test cache extracts artifacts with `python3 -m zipfile`, and paths
+an action reads must come from `$RUNNER_TEMP` inside the container (exported
+to `GITHUB_ENV`), not `${{ runner.temp }}`, which names the host path. Git
+needs `safe.directory` because the container runs as root.
+`ImageOS`/`ImageVersion` are set to the container so cached results are scoped
+to it. Each shard bounds Playwright with `E2E_GLOBAL_TIMEOUT_MINUTES`, below
+the step `timeout-minutes`, below the job cap.
+
 # PR test selection (#1175)
 
 On `pull_request`, ci.yml's `changes` job narrows each tier from the PR merge
@@ -25,7 +56,17 @@ diff (`HEAD^1...HEAD`) and nothing else: `scripts/e2e-affected.mjs` (browser
 specs), `scripts/unit-affected.mjs` (`vitest related` inputs) and
 `scripts/rust-affected.mjs` (`cargo test -p` members via `cargo metadata`).
 Each publishes `ALL`, `NONE` or a list plus a reason, and every test step logs
-which it ran and why. Pushes and manual runs always use `ALL`. Any doubt is
+which it ran and why. Browser selection is per engine (#1367): `e2e`
+(`--strict`, Chromium: every spec for any `src/` change), `webkit` (`--webkit`:
+the Chromium selection when narrow, else cluster-mapped plus the curated
+`browserName`/`@webkit` specs, or ALL for a `WEBKIT_SENSITIVE` path, component
+styling, or anything the clusters cannot place) and `view-modes`
+(`--view-modes`: specs iterating `VIEW_MODES` reached through a view-mode
+component or spec, run with `ALL_VIEW_MODES=1`; ALL = every such spec). A
+browser job whose selection is `NONE` is skipped and its gate accepts that
+only for `NONE`. A version-only diff (`scripts/version-only.mjs`) selects e2e
+NONE, rust NONE and only the unit tests that read the bumped files.
+`map-feature.md` changes select the union of the base and head maps. Pushes and manual runs always use `ALL`. Any doubt is
 `ALL` for that tier: a selector failure, an unknown file type, an unusual path,
 or more than `TEST_SELECTION_MAX_FILES` (50, set on the `changes` job) changed
 files. A Rust `NONE` also skips the toolchain, fmt and clippy steps; the
@@ -60,6 +101,10 @@ the probe and the run. The unit target reads ADRs, the README, workflows,
 `website/api` and Rust sources as text contracts, so those are its inputs; the
 Rust target excludes the frontend, browser specs, docs and the website; the
 browser target excludes Rust, the website, docs, workflows and unit tests.
+The browser target hashes the root `package.json` with its version replaced
+by a placeholder (`TEST_CACHE_NORMALIZE_VERSION=1` on the browser jobs
+rewrites the checkout's copy before any hash), so a release bump replays
+browser shards; `PKGBUILD` is excluded from its inputs.
 Environment that is neither a file nor a listed env var (Playwright's apt
 dependencies, the `python3`/`rustc` some unit tests call) is covered only by
 `ImageVersion`.

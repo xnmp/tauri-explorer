@@ -27,7 +27,10 @@
 //     (`gh run view <id> --log > run.log`) of successful CI runs. The browser
 //     jobs run one worker, so the gap between consecutive test-start lines of a
 //     job is that test's duration; each file's per-run total is then the median
-//     across the given runs.
+//     across the given runs. Only `chromium (N)` / `webkit-tests (N)` jobs that
+//     executed (not cache replays) count; specs they did not time keep their
+//     previous timing, and deleted specs are dropped. The weekly
+//     e2e-shard-timings.yml workflow runs this against recent dev pushes.
 
 import { spawnSync } from "node:child_process";
 import { readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
@@ -121,12 +124,19 @@ const TEST_START =
   /^([^\t]+)\t[^\t]*\t(\d{4}-\d\d-\d\dT[\d:.]+)Z\s.*?\[\d+\/\d+\] (?:\(retries\) )?\[([\w-]+)\] › (?:e2e\/)?([^:\s]+):\d+/;
 // The line reporter's closing summary bounds the job's final test.
 const RUN_END = /^([^\t]+)\t[^\t]*\t(\d{4}-\d\d-\d\dT[\d:.]+)Z\s+\d+ passed\b/;
+// Only the default-mode browser shards time the plan; the ALL_VIEW_MODES job
+// runs the same files several times over and would inflate them (#1367).
+const SHARD_JOB = /^(chromium|webkit-tests) \(\d+\)$/;
+// A shard served from the test-result cache replays its log instantly.
+const CACHE_HIT = /: passed from the test-result cache\b/;
 const ANSI = /\x1b\[[0-9;]*[A-Za-z]|\^\[\[[0-9;]*[A-Za-z]/g;
 
 /**
  * Per-engine, per-file seconds observed in one GitHub Actions run log.
  * A test whose job has no later start line or closing summary (a cancelled or
  * truncated job) is not counted, rather than charged an unbounded duration.
+ * Only default-mode shard jobs count, and a job replayed from the test-result
+ * cache counts not at all: its replayed lines carry no real durations.
  *
  * @param {string} log
  * @returns {Record<string, Record<string, number>>}
@@ -134,8 +144,13 @@ const ANSI = /\x1b\[[0-9;]*[A-Za-z]|\^\[\[[0-9;]*[A-Za-z]/g;
 export function parseCiLog(log) {
   /** @type {Map<string, { job: string, at: number, engine?: string, spec?: string }[]>} */
   const jobs = new Map();
+  /** @type {Set<string>} */
+  const replayed = new Set();
   for (const raw of log.split("\n")) {
     const line = raw.replace(ANSI, "");
+    const job = line.slice(0, line.indexOf("\t"));
+    if (!SHARD_JOB.test(job)) continue;
+    if (CACHE_HIT.test(line)) { replayed.add(job); continue; }
     const start = TEST_START.exec(line);
     const end = start ? null : RUN_END.exec(line);
     const event = start
@@ -149,7 +164,8 @@ export function parseCiLog(log) {
   }
   /** @type {Record<string, Record<string, number>>} */
   const totals = {};
-  for (const events of jobs.values()) {
+  for (const [job, events] of jobs) {
+    if (replayed.has(job)) continue;
     for (let i = 0; i + 1 < events.length; i++) {
       const { engine, spec, at } = events[i];
       if (!spec || !engine) continue;
@@ -185,6 +201,26 @@ export function combineRuns(runs) {
     }
   }
   return combined;
+}
+
+/**
+ * Recorded timings for the specs that still exist, keeping a previous timing
+ * for any spec the logs did not time (e.g. every shard holding it was a cache
+ * hit), so the planner does not fall back to median estimates for it.
+ * @param {Record<string, Record<string, number>>} previous
+ * @param {Record<string, Record<string, number>>} recorded
+ * @param {readonly string[]} discovered spec paths relative to e2e/
+ */
+export function mergeTimings(previous, recorded, discovered) {
+  const exists = new Set(discovered);
+  /** @type {Record<string, Record<string, number>>} */
+  const merged = {};
+  for (const engine of [...new Set([...Object.keys(previous), ...Object.keys(recorded)])].sort()) {
+    const files = { ...previous[engine], ...recorded[engine] };
+    merged[engine] = Object.fromEntries(Object.keys(files).filter((spec) => exists.has(spec)).sort()
+      .map((spec) => [spec, files[spec]]));
+  }
+  return merged;
 }
 
 /** Spec files Playwright discovers under `dir`, relative to it, '/'-separated. */
@@ -320,8 +356,10 @@ function main(argv) {
   }
   if (command === "record") {
     if (args.length === 0) throw new Error("record needs one or more GitHub Actions log files");
-    const combined = combineRuns(args.map((file) => parseCiLog(readFileSync(file, "utf8"))));
-    if (Object.keys(combined).length === 0) throw new Error("no Playwright test lines found in the given logs");
+    const recorded = combineRuns(args.map((file) => parseCiLog(readFileSync(file, "utf8"))));
+    if (Object.keys(recorded).length === 0) throw new Error("no Playwright test lines found in the given logs");
+    const previous = JSON.parse(readFileSync(TIMINGS_PATH, "utf8"));
+    const combined = mergeTimings(previous, recorded, discoverSpecs());
     writeFileSync(TIMINGS_PATH, `${JSON.stringify(combined, null, 1)}\n`);
     for (const [engine, files] of Object.entries(combined)) {
       const minutes = Object.values(files).reduce((sum, s) => sum + s, 0) / 60;

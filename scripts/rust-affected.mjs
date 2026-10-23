@@ -18,6 +18,9 @@
 //   6. Affected = touched packages plus every local package that depends on
 //      them, transitively, from `cargo metadata`'s resolve graph. Workspace
 //      members among them are tested; all of them -> all.
+//   A release version bump (scripts/version-only.mjs) -> none: no crate's
+//   behaviour depends on its version, and native smoke still builds and boots
+//   the binary (#1367).
 //   `cargo metadata` runs only when some file touches Rust; a failure -> all.
 
 import { execFileSync } from "node:child_process";
@@ -38,6 +41,7 @@ const SELECTION_INPUTS = new Set([
   ".github/workflows/ci.yml",
   "scripts/rust-affected.mjs",
   "scripts/test-selection.mjs",
+  "scripts/version-only.mjs",
   // How the target runs through the test-result cache (#1176).
   "turbo.json",
   "scripts/test-cache.mjs",
@@ -114,15 +118,19 @@ export function loadRustSources(root = ROOT) {
 /**
  * @param {string[]} changed
  * @param {RustSource[]} sources
- * @param {{ maxFiles: number, metadata: () => any, root?: string }} options
+ * @param {{ maxFiles: number, metadata: () => any, root?: string, versionOnly?: boolean }} options
  *   metadata is called only when some changed file reaches Rust; root is the
- *   repository directory its manifest paths are relative to.
+ *   repository directory its manifest paths are relative to; versionOnly: the
+ *   diff only bumps release versions (scripts/version-only.mjs).
  * @returns {Selection}
  */
-export function selectRust(changed, sources, { maxFiles, metadata, root = ROOT }) {
+export function selectRust(changed, sources, { maxFiles, metadata, root = ROOT, versionOnly = false }) {
   if (changed.length === 0) return { mode: "none", reason: "no changed files", items: [] };
   const shared = sharedEscalation(changed, maxFiles);
   if (shared) return allOf([shared]);
+  if (versionOnly) {
+    return { mode: "none", reason: "version-only change; native smoke still builds and boots the binary", items: [] };
+  }
 
   /** @type {string[]} */
   const reasons = [];
@@ -179,6 +187,6 @@ function cargoMetadata() {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  runCli("rust-affected", (changed, maxFiles) =>
-    selectRust(changed, loadRustSources(), { maxFiles, metadata: cargoMetadata }));
+  runCli("rust-affected", (changed, maxFiles, { versionOnly }) =>
+    selectRust(changed, loadRustSources(), { maxFiles, metadata: cargoMetadata, versionOnly }));
 }

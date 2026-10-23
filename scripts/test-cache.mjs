@@ -21,6 +21,8 @@
 //   - The local Turborepo directory lives outside the checkout (RUNNER_TEMP).
 //   - TEST_CACHE_TOOLCHAIN (hashed via turbo.json's globalEnv) carries the
 //     versions of the tools a target runs on.
+//   - With TEST_CACHE_NORMALIZE_VERSION=1 (browser jobs) the root package.json
+//     version is hashed as a placeholder, so a release bump replays e2e (#1367).
 // See .github/workflows/CLAUDE.md for detecting a stale hit and bypassing.
 
 import { execFileSync, spawnSync } from "node:child_process";
@@ -234,7 +236,7 @@ export function staleEntries(files, now, maxAgeMs) {
 function targetTask(target) {
   if (target === "unit") return "ci:unit";
   if (/^rust-(default|opt-in)$/.test(target)) return "ci:rust";
-  if (/^(chromium|webkit)-[1-9]\d*$/.test(target)) return "ci:e2e";
+  if (/^(chromium|webkit|chromium-view-modes)-[1-9]\d*$/.test(target)) return "ci:e2e";
   throw new Error(`test-cache: unknown target ${target}`);
 }
 
@@ -264,6 +266,7 @@ export async function restoreCache(env, target, fetchApi = fetch, workspace = pr
   mkdirSync(dir, { recursive: true });
   const { prefix } = cacheKeys(env, target);
   const task = targetTask(target);
+  applyVersionBlindManifest(task, env, workspace);
   const expectedHash = dryRun(task, { read: false, write: false }, turboEnv(task, env), workspace)?.tasks?.[0]?.hash;
   if (!expectedHash) throw new Error(`test-cache: could not hash ${target} before restore`);
   const api = `https://api.github.com/repos/${env.GITHUB_REPOSITORY}`;
@@ -305,7 +308,9 @@ export async function restoreCache(env, target, fetchApi = fetch, workspace = pr
       const staging = mkdtempSync(join(dirname(dir), "test-cache-restore-"));
       try {
         writeFileSync(join(staging, "artifact.zip"), Buffer.from(zip));
-        execFileSync("unzip", ["-q", join(staging, "artifact.zip"), "-d", staging]);
+        // Python's zipfile, not unzip: the Playwright container has no unzip
+        // (#1367). Its extractor drops absolute and `..` member paths.
+        execFileSync("python3", ["-m", "zipfile", "-e", join(staging, "artifact.zip"), staging]);
         // Protected-dev pack publishes this record only for a newly passing
         // target. Unrelated job/attempt failures do not invalidate that result.
         const record = JSON.parse(readFileSync(join(staging, "result.json"), "utf8"));
@@ -368,6 +373,49 @@ function parseArgs(argv) {
     else rest.push(argv[i]);
   }
   return { opts, rest };
+}
+
+/** Tasks whose results cannot depend on the root package.json `version`. */
+export const VERSION_BLIND_TASKS = new Set(["ci:e2e"]);
+export const MANIFEST_VERSION_PLACEHOLDER = "0.0.0-test-cache";
+
+/**
+ * The root package.json text with its top-level `version` value replaced by a
+ * fixed placeholder and every other byte kept, so Turborepo (which always
+ * hashes the root manifest) gives a release bump the same hash (#1367).
+ * Throws when the rewrite would touch anything but the top-level version.
+ * @param {string} text
+ */
+export function versionBlindManifest(text) {
+  const parsed = JSON.parse(text);
+  if (typeof parsed !== "object" || parsed === null || typeof parsed.version !== "string") return text;
+  const out = text.replace(/^(\s*"version"\s*:\s*)"[^"\\\n]*"/m, `$1"${MANIFEST_VERSION_PLACEHOLDER}"`);
+  const check = JSON.parse(out);
+  if (check.version !== MANIFEST_VERSION_PLACEHOLDER ||
+      JSON.stringify({ ...check, version: parsed.version }) !== JSON.stringify(parsed)) {
+    throw new Error("test-cache: package.json version is not a plain top-level string");
+  }
+  return out;
+}
+
+/**
+ * Browser jobs set TEST_CACHE_NORMALIZE_VERSION=1: their checkout's
+ * package.json is rewritten before any hash is computed. The browser suite
+ * runs against the mock backend, which reports its own version; nothing it
+ * executes reads the manifest's version. Other tasks keep the real version.
+ * @param {string} task
+ * @param {Record<string, string | undefined>} env
+ * @param {string} [workspace]
+ */
+function applyVersionBlindManifest(task, env, workspace = process.cwd()) {
+  if (env.TEST_CACHE_NORMALIZE_VERSION !== "1" || !VERSION_BLIND_TASKS.has(task)) return;
+  const file = join(workspace, "package.json");
+  const text = readFileSync(file, "utf8");
+  const blind = versionBlindManifest(text);
+  if (blind !== text) {
+    writeFileSync(file, blind);
+    console.log(`Test-result cache: package.json version hashed as ${MANIFEST_VERSION_PLACEHOLDER} for ${task}`);
+  }
 }
 
 /** @param {string} task @param {NodeJS.ProcessEnv} [sourceEnv] */
@@ -437,6 +485,7 @@ function probe(opts) {
   // Execution must use this same cutoff: crossing the TTL between probe and
   // run must not turn a hit into a miss after dependency setup was skipped.
   if (process.env.GITHUB_ENV) appendFileSync(process.env.GITHUB_ENV, `TEST_CACHE_PROBED_AT=${checkedAt}\n`);
+  applyVersionBlindManifest(opts.task, process.env);
   const task = dryRun(opts.task, access, turboEnv(opts.task))?.tasks?.[0];
   const hash = task?.hash ?? "unknown";
   const hit = Boolean(task) && access.read && task.cache?.status === "HIT";
@@ -450,6 +499,7 @@ function probe(opts) {
  * @param {Record<string, string>} opts
  */
 function explain(opts) {
+  applyVersionBlindManifest(opts.task, process.env);
   const env = turboEnv(opts.task);
   const summary = dryRun(opts.task, { read: true, write: false }, env);
   if (!summary) throw new Error(`test-cache: Turborepo could not hash ${opts.task}`);
@@ -477,6 +527,7 @@ function run(opts) {
   const runs = join(process.cwd(), ".turbo", "runs");
   const listRuns = () => { try { return new Set(readdirSync(runs)); } catch { return new Set(); } };
   const before = listRuns();
+  applyVersionBlindManifest(opts.task, process.env);
   console.log(`Test-result cache: ${access.read ? "read" : "bypassed (read disabled)"}, ` +
     `${access.write ? "trusted run, passing results are stored" : "read-only run, nothing is stored"}`);
   const result = spawnSync(TURBO, [...turboArgs(opts.task, dir, access), "--summarize"], {

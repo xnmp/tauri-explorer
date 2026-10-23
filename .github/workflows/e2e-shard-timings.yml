@@ -1,0 +1,57 @@
+name: Refresh E2E shard timings
+
+# Weekly: re-record scripts/e2e-shard-timings.json from the logs of recent
+# successful dev push CI runs (scripts/e2e-shards.mjs record, #1123/#1367) and
+# open a PR when it changed. Cache-replayed shards and the ALL_VIEW_MODES job
+# are not timed; specs they leave untimed keep their previous timing.
+# A PR opened with GITHUB_TOKEN does not trigger CI itself: close and reopen it
+# (or push to it) to run the required checks.
+on:
+  schedule:
+    - cron: "41 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: dev
+
+      - name: Record timings from recent successful dev pushes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          logs="$RUNNER_TEMP/ci-logs"
+          mkdir -p "$logs"
+          gh run list --workflow ci.yml --branch dev --event push --status success --limit 5 \
+            --json databaseId --jq '.[].databaseId' > "$RUNNER_TEMP/runs.txt"
+          while read -r id; do
+            gh run view "$id" --log > "$logs/$id.log"
+          done < "$RUNNER_TEMP/runs.txt"
+          node scripts/e2e-shards.mjs record "$logs"/*.log
+
+      - name: Open a pull request when the timings changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --quiet -- scripts/e2e-shard-timings.json; then
+            echo "Shard timings unchanged."
+            exit 0
+          fi
+          head="chore/refresh-shard-timings-$(date -u +%Y%m%d)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$head"
+          git commit -m "chore: refresh E2E shard timings" -- scripts/e2e-shard-timings.json
+          git push origin "$head"
+          gh pr create --base dev --head "$head" \
+            --title "chore: refresh E2E shard timings" \
+            --body "Re-recorded by the weekly e2e-shard-timings workflow from recent successful dev push CI runs. Close and reopen this PR to run CI (a GITHUB_TOKEN PR does not trigger workflows)."

@@ -8,7 +8,31 @@ permissions:
   contents: write
 
 jobs:
+  # PRs into main do not run CI (#1367); the code's dev push did. Refuse to
+  # read the version, tag or build unless a dev commit with this exact tree
+  # has a successful dev push CI run and native smoke. Waits for a dev run
+  # still in progress. A tree that never reached dev (a direct main commit)
+  # cannot be released.
+  dev-ci-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Require a successful dev push CI run for this tree
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch --no-tags origin +refs/heads/dev:refs/remotes/origin/dev
+          node scripts/release-ci-gate.mjs --wait-minutes 60
+
   version-check:
+    needs: dev-ci-gate
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.ver.outputs.version }}

@@ -7,6 +7,7 @@ import {
   compareSelection,
   discoverSpecs,
   listedSpecFiles,
+  mergeTimings,
   parseCiLog,
   parseShardArg,
   planShards,
@@ -158,6 +159,20 @@ describe("parseCiLog", () => {
     expect(parseCiLog(log)).toEqual({ webkit: { "nested/a.spec.ts": 5 } });
   });
 
+  it("times only default-mode shard jobs that executed, not cache replays or the view-mode job (#1367)", () => {
+    const log = [
+      start("chromium (1)", "10:00:00.0000000", 1, "chromium", "a.spec.ts"),
+      line("chromium (1)", "10:00:04.0000000", "  1 passed (4.0s)"),
+      start("chromium (2)", "10:00:00.0000000", 1, "chromium", "b.spec.ts"),
+      line("chromium (2)", "10:00:00.0000000", "  1 passed (9.0s)"),
+      line("chromium (2)", "10:00:00.0000000", "chromium-2: passed from the test-result cache (hash ab12; saved 9m 1s)"),
+      start("chromium-view-modes (1)", "10:00:00.0000000", 1, "chromium", "a.spec.ts"),
+      line("chromium-view-modes (1)", "10:01:00.0000000", "  1 passed (60.0s)"),
+    ].join("\n");
+
+    expect(parseCiLog(log)).toEqual({ chromium: { "a.spec.ts": 4 } });
+  });
+
   it("returns nothing for an empty or unrelated log", () => {
     expect(parseCiLog("")).toEqual({});
     expect(parseCiLog("just\nsome\ntext")).toEqual({});
@@ -263,5 +278,16 @@ describe("restrictSpecs", () => {
 
   it("treats ALL anywhere in the selection as the full suite", () => {
     expect(restrictSpecs(discovered, "e2e/a.spec.ts\nALL\n").all).toBe(true);
+  });
+});
+
+describe("mergeTimings", () => {
+  it("overrides recorded specs, keeps untimed existing ones and drops deleted ones", () => {
+    const previous = { chromium: { "a.spec.ts": 1, "b.spec.ts": 2, "gone.spec.ts": 3 }, webkit: { "a.spec.ts": 5 } };
+    const recorded = { chromium: { "a.spec.ts": 10, "new.spec.ts": 4 } };
+    expect(mergeTimings(previous, recorded, ["a.spec.ts", "b.spec.ts", "new.spec.ts"])).toEqual({
+      chromium: { "a.spec.ts": 10, "b.spec.ts": 2, "new.spec.ts": 4 },
+      webkit: { "a.spec.ts": 5 },
+    });
   });
 });

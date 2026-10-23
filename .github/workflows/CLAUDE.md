@@ -118,12 +118,18 @@ translation, and passes `--impact-map=` to the three browser selectors. Each
 step is `continue-on-error`: no map, a failed download, a malformed map or one
 older than `MAX_MAP_AGE_HOURS` (72) selects exactly as before the map existed.
 With a map, Chromium runs the specs whose tests executed the changed lines
-(`scripts/impact-select.mjs`); WebKit adds the curated engine-specific specs
-and still runs in full for `WEBKIT_SENSITIVE` paths, component styling,
-engine detection or a change no Chromium test executed; view modes keep the
-view-mode specs among them. A new file, a file no spec loaded, an asset no
-spec fetched, the mock backend, config, lockfiles and selection inputs still
-select ALL. Dev pushes, the nightly CI run and dispatch still run every spec.
+(`scripts/impact-select.mjs`), plus the drift: tests that executed code
+changed between the map's commit and the merge base, and specs edited since
+then, because their coverage in the map is out of date (an unavailable map
+commit means no map). WebKit is the selection without a map united with the
+coverage and curated engine-specific specs (Chromium coverage cannot see a
+WebKit-only caller), and still runs in full for `WEBKIT_SENSITIVE` paths,
+component styling, engine detection or a change no Chromium test executed;
+view modes keep the view-mode specs among the Chromium selection. A new file,
+a file no spec loaded, an asset no spec fetched, the mock backend, config,
+lockfiles, selection inputs and the map's recorder (`impact-collect.mjs`,
+`impact-lines.mjs`, `e2e/impact-coverage.ts`, this workflow) still select ALL.
+Dev pushes, the nightly CI run and dispatch still run every spec.
 
 # Test-result cache (#1176)
 

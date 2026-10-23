@@ -133,16 +133,13 @@ function mapIndex(impact) {
 
 /**
  * @param {{ impact: ImpactMap, changed: ChangedFile[], level?: "file" | "hunk", ts?: any,
- *   namespaceTargets?: Set<string>, exists?: (path: string) => boolean,
- *   mentionedInRepo?: (name: string) => boolean }} input
+ *   namespaceTargets?: Set<string>, exists?: (path: string) => boolean }} input
  *   namespaceTargets: repo files some module imports as a namespace
  *   (`import * as`, `export * from`, dynamic `import()`), whose new exports
  *   can be reached without a changed caller.
- *   mentionedInRepo: whether any file at the merge base mentions an
- *   identifier (default: assume it does).
  * @returns {ImpactSelection}
  */
-export function selectFromImpact({ impact, changed, level = "hunk", ts = null, namespaceTargets = new Set(), exists = () => false, mentionedInRepo = () => true }) {
+export function selectFromImpact({ impact, changed, level = "hunk", ts = null, namespaceTargets = new Set(), exists = () => false }) {
   const index = mapIndex(impact);
   /** @type {ImpactSelection} */
   const out = { all: [], specs: new Set(), tests: new Set(), zeroCoverage: [], fileLevel: [], hunkLevel: [] };
@@ -208,7 +205,29 @@ export function selectFromImpact({ impact, changed, level = "hunk", ts = null, n
       const targetSpecs = impact.files[target];
       return Boolean(targetSpecs && loaders.every((s) => targetSpecs.includes(s)));
     };
-    const headImports = new Set(headFacts.lines.filter((l) => l.kind === "import" && l.specifier).map((l) => l.specifier));
+    const headText = /** @type {string} */ (file.headText);
+    /**
+     * Whether editing the imports of `specifier` only renames bindings:
+     * every loader already evaluates its module, neither side has a
+     * side-effect import or re-export of it, each binding new to it has a
+     * local name the old file never mentions (so nothing existing, a global
+     * included, now resolves to it), and each binding dropped from it has a
+     * local name the new file no longer mentions.
+     */
+    const bindingsInert = (/** @type {string} */ specifier) => {
+      const of = (/** @type {import("./impact-regions.mjs").SourceFacts} */ f) =>
+        (f.imports ?? []).filter((i) => i.specifier === specifier);
+      const before = of(baseFacts);
+      const after = of(headFacts);
+      if ([...before, ...after].some((i) => i.bindings === null)) return false;
+      const set = (/** @type {import("./impact-regions.mjs").ImportFact[]} */ list) => new Set(list.flatMap((i) => i.bindings ?? []));
+      const was = set(before);
+      const now = set(after);
+      const local = (/** @type {string} */ b) => b.slice(0, b.indexOf("="));
+      for (const b of now) if (!was.has(b) && mentions(baseText, local(b))) return false;
+      for (const b of was) if (!now.has(b) && mentions(headText, local(b))) return false;
+      return alreadyLoaded(specifier);
+    };
     /** An old line whose change cannot alter execution by itself. */
     const inertRemoved = (/** @type {number} */ n) => {
       const region = baseFacts.lines[n - 1] ?? { kind: "code" };
@@ -218,28 +237,22 @@ export function selectFromImpact({ impact, changed, level = "hunk", ts = null, n
         // the AST alone is proof only outside Svelte markup.
         return m === null ? !path.endsWith(".svelte") : !lines.mapped.has(m);
       }
-      // An import whose module the new side still imports, and that every
-      // loader already evaluates, only changes bindings.
-      return region.kind === "import" && Boolean(region.specifier) && headImports.has(region.specifier) &&
-        alreadyLoaded(/** @type {string} */ (region.specifier));
+      return region.kind === "import" && Boolean(region.specifier) && bindingsInert(/** @type {string} */ (region.specifier));
     };
     /** A new line that adds no execution of its own. */
     const inertAdded = (/** @type {number} */ n, /** @type {number} */ first, /** @type {number} */ last) => {
       const region = headFacts.lines[n - 1];
       if (!region || NO_RUNTIME.has(region.kind)) return true;
-      if (region.kind === "import") return Boolean(region.specifier) && alreadyLoaded(/** @type {string} */ (region.specifier));
+      if (region.kind === "import") return Boolean(region.specifier) && bindingsInert(/** @type {string} */ (region.specifier));
       // A wholly new declaration whose name the old file never mentions binds
       // a name nothing existing can call. Exports reachable through a
       // namespace import, and component exports, are excluded.
-      const wholeNew = (/** @type {{ start: number, end: number }} */ d) => d.start <= n && n <= d.end && d.start >= first && d.end <= last;
-      if (headFacts.declarations.some((d) => wholeNew(d) &&
+      // (A new object member is not: enumeration, spreads and getters reach
+      // members without naming them.)
+      return headFacts.declarations.some((d) =>
+        d.start <= n && n <= d.end && d.start >= first && d.end <= last &&
         !(d.exported && (path.endsWith(".svelte") || namespaceTargets.has(path))) &&
-        !mentions(baseText, d.name))) return true;
-      // Likewise a wholly new method or function-valued property, when no
-      // file mentioned its name before: an object's new member is reachable
-      // by name from any file (optional calls, dynamic lookups), so the name
-      // must be new to the repository, not only to this file.
-      return (headFacts.members ?? []).some((d) => wholeNew(d) && !mentions(baseText, d.name) && !mentionedInRepo(d.name));
+        !mentions(baseText, d.name));
     };
 
     const baseLineCount = baseText.split("\n").length;
@@ -256,12 +269,17 @@ export function selectFromImpact({ impact, changed, level = "hunk", ts = null, n
       return null;
     };
 
-    const headNames = new Set((headFacts.headers ?? []).map((h) => h.name));
-    const baseHeaders = new Map((baseFacts.headers ?? []).map((h) => [h.line, h.name]));
+    // A header survives when the new side has a function of the same name
+    // and shape: same declaration kind, export, async/static, accessor kind.
+    const key = (/** @type {import("./impact-regions.mjs").FunctionHeader} */ h) => `${h.name}\u0000${h.shape}`;
+    const headHeaders = new Set((headFacts.headers ?? []).map(key));
+    const baseHeaders = new Map((baseFacts.headers ?? []).map((h) => [h.line, key(h)]));
     const survivingHeader = (/** @type {number} */ n) => {
-      const name = baseHeaders.get(n);
-      return name !== undefined && headNames.has(name);
+      const k = baseHeaders.get(n);
+      return k !== undefined && headHeaders.has(k);
     };
+    const inSpans = (/** @type {Array<[number, number]> | undefined} */ spans, /** @type {number} */ n) =>
+      (spans ?? []).some(([a, b]) => a <= n && n <= b);
 
     let fellBack = false;
     /** @type {Set<number>} */
@@ -276,6 +294,11 @@ export function selectFromImpact({ impact, changed, level = "hunk", ts = null, n
       if (removedCode.length === 0 && addedCode.length === 0) continue;
       /** @type {Set<number>} */
       const hunkTests = new Set();
+      // Component styles apply when the module loads, wherever the block sits.
+      const added = Array.from({ length: h.headCount }, (_, i) => h.headStart + i);
+      if (removed.some((n) => inSpans(baseFacts.styles, n)) || added.some((n) => inSpans(headFacts.styles, n))) {
+        for (const t of lines.tests) hunkTests.add(t);
+      }
       // A function header whose function survives under the same name runs
       // only when the function is called: place it by the block around it,
       // not by the enclosing code that merely created the function.
@@ -312,4 +335,27 @@ export function selectFromImpact({ impact, changed, level = "hunk", ts = null, n
     addTests(selected);
   }
   return out;
+}
+
+/**
+ * Add the tests whose behaviour may differ from the map: those that ran code
+ * changed between the map's commit and the merge base (`drift`, selected
+ * like a PR over that diff), and every spec whose own definition changed
+ * since then (`driftSpecs`). For them the map's coverage is out of date, so
+ * they run whatever the PR changes. Drift that cannot be placed selects ALL.
+ * The drift's unexecuted hunks do not mark the PR's change as WebKit-only.
+ * @param {ImpactSelection} pr
+ * @param {ImpactSelection} drift
+ * @param {Iterable<string>} driftSpecs
+ * @returns {ImpactSelection}
+ */
+export function withDrift(pr, drift, driftSpecs) {
+  return {
+    all: [...pr.all, ...drift.all.map((r) => `since the impact map's commit: ${r}`)],
+    specs: new Set([...pr.specs, ...drift.specs, ...driftSpecs]),
+    tests: new Set([...pr.tests, ...drift.tests]),
+    zeroCoverage: pr.zeroCoverage,
+    fileLevel: pr.fileLevel,
+    hunkLevel: pr.hunkLevel,
+  };
 }

@@ -76,8 +76,8 @@ import { fileURLToPath } from "node:url";
 import { dirname, join, posix } from "node:path";
 import { allOf, gitBlobReader, gitChangedFiles, parseArgs, sharedEscalation, versionOnlyChange } from "./test-selection.mjs";
 import { loadImpactMap } from "./impact-coverage.mjs";
-import { gatherChanged, mentionedAt, namespaceTargets } from "./impact-git.mjs";
-import { selectFromImpact } from "./impact-select.mjs";
+import { changedBetween, directBlobReader, gatherChanged, namespaceTargets } from "./impact-git.mjs";
+import { selectFromImpact, withDrift } from "./impact-select.mjs";
 import { resolveSpecifier } from "./impact-regions.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -346,6 +346,11 @@ const SELECTION_INPUTS = new Set([
   "scripts/impact-git.mjs",
   "scripts/impact-regions.mjs",
   "scripts/impact-select.mjs",
+  // How the map is recorded: a change here can make later maps under-report.
+  "scripts/impact-collect.mjs",
+  "scripts/impact-lines.mjs",
+  "e2e/impact-coverage.ts",
+  ".github/workflows/e2e-impact-map.yml",
   // How the target runs through the test-result cache (#1176).
   "turbo.json",
   "scripts/test-cache.mjs",
@@ -611,7 +616,7 @@ export function e2eImporters(changedSupport, specs, support) {
 
 /**
  * Repository modules each spec evaluates in the Node test process (not the
- * browser): value imports from the spec and its e2e support modules, followed
+ * browser): imports from the spec and its e2e support modules, followed
  * transitively through relative imports. Browser coverage cannot see these,
  * so a changed module here selects the specs that load it.
  * @param {string[]} specFiles e2e/*.spec.ts paths
@@ -626,7 +631,10 @@ export function nodeSideImports(specFiles, read, exists) {
     let list = deps.get(file);
     if (list) return list;
     const text = read(file) ?? "";
-    list = [...text.matchAll(/^\s*(?:import|export)\s+(?!type\b)(?:[^"';]*?\sfrom\s*)?["']([^"']+)["']|import\(\s*["']([^"']+)["']\s*\)/gm)]
+    // Every module-specifier position, anywhere in the text: multi-line and
+    // same-line imports included. Type-only imports and comments may
+    // over-select; nothing a spec evaluates is missed.
+    list = [...text.matchAll(/\b(?:from|import)\s*\(?\s*["']([^"'\n]+)["']|\brequire\(\s*["']([^"'\n]+)["']/g)]
       .map((m) => m[1] ?? m[2])
       .filter((spec) => spec.startsWith("."))
       .map((spec) => resolveSpecifier(file, spec, exists))
@@ -700,9 +708,11 @@ export const ENGINE_DETECTION = /navigator\.(userAgent|vendor)|CSS\.supports\(|\
 
 /**
  * WebKit on PRs with a test-impact map: the coverage selection plus the
- * curated engine-specific specs. Every spec for a WKWebView-sensitive change,
- * component styling, a file that detects the engine, or a change no Chromium
- * test executed (its WebKit-only branch never ran under Chromium coverage).
+ * curated engine-specific specs, united with the selection without a map
+ * (selectWebkit): Chromium coverage cannot see a WebKit-only caller in an
+ * unchanged file reaching the changed code. Every spec for a
+ * WKWebView-sensitive change, component styling, a file that detects the
+ * engine, or a change no Chromium test executed.
  * @param {CoverageInput} input
  * @returns {Selection}
  */
@@ -719,10 +729,12 @@ export function selectWebkitCoverage(input) {
   if (impactSelection.zeroCoverage.length > 0) {
     return allOf(impactSelection.zeroCoverage.map((h) => `change no Chromium test executed (may be WebKit-only): ${h}`));
   }
-  if (coverage.mode === "none") return coverage;
-  const curated = specs.filter((s) => WEBKIT_CURATED.test(s.content)).map((s) => s.rel);
-  const items = [...new Set([...coverage.items, ...curated])].sort();
-  return listed(items, changed.length, "coverage-mapped or curated WebKit spec(s)");
+  const without = selectWebkit(input);
+  if (without.mode === "all") return without;
+  if (coverage.mode === "none" && without.mode === "none") return coverage;
+  const curated = coverage.mode === "none" ? [] : specs.filter((s) => WEBKIT_CURATED.test(s.content)).map((s) => s.rel);
+  const items = [...new Set([...coverage.items, ...curated, ...without.items])].sort();
+  return listed(items, changed.length, "coverage-mapped, curated or cluster-mapped WebKit spec(s)");
 }
 
 /**
@@ -865,11 +877,38 @@ async function impactInputs(flags, { base, head, changed, read }) {
   try { ts = (await import("typescript")).default; } catch { warn("typescript unavailable; hunk-level proofs disabled"); }
   const files = changed.filter((f) => f.startsWith("src/") && !isMockBackend(f));
   const { targets, exists } = namespaceTargets(head, ROOT);
-  const impactSelection = selectFromImpact({
+  const prSelection = selectFromImpact({
     impact, level, ts, namespaceTargets: targets, exists,
-    mentionedInRepo: mentionedAt(execFileSync("git", ["merge-base", base, head], { cwd: ROOT, encoding: "utf8" }).trim(), ROOT),
     changed: gatherChanged({ base, head, files, root: ROOT, read, impact }),
   });
+  // Code that changed on dev after the map was recorded can route tests into
+  // the PR's change without the map knowing (#1368 review): select those
+  // tests too. Without the map's commit the drift is unknown: no map.
+  const mergeBase = execFileSync("git", ["merge-base", base, head], { cwd: ROOT, encoding: "utf8" }).trim();
+  const drift = changedBetween(impact.commit, mergeBase, ROOT);
+  if (drift === null) {
+    warn(`impact map commit ${impact.commit.slice(0, 12)} is unavailable; selecting without the map`);
+    return null;
+  }
+  let impactSelection = prSelection;
+  if (changed.some((f) => f.startsWith("src/"))) {
+    const driftSrc = drift.filter((f) => f.startsWith("src/"));
+    const driftSelection = selectFromImpact({
+      impact, level, ts, namespaceTargets: namespaceTargets(mergeBase, ROOT).targets, exists,
+      // The map's commit itself against the merge base: the map can be newer
+      // than a PR's base as well as older.
+      changed: gatherChanged({ base: impact.commit, head: mergeBase, files: driftSrc, root: ROOT,
+        read: directBlobReader(impact.commit, mergeBase, ROOT), impact, direct: true }),
+    });
+    const driftSupport = drift.filter((f) => f.startsWith("e2e/") && !/\.spec\.ts$/.test(f));
+    const supportImporters = e2eImporters(driftSupport, loadSpecs(), loadSupport()) ?? loadSpecs().map((s) => s.rel);
+    const driftSpecs = [...drift.filter((f) => /^e2e\/.+\.spec\.ts$/.test(f)), ...supportImporters];
+    impactSelection = withDrift(prSelection, driftSelection, driftSpecs);
+    if (drift.length > 0) {
+      warn(`impact map drift: ${drift.length} file(s) changed since the map's commit, ` +
+        `${driftSelection.tests.size} test(s) and ${driftSpecs.length} spec(s) re-run for it`);
+    }
+  }
   warn(`impact map ${impact.commit.slice(0, 12)} (${impact.generatedAt}), ${level} level: ` +
     `${impactSelection.hunkLevel.length} file(s) by hunk, ${impactSelection.fileLevel.length} by file, ` +
     `${impactSelection.tests.size}/${impact.tests.length} test(s)` +

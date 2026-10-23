@@ -22,14 +22,19 @@
  * @typedef {{ start: number, end: number, name: string, exported: boolean, topLevel: boolean }} Declaration
  *   1-based inclusive line span of a function declaration or of a `const`
  *   whose every initializer is a function.
- * @typedef {{ line: number, name: string }} FunctionHeader
+ * @typedef {{ line: number, name: string, shape: string }} FunctionHeader
  *   A line holding only a named function's header (its name, modifiers and
  *   parameters, up to the opening of its body): nothing on it runs until the
- *   function is called, except creating a function of that name.
- * @typedef {{ start: number, end: number, name: string }} Member
- *   1-based inclusive line span of a named method or function-valued
- *   property, on lines it has to itself.
- * @typedef {{ lines: LineRegion[], declarations: Declaration[], headers?: FunctionHeader[], members?: Member[] }} SourceFacts
+ *   function is called, except creating a function of that name and `shape`
+ *   (declaration kind, modifiers such as export/async/static, accessor kind,
+ *   generator).
+ * @typedef {{ specifier: string, bindings: string[] | null }} ImportFact
+ *   One import statement's value bindings as `local=imported` (`*` for a
+ *   namespace, `default`); null for a side-effect import or a re-export,
+ *   which are never mere bindings.
+ * @typedef {{ lines: LineRegion[], declarations: Declaration[], headers?: FunctionHeader[],
+ *   imports?: ImportFact[], styles?: Array<[number, number]> }} SourceFacts
+ *   styles: 1-based inclusive line spans of Svelte `<style>` blocks.
  * @typedef {{ baseStart: number, baseCount: number, headStart: number, headCount: number }} Hunk
  */
 
@@ -109,8 +114,8 @@ export function scriptFacts(ts, text, { js = false } = {}) {
 
   /** @type {FunctionHeader[]} */
   const headers = [];
-  /** @type {Member[]} */
-  const members = [];
+  /** @type {ImportFact[]} */
+  const imports = [];
   const nameText = (/** @type {any} */ n) => n && (ts.isIdentifier(n) || ts.isStringLiteral(n) || ts.isPrivateIdentifier?.(n)) ? n.text : null;
   /** The declaration that owns function `fn`, and its name, or null. */
   const ownerOf = (/** @type {any} */ fn) => {
@@ -139,14 +144,31 @@ export function scriptFacts(ts, text, { js = false } = {}) {
     const start = found.owner.getStart(source);
     const lineStart = text.lastIndexOf("\n", start - 1) + 1;
     if (text.slice(lineStart, start).trim() !== "") return;
-    for (let line = lineOf(start); line <= lineOf(fn.body.getStart(source)); line++) headers.push({ line, name: found.name });
     const owner = found.owner;
-    if (ts.isMethodDeclaration(owner) || ts.isPropertyAssignment(owner) || ts.isGetAccessorDeclaration(owner) || ts.isSetAccessorDeclaration(owner)) {
-      const lineEnd = text.indexOf("\n", owner.end);
-      if (/^[\s,;]*$/.test(text.slice(owner.end, lineEnd === -1 ? text.length : lineEnd))) {
-        members.push({ start: lineOf(start), end: lineOf(owner.end - 1), name: found.name });
+    const modifiers = (/** @type {any} */ n) =>
+      ((ts.canHaveModifiers?.(n) ? ts.getModifiers(n) : n.modifiers) ?? []).map((/** @type {any} */ m) => m.kind).sort().join(",");
+    const list = ts.isVariableStatement(owner) ? owner.declarationList.flags & (ts.NodeFlags.Const | ts.NodeFlags.Let) : 0;
+    const shape = [owner.kind, modifiers(owner), list, fn.kind, modifiers(fn), fn.asteriskToken ? "*" : ""].join("|");
+    for (let line = lineOf(start); line <= lineOf(fn.body.getStart(source)); line++) headers.push({ line, name: found.name, shape });
+  };
+  /** @param {any} node */
+  const importFact = (node) => {
+    const specifier = node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier) ? node.moduleSpecifier.text : null;
+    if (!specifier) return;
+    const clause = ts.isImportDeclaration(node) ? node.importClause : null;
+    if (!clause) { imports.push({ specifier, bindings: null }); return; }
+    /** @type {string[]} */
+    const bindings = [];
+    if (clause.name) bindings.push(`${clause.name.text}=default`);
+    const named = clause.namedBindings;
+    if (named && ts.isNamespaceImport(named)) bindings.push(`${named.name.text}=*`);
+    if (named && ts.isNamedImports(named)) {
+      for (const el of named.elements) {
+        if (el.isTypeOnly) continue;
+        bindings.push(`${el.name.text}=${(el.propertyName ?? el.name).text}`);
       }
     }
+    imports.push({ specifier, bindings: clause.isTypeOnly ? [] : bindings });
   };
 
   /** @param {any} node @param {boolean} topLevel */
@@ -158,6 +180,7 @@ export function scriptFacts(ts, text, { js = false } = {}) {
       return;
     }
     if (ts.isImportDeclaration(node) || (ts.isExportDeclaration(node) && node.moduleSpecifier)) {
+      importFact(node);
       const spec = node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier) ? node.moduleSpecifier.text : undefined;
       add(node.getStart(source), node.end, typeOnlyModuleStatement(node) ? "type" : "import", spec);
       return;
@@ -205,7 +228,7 @@ export function scriptFacts(ts, text, { js = false } = {}) {
     for (const child of children) leaves(child);
   };
   leaves(source);
-  return { lines, declarations, headers, members };
+  return { lines, declarations, headers, imports };
 }
 
 /** @param {string} text @param {number} offset */
@@ -228,8 +251,13 @@ export function svelteFacts(ts, text) {
   const declarations = [];
   /** @type {FunctionHeader[]} */
   const headers = [];
-  /** @type {Member[]} */
-  const members = [];
+  /** @type {ImportFact[]} */
+  const imports = [];
+  /** @type {Array<[number, number]>} */
+  const styles = [];
+  for (const m of text.matchAll(/<style\b[^>]*>[\s\S]*?<\/style\s*>/g)) {
+    styles.push([lineAt(text, /** @type {number} */ (m.index)), lineAt(text, /** @type {number} */ (m.index) + m[0].length)]);
+  }
   for (const m of text.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/g)) {
     const [whole, attrs, content] = m;
     const contentStart = /** @type {number} */ (m.index) + whole.indexOf(">") + 1;
@@ -255,9 +283,9 @@ export function svelteFacts(ts, text) {
     }
     // The opening tag's line also holds tag text; never count it a header.
     for (const h of facts.headers ?? []) if (h.line > 1) headers.push({ ...h, line: h.line + first - 1 });
-    for (const d of facts.members ?? []) if (d.start > 1) members.push({ ...d, start: d.start + first - 1, end: d.end + first - 1 });
+    imports.push(...(facts.imports ?? []));
   }
-  return { lines, declarations, headers, members };
+  return { lines, declarations, headers, imports, styles };
 }
 
 /**

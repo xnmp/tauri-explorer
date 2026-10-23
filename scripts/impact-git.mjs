@@ -12,11 +12,15 @@ const gitOrNull = (args, root) => { try { return git(args, root); } catch { retu
 
 /**
  * @param {{ base: string, head: string, files: string[], root: string,
- *   read: import("./version-only.mjs").BlobReader, impact: import("./impact-coverage.mjs").ImpactMap }} input
+ *   read: import("./version-only.mjs").BlobReader, impact: import("./impact-coverage.mjs").ImpactMap,
+ *   direct?: boolean }} input
+ *   direct: diff `base` itself against `head` (the drift since the map's
+ *   commit, in whichever direction), instead of their merge base; `read`
+ *   must then read "base" at `base` too.
  * @returns {import("./impact-select.mjs").ChangedFile[]}
  */
-export function gatherChanged({ base, head, files, root, read, impact }) {
-  const mergeBase = git(["merge-base", base, head], root).trim();
+export function gatherChanged({ base, head, files, root, read, impact, direct = false }) {
+  const mergeBase = direct ? base : git(["merge-base", base, head], root).trim();
   const mapCommit = /^[0-9a-f]{7,40}$/.test(impact.commit) && gitOrNull(["cat-file", "-e", `${impact.commit}^{commit}`], root) !== null
     ? impact.commit : null;
   return files.map((path) => {
@@ -79,27 +83,26 @@ export function namespaceTargets(head, root) {
 }
 
 /**
- * Whether any tracked file at `rev` mentions identifier `name` as a word.
- * Errors count as a mention, so a failed lookup never proves a name new.
- * @param {string} rev
+ * Files changed between two commits (renames as delete + add), or null when
+ * either commit is unavailable.
+ * @param {string} from
+ * @param {string} to
  * @param {string} root
- * @returns {(name: string) => boolean}
+ * @returns {string[] | null}
  */
-export function mentionedAt(rev, root) {
-  /** @type {Map<string, boolean>} */
-  const cache = new Map();
-  return (name) => {
-    let hit = cache.get(name);
-    if (hit === undefined) {
-      try {
-        execFileSync("git", ["grep", "-q", "-w", "-F", "-e", name, rev], { cwd: root, stdio: "ignore" });
-        hit = true;
-      } catch (e) {
-        // git grep exits 1 for no match; anything else is unknown.
-        hit = /** @type {{ status?: number }} */ (e).status !== 1;
-      }
-      cache.set(name, hit);
-    }
-    return hit;
-  };
+export function changedBetween(from, to, root) {
+  const out = gitOrNull(["diff", "--name-only", "--no-renames", from, to], root);
+  return out === null ? null : out.split("\n").filter(Boolean);
+}
+
+/**
+ * A blob reader for "base" at `base` and "head" at `head` exactly (no merge
+ * base), returning null for a path absent at that commit.
+ * @param {string} base
+ * @param {string} head
+ * @param {string} root
+ * @returns {import("./version-only.mjs").BlobReader}
+ */
+export function directBlobReader(base, head, root) {
+  return (side, path) => gitOrNull(["show", `${side === "base" ? base : head}:${path}`], root);
 }

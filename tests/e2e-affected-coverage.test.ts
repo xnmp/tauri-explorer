@@ -11,7 +11,8 @@ import {
 // what src/ changes reach (tests/impact-select.test.ts); these tests pin how
 // each tier combines that with the selector's other rules.
 
-const map = { hubs: ["routes/+page.svelte"], clusters: [] };
+// One cluster, so the WebKit selection without a map is narrow for x.ts.
+const map = { hubs: ["routes/+page.svelte"], clusters: [{ title: "X", files: ["x.ts"], phrases: new Set(["quick-open"]) }] };
 const specs = [
   { rel: "e2e/quick-open.spec.ts", content: "import { test } from './fixtures'; import { helper } from './helpers'; test('quick-open')" },
   { rel: "e2e/tiles.spec.ts", content: "import { test } from './fixtures'; import { view_modes } from './helpers'; for (const m of view_modes) test(m)" },
@@ -71,8 +72,8 @@ describe("selectCoverage (Chromium with an impact map)", () => {
 
   it("selects the specs importing a changed e2e support module", () => {
     expect(selectCoverage(input(["e2e/png-pixels.ts"]))).toMatchObject({ mode: "selected", items: ["e2e/pixels.spec.ts"] });
-    // fixtures.ts imports impact-coverage.ts, and every spec imports fixtures.
-    expect(selectCoverage(input(["e2e/impact-coverage.ts"])).items).toHaveLength(specs.length);
+    // The recorder decides what later maps contain: it selects everything.
+    expect(selectCoverage(input(["e2e/impact-coverage.ts"])).mode).toBe("all");
   });
 
   it("still selects a spec that names a changed fixture path", () => {
@@ -95,6 +96,11 @@ describe("selectWebkitCoverage", () => {
     expect(selectWebkitCoverage(input(["src/lib/x.ts"], reached(["e2e/quick-open.spec.ts"])))).toMatchObject({
       mode: "selected", items: ["e2e/engine.spec.ts", "e2e/new.spec.ts", "e2e/quick-open.spec.ts"],
     });
+  });
+
+  it("keeps the selection without a map: a WebKit-only caller is invisible to Chromium coverage", () => {
+    const result = selectWebkitCoverage(input(["src/lib/x.ts"], reached(["e2e/tiles.spec.ts"])));
+    expect(result.items).toEqual(expect.arrayContaining(["e2e/quick-open.spec.ts", "e2e/tiles.spec.ts"]));
   });
 
   it("runs every WebKit spec for a sensitive path, engine detection, or code Chromium never ran", () => {
@@ -149,8 +155,15 @@ describe("nodeSideImports", () => {
     expect(specsOf("e2e/helpers.ts")).toEqual(["e2e/a.spec.ts", "e2e/b.spec.ts"]);
   });
 
-  it("ignores type-only imports", () => {
-    expect(specsOf("src/lib/types.ts")).toEqual([]);
+  it("follows multi-line and same-line imports (type-only ones may over-select)", () => {
+    const more: Record<string, string> = {
+      "e2e/c.spec.ts": 'import {\n  a, // don\'t remove\n} from "../src/lib/x";\nimport { b } from "../src/lib/y"; import { c } from "../src/lib/z";',
+      "src/lib/x.ts": "export const a = 1;",
+      "src/lib/y.ts": "export const b = 1;",
+      "src/lib/z.ts": "export const c = 1;",
+    };
+    const g = nodeSideImports(["e2e/c.spec.ts"], (p) => more[p] ?? null, (p) => p in more);
+    for (const f of ["src/lib/x.ts", "src/lib/y.ts", "src/lib/z.ts"]) expect([...(g.get(f) ?? [])], f).toEqual(["e2e/c.spec.ts"]);
   });
 
   it("selects the Node-side importers of a changed module", () => {

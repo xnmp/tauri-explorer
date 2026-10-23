@@ -20,5 +20,15 @@ is a silent under-selection if treated as "no test touches this":
   (WebKit-only branches, unrecorded serial setup). It falls back to every spec
   that loaded the file, and the WebKit tier runs in full.
 
+- The map describes the code at its own commit. A dev change after it can
+  route a test into the PR's change without the map knowing, so the selector
+  also runs the tests that executed code changed between the map's commit and
+  the merge base. Diff those two commits directly: the map can be newer than
+  a PR's base, and their merge base is then the base itself (an empty diff).
+- "Inert" proofs need the whole binding, not the specifier: `import { a as b }`
+  replacing `import { b }` keeps the module and changes behaviour. New object
+  members are never inert (enumeration, spreads and getters reach them), and
+  a function header placed by its callers must keep its export/accessor shape.
+
 Stale or missing maps select exactly as the keyword clusters did; never make a
 map fetch failure skip tests.

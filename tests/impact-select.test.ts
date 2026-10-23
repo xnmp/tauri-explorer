@@ -1,7 +1,7 @@
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { mergeImpact } from "../scripts/impact-coverage.mjs";
-import { invertHunks, lineTranslator, selectFromImpact, type ChangedFile } from "../scripts/impact-select.mjs";
+import { invertHunks, lineTranslator, selectFromImpact, withDrift, type ChangedFile } from "../scripts/impact-select.mjs";
 
 // src/lib/x.ts at the map's commit. Tests: t0 (a) calls alpha(0), t1 (b)
 // calls alpha(1), t2 (c) only loads the module. Nobody calls beta.
@@ -108,28 +108,62 @@ describe("selectFromImpact: hunk level", () => {
       { id: "v0", spec: "e2e/v.spec.ts", title: ["v0"], location: "e2e/v.spec.ts:1", loaded: ["src/lib/api.ts"], exercised: ["src/lib/api.ts"], lines: { "src/lib/api.ts": [[1, 2], [5, 5]] } },
     ], [{ path: "src/lib/api.ts", blob: "api", aligned: true, mapped: [[1, 5]], blocks: [[1, 5], [2, 4]] }],
     { commit: "c0ffee", generatedAt: new Date().toISOString() });
-    const insert = (lines: string[], mentionedInRepo?: (name: string) => boolean) => {
+    const insert = (lines: string[]) => {
       const head = [...API.split("\n").slice(0, 4), ...lines, "};"].join("\n");
-      const out = selectFromImpact({ impact: apiImpact, ts, exists, mentionedInRepo, changed: [{
+      const out = selectFromImpact({ impact: apiImpact, ts, exists, changed: [{
         path: "src/lib/api.ts", status: "modified", baseText: API, headText: head, baseBlob: "api",
         hunks: [{ baseStart: 4, baseCount: 0, headStart: 5, headCount: lines.length }],
       }] });
       return [...out.specs].sort();
     };
 
-    it("is a binding only when no file mentioned its name before", () => {
-      expect(insert(["  b() {", "    return 2;", "  },"], () => false)).toEqual([]);
+    it("selects every user of the object, even for a name nothing mentions (enumeration and spreads reach it)", () => {
+      expect(insert(["  zzqNew() {", "    return 2;", "  },"])).toEqual(["e2e/u.spec.ts", "e2e/v.spec.ts"]);
+      expect(insert(["  get zzqBoom() {", "    throw new Error();", "  },"])).toEqual(["e2e/u.spec.ts", "e2e/v.spec.ts"]);
+    });
+  });
+
+  describe("import edits", () => {
+    const ALL3 = ["e2e/a.spec.ts", "e2e/b.spec.ts", "e2e/c.spec.ts"];
+    it("selects when a binding keeps its local name but changes what it imports", () => {
+      expect(run([edit(1, 1, ['import { other as helper } from "./y";'])]).specs).toEqual(ALL3);
+      expect(run([edit(1, 1, ['import * as helper from "./y";'])]).specs).toEqual(ALL3);
+      expect(run([edit(1, 1, ['import helper from "./y";'])]).specs).toEqual(ALL3);
     });
 
-    it("selects the loaders when some file already mentions the name (an optional call may reach it)", () => {
-      expect(insert(["  b() {", "    return 2;", "  },"], (name) => name === "b")).toEqual(["e2e/u.spec.ts", "e2e/v.spec.ts"]);
-      // The default assumes a mention.
-      expect(insert(["  b() {", "    return 2;", "  },"])).toEqual(["e2e/u.spec.ts", "e2e/v.spec.ts"]);
+    it("selects when a new binding shadows a name the file already uses (a global included)", () => {
+      expect(run([edit(1, 1, ['import { helper, alpha } from "./y";'])]).specs).toEqual(ALL3);
     });
 
-    it("selects the loaders when the member shares its line with other new code", () => {
-      expect(insert(["  b() { return 2; }, c: start(),"], () => false)).toEqual(["e2e/u.spec.ts", "e2e/v.spec.ts"]);
+    it("selects when a dropped binding is still used", () => {
+      expect(run([edit(1, 1, ['import {} from "./y";'])]).specs).toEqual(ALL3);
     });
+
+    it("never treats a side-effect import or a re-export as a binding", () => {
+      expect(run([edit(1, 0, ['import "./y";'])]).specs).toEqual(ALL3);
+      expect(run([edit(13, 0, ['export { helper as h2 } from "./y";'])]).specs).toEqual(ALL3);
+    });
+  });
+
+  it("does not place a header by its callers when the function's shape changes", () => {
+    // Dropping `export` breaks importers at link time; an accessor runs on access.
+    const ALL3 = ["e2e/a.spec.ts", "e2e/b.spec.ts", "e2e/c.spec.ts"];
+    expect(run([edit(4, 1, ["function alpha(n: number) {"])]).specs).toEqual(ALL3);
+    expect(run([edit(4, 1, ["export async function alpha(n: number) {"])]).specs).toEqual(ALL3);
+  });
+
+  it("selects every loader for a Svelte style change, wherever the block sits", () => {
+    const base = ["<script>", "  let a = 1;", "  function f() {", "    a++;", "  }", "</script>", "<style>", "  :global(p) { color: red; }", "</style>", "<p>{a}</p>"].join("\n");
+    const svelteImpact = mergeImpact([
+      { id: "s0", spec: "e2e/s.spec.ts", title: ["s0"], location: "e2e/s.spec.ts:1", loaded: ["src/lib/S.svelte"], exercised: ["src/lib/S.svelte"], lines: { "src/lib/S.svelte": [[1, 4], [10, 10]] } },
+      { id: "s1", spec: "e2e/t.spec.ts", title: ["s1"], location: "e2e/t.spec.ts:1", loaded: ["src/lib/S.svelte"], exercised: ["src/lib/S.svelte"], lines: { "src/lib/S.svelte": [[1, 2]] } },
+    ], [{ path: "src/lib/S.svelte", blob: "s", aligned: true, mapped: [[1, 6], [10, 10]], blocks: [[1, 10], [2, 10], [3, 5]] }],
+    { commit: "c0ffee", generatedAt: new Date().toISOString() });
+    const out = selectFromImpact({ impact: svelteImpact, ts, exists, changed: [{
+      path: "src/lib/S.svelte", status: "modified", baseText: base, headText: base.replace("red", "blue"), baseBlob: "s",
+      hunks: [{ baseStart: 8, baseCount: 1, headStart: 8, headCount: 1 }],
+    }] });
+    expect([...out.specs].sort()).toEqual(["e2e/s.spec.ts", "e2e/t.spec.ts"]);
   });
 
   it("does not treat a declaration that shadows an existing name as a binding", () => {
@@ -261,5 +295,26 @@ describe("lineTranslator", () => {
       { baseStart: 5, baseCount: 2, headStart: 8, headCount: 1 },
     ]);
     expect([1, 2, 3, 4, 5, 6, 7].map(t)).toEqual([1, 2, 5, 6, null, null, 8]);
+  });
+});
+
+describe("withDrift", () => {
+  const sel = (over: Partial<ReturnType<typeof selectFromImpact>> = {}) => ({
+    all: [] as string[], specs: new Set<string>(), tests: new Set<number>(), zeroCoverage: [] as string[],
+    fileLevel: [] as string[], hunkLevel: [] as string[], ...over,
+  });
+
+  it("adds the tests that ran code changed since the map, and specs edited since then", () => {
+    const out = withDrift(sel({ specs: new Set(["e2e/a.spec.ts"]), tests: new Set([0]) }),
+      sel({ specs: new Set(["e2e/b.spec.ts"]), tests: new Set([1]) }), ["e2e/c.spec.ts"]);
+    expect([...out.specs].sort()).toEqual(["e2e/a.spec.ts", "e2e/b.spec.ts", "e2e/c.spec.ts"]);
+    expect([...out.tests].sort()).toEqual([0, 1]);
+  });
+
+  it("selects ALL when the drift cannot be placed, and keeps only the PR's unexecuted hunks", () => {
+    const out = withDrift(sel({ zeroCoverage: ["src/a.ts:3"] }),
+      sel({ all: ["new file, not in the impact map: src/n.ts"], zeroCoverage: ["src/b.ts:9"] }), []);
+    expect(out.all).toEqual(["since the impact map's commit: new file, not in the impact map: src/n.ts"]);
+    expect(out.zeroCoverage).toEqual(["src/a.ts:3"]);
   });
 });

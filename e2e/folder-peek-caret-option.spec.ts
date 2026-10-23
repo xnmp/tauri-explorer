@@ -227,3 +227,27 @@ for (const mode of ["details", "list", "tiles"] as const) {
     await page.screenshot({ path: `screenshots/fix/peek/restored-${mode}.png` });
   });
 }
+
+// #1359: like List (#1328), Details keeps a caretless folder's Open action at
+// the row's far-right edge, clear of the name, and it still navigates.
+test("details: with peek carets off the hovered Open action sits at the row's right edge and navigates", async ({ page }) => {
+  const alpha = row(page, `${root}/Alpha`);
+  const open = alpha.getByRole("button", { name: "Open Alpha", exact: true });
+  await alpha.hover();
+  await expect(open).toHaveCSS("opacity", "1");
+  await expect.poll(async () => {
+    const [buttonBox, rowBox] = await Promise.all([open.boundingBox(), alpha.boundingBox()]);
+    return buttonBox && rowBox ? rowBox.x + rowBox.width - buttonBox.x - buttonBox.width : Number.POSITIVE_INFINITY;
+  }).toBeLessThanOrEqual(12);
+  await page.screenshot({ path: "evidence/issue-1359-details-open-right-edge.png" });
+  await open.click();
+  await expect.poll(() => currentPath(page)).toBe(`${root}/Alpha`);
+});
+
+test("details: with peek carets on there is no Open action and the caret stays beside the name", async ({ page }) => {
+  await setting(page, { folderPeekCarets: true });
+  const alpha = row(page, `${root}/Alpha`);
+  await alpha.hover();
+  await expect(alpha.locator(".peek-open")).toHaveCount(0);
+  await expect(alpha.locator(".peek-caret")).toBeVisible();
+});

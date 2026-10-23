@@ -130,6 +130,7 @@
   data-index={index}
   style:--peek-indent={peek ? `${depth * 22}px` : undefined}
   class:peek-row={peek}
+  class:caretless={peek && !carets}
   aria-colindex={1}
   class:directory={entry.kind === "directory"}
   class:hidden-entry={entry.name.startsWith(".") || isManuallyHidden}
@@ -366,6 +367,16 @@
 
   .name-cell:has(:global(.peek-open)) .name-text {
     flex: 0 1 auto;
+  }
+
+  /* Caretless rows pin Open to the row's far-right edge, as List does (#1328,
+     #1359). The row is the containing block (.name-cell is unpositioned, so its
+     overflow clip does not apply); it stays out of the name column's flow. */
+  .file-item.caretless .name-cell > :global(.peek-open) {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
   }
 
   /* Icon container */

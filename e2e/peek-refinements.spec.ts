@@ -27,14 +27,9 @@ for (const mode of ["details", "list"] as const) {
       const buttonRect = element.querySelector(".peek-open")!.getBoundingClientRect();
       return { titleGap, rowRightGap: rowRect.right - buttonRect.right };
     });
-    if (mode === "list") {
-      expect(placement.rowRightGap).toBeGreaterThanOrEqual(7);
-      expect(placement.rowRightGap).toBeLessThanOrEqual(10);
-    } else {
-      expect(placement.titleGap).toBeGreaterThanOrEqual(4);
-      expect(placement.titleGap).toBeLessThanOrEqual(12);
-    }
-    const placementName = mode === "list" ? "at-row-edge" : "beside-title";
+    expect(placement.rowRightGap).toBeGreaterThanOrEqual(7);
+    expect(placement.rowRightGap).toBeLessThanOrEqual(10);
+    const placementName = "at-row-edge";
     await page.screenshot({ path: `screenshots/fix/peek/open-${placementName}-${mode}.png` });
     await row.getByRole("button", { name: "Open Alpha", exact: true }).click();
     await expect(page.locator(`${shown} .entry-item[data-path="/folder-peek/Alpha/same.txt"]`)).toBeVisible();

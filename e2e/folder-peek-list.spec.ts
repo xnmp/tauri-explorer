@@ -916,6 +916,49 @@ for (const activation of ["click", "Enter", "Space"] as const) {
   });
 }
 
+test("Less from the scrollable column returns to the compact card and its grip (#1360)", async ({ page }) => {
+  await open(page, root, { width: 720, height: 430 });
+  const base = "/list-column-less";
+  const folder = `${base}/Archive`;
+  await page.evaluate(([base, folder]) => import("/src/lib/api/mock-fixtures.ts").then(({ mockFiles }) => {
+    const entry = (path: string, kind: "file" | "directory") => ({ path, name: path.split("/").at(-1)!, kind, size: 1, modified: "" });
+    mockFiles[base] = [entry(folder, "directory")];
+    mockFiles[folder] = Array.from({ length: 80 }, (_, index) => entry(`${folder}/item-${String(index).padStart(3, "0")}.txt`, "file"));
+  }), [base, folder] as const);
+  await explorerCall(page, "return explorer.navigateTo(value)", base);
+  await toggle(page, folder);
+  const R = Number(await page.locator(`${shown} .list-view`).getAttribute("data-rows"));
+  const grip = slot(page, folder).getByRole("separator", { name: "Resize Archive" });
+  await expect(grip).toBeVisible();
+  const compact = await card(page, folder).evaluate(el => el.clientHeight);
+  expect(compact).toBeLessThan((R - 1) * 30);
+  await slot(page, folder).getByRole("button", { name: "Expand Archive to one column" }).click();
+  await settled(page);
+  await expect.poll(() => card(page, folder).evaluate(el => el.clientHeight)).toBe((R - 1) * 30);
+  // The column stage has no grip, so it must offer its own way back.
+  await expect(grip).toHaveCount(0);
+  const shrink = row(page, folder).getByRole("button", { name: "Shrink Archive to a card" });
+  await expect(shrink).toHaveText("Less");
+  await page.screenshot({ path: "screenshots/fix/expanding-a-large-folder/column-stage-less.png" });
+  await shrink.click();
+  await settled(page);
+  await expect.poll(() => card(page, folder).evaluate(el => el.clientHeight)).toBe(compact);
+  await expect(grip).toBeVisible();
+  await expect(shrink).toHaveCount(0);
+  await expect(row(page, folder)).toBeFocused();
+  await expect(slot(page, folder).getByRole("button", { name: "Expand Archive to one column" })).toBeVisible();
+  await page.screenshot({ path: "screenshots/fix/expanding-a-large-folder/compact-card-restored.png" });
+  // The grip's remembered height survives the round trip.
+  await grip.focus();
+  await page.keyboard.press("Home");
+  await expect.poll(() => card(page, folder).evaluate(el => el.clientHeight)).toBe(30);
+  await slot(page, folder).getByRole("button", { name: "Expand Archive to one column" }).click();
+  await settled(page);
+  await row(page, folder).getByRole("button", { name: "Shrink Archive to a card" }).click();
+  await settled(page);
+  await expect.poll(() => card(page, folder).evaluate(el => el.clientHeight)).toBe(30);
+});
+
 
 async function fullyExpand(page: Page, path: string): Promise<void> {
   const name = path.split("/").at(-1)!;

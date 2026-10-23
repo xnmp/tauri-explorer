@@ -238,12 +238,13 @@ it("no closed, nested, temporary, disabled or non-List target acquires either Li
   const nested = entry("/r/a/nested");
   source.current = async path => ({ ok: true, path, entries: path === a.path ? [nested, big] : path === nested.path ? [] : trees[path] ?? [] });
   const pane = create("list");
-  const setStage = (path: string, stage: "column" | "full") => {
+  const setStage = (path: string, stage: "column" | "full" | "card") => {
     if (stage === "full") pane.showAllListChildren(path);
-    else pane.showColumnListChildren(path);
+    else if (stage === "column") pane.showColumnListChildren(path);
+    else pane.showCompactListCard(path);
   };
   const staged = () => [...pane.listColumnPaths, ...pane.listFullFlowPaths];
-  for (const stage of ["column", "full"] as const) {
+  for (const stage of ["column", "full", "card"] as const) {
     // Closed.
     setStage(a.path, stage);
     // Temporary (a drag's spring peek).
@@ -276,6 +277,59 @@ it("no closed, nested, temporary, disabled or non-List target acquires either Li
   expect(staged()).toEqual([a.path]);
   expect([...pane.listColumnPaths]).toEqual([a.path]);
   expect(pane.listFullFlowPaths.size).toBe(0);
+});
+
+it("Less walks full flow back to the column and the column back to the compact card (#1360)", async () => {
+  const left = create("list"), right = create("list");
+  await left.togglePeek(a.path); await right.togglePeek(a.path); await settle();
+  left.setListCardRows(a.path, 2);
+  left.showColumnListChildren(a.path); right.showColumnListChildren(a.path);
+  left.showAllListChildren(a.path);
+  // Less from full flow: the column.
+  left.showColumnListChildren(a.path);
+  expect([...left.listColumnPaths]).toEqual([a.path]);
+  // Less from the column: the compact card, which no stage remembers.
+  left.showCompactListCard(a.path);
+  expect(left.listColumnPaths.size).toBe(0);
+  expect(left.listFullFlowPaths.size).toBe(0);
+  // The compact card keeps its grip height; the other pane keeps its stage.
+  expect(left.listCardRows(a.path)).toBe(2);
+  expect([...right.listColumnPaths]).toEqual([a.path]);
+  // Returning to the card is idempotent and More can stage the folder again.
+  left.showCompactListCard(a.path);
+  expect(left.listColumnPaths.size + left.listFullFlowPaths.size).toBe(0);
+  left.showColumnListChildren(a.path);
+  expect([...left.listColumnPaths]).toEqual([a.path]);
+});
+
+it("an ineligible target's compact-card request never clears its remembered stage, nor another folder's (#1360)", async () => {
+  const pane = create("list");
+  const stageOf = (path: string) => pane.listColumnPaths.has(path) ? "column" : pane.listFullFlowPaths.has(path) ? "full" : "card";
+  await pane.togglePeek(a.path); await pane.togglePeek(b.path); await settle();
+  pane.showAllListChildren(a.path);
+  pane.showColumnListChildren(b.path);
+  // Non-List views and Folder Peek off keep the expansion and its stage.
+  for (const mode of ["details", "tiles"] as const) {
+    pane.setViewMode(mode); await settle();
+    pane.showCompactListCard(a.path);
+  }
+  pane.setViewMode("list"); await settle();
+  settingsStore.update({ folderPeek: false }); await settle();
+  pane.showCompactListCard(a.path);
+  settingsStore.update({ folderPeek: true }); await settle();
+  expect(stageOf(a.path)).toBe("full");
+  // Closed, then reopened only as a drag's temporary peek.
+  await pane.togglePeek(a.path); await settle();
+  pane.showCompactListCard(a.path);
+  await pane.setSpringPeeks([a.path]); await settle();
+  pane.showCompactListCard(a.path);
+  await pane.setSpringPeeks([]); await settle();
+  expect(stageOf(a.path)).toBe("full");
+  // Once eligible again, it clears only that folder in this pane.
+  await pane.togglePeek(a.path); await settle();
+  pane.showCompactListCard(a.path);
+  expect(stageOf(a.path)).toBe("card");
+  expect(stageOf(b.path)).toBe("column");
 });
 
 it("a remembered stage survives a later spring peek of the closed folder without changing", async () => {

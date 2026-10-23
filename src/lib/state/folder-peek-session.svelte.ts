@@ -120,6 +120,8 @@ export function createFolderPeekSession(windows: boolean, initialExpanded: reado
     get columnPaths() { return columnPaths; },
     showAllListChildren(path: string) { if (!disposed) listExpansion = rememberListExpansion(listExpansion, path, "full"); },
     showColumnListChildren(path: string) { if (!disposed) listExpansion = rememberListExpansion(listExpansion, path, "column"); },
+    /** The compact card is the absence of a remembered stage. */
+    showCompactListCard(path: string) { if (!disposed && listExpansion.has(path)) listExpansion = new Map([...listExpansion].filter(([key]) => key !== path)); },
     cardRows(path: string) { return cardRows.get(path); },
     setCardRows(path: string, rows: number) { if (!disposed) cardRows = rememberCardRows(cardRows, path, rows); },
     panelHeight(path: string) { return panelHeights.get(path); },

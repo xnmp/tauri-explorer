@@ -234,6 +234,64 @@ it("keeps column and full-flow stages mutually exclusive and pane-local", async 
   expect(left.listColumnPaths.has(a.path)).toBe(true);
 });
 
+it("no closed, nested, temporary, disabled or non-List target acquires either List stage", async () => {
+  const nested = entry("/r/a/nested");
+  source.current = async path => ({ ok: true, path, entries: path === a.path ? [nested, big] : path === nested.path ? [] : trees[path] ?? [] });
+  const pane = create("list");
+  const setStage = (path: string, stage: "column" | "full") => {
+    if (stage === "full") pane.showAllListChildren(path);
+    else pane.showColumnListChildren(path);
+  };
+  const staged = () => [...pane.listColumnPaths, ...pane.listFullFlowPaths];
+  for (const stage of ["column", "full"] as const) {
+    // Closed.
+    setStage(a.path, stage);
+    // Temporary (a drag's spring peek).
+    await pane.setSpringPeeks([a.path]); await settle();
+    setStage(a.path, stage);
+    await pane.setSpringPeeks([]); await settle();
+    // Nested, although permanently expanded.
+    await pane.togglePeek(a.path); await settle(); await pane.togglePeek(nested.path); await settle();
+    expect(pane.isPeekExpanded(nested.path)).toBe(true);
+    setStage(nested.path, stage);
+    // A file row is not a folder card.
+    setStage(big.path, stage);
+    expect(staged()).toEqual([]);
+    // Non-List views keep the expansion but cannot stage it.
+    for (const mode of ["details", "tiles"] as const) {
+      pane.setViewMode(mode); await settle();
+      setStage(a.path, stage);
+    }
+    pane.setViewMode("list"); await settle();
+    // Folder Peek off.
+    settingsStore.update({ folderPeek: false }); await settle();
+    setStage(a.path, stage);
+    settingsStore.update({ folderPeek: true }); await settle();
+    expect(staged()).toEqual([]);
+    await pane.togglePeek(nested.path); await pane.togglePeek(a.path); await settle();
+  }
+  // The same target is admitted once it is eligible.
+  await pane.togglePeek(a.path); await settle();
+  pane.showColumnListChildren(a.path);
+  expect(staged()).toEqual([a.path]);
+  expect([...pane.listColumnPaths]).toEqual([a.path]);
+  expect(pane.listFullFlowPaths.size).toBe(0);
+});
+
+it("a remembered stage survives a later spring peek of the closed folder without changing", async () => {
+  const pane = create("list");
+  await pane.togglePeek(a.path); await settle();
+  pane.showAllListChildren(a.path);
+  await pane.togglePeek(a.path); await settle();
+  await pane.setSpringPeeks([a.path]); await settle();
+  // Temporary peeks neither restage nor clear the user's choice.
+  pane.showColumnListChildren(a.path);
+  expect(pane.listFullFlowPaths.has(a.path)).toBe(true);
+  expect(pane.listColumnPaths.has(a.path)).toBe(false);
+  await pane.setSpringPeeks([]); await pane.togglePeek(a.path); await settle();
+  expect(pane.listFullFlowPaths.has(a.path)).toBe(true);
+});
+
 it("bounds session stages and retains the most recently chosen folders", () => {
   const before = new Map([["/r/a", "column"], ["/r/b", "full"]] as const);
   const refreshed = rememberListExpansion(before, "/r/a", "full", 2);

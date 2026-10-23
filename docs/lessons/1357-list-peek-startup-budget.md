@@ -11,6 +11,12 @@ the budget guard itself remains unchanged. Its real production build is the
 regression oracle, because unit tests of the admission policy cannot detect
 compressed output growth.
 
+Keep applicable behavioral coverage when reverting a refactor. The List stage
+rejection and spring-peek preservation tests still apply to the restored
+`showAllListChildren` / `showColumnListChildren` APIs; only malformed generic
+stage arguments cease to apply. Both restored tests fail if the explorer's
+stage admission guards are removed.
+
 This is an internal refactor rollback, with no intended visual change. Directory
 observation and keyboard focus ownership remain as defined by ADR 0014 and
 ADR 0015.

@@ -28,8 +28,39 @@ import {
 import {
   MAX_GIT_PALETTE_COMMIT_TARGETS,
   registerGitPaletteTargets,
+  graphPaletteTargets,
+  type GitPaletteActions,
   type GitPaletteTarget,
 } from "$lib/state/git-palette";
+import type { GraphCommit, GraphRefs } from "$lib/state/git-graph-cache";
+
+describe("graphPaletteTargets", () => {
+  const actions = {} as GitPaletteActions;
+  const row = (oid: string, stash?: string) =>
+    ({ oid, short_oid: oid.slice(0, 7), summary: `s-${oid}`, ...(stash ? { stash } : {}) }) as unknown as GraphCommit;
+
+  it("exposes local branches only, never remotes or tags", () => {
+    const refs = {
+      a: [{ name: "main", kind: "LocalBranch" }, { name: "origin/main", kind: "RemoteBranch" }],
+      b: [{ name: "v1", kind: "Tag" }, { name: "dev", kind: "LocalBranch" }],
+    } as unknown as GraphRefs;
+    expect(graphPaletteTargets(refs, [], actions).branches).toEqual(["main", "dev"]);
+  });
+
+  it("separates stash rows from commit targets", () => {
+    const targets = graphPaletteTargets({}, [row("aaaaaaaaa"), row("bbbbbbbbb", "stash@{0}")], actions);
+    expect(targets.commits).toEqual([{ oid: "aaaaaaaaa", shortOid: "aaaaaaa", summary: "s-aaaaaaaaa" }]);
+    expect(targets.stashes).toEqual([{ selector: "stash@{0}", summary: "s-bbbbbbbbb" }]);
+    expect(targets.actions).toBe(actions);
+  });
+
+  it("caps commit targets to the most recent loaded rows", () => {
+    const rows = Array.from({ length: MAX_GIT_PALETTE_COMMIT_TARGETS + 25 }, (_, i) => row(`c${i}`.padEnd(9, "0")));
+    const targets = graphPaletteTargets({}, rows, actions);
+    expect(targets.commits).toHaveLength(MAX_GIT_PALETTE_COMMIT_TARGETS);
+    expect(targets.commits[0].oid).toBe(rows[0].oid);
+  });
+});
 
 const commit: GitPaletteTarget = {
   oid: "a1b2c3d4e5f6",

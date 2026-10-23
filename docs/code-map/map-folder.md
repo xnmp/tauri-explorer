@@ -86,6 +86,16 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `ScmPanel.svelte` — standalone SCM panel (stage/unstage/commit lists).
 - `ScmDiffView.svelte` — unified diff viewer replacing FileList for a diff.
 - `GitGraphView.svelte` — commit-graph pane content (#51/#58); the uncommitted-changes node opens an inline stage/unstage/commit panel (#466, logic in `domain/commit-panel.ts`), arbitrary commit comparison transitions live in `git-graph-comparison.ts` (#512), failed GitHub Actions checks can expose their failed `gh` log inline from an open-PR badge (#521), branch/tag delete, branch rename, merge, and pull record session undo snapshots with a confirmed Ctrl+Z inverse (#513), and `GitAuthorAvatar.svelte` renders opt-out round author images with deterministic local fallbacks (#514).
+- `git-graph/GitGraphBanners.svelte` — PR action toolbar/status, standing detached-HEAD banner (#524) and cancellable network-operation banner (#528).
+- `git-graph/GitGraphHeader.svelte` — graph column header: graph/author/date resize separators (#341) and the branch-filter slot.
+- `git-graph/GitGraphBranchFilter.svelte` — branch-filter button + popover: fork-point jump (#1083), file-path filter (#529), local-only/remote-only toggles, author and branch checkboxes (semantics in `domain/git-graph-branch-filter.ts`).
+- `git-graph/GitGraphColumnMenu.svelte` — header right-click menu over `state/git-graph-view-prefs.svelte.ts` (columns, avatars/Gravatar, detail metadata, merge muting, branch tracing).
+- `git-graph/GitGraphLanes.svelte` — windowed lane SVG: branch lines, traced lineage overlay and vertices.
+- `git-graph/GitGraphCommitRow.svelte` — one windowed commit row: ref chips, PR and branch-status badges, avatar and metadata columns.
+- `git-graph/GitGraphCommitDetail.svelte` — inline commit details contents: message/metadata, comparison controls, changed files + inline diffs, uncommitted commit box (#466).
+- `git-graph/GitGraphPrDetail.svelte` — inline PR dropdown contents: actions, description/comments, failed CI checks + logs, review threads (#459, #521).
+- `git-graph/GitGraphCommitMenu.svelte` — commit context menu and references disclosure (anchor in `composables/use-git-graph-menu.svelte.ts`).
+- `git-graph/GitGraphDialogs.svelte` — rename/name prompts, pull offer, reset/delete suboption modals, PR action and undo confirmations.
 - `icons/FilesIcon.svelte`, `icons/ScmIcon.svelte` — activity-bar SVG icons.
 - `CommandPalette.svelte` — Ctrl+Shift+P command palette UI.
 - `QuickOpen.svelte` — Ctrl+P fuzzy file finder.
@@ -141,6 +151,13 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-pr-session.svelte.ts` — mounted GitHub badge, PR detail and CI log requests; immutable snapshots, invocation identities and disposal.
 - `git-branch-status.svelte.ts` — newest-reload-only owner of the graph's trunk-aware branch-status badges (#1081); disposal and superseded reloads cannot publish.
 - `git-graph-branches.svelte.ts` — lazy branch/author metadata and cancellable merge-base jump owner; known-coverage fallback and query/popover request coordination.
+- `git-graph-actions.svelte.ts` — git-graph mutations (checkout, cherry-pick, merge, reset, branch/tag create/rename/delete, remote delete, pull offer, confirmed undo, F5 fetch) and the prompt/modal state they drive; every mutation ends in `refreshAfterGitMutation`.
+- `git-graph-expansion.svelte.ts` — the graph's single inline expansion (commit details XOR PR dropdown) with its measured heights.
+- `git-graph-history-filter.svelte.ts` — per-repo branch subset / local-only / remote-only filters (persisted) and the ephemeral file-path filter.
+- `git-graph-view-prefs.svelte.ts` — global persisted git-graph layout preferences (columns, avatars, detail metadata, merge muting, branch tracing).
+- `git-graph-pr-dialog.svelte.ts` — PR mutation confirmation dialog state, including the explicit retry acknowledgement after an uncertain failure (ADR 0006).
+- `git-graph-working-tree.ts` — uncommitted-node stage/unstage/commit orchestration and per-file diff routing (inline or preview pane, #366, #466).
+- `git-graph-repo-refresh.ts` — mounted graph's repository watch + debounced external-change reload (#365, #432).
 - `git-graph-debounced-reload.ts` — trailing debounce for the path-filter reload; cancelled when a merge-base jump starts (#1281).
 
 - `window-startup.ts` — window-owned settings/theme/plugin startup; disposal prevents late settings from activating plugins.
@@ -384,6 +401,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-pane-dividers.svelte.ts` — single captured divider gesture per workspace; pointer/keyboard adapter with geometry and lifetime validation.
 - `use-inline-panel-width.svelte.ts` — mount-owned contribution of visible inline accessories to the pane viewport.
 - `use-panel-resize.svelte.ts` — localStorage width preference adapter for Sidebar, SCM, Miller and Git columns.
+- `use-git-graph-menu.svelte.ts` — git-graph commit menu / references disclosure anchor: cursor or trigger positioning under zoom, viewport clamp, captured scroller position and focus (#1082).
 - `use-resize-owner.svelte.ts` — shared axis-aware pointer capture, geometry, keyboard and activity lifetime.
 - `use-controlled-size.svelte.ts` — external-source size adapter; transient drafts, final commits and value-based source supersession.
 - `use-list-columns.svelte.ts` — List column virtualizer over `buildListModel`; synchronous content-box sizing, wheel ownership (a scrollable card first), editor pinning, card scroll offsets, the grip drag session (window-level release, clamped to the card's column) and preview, entry/card reveal and settled callbacks.
@@ -454,6 +472,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `shortcut-recording.ts` — pure two-step recording transitions and shared chord deadline.
 - `git.ts` — git status letter/indicator conversion.
 - `git-graph.ts` — commit-graph lane layout (#58/#179).
+- `git-graph-view.ts` — git-graph table geometry: row offsets with an inline expansion, render window, lane windowing, table minimum width, menu clamp, synthetic uncommitted row and date cells.
+- `git-graph-branch-filter.ts` — branch-filter popover semantics (all/none/subset toggles, author batch toggles, remote-only exclusion).
 - `git-branch-status.ts` — branch-status badge presenter (merged / squashed / stale; `unknown` shows none) and status index (#1081).
 - `git-graph-comparison.ts` — pure normal-detail/comparison transitions, chronological pair ordering, and stale-request generation checks (#512).
 - `git-graph-undo.ts` — immutable undo snapshot union, pure bounded per-repository ledger, confirmation labels, and structural action comparison (#513).

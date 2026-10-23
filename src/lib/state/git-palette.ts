@@ -12,6 +12,7 @@ import {
   unregisterCommand,
   type Command,
 } from "./commands.svelte";
+import type { GraphCommit, GraphRefs } from "./git-graph-cache";
 import { windowTabsManager } from "./window-tabs.svelte";
 
 const registeredIdsByPane = new Map<string, Set<string>>();
@@ -57,6 +58,32 @@ function activeGraphPane(paneId: string): boolean {
 
 function unique(values: readonly string[]): string[] {
   return [...new Set(values)].sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * Build a graph's palette targets from its loaded refs and history: local
+ * branches, the most recent non-stash commits (capped, see below) and the
+ * woven stash rows.
+ */
+export function graphPaletteTargets(
+  refs: GraphRefs,
+  commits: readonly GraphCommit[],
+  actions: GitPaletteActions,
+): GitPaletteTargets {
+  return {
+    branches: Object.values(refs)
+      .flat()
+      .filter((ref) => ref.kind === "LocalBranch")
+      .map((ref) => ref.name),
+    commits: commits
+      .slice(0, MAX_GIT_PALETTE_COMMIT_TARGETS)
+      .filter((commit) => !commit.stash)
+      .map((commit) => ({ oid: commit.oid, shortOid: commit.short_oid, summary: commit.summary })),
+    stashes: commits.flatMap((commit) => (
+      commit.stash ? [{ selector: commit.stash, summary: commit.summary }] : []
+    )),
+    actions,
+  };
 }
 
 /**

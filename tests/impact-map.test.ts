@@ -5,6 +5,7 @@ import {
   MAX_MAP_AGE_HOURS,
   decodeSet,
   encodeSet,
+  expectedTests,
   fromRuns,
   loadImpactMap,
   mergeImpact,
@@ -161,6 +162,23 @@ describe("mergeImpact", () => {
     const byLine = x.cover.flatMap(([a, b, s]) => fromRuns([[a, b]]).map((n) => [n, decodeSet(map.sets[s])]));
     expect(byLine).toEqual([[1, [0]], [2, [0]], [3, [0, 1]], [4, [0, 1]], [5, [1]]]);
     expect(map.lines["src/y.ts"]).toBeUndefined();
+  });
+
+  it("marks a spec incomplete when an executed test left no record", () => {
+    const map = mergeImpact([record("t1", "e2e/a.spec.ts", ["src/x.ts"])], [],
+      { expected: [{ id: "t1", spec: "e2e/a.spec.ts" }, { id: "t9", spec: "e2e/a.spec.ts" }, { id: "t2", spec: "e2e/b.spec.ts" }] });
+    expect(map.incomplete).toEqual(["e2e/a.spec.ts", "e2e/b.spec.ts"]);
+    expect(map.specs).toEqual([]);
+  });
+
+  it("reads the executed tests from a Playwright JSON report", () => {
+    const report = { config: {}, suites: [{ specs: [], suites: [{ specs: [
+      { id: "ran", file: "a.spec.ts", tests: [{ results: [{ status: "failed" }] }] },
+      { id: "skip", file: "a.spec.ts", tests: [{ results: [{ status: "skipped" }] }] },
+      { id: "none", file: "a.spec.ts", tests: [{ results: [] }] },
+    ] }] }] };
+    expect(expectedTests(report)).toEqual([{ id: "ran", spec: "e2e/a.spec.ts" }]);
+    expect(expectedTests(null)).toEqual([]);
   });
 
   it("drops line data for a file served in two versions", () => {

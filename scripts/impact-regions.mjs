@@ -22,7 +22,14 @@
  * @typedef {{ start: number, end: number, name: string, exported: boolean, topLevel: boolean }} Declaration
  *   1-based inclusive line span of a function declaration or of a `const`
  *   whose every initializer is a function.
- * @typedef {{ lines: LineRegion[], declarations: Declaration[] }} SourceFacts
+ * @typedef {{ line: number, name: string }} FunctionHeader
+ *   A line holding only a named function's header (its name, modifiers and
+ *   parameters, up to the opening of its body): nothing on it runs until the
+ *   function is called, except creating a function of that name.
+ * @typedef {{ start: number, end: number, name: string }} Member
+ *   1-based inclusive line span of a named method or function-valued
+ *   property, on lines it has to itself.
+ * @typedef {{ lines: LineRegion[], declarations: Declaration[], headers?: FunctionHeader[], members?: Member[] }} SourceFacts
  * @typedef {{ baseStart: number, baseCount: number, headStart: number, headCount: number }} Hunk
  */
 
@@ -62,7 +69,7 @@ export function scriptFacts(ts, text, { js = false } = {}) {
   const ranges = [];
   /** @type {Declaration[]} */
   const declarations = [];
-  const add = (/** @type {number} */ start, /** @type {number} */ end, /** @type {RegionKind} */ kind, /** @type {string=} */ specifier) => {
+  const add = (/** @type {number} */ start, /** @type {number} */ end, /** @type {RegionKind} */ kind, /** @type {string | undefined} */ specifier = undefined) => {
     if (end > start) ranges.push([start, end, kind, specifier]);
   };
   const lineOf = (/** @type {number} */ pos) => source.getLineAndCharacterOfPosition(pos).line + 1;
@@ -100,8 +107,51 @@ export function scriptFacts(ts, text, { js = false } = {}) {
     });
   };
 
+  /** @type {FunctionHeader[]} */
+  const headers = [];
+  /** @type {Member[]} */
+  const members = [];
+  const nameText = (/** @type {any} */ n) => n && (ts.isIdentifier(n) || ts.isStringLiteral(n) || ts.isPrivateIdentifier?.(n)) ? n.text : null;
+  /** The declaration that owns function `fn`, and its name, or null. */
+  const ownerOf = (/** @type {any} */ fn) => {
+    if (ts.isFunctionDeclaration(fn) || ts.isMethodDeclaration(fn) || ts.isGetAccessorDeclaration(fn) || ts.isSetAccessorDeclaration(fn)) {
+      const name = nameText(fn.name);
+      return name ? { owner: fn, name } : null;
+    }
+    if (ts.isConstructorDeclaration(fn)) return { owner: fn, name: "constructor" };
+    if (!ts.isArrowFunction(fn) && !ts.isFunctionExpression(fn)) return null;
+    let p = fn.parent;
+    while (p && (ts.isParenthesizedExpression(p) || ts.isAsExpression(p) || ts.isSatisfiesExpression?.(p))) p = p.parent;
+    if (p && ts.isPropertyAssignment(p) && unwrap(p.initializer) === fn) {
+      const name = nameText(p.name);
+      return name ? { owner: p, name } : null;
+    }
+    if (p && ts.isVariableDeclaration(p) && ts.isIdentifier(p.name) && unwrap(p.initializer) === fn &&
+        p.parent?.declarations?.length === 1 && p.parent.parent && ts.isVariableStatement(p.parent.parent)) {
+      return { owner: p.parent.parent, name: p.name.text };
+    }
+    return null;
+  };
+  const header = (/** @type {any} */ fn) => {
+    if (!fn.body) return;
+    const found = ownerOf(fn);
+    if (!found) return;
+    const start = found.owner.getStart(source);
+    const lineStart = text.lastIndexOf("\n", start - 1) + 1;
+    if (text.slice(lineStart, start).trim() !== "") return;
+    for (let line = lineOf(start); line <= lineOf(fn.body.getStart(source)); line++) headers.push({ line, name: found.name });
+    const owner = found.owner;
+    if (ts.isMethodDeclaration(owner) || ts.isPropertyAssignment(owner) || ts.isGetAccessorDeclaration(owner) || ts.isSetAccessorDeclaration(owner)) {
+      const lineEnd = text.indexOf("\n", owner.end);
+      if (/^[\s,;]*$/.test(text.slice(owner.end, lineEnd === -1 ? text.length : lineEnd))) {
+        members.push({ start: lineOf(start), end: lineOf(owner.end - 1), name: found.name });
+      }
+    }
+  };
+
   /** @param {any} node @param {boolean} topLevel */
   const visit = (node, topLevel) => {
+    if (ts.isFunctionLike(node)) header(node);
     if (ts.isTypeNode(node) && !ts.isExpressionWithTypeArguments?.(node)) { add(node.getStart(source), node.end, "type"); return; }
     if (ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node) || hasModifier(node, SK.DeclareKeyword)) {
       add(node.getStart(source), node.end, "type");
@@ -155,7 +205,7 @@ export function scriptFacts(ts, text, { js = false } = {}) {
     for (const child of children) leaves(child);
   };
   leaves(source);
-  return { lines, declarations };
+  return { lines, declarations, headers, members };
 }
 
 /** @param {string} text @param {number} offset */
@@ -176,6 +226,10 @@ export function svelteFacts(ts, text) {
   const lines = text.split("\n").map((line) => ({ kind: /** @type {RegionKind} */ (line.trim() === "" ? "trivia" : "code") }));
   /** @type {Declaration[]} */
   const declarations = [];
+  /** @type {FunctionHeader[]} */
+  const headers = [];
+  /** @type {Member[]} */
+  const members = [];
   for (const m of text.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/g)) {
     const [whole, attrs, content] = m;
     const contentStart = /** @type {number} */ (m.index) + whole.indexOf(">") + 1;
@@ -199,8 +253,11 @@ export function svelteFacts(ts, text) {
         topLevel: isModule && d.topLevel,
       });
     }
+    // The opening tag's line also holds tag text; never count it a header.
+    for (const h of facts.headers ?? []) if (h.line > 1) headers.push({ ...h, line: h.line + first - 1 });
+    for (const d of facts.members ?? []) if (d.start > 1) members.push({ ...d, start: d.start + first - 1, end: d.end + first - 1 });
   }
-  return { lines, declarations };
+  return { lines, declarations, headers, members };
 }
 
 /**

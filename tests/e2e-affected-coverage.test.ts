@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   e2eImporters,
+  nodeSideImports,
   selectCoverage,
   selectViewModesCoverage,
   selectWebkitCoverage,
@@ -124,5 +125,36 @@ describe("selectViewModesCoverage", () => {
   it("falls back to the component rule when coverage cannot place the change", () => {
     const result = selectViewModesCoverage(input(["src/lib/domain/new.ts"], reached([], { all: ["new file"] })));
     expect(result.mode).toBe("none");
+  });
+});
+
+describe("nodeSideImports", () => {
+  const files: Record<string, string> = {
+    "e2e/a.spec.ts": 'import { test } from "./fixtures";\nimport { KEYS } from "../src/lib/api/control";\nimport type { T } from "../src/lib/types";',
+    "e2e/b.spec.ts": 'import { test } from "./fixtures";\nimport { EXAMPLES } from "../tests/fixtures/examples";',
+    "e2e/fixtures.ts": 'export { x } from "./helpers";',
+    "e2e/helpers.ts": "export const x = 1;",
+    "src/lib/api/control.ts": 'import { base } from "../domain/base";\nexport const KEYS = base;',
+    "src/lib/domain/base.ts": "export const base = 1;",
+    "src/lib/types.ts": "export interface T {}",
+    "tests/fixtures/examples.ts": "export const EXAMPLES = [];",
+  };
+  const graph = nodeSideImports(["e2e/a.spec.ts", "e2e/b.spec.ts"], (p) => files[p] ?? null, (p) => p in files);
+  const specsOf = (p: string) => [...(graph.get(p) ?? [])].sort();
+
+  it("follows value imports transitively from each spec", () => {
+    expect(specsOf("src/lib/api/control.ts")).toEqual(["e2e/a.spec.ts"]);
+    expect(specsOf("src/lib/domain/base.ts")).toEqual(["e2e/a.spec.ts"]);
+    expect(specsOf("tests/fixtures/examples.ts")).toEqual(["e2e/b.spec.ts"]);
+    expect(specsOf("e2e/helpers.ts")).toEqual(["e2e/a.spec.ts", "e2e/b.spec.ts"]);
+  });
+
+  it("ignores type-only imports", () => {
+    expect(specsOf("src/lib/types.ts")).toEqual([]);
+  });
+
+  it("selects the Node-side importers of a changed module", () => {
+    expect(selectCoverage({ ...input(["src/lib/domain/base.ts"]), nodeImports: new Map([["src/lib/domain/base.ts", new Set(["e2e/cloud.spec.ts"])]]) }).items)
+      .toContain("e2e/cloud.spec.ts");
   });
 });

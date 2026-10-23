@@ -54,7 +54,7 @@ export function scriptLines(script) {
   decoded.forEach((line, genLine) => {
     const base = lineStarts[genLine];
     if (base === undefined) return;
-    for (const seg of line) if (seg.length >= 4) segments.push([base + seg[0], seg[2] + 1]);
+    for (const seg of line) if (seg.length >= 4) segments.push([base + seg[0], /** @type {number} */ (seg[2]) + 1]);
   });
   segments.sort((a, b) => a[0] - b[0]);
 

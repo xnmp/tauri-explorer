@@ -597,6 +597,11 @@ Recovery delivery: `src-tauri/src/files/recovery/subscriptions.rs` owns exact-re
 
 Planned move journal authority: `src-tauri/src/files/recovery/move_model.rs` owns the immutable resource/volume/artifact contract. `src-tauri/src/files/recovery/coordinator.rs` preserves planned records on reopen and rejects them from copy history execution. Durable move execution (#685): the shared `src-tauri/src/files/recovery/checkpoint.rs` reducer encodes the crash ordering (publish before park) for the move shape; `src-tauri/src/files/recovery/move_execution.rs` is the concrete executor (stage, displace, publish, park, remove, restore) using private artifact roots; `src-tauri/src/files/recovery/forward_move.rs` is the production orchestration (admission, `MoveSpec` binding, promotion, execution) producing `FileMutationReceipt`/`MoveRecoveryReceipt`. Their contracts live in `src-tauri/test_support/recovery_checkpoint.rs`, `src-tauri/test_support/recovery_move_execution.rs` and `src-tauri/test_support/recovery_forward_move.rs`.
 
+## CI test selection (browser E2E impact map)
+
+- FLOW (#1368): nightly `.github/workflows/e2e-impact-map.yml` → `E2E_COVERAGE=1` auto fixture in `e2e/fixtures.ts` → `e2e/impact-coverage.ts` records every page's V8 block coverage → `scripts/impact-collect.mjs` + `scripts/impact-lines.mjs` reduce it per test to source lines → `scripts/impact-coverage.mjs merge` builds the map artifact → PR `changes` job downloads it → `scripts/e2e-affected.mjs --impact-map=` → `scripts/impact-git.mjs` (hunks, blobs, namespace imports) → `scripts/impact-select.mjs` (+ `scripts/impact-regions.mjs` inert-change proofs) → specs per tier.
+- Safety rules: a new file, a file no spec loaded, an unplaceable asset, the mock backend, config and selection inputs select ALL; a hunk no Chromium test ran falls back to the file level and runs all of WebKit; a missing or stale map selects as before. Contracts: `tests/impact-map.test.ts`, `tests/impact-select.test.ts`, `tests/e2e-affected-coverage.test.ts`, `tests/e2e-fixture-imports.test.ts`.
+
 ## Native release qualification
 
 - `src-tauri/build.rs`, `src-tauri/windows-app-manifest.xml` — shared app/test Windows activation manifest; MSVC linker embedding prevents test harness loader failures before native contracts run.

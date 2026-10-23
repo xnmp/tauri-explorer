@@ -67,6 +67,19 @@ describe("selectFromImpact: hunk level", () => {
     expect(r).toMatchObject({ all: [], specs: [] });
   });
 
+  it("places a function header change by the function's callers, not its loaders", () => {
+    // Line 4 is "covered" by every loader (the module creates alpha), but a
+    // new parameter default only runs when alpha is called.
+    expect(run([edit(4, 1, ["export function alpha(n: number, m = helper(0)) {"])]).specs).toEqual(["e2e/a.spec.ts", "e2e/b.spec.ts"]);
+    // Rewriting the whole function: still only its callers.
+    const whole = run([edit(4, 6, ["export function alpha(n: number) {", "  return n > 0 ? helper(n) : 0;", "}"])]);
+    expect(whole.specs).toEqual(["e2e/a.spec.ts", "e2e/b.spec.ts"]);
+  });
+
+  it("selects every loader when a function's name does not survive", () => {
+    expect(run([edit(4, 1, ["export function alpha2(n: number) {"])]).specs).toEqual(["e2e/a.spec.ts", "e2e/b.spec.ts", "e2e/c.spec.ts"]);
+  });
+
   it("places a pure insertion in its smallest enclosing block", () => {
     // After line 5, inside the `if` block: only the test that entered it,
     // not the one that evaluated its condition.
@@ -86,6 +99,37 @@ describe("selectFromImpact: hunk level", () => {
 
   it("treats a new, unreferenced, non-exported function as a binding only", () => {
     expect(run([edit(13, 0, ["function gamma() {", "  return 4;", "}"])]).specs).toEqual([]);
+  });
+
+  describe("a new method on an object", () => {
+    const API = ["export const api = {", "  a() {", "    return 1;", "  },", "};"].join("\n");
+    const apiImpact = mergeImpact([
+      { id: "u0", spec: "e2e/u.spec.ts", title: ["u0"], location: "e2e/u.spec.ts:1", loaded: ["src/lib/api.ts"], exercised: ["src/lib/api.ts"], lines: { "src/lib/api.ts": [[1, 5]] } },
+      { id: "v0", spec: "e2e/v.spec.ts", title: ["v0"], location: "e2e/v.spec.ts:1", loaded: ["src/lib/api.ts"], exercised: ["src/lib/api.ts"], lines: { "src/lib/api.ts": [[1, 2], [5, 5]] } },
+    ], [{ path: "src/lib/api.ts", blob: "api", aligned: true, mapped: [[1, 5]], blocks: [[1, 5], [2, 4]] }],
+    { commit: "c0ffee", generatedAt: new Date().toISOString() });
+    const insert = (lines: string[], mentionedInRepo?: (name: string) => boolean) => {
+      const head = [...API.split("\n").slice(0, 4), ...lines, "};"].join("\n");
+      const out = selectFromImpact({ impact: apiImpact, ts, exists, mentionedInRepo, changed: [{
+        path: "src/lib/api.ts", status: "modified", baseText: API, headText: head, baseBlob: "api",
+        hunks: [{ baseStart: 4, baseCount: 0, headStart: 5, headCount: lines.length }],
+      }] });
+      return [...out.specs].sort();
+    };
+
+    it("is a binding only when no file mentioned its name before", () => {
+      expect(insert(["  b() {", "    return 2;", "  },"], () => false)).toEqual([]);
+    });
+
+    it("selects the loaders when some file already mentions the name (an optional call may reach it)", () => {
+      expect(insert(["  b() {", "    return 2;", "  },"], (name) => name === "b")).toEqual(["e2e/u.spec.ts", "e2e/v.spec.ts"]);
+      // The default assumes a mention.
+      expect(insert(["  b() {", "    return 2;", "  },"])).toEqual(["e2e/u.spec.ts", "e2e/v.spec.ts"]);
+    });
+
+    it("selects the loaders when the member shares its line with other new code", () => {
+      expect(insert(["  b() { return 2; }, c: start(),"], () => false)).toEqual(["e2e/u.spec.ts", "e2e/v.spec.ts"]);
+    });
   });
 
   it("does not treat a declaration that shadows an existing name as a binding", () => {
@@ -126,10 +170,32 @@ describe("selectFromImpact: hunk level", () => {
     expect(r.specs).toEqual(["e2e/b.spec.ts"]);
   });
 
-  it("falls back when a changed line itself changed since the map", () => {
+  it("places a line edited since the map in the block around its shared neighbours", () => {
     const toMapLine = lineTranslator(invertHunks([{ baseStart: 6, baseCount: 1, headStart: 6, headCount: 1 }]));
     const r = run([{ ...edit(6, 1, ["    return 0;"]), baseBlob: "newer", toMapLine }]);
+    expect(r.hunkLevel).toEqual(["src/lib/x.ts"]);
+    expect(r.specs).toEqual(["e2e/b.spec.ts"]);
+  });
+
+  it("widens to the loaders when the edit since the map reaches the file's edges", () => {
+    // Every base line changed since the map: no shared neighbour to place it.
+    const toMapLine = lineTranslator(invertHunks([{ baseStart: 1, baseCount: 13, headStart: 1, headCount: 13 }]));
+    const r = run([{ ...edit(6, 1, ["    return 0;"]), baseBlob: "newer", toMapLine }]);
     expect(r.fileLevel).toEqual(["src/lib/x.ts"]);
+    expect(r.specs).toEqual(["e2e/a.spec.ts", "e2e/b.spec.ts", "e2e/c.spec.ts"]);
+  });
+
+  it("does not treat a Svelte comment edited since the map as inert", () => {
+    const base = "<script>\n  let a = 1;\n</script>\n<p>{a}</p>\n<!-- note -->\n<p>end</p>";
+    const svelteImpact = mergeImpact([
+      { id: "s0", spec: "e2e/s.spec.ts", title: ["s0"], location: "e2e/s.spec.ts:1", loaded: ["src/lib/S.svelte"], exercised: ["src/lib/S.svelte"], lines: { "src/lib/S.svelte": [[1, 6]] } },
+    ], [{ path: "src/lib/S.svelte", blob: "s", aligned: true, mapped: [[1, 6]], blocks: [[1, 6]] }], { commit: "c0ffee", generatedAt: new Date().toISOString() });
+    const toMapLine = lineTranslator(invertHunks([{ baseStart: 5, baseCount: 1, headStart: 5, headCount: 1 }]));
+    const out = selectFromImpact({ impact: svelteImpact, ts, exists, changed: [{
+      path: "src/lib/S.svelte", status: "modified", baseText: base, headText: base.replace("<!-- note -->", "<!-- other -->"),
+      baseBlob: "newer", toMapLine, hunks: [{ baseStart: 5, baseCount: 1, headStart: 5, headCount: 1 }],
+    }] });
+    expect([...out.specs]).toEqual(["e2e/s.spec.ts"]);
   });
 
   it("handles a change git reports without hunks as module-level", () => {

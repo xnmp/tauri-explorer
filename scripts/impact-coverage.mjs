@@ -28,7 +28,9 @@
 // top level.
 //
 // Usage:
-//   node scripts/impact-coverage.mjs merge --out map.json [--commit SHA] <record dir>...
+//   node scripts/impact-coverage.mjs merge --out map.json [--commit SHA] [--reports <dir>] <record dir>...
+//     --reports: Playwright JSON reports of the run; specs with an executed
+//     test that left no record are marked incomplete.
 //   node scripts/impact-coverage.mjs stats <map.json>
 
 import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
@@ -156,7 +158,7 @@ export function decodeSet(encoded) {
  * @typedef {import("./impact-collect.mjs").FileMeta} FileMeta
  * @typedef {{ blob: string | null, aligned: boolean, mapped: Array<[number, number]>,
  *   blocks: Array<[number, number]>, tests: number, cover: Array<[number, number, number]> }} FileLines
- * @typedef {{ version: number, commit: string, generatedAt: string, specs: string[],
+ * @typedef {{ version: number, commit: string, generatedAt: string, specs: string[], incomplete?: string[],
  *   tests: Array<{ id: string, spec: string, title: string[], location: string }>,
  *   files: Record<string, string[]>, exercised: Record<string, string[]>, assets: Record<string, string[]>,
  *   lines: Record<string, FileLines>, sets: string[] }} ImpactMap
@@ -169,10 +171,13 @@ export function decodeSet(encoded) {
  * still applies).
  * @param {TestRecord[]} records
  * @param {FileMeta[]} metas
- * @param {{ commit?: string, generatedAt?: string }} [meta]
+ * @param {{ commit?: string, generatedAt?: string, expected?: Array<{ id: string, spec: string }> }} [meta]
+ *   expected: the tests the run executed (from its JSON reports). A spec with
+ *   an executed test that left no record is incomplete: it is listed in
+ *   `incomplete` and left out of `specs`, so selection always runs it.
  * @returns {ImpactMap}
  */
-export function mergeImpact(records, metas, { commit = "unknown", generatedAt = new Date().toISOString() } = {}) {
+export function mergeImpact(records, metas, { commit = "unknown", generatedAt = new Date().toISOString(), expected = [] } = {}) {
   /** @type {Map<string, number>} */
   const testIndex = new Map();
   /** @type {ImpactMap["tests"]} */
@@ -245,6 +250,7 @@ export function mergeImpact(records, metas, { commit = "unknown", generatedAt = 
     const byLine = /** @type {Map<number, Set<number>>} */ (lineTests.get(file));
     /** @type {Array<[number, number, number]>} */
     const cover = [];
+    /** @type {[number, number, number] | null} */
     let run = null;
     for (const n of [...byLine.keys()].sort((a, b) => a - b)) {
       const idx = intern(/** @type {Set<number>} */ (byLine.get(n)));
@@ -262,11 +268,13 @@ export function mergeImpact(records, metas, { commit = "unknown", generatedAt = 
   }
   /** @param {Map<string, Set<string>>} m */
   const plain = (m) => Object.fromEntries([...m.keys()].sort().map((k) => [k, [...(m.get(k) ?? [])].sort()]));
+  const incomplete = [...new Set(expected.filter((t) => !testIndex.has(t.id)).map((t) => t.spec))].sort();
   return {
     version: MAP_VERSION,
     commit,
     generatedAt,
-    specs: [...new Set(tests.map((t) => t.spec))].sort(),
+    specs: [...new Set(tests.map((t) => t.spec))].filter((s) => !incomplete.includes(s)).sort(),
+    incomplete,
     tests,
     files: plain(/** @type {Map<string, Set<string>>} */ (layers.get("files"))),
     exercised: plain(/** @type {Map<string, Set<string>>} */ (layers.get("exercised"))),
@@ -274,6 +282,29 @@ export function mergeImpact(records, metas, { commit = "unknown", generatedAt = 
     lines,
     sets,
   };
+}
+
+/**
+ * The tests a Playwright JSON report says ran (any status but skipped), with
+ * their spec paths relative to the repository (testDir is e2e/).
+ * @param {any} report
+ * @param {string} [testDir]
+ * @returns {Array<{ id: string, spec: string }>}
+ */
+export function expectedTests(report, testDir = "e2e") {
+  /** @type {Array<{ id: string, spec: string }>} */
+  const out = [];
+  /** @param {any} suite */
+  const walk = (suite) => {
+    for (const spec of suite.specs ?? []) {
+      const ran = (spec.tests ?? []).some((/** @type {any} */ t) =>
+        (t.results ?? []).some((/** @type {any} */ r) => r.status !== "skipped"));
+      if (ran) out.push({ id: spec.id, spec: `${testDir}/${spec.file}` });
+    }
+    for (const child of suite.suites ?? []) walk(child);
+  };
+  for (const suite of report?.suites ?? []) walk(suite);
+  return out;
 }
 
 // --- load ------------------------------------------------------------------
@@ -346,9 +377,11 @@ function main() {
     let out = null;
     let commit = process.env.GITHUB_SHA ?? "unknown";
     const inputs = [];
+    const reports = [];
     for (let i = 0; i < rest.length; i++) {
       if (rest[i] === "--out") out = rest[++i];
       else if (rest[i] === "--commit") commit = rest[++i];
+      else if (rest[i] === "--reports") reports.push(rest[++i]);
       else inputs.push(rest[i]);
     }
     if (!out || inputs.length === 0) throw new Error("usage: merge --out map.json [--commit SHA] <record dir>...");
@@ -356,13 +389,22 @@ function main() {
     const records = [];
     /** @type {FileMeta[]} */
     const metas = [];
+    /** @type {Array<{ id: string, spec: string }>} */
+    const expected = [];
+    const reportFiles = new Set(reports.flatMap(jsonFiles));
     for (const file of inputs.flatMap(jsonFiles)) {
+      if (reportFiles.has(file)) continue;
       const data = JSON.parse(readFileSync(file, "utf8"));
       if (typeof data.path === "string" && "blob" in data) metas.push(data);
       else if (typeof data.spec === "string" && typeof data.id === "string") records.push(data);
     }
+    for (const file of reportFiles) {
+      const data = JSON.parse(readFileSync(file, "utf8"));
+      if (Array.isArray(data.suites) && data.config) expected.push(...expectedTests(data));
+    }
     if (records.length === 0) throw new Error("no coverage records found");
-    const map = mergeImpact(records, metas, { commit });
+    const map = mergeImpact(records, metas, { commit, expected });
+    if (map.incomplete?.length) process.stderr.write(`[impact-coverage] incomplete (always selected): ${map.incomplete.join(" ")}\n`);
     writeFileSync(out, JSON.stringify(map) + "\n");
     process.stderr.write(`[impact-coverage] ${records.length} records, ${map.tests.length} tests, ${map.sets.length} test sets: ${JSON.stringify(mapStats(map))}\n`);
     return;

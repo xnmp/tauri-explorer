@@ -101,6 +101,61 @@ describe("changes job selection", () => {
     ]);
   });
 
+  it("passes a downloaded impact map to the browser tiers only (#1368)", () => {
+    const map = join(dir, "map.json");
+    writeFileSync(map, "{}");
+    writeFileSync(join(dir, "node"), `#!/bin/bash\necho "node $*" >> "${dir}/calls"\necho '{"mode":"all","reason":"r","items":[]}'\n`);
+    chmodSync(join(dir, "node"), 0o755);
+    runStep(select.run as string, { TEST_SELECTION_MAX_FILES: "50", IMPACT_MAP: map });
+    expect(calls()).toEqual([
+      `node scripts/e2e-affected.mjs --strict --impact-map=${map} --json --max-files 50 HEAD^1 HEAD`,
+      `node scripts/e2e-affected.mjs --webkit --impact-map=${map} --json --max-files 50 HEAD^1 HEAD`,
+      `node scripts/e2e-affected.mjs --view-modes --impact-map=${map} --json --max-files 50 HEAD^1 HEAD`,
+      "node scripts/unit-affected.mjs --json --max-files 50 HEAD^1 HEAD",
+      "node scripts/rust-affected.mjs --json --max-files 50 HEAD^1 HEAD",
+    ]);
+  });
+
+  it("selects without a map when none was downloaded", () => {
+    writeFileSync(join(dir, "node"), `#!/bin/bash\necho "node $*" >> "${dir}/calls"\necho '{"mode":"all","reason":"r","items":[]}'\n`);
+    chmodSync(join(dir, "node"), 0o755);
+    runStep(select.run as string, { TEST_SELECTION_MAX_FILES: "50", IMPACT_MAP: join(dir, "missing.json") });
+    expect(calls().filter((c) => c.includes("--impact-map"))).toEqual([]);
+  });
+
+  describe("impact map download", () => {
+    const fetch = step("changes", (s) => s.id === "impact");
+    const stubGh = (runList: string) => {
+      writeFileSync(join(dir, "gh"), `#!/bin/bash\necho "gh $*" >> "${dir}/calls"\ncase "$2" in list) printf '%s' '${runList}' ;; download) mkdir -p "\${9}"; echo "{}" > "\${9}/e2e-impact-map.json" ;; esac\n`);
+      chmodSync(join(dir, "gh"), 0o755);
+      writeFileSync(join(dir, "git"), `#!/bin/bash\necho "git $*" >> "${dir}/calls"\n`);
+      chmodSync(join(dir, "git"), 0o755);
+    };
+
+    it("never fails the job and only trusts successful dev runs", () => {
+      expect(fetch.if).toBe("github.event_name == 'pull_request'");
+      expect((fetch as { "continue-on-error"?: boolean })["continue-on-error"]).toBe(true);
+      expect(fetch.run).toContain("--workflow e2e-impact-map.yml --branch dev --status success");
+    });
+
+    it("downloads the newest map and fetches its commit", () => {
+      stubGh("42 abc123");
+      runStep(fetch.run as string, { GITHUB_REPOSITORY: "o/r" });
+      expect(readFileSync(join(dir, "out"), "utf8").trim()).toBe(`map=${dir}/impact-map/e2e-impact-map.json`);
+      expect(calls()).toEqual(expect.arrayContaining([
+        `gh run download 42 --repo o/r -n e2e-impact-map -D ${dir}/impact-map`,
+        "git fetch --no-tags --depth=1 origin abc123",
+      ]));
+    });
+
+    it("publishes no map when no run exists", () => {
+      stubGh("");
+      runStep(fetch.run as string, { GITHUB_REPOSITORY: "o/r" });
+      expect(existsSync(join(dir, "out"))).toBe(false);
+      expect(readFileSync(join(dir, "summary"), "utf8")).toContain("none available");
+    });
+  });
+
   it("selects the full tier when a selector fails or prints garbage", () => {
     writeFileSync(join(dir, "node"), `#!/bin/bash\ncase "$1" in *unit*) echo 'not json' ;; *) exit 3 ;; esac\n`);
     chmodSync(join(dir, "node"), 0o755);

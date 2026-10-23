@@ -15,7 +15,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { repoPathFromUrl, scriptExercised } from "./impact-coverage.mjs";
+import { repoPathFromUrl, scriptExercised, toRuns } from "./impact-coverage.mjs";
 import { scriptLines } from "./impact-lines.mjs";
 
 export const RECORD_VERSION = 1;
@@ -104,14 +104,7 @@ export function reduceCoverage(scripts, { root, readFile, seen = new Map() }) {
   /** @type {Record<string, Array<[number, number]>>} */
   const lines = {};
   for (const path of [...covered.keys()].sort()) {
-    const sorted = [...(covered.get(path) ?? [])].sort((a, b) => a - b);
-    /** @type {Array<[number, number]>} */
-    const runs = [];
-    for (const n of sorted) {
-      const last = runs[runs.length - 1];
-      if (last && last[1] + 1 === n) last[1] = n; else runs.push([n, n]);
-    }
-    lines[path] = runs;
+    lines[path] = toRuns(covered.get(path) ?? []);
   }
   return { loaded: [...loaded].sort(), exercised: [...exercised].sort(), lines, metas };
 }

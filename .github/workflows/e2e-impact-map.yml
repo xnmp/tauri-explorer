@@ -1,0 +1,140 @@
+name: E2E impact map
+
+# Nightly on dev (#1368): runs every Chromium browser spec with V8 coverage
+# (E2E_COVERAGE=1, e2e/impact-coverage.ts) and ALL_VIEW_MODES=1, so List and
+# Tiles code is recorded too, then merges the per-test records into the
+# test-impact map (scripts/impact-coverage.mjs merge). PR CI downloads the
+# newest successful run's `e2e-impact-map` artifact to select browser specs
+# by coverage (scripts/e2e-affected.mjs --impact-map=...). The map is never
+# committed; a PR with no usable map (missing, malformed, older than
+# MAX_MAP_AGE_HOURS) selects exactly as it did before the map existed.
+#
+# Failing tests still record coverage, so a test failure does not block the
+# map. A spec whose tests did not all record (a crashed worker, a shard that
+# never finished) is left out of the map's spec list, and PR selection then
+# always runs it.
+on:
+  schedule:
+    - cron: "17 1 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  CONTAINER_BUN_VERSION: "1.4.3"
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    # Same image as ci.yml's browser jobs (tests/ci-playwright-container.test.ts).
+    container:
+      image: mcr.microsoft.com/playwright:v1.60.0-noble@sha256:9bd26ad900bb5e0f4dee75839e957a89ae89c2b7ab1e76050e559790e946b948
+      options: --ipc=host
+    defaults:
+      run:
+        shell: bash
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+    env:
+      ALL_VIEW_MODES: "1"
+      E2E_COVERAGE: "1"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'dev' || github.ref }}
+
+      - name: Trust the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Install bun
+        run: |
+          npm install --global --ignore-scripts "@oven/bun-linux-x64@${CONTAINER_BUN_VERSION}"
+          ln -sf "$(npm root --global)/@oven/bun-linux-x64/bin/bun" /usr/local/bin/bun
+          ln -sf /usr/local/bin/bun /usr/local/bin/bunx
+          test "$(bun --version)" = "$CONTAINER_BUN_VERSION"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Plan shard
+        run: |
+          echo ALL > "$RUNNER_TEMP/all.txt"
+          node scripts/e2e-shards.mjs plan --engine chromium --shard ${{ matrix.shard }}/${{ strategy.job-total }} --only "$RUNNER_TEMP/all.txt" --out "$RUNNER_TEMP/shard.txt"
+          echo "IMPACT_DIR=$RUNNER_TEMP/impact" >> "$GITHUB_ENV"
+
+      # Test failures do not fail the job: their coverage is still recorded,
+      # and the JSON report tells the merge which tests should have records.
+      # Coverage slows the page (~30% locally), so a test that times out is
+      # retried once; the merge unions every attempt's record.
+      - name: Browser specs with coverage
+        timeout-minutes: 40
+        run: |
+          mkdir -p "$IMPACT_DIR"
+          export E2E_COVERAGE_DIR="$IMPACT_DIR/records"
+          export PLAYWRIGHT_JSON_OUTPUT_FILE="$IMPACT_DIR/report-${{ matrix.shard }}.json"
+          start=$(date +%s)
+          status=0
+          npx playwright test --project=chromium --test-list "$RUNNER_TEMP/shard.txt" --reporter=line,json --retries=1 || status=$?
+          echo "Coverage shard ${{ matrix.shard }}: playwright exit $status after $(( $(date +%s) - start ))s, $(find "$E2E_COVERAGE_DIR" -maxdepth 1 -name '*.json' | wc -l) test record(s)" | tee -a "$GITHUB_STEP_SUMMARY"
+          test -s "$PLAYWRIGHT_JSON_OUTPUT_FILE"
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: impact-records-${{ matrix.shard }}
+          path: ${{ env.IMPACT_DIR }}
+          if-no-files-found: error
+          retention-days: 3
+
+  merge:
+    needs: coverage
+    if: always() && needs.coverage.result != 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'dev' || github.ref }}
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: impact-records-*
+          path: ${{ runner.temp }}/records
+
+      - name: Merge the impact map
+        run: |
+          commit=$(git rev-parse HEAD)
+          reports=()
+          while IFS= read -r report; do reports+=(--reports "$report"); done \
+            < <(find "$RUNNER_TEMP/records" -maxdepth 2 -name 'report-*.json')
+          echo "${#reports[@]} report argument(s)"
+          node scripts/impact-coverage.mjs merge --out "$RUNNER_TEMP/e2e-impact-map.json" --commit "$commit" \
+            "${reports[@]}" "$RUNNER_TEMP/records" 2> "$RUNNER_TEMP/merge.log" || { cat "$RUNNER_TEMP/merge.log"; exit 1; }
+          cat "$RUNNER_TEMP/merge.log"
+          {
+            echo "### E2E impact map for \`$commit\`"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/merge.log"
+            node scripts/impact-coverage.mjs stats "$RUNNER_TEMP/e2e-impact-map.json"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: e2e-impact-map
+          path: ${{ runner.temp }}/e2e-impact-map.json
+          if-no-files-found: error
+          retention-days: 14

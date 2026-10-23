@@ -133,13 +133,16 @@ function mapIndex(impact) {
 
 /**
  * @param {{ impact: ImpactMap, changed: ChangedFile[], level?: "file" | "hunk", ts?: any,
- *   namespaceTargets?: Set<string>, exists?: (path: string) => boolean }} input
+ *   namespaceTargets?: Set<string>, exists?: (path: string) => boolean,
+ *   mentionedInRepo?: (name: string) => boolean }} input
  *   namespaceTargets: repo files some module imports as a namespace
  *   (`import * as`, `export * from`, dynamic `import()`), whose new exports
  *   can be reached without a changed caller.
+ *   mentionedInRepo: whether any file at the merge base mentions an
+ *   identifier (default: assume it does).
  * @returns {ImpactSelection}
  */
-export function selectFromImpact({ impact, changed, level = "hunk", ts = null, namespaceTargets = new Set(), exists = () => false }) {
+export function selectFromImpact({ impact, changed, level = "hunk", ts = null, namespaceTargets = new Set(), exists = () => false, mentionedInRepo = () => true }) {
   const index = mapIndex(impact);
   /** @type {ImpactSelection} */
   const out = { all: [], specs: new Set(), tests: new Set(), zeroCoverage: [], fileLevel: [], hunkLevel: [] };
@@ -209,7 +212,12 @@ export function selectFromImpact({ impact, changed, level = "hunk", ts = null, n
     /** An old line whose change cannot alter execution by itself. */
     const inertRemoved = (/** @type {number} */ n) => {
       const region = baseFacts.lines[n - 1] ?? { kind: "code" };
-      if (NO_RUNTIME.has(region.kind)) return !lines.mapped.has(/** @type {number} */ (toMap(n)));
+      if (NO_RUNTIME.has(region.kind)) {
+        const m = toMap(n);
+        // A line edited since the map's commit has no source-map evidence;
+        // the AST alone is proof only outside Svelte markup.
+        return m === null ? !path.endsWith(".svelte") : !lines.mapped.has(m);
+      }
       // An import whose module the new side still imports, and that every
       // loader already evaluates, only changes bindings.
       return region.kind === "import" && Boolean(region.specifier) && headImports.has(region.specifier) &&
@@ -223,10 +231,36 @@ export function selectFromImpact({ impact, changed, level = "hunk", ts = null, n
       // A wholly new declaration whose name the old file never mentions binds
       // a name nothing existing can call. Exports reachable through a
       // namespace import, and component exports, are excluded.
-      return headFacts.declarations.some((d) =>
-        d.start <= n && n <= d.end && d.start >= first && d.end <= last &&
+      const wholeNew = (/** @type {{ start: number, end: number }} */ d) => d.start <= n && n <= d.end && d.start >= first && d.end <= last;
+      if (headFacts.declarations.some((d) => wholeNew(d) &&
         !(d.exported && (path.endsWith(".svelte") || namespaceTargets.has(path))) &&
-        !mentions(baseText, d.name));
+        !mentions(baseText, d.name))) return true;
+      // Likewise a wholly new method or function-valued property, when no
+      // file mentioned its name before: an object's new member is reachable
+      // by name from any file (optional calls, dynamic lookups), so the name
+      // must be new to the repository, not only to this file.
+      return (headFacts.members ?? []).some((d) => wholeNew(d) && !mentions(baseText, d.name) && !mentionedInRepo(d.name));
+    };
+
+    const baseLineCount = baseText.split("\n").length;
+    /**
+     * The map line for base line `n`, or for the nearest base line in
+     * direction `step` that the map's commit shares: lines edited between
+     * the map's commit and the merge base are new code to the map.
+     */
+    const toMapNear = (/** @type {number} */ n, /** @type {1 | -1} */ step) => {
+      for (let k = n; k >= 1 && k <= baseLineCount; k += step) {
+        const m = toMap(k);
+        if (m !== null) return m;
+      }
+      return null;
+    };
+
+    const headNames = new Set((headFacts.headers ?? []).map((h) => h.name));
+    const baseHeaders = new Map((baseFacts.headers ?? []).map((h) => [h.line, h.name]));
+    const survivingHeader = (/** @type {number} */ n) => {
+      const name = baseHeaders.get(n);
+      return name !== undefined && headNames.has(name);
     };
 
     let fellBack = false;
@@ -234,7 +268,6 @@ export function selectFromImpact({ impact, changed, level = "hunk", ts = null, n
     const selected = new Set();
     for (const h of file.hunks) {
       const removed = Array.from({ length: h.baseCount }, (_, i) => h.baseStart + i);
-      if (removed.some((n) => toMap(n) === null)) { fellBack = true; break; }
       const lastAdded = h.headStart + h.headCount - 1;
       const addedCode = Array.from({ length: h.headCount }, (_, i) => h.headStart + i)
         .filter((n) => !inertAdded(n, h.headStart, lastAdded));
@@ -243,7 +276,13 @@ export function selectFromImpact({ impact, changed, level = "hunk", ts = null, n
       if (removedCode.length === 0 && addedCode.length === 0) continue;
       /** @type {Set<number>} */
       const hunkTests = new Set();
-      const placed = removedCode.filter((n) => lines.mapped.has(/** @type {number} */ (toMap(n))));
+      // A function header whose function survives under the same name runs
+      // only when the function is called: place it by the block around it,
+      // not by the enclosing code that merely created the function.
+      const placed = removedCode.filter((n) => {
+        const m = toMap(n);
+        return m !== null && lines.mapped.has(m) && !survivingHeader(n);
+      });
       for (const n of placed) {
         const m = /** @type {number} */ (toMap(n));
         for (const t of index.coveredIn(path, m, m)) hunkTests.add(t);
@@ -255,8 +294,8 @@ export function selectFromImpact({ impact, changed, level = "hunk", ts = null, n
         if (h.baseCount === 0 && h.baseStart < 1) {
           for (const t of lines.tests) hunkTests.add(t);
         } else {
-          const a = toMap(h.baseStart);
-          const b = toMap(h.baseCount > 0 ? h.baseStart + h.baseCount - 1 : h.baseStart + 1);
+          const a = toMapNear(h.baseStart, -1);
+          const b = toMapNear(h.baseCount > 0 ? h.baseStart + h.baseCount - 1 : h.baseStart + 1, 1);
           if (a === null || b === null) { fellBack = true; break; }
           for (const t of index.enclosing(path, a, b)) hunkTests.add(t);
         }

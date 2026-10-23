@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // e2e-affected.mjs — select the E2E specs affected by a diff.
 //
-// Usage:  node scripts/e2e-affected.mjs [--strict | --webkit | --view-modes] [--json] [--max-files N] [base] [head]
+// Usage:  node scripts/e2e-affected.mjs [--strict | --webkit | --view-modes] [--impact-map=PATH [--impact-level=file|hunk]]
+//                                        [--json] [--max-files N] [base] [head]
 //         node scripts/e2e-affected.mjs --list-view-mode-specs
 //   base defaults to "origin/dev", head to "HEAD".
 //   --json: print a test-selection.mjs Selection (mode, reason, items) instead.
@@ -21,6 +22,18 @@
 //   reached through a changed view-mode component or spec, run on Chromium
 //   with ALL_VIEW_MODES=1; ALL means every such spec.
 //   --list-view-mode-specs: print every spec that iterates the view modes.
+//   --impact-map=<path> (CI, #1368): with --strict, --webkit or --view-modes,
+//   select src/ changes through the coverage-based test-impact map instead
+//   (scripts/impact-select.mjs, built nightly by e2e-impact-map.yml):
+//   the tests that ran the changed lines (hunk level) or every spec that
+//   loaded the file (--impact-level=file). Chromium runs those specs;
+//   WebKit adds the curated engine-specific set and runs everything for
+//   WEBKIT_SENSITIVE paths, component styling, engine detection or code no
+//   Chromium test ran; view modes keep the view-mode specs among them. A new
+//   file, a file no spec loaded or an asset no spec fetched selects ALL; a
+//   changed e2e support module selects the specs importing it; every
+//   escalation below except clusters and hubs still applies. A missing,
+//   malformed or stale map selects as without it.
 //   A release version bump (scripts/version-only.mjs) selects none.
 //
 // Output (stdout): newline-separated spec paths (e.g. "e2e/foo.spec.ts"),
@@ -57,13 +70,15 @@
 //   7. Anything else (an unknown top-level file)  -> ALL.
 //   If map-feature.md is missing -> ALL (+ warning).
 
+import { execFileSync } from "node:child_process";
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, posix } from "node:path";
 import { allOf, gitBlobReader, gitChangedFiles, parseArgs, sharedEscalation, versionOnlyChange } from "./test-selection.mjs";
 import { loadImpactMap } from "./impact-coverage.mjs";
-import { gatherChanged, namespaceTargets } from "./impact-git.mjs";
+import { gatherChanged, mentionedAt, namespaceTargets } from "./impact-git.mjs";
 import { selectFromImpact } from "./impact-select.mjs";
+import { resolveSpecifier } from "./impact-regions.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const MAP_REL = "docs/code-map/map-feature.md";
@@ -326,6 +341,11 @@ const SELECTION_INPUTS = new Set([
   "scripts/e2e-affected.mjs",
   "scripts/test-selection.mjs",
   "scripts/version-only.mjs",
+  // Coverage-based selection with the test-impact map (#1368).
+  "scripts/impact-coverage.mjs",
+  "scripts/impact-git.mjs",
+  "scripts/impact-regions.mjs",
+  "scripts/impact-select.mjs",
   // How the target runs through the test-result cache (#1176).
   "turbo.json",
   "scripts/test-cache.mjs",
@@ -590,11 +610,56 @@ export function e2eImporters(changedSupport, specs, support) {
 }
 
 /**
+ * Repository modules each spec evaluates in the Node test process (not the
+ * browser): value imports from the spec and its e2e support modules, followed
+ * transitively through relative imports. Browser coverage cannot see these,
+ * so a changed module here selects the specs that load it.
+ * @param {string[]} specFiles e2e/*.spec.ts paths
+ * @param {(path: string) => string | null} read raw file text
+ * @param {(path: string) => boolean} exists
+ * @returns {Map<string, Set<string>>} module -> specs
+ */
+export function nodeSideImports(specFiles, read, exists) {
+  /** @type {Map<string, string[]>} */
+  const deps = new Map();
+  const depsOf = (/** @type {string} */ file) => {
+    let list = deps.get(file);
+    if (list) return list;
+    const text = read(file) ?? "";
+    list = [...text.matchAll(/^\s*(?:import|export)\s+(?!type\b)(?:[^"';]*?\sfrom\s*)?["']([^"']+)["']|import\(\s*["']([^"']+)["']\s*\)/gm)]
+      .map((m) => m[1] ?? m[2])
+      .filter((spec) => spec.startsWith("."))
+      .map((spec) => resolveSpecifier(file, spec, exists))
+      .filter((p) => p !== null);
+    deps.set(file, /** @type {string[]} */ (list));
+    return /** @type {string[]} */ (list);
+  };
+  /** @type {Map<string, Set<string>>} */
+  const out = new Map();
+  for (const spec of specFiles) {
+    const seen = new Set([spec]);
+    const queue = [spec];
+    while (queue.length > 0) {
+      for (const dep of depsOf(/** @type {string} */ (queue.pop()))) {
+        if (seen.has(dep)) continue;
+        seen.add(dep);
+        queue.push(dep);
+        let set = out.get(dep);
+        if (!set) out.set(dep, (set = new Set()));
+        set.add(spec);
+      }
+    }
+  }
+  return out;
+}
+
+/**
  * @typedef {import("./impact-select.mjs").ImpactSelection} ImpactSelection
  * @typedef {SelectionInput & { impact: import("./impact-coverage.mjs").ImpactMap,
- *   impactSelection: ImpactSelection }} CoverageInput
+ *   impactSelection: ImpactSelection, nodeImports?: Map<string, Set<string>> }} CoverageInput
  *   impactSelection: selectFromImpact over the changed src/ files (minus the
  *   mock backend, which escalates on its own).
+ *   nodeImports: nodeSideImports for the specs (module -> specs).
  */
 
 /**
@@ -608,7 +673,7 @@ export function e2eImporters(changedSupport, specs, support) {
  * @param {CoverageInput} input
  * @returns {Selection}
  */
-export function selectCoverage({ changed, map, specs, devServerInputs = new Set(), support = [], impact, impactSelection }) {
+export function selectCoverage({ changed, map, specs, devServerInputs = new Set(), support = [], impact, impactSelection, nodeImports = new Map() }) {
   const strict = classify(changed, map, specs, devServerInputs, { strict: true });
   const blocking = strict.triggers.filter((t) => !IMPACT_REPLACES.has(t.kind));
   if (blocking.length > 0) return allOf(blocking.map((t) => t.reason));
@@ -618,6 +683,7 @@ export function selectCoverage({ changed, map, specs, devServerInputs = new Set(
   if (impactSelection.all.length > 0) return allOf(impactSelection.all);
   const present = new Set(specs.map((s) => s.rel));
   const selected = new Set([...strict.selected, ...importers, ...impactSelection.specs]);
+  for (const file of changed) for (const s of nodeImports.get(file) ?? []) selected.add(s);
   if (changed.some((f) => f.startsWith("src/"))) {
     const mapped = new Set(impact.specs);
     for (const s of present) if (!mapped.has(s)) selected.add(s);
@@ -801,13 +867,17 @@ async function impactInputs(flags, { base, head, changed, read }) {
   const { targets, exists } = namespaceTargets(head, ROOT);
   const impactSelection = selectFromImpact({
     impact, level, ts, namespaceTargets: targets, exists,
+    mentionedInRepo: mentionedAt(execFileSync("git", ["merge-base", base, head], { cwd: ROOT, encoding: "utf8" }).trim(), ROOT),
     changed: gatherChanged({ base, head, files, root: ROOT, read, impact }),
   });
   warn(`impact map ${impact.commit.slice(0, 12)} (${impact.generatedAt}), ${level} level: ` +
     `${impactSelection.hunkLevel.length} file(s) by hunk, ${impactSelection.fileLevel.length} by file, ` +
     `${impactSelection.tests.size}/${impact.tests.length} test(s)` +
     (impactSelection.zeroCoverage.length ? `, unexecuted: ${impactSelection.zeroCoverage.join(", ")}` : ""));
-  return { impact, impactSelection };
+  /** @param {string} p */
+  const readFile = (p) => { try { return readFileSync(join(ROOT, p), "utf8"); } catch { return null; } };
+  const nodeImports = nodeSideImports(loadSpecs().map((s) => s.rel), readFile, (p) => existsSync(join(ROOT, p)));
+  return { impact, impactSelection, nodeImports };
 }
 
 // Run only when invoked directly (not when imported by tests).

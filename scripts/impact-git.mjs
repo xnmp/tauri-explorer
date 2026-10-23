@@ -77,3 +77,29 @@ export function namespaceTargets(head, root) {
   }
   return { targets, exists };
 }
+
+/**
+ * Whether any tracked file at `rev` mentions identifier `name` as a word.
+ * Errors count as a mention, so a failed lookup never proves a name new.
+ * @param {string} rev
+ * @param {string} root
+ * @returns {(name: string) => boolean}
+ */
+export function mentionedAt(rev, root) {
+  /** @type {Map<string, boolean>} */
+  const cache = new Map();
+  return (name) => {
+    let hit = cache.get(name);
+    if (hit === undefined) {
+      try {
+        execFileSync("git", ["grep", "-q", "-w", "-F", "-e", name, rev], { cwd: root, stdio: "ignore" });
+        hit = true;
+      } catch (e) {
+        // git grep exits 1 for no match; anything else is unknown.
+        hit = /** @type {{ status?: number }} */ (e).status !== 1;
+      }
+      cache.set(name, hit);
+    }
+    return hit;
+  };
+}

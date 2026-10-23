@@ -24,8 +24,6 @@ All notable changes to Tauri Explorer.
 
 ### Changed
 
-- List peek column/full-flow stage changes share one eligibility policy and
-  write path; malformed stage requests are now ignored (#1346).
 - In Details view the folder peek Open control sits at the right end of the Name
   column without a caret, following column resizes; long names truncate before
   it (#1359).

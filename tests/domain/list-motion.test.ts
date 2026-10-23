@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { columnFlow, type ListFlowModel } from "$lib/domain/list-column-flow";
+import type { ListFlowModel } from "$lib/domain/list-column-flow";
+import { columnFlow } from "$lib/domain/list-cards";
 import { columnClip, easeOutCubic, LIST_MOTION_ARM_MS, listMotionSnapshot, motionArmAt, motionRows, planListMotion, stepMotionArm, type MotionArm, type MotionArmInput, type MotionStep } from "$lib/domain/list-motion";
 
 /** A model over named items; `cards` gives each open card's visible rows. */

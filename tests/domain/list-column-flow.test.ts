@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { columnFlow, listRows, listPageColumns, resolveListMove, listColumnRange, listWheelStep, type SlotSpec } from "$lib/domain/list-column-flow";
+import { columnFlow } from "$lib/domain/list-cards";
+import { listRows, listPageColumns, resolveListMove, listColumnRange, listWheelStep, type SlotSpec } from "$lib/domain/list-column-flow";
 import { buildListModel } from "$lib/domain/list-cards";
 import { flatPeekEntries, flatPeekRows } from "$lib/domain/folder-peek-flat";
 import type { FileEntry } from "$lib/domain/file";

@@ -2,10 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { FileEntry } from "$lib/domain/file";
 import { buildPeekRows, flattenPeekEntries, type PeekListing } from "$lib/domain/folder-peek";
 import { flatPeekEntries, flatPeekRows } from "$lib/domain/folder-peek-flat";
-import { columnFlow, resolveListMove, LIST_COLUMN_STRIDE, LIST_COLUMN_WIDTH, LIST_SLOT_HEIGHT, type ListFlowModel } from "$lib/domain/list-column-flow";
+import { resolveListMove, LIST_COLUMN_STRIDE, LIST_COLUMN_WIDTH, LIST_SLOT_HEIGHT, type ListFlowModel } from "$lib/domain/list-column-flow";
 import {
   buildListModel, buildListStructure, sizeListModel, listMoreExpansion, listCardVisibleRows, fullFlowGuideSpans, fullFlowGuideSegments, cardFades, cardMaxRows, cardMoreCount, cardRevealTop, cardVisibleRows, cardWheelConsumes,
   cardWindow, gripKeyRows, gripRows, rememberCardRows, springCardFits, springWrapBridges, LIST_CARD_DEFAULT_ROWS,
+  listSpillCap, listSpillCut, SPRING_CARD_FIT, columnFlow,
 } from "$lib/domain/list-cards";
 
 // ---------------------------------------------------------------------------
@@ -91,7 +92,9 @@ describe("List structure and sizing", () => {
     const [card] = structure.cards;
     const tall = sizeListModel(structure, 20, () => 12), short = sizeListModel(structure, 8, () => 12);
     expect(tall.items[card].card?.visibleRows).toBe(12);
-    expect(short.items[card].card?.visibleRows).toBe(cardMaxRows(8));
+    // Archive heads row 4 of 8: it opens in place, shrunk to the 3 rows left (#1365).
+    expect(short.layout.byIndex[card]).toMatchObject({ column: 0, row: 4 });
+    expect(short.items[card].card?.visibleRows).toBe(3);
     // Plain items keep their identity across sizes; the card item is re-sized.
     expect(short.items.filter((item, index) => index !== card && item !== tall.items[index])).toEqual([]);
     const full = buildListModel(rows, 8, () => 12);
@@ -136,15 +139,15 @@ describe("buildListModel (ports the mock selfTest)", () => {
     const { rows } = rowsFor(top, expanded, listing);
     const structure = buildListStructure(rows);
     const paths = temporary.map(path => `${ROOT}/${path}`);
-    return { model: sizeListModel(structure, R, () => undefined, springCardFits(structure, rows, paths, R, () => undefined)), paths };
+    return { model: sizeListModel(structure, R, () => undefined, springCardFits(structure, paths)), paths };
   };
   it("a temporary card keeps its place when its header and two rows fit there, shrinking to the rows left", () => {
     // Personal (row 3 of 6) has three slots left: header plus two rows, in place.
     const { model } = springModel(TOP, ["Personal"], ["Personal"], 6);
     expect(positions(model).Personal).toEqual([0, 3]);
     expect(model.items[3].card).toMatchObject({ visibleRows: 2 });
-    // An ordinary card in the same place wraps; a temporary card that fits is unchanged.
-    expect(positions(modelFor(["Personal"])).Personal).toEqual([1, 0]);
+    // A user card in the same place follows the same rule (#1365); a temporary card that fits is unchanged.
+    expect(positions(modelFor(["Personal"])).Personal).toEqual([0, 3]);
     expect(springModel(TOP, ["Inbox"], ["Inbox"], 21).model.layout.byIndex).toEqual(modelFor(["Inbox"], 21).layout.byIndex);
   });
   it("a temporary card with fewer than two rows left starts the next column, whatever its listing holds", () => {
@@ -160,8 +163,8 @@ describe("buildListModel (ports the mock selfTest)", () => {
       ? (status === "loaded" ? { status, entries: [F("One/x")] } : { status, entries: [], showLoading: false }) : undefined;
     for (const status of ["loading", "loaded"] as const) {
       expect(positions(springModel(top, ["One"], ["One"], 6, one(status)).model).One).toEqual([1, 0]);
-      // A user card there stays in place: it fits.
-      expect(positions(buildListModel(rowsFor(top, ["One"], one(status)).rows, 6, () => undefined)).One).toEqual([0, 4]);
+      // A user card there follows the same rule (#1365).
+      expect(positions(buildListModel(rowsFor(top, ["One"], one(status)).rows, 6, () => undefined)).One).toEqual([1, 0]);
     }
   });
   it("a card holding a temporary peek keeps its place, so springing a nested folder never moves the card", () => {
@@ -175,7 +178,7 @@ describe("buildListModel (ports the mock selfTest)", () => {
     expect(positions(modelFor(["Career", "Career/Applications"], 4)).Career).toEqual([0, 1]);
     expect(positions(springModel(TOP, ["Career", "Career/Applications"], ["Career/Applications"], 4).model).Career).toEqual([0, 1]);
     const plain = rowsFor(TOP, ["Career"]).rows;
-    expect(springCardFits(buildListStructure(plain), plain, [], 6, () => undefined)).toBeUndefined();
+    expect(springCardFits(buildListStructure(plain), [])).toBeUndefined();
   });
   it("a card that had started the next column keeps starting it when a nested folder springs open inside it", () => {
     // AI Draft Archive holds column 0's last row, so as a user card it starts column 1.
@@ -192,8 +195,8 @@ describe("buildListModel (ports the mock selfTest)", () => {
       : path === `${ROOT}/Two/Deep` ? { status: "loaded", entries: Array.from({ length: 9 }, (_, i) => F(`Two/Deep/${i}`)) } : undefined;
     expect(positions(buildListModel(rowsFor(top, ["Two"], two).rows, 6, () => undefined)).Two).toEqual([0, 3]);
     expect(positions(springModel(top, ["Two", "Two/Deep"], ["Two/Deep"], 6, two).model).Two).toEqual([0, 3]);
-    // Unopened by the spring, the same nested expansion wraps the user card.
-    expect(positions(buildListModel(rowsFor(top, ["Two", "Two/Deep"], two).rows, 6, () => undefined)).Two).toEqual([1, 0]);
+    // Opened by the user, the same nested expansion keeps the card in place too (#1365).
+    expect(positions(buildListModel(rowsFor(top, ["Two", "Two/Deep"], two).rows, 6, () => undefined)).Two).toEqual([0, 3]);
   });
   it("bridges a wrapped temporary card from its vacated slot: both columns' spare rows and the gap channel", () => {
     const { model, paths } = springModel(TOP, ["AI Draft Archive"], ["AI Draft Archive"], 6);
@@ -294,9 +297,9 @@ describe("buildListModel (ports the mock selfTest)", () => {
   it("keeps the creation row as a non-entry top-level item", () => {
     const model = buildListModel(rowsFor(TOP, ["Career"], listingOf, true).rows, 6, () => undefined);
     expect(model.items[0]).toEqual({ key: "create", entryIndex: null, card: null });
-    // Sentinel, Inbox, then a 5-slot card that no longer fits column 0.
-    expect(positions(model).Career).toEqual([1, 0]);
-    expect(model.layout.atSlot(0, 2)).toBeUndefined();
+    // Sentinel, Inbox, then the card in place, shrunk to the 4 slots left (#1365).
+    expect(positions(model).Career).toEqual([0, 2]);
+    expect(model.layout.byIndex[2].slots).toBe(4);
     expect(model.entryItem[0]).toBe(1);
   });
   it("applies remembered heights through the clamp and places a card at the end of the flow", () => {
@@ -339,8 +342,10 @@ describe("buildListModel (ports the mock selfTest)", () => {
         const tree = rowsFor([item], [...expanded]).rows;
         const content = tree.rows.length - 1;
         const card = item.kind === "directory" && expanded.has(item.name);
-        const slots = card ? 1 + Math.min(content, Math.max(1, Math.min(Math.round(heights[item.name] ?? 6), Math.floor(0.7 * R)))) : 1;
-        while (index % R + slots > R) index++;
+        let slots = card ? 1 + Math.min(content, Math.max(1, Math.min(Math.round(heights[item.name] ?? 6), Math.floor(0.7 * R)))) : 1;
+        // An open folder keeps its place while its header and two rows fit (#1365).
+        if (card && index % R > 0 && R - index % R < 3) index += R - index % R;
+        if (card) slots = Math.min(slots, R - index % R);
         const position = [item.name, Math.floor(index / R), index % R, slots];
         index += slots;
         return position;
@@ -365,7 +370,11 @@ describe("buildListModel (ports the mock selfTest)", () => {
         columns.forEach((column, c) => {
           let end = 0;
           for (const p of column) { expect(p.row).toBe(end); end = p.row + p.slots; expect(end).toBeLessThanOrEqual(R); }
-          if (end < R && c < columns.length - 1) expect(columns[c + 1][0].slots).toBeGreaterThan(R - end);
+          // A column ends early only for an open folder with fewer than three slots left.
+          if (end < R && c < columns.length - 1) {
+            expect(R - end).toBeLessThan(3);
+            expect(after.items[columns[c + 1][0].index].card).not.toBeNull();
+          }
         });
         expect(signature(after)).toEqual(oracle(items, R, expanded, heights).map(([name, c, r, s]) => [name, c, r, s]));
         const afterPos = positions(after);
@@ -373,7 +382,8 @@ describe("buildListModel (ports the mock selfTest)", () => {
         if (opening && path === root) {
           const [c, r] = before[root];
           const slots = after.layout.byIndex[items.findIndex(item => item.name === root)].slots;
-          expect(afterPos[root]).toEqual(r + slots <= R ? [c, r] : [c + 1, 0]);
+          expect(slots).toBeLessThanOrEqual(R - afterPos[root][1]);
+          expect(afterPos[root]).toEqual(r === 0 || R - r >= 3 ? [c, r] : [c + 1, 0]);
         }
       }
       expect(signature(modelFor([], R, heights, items))).toEqual(signature(modelFor([], R, {}, items)));
@@ -529,7 +539,12 @@ describe("List moves with cards", () => {
     expect(move("ArrowLeft", "b")).toBe("A");
     expect(move("Home", "f")).toBe("A");
     // A card slot showing only a pseudo-row resolves to the card's header.
-    expect(move("ArrowRight", "A/two")).toBe("Empty");
+    const files = ["a", "b", "c", "d", "e", "f"].map(F);
+    const second = rowsFor([...files, D("Empty"), F("g")], ["Empty"], listing);
+    const secondModel = buildListModel(second.rows, 6, () => undefined);
+    const result = resolveListMove({ key: "ArrowRight", ctrlKey: false, metaKey: false, shiftKey: false, altKey: false }, secondModel,
+      second.tree.entries.findIndex(e => e.path === `${ROOT}/b`), 500);
+    expect(result?.kind === "focus" && second.tree.entries[result.index].name).toBe("Empty");
   });
   it("fails closed for malformed cursors and empty models", () => {
     const { model } = setup();
@@ -615,12 +630,11 @@ it("full-flow nested guides split across columns without covering later siblings
 
 
 describe("staged List expansion (#1324)", () => {
-  it("fills one column first only when content exceeds that column", () => {
-    expect(listMoreExpansion(80, 10, false)).toBe("column");
-    expect(listMoreExpansion(80, 10, true)).toBe("full");
-    expect(listMoreExpansion(9, 10, false)).toBe("full");
-    expect(listMoreExpansion(10, 10, false)).toBe("column");
-    expect(listMoreExpansion(Number.NaN, 10, false)).toBe("full");
+  it("+N more spills a compact card, and every later stage's +N more shows all rows (#1365)", () => {
+    expect(listMoreExpansion("card")).toBe("spill");
+    expect(listMoreExpansion("spill")).toBe("full");
+    expect(listMoreExpansion("column")).toBe("full");
+    expect(listMoreExpansion("full")).toBe("full");
   });
 
   it("reserves the header slot, sizes with the viewport, and bounds malformed counts", () => {
@@ -640,4 +654,210 @@ describe("staged List expansion (#1324)", () => {
     expect(model.items.find(item => item.card?.path === "/r/Codex")?.card?.visibleRows).toBe(2);
     expect(model.entryOffset.filter(offset => offset >= 0).length).toBeGreaterThan(5);
   });
+});
+
+
+describe("spill stage: +N more never moves the folder's header (#1365)", () => {
+  const files = (count: number, prefix = "f") => Array.from({ length: count }, (_, i) => F(`${prefix}-${String(i).padStart(3, "0")}`));
+  const bigListing = (size: number, extra: Record<string, FileEntry[]> = {}) => (path: string): PeekListing | undefined => {
+    const key = path.slice(ROOT.length + 1);
+    if (key === "Big") return { status: "loaded", entries: extra.Big ?? files(size, "Big/item") };
+    return extra[key] ? { status: "loaded", entries: extra[key] } : undefined;
+  };
+  /** `before` plain files, then the open folder Big, then two files. */
+  const scene = (before: number, size = 80, extra: Record<string, FileEntry[]> = {}, expanded: string[] = ["Big"]) =>
+    rowsFor([...files(before), D("Big"), F("z-after-1"), F("z-after-2")], expanded, bigListing(size, extra));
+  const BIG = `${ROOT}/Big`;
+  const stageModel = (rows: ReturnType<typeof scene>["rows"], stage: "card" | "spill" | "full", R: number) =>
+    sizeListModel(buildListStructure(rows, new Set(stage === "full" ? [BIG] : []), new Set(stage === "spill" ? [BIG] : [])), R, () => undefined);
+  const headerOf = (model: ListFlowModel) => model.layout.byIndex[model.items.findIndex(item => item.key === `entry:${BIG}`)];
+  const moreOf = (model: ListFlowModel) => {
+    const index = model.items.findIndex(item => item.more);
+    return index < 0 ? null : { item: model.items[index], placement: model.layout.byIndex[index] };
+  };
+
+  it("caps the spill at the rest of the header's column plus the next column", () => {
+    expect([0, 4, 7, 9].map(row => listSpillCap(10, row))).toEqual([19, 15, 12, 10]);
+    // A header on the last row spills into the next column only.
+    expect(listSpillCap(10, 9)).toBe(10);
+    // The cap follows R.
+    expect([4, 6, 21].map(R => listSpillCap(R, 2))).toEqual([5, 9, 39]);
+    // Malformed rows clamp into the column.
+    expect([listSpillCap(10, -3), listSpillCap(10, 99), listSpillCap(10, Number.NaN)]).toEqual([19, 10, 19]);
+  });
+
+  it("cuts a group over the cap to cap - 1 rows plus one +N more slot for the rest", () => {
+    expect(listSpillCut(80, 19)).toEqual({ shown: 18, hidden: 62 });
+    expect(listSpillCut(19, 19)).toEqual({ shown: 19, hidden: 0 });
+    expect(listSpillCut(20, 19)).toEqual({ shown: 18, hidden: 2 });
+    expect(listSpillCut(0, 19)).toEqual({ shown: 0, hidden: 0 });
+    expect(listSpillCut(Number.NaN, 19)).toEqual({ shown: 0, hidden: 0 });
+  });
+
+  for (const [label, before] of [["top", 0], ["middle", 4], ["third-from-last", 7]] as const) {
+    it(`a header on the ${label} row keeps its place; rows fill its column and the next, ending in +N more`, () => {
+      const R = 10;
+      const { rows } = scene(before);
+      const card = stageModel(rows, "card", R), spill = stageModel(rows, "spill", R);
+      const header = headerOf(spill);
+      expect(header).toEqual({ ...headerOf(card), slots: 1 });
+      expect([header.column, header.row]).toEqual([0, before]);
+      const cap = listSpillCap(R, header.row);
+      // Every slot below the header in its column, then the whole next column.
+      const slots = spill.layout.byIndex.filter(p => p.index > header.index && p.index <= header.index + cap);
+      expect(slots.map(p => [p.column, p.row])).toEqual([
+        ...Array.from({ length: R - header.row - 1 }, (_, i) => [0, header.row + 1 + i]),
+        ...Array.from({ length: R }, (_, i) => [1, i]),
+      ]);
+      const more = moreOf(spill)!;
+      expect(more.placement).toMatchObject({ column: 1, row: R - 1, slots: 1 });
+      expect(more.item.more).toMatchObject({ path: BIG, count: 80 - (cap - 1) });
+      // The rows the slot stands for start at its own peek row.
+      expect(rows.rows[more.item.more!.rowIndex]).toMatchObject({ kind: "entry", entry: { path: `${BIG}/item-${String(cap - 1).padStart(3, "0")}` } });
+      // Later items start the column after.
+      expect(spill.layout.byIndex[spill.items.findIndex(item => item.key === `entry:${ROOT}/z-after-1`)]).toMatchObject({ column: 2, row: 0 });
+    });
+  }
+
+  it("a folder opened with fewer than SPRING_CARD_FIT slots left starts the next column, and spills from there", () => {
+    const R = 10;
+    expect(SPRING_CARD_FIT).toBe(3);
+    // Three slots left (row 7): in place, shrunk to its two rows.
+    const inPlace = stageModel(scene(7).rows, "card", R);
+    expect(headerOf(inPlace)).toMatchObject({ column: 0, row: 7, slots: 3 });
+    // Two or one left (rows 8 and 9): the next column.
+    for (const before of [8, 9]) {
+      const { rows } = scene(before);
+      for (const stage of ["card", "spill", "full"] as const) expect(headerOf(stageModel(rows, stage, R))).toMatchObject({ column: 1, row: 0 });
+      // A header that could only reach the last row closed therefore spills
+      // across its new column and the next: R - 1 + R slots.
+      const more = moreOf(stageModel(rows, "spill", R))!;
+      expect(more.placement).toMatchObject({ column: 2, row: R - 1 });
+      expect(more.item.more!.count).toBe(80 - (listSpillCap(R, 0) - 1));
+    }
+  });
+
+  it("never moves the header across compact, spill and full stages, at any row or column height", () => {
+    for (const R of [4, 6, 10, 21]) for (let before = 0; before < 2 * R + 2; before++) {
+      const { rows } = scene(before);
+      const placements = (["card", "spill", "full"] as const).map(stage => {
+        const { column, row } = headerOf(stageModel(rows, stage, R));
+        return [column, row];
+      });
+      expect({ R, before, placements }).toEqual({ R, before, placements: [placements[0], placements[0], placements[0]] });
+      // Items before the folder never move either.
+      const closed = stageModel(scene(before, 80, {}, []).rows, "card", R);
+      expect(stageModel(rows, "spill", R).layout.byIndex.slice(0, before)).toEqual(closed.layout.byIndex.slice(0, before));
+    }
+  });
+
+  it("re-cuts when R changes, from the structure alone", () => {
+    const { rows } = scene(4);
+    const structure = buildListStructure(rows, new Set(), new Set([BIG]));
+    for (const R of [6, 10, 21]) {
+      const model = sizeListModel(structure, R, () => undefined);
+      const header = headerOf(model), more = moreOf(model)!;
+      expect(more.placement).toMatchObject({ column: header.column + 1, row: R - 1 });
+      expect(more.item.more!.count).toBe(80 - (listSpillCap(R, header.row) - 1));
+    }
+  });
+
+  it("shows every row with no +N more slot when the folder fits the cap, as in full flow", () => {
+    const { rows } = scene(4, 12);
+    const spill = stageModel(rows, "spill", 10), full = stageModel(rows, "full", 10);
+    expect(moreOf(spill)).toBeNull();
+    expect(spill.layout.byIndex).toEqual(full.layout.byIndex);
+    expect(spill.items).toEqual(full.items);
+  });
+
+  it("hidden rows have no slot; keyboard moves cross the column break and End stops at the last shown row", () => {
+    const R = 10;
+    const { rows, tree } = rowsFor([F("a"), D("Big")], ["Big"], bigListing(80));
+    const model = stageModel(rows, "spill", R);
+    const at = (path: string) => tree.indices.get(`${ROOT}/${path}`)!;
+    const key = (name: string) => ({ key: name, ctrlKey: false, metaKey: false, shiftKey: false, altKey: false });
+    // Header on row 1: 8 rows below it, then 9 more rows plus +N more in column 1.
+    const shown = listSpillCap(R, 1) - 1;
+    for (let i = 0; i < 80; i++) expect(model.entryItem[at(`Big/item-${String(i).padStart(3, "0")}`)] >= 0).toBe(i < shown);
+    // Right from the bottom of column 0 lands on the same row of column 1.
+    const move = (name: string, from: string) => {
+      const result = resolveListMove(key(name), model, at(from), 600);
+      return result?.kind === "focus" ? tree.entries[result.index].path.slice(ROOT.length + 1) : result?.kind;
+    };
+    // Column 0 holds item-000..007 on rows 2-9; column 1 item-008..016 on rows 0-8.
+    expect(move("ArrowRight", "Big/item-000")).toBe("Big/item-010");
+    expect(move("ArrowLeft", "Big/item-016")).toBe("Big/item-006");
+    // Row 9 of column 1 is the +N more slot: the nearest row in that column.
+    expect(move("ArrowRight", "Big/item-007")).toBe("Big/item-016");
+    expect(move("ArrowLeft", "Big/item-008")).toBe("a");
+    // Up/Down stop at the column ends, as for any column.
+    expect(move("ArrowDown", "Big/item-007")).toBe("handled");
+    expect(move("ArrowUp", "Big/item-008")).toBe("handled");
+    // The last shown row; the +N more slot is not an entry.
+    expect(move("End", "a")).toBe(`Big/item-${String(shown - 1).padStart(3, "0")}`);
+    expect(move("ArrowDown", `Big/item-${String(shown - 1).padStart(3, "0")}`)).toBe("handled");
+    // A cursor a spill hid (e.g. scrolled to inside the compact card before
+    // "+N more") resumes on the last row shown before it, for any move key.
+    for (const name of ["ArrowDown", "ArrowUp", "ArrowRight", "PageDown"]) {
+      expect(move(name, "Big/item-050")).toBe(`Big/item-${String(shown - 1).padStart(3, "0")}`);
+    }
+    expect(resolveListMove({ ...key("ArrowDown"), shiftKey: true }, model, at("Big/item-050"), 600)).toMatchObject({ selection: "extend" });
+  });
+
+  it("closes a nested group's guide at the cut instead of drawing it into hidden rows", () => {
+    const R = 6;
+    // Big: Nested (12 files), then 20 files. Header on row 0: cap 11 = 10 rows + more.
+    const extra = { Big: [D("Big/Nested"), ...files(20, "Big/x")], "Big/Nested": files(12, "Big/Nested/n"), "Big/Later": [] };
+    const { rows } = scene(0, 0, extra, ["Big", "Big/Nested"]);
+    const model = stageModel(rows, "spill", R);
+    const more = moreOf(model)!;
+    expect(more.placement).toMatchObject({ column: 1, row: R - 1 });
+    const spans = fullFlowGuideSpans(rows, model);
+    expect(spans.map(span => span.path)).toEqual([`${BIG}/Nested`]);
+    // Nested's rows start at row 2 (row 1 is Nested itself) and are cut after
+    // the slot before +N more: the guide ends there, never under the slot.
+    const [span] = spans;
+    expect(span.first).toMatchObject({ column: 0, row: 2 });
+    expect(span.last).toMatchObject({ column: 1, row: R - 2 });
+    const segments = fullFlowGuideSegments(spans, [0, 1, 2], R);
+    expect(segments.map(segment => segment.column)).toEqual([0, 1]);
+    const bottom = Math.max(...segments.filter(segment => segment.column === 1).map(segment => segment.top + segment.height));
+    expect(bottom).toBeLessThanOrEqual(more.placement.row * LIST_SLOT_HEIGHT);
+    // A nested group wholly behind the cut draws no guide at all.
+    const late = { Big: [...files(20, "Big/x"), D("Big/Late")], "Big/Late": files(3, "Big/Late/n") };
+    const hidden = scene(0, 0, late, ["Big", "Big/Late"]).rows;
+    expect(fullFlowGuideSpans(hidden, stageModel(hidden, "spill", R))).toEqual([]);
+    expect(fullFlowGuideSpans(hidden, stageModel(hidden, "full", R)).map(span => span.path)).toEqual([`${BIG}/Late`]);
+  });
+
+  it("cuts several spilled folders in order, each at the cap for its own header row", () => {
+    const R = 6;
+    const listing = (path: string): PeekListing | undefined => path === `${ROOT}/A` || path === `${ROOT}/B`
+      ? { status: "loaded", entries: files(30, `${path.slice(ROOT.length + 1)}/i`) } : undefined;
+    const { rows } = rowsFor([F("x"), D("A"), F("y"), D("B")], ["A", "B"], listing);
+    const model = sizeListModel(buildListStructure(rows, new Set(), new Set([`${ROOT}/A`, `${ROOT}/B`])), R, () => undefined);
+    const place = (key: string) => model.layout.byIndex[model.items.findIndex(item => item.key === key)];
+    expect(place(`entry:${ROOT}/A`)).toMatchObject({ column: 0, row: 1 });
+    expect(place(`more:${ROOT}/A`)).toMatchObject({ column: 1, row: 5 });
+    expect(place(`entry:${ROOT}/y`)).toMatchObject({ column: 2, row: 0 });
+    expect(place(`entry:${ROOT}/B`)).toMatchObject({ column: 2, row: 1 });
+    expect(place(`more:${ROOT}/B`)).toMatchObject({ column: 3, row: 5 });
+    expect(model.items.filter(item => item.more).map(item => item.more!.count)).toEqual([30 - (listSpillCap(R, 1) - 1), 30 - (listSpillCap(R, 1) - 1)]);
+    // Every placed entry maps to an item that names it.
+    model.entryItem.forEach((item, entry) => { if (item >= 0) expect(model.items[item].entryIndex ?? model.items[item].card).not.toBeNull(); });
+  });
+});
+
+it("flows a spill in one pass: hundreds of spilled folders size quickly", () => {
+  const F2 = (path: string): FileEntry => ({ name: path.split("/").at(-1)!, path: `${ROOT}/${path}`, kind: "file", size: 1, modified: "" });
+  const D2 = (path: string): FileEntry => ({ ...F2(path), kind: "directory", size: 0 });
+  const top = [...Array.from({ length: 200 }, (_, i) => D2(`s-${String(i).padStart(3, "0")}`)), ...Array.from({ length: 20_000 }, (_, i) => F2(`f-${i}`))];
+  const listing = (path: string): PeekListing => ({ status: "loaded", entries: Array.from({ length: 100 }, (_, i) => F2(`${path.slice(ROOT.length + 1)}/c-${i}`)) });
+  const { rows } = rowsFor(top, top.slice(0, 200).map(entry => entry.name), listing);
+  const structure = buildListStructure(rows, new Set(), new Set(top.slice(0, 200).map(entry => entry.path)));
+  const started = performance.now();
+  const model = sizeListModel(structure, 30, () => undefined);
+  expect(performance.now() - started).toBeLessThan(150);
+  expect(model.items.filter(item => item.more)).toHaveLength(200);
+  expect(model.layout.byIndex).toHaveLength(model.items.length);
 });

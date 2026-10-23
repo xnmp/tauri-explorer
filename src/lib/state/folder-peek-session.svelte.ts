@@ -26,17 +26,25 @@ export function createFolderPeekSession(windows: boolean, initialExpanded: reado
   let listExpansion = $state.raw<ReadonlyMap<string, ListPeekExpansion>>(new Map());
   const fullFlowPaths = $derived(new Set([...listExpansion].filter(([, mode]) => mode === "full").map(([path]) => path)));
   const columnPaths = $derived(new Set([...listExpansion].filter(([, mode]) => mode === "column").map(([path]) => path)));
+  const spillPaths = $derived(new Set([...listExpansion].filter(([, mode]) => mode === "spill").map(([path]) => path)));
   /** Tiles panel heights (CSS px) per top-level path, for the session. */
   let panelHeights = $state.raw<ReadonlyMap<string, number>>(new Map());
   /** Tiles panel sides of the expanded folders, kept while feasible (§9.1). Unlike
    * heights, a side lasts only while its folder stays expanded. */
   let panelSides = $state.raw<ReadonlyMap<string, BandSide>>(new Map());
   const noSides: ReadonlyMap<string, BandSide> = new Map();
+  const noStages: ReadonlyMap<string, ListPeekExpansion> = new Map();
   function setExpanded(next: ExpandedPaths) {
     expanded = next;
     panelSides = rememberWhileExpanded(panelSides, noSides, next);
+    // Closing a folder forgets its List stage (#1365).
+    listExpansion = rememberWhileExpanded(listExpansion, noStages, next);
   }
   let ordinal = initialPaths.length;
+  /** The compact card is the absence of a remembered stage. */
+  function showCompactListCard(path: string) {
+    if (!disposed && listExpansion.has(path)) listExpansion = new Map([...listExpansion].filter(([key]) => key !== path));
+  }
   let disposed = false;
   const resources = new Map<string, { target: RefreshTarget; retire(): Promise<void> }>();
   const retiring = new Set<Promise<void>>();
@@ -105,7 +113,13 @@ export function createFolderPeekSession(windows: boolean, initialExpanded: reado
     /** What the projection renders: the expanded set plus temporary peeks. */
     get projected() { return projected; },
     setTemporary(paths: readonly string[]) { if (!disposed) temporary = paths; },
-    toggle(path: string) { if (!disposed) setExpanded(toggleExpanded(expanded, path, ++ordinal)); },
+    /** A click always opens the compact card, whatever stage the folder had
+     * (#1365); closing forgets it too (`setExpanded`). */
+    toggle(path: string) {
+      if (disposed) return;
+      showCompactListCard(path);
+      setExpanded(toggleExpanded(expanded, path, ++ordinal));
+    },
     collapse(path: string) { if (expanded.has(path)) { const next = new Map(expanded); next.delete(path); setExpanded(next); } },
     collapseAll(roots: readonly string[]) {
       const next = collapseSubtree(expanded, roots, windows);
@@ -120,8 +134,10 @@ export function createFolderPeekSession(windows: boolean, initialExpanded: reado
     get columnPaths() { return columnPaths; },
     showAllListChildren(path: string) { if (!disposed) listExpansion = rememberListExpansion(listExpansion, path, "full"); },
     showColumnListChildren(path: string) { if (!disposed) listExpansion = rememberListExpansion(listExpansion, path, "column"); },
-    /** The compact card is the absence of a remembered stage. */
-    showCompactListCard(path: string) { if (!disposed && listExpansion.has(path)) listExpansion = new Map([...listExpansion].filter(([key]) => key !== path)); },
+    get spillPaths() { return spillPaths; },
+    /** Rows below the header, capped while flowing (#1365). */
+    showSpillListChildren(path: string) { if (!disposed) listExpansion = rememberListExpansion(listExpansion, path, "spill"); },
+    showCompactListCard,
     cardRows(path: string) { return cardRows.get(path); },
     setCardRows(path: string, rows: number) { if (!disposed) cardRows = rememberCardRows(cardRows, path, rows); },
     panelHeight(path: string) { return panelHeights.get(path); },

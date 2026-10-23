@@ -10,10 +10,15 @@ h1 { color: #156e63; } .card { background: white; border-radius: 12px; padding: 
 <img src="https://example.invalid/preview-tracker"><a href="https://example.invalid" target="_top">External link</a>
 ${"\n".repeat(220)}<p>End of document</p></body></html>`;
 
+// A fixed-width desktop layout: wider than any docked preview pane.
+const wideDocumentSource = `<!doctype html><html><body style="margin:0">
+<div class="wide" style="width:1200px;height:900px;background:linear-gradient(90deg,#156e63,#16324f)"><h1 style="color:white;margin:0;padding:24px">Quarterly report</h1></div>
+</body></html>`;
+
 test.beforeEach(async ({ page }) => {
-  await page.addInitScript((source) => {
+  await page.addInitScript(({ source, wideSource }) => {
     const control = ((window as unknown as { __mockControl?: MockControl }).__mockControl ??= {});
-    control.directoryEntries = path => path === "/home/html-preview" ? ["page.html", "page.HTM", "slow.html", "source.txt"].map(name => ({
+    control.directoryEntries = path => path === "/home/html-preview" ? ["page.html", "page.HTM", "slow.html", "source.txt", "wide.html"].map(name => ({
       name, path: `${path}/${name}`, kind: "file" as const, size: 2048, modified: "2026-01-01T00:00:00Z",
     })) : [];
     control.previewReadText = path => {
@@ -24,9 +29,10 @@ test.beforeEach(async ({ page }) => {
           resolve("<h1>Obsolete preview</h1>");
         }, { once: true }));
       }
+      if (path.endsWith("wide.html")) return wideSource;
       return path.endsWith("source.txt") ? "<h1>Keep this as source</h1>" : source;
     };
-  }, documentSource);
+  }, { source: documentSource, wideSource: wideDocumentSource });
   await page.goto("/?path=/home/html-preview");
   await waitForEntries(page);
   if (!(await page.locator(".preview-pane").isVisible())) await pressShortcut(page, " ", {});
@@ -75,4 +81,49 @@ test("selection and navigation proceed while an HTML read is pending", async ({ 
   await expect(page.locator('[data-path="/home/html-preview/slow.html"]')).toHaveCount(0);
   await page.evaluate(() => document.dispatchEvent(new Event("finish-html-read")));
   await expect(page.locator('iframe[title="HTML preview"]')).toHaveCount(0);
+});
+
+test("HTML preview fits wide documents by default and zooms on request (#1352)", async ({ page }) => {
+  await page.locator('[data-path="/home/html-preview/wide.html"]').click();
+  const viewport = page.locator(".html-viewport");
+  const frame = page.frameLocator('iframe[title="HTML preview"]');
+  const zoomLabel = page.getByLabel("HTML magnification");
+  await expect(frame.locator("h1")).toHaveText("Quarterly report");
+  const pane = (await viewport.boundingBox())!;
+  expect(pane.width).toBeLessThan(1200);
+
+  const visibleWidth = async () => (await frame.locator(".wide").boundingBox())!.width;
+  // Fit: the whole 1200px layout is painted inside the pane.
+  await expect.poll(visibleWidth).toBeLessThanOrEqual(pane.width + 1);
+  const fitWidth = await visibleWidth();
+  expect(fitWidth).toBeGreaterThan(pane.width * 0.8);
+  const fitLabel = Number.parseInt((await zoomLabel.textContent())!, 10);
+  expect(fitLabel).toBeLessThan(100);
+
+  await page.getByRole("button", { name: "Zoom HTML in" }).click();
+  await expect.poll(async () => Number.parseInt((await zoomLabel.textContent())!, 10)).toBeGreaterThan(fitLabel);
+  await expect.poll(visibleWidth).toBeGreaterThan(fitWidth);
+
+  // 100%: one CSS pixel per screen pixel, so the layout overflows and scrolls.
+  await page.getByRole("button", { name: "100%" }).click();
+  await expect(zoomLabel).toHaveText("100%");
+  await expect.poll(visibleWidth).toBeCloseTo(1200, 0);
+  const iframe = page.locator('iframe[title="HTML preview"]');
+  const covered = (await iframe.boundingBox())!;
+  expect(Math.abs(covered.width - pane.width)).toBeLessThan(2);
+  expect(Math.abs(covered.height - pane.height)).toBeLessThan(2);
+  await iframe.hover();
+  await page.mouse.wheel(300, 0);
+  await expect.poll(async () => (await frame.locator(".wide").boundingBox())!.x).toBeLessThan(covered.x - 50);
+
+  await page.getByRole("button", { name: "Fit" }).click();
+  await expect(zoomLabel).toHaveText(`${fitLabel}%`);
+
+  // A newly selected document starts at Fit again.
+  await page.getByRole("button", { name: "100%" }).click();
+  await page.locator('[data-path="/home/html-preview/page.html"]').click();
+  await expect(page.locator('iframe[title="HTML preview"]').contentFrame().locator("h1")).toHaveText("Project overview");
+  await page.locator('[data-path="/home/html-preview/wide.html"]').click();
+  await expect(zoomLabel).toHaveText(`${fitLabel}%`);
+  await page.screenshot({ path: "evidence/1352-html-preview-fit.png" });
 });

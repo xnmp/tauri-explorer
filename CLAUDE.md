@@ -561,7 +561,7 @@ Geometry assertions must select the guide for the intended depth; the first
 `.list-guide` now belongs to the card root. Scroll nested children into the card's
 viewport before capturing lineage evidence (#1330).
 
-HTML previews use a sandboxed `srcdoc` iframe in `PreviewPane.svelte`, with no
+HTML previews use a sandboxed `srcdoc` iframe in `HtmlPreview.svelte`, with no
 script or same-origin permission and a restrictive CSP before file content.
 Keep HTML on the bounded async reader in `preview-content.ts`, bypassing source
 highlighting and its 200-line truncation (which can cut document structure).
@@ -572,3 +572,7 @@ For HTML preview CSP browser tests, route the forbidden image to a valid fixture
 and assert it never reaches the route plus completed/zero-natural-width image
 state. WebKit omits `requestfailed` events for CSP and blocks asynchronous
 callbacks injected into a script-disabled sandbox; neither is a portable oracle.
+HTML preview zoom cannot measure the sandboxed document, so it uses browser
+page-zoom semantics (`domain/html-preview-zoom.ts`): lay the frame out at
+pane / scale and paint it scaled, with Fit emulating a 1280px viewport. Do not
+add `allow-same-origin` to measure content width (#1352).

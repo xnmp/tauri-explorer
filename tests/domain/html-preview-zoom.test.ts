@@ -82,3 +82,4 @@ describe("HTML preview zoom steps", () => {
     expect(htmlZoomLabel(1.5, 400)).toBe("150%");
   });
 });
+

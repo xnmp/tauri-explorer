@@ -67,3 +67,4 @@ export function stepHtmlZoom(zoom: HtmlZoom, paneWidth: number, direction: 1 | -
 export function htmlZoomLabel(zoom: HtmlZoom, paneWidth: number): string {
   return `${Math.round(htmlPreviewScale(zoom, paneWidth) * 100)}%`;
 }
+

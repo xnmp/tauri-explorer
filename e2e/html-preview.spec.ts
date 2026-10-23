@@ -29,7 +29,10 @@ test.beforeEach(async ({ page }) => {
           resolve("<h1>Obsolete preview</h1>");
         }, { once: true }));
       }
-      if (path.endsWith("wide.html")) return wideSource;
+      if (path.endsWith("wide.html")) {
+        document.body.dataset.wideReads = String(Number(document.body.dataset.wideReads ?? 0) + 1);
+        return wideSource;
+      }
       return path.endsWith("source.txt") ? "<h1>Keep this as source</h1>" : source;
     };
   }, { source: documentSource, wideSource: wideDocumentSource });
@@ -115,6 +118,17 @@ test("HTML preview fits wide documents by default and zooms on request (#1352)",
   await iframe.hover();
   await page.mouse.wheel(300, 0);
   await expect.poll(async () => (await frame.locator(".wide").boundingBox())!.x).toBeLessThan(covered.x - 50);
+
+  // A watcher/local-change reload of the same document keeps the chosen zoom.
+  const reads = Number(await page.locator("body").getAttribute("data-wide-reads"));
+  await page.evaluate(async () => {
+    const events = await import(/* @vite-ignore */ "/src/lib/state/file-events.ts");
+    events.broadcastFileChange(["/home/html-preview"]);
+  });
+  await expect(page.locator("body")).toHaveAttribute("data-wide-reads", String(reads + 1));
+  await expect(frame.locator("h1")).toHaveText("Quarterly report");
+  await expect(zoomLabel).toHaveText("100%");
+  await expect.poll(visibleWidth).toBeCloseTo(1200, 0);
 
   await page.getByRole("button", { name: "Fit" }).click();
   await expect(zoomLabel).toHaveText(`${fitLabel}%`);

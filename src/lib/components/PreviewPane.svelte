@@ -29,6 +29,7 @@ import { openFile } from "$lib/api/open";
   import { gitCommitFileDiff, gitCompareCommitFileDiff } from "$lib/api/git-log";
   import VirtualList from "./VirtualList.svelte";
   import HtmlPreview from "./HtmlPreview.svelte";
+  import type { HtmlZoom } from "$lib/domain/html-preview-zoom";
   import { type CsvPreview } from "$lib/domain/csv-preview";
   import { subscribeToLocalFileChanges } from "$lib/state/file-events";
   import { parentDir } from "$lib/domain/path";
@@ -148,6 +149,12 @@ import { openFile } from "$lib/api/open";
    * so external edits to the same file invalidate the cached preview. */
   const selectedKind = $derived(selectedFile ? classifyPreview(selectedFile) : null);
   const selectedPath = $derived(selectedFile?.path ?? null);
+  // Every newly selected document starts at Fit; a reload of the same path
+  // (watcher refresh after a save remounts HtmlPreview) keeps the zoom.
+  let htmlZoom = $derived.by<HtmlZoom>(() => {
+    void selectedPath;
+    return "fit";
+  });
   const previewKey = $derived(
     selectedFile ? `${selectedFile.path}|${selectedFile.modified}|${selectedFile.size}|${localPreviewRevision}` : null,
   );
@@ -632,9 +639,9 @@ import { openFile } from "$lib/api/open";
           </div>
         </div>
       {:else if content.kind === "html"}
-        {#key selectedFile.path}
-          <HtmlPreview source={content.document} fullscreen={fullscreen.active} ontogglefullscreen={fullscreen.toggle} />
-        {/key}
+        <HtmlPreview source={content.document} zoom={htmlZoom}
+          onzoom={(zoom) => (htmlZoom = zoom)}
+          fullscreen={fullscreen.active} ontogglefullscreen={fullscreen.toggle} />
       {:else if content.kind === "markdown"}
         <div class="preview-markdown" class:hljs-light={isLightTheme} class:hljs-dark={!isLightTheme}>{@html content.html}</div>
       {:else if content.kind === "code"}

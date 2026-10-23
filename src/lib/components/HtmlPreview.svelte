@@ -8,14 +8,15 @@
 
   interface Props {
     source: string;
+    zoom: HtmlZoom;
+    onzoom: (zoom: HtmlZoom) => void;
     fullscreen: boolean;
     ontogglefullscreen: () => void;
   }
 
-  let { source, fullscreen, ontogglefullscreen }: Props = $props();
+  let { source, zoom, onzoom, fullscreen, ontogglefullscreen }: Props = $props();
 
-  // Each mounted document starts at Fit; PreviewPane keys this per file.
-  let zoom = $state<HtmlZoom>("fit");
+  // PreviewPane owns the zoom so a reload remount of the same file keeps it.
   let paneWidth = $state(0);
   let paneHeight = $state(0);
 
@@ -31,11 +32,11 @@
 <div class="html-preview">
   <div class="html-controls" role="group" aria-label="HTML viewing controls">
     <div class="html-control-group">
-      <button type="button" aria-label="Zoom HTML out" disabled={zoomOut === null} onclick={() => { if (zoomOut !== null) zoom = zoomOut; }}>−</button>
+      <button type="button" aria-label="Zoom HTML out" disabled={zoomOut === null} onclick={() => { if (zoomOut !== null) onzoom(zoomOut); }}>−</button>
       <output class="html-zoom" aria-label="HTML magnification">{htmlZoomLabel(zoom, paneWidth)}</output>
-      <button type="button" aria-label="Zoom HTML in" disabled={zoomIn === null} onclick={() => { if (zoomIn !== null) zoom = zoomIn; }}>+</button>
-      <button type="button" class="text-button" aria-pressed={zoom === "fit"} onclick={() => (zoom = "fit")}>Fit</button>
-      <button type="button" class="text-button" aria-pressed={zoom === 1} onclick={() => (zoom = 1)}>100%</button>
+      <button type="button" aria-label="Zoom HTML in" disabled={zoomIn === null} onclick={() => { if (zoomIn !== null) onzoom(zoomIn); }}>+</button>
+      <button type="button" class="text-button" aria-pressed={zoom === "fit"} onclick={() => onzoom("fit")}>Fit</button>
+      <button type="button" class="text-button" aria-pressed={zoom === 1} onclick={() => onzoom(1)}>100%</button>
     </div>
     <button type="button" aria-label={fullscreen ? "Exit HTML fullscreen" : "View HTML fullscreen"} onclick={ontogglefullscreen}>⛶</button>
   </div>

@@ -25,8 +25,35 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-  build:
+  # PRs into main do not run CI (#1367); the code's dev push did. Before
+  # anything is built or tagged, require a dev commit with this exact tree to
+  # have a successful dev push CI run and native smoke (waiting for a dev run
+  # still in progress). Runs only when a release would happen: a push to main
+  # whose version is already tagged builds nothing. A tree that never reached
+  # dev (a direct main commit) cannot be released. release-gate.yml runs the
+  # same check on the PR into main.
+  dev-ci-gate:
     needs: version-check
+    if: needs.version-check.outputs.tag_exists == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Require a successful dev push CI run for this tree
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch --no-tags origin +refs/heads/dev:refs/remotes/origin/dev
+          node scripts/release-ci-gate.mjs --wait-minutes 60
+
+  build:
+    needs: [version-check, dev-ci-gate]
     if: needs.version-check.outputs.tag_exists == 'false'
     strategy:
       fail-fast: false
@@ -104,7 +131,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: [version-check, build]
+    needs: [version-check, dev-ci-gate, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

@@ -1,0 +1,59 @@
+name: Refresh E2E shard timings
+
+# Weekly: re-record scripts/e2e-shard-timings.json from the logs of recent
+# successful dev push CI runs (scripts/e2e-shards.mjs record, #1123/#1367).
+# Cache-replayed shards and the ALL_VIEW_MODES job are not timed; specs they
+# leave untimed keep their previous timing.
+#
+# The workflow pushes no branch and opens no PR: the repository does not let
+# GITHUB_TOKEN create pull requests, and a token-created PR would not run CI.
+# It uploads the regenerated file as the `e2e-shard-timings` artifact and
+# writes the drift to the job summary. To apply it, download the artifact,
+# copy it over scripts/e2e-shard-timings.json on a branch and open a PR.
+on:
+  schedule:
+    - cron: "41 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: dev
+
+      - name: Record timings from recent successful dev pushes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          logs="$RUNNER_TEMP/ci-logs"
+          mkdir -p "$logs"
+          gh run list --workflow ci.yml --branch dev --event push --status success --limit 5 \
+            --json databaseId --jq '.[].databaseId' > "$RUNNER_TEMP/runs.txt"
+          if [ ! -s "$RUNNER_TEMP/runs.txt" ]; then
+            echo "::error title=No CI runs to record::no successful dev push ci.yml run found; shard timings were not refreshed"
+            exit 1
+          fi
+          cp scripts/e2e-shard-timings.json "$RUNNER_TEMP/timings.before.json"
+          while read -r id; do
+            gh run view "$id" --log > "$logs/$id.log"
+          done < "$RUNNER_TEMP/runs.txt"
+          node scripts/e2e-shards.mjs record "$logs"/*.log
+          {
+            echo "Recorded from dev push runs: $(paste -sd ' ' "$RUNNER_TEMP/runs.txt")"
+            echo
+            node scripts/e2e-shards.mjs drift "$RUNNER_TEMP/timings.before.json"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: e2e-shard-timings
+          path: scripts/e2e-shard-timings.json
+          if-no-files-found: error
+          retention-days: 30

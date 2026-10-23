@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // e2e-affected.mjs — select the E2E specs affected by a diff.
 //
-// Usage:  node scripts/e2e-affected.mjs [--strict] [--json] [--max-files N] [base] [head]
+// Usage:  node scripts/e2e-affected.mjs [--strict | --webkit | --view-modes] [--json] [--max-files N] [base] [head]
+//         node scripts/e2e-affected.mjs --list-view-mode-specs
 //   base defaults to "origin/dev", head to "HEAD".
 //   --json: print a test-selection.mjs Selection (mode, reason, items) instead.
 //   --max-files N (CI): also apply the escalations every CI tier shares —
@@ -10,6 +11,17 @@
 //   --strict (CI): any src/ change runs everything. Keyword clusters miss specs
 //   that exercise a component incidentally (#1131 review), so they only advise
 //   local runs; CI narrows only for changes that never ship in the frontend.
+//   This is the Chromium selection.
+//   --webkit (CI, #1367): the strict selection when it is narrow; otherwise
+//   cluster-mapped specs plus the curated engine-specific set (specs that
+//   branch on browserName or carry @webkit), or ALL for a WKWebView-sensitive
+//   change (WEBKIT_SENSITIVE paths, component styling) or anything the
+//   clusters cannot place. Dev pushes always run full WebKit.
+//   --view-modes (CI, #1367): the specs that iterate VIEW_MODES/VIEW_VARIANTS
+//   reached through a changed view-mode component or spec, run on Chromium
+//   with ALL_VIEW_MODES=1; ALL means every such spec.
+//   --list-view-mode-specs: print every spec that iterates the view modes.
+//   A release version bump (scripts/version-only.mjs) selects none.
 //
 // Output (stdout): newline-separated spec paths (e.g. "e2e/foo.spec.ts"),
 //   OR the literal string "ALL" when the whole suite must run.
@@ -38,23 +50,29 @@
 //      e2e-tauri, .github, packaging, e2e-load and e2e-sweep (their own
 //      configs), Nix and editor files.
 //   6. Changes to CI selection itself (ci.yml, e2e-shards.mjs,
-//      e2e-affected.mjs, test-selection.mjs, map-feature.md) or the
+//      e2e-affected.mjs, test-selection.mjs, version-only.mjs) or the
 //      test-result cache wiring (turbo.json, test-cache.mjs, ci-test-e2e.sh) -> ALL.
+//      A map-feature.md change selects the union of what the base and head
+//      maps select (#1367), so moving a file between clusters cannot drop it.
 //   7. Anything else (an unknown top-level file)  -> ALL.
 //   If map-feature.md is missing -> ALL (+ warning).
 
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, posix } from "node:path";
-import { allOf, gitChangedFiles, parseArgs, sharedEscalation } from "./test-selection.mjs";
+import { allOf, gitBlobReader, gitChangedFiles, parseArgs, sharedEscalation, versionOnlyChange } from "./test-selection.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const MAP_PATH = join(ROOT, "docs/code-map/map-feature.md");
+const MAP_REL = "docs/code-map/map-feature.md";
+const MAP_PATH = join(ROOT, MAP_REL);
 const E2E_DIR = join(ROOT, "e2e");
 
 /** @typedef {{ title: string, files: string[], phrases: Set<string> }} Cluster */
 /** @typedef {{ hubs: string[], clusters: Cluster[] }} CodeMap */
 /** @typedef {{ rel: string, content: string }} SpecEntry */
+/** @typedef {"dev-server" | "selection" | "shared-e2e" | "mock" | "hub" | "strict" | "unmapped" | "no-spec" | "config" | "unknown"} TriggerKind */
+/** @typedef {{ kind: TriggerKind, reason: string }} Trigger */
+/** @typedef {import("./test-selection.mjs").Selection} Selection */
 
 /** @param {string} m */
 const warn = (m) => process.stderr.write(`[e2e-affected] ${m}\n`);
@@ -220,9 +238,11 @@ export function classify(changed, map, specs, devServerInputs = new Set(), { str
   const selected = new Set();
   /** @type {string[]} */
   const warnings = [];
+  /** @type {Trigger[]} */
+  const triggers = [];
   let all = false;
-  /** @param {string} reason */
-  const triggerAll = (reason) => { all = true; warnings.push(reason); };
+  /** @param {string} reason @param {TriggerKind} kind */
+  const triggerAll = (reason, kind) => { all = true; warnings.push(reason); triggers.push({ kind, reason }); };
 
   /** @param {string} f */
   const isConfig = (f) =>
@@ -255,10 +275,10 @@ export function classify(changed, map, specs, devServerInputs = new Set(), { str
     f.endsWith(".md");
 
   for (const f of changed) {
-    if (devServerInputs.has(f)) { triggerAll(`dev-server input change: ${f}`); continue; }
+    if (devServerInputs.has(f)) { triggerAll(`dev-server input change: ${f}`, "dev-server"); continue; }
     // A change to how CI selects or shards specs must prove itself on the full suite.
     if (SELECTION_INPUTS.has(f)) {
-      triggerAll(`CI test-selection change: ${f}`);
+      triggerAll(`CI test-selection change: ${f}`, "selection");
       continue;
     }
     // A spec that names this file reads it directly (fixtures outside e2e/).
@@ -269,18 +289,18 @@ export function classify(changed, map, specs, devServerInputs = new Set(), { str
       if (existsSync(join(ROOT, f))) selected.add(f);
       continue;
     }
-    if (f.startsWith("e2e/")) { triggerAll(`shared e2e support change: ${f}`); continue; }
-    if (/^src\/lib\/api\/mock-[\w.-]+\.ts$/.test(f)) { triggerAll(`mock backend change: ${f}`); continue; }
-    if (map.hubs.some((h) => fileMatchesToken(f, h))) { triggerAll(`central-hub change: ${f}`); continue; }
+    if (f.startsWith("e2e/")) { triggerAll(`shared e2e support change: ${f}`, "shared-e2e"); continue; }
+    if (/^src\/lib\/api\/mock-[\w.-]+\.ts$/.test(f)) { triggerAll(`mock backend change: ${f}`, "mock"); continue; }
+    if (map.hubs.some((h) => fileMatchesToken(f, h))) { triggerAll(`central-hub change: ${f}`, "hub"); continue; }
 
     if (f.startsWith("src/")) {
-      if (strict) { triggerAll(`frontend source change (strict): ${f}`); continue; }
+      if (strict) { triggerAll(`frontend source change (strict): ${f}`, "strict"); continue; }
       const matched = map.clusters.filter((c) => c.files.some((t) => fileMatchesToken(f, t)));
-      if (matched.length === 0) { triggerAll(`unmapped src file (no cluster): ${f}`); continue; }
+      if (matched.length === 0) { triggerAll(`unmapped src file (no cluster): ${f}`, "unmapped"); continue; }
       const clusterSpecs = [];
       for (const c of matched) clusterSpecs.push(...specsForCluster(c, specs));
       if (clusterSpecs.length === 0) {
-        triggerAll(`cluster(s) [${matched.map((c) => c.title).join(", ")}] matched ${f} but resolved to no spec`);
+        triggerAll(`cluster(s) [${matched.map((c) => c.title).join(", ")}] matched ${f} but resolved to no spec`, "no-spec");
         continue;
       }
       for (const s of clusterSpecs) selected.add(s);
@@ -288,12 +308,12 @@ export function classify(changed, map, specs, devServerInputs = new Set(), { str
     }
 
     if (isIgnored(f)) continue;
-    if (isConfig(f)) { triggerAll(`build/config change: ${f}`); continue; }
+    if (isConfig(f)) { triggerAll(`build/config change: ${f}`, "config"); continue; }
     // Unknown top-level file — do not risk silent under-selection.
-    triggerAll(`unrecognized change: ${f}`);
+    triggerAll(`unrecognized change: ${f}`, "unknown");
   }
 
-  return { all, selected, warnings };
+  return { all, selected, warnings, triggers };
 }
 
 // Files that decide which specs run; changing them must run everything.
@@ -302,7 +322,7 @@ const SELECTION_INPUTS = new Set([
   "scripts/e2e-shards.mjs",
   "scripts/e2e-affected.mjs",
   "scripts/test-selection.mjs",
-  "docs/code-map/map-feature.md",
+  "scripts/version-only.mjs",
   // How the target runs through the test-result cache (#1176).
   "turbo.json",
   "scripts/test-cache.mjs",
@@ -335,18 +355,222 @@ export function devServerScripts(root = ROOT) {
   return inputs;
 }
 
+// --- per-engine PR selections (#1367) ------------------------------------
+
+/**
+ * WKWebView-sensitive frontend areas: a change here runs the full WebKit
+ * suite on a PR, because engine-specific layout, zoom and input differences
+ * show up in specs that never name the changed file.
+ * @type {[RegExp, string][]}
+ */
+export const WEBKIT_SENSITIVE = [
+  [/\.css$/, "stylesheet"],
+  [/^src\/lib\/themes\//, "theme"],
+  [/zoom|overlay|context-?menu|popover|tooltip/i, "zoom or fixed overlay"],
+  [/file-?list|file-?item/i, "FileList/FileItem"],
+  [/marquee/i, "marquee"],
+  [/preview/i, "preview"],
+  [/drag|drop|dnd/i, "drag and drop"],
+  [/peek/i, "peek"],
+];
+
+/**
+ * Components whose rendering differs between Details, List and Tiles; PR
+ * specs selected through them also run with ALL_VIEW_MODES=1 on Chromium.
+ */
+export const VIEW_MODE_COMPONENT = /file-?list|file-?item|tile|list-?(view|card|columns)|details-?view|peek|view-?mode/i;
+
+/**
+ * App-wide presentation inputs: stylesheets, themes and the global document
+ * markup restyle every view mode without naming one, so a PR touching them
+ * runs every view-mode spec.
+ * @type {[RegExp, string][]}
+ */
+export const VIEW_MODE_GLOBAL = [
+  [/^(?!website\/).*\.css$/, "stylesheet"],
+  [/^src\/lib\/themes\//, "theme"],
+  [/^(src\/app\.html|index\.html|src\/routes\/\+layout\.(svelte|ts))$/, "global markup"],
+];
+
+/** Specs that branch on the engine or carry an explicit `@webkit` tag. */
+const WEBKIT_CURATED = /browsername|@webkit\b/;
+
+/** A spec (or support module) that iterates the configurable view modes. */
+const USES_VIEW_MODES = /(?<!all_)view_(modes|variants)\b|process\.env\.all_view_modes/i;
+
+/** @param {string} text */
+const styleBlocks = (text) => [...text.matchAll(/<style\b[^>]*>[\s\S]*?<\/style>/gi)].map((m) => m[0]);
+
+/**
+ * Whether a Svelte component's change can alter styling: its `<style>` blocks
+ * differ, or an added/removed line mentions `style` or `class`. A missing side
+ * (added or deleted file) counts as styling.
+ * @param {string | null} before
+ * @param {string | null} after
+ */
+export function svelteStyleChanged(before, after) {
+  if (before === null || after === null) return true;
+  const a = styleBlocks(before);
+  const b = styleBlocks(after);
+  if (a.length !== b.length || a.some((block, i) => block !== b[i])) return true;
+  /** @type {Map<string, number>} */
+  const counts = new Map();
+  for (const line of before.split("\n")) counts.set(line, (counts.get(line) ?? 0) + 1);
+  for (const line of after.split("\n")) counts.set(line, (counts.get(line) ?? 0) - 1);
+  return [...counts].some(([line, n]) => n !== 0 && /\b(style|class)\b|style:|class:/.test(line));
+}
+
+/**
+ * Why a changed file needs the full WebKit suite, or null.
+ * @param {string} file
+ * @param {import("./version-only.mjs").BlobReader} read
+ */
+export function webkitSensitivity(file, read) {
+  if (!file.startsWith("src/")) return null;
+  for (const [pattern, label] of WEBKIT_SENSITIVE) if (pattern.test(file)) return label;
+  if (file.endsWith(".svelte") && svelteStyleChanged(read("base", file), read("head", file))) return "component styling";
+  return null;
+}
+
+/**
+ * Specs whose tests iterate VIEW_MODES/VIEW_VARIANTS (directly or through an
+ * e2e support module that does), so ALL_VIEW_MODES=1 changes what they run.
+ * @param {SpecEntry[]} specs
+ * @param {SpecEntry[]} support e2e/ modules that are not specs, except helpers.ts
+ */
+export function viewModeSpecs(specs, support = []) {
+  const modules = support
+    .filter((m) => m.rel !== "e2e/helpers.ts" && USES_VIEW_MODES.test(m.content))
+    .map((m) => m.rel.slice("e2e/".length).replace(/\.ts$/, ""));
+  return specs
+    .filter((s) => USES_VIEW_MODES.test(s.content) ||
+      modules.some((m) => s.content.includes(`"./${m}"`) || s.content.includes(`'./${m}'`) ||
+        s.content.includes(`"./${m}.ts"`) || s.content.includes(`'./${m}.ts'`)))
+    .map((s) => s.rel)
+    .sort();
+}
+
+/** Trigger kinds that make a change's reach across the suite unknowable. */
+const GLOBAL_KINDS = new Set(["dev-server", "selection", "shared-e2e", "mock", "hub", "config", "unknown"]);
+
+/**
+ * @param {string[]} items
+ * @param {number} changedCount
+ * @param {string} [what]
+ * @returns {Selection}
+ */
+const listed = (items, changedCount, what = "spec(s)") => items.length
+  ? { mode: "selected", reason: `${items.length} ${what} from ${changedCount} changed file(s)`, items }
+  : { mode: "none", reason: `none of ${changedCount} changed file(s) reaches a browser spec`, items: [] };
+
+/**
+ * @typedef {{ changed: string[], map: CodeMap, specs: SpecEntry[], devServerInputs?: Set<string>,
+ *   read?: import("./version-only.mjs").BlobReader, support?: SpecEntry[] }} SelectionInput
+ */
+
+/**
+ * Chromium on PRs: every spec for any frontend source change (strict), so
+ * keyword clusters only narrow changes that never ship in the frontend.
+ * @param {SelectionInput} input
+ * @returns {Selection}
+ */
+export function selectChromium({ changed, map, specs, devServerInputs = new Set() }) {
+  const { all, selected, warnings } = classify(changed, map, specs, devServerInputs, { strict: true });
+  return all ? allOf(warnings) : listed([...selected].sort(), changed.length);
+}
+
+/**
+ * WebKit on PRs: the Chromium selection when that is already narrow;
+ * otherwise the cluster-mapped specs plus the curated engine-specific set,
+ * escalating to every spec for a WKWebView-sensitive change or anything the
+ * clusters cannot place (mock backend, helpers, config, hubs, unmapped files).
+ * @param {SelectionInput} input
+ * @returns {Selection}
+ */
+export function selectWebkit({ changed, map, specs, devServerInputs = new Set(), read = () => null }) {
+  const strict = classify(changed, map, specs, devServerInputs, { strict: true });
+  if (!strict.all) return listed([...strict.selected].sort(), changed.length);
+  const loose = classify(changed, map, specs, devServerInputs, { strict: false });
+  if (loose.all) return allOf(loose.warnings);
+  const sensitive = changed.flatMap((f) => {
+    const label = webkitSensitivity(f, read);
+    return label ? [`WKWebView-sensitive change (${label}): ${f}`] : [];
+  });
+  if (sensitive.length > 0) return allOf(sensitive);
+  const curated = specs.filter((s) => WEBKIT_CURATED.test(s.content)).map((s) => s.rel);
+  const items = [...new Set([...loose.selected, ...curated])].sort();
+  return listed(items, changed.length, "cluster-mapped or curated WebKit spec(s)");
+}
+
+/**
+ * ALL_VIEW_MODES=1 Chromium on PRs: the view-mode specs reached through a
+ * changed view-mode component (FileList, FileItem, List, Tiles, peek) or a
+ * changed view-mode spec; every view-mode spec ("all") for a global trigger
+ * or an app-wide presentation change (VIEW_MODE_GLOBAL).
+ * @param {SelectionInput} input
+ * @returns {Selection}
+ */
+export function selectViewModes({ changed, map, specs, devServerInputs = new Set(), support = [] }) {
+  const loose = classify(changed, map, specs, devServerInputs, { strict: false });
+  const global = loose.triggers.filter((t) => GLOBAL_KINDS.has(t.kind));
+  if (global.length > 0) return allOf(global.map((t) => t.reason));
+  const presentation = changed.flatMap((f) => {
+    const hit = VIEW_MODE_GLOBAL.find(([pattern]) => pattern.test(f));
+    return hit ? [`app-wide presentation change (${hit[1]}): ${f}`] : [];
+  });
+  if (presentation.length > 0) return allOf(presentation);
+  const vm = new Set(viewModeSpecs(specs, support));
+  const components = changed.filter((f) => f.startsWith("src/") && VIEW_MODE_COMPONENT.test(f));
+  const reached = new Set(changed.filter((f) => vm.has(f)));
+  if (components.length > 0) {
+    const mapped = classify(components, map, specs, devServerInputs, { strict: false });
+    if (mapped.all) return allOf(mapped.warnings.map((w) => `view-mode component: ${w}`));
+    for (const spec of mapped.selected) reached.add(spec);
+  }
+  const items = [...reached].filter((spec) => vm.has(spec)).sort();
+  return listed(items, changed.length, "view-mode spec(s)");
+}
+
+/**
+ * Combine selections made with different code maps: any "all" wins, else the
+ * union of their specs.
+ * @param {Selection[]} selections
+ * @param {number} changedCount
+ * @returns {Selection}
+ */
+export function unionSelections(selections, changedCount) {
+  if (selections.length === 1) return selections[0];
+  const all = selections.find((s) => s.mode === "all");
+  if (all) return all;
+  const items = [...new Set(selections.flatMap((s) => s.items))].sort();
+  if (items.length === 0) return selections[0];
+  return { mode: "selected", reason: `${items.length} spec(s) from ${changedCount} changed file(s), with the base and head code maps`, items };
+}
+
+/** Non-spec TypeScript modules under e2e/ (helpers, fixtures, page objects). */
+export function loadSupport() {
+  return readdirSync(E2E_DIR)
+    .filter((name) => name.endsWith(".ts") && !name.endsWith(".spec.ts"))
+    .map((name) => ({ rel: `e2e/${name}`, content: readFileSync(join(E2E_DIR, name), "utf8").toLowerCase() }));
+}
+
 // --- main ----------------------------------------------------------------
 
 function main() {
   const { base, head, maxFiles, flags } = parseArgs(process.argv.slice(2));
+  if (flags.has("--list-view-mode-specs")) {
+    process.stdout.write(viewModeSpecs(loadSpecs(), loadSupport()).join("\n") + "\n");
+    return;
+  }
   const strict = flags.has("--strict");
+  const engine = flags.has("--webkit") ? "webkit" : flags.has("--view-modes") ? "view-modes" : strict ? "chromium" : "local";
   // --max-files (CI) also applies the escalations every tier shares (#1175).
   const shared = process.argv.includes("--max-files");
   // head: the merge hook passes the feature branch so the diff is
   // dev...<branch> while checked out on dev.
-  /** @param {{ mode: "all" | "selected" | "none", reason: string, items: string[] }} result */
+  /** @param {Selection} result */
   const emit = (result) => {
-    warn(`selection: ${result.mode}: ${result.reason}`);
+    warn(`selection (${engine}): ${result.mode}: ${result.reason}`);
     if (flags.has("--json")) process.stdout.write(JSON.stringify(result) + "\n");
     else if (result.mode === "all") process.stdout.write("ALL\n");
     else process.stdout.write(result.items.join("\n") + (result.items.length ? "\n" : ""));
@@ -371,27 +595,41 @@ function main() {
     return;
   }
 
+  const read = gitBlobReader(base, head, ROOT);
+  // A release version bump runs no browser spec: the suite's mock backend
+  // reports its own version, and the bumped files are not browser inputs.
+  if (versionOnlyChange(changed, read)) {
+    emit({ mode: "none", reason: `version-only change of ${changed.length} file(s)`, items: [] });
+    return;
+  }
+
   if (!existsSync(MAP_PATH)) {
     warn(`missing ${MAP_PATH}; cannot map src changes`);
     emit({ mode: "all", reason: "missing docs/code-map/map-feature.md", items: [] });
     return;
   }
 
-  const map = parseMap(readFileSync(MAP_PATH, "utf8"));
-  const specs = loadSpecs();
-  const { all, selected, warnings } = classify(changed, map, specs, devServerScripts(), { strict });
-
-  for (const w of warnings) warn(w);
-
-  if (all) {
-    emit(allOf(warnings));
-    return;
+  const maps = [readFileSync(MAP_PATH, "utf8")];
+  if (changed.includes(MAP_REL)) {
+    const before = read("base", MAP_REL);
+    if (before === null) {
+      emit({ mode: "all", reason: `${MAP_REL} was added`, items: [] });
+      return;
+    }
+    maps.push(before);
   }
-
-  const list = [...selected].sort();
-  emit(list.length
-    ? { mode: "selected", reason: `${list.length} spec(s) from ${changed.length} changed file(s)`, items: list }
-    : { mode: "none", reason: `none of ${changed.length} changed file(s) reaches a browser spec`, items: [] });
+  const specs = loadSpecs();
+  const common = { changed, specs, devServerInputs: devServerScripts(), read, support: loadSupport() };
+  /** @type {(input: SelectionInput) => Selection} */
+  const select = engine === "webkit" ? selectWebkit
+    : engine === "view-modes" ? selectViewModes
+    : engine === "chromium" ? selectChromium
+    : (input) => {
+      const { all, selected, warnings } = classify(changed, input.map, specs, common.devServerInputs, { strict: false });
+      for (const w of warnings) warn(w);
+      return all ? allOf(warnings) : listed([...selected].sort(), changed.length);
+    };
+  emit(unionSelections(maps.map((text) => select({ ...common, map: parseMap(text) })), changed.length));
 }
 
 // Run only when invoked directly (not when imported by tests).

@@ -58,7 +58,7 @@ describe("changes job selection", () => {
     expect(select.if).toBe("github.event_name == 'pull_request'");
   });
 
-  it.each(["e2e", "unit", "rust"])("runs every %s test outside pull requests", (tier) => {
+  it.each(["e2e", "webkit", "view-modes", "unit", "rust"])("runs every %s test outside pull requests", (tier) => {
     const outputs = ci.jobs.changes.outputs;
     expect(outputs[tier]).toBe(`\${{ github.event_name == 'pull_request' && steps.select.outputs.${tier} || 'ALL' }}`);
     expect(outputs[`${tier}-reason`]).toContain("format('{0} event runs every test', github.event_name)");
@@ -66,14 +66,16 @@ describe("changes job selection", () => {
 
   it("publishes each selector's verdict and reason computed from the PR merge diff", () => {
     const outputs: Record<string, string> = {
-      "e2e-affected": '{"mode":"selected","reason":"2 spec(s) from 3 changed file(s)","items":["e2e/a.spec.ts","e2e/b.spec.ts"]}',
+      "e2e-affected.mjs --strict": '{"mode":"selected","reason":"2 spec(s) from 3 changed file(s)","items":["e2e/a.spec.ts","e2e/b.spec.ts"]}',
+      "e2e-affected.mjs --webkit": '{"mode":"selected","reason":"1 spec(s) from 3 changed file(s)","items":["e2e/a.spec.ts"]}',
+      "e2e-affected.mjs --view-modes": '{"mode":"none","reason":"none of 3 changed file(s) reaches a browser spec","items":[]}',
       "unit-affected": '{"mode":"none","reason":"none of 3 changed file(s) reaches a unit test","items":[]}',
       "rust-affected": '{"mode":"all","reason":"workspace-wide Cargo change: src-tauri/Cargo.lock","items":[]}',
     };
     const node = Object.entries(outputs)
-      .map(([name, json]) => `*${name}*) echo '${json}' ;;`)
+      .map(([name, json]) => `"scripts/${name}"*) echo '${json}' ;;`)
       .join("\n");
-    writeFileSync(join(dir, "node"), `#!/bin/bash\necho "node $*" >> "${dir}/calls"\ncase "$1" in\n${node}\nesac\n`);
+    writeFileSync(join(dir, "node"), `#!/bin/bash\necho "node $*" >> "${dir}/calls"\ncase "$*" in\n${node}\nesac\n`);
     chmodSync(join(dir, "node"), 0o755);
 
     runStep(select.run as string, { TEST_SELECTION_MAX_FILES: "50" });
@@ -81,6 +83,10 @@ describe("changes job selection", () => {
     expect(readFileSync(join(dir, "out"), "utf8").trim().split("\n")).toEqual([
       "e2e=e2e/a.spec.ts e2e/b.spec.ts",
       "e2e-reason=2 spec(s) from 3 changed file(s)",
+      "webkit=e2e/a.spec.ts",
+      "webkit-reason=1 spec(s) from 3 changed file(s)",
+      "view-modes=NONE",
+      "view-modes-reason=none of 3 changed file(s) reaches a browser spec",
       "unit=NONE",
       "unit-reason=none of 3 changed file(s) reaches a unit test",
       "rust=ALL",
@@ -88,6 +94,8 @@ describe("changes job selection", () => {
     ]);
     expect(calls()).toEqual([
       "node scripts/e2e-affected.mjs --strict --json --max-files 50 HEAD^1 HEAD",
+      "node scripts/e2e-affected.mjs --webkit --json --max-files 50 HEAD^1 HEAD",
+      "node scripts/e2e-affected.mjs --view-modes --json --max-files 50 HEAD^1 HEAD",
       "node scripts/unit-affected.mjs --json --max-files 50 HEAD^1 HEAD",
       "node scripts/rust-affected.mjs --json --max-files 50 HEAD^1 HEAD",
     ]);
@@ -100,7 +108,7 @@ describe("changes job selection", () => {
     runStep(select.run as string, { TEST_SELECTION_MAX_FILES: "50" });
 
     const out = readFileSync(join(dir, "out"), "utf8");
-    for (const tier of ["e2e", "unit", "rust"]) {
+    for (const tier of ["e2e", "webkit", "view-modes", "unit", "rust"]) {
       expect(out).toContain(`${tier}=ALL\n${tier}-reason=selection failed\n`);
     }
   });
@@ -221,20 +229,26 @@ describe("Rust test step", () => {
 });
 
 describe.each([
-  ["chromium", "E2E tests", "E2E"],
-  ["webkit-tests", "E2E tests (WebKit)", "WebKit E2E"],
-])("%s browser step", (job, name, label) => {
+  ["chromium", "E2E tests", "chromium E2E", "chromium", "chromium"],
+  ["chromium-view-modes", "E2E tests (all view modes)", "chromium ALL_VIEW_MODES E2E", "chromium", "chromium-view-modes"],
+  ["webkit-tests", "E2E tests (WebKit)", "WebKit E2E", "webkit", "webkit"],
+])("%s browser step", (job, name, label, engine, target) => {
   const e2e = step(job, (s) => s.name === name);
 
-  const engine = job === "chromium" ? "chromium" : "webkit";
   const shard = { "steps.plan.outputs.run": "true", "matrix.shard": "2" };
 
   it("runs its planned shard through the cache and states whether it is the full suite", () => {
     writeFileSync(join(dir, "e2e-shard.txt"), "e2e/a.spec.ts\ne2e/b.spec.ts\n");
     const log = runStep(e2e.run as string, { E2E_SELECTION: "ALL", E2E_REASON: "push event runs every test" }, shard);
     expect(log).toContain(`${label}: full suite (push event runs every test), shard of 2 spec file(s)`);
-    expect(calls()).toEqual([`node scripts/test-cache.mjs run --task ci:e2e --target ${engine}-2`]);
+    expect(calls()).toEqual([`node scripts/test-cache.mjs run --task ci:e2e --target ${target}-2`]);
     expect(ci.jobs[job].env.E2E_ENGINE).toBe(engine);
+  });
+
+  it("reads its own tier of the selection and skips itself when that is NONE", () => {
+    const selection = { chromium: "e2e", "chromium-view-modes": "view-modes", "webkit-tests": "webkit" }[job];
+    expect(e2e.env).toMatchObject({ E2E_SELECTION: `\${{ needs.changes.outputs.${selection} }}` });
+    expect(ci.jobs[job].if).toBe(`needs.changes.outputs.code == 'true' && needs.changes.outputs.${selection} != 'NONE'`);
   });
 
   it("verifies and runs exactly the shard's specs in the cached script", () => {
@@ -253,5 +267,64 @@ describe.each([
     const log = runStep(e2e.run as string, { E2E_SELECTION: "e2e/a.spec.ts", E2E_REASON: "1 spec(s) from 1 changed file(s)" }, { "steps.plan.outputs.run": "false", "matrix.shard": "2" });
     expect(log).toContain(`${label}: nothing to run in this shard; selected subset (1 spec(s) from 1 changed file(s))`);
     expect(calls()).toEqual([]);
+  });
+});
+
+describe("view-mode shard plan", () => {
+  const plan = step("chromium-view-modes", (s) => s.id === "plan");
+
+  it("expands ALL into every spec that iterates the view modes", () => {
+    writeFileSync(join(dir, "node"), `#!/bin/bash\necho "node $*" >> "${dir}/calls"\ncase "$*" in *list-view-mode-specs*) echo e2e/a.spec.ts ;; esac\n`);
+    chmodSync(join(dir, "node"), 0o755);
+    runStep(plan.run as string, { E2E_SELECTION: "ALL", E2E_REASON: "push event runs every test", GITHUB_ENV: join(dir, "env") },
+      { "matrix.shard": "1", "strategy.job-total": "2" });
+    expect(calls()[0]).toBe("node scripts/e2e-affected.mjs --list-view-mode-specs");
+    expect(readFileSync(join(dir, "e2e-selection.txt"), "utf8")).toBe("e2e/a.spec.ts\n");
+  });
+});
+
+describe.each([
+  ["frontend", "Require frontend validation and browser outcomes"],
+  ["webkit", "Require all WebKit browser outcomes"],
+])("%s gate", (gate, name) => {
+  const check = step(gate, (s) => s.name === name);
+  const base: Record<string, string> = gate === "frontend"
+    ? { CHECKS_RESULT: "success", CHROMIUM_RESULT: "success", VIEW_MODES_RESULT: "success", E2E: "ALL", VIEW_MODES: "ALL" }
+    : { WEBKIT_RESULT: "success", WEBKIT: "ALL" };
+  const browser = gate === "frontend" ? ["CHROMIUM_RESULT", "E2E"] : ["WEBKIT_RESULT", "WEBKIT"];
+  const passes = (env: Record<string, string>) => {
+    try {
+      runStep(check.run as string, { CHANGES_RESULT: "success", CODE: "true", ...base, ...env });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  it("requires every upstream job on a code change", () => {
+    expect(passes({})).toBe(true);
+    for (const result of ["failure", "cancelled", "skipped"]) expect(passes({ [browser[0]]: result })).toBe(false);
+  });
+
+  it("accepts a skipped browser job only when its selection is NONE", () => {
+    expect(passes({ [browser[0]]: "skipped", [browser[1]]: "NONE" })).toBe(true);
+    expect(passes({ [browser[0]]: "success", [browser[1]]: "NONE" })).toBe(false);
+  });
+
+  it("requires every job skipped on a docs-only change and a successful changes job", () => {
+    const skipped = Object.fromEntries(Object.keys(base).filter((k) => k.endsWith("_RESULT")).map((k) => [k, "skipped"]));
+    expect(passes({ CODE: "false", ...skipped })).toBe(true);
+    expect(passes({ CODE: "false" })).toBe(false);
+    expect(passes({ CHANGES_RESULT: "failure" })).toBe(false);
+  });
+
+  it("names the job that failed the gate", () => {
+    let log = "";
+    try {
+      runStep(check.run as string, { CHANGES_RESULT: "success", CODE: "true", ...base, [browser[0]]: "cancelled" });
+    } catch (error) {
+      log = String((error as { stdout?: string }).stdout);
+    }
+    expect(log).toMatch(/::error title=\S+ cancelled::\S+ is cancelled, expected success/);
   });
 });

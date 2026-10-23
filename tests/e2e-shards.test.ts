@@ -2,15 +2,20 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { parse } from "yaml";
 import {
   combineRuns,
   compareSelection,
   discoverSpecs,
+  formatDrift,
   listedSpecFiles,
+  mergeTimings,
   parseCiLog,
   parseShardArg,
   planShards,
   restrictSpecs,
+  timingDrift,
 } from "../scripts/e2e-shards.mjs";
 
 const flatten = (shards: { specs: string[] }[]) => shards.flatMap((shard) => shard.specs);
@@ -158,6 +163,20 @@ describe("parseCiLog", () => {
     expect(parseCiLog(log)).toEqual({ webkit: { "nested/a.spec.ts": 5 } });
   });
 
+  it("times only default-mode shard jobs that executed, not cache replays or the view-mode job (#1367)", () => {
+    const log = [
+      start("chromium (1)", "10:00:00.0000000", 1, "chromium", "a.spec.ts"),
+      line("chromium (1)", "10:00:04.0000000", "  1 passed (4.0s)"),
+      start("chromium (2)", "10:00:00.0000000", 1, "chromium", "b.spec.ts"),
+      line("chromium (2)", "10:00:00.0000000", "  1 passed (9.0s)"),
+      line("chromium (2)", "10:00:00.0000000", "chromium-2: passed from the test-result cache (hash ab12; saved 9m 1s)"),
+      start("chromium-view-modes (1)", "10:00:00.0000000", 1, "chromium", "a.spec.ts"),
+      line("chromium-view-modes (1)", "10:01:00.0000000", "  1 passed (60.0s)"),
+    ].join("\n");
+
+    expect(parseCiLog(log)).toEqual({ chromium: { "a.spec.ts": 4 } });
+  });
+
   it("returns nothing for an empty or unrelated log", () => {
     expect(parseCiLog("")).toEqual({});
     expect(parseCiLog("just\nsome\ntext")).toEqual({});
@@ -263,5 +282,61 @@ describe("restrictSpecs", () => {
 
   it("treats ALL anywhere in the selection as the full suite", () => {
     expect(restrictSpecs(discovered, "e2e/a.spec.ts\nALL\n").all).toBe(true);
+  });
+});
+
+describe("mergeTimings", () => {
+  it("overrides recorded specs, keeps untimed existing ones and drops deleted ones", () => {
+    const previous = { chromium: { "a.spec.ts": 1, "b.spec.ts": 2, "gone.spec.ts": 3 }, webkit: { "a.spec.ts": 5 } };
+    const recorded = { chromium: { "a.spec.ts": 10, "new.spec.ts": 4 } };
+    expect(mergeTimings(previous, recorded, ["a.spec.ts", "b.spec.ts", "new.spec.ts"])).toEqual({
+      chromium: { "a.spec.ts": 10, "b.spec.ts": 2, "new.spec.ts": 4 },
+      webkit: { "a.spec.ts": 5 },
+    });
+  });
+});
+
+describe("timingDrift", () => {
+  const before = { chromium: { "a.spec.ts": 60, "b.spec.ts": 30, "gone.spec.ts": 12 }, webkit: { "a.spec.ts": 120 } };
+  const after = { chromium: { "a.spec.ts": 90, "b.spec.ts": 30, "new.spec.ts": 6 }, webkit: { "a.spec.ts": 120 } };
+
+  it("reports per-engine totals and the specs that moved most, including added and removed ones", () => {
+    const [chromium, webkit] = timingDrift(before, after);
+    expect(chromium).toMatchObject({ engine: "chromium", beforeMinutes: 1.7, afterMinutes: 2.1, changed: 3 });
+    expect(chromium.largest.map((c) => c.file)).toEqual(["a.spec.ts", "gone.spec.ts", "new.spec.ts"]);
+    expect(chromium.largest[1]).toEqual({ file: "gone.spec.ts", before: 12, after: null });
+    expect(webkit).toMatchObject({ engine: "webkit", changed: 0, largest: [] });
+  });
+
+  it("handles an engine present on one side only and limits the listed specs", () => {
+    const drift = timingDrift({}, { webkit: { "a.spec.ts": 1, "b.spec.ts": 2 } }, 1);
+    expect(drift).toEqual([{ engine: "webkit", beforeMinutes: 0, afterMinutes: 0.1, changed: 2, largest: [{ file: "b.spec.ts", before: null, after: 2 }] }]);
+  });
+
+  it("formats a Markdown summary for the job summary", () => {
+    const text = formatDrift(timingDrift(before, after));
+    expect(text).toContain("**chromium**: 1.7 → 2.1 recorded minutes, 3 spec timing(s) changed");
+    expect(text).toContain("| gone.spec.ts | 12 | — |");
+    expect(text).toContain("**webkit**: 2 → 2 recorded minutes, 0 spec timing(s) changed");
+  });
+});
+
+describe("e2e-shard-timings.yml", () => {
+  const text = readFileSync(new URL("../.github/workflows/e2e-shard-timings.yml", import.meta.url), "utf8");
+  const workflow = parse(text);
+
+  it("publishes the refreshed file as an artifact with read-only permissions, never a branch or PR", () => {
+    expect(workflow.permissions).toEqual({ contents: "read", actions: "read" });
+    const steps = workflow.jobs.refresh.steps as { uses?: string; run?: string; with?: Record<string, unknown> }[];
+    const runs = steps.map((s) => s.run ?? "").join("\n");
+    expect(runs).not.toMatch(/git push|gh pr create|git commit/);
+    const upload = steps.find((s) => s.uses?.startsWith("actions/upload-artifact@"));
+    expect(upload?.with).toMatchObject({ name: "e2e-shard-timings", path: "scripts/e2e-shard-timings.json", "if-no-files-found": "error" });
+    expect(runs).toContain("node scripts/e2e-shards.mjs drift");
+  });
+
+  it("fails with an error annotation when no successful dev run exists", () => {
+    expect(text).toContain('if [ ! -s "$RUNNER_TEMP/runs.txt" ]; then');
+    expect(text).toMatch(/::error title=No CI runs to record::[^\n]*\n\s*exit 1/);
   });
 });

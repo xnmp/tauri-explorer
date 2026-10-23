@@ -1,3 +1,4 @@
+import picomatch from "picomatch";
 import { readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
@@ -23,10 +24,12 @@ describe("CI admission policy (#1133)", () => {
         return Object.hasOwn(triggers, "pull_request") ||
           Object.hasOwn(triggers, "pull_request_target");
       });
-    expect(prWorkflows.sort()).toEqual(["ci.yml", "e2e-tauri.yml"]);
+    expect(prWorkflows.sort()).toEqual(["ci.yml", "e2e-tauri.yml", "release-gate.yml"]);
+    // release-gate.yml is the lightweight pre-merge release check for PRs into main (#1367).
+    expect(load("release-gate.yml").on).toEqual({ pull_request: { branches: ["main"] } });
 
     const ci = load("ci.yml");
-    expect(ci.on.pull_request.branches).toContain("dev");
+    expect(ci.on.pull_request.branches).toEqual(["dev"]);
     expect(ci.on.pull_request.paths).toBeUndefined();
     expect(ci.on.pull_request["paths-ignore"]).toBeUndefined();
     expect(Object.keys(ci.jobs)).toEqual(expect.arrayContaining([
@@ -53,7 +56,7 @@ describe("CI admission policy (#1133)", () => {
     expect(rust).toContain("cargo clippy ");
     expect(rust).toContain("cargo test ");
     const native = load("e2e-tauri.yml");
-    expect(native.on.pull_request.branches).toContain("dev");
+    expect(native.on.pull_request.branches).toEqual(["dev"]);
     expect(native.on.push).toEqual({ branches: ["dev"] });
     expect(Object.hasOwn(native.on, "workflow_dispatch")).toBe(true);
     // Pin the actual runner admission expression, including the full Windows
@@ -93,4 +96,54 @@ describe("CI admission policy (#1133)", () => {
       }
     },
   );
+});
+
+describe("release and nightly coverage (#1367)", () => {
+  it("runs CI on main pushes and nightly, but not on PRs into main", () => {
+    const ci = load("ci.yml");
+    expect(ci.on.push.branches).toEqual(["dev", "main"]);
+    expect(ci.on.schedule).toHaveLength(1);
+    // The nightly run executes every target rather than replaying the cache.
+    expect(ci.env.TEST_CACHE_READ).toContain("github.event_name != 'schedule'");
+    // A release instead requires the dev push CI of the same tree.
+    expect(load("release.yml").jobs.build.needs).toContain("dev-ci-gate");
+  });
+});
+
+describe.each(["ci.yml", "e2e-tauri.yml"])("%s docs-only filter", (file) => {
+  const filter = () => {
+    const step = load(file).jobs.changes.steps.find((s: { id?: string }) => s.id === "filter");
+    return parse(step.with.filters).code as string[];
+  };
+
+  it("treats screenshots and evidence as documentation", () => {
+    expect(filter()).toEqual(expect.arrayContaining(["!screenshots/**", "!evidence/**", "!docs/**", "!*.md"]));
+    expect(filter()[0]).toBe("**");
+  });
+
+  // dorny/paths-filter matches with picomatch({ dot: true }); with
+  // predicate-quantifier "every" a file is code when every pattern accepts it.
+  const isCode = (file: string) => filter().every((pattern) => picomatch(pattern, { dot: true })(file));
+
+  it.each(["docs/guide.md", "docs/code-map/map-feature.md", "README.md", "CHANGELOG.md", "screenshots/x/a.png", "evidence/ac-1.png"])(
+    "skips heavy jobs for documentation-only %s",
+    (file) => { expect(isCode(file)).toBe(false); },
+  );
+
+  it.each(["e2e/fixtures/notes.md", "src/lib/domain/help.md", "tests/fixtures/sample.md", ".github/notes/fixture.md", "src/lib/a.ts"])(
+    "still treats %s as code (Markdown outside docs/ and the root can be a fixture)",
+    (file) => { expect(isCode(file)).toBe(true); },
+  );
+
+  it("is safe: no test, script or build input reads screenshots/ or evidence/", () => {
+    const readers = ["vite.config.ts", "playwright.config.ts", "package.json", "turbo.json"]
+      .map((f) => readFileSync(new URL(`../${f}`, import.meta.url), "utf8"));
+    for (const text of readers.slice(0, 3)) expect(text).not.toMatch(/(screenshots|evidence)\//);
+    // Browser specs only write capture proof there; Turborepo's browser and
+    // unit targets exclude both trees (tests/test-cache.test.ts).
+    const turbo = JSON.parse(readers[3]);
+    for (const task of ["ci:unit", "ci:e2e", "ci:rust"]) {
+      expect(turbo.tasks[task].inputs).toEqual(expect.arrayContaining(["!evidence/**", "!screenshots/**"]));
+    }
+  });
 });

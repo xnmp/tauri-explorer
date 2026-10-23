@@ -10,14 +10,21 @@ printf '%s\n' "${E2E_SHARD_SPECS:?}" > "$list"
 # Fails unless Playwright selects exactly the planned files; --test-list
 # silently runs nothing for an unresolvable entry.
 node scripts/e2e-shards.mjs verify --engine "${E2E_ENGINE:?}" --list "$list"
+# A stalled shard stops itself below the CI step and job caps (#1367), so the
+# line reporter prints its interrupted and unrun tests and the HTML report is
+# written, instead of the runner killing the job with no diagnosis.
+limit=()
+if [ -n "${E2E_GLOBAL_TIMEOUT_MINUTES:-}" ]; then
+  limit=("--global-timeout=$((E2E_GLOBAL_TIMEOUT_MINUTES * 60000))")
+fi
 case "$E2E_ENGINE" in
   chromium)
-    npx playwright test --project=chromium --test-list "$list" --reporter=line,html ;;
+    npx playwright test --project=chromium --test-list "$list" --reporter=line,html "${limit[@]}" ;;
   webkit)
     # Only video decoder specs opt into GTK; other specs retain headless WPE.
     # The display belongs to this hosted runner and is destroyed after testing.
     xvfb-run -a --server-args="-screen 0 1920x1080x24 -nolisten tcp" \
-      npx playwright test --project=webkit --test-list "$list" --reporter=line,html ;;
+      npx playwright test --project=webkit --test-list "$list" --reporter=line,html "${limit[@]}" ;;
   *)
     echo "ci-test-e2e: unknown engine $E2E_ENGINE" >&2
     exit 2 ;;

@@ -188,6 +188,17 @@ Rules that bite:
 
 ## Verification
 
+CI selection (#1367, details in `.github/workflows/CLAUDE.md`): PR Chromium runs
+every spec for any `src/` change; PR WebKit narrows unless a WKWebView-sensitive
+path changes (CSS/themes, zoom/overlays, FileList/FileItem, marquee, preview,
+DnD, peek, component styling); `ALL_VIEW_MODES` Chromium runs on dev pushes,
+nightly, and for PRs touching view-mode components, stylesheets, themes or
+global markup. Mock backend, e2e helpers,
+fixtures, configs and lockfiles still select everything. Version-only bumps run
+no browser or Rust tests. PRs into main run only the `release-gate` check:
+release.yml requires green dev-push CI for the same tree, so merge to main only
+after dev CI passes and `release-gate` is green.
+
 The three test tiers see different things; pick by what could actually break:
 
 1. **Vitest (`tests/`)** — domain logic and store behavior. The default home for every fix's regression test.

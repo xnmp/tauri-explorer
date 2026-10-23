@@ -8,7 +8,7 @@
   import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
   import { usesPointerDrag } from "$lib/domain/platform";
   import { dialogStore } from "$lib/state/dialogs.svelte";
-  import type { ListCardSpec, ListNavigationSnapshot } from "$lib/domain/list-column-flow";
+  import type { ListCardSpec, ListNavigationSnapshot, ListSpillMore } from "$lib/domain/list-column-flow";
   import { LIST_COLUMN_STRIDE, LIST_PADDING_X, LIST_SLOT_HEIGHT } from "$lib/domain/list-column-flow";
   import { cardMoreCount, listMoreExpansion } from "$lib/domain/list-cards";
   import { peekTreePositionLookup, type PeekRow } from "$lib/domain/folder-peek";
@@ -50,6 +50,7 @@
     getRows: () => explorer.detailRows,
     getFullFlowPaths: () => explorer.listFullFlowPaths,
     getColumnPaths: () => explorer.listColumnPaths,
+    getSpillPaths: () => explorer.listSpillPaths,
     getPreferredRows: path => explorer.listCardRows(path),
     getSpringPaths: () => explorer.springPeeks,
     getPinnedPaths: () => dialogStore.renamingEntry ? [dialogStore.renamingEntry.path] : [],
@@ -76,16 +77,32 @@
     ? Math.max(0, card.end - card.start - card.visibleRows)
     : cardMoreCount(card.end - card.start,
       columns.previewRows(card.path) ?? card.visibleRows, columns.cardScrollTop(card.path));
-  const moreStage = (card: ListCardSpec) => listMoreExpansion(card.end - card.start,
-    columns.rows, explorer.listColumnPaths.has(card.path));
-  async function expandList(event: MouseEvent, path: string, stage: "column" | "full"): Promise<void> {
+  const moreStage = (card: ListCardSpec) => listMoreExpansion(explorer.listColumnPaths.has(card.path) ? "column" : "card");
+  /** Every expanded stage's Less returns to the compact card (#1360, #1365), or null when it shows none. */
+  function lessStage(row: EntryRow): "card" | null {
+    const path = row.entry.path;
+    if (row.depth !== 0 || !row.expanded || explorer.isSpringPeek(path)) return null;
+    return explorer.listFullFlowPaths.has(path) || explorer.listSpillPaths.has(path) || explorer.listColumnPaths.has(path) ? "card" : null;
+  }
+  /** A spill's last slot shows every row (#1365). Focus moves to the row that
+   * takes the slot, so the keyboard continues where the button was without a
+   * sideways scroll back to the header. */
+  async function showAll(more: ListSpillMore): Promise<void> {
+    if (paneId) windowTabsManager.setActivePane(paneId);
+    explorer.showAllListChildren(more.path);
+    await tick();
+    canvas?.querySelector<HTMLElement>(`.entry-item[data-index="${explorer.detailRows.rowToEntry[more.rowIndex]}"]`)?.focus({ preventScroll: true });
+  }
+  async function expandList(event: MouseEvent, path: string, stage: "card" | "column" | "spill" | "full"): Promise<void> {
     if (paneId) windowTabsManager.setActivePane(paneId);
     // The action changes with its stage; its stable header retains
     // keyboard focus so the next navigation key still belongs to this tree.
     (event.currentTarget as HTMLElement).closest<HTMLElement>(".entry-item")?.focus({ preventScroll: true });
     const directory = explorer.currentPath;
     if (stage === "full") explorer.showAllListChildren(path);
-    else explorer.showColumnListChildren(path);
+    else if (stage === "spill") explorer.showSpillListChildren(path);
+    else if (stage === "column") explorer.showColumnListChildren(path);
+    else explorer.showCompactListCard(path);
     await tick();
     if (explorer.currentPath === directory) {
       const index = explorer.displayEntries.findIndex(entry => entry.path === path);
@@ -134,6 +151,12 @@
     {#if explorer.rowClickOwnsPeek(row.entry) && dialogStore.renamingEntry?.path !== row.entry.path}
       <PeekOpenButton entry={row.entry} {explorer} />
     {/if}
+    {#if lessStage(row) === "card"}
+      <!-- Expanded stages have no grip: Less is their way back to the card (#1360, #1365). -->
+      <button class="list-card-more list-card-less" type="button" draggable={false}
+        aria-label={`Shrink ${row.entry.name} to a card`} title="Return to a resizable card"
+        onclick={(event) => expandList(event, row.entry.path, "card")}>Less</button>
+    {/if}
     {#if card && card.end > card.start}
       <!-- Inside the folder's treeitem (a tree owns only groups and treeitems),
            positioned on the card's bottom edge against the slot. -->
@@ -144,14 +167,10 @@
       {/if}
       {#if moreCount(card) > 0 && !explorer.isSpringPeek(card.path)}
         <button class="list-card-more" type="button" draggable={false}
-          aria-label={moreStage(card) === "column" ? `Expand ${row.entry.name} to one column` : `Show all ${row.entry.name} items`}
-          title={moreStage(card) === "column" ? "Expand to a scrollable column" : "Show all items across columns"}
+          aria-label={moreStage(card) === "spill" ? `Show more ${row.entry.name} items` : `Show all ${row.entry.name} items`}
+          title={moreStage(card) === "spill" ? "Show more rows below the folder" : "Show all items across columns"}
           onclick={(event) => expandList(event, card.path, moreStage(card))}>+{moreCount(card)} more</button>
       {/if}
-    {:else if row.depth === 0 && row.expanded && explorer.listFullFlowPaths.has(row.entry.path) && !explorer.isSpringPeek(row.entry.path)}
-      <button class="list-card-more list-card-less" type="button" draggable={false}
-        aria-label={`Show fewer ${row.entry.name} items`} title="Return to a scrollable column"
-        onclick={(event) => expandList(event, row.entry.path, "column")}>Less</button>
     {/if}
   </EntryCell>
 {/snippet}
@@ -174,12 +193,21 @@
       {#each columns.visibleItems as slot (slot.item.key)}
         <div class="list-slot list-place" class:list-card-box={!!slot.item.card} class:covered={columns.isCovered(slot.item.key)}
           data-motion-key={slot.item.key} data-column={slot.placement.column}
-          data-row-path={slot.header?.entry.path ?? slot.state?.parentPath}
-          data-row-kind={slot.header ? slot.header.entry.kind === "directory" ? "directory" : "file" : slot.state ? "state" : undefined}
+          data-row-path={slot.header?.entry.path ?? slot.state?.parentPath ?? slot.item.more?.path}
+          data-row-kind={slot.header ? slot.header.entry.kind === "directory" ? "directory" : "file" : slot.state || slot.item.more ? "state" : undefined}
           style:left="{slot.placement.column * LIST_COLUMN_STRIDE}px" style:top="{slot.placement.row * LIST_SLOT_HEIGHT}px"
-          style:--depth={slot.header?.depth ?? 0}>
+          style:--depth={slot.header?.depth ?? (slot.item.more ? 1 : 0)}>
           {#if slot.state}
             <ListPeekState row={slot.state} {carets} />
+          {:else if slot.item.more}
+            <!-- A spill's last slot (#1365): a drop on it goes into its folder,
+                 like the folder's status rows. -->
+            <div class="list-spill-more peek-drop-target" class:carets data-path={slot.item.more.path}
+              role="treeitem" aria-level={2} aria-selected="false">
+              <button class="list-card-more list-spill-more-button" type="button" draggable={false}
+                aria-label={`Show all ${slot.item.more.path.split(/[\\/]/).at(-1)} items`} title="Show all items across columns"
+                onclick={() => showAll(slot.item.more!)}>+{slot.item.more.count} more</button>
+            </div>
           {:else if !slot.header}
             <InlineNewFolder {explorer} variant="list" columns />
           {:else}
@@ -278,7 +306,8 @@
 
   .list-view :global(.list-entry:where(.selected)) {
     background: color-mix(in srgb, var(--accent) 8%, transparent);
-    border-color: var(--accent);
+    border-color: transparent;
+    border-left-color: var(--accent);
   }
 
   /* Ghosted entries (hidden, empty folder, cut) dim their icon and quiet
@@ -413,6 +442,15 @@
   .list-card-more:hover { background: var(--subtle-fill-tertiary); color: var(--text-primary); }
   .list-card-more:focus-visible { outline: 2px solid var(--focus-stroke-outer); outline-offset: 1px; }
   .list-card-less { position: static; flex-shrink: 0; margin-left: auto; }
+  .list-spill-more {
+    height: 26px;
+    margin: 2px 0;
+    display: flex;
+    align-items: center;
+    padding-left: calc(11px + var(--depth) * 16px);
+  }
+  .list-spill-more.carets { padding-left: calc(27px + var(--depth) * 16px); }
+  .list-spill-more-button { position: static; font-size: 12px; }
 
 
   /* While renaming, let the content-width rename box extend past the item over

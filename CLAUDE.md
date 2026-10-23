@@ -556,12 +556,18 @@ Synthetic drag probes that target row edges must await populated rows and the
 end of live List motion before reading hit-test coordinates; a bounding box
 can include pixels still clipped by the opening card (#1292).
 
+List peek stages never move a folder's header (#1365): every open header uses
+the `SPRING_CARD_FIT` rule in `sizeListModel`, "+N more" spills rows (cut while
+flowing, never in `buildListStructure`, which must not depend on R) before full
+flow, Less always returns to the compact card, and closing forgets the stage.
+Spilled rows hidden behind "+N more" have no slot (`entryItem` -1).
+
 List peek lineage includes the card's outer folder as well as nested groups.
 Geometry assertions must select the guide for the intended depth; the first
 `.list-guide` now belongs to the card root. Scroll nested children into the card's
 viewport before capturing lineage evidence (#1330).
 
-HTML previews use a sandboxed `srcdoc` iframe in `PreviewPane.svelte`, with no
+HTML previews use a sandboxed `srcdoc` iframe in `HtmlPreview.svelte`, with no
 script or same-origin permission and a restrictive CSP before file content.
 Keep HTML on the bounded async reader in `preview-content.ts`, bypassing source
 highlighting and its 200-line truncation (which can cut document structure).
@@ -572,3 +578,16 @@ For HTML preview CSP browser tests, route the forbidden image to a valid fixture
 and assert it never reaches the route plus completed/zero-natural-width image
 state. WebKit omits `requestfailed` events for CSP and blocks asynchronous
 callbacks injected into a script-disabled sandbox; neither is a portable oracle.
+HTML preview zoom cannot measure the sandboxed document, so it scales a fixed
+desktop layout like an image (`domain/html-preview-zoom.ts`): the frame lays out
+the Fit width (max(1280, pane)) at every magnification and zoom only scales its paint; Fit shows it whole, zooming
+in scrolls the pane horizontally, and the frame's height stays in CSS
+(`calc(100% / scale)`) because `bind:clientHeight` misses scrollbar changes.
+Re-laying out at pane / scale (browser zoom) reflowed responsive pages at every
+step (#1361). Do not add `allow-same-origin` to measure content width (#1352).
+
+Startup bundle accounting is sensitive even to internal refactors: #1346's
+List peek admission consolidation pushed gzip to 281,985 bytes against the
+281,984-byte cap. Reproduce with `bun run check:bundle` on the locked dependencies;
+unit tests alone cannot verify this contract. #1357 reverts that refactor rather
+than increasing the budget.

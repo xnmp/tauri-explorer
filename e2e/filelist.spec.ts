@@ -59,27 +59,35 @@ for (const { name, viewMode, classic } of VIEW_VARIANTS) {
       expect(highlighted).toBe(true);
     });
 
-    test("selected rows show a full accent border", async ({ page }) => {
-      test.skip(viewMode === "tiles", "Tiles are cards, not rows");
-      const item = page.locator(".entry-item").first();
-      await item.click();
-      await expect(item).toHaveClass(/selected/);
-      await item.evaluate((el) => (el as HTMLElement).blur());
+    // #1351: selection is an accent edge only; a full ring is the keyboard focus
+    // indicator. Pointer-drag platforms (macOS/Windows) focus a clicked row from
+    // script, which inherits :focus-visible from a keyboard-focused row.
+    for (const platform of [null, "MacIntel"]) {
+      test(`clicked rows show an accent edge, not a full border${platform ? ` (${platform} pointer drag)` : ""}`, async ({ page }) => {
+        test.skip(viewMode === "tiles", "Tiles are cards, not rows");
+        if (platform) {
+          await page.addInitScript((value) => Object.defineProperty(navigator, "platform", { get: () => value }), platform);
+          await page.reload();
+          await waitForEntries(page);
+        }
+        await page.locator(".entry-item").first().click();
+        await page.keyboard.press("ArrowDown");
+        const item = page.locator(".entry-item").nth(3);
+        await item.click();
+        await expect(item).toHaveClass(/selected/);
+        await expect(item).toBeFocused();
 
-      const { borderColors, accentColor } = await item.evaluate((el) => {
-        const style = getComputedStyle(el);
-        const probe = document.createElement("span");
-        probe.style.color = "var(--accent)";
-        el.append(probe);
-        const accentColor = getComputedStyle(probe).color;
-        probe.remove();
-        return {
-          accentColor,
-          borderColors: [style.borderTopColor, style.borderRightColor, style.borderBottomColor, style.borderLeftColor],
-        };
+        const chrome = await item.evaluate((el) => {
+          const style = getComputedStyle(el);
+          return {
+            focusVisible: el.matches(":focus-visible"),
+            outline: style.outlineStyle,
+            sides: [style.borderTopColor, style.borderRightColor, style.borderBottomColor],
+          };
+        });
+        expect(chrome).toEqual({ focusVisible: false, outline: "none", sides: Array(3).fill("rgba(0, 0, 0, 0)") });
       });
-      expect(borderColors).toEqual([accentColor, accentColor, accentColor, accentColor]);
-    });
+    }
 
     test("arrow keys move the selection between entries", async ({ page }) => {
       // Details steps by row; column-flow List fills vertically; Tiles and the

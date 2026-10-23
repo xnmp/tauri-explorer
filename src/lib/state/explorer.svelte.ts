@@ -257,6 +257,9 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   };
   // A function, not a narrowed read: capability is live across the lazy load.
   const peeksAllowed = () => capability !== "none";
+  /** List stages belong to open, permanent, top-level folders of a peeking List view. */
+  const listStageAllowed = (path: string) => coreState.viewMode === "list" && capability !== "none" && peek.expanded.has(path)
+    && !peek.temporary.includes(path) && peekTree.meta.get(path)?.depth === 0;
   async function togglePeek(path: string) {
     if (!peeksAllowed()) return;
     if (!peek.policies) {
@@ -1176,17 +1179,14 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     peekStatus(path: string) { return peek.listing(path)?.status; },
     /** List folders explicitly expanded across the normal column flow. */
     get listFullFlowPaths() { return peek.fullFlowPaths; },
-    showAllListChildren(path: string) {
-      if (coreState.viewMode !== "list" || capability === "none" || !peek.expanded.has(path)
-          || peek.temporary.includes(path) || peekTree.meta.get(path)?.depth !== 0) return;
-      peek.showAllListChildren(path);
-    },
+    showAllListChildren(path: string) { if (listStageAllowed(path)) peek.showAllListChildren(path); },
     get listColumnPaths() { return peek.columnPaths; },
-    showColumnListChildren(path: string) {
-      if (coreState.viewMode !== "list" || capability === "none" || !peek.expanded.has(path)
-          || peek.temporary.includes(path) || peekTree.meta.get(path)?.depth !== 0) return;
-      peek.showColumnListChildren(path);
-    },
+    showColumnListChildren(path: string) { if (listStageAllowed(path)) peek.showColumnListChildren(path); },
+    /** Back from the column stage to the compact, grip-sized card (#1360). */
+    showCompactListCard(path: string) { if (listStageAllowed(path)) peek.showCompactListCard(path); },
+    /** List folders whose rows spill below their header, capped (#1365). */
+    get listSpillPaths() { return peek.spillPaths; },
+    showSpillListChildren(path: string) { if (listStageAllowed(path)) peek.showSpillListChildren(path); },
     /** Remembered List card height (visible rows) for a top-level folder. */
     listCardRows(path: string) { return peek.cardRows(path); },
     setListCardRows(path: string, rows: number) {

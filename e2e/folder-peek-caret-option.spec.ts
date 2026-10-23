@@ -227,3 +227,65 @@ for (const mode of ["details", "list", "tiles"] as const) {
     await page.screenshot({ path: `screenshots/fix/peek/restored-${mode}.png` });
   });
 }
+
+// #1359: with carets off, Details keeps a hovered folder's Open action at the
+// right end of the Name column (not the far end of every column), clear of the
+// name, following column resizing, and it still navigates.
+const nameCellGeometry = (page: Page, path: string) => row(page, path).evaluate(element => {
+  const cell = element.querySelector<HTMLElement>(".name-cell")!.getBoundingClientRect();
+  const button = element.querySelector<HTMLElement>(".peek-open")!.getBoundingClientRect();
+  const range = document.createRange();
+  range.selectNodeContents(element.querySelector(".entry-name")!);
+  const text = range.getBoundingClientRect();
+  const visibleTextRight = Math.min(text.right, element.querySelector<HTMLElement>(".name-text")!.getBoundingClientRect().right);
+  return { cellGap: cell.right - button.right, textGap: button.left - visibleTextRight, buttonInsideCell: button.left >= cell.left && button.right <= cell.right + 0.5 };
+});
+
+test("details: with peek carets off the hovered Open action sits at the Name column's right end and navigates", async ({ page }) => {
+  const alpha = row(page, `${root}/Alpha`);
+  const open = alpha.getByRole("button", { name: "Open Alpha", exact: true });
+  await alpha.hover();
+  await expect(open).toHaveCSS("opacity", "1");
+  const header = await pane(page).locator(".column-header.name-column").evaluate(el => el.parentElement!.getBoundingClientRect().right);
+  await expect.poll(async () => header - (await open.boundingBox())!.x - (await open.boundingBox())!.width).toBeLessThanOrEqual(26);
+  const g = await nameCellGeometry(page, `${root}/Alpha`);
+  expect(g.buttonInsideCell).toBe(true);
+  expect(g.cellGap).toBeGreaterThanOrEqual(0);
+  expect(g.cellGap).toBeLessThanOrEqual(8);
+  await page.screenshot({ path: "evidence/issue-1359-details-open-name-column-end.png" });
+  await open.click();
+  await expect.poll(() => currentPath(page)).toBe(`${root}/Alpha`);
+});
+
+test("details: resizing the Name column moves Open with it and the name truncates before it", async ({ page }) => {
+  const long = `${root}/Large`;
+  const handle = pane(page).getByRole("separator", { name: "Resize Name column" });
+  await handle.focus();
+  await page.keyboard.press("Home");
+  const r = row(page, long);
+  await r.hover();
+  const open = r.getByRole("button", { name: "Open Large", exact: true });
+  await expect(open).toHaveCSS("opacity", "1");
+  const narrow = await nameCellGeometry(page, long);
+  expect(narrow.buttonInsideCell).toBe(true);
+  expect(narrow.textGap).toBeGreaterThanOrEqual(0);
+  await page.screenshot({ path: "screenshots/fix/peek-carets-details-navigate/details-open-name-column-resized.png" });
+  const before = (await open.boundingBox())!.x;
+  await handle.focus();
+  await page.keyboard.press("End");
+  await r.hover();
+  await expect.poll(async () => (await open.boundingBox())!.x).toBeGreaterThan(before);
+  const wide = await nameCellGeometry(page, long);
+  expect(wide.buttonInsideCell).toBe(true);
+  expect(wide.cellGap).toBeLessThanOrEqual(8);
+  await open.click();
+  await expect.poll(() => currentPath(page)).toBe(long);
+});
+
+test("details: with peek carets on there is no Open action and the caret stays beside the name", async ({ page }) => {
+  await setting(page, { folderPeekCarets: true });
+  const alpha = row(page, `${root}/Alpha`);
+  await alpha.hover();
+  await expect(alpha.locator(".peek-open")).toHaveCount(0);
+  await expect(alpha.locator(".peek-caret")).toBeVisible();
+});

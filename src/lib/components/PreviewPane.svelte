@@ -28,6 +28,8 @@ import { openFile } from "$lib/api/open";
   import { createPreviewDiffActions, type HunkAction } from "$lib/state/preview-diff-actions";
   import { gitCommitFileDiff, gitCompareCommitFileDiff } from "$lib/api/git-log";
   import VirtualList from "./VirtualList.svelte";
+  import HtmlPreview from "./HtmlPreview.svelte";
+  import type { HtmlZoom } from "$lib/domain/html-preview-zoom";
   import { type CsvPreview } from "$lib/domain/csv-preview";
   import { subscribeToLocalFileChanges } from "$lib/state/file-events";
   import { parentDir } from "$lib/domain/path";
@@ -147,6 +149,12 @@ import { openFile } from "$lib/api/open";
    * so external edits to the same file invalidate the cached preview. */
   const selectedKind = $derived(selectedFile ? classifyPreview(selectedFile) : null);
   const selectedPath = $derived(selectedFile?.path ?? null);
+  // Every newly selected document starts at Fit; a reload of the same path
+  // (watcher refresh after a save remounts HtmlPreview) keeps the zoom.
+  let htmlZoom = $derived.by<HtmlZoom>(() => {
+    void selectedPath;
+    return "fit";
+  });
   const previewKey = $derived(
     selectedFile ? `${selectedFile.path}|${selectedFile.modified}|${selectedFile.size}|${localPreviewRevision}` : null,
   );
@@ -631,11 +639,9 @@ import { openFile } from "$lib/api/open";
           </div>
         </div>
       {:else if content.kind === "html"}
-        <!-- No scripts or same-origin access: file markup must never reach the
-             Explorer document or IPC. CSP also prevents remote subresources;
-             inline styles and embedded images keep self-contained pages useful. -->
-        <iframe class="preview-html" title="HTML preview" sandbox="" referrerpolicy="no-referrer"
-          srcdoc={`<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; base-uri 'none'; form-action 'none'">${content.document}`}></iframe>
+        <HtmlPreview source={content.document} zoom={htmlZoom}
+          onzoom={(zoom) => (htmlZoom = zoom)}
+          fullscreen={fullscreen.active} ontogglefullscreen={fullscreen.toggle} />
       {:else if content.kind === "markdown"}
         <div class="preview-markdown" class:hljs-light={isLightTheme} class:hljs-dark={!isLightTheme}>{@html content.html}</div>
       {:else if content.kind === "code"}
@@ -986,14 +992,6 @@ import { openFile } from "$lib/api/open";
     display: flex;
     flex-direction: column;
     min-height: 0;
-  }
-
-  .preview-html {
-    flex: 1;
-    width: 100%;
-    min-height: 0;
-    border: 0;
-    background: white;
   }
 
   .video-preview-marker {

@@ -1,4 +1,4 @@
-import { rememberListExpansion } from "$lib/domain/folder-peek-memory";
+import { rememberListExpansion, type ListPeekExpansion } from "$lib/domain/folder-peek-memory";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import * as client from "svelte/internal/client";
 import type { FileEntry } from "$lib/domain/file";
@@ -183,13 +183,12 @@ it("remembers Tiles panel heights per pane for the session, without counting as 
 });
 
 
-it("full-flow choice is per pane and survives collapse, refresh, navigation and view changes", async () => {
+it("a List stage is per pane and survives refresh, navigation and view changes, but closing forgets it (#1365)", async () => {
   const left = create("list"), right = create("list");
   await left.togglePeek(a.path); await settle();
   left.showAllListChildren(a.path);
   expect([...left.listFullFlowPaths]).toEqual([a.path]);
   expect(right.listFullFlowPaths.size).toBe(0);
-  await left.togglePeek(a.path); await left.togglePeek(a.path); await settle();
   await left.refresh({ silent: true }); await settle();
   left.setViewMode("details"); await settle();
   left.setViewMode("list"); await settle();
@@ -197,6 +196,28 @@ it("full-flow choice is per pane and survives collapse, refresh, navigation and 
   await left.navigateTo("/r"); await settle();
   expect(left.listFullFlowPaths.has(a.path)).toBe(true);
   expect(left.expandedPaths.has(a.path)).toBe(true);
+  // Closing forgets the stage: the next click opens the compact card.
+  await left.togglePeek(a.path); await settle();
+  expect(left.listFullFlowPaths.size).toBe(0);
+  await left.togglePeek(a.path); await settle();
+  expect(left.expandedPaths.has(a.path)).toBe(true);
+  expect(left.listFullFlowPaths.size + left.listSpillPaths.size + left.listColumnPaths.size).toBe(0);
+});
+
+it("every way of closing a folder forgets its List stage, and only that folder's (#1365)", async () => {
+  const pane = create("list");
+  await pane.togglePeek(a.path); await pane.togglePeek(b.path); await settle();
+  pane.showSpillListChildren(a.path);
+  pane.showAllListChildren(b.path);
+  pane.collapseAllPeeks(); await settle();
+  expect(pane.listSpillPaths.size + pane.listFullFlowPaths.size).toBe(0);
+  await pane.togglePeek(a.path); await pane.togglePeek(b.path); await settle();
+  expect(pane.listSpillPaths.size + pane.listFullFlowPaths.size).toBe(0);
+  pane.showSpillListChildren(a.path);
+  pane.showAllListChildren(b.path);
+  await pane.togglePeek(b.path); await settle();
+  expect([...pane.listSpillPaths]).toEqual([a.path]);
+  expect(pane.listFullFlowPaths.size).toBe(0);
 });
 
 it("full-flow accepts only an open, permanent top-level List folder", async () => {
@@ -215,23 +236,124 @@ it("full-flow accepts only an open, permanent top-level List folder", async () =
 });
 
 
-it("keeps column and full-flow stages mutually exclusive and pane-local", async () => {
+it("keeps spill, full-flow and column stages mutually exclusive and pane-local", async () => {
   const left = create("list"), right = create("list");
   await left.togglePeek(a.path); await settle();
-  left.showColumnListChildren(a.path);
-  expect(left.listColumnPaths.has(a.path)).toBe(true);
-  expect(left.listFullFlowPaths.has(a.path)).toBe(false);
-  expect(right.listColumnPaths.size).toBe(0);
+  const stageOf = () => [left.listSpillPaths, left.listFullFlowPaths, left.listColumnPaths].flatMap((paths, index) => paths.has(a.path) ? [["spill", "full", "column"][index]] : []);
+  left.showSpillListChildren(a.path);
+  expect(stageOf()).toEqual(["spill"]);
+  expect(right.listSpillPaths.size).toBe(0);
   left.showAllListChildren(a.path);
-  expect(left.listColumnPaths.has(a.path)).toBe(false);
-  expect(left.listFullFlowPaths.has(a.path)).toBe(true);
+  expect(stageOf()).toEqual(["full"]);
   left.showColumnListChildren(a.path);
-  await left.togglePeek(a.path); await left.togglePeek(a.path); await settle();
-  expect(left.listColumnPaths.has(a.path)).toBe(true);
-  expect(left.listFullFlowPaths.has(a.path)).toBe(false);
+  expect(stageOf()).toEqual(["column"]);
+  left.showSpillListChildren(a.path);
+  expect(stageOf()).toEqual(["spill"]);
   left.setViewMode("details"); await settle();
   left.showAllListChildren(a.path);
-  expect(left.listColumnPaths.has(a.path)).toBe(true);
+  expect(stageOf()).toEqual(["spill"]);
+});
+
+it("no closed, nested, temporary, disabled or non-List target acquires either List stage", async () => {
+  const nested = entry("/r/a/nested");
+  source.current = async path => ({ ok: true, path, entries: path === a.path ? [nested, big] : path === nested.path ? [] : trees[path] ?? [] });
+  const pane = create("list");
+  const setStage = (path: string, stage: "column" | "spill" | "full" | "card") => {
+    if (stage === "full") pane.showAllListChildren(path);
+    else if (stage === "spill") pane.showSpillListChildren(path);
+    else if (stage === "column") pane.showColumnListChildren(path);
+    else pane.showCompactListCard(path);
+  };
+  const staged = () => [...pane.listColumnPaths, ...pane.listSpillPaths, ...pane.listFullFlowPaths];
+  for (const stage of ["column", "spill", "full", "card"] as const) {
+    // Closed.
+    setStage(a.path, stage);
+    // Temporary (a drag's spring peek).
+    await pane.setSpringPeeks([a.path]); await settle();
+    setStage(a.path, stage);
+    await pane.setSpringPeeks([]); await settle();
+    // Nested, although permanently expanded.
+    await pane.togglePeek(a.path); await settle(); await pane.togglePeek(nested.path); await settle();
+    expect(pane.isPeekExpanded(nested.path)).toBe(true);
+    setStage(nested.path, stage);
+    // A file row is not a folder card.
+    setStage(big.path, stage);
+    expect(staged()).toEqual([]);
+    // Non-List views keep the expansion but cannot stage it.
+    for (const mode of ["details", "tiles"] as const) {
+      pane.setViewMode(mode); await settle();
+      setStage(a.path, stage);
+    }
+    pane.setViewMode("list"); await settle();
+    // Folder Peek off.
+    settingsStore.update({ folderPeek: false }); await settle();
+    setStage(a.path, stage);
+    settingsStore.update({ folderPeek: true }); await settle();
+    expect(staged()).toEqual([]);
+    await pane.togglePeek(nested.path); await pane.togglePeek(a.path); await settle();
+  }
+  // The same target is admitted once it is eligible.
+  await pane.togglePeek(a.path); await settle();
+  pane.showColumnListChildren(a.path);
+  expect(staged()).toEqual([a.path]);
+  expect([...pane.listColumnPaths]).toEqual([a.path]);
+  expect(pane.listFullFlowPaths.size).toBe(0);
+});
+
+it("Less returns every expanded stage to the compact card, keeping its grip height (#1360, #1365)", async () => {
+  const left = create("list"), right = create("list");
+  await left.togglePeek(a.path); await right.togglePeek(a.path); await settle();
+  left.setListCardRows(a.path, 2);
+  right.showSpillListChildren(a.path);
+  for (const stage of [() => left.showSpillListChildren(a.path), () => left.showAllListChildren(a.path), () => left.showColumnListChildren(a.path)]) {
+    stage();
+    expect(left.listSpillPaths.size + left.listFullFlowPaths.size + left.listColumnPaths.size).toBe(1);
+    left.showCompactListCard(a.path);
+    expect(left.listSpillPaths.size + left.listFullFlowPaths.size + left.listColumnPaths.size).toBe(0);
+  }
+  // The compact card keeps its grip height; the other pane keeps its stage.
+  expect(left.listCardRows(a.path)).toBe(2);
+  expect([...right.listSpillPaths]).toEqual([a.path]);
+  // Returning to the card is idempotent and More can stage the folder again.
+  left.showCompactListCard(a.path);
+  expect(left.listSpillPaths.size + left.listFullFlowPaths.size).toBe(0);
+  left.showSpillListChildren(a.path);
+  expect([...left.listSpillPaths]).toEqual([a.path]);
+});
+
+it("an ineligible target's compact-card request never clears its remembered stage, nor another folder's (#1360)", async () => {
+  const pane = create("list");
+  const stageOf = (path: string) => pane.listColumnPaths.has(path) ? "column" : pane.listFullFlowPaths.has(path) ? "full" : "card";
+  await pane.togglePeek(a.path); await pane.togglePeek(b.path); await settle();
+  pane.showAllListChildren(a.path);
+  pane.showColumnListChildren(b.path);
+  // Non-List views and Folder Peek off keep the expansion and its stage.
+  for (const mode of ["details", "tiles"] as const) {
+    pane.setViewMode(mode); await settle();
+    pane.showCompactListCard(a.path);
+  }
+  pane.setViewMode("list"); await settle();
+  settingsStore.update({ folderPeek: false }); await settle();
+  pane.showCompactListCard(a.path);
+  settingsStore.update({ folderPeek: true }); await settle();
+  expect(stageOf(a.path)).toBe("full");
+  // Once eligible, it clears only that folder in this pane.
+  pane.showCompactListCard(a.path);
+  expect(stageOf(a.path)).toBe("card");
+  expect(stageOf(b.path)).toBe("column");
+});
+
+it("closing forgets the stage: neither a later spring peek nor reopening restores it (#1365)", async () => {
+  const pane = create("list");
+  await pane.togglePeek(a.path); await settle();
+  pane.showAllListChildren(a.path);
+  await pane.togglePeek(a.path); await settle();
+  await pane.setSpringPeeks([a.path]); await settle();
+  // Temporary peeks cannot stage the folder.
+  pane.showSpillListChildren(a.path);
+  expect(pane.listFullFlowPaths.size + pane.listSpillPaths.size).toBe(0);
+  await pane.setSpringPeeks([]); await pane.togglePeek(a.path); await settle();
+  expect(pane.listFullFlowPaths.size + pane.listSpillPaths.size).toBe(0);
 });
 
 it("bounds session stages and retains the most recently chosen folders", () => {
@@ -241,7 +363,7 @@ it("bounds session stages and retains the most recently chosen folders", () => {
     .toEqual([["/r/a", "full"], ["/r/c", "column"]]);
   expect([...before]).toEqual([["/r/a", "column"], ["/r/b", "full"]]);
   expect(rememberListExpansion(before, "/r/c", "column", 0).size).toBe(0);
-  let many: ReadonlyMap<string, "column" | "full"> = new Map();
+  let many: ReadonlyMap<string, ListPeekExpansion> = new Map();
   for (let index = 0; index < 1000; index++) many = rememberListExpansion(many, `/r/${index}`, "column");
   expect(many.size).toBe(500);
   expect(many.has("/r/499")).toBe(false);

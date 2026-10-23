@@ -31,6 +31,8 @@ export const test = base.extend({
     await page.addInitScript(() => {
       Object.defineProperty(window.navigator, "platform", {
         get: () => "Linux x86_64",
+        // A later init script may opt one spec into another engine's paths.
+        configurable: true,
       });
     });
     await use(page);

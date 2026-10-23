@@ -18,18 +18,19 @@ for (const mode of ["details", "list"] as const) {
     const row = page.locator(`${shown} .entry-item[data-path="/folder-peek/Alpha"]`);
     await row.hover();
     await expect(row.getByRole("button", { name: "Open Alpha", exact: true })).toHaveCSS("opacity", "1");
-    const placement = await row.evaluate(element => {
+    const placement = await row.evaluate((element, mode) => {
       const title = element.querySelector(".entry-name")!;
       const text = document.createRange();
       text.selectNodeContents(title);
       const titleGap = element.querySelector(".peek-open")!.getBoundingClientRect().left - text.getBoundingClientRect().right;
-      const rowRect = element.getBoundingClientRect();
+      const rowRect = mode === "list" ? element.getBoundingClientRect() : element.querySelector(".name-cell")!.getBoundingClientRect();
       const buttonRect = element.querySelector(".peek-open")!.getBoundingClientRect();
       return { titleGap, rowRightGap: rowRect.right - buttonRect.right };
-    });
-    expect(placement.rowRightGap).toBeGreaterThanOrEqual(7);
-    expect(placement.rowRightGap).toBeLessThanOrEqual(10);
-    const placementName = "at-row-edge";
+    }, mode);
+    // List: row edge. Details: right end of the Name column (#1359).
+    expect(placement.rowRightGap).toBeGreaterThanOrEqual(mode === "list" ? 7 : 3);
+    expect(placement.rowRightGap).toBeLessThanOrEqual(mode === "list" ? 10 : 8);
+    const placementName = mode === "list" ? "at-row-edge" : "at-name-column-end";
     await page.screenshot({ path: `screenshots/fix/peek/open-${placementName}-${mode}.png` });
     await row.getByRole("button", { name: "Open Alpha", exact: true }).click();
     await expect(page.locator(`${shown} .entry-item[data-path="/folder-peek/Alpha/same.txt"]`)).toBeVisible();

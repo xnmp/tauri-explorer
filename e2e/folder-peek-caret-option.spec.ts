@@ -228,20 +228,58 @@ for (const mode of ["details", "list", "tiles"] as const) {
   });
 }
 
-// #1359: like List (#1328), Details keeps a caretless folder's Open action at
-// the row's far-right edge, clear of the name, and it still navigates.
-test("details: with peek carets off the hovered Open action sits at the row's right edge and navigates", async ({ page }) => {
+// #1359: with carets off, Details keeps a hovered folder's Open action at the
+// right end of the Name column (not the far end of every column), clear of the
+// name, following column resizing, and it still navigates.
+const nameCellGeometry = (page: Page, path: string) => row(page, path).evaluate(element => {
+  const cell = element.querySelector<HTMLElement>(".name-cell")!.getBoundingClientRect();
+  const button = element.querySelector<HTMLElement>(".peek-open")!.getBoundingClientRect();
+  const range = document.createRange();
+  range.selectNodeContents(element.querySelector(".entry-name")!);
+  const text = range.getBoundingClientRect();
+  const visibleTextRight = Math.min(text.right, element.querySelector<HTMLElement>(".name-text")!.getBoundingClientRect().right);
+  return { cellGap: cell.right - button.right, textGap: button.left - visibleTextRight, buttonInsideCell: button.left >= cell.left && button.right <= cell.right + 0.5 };
+});
+
+test("details: with peek carets off the hovered Open action sits at the Name column's right end and navigates", async ({ page }) => {
   const alpha = row(page, `${root}/Alpha`);
   const open = alpha.getByRole("button", { name: "Open Alpha", exact: true });
   await alpha.hover();
   await expect(open).toHaveCSS("opacity", "1");
-  await expect.poll(async () => {
-    const [buttonBox, rowBox] = await Promise.all([open.boundingBox(), alpha.boundingBox()]);
-    return buttonBox && rowBox ? rowBox.x + rowBox.width - buttonBox.x - buttonBox.width : Number.POSITIVE_INFINITY;
-  }).toBeLessThanOrEqual(12);
-  await page.screenshot({ path: "evidence/issue-1359-details-open-right-edge.png" });
+  const header = await pane(page).locator(".column-header.name-column").evaluate(el => el.parentElement!.getBoundingClientRect().right);
+  await expect.poll(async () => header - (await open.boundingBox())!.x - (await open.boundingBox())!.width).toBeLessThanOrEqual(26);
+  const g = await nameCellGeometry(page, `${root}/Alpha`);
+  expect(g.buttonInsideCell).toBe(true);
+  expect(g.cellGap).toBeGreaterThanOrEqual(0);
+  expect(g.cellGap).toBeLessThanOrEqual(8);
+  await page.screenshot({ path: "evidence/issue-1359-details-open-name-column-end.png" });
   await open.click();
   await expect.poll(() => currentPath(page)).toBe(`${root}/Alpha`);
+});
+
+test("details: resizing the Name column moves Open with it and the name truncates before it", async ({ page }) => {
+  const long = `${root}/Large`;
+  const handle = pane(page).getByRole("separator", { name: "Resize Name column" });
+  await handle.focus();
+  await page.keyboard.press("Home");
+  const r = row(page, long);
+  await r.hover();
+  const open = r.getByRole("button", { name: "Open Large", exact: true });
+  await expect(open).toHaveCSS("opacity", "1");
+  const narrow = await nameCellGeometry(page, long);
+  expect(narrow.buttonInsideCell).toBe(true);
+  expect(narrow.textGap).toBeGreaterThanOrEqual(0);
+  await page.screenshot({ path: "screenshots/fix/peek-carets-details-navigate/details-open-name-column-resized.png" });
+  const before = (await open.boundingBox())!.x;
+  await handle.focus();
+  await page.keyboard.press("End");
+  await r.hover();
+  await expect.poll(async () => (await open.boundingBox())!.x).toBeGreaterThan(before);
+  const wide = await nameCellGeometry(page, long);
+  expect(wide.buttonInsideCell).toBe(true);
+  expect(wide.cellGap).toBeLessThanOrEqual(8);
+  await open.click();
+  await expect.poll(() => currentPath(page)).toBe(long);
 });
 
 test("details: with peek carets on there is no Open action and the caret stays beside the name", async ({ page }) => {
@@ -250,32 +288,4 @@ test("details: with peek carets on there is no Open action and the caret stays b
   await alpha.hover();
   await expect(alpha.locator(".peek-open")).toHaveCount(0);
   await expect(alpha.locator(".peek-caret")).toBeVisible();
-});
-
-test("details: with columns overflowing the pane the hovered Open action stays inside the visible scroller before and after scrolling", async ({ page }) => {
-  await page.setViewportSize({ width: 640, height: 600 });
-  const alpha = row(page, `${root}/Alpha`);
-  const open = alpha.getByRole("button", { name: "Open Alpha", exact: true });
-  // The horizontal scroller is whichever ancestor of the row scrolls sideways.
-  const scroller = alpha.locator("xpath=ancestor::*[contains(concat(' ', @class, ' '), ' content ')][1]");
-  const visibleGap = async () => {
-    const [b, sc] = await Promise.all([open.boundingBox(), scroller.evaluate(el => { const r = el.getBoundingClientRect(); return { left: r.left, right: r.left + el.clientWidth, scrollW: el.scrollWidth, clientW: el.clientWidth }; })]);
-    return b ? { gap: sc.right - b.x - b.width, inside: b.x >= sc.left } : { gap: Number.POSITIVE_INFINITY, inside: false };
-  };
-  const overflow = await scroller.evaluate(el => el.scrollWidth - el.clientWidth);
-  expect(overflow).toBeGreaterThan(0);
-  for (const left of [0, overflow / 2, overflow]) {
-    await scroller.evaluate((el, x) => { el.scrollLeft = x; }, left);
-    await alpha.hover();
-    await expect(open).toHaveCSS("opacity", "1");
-    await expect.poll(async () => (await visibleGap()).gap).toBeGreaterThanOrEqual(0);
-    await expect.poll(async () => (await visibleGap()).gap).toBeLessThanOrEqual(12);
-    expect((await visibleGap()).inside).toBe(true);
-    if (left === 0) await page.screenshot({ path: "screenshots/fix/peek-carets-details-navigate/details-open-narrow-scroll-start.png" });
-  }
-  await page.screenshot({ path: "screenshots/fix/peek-carets-details-navigate/details-open-narrow-scroll-end.png" });
-  await scroller.evaluate(el => { el.scrollLeft = 0; });
-  await alpha.hover();
-  await open.click();
-  await expect.poll(() => currentPath(page)).toBe(`${root}/Alpha`);
 });

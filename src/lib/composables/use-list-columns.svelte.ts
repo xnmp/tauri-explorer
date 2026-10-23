@@ -22,6 +22,8 @@ interface ListColumnsDeps {
   getFullFlowPaths?: () => ReadonlySet<string>;
   /** Folders filling one column with a scrollable descendant section. */
   getColumnPaths?: () => ReadonlySet<string>;
+  /** Folders whose rows spill below their header, capped (#1365). */
+  getSpillPaths?: () => ReadonlySet<string>;
   /** Remembered card height (visible rows) for an open top-level folder. */
   getPreferredRows: (path: string) => number | undefined;
   /** A drag's temporary peeks (#1242): the cards holding them keep their place,
@@ -45,18 +47,15 @@ export function useListColumns(deps: ListColumnsDeps) {
   const rows = $derived(listRows(height));
   // A row-count change re-sizes and re-flows; only a row-model change rebuilds items.
   const springPaths = $derived(deps.getSpringPaths?.() ?? []);
-  // A closed folder remembered as full-flow still springs into a compact card:
-  // only the drag's explicit temporary geometry can keep its held row stable.
-  const fullFlowPaths = $derived.by(() => {
-    const paths = deps.getFullFlowPaths?.();
-    return paths && springPaths.length ? new Set([...paths].filter(path => !springPaths.includes(path))) : paths;
-  });
-  const columnPaths = $derived.by(() => {
-    const paths = deps.getColumnPaths?.();
-    return paths && springPaths.length ? new Set([...paths].filter(path => !springPaths.includes(path))) : paths;
-  });
-  const structure = $derived(buildListStructure(deps.getRows(), fullFlowPaths));
-  const model = $derived(sizeListModel(structure, rows, deps.getPreferredRows, springCardFits(structure, deps.getRows(), springPaths, rows, deps.getPreferredRows, columnPaths), columnPaths));
+  // A spring peek is always a compact card: only the drag's explicit temporary
+  // geometry can keep its held row stable (closed folders keep no stage, #1365).
+  const withoutSpring = (paths: ReadonlySet<string> | undefined) =>
+    paths && springPaths.length ? new Set([...paths].filter(path => !springPaths.includes(path))) : paths;
+  const fullFlowPaths = $derived(withoutSpring(deps.getFullFlowPaths?.()));
+  const columnPaths = $derived(withoutSpring(deps.getColumnPaths?.()));
+  const spillPaths = $derived(withoutSpring(deps.getSpillPaths?.()));
+  const structure = $derived(buildListStructure(deps.getRows(), fullFlowPaths, spillPaths));
+  const model = $derived(sizeListModel(structure, rows, deps.getPreferredRows, springCardFits(structure, springPaths), columnPaths));
   const springBridges = $derived(springWrapBridges(model, springPaths));
   const layout = $derived(model.layout);
   const extent = $derived(listExtent(layout.columns.length));
@@ -81,7 +80,8 @@ export function useListColumns(deps: ListColumnsDeps) {
     const columns = new Set(Array.from({ length: rangeEnd - rangeStart }, (_, i) => rangeStart + i));
     // The creation row is the first item whenever it exists.
     if (model.items[0]?.entryIndex === null) columns.add(layout.byIndex[0].column);
-    for (const index of pinnedEntries) columns.add(layout.byIndex[model.entryItem[index]].column);
+    // A row a spill hides has no slot to pin (#1365).
+    for (const index of pinnedEntries) { const placement = layout.byIndex[model.entryItem[index]]; if (placement) columns.add(placement.column); }
     return [...columns].sort((a, b) => a - b);
   });
   const guideSpans = $derived(fullFlowGuideSpans(deps.getRows(), model));

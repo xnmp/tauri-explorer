@@ -103,9 +103,10 @@ test("with peek carets off, the hovered folder Open action sits at the row edge 
   await expect.poll(() => explorerCall<string>(page, "return explorer.currentPath")).toBe(`${root}/Career`);
 });
 
-test("a card that does not fit starts the next column, leaving a gap, and is scrolled into view", async ({ page }) => {
-  const R = await open(page, root, { width: 720, height: 430 });
-  expect(R).toBeLessThan(12);
+test("a folder with fewer than three slots left starts the next column, leaving a gap, and is scrolled into view", async ({ page }) => {
+  // Personal is the sixth item: at R=7 only two slots are left below it (#1365).
+  const R = await open(page, root, { width: 720, height: 340 });
+  expect(R).toBe(7);
   expect(await viewport(page).evaluate(el => el.scrollLeft)).toBe(0);
   await toggle(page, `${root}/Personal`);
   const after = await placements(page);
@@ -211,15 +212,16 @@ test("assistive technology reads the List as a tree, with sibling positions, ins
   await page.keyboard.press("Tab");
   await expect(slot(page, `${root}/Career`).getByRole("separator", { name: "Resize Career" })).toBeFocused();
   await page.keyboard.press("Tab");
-  const more = slot(page, `${root}/Career`).getByRole("button", { name: /Expand Career to one column|Show all Career items/ });
+  const more = slot(page, `${root}/Career`).getByRole("button", { name: "Show more Career items" });
   await expect(more).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(row(page, `${root}/Career`)).toBeFocused();
-  const all = slot(page, `${root}/Career`).getByRole("button", { name: "Show all Career items" });
-  if (await all.count()) { await all.focus(); await page.keyboard.press("Enter"); }
+  // The spill shows every row here, or ends in a "+N more" treeitem.
+  const all = page.locator(shown).getByRole("button", { name: "Show all Career items" });
+  if (await all.count()) { await all.focus(); expect(await violations()).toEqual([]); await page.keyboard.press("Enter"); }
   await expect(card(page, `${root}/Career`)).toHaveCount(0);
-  await expect(row(page, `${root}/Career`)).toBeFocused();
-  const less = row(page, `${root}/Career`).getByRole("button", { name: "Show fewer Career items" });
+  if (!await all.count()) await row(page, `${root}/Career`).focus();
+  const less = row(page, `${root}/Career`).getByRole("button", { name: "Shrink Career to a card" });
   await less.focus(); await page.keyboard.press("Enter");
   await expect(card(page, `${root}/Career`)).toHaveCount(1);
   await expect(row(page, `${root}/Career`)).toBeFocused();
@@ -539,20 +541,23 @@ test("closing a card keeps keyboard focus on its header: caret, carets-off click
   expect(await activePath(page)).toBe(`${root}/Codex`);
 });
 
-test("a card that wraps once its slow listing settles is revealed, though motion has stopped", async ({ page }) => {
+test("a card whose slow listing settles after its motion keeps its place, shrunk to the rows left", async ({ page }) => {
   await open(page, root, { width: 720, height: 430 });
   await page.evaluate(async () => {
     const { getMockControl } = await import("/src/lib/api/mock-control.ts");
     getMockControl().latency = { list_directory_fresh: 2500 };
   });
   await caret(page, `${root}/Personal`).click();
-  // Past the motion window (1.5s) the card still fits at [0,5] with its Loading row.
+  // Past the motion window (1.5s) the card holds its place with its Loading row.
   await page.waitForTimeout(1700);
   expect((await placements(page))[`${root}/Personal`]).toEqual([0, 5]);
   await expect.poll(() => explorerCall<string>(page, "return explorer.peekStatus(value) ?? 'none'", `${root}/Personal`), { timeout: 8000 }).toBe("loaded");
   await settled(page);
-  expect((await placements(page))[`${root}/Personal`]).toEqual([1, 0]);
-  await expect.poll(() => inView(page, `${root}/Personal`)).toBe(true);
+  // Its rows never move it (#1365): it shrinks to the rows left, without a sideways scroll.
+  expect((await placements(page))[`${root}/Personal`]).toEqual([0, 5]);
+  const R = Number(await page.locator(`${shown} .list-view`).getAttribute("data-rows"));
+  await expect.poll(() => card(page, `${root}/Personal`).evaluate(el => el.clientHeight)).toBe((R - 6) * 30);
+  expect(await viewport(page).evaluate(el => el.scrollLeft)).toBe(0);
 });
 
 test("an open whose motion a layout change interrupts is still revealed", async ({ page }) => {
@@ -560,7 +565,8 @@ test("an open whose motion a layout change interrupts is still revealed", async 
   // refresh lands mid-motion however slowly the runner serves it (a wall-clock
   // bound around the refresh failed on loaded CI WebKit).
   await page.clock.install();
-  await open(page, root, { width: 720, height: 430 });
+  // R=7: Personal has two slots left, so it starts the next column (#1365).
+  await open(page, root, { width: 720, height: 340 });
   const path = `${root}/Personal`;
   await page.evaluate(async () => {
     await import("/src/lib/api/mock-fixtures.ts");
@@ -855,7 +861,7 @@ test("peek groups are unboxed while nesting and resize controls remain visible",
 
 
 for (const activation of ["click", "Enter", "Space"] as const) {
-  test(`+N more ${activation} fills a scrollable column before flowing all children`, async ({ page }) => {
+  test(`+N more ${activation} spills rows below the header before flowing all children (#1365)`, async ({ page }) => {
     await open(page, root, { width: 720, height: 430 });
     const base = "/list-full-flow";
     const folder = `${base}/Archive`;
@@ -866,27 +872,30 @@ for (const activation of ["click", "Enter", "Space"] as const) {
     }), [base, folder] as const);
     await explorerCall(page, "return explorer.navigateTo(value)", base);
     await toggle(page, folder);
-    const more = slot(page, folder).getByRole("button", { name: /Expand Archive to one column|Show all Archive items/ });
+    const compact = await card(page, folder).evaluate(el => el.clientHeight);
+    const header = await row(page, folder).boundingBox();
+    const more = slot(page, folder).getByRole("button", { name: "Show more Archive items" });
     await expect(more).toBeVisible();
     if (activation === "click") {
       await page.screenshot({ path: "evidence/1324-list-full-flow-more-button.png" });
       await more.click();
     }
     else { await more.focus(); await page.keyboard.press(activation); }
-    await expect(card(page, folder)).toHaveCount(1);
+    await expect(card(page, folder)).toHaveCount(0);
+    await expect(row(page, folder)).toBeFocused();
     const R = Number(await page.locator(`${shown} .list-view`).getAttribute("data-rows"));
-    await expect.poll(() => card(page, folder).evaluate(el => el.clientHeight)).toBe((R - 1) * 30);
-    expect(await card(page, folder).evaluate(el => el.scrollHeight > el.clientHeight)).toBe(true);
-    const all = slot(page, folder).getByRole("button", { name: "Show all Archive items" });
-    await expect(all).toBeVisible();
-    // The second-stage action stays available even at the scroll area's end.
-    await card(page, folder).evaluate(el => { el.scrollTop = el.scrollHeight; });
-    await expect(all).toBeVisible();
-    if (activation === "click") await page.screenshot({ path: "evidence/1324-list-column-scroll.png" });
+    // The header stays put; its rows fill the rest of column 0 and column 1,
+    // whose last slot offers the rest.
+    expect(await row(page, folder).boundingBox()).toEqual(header);
+    const all = page.locator(`${shown} .list-slot[data-motion-key="more:${folder}"]`).getByRole("button", { name: "Show all Archive items" });
+    await expect(all).toHaveText(`+${80 - (2 * R - 2)} more`);
+    expect(Number(await slot(page, `${folder}/item-${String(2 * R - 3).padStart(3, "0")}.txt`).getAttribute("data-column"))).toBe(1);
     if (activation === "click") await all.click();
     else { await all.focus(); await page.keyboard.press(activation); }
-    await expect(card(page, folder)).toHaveCount(0);
+    await expect(all).toHaveCount(0);
     await expect(row(page, folder)).toHaveAttribute("aria-expanded", "true");
+    // The row that took the slot has the keyboard.
+    await expect(row(page, `${folder}/item-${String(2 * R - 2).padStart(3, "0")}.txt`)).toBeFocused();
     // End must reveal and select a previously unmounted child through FileList,
     // proving that column virtualization and keyboard navigation share the model.
     await row(page, folder).focus();
@@ -902,21 +911,17 @@ for (const activation of ["click", "Enter", "Space"] as const) {
     expect(await explorerCall(page, "return explorer.currentPath")).toBe(base);
     if (activation === "click") await page.screenshot({ path: "evidence/1324-list-full-flow-last-children.png" });
     await page.keyboard.press("Home");
-    const less = row(page, folder).getByRole("button", { name: "Show fewer Archive items" });
+    const less = row(page, folder).getByRole("button", { name: "Shrink Archive to a card" });
     await expect(less).toHaveText("Less");
-    if (activation === "click") {
-      await page.screenshot({ path: "evidence/1329-list-full-flow-less.png" });
-      await page.screenshot({ path: "screenshots/fix/list-view-peek/list-full-flow-less.png" });
-    }
     await less.click();
     await expect(card(page, folder)).toHaveCount(1);
-    await expect.poll(() => card(page, folder).evaluate(el => el.clientHeight)).toBe((R - 1) * 30);
-    await expect(slot(page, folder).getByRole("button", { name: "Show all Archive items" })).toBeVisible();
+    await expect.poll(() => card(page, folder).evaluate(el => el.clientHeight)).toBe(compact);
+    await expect(slot(page, folder).getByRole("button", { name: "Show more Archive items" })).toBeVisible();
     await expect(less).toHaveCount(0);
   });
 }
 
-test("Less from the scrollable column returns to the compact card and its grip (#1360)", async ({ page }) => {
+test("Less from the legacy scrollable column returns to the compact card and its grip (#1360)", async ({ page }) => {
   await open(page, root, { width: 720, height: 430 });
   const base = "/list-column-less";
   const folder = `${base}/Archive`;
@@ -932,27 +937,27 @@ test("Less from the scrollable column returns to the compact card and its grip (
   await expect(grip).toBeVisible();
   const compact = await card(page, folder).evaluate(el => el.clientHeight);
   expect(compact).toBeLessThan((R - 1) * 30);
-  await slot(page, folder).getByRole("button", { name: "Expand Archive to one column" }).click();
+  // No click reaches the column stage since #1365; it is staged directly.
+  const toColumn = () => explorerCall(page, "explorer.showColumnListChildren(value)", folder);
+  await toColumn();
   await settled(page);
   await expect.poll(() => card(page, folder).evaluate(el => el.clientHeight)).toBe((R - 1) * 30);
   // The column stage has no grip, so it must offer its own way back.
   await expect(grip).toHaveCount(0);
   const shrink = row(page, folder).getByRole("button", { name: "Shrink Archive to a card" });
   await expect(shrink).toHaveText("Less");
-  await page.screenshot({ path: "screenshots/fix/expanding-a-large-folder/column-stage-less.png" });
   await shrink.click();
   await settled(page);
   await expect.poll(() => card(page, folder).evaluate(el => el.clientHeight)).toBe(compact);
   await expect(grip).toBeVisible();
   await expect(shrink).toHaveCount(0);
   await expect(row(page, folder)).toBeFocused();
-  await expect(slot(page, folder).getByRole("button", { name: "Expand Archive to one column" })).toBeVisible();
-  await page.screenshot({ path: "screenshots/fix/expanding-a-large-folder/compact-card-restored.png" });
+  await expect(slot(page, folder).getByRole("button", { name: "Show more Archive items" })).toBeVisible();
   // The grip's remembered height survives the round trip.
   await grip.focus();
   await page.keyboard.press("Home");
   await expect.poll(() => card(page, folder).evaluate(el => el.clientHeight)).toBe(30);
-  await slot(page, folder).getByRole("button", { name: "Expand Archive to one column" }).click();
+  await toColumn();
   await settled(page);
   await row(page, folder).getByRole("button", { name: "Shrink Archive to a card" }).click();
   await settled(page);
@@ -960,11 +965,14 @@ test("Less from the scrollable column returns to the compact card and its grip (
 });
 
 
+/** "+N more" until every row of `path` flows: a spill, then its last slot when it has one (#1365). */
 async function fullyExpand(page: Page, path: string): Promise<void> {
   const name = path.split("/").at(-1)!;
-  const column = row(page, path).getByRole("button", { name: `Expand ${name} to one column` });
-  if (await column.count()) await column.click();
-  await row(page, path).getByRole("button", { name: `Show all ${name} items` }).click();
+  await row(page, path).getByRole("button", { name: `Show more ${name} items` }).click();
+  await expect(card(page, path)).toHaveCount(0);
+  const all = page.locator(`${shown} .list-slot[data-motion-key="more:${path}"]`).getByRole("button", { name: `Show all ${name} items` });
+  if (await all.count()) await all.click();
+  await expect(all).toHaveCount(0);
 }
 
 test("full-flow nesting keeps status rows and guides through resize and carets-off mode", async ({ page }) => {
@@ -1037,17 +1045,18 @@ test("full-flow preserves nested selection and keyboard outcomes across narrow a
   expect(await explorerCall(page, "return explorer.currentPath")).toBe(base);
 });
 
-test("a saved full-flow choice uses a compact temporary peek and restores full flow on permanent reopen", async ({ page }) => {
+test("closing forgets full flow: a temporary peek and a permanent reopen both show the compact card (#1365)", async ({ page }) => {
   const { folder, nested } = await openFullFlowTree(page);
   await fullyExpand(page, folder);
   await toggle(page, folder);
   await expect(row(page, nested)).toHaveCount(0);
   await explorerCall(page, "return explorer.setSpringPeeks([value])", folder);
   await expect(page.locator(`${shown} [data-card-scroll]`)).toHaveCount(1);
-  await expect(row(page, folder).getByRole("button", { name: "Show all Outer items" })).toHaveCount(0);
+  await expect(row(page, folder).getByRole("button", { name: "Shrink Outer to a card" })).toHaveCount(0);
   await explorerCall(page, "return explorer.setSpringPeeks([])");
   await expect(row(page, nested)).toHaveCount(0);
   await toggle(page, folder);
   await expect(row(page, nested)).toBeVisible();
-  await expect(page.locator(`${shown} [data-card-scroll]`)).toHaveCount(0);
+  await expect(page.locator(`${shown} [data-card-scroll]`)).toHaveCount(1);
+  await expect(row(page, folder).getByRole("button", { name: "Shrink Outer to a card" })).toHaveCount(0);
 });

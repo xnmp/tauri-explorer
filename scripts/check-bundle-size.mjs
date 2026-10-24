@@ -5,6 +5,13 @@
  * manifest, gzips it (node zlib, default level — what most servers use),
  * and fails when it exceeds the budget.
  *
+ * Gzip is measured after replacing content-hashed file names in each chunk
+ * with a fixed placeholder (`normalizeHashedNames`). Chunks list, import and
+ * preload one another by hashed name, so changing any lazy chunk renames
+ * unchanged startup files and shifts their gzip size by the entropy of the
+ * new hash strings — hundreds of bytes across the startup graph with no code
+ * change (#1372). Raw bytes are measured as emitted.
+ *
  * Usage:
  *   node scripts/check-bundle-size.mjs             # build, then check
  *   node scripts/check-bundle-size.mjs --no-build  # check an existing build
@@ -15,7 +22,7 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
-import { collectStartupFiles } from "./startup-bundle.mjs";
+import { collectStartupFiles, normalizeHashedNames } from "./startup-bundle.mjs";
 import { findHookLeaks } from "./release-hook-leaks.mjs";
 
 // Measured 2026-07-12 (chore/perf-regression-guards, post merge of dev):
@@ -23,7 +30,10 @@ import { findHookLeaks } from "./release-hook-leaks.mjs";
 // bytes gzip. Budget = that gzip size + 10%. Raise deliberately (with a
 // note here) when a feature legitimately grows the cold-start payload;
 // never raise it just to make CI green.
-const BUDGET_GZIP_BYTES = 239_791;
+// Recalibrated 239,791 -> 237,844 when gzip became hash-normalized (#1372):
+// dev 81b6246d measured 86,649 bytes as emitted and 84,702 normalized, and
+// the cap keeps the same 153,142 bytes of headroom.
+const BUDGET_GZIP_BYTES = 237_844;
 
 // Full static entry closure at ea256aaf, measured before #680's lazy mock
 // split. Guard both parse input (raw bytes, relevant to local Tauri assets)
@@ -37,12 +47,10 @@ const STARTUP_RAW_BUDGET = 866_617;
 // Raised 278,400 -> 279,424 (+1 KiB) for #1061: pane minima and CSS-sized
 // split panes must apply on the first painted frame, so that code is startup
 // by nature (+279 bytes gzip over a dev that sat within ~300 bytes of the cap).
-// Raised 279,424 -> 279,936 (+512 bytes) for #1081, which adds no startup
-// code: its graph-only IPC wrapper lives in a lazy module, and the startup
-// closure's raw size matches dev (828,435 vs 828,439 bytes). Gzip still moved
-// +85 bytes because content-hashed chunk names in eager import lists changed
-// and compress differently; dev measured 279,400-279,408, within 24 bytes of
-// the old cap, so any lazy-chunk change could fail on name churn alone.
+// Raised 279,424 -> 279,936 (+512 bytes) for #1081, which added no startup
+// code: the +85 bytes it measured came from content-hashed chunk names. Gzip
+// is now measured with those names normalized (see the header), so such
+// churn no longer moves the total.
 // Raised 279,936 -> 280,448 (+512) for #863 (in-app Trash): dev measured
 // 279,766. Listing, restore, menu actions and refresh load lazily with the
 // first Trash listing (~1.7 KiB gzip chunk); what stays eager is the provider
@@ -60,7 +68,12 @@ const STARTUP_RAW_BUDGET = 866_617;
 // apply immediately. Bounded membership policies and closed-tab session
 // metadata add 580 bytes gzip over dev (280,623 -> 281,203); listings,
 // watches and tree projection remain lazy. The raw budget is unchanged.
-const STARTUP_GZIP_BUDGET = 281_984;
+// Recalibrated 281,984 -> 276,247 when gzip became hash-normalized (#1372),
+// granting no extra budget: dev 81b6246d measured 281,838 bytes as emitted
+// (146 bytes under the old cap) and 276,101 normalized, plus the same 146.
+// Under the old measure, a lazy-only SettingsDialog split (+9 bytes raw)
+// moved startup gzip +356 bytes through renamed chunks alone.
+const STARTUP_GZIP_BUDGET = 276_247;
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const clientDir = resolve(repoRoot, ".svelte-kit/output/client");
@@ -88,15 +101,18 @@ try {
  * the largest of those — the +page.svelte import graph. Resolving it through
  * the import closure keeps this stable across hash and chunk-name changes.
  */
+const emittedFiles = readdirSync(clientDir, { recursive: true }).map(String);
+const normalizedGzip = (file) =>
+  gzipSync(normalizeHashedNames(readFileSync(resolve(clientDir, file), "utf-8"), emittedFiles)).length;
 const chunks = collectStartupFiles(manifest).map((file) => ({
   file,
   rawBytes: statSync(resolve(clientDir, file)).size,
-  gzipBytes: gzipSync(readFileSync(resolve(clientDir, file))).length,
+  gzipBytes: normalizedGzip(file),
 }));
 const main = chunks.reduce((max, chunk) => chunk.rawBytes > max.rawBytes ? chunk : max);
 const startupRaw = chunks.reduce((total, chunk) => total + chunk.rawBytes, 0);
 const startupGzip = chunks.reduce((total, chunk) => total + chunk.gzipBytes, 0);
-const gzipBytes = gzipSync(readFileSync(resolve(clientDir, main.file))).length;
+const gzipBytes = main.gzipBytes;
 const pct = ((gzipBytes / BUDGET_GZIP_BYTES) * 100).toFixed(1);
 
 console.log(`Main chunk:  ${main.file}`);

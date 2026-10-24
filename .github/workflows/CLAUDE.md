@@ -98,15 +98,17 @@ diagnostics on the dev server or hooks explicitly. Local runs and
 
 # Dev-push impact map (#1386)
 
-On dev pushes (and dispatches, never PRs) both Chromium jobs run with
-`E2E_COVERAGE=function`: CDP precise coverage without block counts, about 5%
+On dev pushes (only: not PRs, main pushes, the schedule or dispatch, none of
+which publish) both Chromium jobs run with `E2E_COVERAGE=function`: CDP precise coverage without block counts, about 5%
 slower. On the bundle, `e2e/impact-coverage.ts` attributes each chunk through
 its hidden source map (`sourcemap: "hidden"` in browser-test builds) and
 `build/e2e-chunk-modules.json`, which lists every repository module a chunk
 contains, including CSS and fully tree-shaken modules, so an evaluated chunk
 marks all of them loaded (`scripts/impact-bundle.mjs`). A chunk without map
 data makes the test's record incomplete. Each shard uploads its records and
-Playwright JSON report; the `impact-map` job merges them with
+Playwright JSON report; the `impact-map` job (`continue-on-error`: an
+advisory artifact must never fail the dev push whose conclusion gates
+releases) merges them with
 `--commit $GITHUB_SHA` and publishes `e2e-impact-map` only when all
 `EXPECTED_REPORTS` (3, the two matrices) are present: a shard replayed from
 the test-result cache records nothing, and the previous map then stays the
@@ -117,7 +119,9 @@ PRs pick the map with `scripts/impact-map-source.mjs`: the newest unexpired
 `e2e-impact-map` artifact whose producing run is a push, schedule or dispatch
 of ci.yml or e2e-impact-map.yml on `dev` in this repository. The artifact name
 alone is not trusted, since any run (including a PR from a branch named `dev`)
-can upload one.
+can upload one. Newest is by artifact `created_at`, not commit order; that is
+safe because drift is a two-way tree diff between the map's commit and the
+merge base, whichever is newer.
 
 # PR test selection (#1175)
 

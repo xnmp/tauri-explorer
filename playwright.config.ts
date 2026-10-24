@@ -46,10 +46,11 @@ export default defineConfig({
   ],
   // CI's browser shards serve one prebuilt browser-test bundle (#1381:
   // E2E_BROWSER_BUILD=1 bun run build, scripts/serve-e2e-build.mjs) instead of
-  // transforming modules on demand per shard. Local runs and the coverage map
-  // (e2e-impact-map.yml) keep the dev server: its per-module scripts are what
-  // the impact collector attributes coverage to. Beside the bundle, a dev
-  // server serves the specs that intercept module requests (e2e/app-server.ts).
+  // transforming modules on demand per shard; dev pushes also record the
+  // impact map there, through the bundle's hidden source maps (#1386). Local
+  // runs and the nightly e2e-impact-map.yml keep the dev server. Beside the
+  // bundle, a dev server serves the specs that intercept module requests
+  // (e2e/app-server.ts).
   webServer: process.env.E2E_BUILD_DIR
     ? [
         {

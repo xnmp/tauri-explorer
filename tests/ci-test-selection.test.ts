@@ -182,11 +182,19 @@ describe("changes job selection", () => {
 });
 
 describe("dev-push impact map (#1386)", () => {
-  it("records coverage on both Chromium jobs outside PRs only", () => {
+  it("records coverage on both Chromium jobs for dev pushes only, the runs that publish", () => {
     for (const job of ["chromium", "chromium-view-modes"]) {
-      expect(ci.jobs[job].env.E2E_COVERAGE).toBe("${{ github.event_name != 'pull_request' && 'function' || '' }}");
+      expect(ci.jobs[job].env.E2E_COVERAGE).toBe("${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' && 'function' || '' }}");
     }
     expect(ci.jobs["webkit-tests"].env.E2E_COVERAGE).toBeUndefined();
+  });
+
+  it("cannot fail the run: the map is advisory and a dev push's conclusion gates releases", () => {
+    expect(ci.jobs["impact-map"]["continue-on-error"]).toBe(true);
+    // No gate or other job waits on it.
+    for (const [name, job] of Object.entries(ci.jobs as Record<string, { needs?: string | string[] }>)) {
+      if (name !== "impact-map") expect([job.needs ?? []].flat()).not.toContain("impact-map");
+    }
   });
 
   it("expects one report per Chromium shard", () => {

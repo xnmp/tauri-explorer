@@ -363,10 +363,10 @@ jobs:
       # with no new flakes measured on Chromium (run 40068235372). WebKit stays
       # at one worker: two overran its 40-minute shard budget there.
       PW_WORKERS: "2"
-      # Outside PRs, record function-level coverage for the dev-push
-      # test-impact map (#1386); it is not hashed, since it cannot change a
-      # result.
-      E2E_COVERAGE: ${{ github.event_name != 'pull_request' && 'function' || '' }}
+      # Dev pushes record function-level coverage for the dev-push test-impact
+      # map (#1386), the only runs that publish it; it is not hashed, since it
+      # cannot change a result.
+      E2E_COVERAGE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' && 'function' || '' }}
       ImageOS: playwright_noble
       ImageVersion: "1.60.0_9bd26ad900bb5e0f4dee75839e957a89ae89c2b7ab1e76050e559790e946b948"
       TEST_CACHE_NORMALIZE_VERSION: "1"
@@ -564,10 +564,10 @@ jobs:
       # at one worker: two overran its 40-minute shard budget there.
       PW_WORKERS: "2"
       ALL_VIEW_MODES: "1"
-      # Outside PRs, record function-level coverage for the dev-push
-      # test-impact map (#1386); it is not hashed, since it cannot change a
-      # result.
-      E2E_COVERAGE: ${{ github.event_name != 'pull_request' && 'function' || '' }}
+      # Dev pushes record function-level coverage for the dev-push test-impact
+      # map (#1386), the only runs that publish it; it is not hashed, since it
+      # cannot change a result.
+      E2E_COVERAGE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' && 'function' || '' }}
       ImageOS: playwright_noble
       ImageVersion: "1.60.0_9bd26ad900bb5e0f4dee75839e957a89ae89c2b7ab1e76050e559790e946b948"
       TEST_CACHE_NORMALIZE_VERSION: "1"
@@ -741,6 +741,10 @@ jobs:
   # map (or the nightly e2e-impact-map.yml one) then stays the newest.
   impact-map:
     needs: [chromium, chromium-view-modes]
+    # Advisory: the map only narrows later PRs. A failure here (install,
+    # artifact transfer, a truncated record) must not fail the dev push,
+    # whose conclusion gates releases (scripts/release-ci-gate.mjs).
+    continue-on-error: true
     if: >-
       !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/dev' &&
       needs.chromium.result == 'success' && needs.chromium-view-modes.result == 'success'

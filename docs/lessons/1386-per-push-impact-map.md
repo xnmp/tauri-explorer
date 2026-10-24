@@ -20,4 +20,10 @@
   against `EXPECTED_REPORTS` and publishes nothing otherwise.
 - **Trust the producing run, not the artifact name.** Any workflow run can
   upload `e2e-impact-map`; `scripts/impact-map-source.mjs` checks the run's
-  event, workflow path, branch and repository.
+  event, workflow path, branch and repository. It takes the newest by
+  `created_at`, so a nightly map can win over a slightly older push map of a
+  later commit; that is safe because drift is a two-way tree diff between the
+  map's commit and the merge base.
+- **An advisory job must not fail the run.** The dev push's conclusion gates
+  releases (`scripts/release-ci-gate.mjs`), so `impact-map` is
+  `continue-on-error`, and nothing `needs` it.

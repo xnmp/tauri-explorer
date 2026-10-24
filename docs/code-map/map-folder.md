@@ -508,7 +508,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `resize-size.ts` — bounded scalar normalization, visual/model delta conversion and axis-aware keyboard sizing.
 - `scroll-moves-handle.ts` — which scrolls end a panel drag: the document's, an ancestor's or a synced scroller's, never an unrelated list's.
 - `pane-viewport.ts` — pure descendant minima (`paneMinima` sizes the rendered canvas and split children without measurement), canvas placement, active-pane reveal and keyboard divider policy.
-- `pane-layout.ts` — pane split-tree pure logic (#228).
+- `pane-layout.ts` — pane split-tree pure logic (#228); `focusAfterClosing`/`reinsertLeaf` for closing and restoring panes (#229).
+- `window-tab-order.ts` — tab-strip index arithmetic: insertion after the active tab, Ctrl+Tab wrapping, drag reordering.
+- `closed-panes.ts` — bounded closed-pane stack, pane-vs-tab restore precedence, repeated last-tab close detection (#229).
 - `tab-title.ts` — VS Code-style tab title disambiguation.
 - `retained-tabs.ts` — which recently active tabs keep their pane tree mounted while hidden: stable render order plus LRU eviction (#1173).
 - `titlebar.ts` — title bar / tab strip visibility rules.

@@ -10,8 +10,9 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   // Local default is capped so a full run doesn't saturate every core and
   // freeze the desktop (Playwright's default is 50% of cores — 12 chromium
-  // workers on this machine). Override per-run with PW_WORKERS=N.
-  workers: process.env.CI ? 1 : Number(process.env.PW_WORKERS ?? 4),
+  // workers on this machine). Override per-run with PW_WORKERS=N; CI
+  // defaults to 1 and sets 2 on the Chromium jobs (#1368).
+  workers: Number(process.env.PW_WORKERS ?? (process.env.CI ? 1 : 4)),
   reporter: "html",
   use: {
     baseURL: "http://localhost:1420",

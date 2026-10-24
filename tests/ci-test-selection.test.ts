@@ -374,15 +374,23 @@ describe("view-mode shard plan", () => {
   });
 });
 
+const gates: Record<string, { base: Record<string, string>; browser: [string, string] }> = {
+  frontend: {
+    base: { CHECKS_RESULT: "success", CHROMIUM_RESULT: "success", VIEW_MODES_RESULT: "success", E2E: "ALL", VIEW_MODES: "ALL" },
+    browser: ["CHROMIUM_RESULT", "E2E"],
+  },
+  webkit: { base: { WEBKIT_RESULT: "success", WEBKIT: "ALL" }, browser: ["WEBKIT_RESULT", "WEBKIT"] },
+  // The Rust suites are skipped for a NONE selection like a browser job (#1368).
+  rust: { base: { RUST_RESULT: "success", RUST: "ALL" }, browser: ["RUST_RESULT", "RUST"] },
+};
+
 describe.each([
   ["frontend", "Require frontend validation and browser outcomes"],
   ["webkit", "Require all WebKit browser outcomes"],
+  ["rust", "Require all Rust suite outcomes"],
 ])("%s gate", (gate, name) => {
   const check = step(gate, (s) => s.name === name);
-  const base: Record<string, string> = gate === "frontend"
-    ? { CHECKS_RESULT: "success", CHROMIUM_RESULT: "success", VIEW_MODES_RESULT: "success", E2E: "ALL", VIEW_MODES: "ALL" }
-    : { WEBKIT_RESULT: "success", WEBKIT: "ALL" };
-  const browser = gate === "frontend" ? ["CHROMIUM_RESULT", "E2E"] : ["WEBKIT_RESULT", "WEBKIT"];
+  const { base, browser } = gates[gate];
   const passes = (env: Record<string, string>) => {
     try {
       runStep(check.run as string, { CHANGES_RESULT: "success", CODE: "true", ...base, ...env });

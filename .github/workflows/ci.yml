@@ -349,12 +349,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2]
     # Job-wide so the cache probe and the run hash the same environment. The
     # container, not the runner image, is this job's environment: name it in
     # the test-result cache's platform identity.
     env:
       E2E_ENGINE: chromium
+      # Two Playwright workers per runner (#1368): halves the runners per run
+      # with no new flakes measured on Chromium (run 40068235372). WebKit stays
+      # at one worker: two overran its 40-minute shard budget there.
+      PW_WORKERS: "2"
       ImageOS: playwright_noble
       ImageVersion: "1.60.0_9bd26ad900bb5e0f4dee75839e957a89ae89c2b7ab1e76050e559790e946b948"
       TEST_CACHE_NORMALIZE_VERSION: "1"
@@ -524,12 +528,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1]
     # Job-wide so the cache probe and the run hash the same environment. The
     # container, not the runner image, is this job's environment: name it in
     # the test-result cache's platform identity.
     env:
       E2E_ENGINE: chromium
+      # Two Playwright workers per runner (#1368): halves the runners per run
+      # with no new flakes measured on Chromium (run 40068235372). WebKit stays
+      # at one worker: two overran its 40-minute shard budget there.
+      PW_WORKERS: "2"
       ALL_VIEW_MODES: "1"
       ImageOS: playwright_noble
       ImageVersion: "1.60.0_9bd26ad900bb5e0f4dee75839e957a89ae89c2b7ab1e76050e559790e946b948"
@@ -970,7 +978,9 @@ jobs:
   rust-suite:
     name: rust-suite (${{ matrix.suite }})
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    # A NONE selection skips the job (no runner); the rust gate accepts that
+    # only for NONE.
+    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.rust != 'NONE'
     runs-on: ubuntu-latest
     # A cold cache build plus the lib suite has exceeded 30 minutes.
     timeout-minutes: 45
@@ -1126,21 +1136,34 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/ci-jobs.mjs report rust-suite
 
-      # Skipped only on a docs-only PR; on code every suite must succeed, so a
-      # failed, cancelled or skipped suite still fails this check. A Rust NONE
-      # selection still runs the job; its steps skip themselves.
+      # On code every suite must succeed unless the Rust selection is NONE,
+      # which skips them; a failed, cancelled or otherwise skipped suite fails
+      # this check.
       - name: Require all Rust suite outcomes
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
           CODE: ${{ needs.changes.outputs.code }}
+          RUST: ${{ needs.changes.outputs.rust }}
           RUST_RESULT: ${{ needs.rust-suite.result }}
         run: |
-          test "$CHANGES_RESULT" = success
+          ok=true
+          expect() {
+            if [ "$2" = "$3" ]; then
+              echo "$1: $2"
+            else
+              echo "::error title=$1 $2::$1 is $2, expected $3"
+              ok=false
+            fi
+          }
+          # A job is skipped only when its selection is NONE (or on a docs-only PR).
+          selected() { [ "$1" = NONE ] && echo skipped || echo success; }
+          expect changes "$CHANGES_RESULT" success
           if [ "$CODE" = true ]; then
-            test "$RUST_RESULT" = success
+            expect rust-suite "$RUST_RESULT" "$(selected "$RUST")"
           else
-            test "$RUST_RESULT" = skipped
+            expect rust-suite "$RUST_RESULT" skipped
           fi
+          $ok
 
   # Hit rate and runner time across every cached test target (#1176). Each
   # target uploads one record; targets that ran nothing upload none.

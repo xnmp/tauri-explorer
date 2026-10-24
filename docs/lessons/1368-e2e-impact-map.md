@@ -45,3 +45,11 @@ is a silent under-selection if treated as "no test touches this":
 
 Stale or missing maps select exactly as the keyword clusters did; never make a
 map fetch failure skip tests.
+
+## Fewer runners (phase 2)
+
+Two Playwright workers per runner suit Chromium (2 shards in about 9.5 min,
+no new flakes) but not WebKit: three 2-worker WebKit shards hit the 40-minute
+global timeout with timing failures in folder-peek and preview specs. WebKit
+per-test time is rendering, not module loading, so it parallelises poorly on a
+2-vCPU runner. Measure a worker change per engine before applying it.

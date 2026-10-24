@@ -63,6 +63,11 @@ unzip, jq or gh: bun comes from the `@oven/bun-linux-x64` npm package at
 an action reads must come from `$RUNNER_TEMP` inside the container (exported
 to `GITHUB_ENV`), not `${{ runner.temp }}`, which names the host path. Git
 needs `safe.directory` because the container runs as root.
+Chromium runs 2 shards and view modes 1, each with `PW_WORKERS=2`; WebKit
+keeps 5 shards with one worker, because two workers per WebKit runner
+overran the 40-minute shard budget with new failures (#1368, run
+40068235372). Changing a matrix also changes `EXPECTED_REPORTS` in the
+dev-push impact-map job, when present.
 `ImageOS`/`ImageVersion` are set to the container so cached results are scoped
 to it. Each shard bounds Playwright with `E2E_GLOBAL_TIMEOUT_MINUTES`, below
 the step `timeout-minutes`, below the job cap.
@@ -114,7 +119,8 @@ NONE, rust NONE and only the unit tests that read the bumped files.
 `map-feature.md` changes select the union of the base and head maps. Pushes and manual runs always use `ALL`. Any doubt is
 `ALL` for that tier: a selector failure, an unknown file type, an unusual path,
 or more than `TEST_SELECTION_MAX_FILES` (50, set on the `changes` job) changed
-files. A Rust `NONE` also skips the toolchain, fmt and clippy steps; the
+files. A Rust `NONE` skips both `rust-suite` jobs (the `rust` gate accepts
+that only for `NONE`); the
 dorny/paths-filter docs-only gate runs first. It treats only `docs/**`,
 root-level `*.md`, `output/**`, `screenshots/**` and `evidence/**` as
 documentation: Markdown under `e2e/`, `src/`, `tests/` or elsewhere can be a

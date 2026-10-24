@@ -45,7 +45,10 @@
 //      when the file is otherwise ignored (e.g. tests/fixtures/*.json read by
 //      a spec).
 //   1. Changed e2e/*.spec.ts            -> the spec itself.
-//   2. Changed src/lib/api/mock-*.ts   -> ALL (the test backend).
+//   2. Changed mock backend core (MOCK_CORE: dispatcher, control surface,
+//      shared fixtures)                -> ALL (the test backend).
+//      Changed mock command family (other src/lib/api/mock-*.ts) -> ALL
+//      without a test-impact map; with one, selected like any src/ file.
 //      Changed e2e/ helpers or fixtures  -> ALL (shared by every spec).
 //      Changed a "central hub" file       -> ALL (map says: affects almost anything).
 //   3. Other changed src/** files       -> map to feature clusters via
@@ -96,7 +99,7 @@ const E2E_DIR = join(ROOT, "e2e");
 /** @typedef {{ title: string, files: string[], phrases: Set<string> }} Cluster */
 /** @typedef {{ hubs: string[], clusters: Cluster[] }} CodeMap */
 /** @typedef {{ rel: string, content: string }} SpecEntry */
-/** @typedef {"dev-server" | "selection" | "shared-e2e" | "mock" | "hub" | "strict" | "unmapped" | "no-spec" | "config" | "unknown"} TriggerKind */
+/** @typedef {"dev-server" | "selection" | "shared-e2e" | "mock" | "mock-family" | "hub" | "strict" | "unmapped" | "no-spec" | "config" | "unknown"} TriggerKind */
 /** @typedef {{ kind: TriggerKind, reason: string }} Trigger */
 /** @typedef {import("./test-selection.mjs").Selection} Selection */
 
@@ -252,6 +255,23 @@ function specsForCluster(cluster, specs) {
 
 // --- classification ------------------------------------------------------
 
+/** @param {string} file */
+const isMockBackend = (file) => /^src\/lib\/api\/mock-[\w.-]+\.ts$/.test(file);
+
+/**
+ * The mock backend's shared core (#1372): the dispatcher every command goes
+ * through, the window control surface specs drive, and the fixture data every
+ * family reads. A change here reaches every spec, so it always selects ALL.
+ * The per-family command modules (mock-git.ts, mock-files.ts, ...) are not
+ * listed: with a test-impact map they select the tests that entered them.
+ */
+export const MOCK_CORE = new Set([
+  "src/lib/api/mock-invoke.ts",
+  "src/lib/api/mock-dispatch.ts",
+  "src/lib/api/mock-control.ts",
+  "src/lib/api/mock-fixtures.ts",
+]);
+
 /**
  * @param {string[]} changed
  * @param {CodeMap} map
@@ -315,7 +335,8 @@ export function classify(changed, map, specs, devServerInputs = new Set(), { str
       continue;
     }
     if (f.startsWith("e2e/")) { triggerAll(`shared e2e support change: ${f}`, "shared-e2e"); continue; }
-    if (/^src\/lib\/api\/mock-[\w.-]+\.ts$/.test(f)) { triggerAll(`mock backend change: ${f}`, "mock"); continue; }
+    if (MOCK_CORE.has(f)) { triggerAll(`mock backend core change: ${f}`, "mock"); continue; }
+    if (isMockBackend(f)) { triggerAll(`mock command family change: ${f}`, "mock-family"); continue; }
     if (map.hubs.some((h) => fileMatchesToken(f, h))) { triggerAll(`central-hub change: ${f}`, "hub"); continue; }
 
     if (f.startsWith("src/")) {
@@ -486,7 +507,7 @@ export function viewModeSpecs(specs, support = []) {
 }
 
 /** Trigger kinds that make a change's reach across the suite unknowable. */
-const GLOBAL_KINDS = new Set(["dev-server", "selection", "shared-e2e", "mock", "hub", "config", "unknown"]);
+const GLOBAL_KINDS = new Set(["dev-server", "selection", "shared-e2e", "mock", "mock-family", "hub", "config", "unknown"]);
 
 /**
  * @param {string[]} items
@@ -586,13 +607,18 @@ export function unionSelections(selections, changedCount) {
 
 /**
  * Trigger kinds the test-impact map replaces: keyword clusters and hubs
- * (coverage places every src/ file), and e2e support modules (the static
+ * (coverage places every src/ file), mock command families (coverage records
+ * which tests entered each handler) and e2e support modules (the static
  * import graph places them).
  */
-const IMPACT_REPLACES = new Set(["strict", "hub", "unmapped", "no-spec", "shared-e2e"]);
+const IMPACT_REPLACES = new Set(["strict", "hub", "unmapped", "no-spec", "shared-e2e", "mock-family"]);
 
-/** @param {string} file */
-const isMockBackend = (file) => /^src\/lib\/api\/mock-[\w.-]+\.ts$/.test(file);
+/**
+ * src/ files the test-impact map decides: every src/ change except the mock
+ * backend core, which escalates to ALL on its own.
+ * @param {string[]} changed
+ */
+export const impactCandidates = (changed) => changed.filter((f) => f.startsWith("src/") && !MOCK_CORE.has(f));
 
 /**
  * Specs that import a changed e2e support module, directly or through other
@@ -904,7 +930,7 @@ async function impactInputs(flags, { base, head, changed, read }) {
   /** @type {any} */
   let ts = null;
   try { ts = (await import("typescript")).default; } catch { warn("typescript unavailable; using the file level"); }
-  const files = changed.filter((f) => f.startsWith("src/") && !isMockBackend(f));
+  const files = impactCandidates(changed);
   const exists = trackedAt(head, ROOT);
   /** @param {string} p */
   const readFile = (p) => { try { return readFileSync(join(ROOT, p), "utf8"); } catch { return null; } };

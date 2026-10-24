@@ -25,7 +25,7 @@ Cross-cutting truth: most features flow **component → store (`src/lib/state`) 
 1. `src-tauri/src/<module>.rs` (or `files/<module>.rs`) — write `#[tauri::command] pub async fn` (MUST be async — sync blocks the main thread).
 2. `src-tauri/src/lib.rs` — register in `tauri::generate_handler![…]`.
 3. `src/lib/api/<area>.ts` (e.g. `files.ts`, `git.ts`, `search.ts`) — wrap with `invoke<T>("command_name", { args })`; args are camelCase in JS, snake_case params in Rust.
-4. `src/lib/api/mock-invoke.ts` — add a handler keyed by the command name to the handler map (~line 326+) so E2E/browser mode works.
+4. The matching mock family module (`src/lib/api/mock-files.ts`, `mock-git.ts`, `mock-system.ts`, ... — see map-folder) — add a handler keyed by the command name to its command table so E2E/browser mode works; `tests/api/mock-invoke-parity.test.ts` checks every Rust command is handled exactly once.
 5. Caller store/component.
 - Gotchas: **mock-invoke is mandatory** or E2E breaks silently. Match arg names exactly (Tauri auto-cases). Long/streaming work → use `task_registry.rs` + `progress.rs`.
 
@@ -141,6 +141,6 @@ Orient from these hubs (highest-traffic files):
 - **`src/routes/+page.svelte`** — SPA root: global shortcuts, store init, layout composition (TitleBar > SharedToolbar > Sidebar + PaneContainer > StatusBar + dialogs).
 - **`src/lib/components/ExplorerPane.svelte`** — renders FileList OR MillerColumns per pane.
 - **`src/lib/api/files.ts`** — every filesystem IPC call; grep here to find the command name, then `src-tauri/src/lib.rs` for the Rust side.
-- **`src/lib/api/mock-invoke.ts`** — canonical list of all backend command names + their shapes (E2E fake backend).
+- **`src/lib/api/mock-invoke.ts`** + its family modules (`mock-*.ts`) — canonical list of all backend command names + their shapes (E2E fake backend).
 - **`src/lib/state/pane-mutations.ts`** / **`directory-listing.ts`** — mutation + listing plumbing.
-- Grep strategy: user-visible string → component; exported symbol → its module; event name (`"directory-changed"`, `"git-status-changed"`) → watcher/emitter pair; command name → `files.ts` + `lib.rs` + `mock-invoke.ts`.
+- Grep strategy: user-visible string → component; exported symbol → its module; event name (`"directory-changed"`, `"git-status-changed"`) → watcher/emitter pair; command name → `files.ts` + `lib.rs` + its `mock-*.ts` family module.

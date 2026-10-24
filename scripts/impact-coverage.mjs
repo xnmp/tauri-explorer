@@ -154,7 +154,9 @@ export function decodeSet(encoded) {
 /**
  * @typedef {{ v?: number, id: string, spec: string, title?: string[], location?: string,
  *   loaded: string[], exercised: string[], lines?: Record<string, Array<[number, number]>>,
- *   requests?: string[] }} TestRecord
+ *   requests?: string[], retry?: number, status?: string, failures?: string[] }} TestRecord
+ *   status: Playwright's status for that attempt; failures: what the
+ *   collector could not record (a page closed early, a CDP error).
  * @typedef {import("./impact-collect.mjs").FileMeta} FileMeta
  * @typedef {{ blob: string | null, aligned: boolean, mapped: Array<[number, number]>,
  *   blocks: Array<[number, number]>, tests: number, cover: Array<[number, number, number]> }} FileLines
@@ -174,7 +176,9 @@ export function decodeSet(encoded) {
  * @param {{ commit?: string, generatedAt?: string, expected?: Array<{ id: string, spec: string }> }} [meta]
  *   expected: the tests the run executed (from its JSON reports). A spec with
  *   an executed test that left no record is incomplete: it is listed in
- *   `incomplete` and left out of `specs`, so selection always runs it.
+ *   `incomplete` and left out of `specs`, so selection always runs it. So is
+ *   a spec with a test whose final attempt did not pass (it stopped part-way,
+ *   so its coverage is truncated) or whose collector reported a failure.
  * @returns {ImpactMap}
  */
 export function mergeImpact(records, metas, { commit = "unknown", generatedAt = new Date().toISOString(), expected = [] } = {}) {
@@ -268,7 +272,17 @@ export function mergeImpact(records, metas, { commit = "unknown", generatedAt = 
   }
   /** @param {Map<string, Set<string>>} m */
   const plain = (m) => Object.fromEntries([...m.keys()].sort().map((k) => [k, [...(m.get(k) ?? [])].sort()]));
-  const incomplete = [...new Set(expected.filter((t) => !testIndex.has(t.id)).map((t) => t.spec))].sort();
+  /** @type {Map<string, TestRecord>} */
+  const finalAttempt = new Map();
+  for (const r of records) {
+    const prev = finalAttempt.get(r.id);
+    if (!prev || (r.retry ?? 0) >= (prev.retry ?? 0)) finalAttempt.set(r.id, r);
+  }
+  const truncated = [
+    ...[...finalAttempt.values()].filter((r) => r.status !== undefined && r.status !== "passed" && r.status !== "skipped"),
+    ...records.filter((r) => (r.failures ?? []).length > 0),
+  ].map((r) => r.spec);
+  const incomplete = [...new Set([...expected.filter((t) => !testIndex.has(t.id)).map((t) => t.spec), ...truncated])].sort();
   return {
     version: MAP_VERSION,
     commit,

@@ -112,13 +112,16 @@ left no record is marked incomplete, and PR selection always runs it. The map
 is never committed.
 
 On PRs the `changes` job installs dependencies with `--ignore-scripts`
-(TypeScript proves comment/type-only hunks inert), downloads the newest map
+(TypeScript finds each hunk's function and proves comment/type-only hunks
+inert), downloads the newest map
 from a successful dev run, fetches the map's commit (`--depth=1`) for line
 translation, and passes `--impact-map=` to the three browser selectors. Each
 step is `continue-on-error`: no map, a failed download, a malformed map or one
 older than `MAX_MAP_AGE_HOURS` (72) selects exactly as before the map existed.
-With a map, Chromium runs the specs whose tests executed the changed lines
-(`scripts/impact-select.mjs`), plus the drift: tests that executed code
+With a map, Chromium runs the specs whose tests entered the innermost
+function around each changed hunk, or every spec that loaded the file for a
+hunk at module level, in markup or styles, or on a function's header or
+closing line (`scripts/impact-select.mjs`); plus the drift: tests that executed code
 changed between the map's commit and the merge base, and specs edited since
 then, because their coverage in the map is out of date (an unavailable map
 commit means no map). WebKit is the selection without a map united with the

@@ -7,10 +7,23 @@ is a silent under-selection if treated as "no test touches this":
 - Playwright's `startCSSCoverage` returns no entries for Vite dev styles: they
   arrive as injected `<style>` elements with no `sourceURL`. Style changes
   therefore select by file loading (or ALL), not by rule usage.
+- Do not narrow below the function. esbuild maps a block's closing brace and
+  V8 attributes it to the `then` block, so adding `else`/`else if`/`catch`
+  after an existing block looked like code only the `then` tests reached
+  (PR #1373 review). A hunk selects every test that entered the innermost
+  function around it; a header, closing line, module-level code, markup or
+  styles select every loader. Measured on 20 PRs, block level gained almost
+  nothing over file level anyway.
 - Svelte 5 hoists component templates to module level, and function headers are
-  "covered" when the module evaluates. An inserted line is attributed to the
-  smallest enclosing executed block excluding its header line; at module scope
-  that degrades to every test that loaded the file.
+  "covered" when the module evaluates: header lines never show who called a
+  function, so the function level counts only its body after the line the
+  body starts on.
+- The project compiles with verbatimModuleSyntax: `import { type A } from "x"`
+  is kept as `import {} from "x"` and still evaluates `x`. Only `import type`
+  is erased. Removing or reordering imports changes evaluation (Svelte keeps
+  unused value imports), so it selects every loader.
+- A test whose final attempt failed has truncated coverage: the merge marks
+  its spec incomplete, so it always runs.
 - A spec that imports `test` from `@playwright/test` bypasses `e2e/fixtures.ts`
   and records nothing. `tests/e2e-fixture-imports.test.ts` enforces the import.
 - Modules a spec imports on the Node side (`src/lib/api/...` constants, test

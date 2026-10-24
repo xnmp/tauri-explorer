@@ -25,8 +25,8 @@
 //   --impact-map=<path> (CI, #1368): with --strict, --webkit or --view-modes,
 //   select src/ changes through the coverage-based test-impact map instead
 //   (scripts/impact-select.mjs, built nightly by e2e-impact-map.yml):
-//   the tests that ran the changed lines (hunk level) or every spec that
-//   loaded the file (--impact-level=file). Chromium runs those specs;
+//   the tests that entered the function around each changed hunk (the
+//   default) or every spec that loaded the file (--impact-level=file). Chromium runs those specs;
 //   WebKit adds the curated engine-specific set and runs everything for
 //   WEBKIT_SENSITIVE paths, component styling, engine detection or code no
 //   Chromium test ran; view modes keep the view-mode specs among them. A new
@@ -76,9 +76,17 @@ import { fileURLToPath } from "node:url";
 import { dirname, join, posix } from "node:path";
 import { allOf, gitBlobReader, gitChangedFiles, parseArgs, sharedEscalation, versionOnlyChange } from "./test-selection.mjs";
 import { loadImpactMap } from "./impact-coverage.mjs";
-import { changedBetween, directBlobReader, gatherChanged, namespaceTargets } from "./impact-git.mjs";
+import { changedBetween, directBlobReader, gatherChanged, trackedAt } from "./impact-git.mjs";
 import { selectFromImpact, withDrift } from "./impact-select.mjs";
 import { resolveSpecifier } from "./impact-regions.mjs";
+import { discoverSpecs, SPEC_FILE } from "./e2e-shards.mjs";
+
+/**
+ * A file Playwright runs as a spec: its default testMatch under testDir
+ * `e2e/`, at any depth (e2e-shards.mjs discovers specs the same way).
+ * @param {string} file repo-relative path
+ */
+export const isSpecFile = (file) => file.startsWith("e2e/") && SPEC_FILE.test(file) && !file.split("/").includes("node_modules");
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const MAP_REL = "docs/code-map/map-feature.md";
@@ -218,8 +226,7 @@ export function parseMap(text) {
 
 export function loadSpecs() {
   const specs = [];
-  for (const name of readdirSync(E2E_DIR)) {
-    if (!name.endsWith(".spec.ts")) continue;
+  for (const name of discoverSpecs(E2E_DIR)) {
     const rel = `e2e/${name}`;
     let content = "";
     try { content = readFileSync(join(E2E_DIR, name), "utf8").toLowerCase(); }
@@ -303,7 +310,7 @@ export function classify(changed, map, specs, devServerInputs = new Set(), { str
     const lower = f.toLowerCase();
     for (const s of specs) if (s.content.includes(lower)) selected.add(s.rel);
     if (/^vitest\.[\w.-]*config\.(ts|js|mjs|cjs)$/.test(f)) continue;
-    if (/^e2e\/.+\.spec\.ts$/.test(f)) {
+    if (isSpecFile(f)) {
       if (existsSync(join(ROOT, f))) selected.add(f);
       continue;
     }
@@ -615,6 +622,25 @@ export function e2eImporters(changedSupport, specs, support) {
 }
 
 /**
+ * Specs whose own code changed in `drift` (files changed since the map's
+ * commit): the spec itself, an e2e support module it imports, or any module
+ * it evaluates in Node (fixtures under tests/, src/ constants). The map's
+ * record of them is out of date, so they run whatever the PR changes. A
+ * support file outside the import graph means every spec.
+ * @param {string[]} drift
+ * @param {Map<string, Set<string>>} nodeImports module -> specs (nodeSideImports)
+ * @param {SpecEntry[]} specs
+ * @param {SpecEntry[]} support
+ * @returns {string[]}
+ */
+export function specsChangedSince(drift, nodeImports, specs, support) {
+  const driftSupport = drift.filter((f) => f.startsWith("e2e/") && !isSpecFile(f));
+  const supportImporters = e2eImporters(driftSupport, specs, support) ?? specs.map((s) => s.rel);
+  const nodeImporters = drift.flatMap((f) => [...(nodeImports.get(f) ?? [])]);
+  return [...new Set([...drift.filter(isSpecFile), ...supportImporters, ...nodeImporters])].sort();
+}
+
+/**
  * Repository modules each spec evaluates in the Node test process (not the
  * browser): imports from the spec and its e2e support modules, followed
  * transitively through relative imports. Browser coverage cannot see these,
@@ -685,7 +711,7 @@ export function selectCoverage({ changed, map, specs, devServerInputs = new Set(
   const strict = classify(changed, map, specs, devServerInputs, { strict: true });
   const blocking = strict.triggers.filter((t) => !IMPACT_REPLACES.has(t.kind));
   if (blocking.length > 0) return allOf(blocking.map((t) => t.reason));
-  const changedSupport = changed.filter((f) => f.startsWith("e2e/") && !/\.spec\.ts$/.test(f));
+  const changedSupport = changed.filter((f) => f.startsWith("e2e/") && !isSpecFile(f));
   const importers = e2eImporters(changedSupport, specs, support);
   if (importers === null) return allOf(changedSupport.map((f) => `e2e support file outside the import graph: ${f}`));
   if (impactSelection.all.length > 0) return allOf(impactSelection.all);
@@ -764,9 +790,12 @@ export function selectViewModesCoverage(input) {
 
 /** Non-spec TypeScript modules under e2e/ (helpers, fixtures, page objects). */
 export function loadSupport() {
-  return readdirSync(E2E_DIR)
-    .filter((name) => name.endsWith(".ts") && !name.endsWith(".spec.ts"))
-    .map((name) => ({ rel: `e2e/${name}`, content: readFileSync(join(E2E_DIR, name), "utf8").toLowerCase() }));
+  return readdirSync(E2E_DIR, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile() && /\.[cm]?[jt]sx?$/.test(entry.name) && !SPEC_FILE.test(entry.name))
+    .map((entry) => posix.join("e2e", posix.relative(E2E_DIR.split("\\").join("/"), join(entry.parentPath, entry.name).split("\\").join("/"))))
+    .filter((rel) => !rel.split("/").includes("node_modules"))
+    .sort()
+    .map((rel) => ({ rel, content: readFileSync(join(ROOT, rel), "utf8").toLowerCase() }));
 }
 
 // --- main ----------------------------------------------------------------
@@ -874,11 +903,14 @@ async function impactInputs(flags, { base, head, changed, read }) {
   const impact = loaded.map;
   /** @type {any} */
   let ts = null;
-  try { ts = (await import("typescript")).default; } catch { warn("typescript unavailable; hunk-level proofs disabled"); }
+  try { ts = (await import("typescript")).default; } catch { warn("typescript unavailable; using the file level"); }
   const files = changed.filter((f) => f.startsWith("src/") && !isMockBackend(f));
-  const { targets, exists } = namespaceTargets(head, ROOT);
+  const exists = trackedAt(head, ROOT);
+  /** @param {string} p */
+  const readFile = (p) => { try { return readFileSync(join(ROOT, p), "utf8"); } catch { return null; } };
+  const nodeImports = nodeSideImports(loadSpecs().map((s) => s.rel), readFile, (p) => existsSync(join(ROOT, p)));
   const prSelection = selectFromImpact({
-    impact, level, ts, namespaceTargets: targets, exists,
+    impact, level, ts, exists,
     changed: gatherChanged({ base, head, files, root: ROOT, read, impact }),
   });
   // Code that changed on dev after the map was recorded can route tests into
@@ -894,15 +926,13 @@ async function impactInputs(flags, { base, head, changed, read }) {
   if (changed.some((f) => f.startsWith("src/"))) {
     const driftSrc = drift.filter((f) => f.startsWith("src/"));
     const driftSelection = selectFromImpact({
-      impact, level, ts, namespaceTargets: namespaceTargets(mergeBase, ROOT).targets, exists,
+      impact, level, ts, exists: trackedAt(mergeBase, ROOT),
       // The map's commit itself against the merge base: the map can be newer
       // than a PR's base as well as older.
       changed: gatherChanged({ base: impact.commit, head: mergeBase, files: driftSrc, root: ROOT,
         read: directBlobReader(impact.commit, mergeBase, ROOT), impact, direct: true }),
     });
-    const driftSupport = drift.filter((f) => f.startsWith("e2e/") && !/\.spec\.ts$/.test(f));
-    const supportImporters = e2eImporters(driftSupport, loadSpecs(), loadSupport()) ?? loadSpecs().map((s) => s.rel);
-    const driftSpecs = [...drift.filter((f) => /^e2e\/.+\.spec\.ts$/.test(f)), ...supportImporters];
+    const driftSpecs = specsChangedSince(drift, nodeImports, loadSpecs(), loadSupport());
     impactSelection = withDrift(prSelection, driftSelection, driftSpecs);
     if (drift.length > 0) {
       warn(`impact map drift: ${drift.length} file(s) changed since the map's commit, ` +
@@ -910,12 +940,9 @@ async function impactInputs(flags, { base, head, changed, read }) {
     }
   }
   warn(`impact map ${impact.commit.slice(0, 12)} (${impact.generatedAt}), ${level} level: ` +
-    `${impactSelection.hunkLevel.length} file(s) by hunk, ${impactSelection.fileLevel.length} by file, ` +
+    `${impactSelection.hunkLevel.length} file(s) by function, ${impactSelection.fileLevel.length} by file, ` +
     `${impactSelection.tests.size}/${impact.tests.length} test(s)` +
     (impactSelection.zeroCoverage.length ? `, unexecuted: ${impactSelection.zeroCoverage.join(", ")}` : ""));
-  /** @param {string} p */
-  const readFile = (p) => { try { return readFileSync(join(ROOT, p), "utf8"); } catch { return null; } };
-  const nodeImports = nodeSideImports(loadSpecs().map((s) => s.rel), readFile, (p) => existsSync(join(ROOT, p)));
   return { impact, impactSelection, nodeImports };
 }
 

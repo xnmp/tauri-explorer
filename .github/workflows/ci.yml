@@ -109,8 +109,9 @@ jobs:
         with:
           fetch-depth: 2
 
-      # The browser selectors parse changed modules with TypeScript to prove
-      # comment- and type-only hunks inert (scripts/impact-regions.mjs). No
+      # The browser selectors parse changed modules with TypeScript to find
+      # the function around each hunk and prove comment- and type-only hunks
+      # inert (scripts/impact-regions.mjs). No
       # install scripts run; without the dependency the impact selector uses
       # its file level, never a narrower selection.
       - uses: oven-sh/setup-bun@v2
@@ -129,8 +130,8 @@ jobs:
       # (#1368). No map, a failed download or an unusable map (malformed, or
       # older than MAX_MAP_AGE_HOURS in scripts/impact-coverage.mjs) leaves
       # the browser tiers on their selection without a map. The map's commit
-      # is fetched so files changed on dev since then keep hunk-level
-      # precision through a line translation.
+      # is fetched to re-run the tests that executed code changed on dev
+      # since then, and to translate lines; without it the map is unused.
       - name: Fetch the E2E impact map
         id: impact
         if: github.event_name == 'pull_request'

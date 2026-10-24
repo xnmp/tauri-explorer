@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   e2eImporters,
+  isSpecFile,
   nodeSideImports,
+  specsChangedSince,
   selectCoverage,
   selectViewModesCoverage,
   selectWebkitCoverage,
@@ -169,5 +171,30 @@ describe("nodeSideImports", () => {
   it("selects the Node-side importers of a changed module", () => {
     expect(selectCoverage({ ...input(["src/lib/domain/base.ts"]), nodeImports: new Map([["src/lib/domain/base.ts", new Set(["e2e/cloud.spec.ts"])]]) }).items)
       .toContain("e2e/cloud.spec.ts");
+  });
+});
+
+describe("isSpecFile", () => {
+  it("matches Playwright's default testMatch at any depth under e2e/", () => {
+    expect(isSpecFile("e2e/a.spec.ts")).toBe(true);
+    expect(isSpecFile("e2e/nested/deeper/b.spec.ts")).toBe(true);
+    expect(isSpecFile("e2e/c.test.mjs")).toBe(true);
+    expect(isSpecFile("e2e/helpers.ts")).toBe(false);
+    expect(isSpecFile("tests/a.spec.ts")).toBe(false);
+    expect(isSpecFile("e2e/node_modules/x/a.spec.ts")).toBe(false);
+  });
+});
+
+describe("specsChangedSince (drift since the map's commit)", () => {
+  it("re-runs specs edited since, importers of changed support, and Node-side importers outside e2e/", () => {
+    const nodeImports = new Map([["tests/fixtures/file-icon-examples.ts", new Set(["e2e/icons.spec.ts"])]]);
+    expect(specsChangedSince(
+      ["e2e/nested/new.spec.ts", "e2e/png-pixels.ts", "tests/fixtures/file-icon-examples.ts", "src/lib/x.ts"],
+      nodeImports, specs, support,
+    )).toEqual(["e2e/icons.spec.ts", "e2e/nested/new.spec.ts", "e2e/pixels.spec.ts"]);
+  });
+
+  it("re-runs every spec for a support file outside the import graph", () => {
+    expect(specsChangedSince(["e2e/data/fixture.json"], new Map(), specs, support)).toHaveLength(specs.length);
   });
 });

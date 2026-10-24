@@ -1,16 +1,16 @@
 // impact-regions.mjs — static facts about the lines a diff touches (#1368).
 //
 // The test-impact map says which tests ran each original line (V8 block
-// coverage through Vite's source maps). Lines that produce no code need a
-// static proof instead, and new code needs to know what it is. Per line of a
-// TypeScript/JavaScript module or Svelte component this reports:
+// coverage through Vite's source maps). The selector scopes a change to the
+// function around it and needs static proof for lines that produce no code.
+// Per line of a TypeScript/JavaScript module or Svelte component this reports:
 //   trivia  comments and blank lines                 (no runtime effect)
 //   type    type-only syntax: interfaces, type aliases, annotations,
 //           `import type`, `declare`                 (no runtime effect)
 //   import  an import/re-export statement, with its specifier
 //   code    anything else
-// and, for the selector's "a new function is only a binding" rule, the
-// function/const-arrow declarations with the line span and name of each.
+// plus every function with a body (its header, body and closing lines) and
+// every import statement's value bindings, in source order.
 // Anything that cannot be parsed counts as `code`.
 //
 // The TypeScript compiler API is injected (`ts`), so this stays pure and a
@@ -19,22 +19,15 @@
 /**
  * @typedef {"trivia" | "type" | "import" | "code"} RegionKind
  * @typedef {{ kind: RegionKind, specifier?: string }} LineRegion
- * @typedef {{ start: number, end: number, name: string, exported: boolean, topLevel: boolean }} Declaration
- *   1-based inclusive line span of a function declaration or of a `const`
- *   whose every initializer is a function.
- * @typedef {{ line: number, name: string, shape: string }} FunctionHeader
- *   A line holding only a named function's header (its name, modifiers and
- *   parameters, up to the opening of its body): nothing on it runs until the
- *   function is called, except creating a function of that name and `shape`
- *   (declaration kind, modifiers such as export/async/static, accessor kind,
- *   generator).
- * @typedef {{ specifier: string, bindings: string[] | null }} ImportFact
- *   One import statement's value bindings as `local=imported` (`*` for a
- *   namespace, `default`); null for a side-effect import or a re-export,
- *   which are never mere bindings.
- * @typedef {{ lines: LineRegion[], declarations: Declaration[], headers?: FunctionHeader[],
- *   imports?: ImportFact[], styles?: Array<[number, number]> }} SourceFacts
- *   styles: 1-based inclusive line spans of Svelte `<style>` blocks.
+ * @typedef {{ start: number, body: number, end: number }} FunctionSpan
+ *   1-based lines of a function with a body: where its declaration starts,
+ *   where its body starts, and where it ends.
+ * @typedef {{ specifier: string, bindings: string[] | null, erased: boolean }} ImportFact
+ *   One import or re-export statement, in source order: its value bindings
+ *   as `local=imported` (`*` for a namespace, `default`), null for a
+ *   side-effect import or a re-export (never mere bindings); `erased` for
+ *   `import type` / `export type`, which emit nothing.
+ * @typedef {{ lines: LineRegion[], functions: FunctionSpan[], imports: ImportFact[] }} SourceFacts
  * @typedef {{ baseStart: number, baseCount: number, headStart: number, headCount: number }} Hunk
  */
 
@@ -72,91 +65,30 @@ export function scriptFacts(ts, text, { js = false } = {}) {
   const SK = ts.SyntaxKind;
   /** @type {Array<[number, number, RegionKind, string?]>} */
   const ranges = [];
-  /** @type {Declaration[]} */
-  const declarations = [];
+  /** @type {FunctionSpan[]} */
+  const functions = [];
   const add = (/** @type {number} */ start, /** @type {number} */ end, /** @type {RegionKind} */ kind, /** @type {string | undefined} */ specifier = undefined) => {
     if (end > start) ranges.push([start, end, kind, specifier]);
   };
   const lineOf = (/** @type {number} */ pos) => source.getLineAndCharacterOfPosition(pos).line + 1;
   const hasModifier = (/** @type {any} */ node, /** @type {number} */ kind) =>
     (ts.canHaveModifiers?.(node) ? ts.getModifiers(node) : node.modifiers)?.some((/** @type {any} */ m) => m.kind === kind) ?? false;
-  const unwrap = (/** @type {any} */ e) => {
-    while (e && (ts.isParenthesizedExpression(e) || ts.isAsExpression(e) || ts.isSatisfiesExpression?.(e) || ts.isTypeAssertionExpression?.(e))) e = e.expression;
-    return e;
-  };
-  const isFn = (/** @type {any} */ e) => e && (ts.isArrowFunction(e) || ts.isFunctionExpression(e));
-  const typeOnlyModuleStatement = (/** @type {any} */ node) => {
-    if (ts.isImportDeclaration(node)) {
-      const clause = node.importClause;
-      if (!clause) return false; // side-effect import
-      if (clause.isTypeOnly) return true;
-      const named = clause.namedBindings;
-      return !clause.name && named && ts.isNamedImports(named) && named.elements.length > 0 &&
-        named.elements.every((/** @type {any} */ el) => el.isTypeOnly);
-    }
-    if (ts.isExportDeclaration(node)) {
-      if (node.isTypeOnly) return true;
-      const clause = node.exportClause;
-      return Boolean(clause && ts.isNamedExports(clause) && clause.elements.length > 0 &&
-        clause.elements.every((/** @type {any} */ el) => el.isTypeOnly));
-    }
-    return false;
-  };
-  const declare = (/** @type {any} */ node, /** @type {string} */ name, /** @type {boolean} */ topLevel) => {
-    declarations.push({
-      start: lineOf(node.getStart(source)),
-      end: lineOf(Math.max(node.getStart(source), node.end - 1)),
-      name,
-      exported: hasModifier(node, SK.ExportKeyword) || hasModifier(node, SK.DefaultKeyword),
-      topLevel,
-    });
-  };
-
-  /** @type {FunctionHeader[]} */
-  const headers = [];
+  // Only `import type` / `export type` statements are erased. The project
+  // compiles with verbatimModuleSyntax, which keeps `import { type A } from
+  // "x"` as `import {} from "x"`: the module still evaluates.
+  const typeOnlyModuleStatement = (/** @type {any} */ node) =>
+    ts.isImportDeclaration(node) ? Boolean(node.importClause?.isTypeOnly)
+    : ts.isExportDeclaration(node) ? Boolean(node.isTypeOnly)
+    : false;
   /** @type {ImportFact[]} */
   const imports = [];
-  const nameText = (/** @type {any} */ n) => n && (ts.isIdentifier(n) || ts.isStringLiteral(n) || ts.isPrivateIdentifier?.(n)) ? n.text : null;
-  /** The declaration that owns function `fn`, and its name, or null. */
-  const ownerOf = (/** @type {any} */ fn) => {
-    if (ts.isFunctionDeclaration(fn) || ts.isMethodDeclaration(fn) || ts.isGetAccessorDeclaration(fn) || ts.isSetAccessorDeclaration(fn)) {
-      const name = nameText(fn.name);
-      return name ? { owner: fn, name } : null;
-    }
-    if (ts.isConstructorDeclaration(fn)) return { owner: fn, name: "constructor" };
-    if (!ts.isArrowFunction(fn) && !ts.isFunctionExpression(fn)) return null;
-    let p = fn.parent;
-    while (p && (ts.isParenthesizedExpression(p) || ts.isAsExpression(p) || ts.isSatisfiesExpression?.(p))) p = p.parent;
-    if (p && ts.isPropertyAssignment(p) && unwrap(p.initializer) === fn) {
-      const name = nameText(p.name);
-      return name ? { owner: p, name } : null;
-    }
-    if (p && ts.isVariableDeclaration(p) && ts.isIdentifier(p.name) && unwrap(p.initializer) === fn &&
-        p.parent?.declarations?.length === 1 && p.parent.parent && ts.isVariableStatement(p.parent.parent)) {
-      return { owner: p.parent.parent, name: p.name.text };
-    }
-    return null;
-  };
-  const header = (/** @type {any} */ fn) => {
-    if (!fn.body) return;
-    const found = ownerOf(fn);
-    if (!found) return;
-    const start = found.owner.getStart(source);
-    const lineStart = text.lastIndexOf("\n", start - 1) + 1;
-    if (text.slice(lineStart, start).trim() !== "") return;
-    const owner = found.owner;
-    const modifiers = (/** @type {any} */ n) =>
-      ((ts.canHaveModifiers?.(n) ? ts.getModifiers(n) : n.modifiers) ?? []).map((/** @type {any} */ m) => m.kind).sort().join(",");
-    const list = ts.isVariableStatement(owner) ? owner.declarationList.flags & (ts.NodeFlags.Const | ts.NodeFlags.Let) : 0;
-    const shape = [owner.kind, modifiers(owner), list, fn.kind, modifiers(fn), fn.asteriskToken ? "*" : ""].join("|");
-    for (let line = lineOf(start); line <= lineOf(fn.body.getStart(source)); line++) headers.push({ line, name: found.name, shape });
-  };
   /** @param {any} node */
   const importFact = (node) => {
     const specifier = node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier) ? node.moduleSpecifier.text : null;
     if (!specifier) return;
+    const erased = typeOnlyModuleStatement(node);
     const clause = ts.isImportDeclaration(node) ? node.importClause : null;
-    if (!clause) { imports.push({ specifier, bindings: null }); return; }
+    if (!clause) { imports.push({ specifier, bindings: null, erased }); return; }
     /** @type {string[]} */
     const bindings = [];
     if (clause.name) bindings.push(`${clause.name.text}=default`);
@@ -168,12 +100,14 @@ export function scriptFacts(ts, text, { js = false } = {}) {
         bindings.push(`${el.name.text}=${(el.propertyName ?? el.name).text}`);
       }
     }
-    imports.push({ specifier, bindings: clause.isTypeOnly ? [] : bindings });
+    imports.push({ specifier, bindings: erased ? [] : bindings, erased });
   };
 
-  /** @param {any} node @param {boolean} topLevel */
-  const visit = (node, topLevel) => {
-    if (ts.isFunctionLike(node)) header(node);
+  /** @param {any} node */
+  const visit = (node) => {
+    if (ts.isFunctionLike(node) && node.body) {
+      functions.push({ start: lineOf(node.getStart(source)), body: lineOf(node.body.getStart(source)), end: lineOf(node.end - 1) });
+    }
     if (ts.isTypeNode(node) && !ts.isExpressionWithTypeArguments?.(node)) { add(node.getStart(source), node.end, "type"); return; }
     if (ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node) || hasModifier(node, SK.DeclareKeyword)) {
       add(node.getStart(source), node.end, "type");
@@ -186,15 +120,9 @@ export function scriptFacts(ts, text, { js = false } = {}) {
       return;
     }
     if (ts.isExportDeclaration(node) && typeOnlyModuleStatement(node)) { add(node.getStart(source), node.end, "type"); return; }
-    if (ts.isFunctionDeclaration(node) && node.body && node.name) declare(node, node.name.text, topLevel);
-    if (ts.isVariableStatement(node) && node.declarationList.declarations.length === 1) {
-      const d = node.declarationList.declarations[0];
-      if (ts.isIdentifier(d.name) && isFn(unwrap(d.initializer))) declare(node, d.name.text, topLevel);
-    }
-    const child = ts.isFunctionLike(node) ? false : topLevel && (ts.isSourceFile(node) || ts.isModuleBlock?.(node));
-    ts.forEachChild(node, (/** @type {any} */ c) => visit(c, child));
+    ts.forEachChild(node, visit);
   };
-  for (const statement of source.statements) visit(statement, true);
+  for (const statement of source.statements) visit(statement);
 
   const lineCount = text.split("\n").length;
   /** @type {LineRegion[]} */
@@ -228,7 +156,7 @@ export function scriptFacts(ts, text, { js = false } = {}) {
     for (const child of children) leaves(child);
   };
   leaves(source);
-  return { lines, declarations, headers, imports };
+  return { lines, functions, imports };
 }
 
 /** @param {string} text @param {number} offset */
@@ -237,9 +165,7 @@ const lineAt = (text, offset) => text.slice(0, offset).split("\n").length; // 1-
 /**
  * Facts for a Svelte component: script contents are classified as
  * TypeScript/JavaScript; markup, styles, the script/style tags themselves and
- * `<svelte:options>` are `code`. Only `<script module>` declarations count as
- * top-level; instance-script exports are component API and never count as
- * mere bindings.
+ * `<svelte:options>` are `code`, outside every function.
  * @param {any} ts
  * @param {string} text
  * @returns {SourceFacts}
@@ -247,22 +173,14 @@ const lineAt = (text, offset) => text.slice(0, offset).split("\n").length; // 1-
 export function svelteFacts(ts, text) {
   /** @type {LineRegion[]} */
   const lines = text.split("\n").map((line) => ({ kind: /** @type {RegionKind} */ (line.trim() === "" ? "trivia" : "code") }));
-  /** @type {Declaration[]} */
-  const declarations = [];
-  /** @type {FunctionHeader[]} */
-  const headers = [];
+  /** @type {FunctionSpan[]} */
+  const functions = [];
   /** @type {ImportFact[]} */
   const imports = [];
-  /** @type {Array<[number, number]>} */
-  const styles = [];
-  for (const m of text.matchAll(/<style\b[^>]*>[\s\S]*?<\/style\s*>/g)) {
-    styles.push([lineAt(text, /** @type {number} */ (m.index)), lineAt(text, /** @type {number} */ (m.index) + m[0].length)]);
-  }
   for (const m of text.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/g)) {
     const [whole, attrs, content] = m;
     const contentStart = /** @type {number} */ (m.index) + whole.indexOf(">") + 1;
     const first = lineAt(text, contentStart);
-    const isModule = /\bmodule\b|context\s*=\s*["']module["']/.test(attrs);
     const facts = scriptFacts(ts, content, { js: !/lang\s*=\s*["']ts["']/.test(attrs) });
     // The opening tag shares its line with the first content line.
     facts.lines.forEach((region, i) => {
@@ -273,25 +191,18 @@ export function svelteFacts(ts, text) {
       }
       lines[n - 1] = region;
     });
-    for (const d of facts.declarations) {
-      declarations.push({
-        ...d,
-        start: d.start + first - 1,
-        end: d.end + first - 1,
-        topLevel: isModule && d.topLevel,
-      });
+    for (const f of facts.functions) {
+      functions.push({ start: f.start + first - 1, body: f.body + first - 1, end: f.end + first - 1 });
     }
-    // The opening tag's line also holds tag text; never count it a header.
-    for (const h of facts.headers ?? []) if (h.line > 1) headers.push({ ...h, line: h.line + first - 1 });
-    imports.push(...(facts.imports ?? []));
+    imports.push(...facts.imports);
   }
-  return { lines, declarations, headers, imports, styles };
+  return { lines, functions, imports };
 }
 
 /**
  * Facts of a module's text, or null when the file type is not a module
  * (callers treat that as unknown). With no `ts`, or unparseable text, every
- * non-blank line is `code` and there are no declarations.
+ * non-blank line is `code` and no function or import is known.
  * @param {any} ts
  * @param {string} file
  * @param {string} text
@@ -301,7 +212,8 @@ export function factsOf(ts, file, text) {
   if (!/\.(svelte|ts|js|mjs)$/.test(file)) return null;
   const fallback = () => ({
     lines: text.split("\n").map((l) => ({ kind: /** @type {RegionKind} */ (l.trim() === "" ? "trivia" : "code") })),
-    declarations: [],
+    functions: [],
+    imports: [],
   });
   if (!ts) return fallback();
   try {

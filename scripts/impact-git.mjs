@@ -2,7 +2,7 @@
 // Everything here shells out; the selection itself stays pure.
 
 import { execFileSync } from "node:child_process";
-import { parseHunks, resolveSpecifier } from "./impact-regions.mjs";
+import { parseHunks } from "./impact-regions.mjs";
 import { invertHunks, lineTranslator } from "./impact-select.mjs";
 
 /** @param {string[]} args @param {string} root */
@@ -44,42 +44,14 @@ export function gatherChanged({ base, head, files, root, read, impact, direct = 
 }
 
 /**
- * Repo files that some module at `head` imports as a namespace
- * (`import * as`, `export * from`, a dynamic `import()`), followed through
- * `export *` re-exports: their exports can be reached by name at runtime.
- * @param {string} head
+ * Whether a path is tracked under src/ at `rev`.
+ * @param {string} rev
  * @param {string} root
- * @returns {{ targets: Set<string>, exists: (path: string) => boolean }}
+ * @returns {(path: string) => boolean}
  */
-export function namespaceTargets(head, root) {
-  const tracked = new Set(git(["ls-tree", "-r", "--name-only", head, "--", "src"], root).split("\n").filter(Boolean));
-  const exists = (/** @type {string} */ p) => tracked.has(p);
-  const hits = (gitOrNull(["grep", "-l", "-E", String.raw`import \* as|export \*|import\(`, head, "--", "src"], root) ?? "")
-    .split("\n").filter(Boolean).map((l) => l.slice(head.length + 1));
-  /** @type {Set<string>} */
-  const targets = new Set();
-  /** @type {Map<string, string[]>} */
-  const reexports = new Map();
-  for (const file of hits) {
-    const text = gitOrNull(["show", `${head}:${file}`], root) ?? "";
-    for (const m of text.matchAll(/import\s*\*\s*as\s+[\w$]+\s+from\s*["']([^"']+)["']|import\(\s*["']([^"']+)["']\s*\)/g)) {
-      const target = resolveSpecifier(file, m[1] ?? m[2], exists);
-      if (target) targets.add(target);
-    }
-    for (const m of text.matchAll(/export\s*\*\s*(?:as\s+[\w$]+\s+)?from\s*["']([^"']+)["']/g)) {
-      const target = resolveSpecifier(file, m[1], exists);
-      if (target) reexports.set(file, [...(reexports.get(file) ?? []), target]);
-    }
-  }
-  let grew = true;
-  while (grew) {
-    grew = false;
-    for (const [file, list] of reexports) {
-      if (!targets.has(file)) continue;
-      for (const t of list) if (!targets.has(t)) { targets.add(t); grew = true; }
-    }
-  }
-  return { targets, exists };
+export function trackedAt(rev, root) {
+  const tracked = new Set((gitOrNull(["ls-tree", "-r", "--name-only", rev, "--", "src"], root) ?? "").split("\n").filter(Boolean));
+  return (p) => tracked.has(p);
 }
 
 /**

@@ -7,24 +7,26 @@
 //
 // file level   a changed module selects every spec that loaded it.
 //
-// hunk level   for each diff hunk on the old (merge-base) side, the tests
-//              that covered any changed line. When the hunk also adds or
-//              changes code that the old side cannot place (a pure
-//              insertion, a replaced unmapped line), the tests that ran the
-//              smallest enclosing V8 function/block. A hunk changes nothing
-//              at runtime only with proof: its old lines have no generated
-//              code in the source map AND the TypeScript parse of both sides
-//              shows only comments, blank lines or type syntax. New code that
-//              is only a binding (a new non-exported function whose name the
-//              old file never mentions, or an import of a module every test
-//              loading this file already evaluates) adds no execution of its
-//              own; its callers are changed lines too.
-//              A hunk that would select no test (code no test ran: a WebKit-,
-//              Tauri- or timing-only branch) falls back to the file level and
-//              is reported in `zeroCoverage`, so WebKit can run in full.
-//              Hunk level needs the map's line data for exactly the old text:
-//              the same git blob, or a translation through the diff from the
-//              map's commit. Otherwise that file uses the file level.
+// function level (default; method-level test-impact analysis)
+//              each diff hunk selects the tests that entered the innermost
+//              function enclosing it on the old (merge-base) side: those
+//              that covered any line of its body after the line its body
+//              starts on. A hunk that touches a function's header or closing
+//              line, sits outside every function (module level, Svelte
+//              markup and styles), or lands in a function the new side
+//              reshapes, selects every test that loaded the file. Only
+//              syntax-level proofs select nothing: comments, blank lines and
+//              type syntax with no generated code on the old side, and a new
+//              import binding (unmentioned local name) of a module every
+//              loader already evaluates. Removing or reordering imports
+//              changes evaluation and selects every loader.
+//              A hunk whose function no test entered (a WebKit-, Tauri- or
+//              timing-only path) falls back to the file level and is
+//              reported in `zeroCoverage`, so WebKit can run in full.
+//              The function level needs the map's line data for exactly the
+//              old text: the same git blob, or a translation through the
+//              diff from the map's commit. Otherwise that file uses the file
+//              level.
 //
 // Escalations to every spec (`all`): a new file, a src file no spec loaded,
 // an asset no spec fetched, an unclassifiable file.
@@ -110,36 +112,17 @@ function mapIndex(impact) {
     }
     return out;
   };
-  /**
-   * Tests that ran the smallest block containing [a, b], or every loader for
-   * the module's top level. A block's first line is its header (a function
-   * signature, an `if` condition), which the enclosing code covers whether
-   * or not the block itself ran, so only the lines after it count.
-   */
-  const enclosing = (/** @type {string} */ path, /** @type {number} */ a, /** @type {number} */ b) => {
-    const f = fileLines(path);
-    if (!f) return new Set();
-    const outer = f.blocks.reduce((m, [s, e]) => [Math.min(m[0], s), Math.max(m[1], e)], [Infinity, -Infinity]);
-    /** @type {[number, number] | null} */
-    let best = null;
-    for (const [s, e] of f.blocks) {
-      if (s <= a && e >= b && (!best || e - s < best[1] - best[0])) best = [s, e];
-    }
-    if (!best || (best[0] === outer[0] && best[1] === outer[1])) return new Set(f.tests);
-    return coveredIn(path, best[1] > best[0] ? best[0] + 1 : best[0], best[1]);
-  };
-  return { fileLines, coveredIn, enclosing };
+  return { fileLines, coveredIn };
 }
 
 /**
  * @param {{ impact: ImpactMap, changed: ChangedFile[], level?: "file" | "hunk", ts?: any,
- *   namespaceTargets?: Set<string>, exists?: (path: string) => boolean }} input
- *   namespaceTargets: repo files some module imports as a namespace
- *   (`import * as`, `export * from`, dynamic `import()`), whose new exports
- *   can be reached without a changed caller.
+ *   exists?: (path: string) => boolean }} input
+ *   level: "hunk" is the function level described above.
+ *   exists: whether a repo path exists (to resolve import specifiers).
  * @returns {ImpactSelection}
  */
-export function selectFromImpact({ impact, changed, level = "hunk", ts = null, namespaceTargets = new Set(), exists = () => false }) {
+export function selectFromImpact({ impact, changed, level = "hunk", ts = null, exists = () => false }) {
   const index = mapIndex(impact);
   /** @type {ImpactSelection} */
   const out = { all: [], specs: new Set(), tests: new Set(), zeroCoverage: [], fileLevel: [], hunkLevel: [] };
@@ -193,6 +176,7 @@ export function selectFromImpact({ impact, changed, level = "hunk", ts = null, n
     }
 
     const baseText = /** @type {string} */ (file.baseText);
+    const headText = /** @type {string} */ (file.headText);
     /** Every test loading this file already evaluates `specifier`'s module. */
     const alreadyLoaded = (/** @type {string} */ specifier) => {
       const target = resolveSpecifier(path, specifier, exists);
@@ -205,31 +189,39 @@ export function selectFromImpact({ impact, changed, level = "hunk", ts = null, n
       const targetSpecs = impact.files[target];
       return Boolean(targetSpecs && loaders.every((s) => targetSpecs.includes(s)));
     };
-    const headText = /** @type {string} */ (file.headText);
+
+    // Removing an import (Svelte keeps unused value imports, so its module
+    // may no longer evaluate) or reordering imports (ESM evaluation order)
+    // reaches every test that loads this file.
+    const order = (/** @type {import("./impact-regions.mjs").SourceFacts} */ f) =>
+      [...new Set(f.imports.filter((i) => !i.erased).map((i) => i.specifier))];
+    const before = order(baseFacts);
+    const after = order(headFacts);
+    if (before.some((s) => !after.includes(s)) || after.filter((s) => before.includes(s)).join("\n") !== before.join("\n")) {
+      fileLevel(path);
+      continue;
+    }
     /**
-     * Whether editing the imports of `specifier` only renames bindings:
-     * every loader already evaluates its module, neither side has a
-     * side-effect import or re-export of it, each binding new to it has a
-     * local name the old file never mentions (so nothing existing, a global
-     * included, now resolves to it), and each binding dropped from it has a
-     * local name the new file no longer mentions.
+     * Whether the edits to `specifier`'s imports only add bindings: no
+     * side-effect import or re-export of it, no binding dropped, each new
+     * binding under a local name the old file never mentions (so nothing
+     * existing, a global included, resolves to it), and its module already
+     * evaluated by every test that loads this file.
      */
-    const bindingsInert = (/** @type {string} */ specifier) => {
-      const of = (/** @type {import("./impact-regions.mjs").SourceFacts} */ f) =>
-        (f.imports ?? []).filter((i) => i.specifier === specifier);
-      const before = of(baseFacts);
-      const after = of(headFacts);
-      if ([...before, ...after].some((i) => i.bindings === null)) return false;
+    const onlyNewBindings = (/** @type {string} */ specifier) => {
+      const of = (/** @type {import("./impact-regions.mjs").SourceFacts} */ f) => f.imports.filter((i) => i.specifier === specifier);
+      const was = of(baseFacts);
+      const now = of(headFacts);
+      if ([...was, ...now].some((i) => i.bindings === null)) return false;
       const set = (/** @type {import("./impact-regions.mjs").ImportFact[]} */ list) => new Set(list.flatMap((i) => i.bindings ?? []));
-      const was = set(before);
-      const now = set(after);
-      const local = (/** @type {string} */ b) => b.slice(0, b.indexOf("="));
-      for (const b of now) if (!was.has(b) && mentions(baseText, local(b))) return false;
-      for (const b of was) if (!now.has(b) && mentions(headText, local(b))) return false;
+      const wasSet = set(was);
+      const nowSet = set(now);
+      for (const b of wasSet) if (!nowSet.has(b)) return false;
+      for (const b of nowSet) if (!wasSet.has(b) && mentions(baseText, b.slice(0, b.indexOf("=")))) return false;
       return alreadyLoaded(specifier);
     };
     /** An old line whose change cannot alter execution by itself. */
-    const inertRemoved = (/** @type {number} */ n) => {
+    const inertBase = (/** @type {number} */ n) => {
       const region = baseFacts.lines[n - 1] ?? { kind: "code" };
       if (NO_RUNTIME.has(region.kind)) {
         const m = toMap(n);
@@ -237,98 +229,57 @@ export function selectFromImpact({ impact, changed, level = "hunk", ts = null, n
         // the AST alone is proof only outside Svelte markup.
         return m === null ? !path.endsWith(".svelte") : !lines.mapped.has(m);
       }
-      return region.kind === "import" && Boolean(region.specifier) && bindingsInert(/** @type {string} */ (region.specifier));
+      return region.kind === "import" && Boolean(region.specifier) && onlyNewBindings(/** @type {string} */ (region.specifier));
     };
     /** A new line that adds no execution of its own. */
-    const inertAdded = (/** @type {number} */ n, /** @type {number} */ first, /** @type {number} */ last) => {
+    const inertHead = (/** @type {number} */ n) => {
       const region = headFacts.lines[n - 1];
       if (!region || NO_RUNTIME.has(region.kind)) return true;
-      if (region.kind === "import") return Boolean(region.specifier) && bindingsInert(/** @type {string} */ (region.specifier));
-      // A wholly new declaration whose name the old file never mentions binds
-      // a name nothing existing can call. Exports reachable through a
-      // namespace import, and component exports, are excluded.
-      // (A new object member is not: enumeration, spreads and getters reach
-      // members without naming them.)
-      return headFacts.declarations.some((d) =>
-        d.start <= n && n <= d.end && d.start >= first && d.end <= last &&
-        !(d.exported && (path.endsWith(".svelte") || namespaceTargets.has(path))) &&
-        !mentions(baseText, d.name));
+      return region.kind === "import" && Boolean(region.specifier) && onlyNewBindings(/** @type {string} */ (region.specifier));
     };
 
-    const baseLineCount = baseText.split("\n").length;
+    const baseLines = baseText.split("\n");
+    const headLines = headText.split("\n");
     /**
-     * The map line for base line `n`, or for the nearest base line in
-     * direction `step` that the map's commit shares: lines edited between
-     * the map's commit and the merge base are new code to the map.
+     * The innermost function whose body strictly contains lines [a, b]
+     * (an insertion after line a when b < a): not its header lines, not its
+     * closing line.
+     * @param {import("./impact-regions.mjs").FunctionSpan[]} functions
      */
-    const toMapNear = (/** @type {number} */ n, /** @type {1 | -1} */ step) => {
-      for (let k = n; k >= 1 && k <= baseLineCount; k += step) {
-        const m = toMap(k);
-        if (m !== null) return m;
-      }
-      return null;
+    const innermost = (functions, /** @type {number} */ a, /** @type {number} */ b) => {
+      const inside = (/** @type {import("./impact-regions.mjs").FunctionSpan} */ f) =>
+        b < a ? f.body <= a && a < f.end : f.body < a && b < f.end;
+      /** @type {import("./impact-regions.mjs").FunctionSpan | null} */
+      let best = null;
+      for (const f of functions) if (inside(f) && (!best || f.end - f.start < best.end - best.start)) best = f;
+      return best;
     };
-
-    // A header survives when the new side has a function of the same name
-    // and shape: same declaration kind, export, async/static, accessor kind.
-    const key = (/** @type {import("./impact-regions.mjs").FunctionHeader} */ h) => `${h.name}\u0000${h.shape}`;
-    const headHeaders = new Set((headFacts.headers ?? []).map(key));
-    const baseHeaders = new Map((baseFacts.headers ?? []).map((h) => [h.line, key(h)]));
-    const survivingHeader = (/** @type {number} */ n) => {
-      const k = baseHeaders.get(n);
-      return k !== undefined && headHeaders.has(k);
-    };
-    const inSpans = (/** @type {Array<[number, number]> | undefined} */ spans, /** @type {number} */ n) =>
-      (spans ?? []).some(([a, b]) => a <= n && n <= b);
+    const header = (/** @type {string[]} */ text, /** @type {import("./impact-regions.mjs").FunctionSpan} */ f) =>
+      text.slice(f.start - 1, f.body).join("\n");
 
     let fellBack = false;
     /** @type {Set<number>} */
     const selected = new Set();
     for (const h of file.hunks) {
       const removed = Array.from({ length: h.baseCount }, (_, i) => h.baseStart + i);
-      const lastAdded = h.headStart + h.headCount - 1;
-      const addedCode = Array.from({ length: h.headCount }, (_, i) => h.headStart + i)
-        .filter((n) => !inertAdded(n, h.headStart, lastAdded));
-      const removedCode = removed.filter((n) => !inertRemoved(n));
-      // Proof of no runtime effect: nothing but inert lines on either side.
-      if (removedCode.length === 0 && addedCode.length === 0) continue;
-      /** @type {Set<number>} */
-      const hunkTests = new Set();
-      // Component styles apply when the module loads, wherever the block sits.
       const added = Array.from({ length: h.headCount }, (_, i) => h.headStart + i);
-      if (removed.some((n) => inSpans(baseFacts.styles, n)) || added.some((n) => inSpans(headFacts.styles, n))) {
-        for (const t of lines.tests) hunkTests.add(t);
-      }
-      // A function header whose function survives under the same name runs
-      // only when the function is called: place it by the block around it,
-      // not by the enclosing code that merely created the function.
-      const placed = removedCode.filter((n) => {
-        const m = toMap(n);
-        return m !== null && lines.mapped.has(m) && !survivingHeader(n);
-      });
-      for (const n of placed) {
-        const m = /** @type {number} */ (toMap(n));
-        for (const t of index.coveredIn(path, m, m)) hunkTests.add(t);
-      }
-      // New code replacing placed old code runs where that code ran. A pure
-      // insertion, or old code the source map cannot place, runs wherever the
-      // smallest block around the change runs.
-      if ((addedCode.length > 0 && placed.length === 0) || placed.length < removedCode.length) {
-        if (h.baseCount === 0 && h.baseStart < 1) {
-          for (const t of lines.tests) hunkTests.add(t);
-        } else {
-          const a = toMapNear(h.baseStart, -1);
-          const b = toMapNear(h.baseCount > 0 ? h.baseStart + h.baseCount - 1 : h.baseStart + 1, 1);
-          if (a === null || b === null) { fellBack = true; break; }
-          for (const t of index.enclosing(path, a, b)) hunkTests.add(t);
-        }
-      }
-      if (hunkTests.size === 0) {
+      // Proof of no runtime effect: nothing but inert lines on either side.
+      if (removed.every(inertBase) && added.every(inertHead)) continue;
+      const fn = innermost(baseFacts.functions, h.baseStart, h.baseStart + h.baseCount - 1);
+      const headFn = innermost(headFacts.functions, h.headStart, h.headStart + h.headCount - 1);
+      // The same function on both sides: same header, same closing line.
+      const same = fn && headFn && header(baseLines, fn) === header(headLines, headFn) &&
+        baseLines[fn.end - 1] === headLines[headFn.end - 1];
+      const from = fn ? toMap(fn.body) : null;
+      const to = fn ? toMap(fn.end) : null;
+      if (!fn || !same || from === null || to === null || to <= from) { fellBack = true; break; }
+      const entered = index.coveredIn(path, from + 1, to);
+      if (entered.size === 0) {
         out.zeroCoverage.push(`${path}:${h.baseStart}`);
         fellBack = true;
         break;
       }
-      for (const t of hunkTests) selected.add(t);
+      for (const t of entered) selected.add(t);
     }
     if (fellBack) { fileLevel(path); continue; }
     out.hunkLevel.push(path);

@@ -52,14 +52,34 @@ const run = (changed: ChangedFile[], extra: Partial<Parameters<typeof selectFrom
   return { all: out.all, specs: [...out.specs].sort(), zero: out.zeroCoverage, fileLevel: out.fileLevel, hunkLevel: out.hunkLevel };
 };
 
-describe("selectFromImpact: hunk level", () => {
-  it("selects only the tests that ran a changed line", () => {
-    expect(run([edit(6, 1, ["    return helper(n) + 1;"])]).specs).toEqual(["e2e/b.spec.ts"]);
-    expect(run([edit(8, 1, ["  return -1;"])]).specs).toEqual(["e2e/a.spec.ts"]);
+describe("selectFromImpact: function level", () => {
+  const ALL3 = ["e2e/a.spec.ts", "e2e/b.spec.ts", "e2e/c.spec.ts"];
+  const CALLERS = ["e2e/a.spec.ts", "e2e/b.spec.ts"];
+
+  it("selects every test that entered the function around a change", () => {
+    // Inside alpha: both callers, whichever branch they took; not the
+    // loader that never called it.
+    expect(run([edit(6, 1, ["    return helper(n) + 1;"])]).specs).toEqual(CALLERS);
+    expect(run([edit(8, 1, ["  return -1;"])]).specs).toEqual(CALLERS);
+    expect(run([edit(5, 0, ["    log(n);"])]).specs).toEqual(CALLERS);
+    expect(run([edit(4, 0, ["  log(n);"])]).specs).toEqual(CALLERS);
   });
 
   it("selects every loader for a module-level change", () => {
-    expect(run([edit(13, 1, ["export const K = 2;"])]).specs).toEqual(["e2e/a.spec.ts", "e2e/b.spec.ts", "e2e/c.spec.ts"]);
+    expect(run([edit(13, 1, ["export const K = 2;"])]).specs).toEqual(ALL3);
+    expect(run([edit(13, 0, ["log();"])]).specs).toEqual(ALL3);
+  });
+
+  it("selects every loader for a change to a function's header or closing line", () => {
+    expect(run([edit(4, 1, ["export function alpha(n: number, m = helper(0)) {"])]).specs).toEqual(ALL3);
+    expect(run([edit(4, 1, ["function alpha(n: number) {"])]).specs).toEqual(ALL3);
+    expect(run([edit(9, 1, ["}, 0;"])]).specs).toEqual(ALL3);
+    // Rewriting the whole function touches its header too.
+    expect(run([edit(4, 6, ["export function alpha(n: number) {", "  return n > 0 ? helper(n) : 0;", "}"])]).specs).toEqual(ALL3);
+  });
+
+  it("selects every loader when the new side reshapes the function (a split moves code to module level)", () => {
+    expect(run([edit(7, 0, ["}", "export function split() {"])]).specs).toEqual(ALL3);
   });
 
   it("selects nothing for type-only and comment-only changes", () => {
@@ -67,122 +87,131 @@ describe("selectFromImpact: hunk level", () => {
     expect(r).toMatchObject({ all: [], specs: [] });
   });
 
-  it("places a function header change by the function's callers, not its loaders", () => {
-    // Line 4 is "covered" by every loader (the module creates alpha), but a
-    // new parameter default only runs when alpha is called.
-    expect(run([edit(4, 1, ["export function alpha(n: number, m = helper(0)) {"])]).specs).toEqual(["e2e/a.spec.ts", "e2e/b.spec.ts"]);
-    // Rewriting the whole function: still only its callers.
-    const whole = run([edit(4, 6, ["export function alpha(n: number) {", "  return n > 0 ? helper(n) : 0;", "}"])]);
-    expect(whole.specs).toEqual(["e2e/a.spec.ts", "e2e/b.spec.ts"]);
+  it("does not treat new code as a binding only: a new function at module level selects every loader", () => {
+    expect(run([edit(13, 0, ["function gamma() {", "  return 4;", "}"])]).specs).toEqual(ALL3);
   });
 
-  it("selects every loader when a function's name does not survive", () => {
-    expect(run([edit(4, 1, ["export function alpha2(n: number) {"])]).specs).toEqual(["e2e/a.spec.ts", "e2e/b.spec.ts", "e2e/c.spec.ts"]);
-  });
-
-  it("places a pure insertion in its smallest enclosing block", () => {
-    // After line 5, inside the `if` block: only the test that entered it,
-    // not the one that evaluated its condition.
-    expect(run([edit(5, 0, ["    log(n);"])]).specs).toEqual(["e2e/b.spec.ts"]);
-    // After line 4, in alpha's body: every caller, not the module's loaders.
-    expect(run([edit(4, 0, ["  log(n);"])]).specs).toEqual(["e2e/a.spec.ts", "e2e/b.spec.ts"]);
-    // After the last line, at the top level: every loader.
-    expect(run([edit(13, 0, ["log();"])]).specs).toEqual(["e2e/a.spec.ts", "e2e/b.spec.ts", "e2e/c.spec.ts"]);
-  });
-
-  it("falls back to the file level for code no test ran, and reports it", () => {
+  it("falls back to the file level for a function no test entered, and reports it", () => {
     const r = run([edit(11, 1, ["  return 3;"])]);
     expect(r.zero).toEqual(["src/lib/x.ts:11"]);
     expect(r.fileLevel).toEqual(["src/lib/x.ts"]);
-    expect(r.specs).toEqual(["e2e/a.spec.ts", "e2e/b.spec.ts", "e2e/c.spec.ts"]);
+    expect(r.specs).toEqual(ALL3);
   });
 
-  it("treats a new, unreferenced, non-exported function as a binding only", () => {
-    expect(run([edit(13, 0, ["function gamma() {", "  return 4;", "}"])]).specs).toEqual([]);
-  });
-
-  describe("a new method on an object", () => {
-    const API = ["export const api = {", "  a() {", "    return 1;", "  },", "};"].join("\n");
-    const apiImpact = mergeImpact([
-      { id: "u0", spec: "e2e/u.spec.ts", title: ["u0"], location: "e2e/u.spec.ts:1", loaded: ["src/lib/api.ts"], exercised: ["src/lib/api.ts"], lines: { "src/lib/api.ts": [[1, 5]] } },
-      { id: "v0", spec: "e2e/v.spec.ts", title: ["v0"], location: "e2e/v.spec.ts:1", loaded: ["src/lib/api.ts"], exercised: ["src/lib/api.ts"], lines: { "src/lib/api.ts": [[1, 2], [5, 5]] } },
-    ], [{ path: "src/lib/api.ts", blob: "api", aligned: true, mapped: [[1, 5]], blocks: [[1, 5], [2, 4]] }],
-    { commit: "c0ffee", generatedAt: new Date().toISOString() });
-    const insert = (lines: string[]) => {
-      const head = [...API.split("\n").slice(0, 4), ...lines, "};"].join("\n");
-      const out = selectFromImpact({ impact: apiImpact, ts, exists, changed: [{
-        path: "src/lib/api.ts", status: "modified", baseText: API, headText: head, baseBlob: "api",
-        hunks: [{ baseStart: 4, baseCount: 0, headStart: 5, headCount: lines.length }],
+  describe("regressions: a new branch attached to an existing block (#1373 review, F1)", () => {
+    // esbuild maps the block's closing brace and V8 attributes it to the
+    // `then` block, so a block-level rule picked only the tests that took
+    // the existing branch. Function level selects every test in the function.
+    const select = (text: string, cover: Record<string, Array<[number, number]>>, hunk: { at: number, lines: string[] }) => {
+      const records = Object.entries(cover).map(([id, lines]) => ({
+        id, spec: `e2e/${id}.spec.ts`, title: [id], location: `e2e/${id}.spec.ts:1`,
+        loaded: ["src/lib/k.ts"], exercised: ["src/lib/k.ts"], lines: { "src/lib/k.ts": lines },
+      }));
+      const n = text.split("\n").length;
+      const kImpact = mergeImpact(records, [{ path: "src/lib/k.ts", blob: "k", aligned: true, mapped: [[1, n]], blocks: [[1, n]] }],
+        { commit: "c0ffee", generatedAt: new Date().toISOString() });
+      const base = text.split("\n");
+      const head = [...base.slice(0, hunk.at), ...hunk.lines, ...base.slice(hunk.at)].join("\n");
+      const out = selectFromImpact({ impact: kImpact, ts, exists, changed: [{
+        path: "src/lib/k.ts", status: "modified", baseText: text, headText: head, baseBlob: "k",
+        hunks: [{ baseStart: hunk.at, baseCount: 0, headStart: hunk.at + 1, headCount: hunk.lines.length }],
       }] });
       return [...out.specs].sort();
     };
 
-    it("selects every user of the object, even for a name nothing mentions (enumeration and spreads reach it)", () => {
-      expect(insert(["  zzqNew() {", "    return 2;", "  },"])).toEqual(["e2e/u.spec.ts", "e2e/v.spec.ts"]);
-      expect(insert(["  get zzqBoom() {", "    throw new Error();", "  },"])).toEqual(["e2e/u.spec.ts", "e2e/v.spec.ts"]);
+    it("`else if` after an early return (window-keys.ts open-filter)", () => {
+      const text = [
+        "export function classify(event: KeyboardEvent, context: { input: boolean }) {", // 1
+        "  const primary = event.ctrlKey;", //                                           2
+        '  if (event.key === "f" && primary) {', //                                      3
+        '    return "open-filter";', //                                                   4
+        "  }", //                                                                         5
+        '  if (context.input) return "pass";', //                                        6
+        '  return "command";', //                                                         7
+        "}", //                                                                           8
+      ].join("\n");
+      // ctrlF took the branch (its closing brace counted with it); other
+      // keys skipped it; idle only loaded the module.
+      const specs = select(text, { ctrlF: [[1, 5]], other: [[1, 3], [6, 8]], idle: [[1, 1]] },
+        { at: 4, lines: ["  } else if (primary && event.shiftKey) {", '    return "pass";'] });
+      expect(specs).toEqual(["e2e/ctrlF.spec.ts", "e2e/other.spec.ts"]);
+    });
+
+    it("`else { throw }` on a branch the browser never takes (common.ts invoke)", () => {
+      const text = [
+        "let cached = false;", //                                   1
+        "export async function invoke(cmd: string) {", //           2
+        "  if (!cached && isTauri()) {", //                         3
+        "    cached = true;", //                                    4
+        "  }", //                                                   5
+        "  if (cached) {", //                                       6
+        "    return tauri(cmd);", //                                7
+        "  }", //                                                   8
+        "  return mock(cmd);", //                                   9
+        "}", //                                                     10
+      ].join("\n");
+      const specs = select(text, { caller: [[1, 3], [6, 6], [8, 10]], idle: [[1, 2]] },
+        { at: 4, lines: ["  } else {", '    throw new Error("not in Tauri");'] });
+      expect(specs).toEqual(["e2e/caller.spec.ts"]);
     });
   });
 
   describe("import edits", () => {
-    const ALL3 = ["e2e/a.spec.ts", "e2e/b.spec.ts", "e2e/c.spec.ts"];
-    it("selects when a binding keeps its local name but changes what it imports", () => {
+    it("treats a new binding of an already-loaded module, under a new name, as a binding only", () => {
+      expect(run([edit(1, 1, ['import { helper, other } from "./y";'])]).specs).toEqual([]);
+    });
+
+    it("selects every loader when a binding keeps its local name but changes what it imports", () => {
       expect(run([edit(1, 1, ['import { other as helper } from "./y";'])]).specs).toEqual(ALL3);
       expect(run([edit(1, 1, ['import * as helper from "./y";'])]).specs).toEqual(ALL3);
       expect(run([edit(1, 1, ['import helper from "./y";'])]).specs).toEqual(ALL3);
     });
 
-    it("selects when a new binding shadows a name the file already uses (a global included)", () => {
+    it("selects every loader when a new binding shadows a name the file already uses (a global included)", () => {
       expect(run([edit(1, 1, ['import { helper, alpha } from "./y";'])]).specs).toEqual(ALL3);
     });
 
-    it("selects when a dropped binding is still used", () => {
+    it("selects every loader when an import or a binding is removed (Svelte keeps unused value imports)", () => {
       expect(run([edit(1, 1, ['import {} from "./y";'])]).specs).toEqual(ALL3);
+      expect(run([edit(1, 1, [])]).specs).toEqual(ALL3);
     });
 
-    it("never treats a side-effect import or a re-export as a binding", () => {
+    it("selects every loader when imports are reordered (ESM evaluation order)", () => {
+      const base = ['import { helper } from "./y";', 'import { z } from "./z";', "export const K = helper(z);"].join("\n");
+      const head = ['import { z } from "./z";', 'import { helper } from "./y";', "export const K = helper(z);"].join("\n");
+      const r = run([{ path: "src/lib/x.ts", status: "modified", baseText: base, headText: head, baseBlob: "newer",
+        toMapLine: (n: number) => n, hunks: [{ baseStart: 1, baseCount: 2, headStart: 1, headCount: 2 }] }]);
+      expect(r.specs).toEqual(ALL3);
+    });
+
+    it("never treats a side-effect import, a re-export or `import { type A }` of an unloaded module as inert", () => {
       expect(run([edit(1, 0, ['import "./y";'])]).specs).toEqual(ALL3);
       expect(run([edit(13, 0, ['export { helper as h2 } from "./y";'])]).specs).toEqual(ALL3);
+      // verbatimModuleSyntax keeps it as `import {} from "./unseen"`.
+      expect(run([edit(1, 0, ['import { type U } from "./unseen";'])]).specs).toEqual(ALL3);
+      expect(run([edit(1, 0, ['import type { U } from "./unseen";'])]).specs).toEqual([]);
+    });
+
+    it("selects every loader for an import of a module some loader never evaluated", () => {
+      expect(run([edit(1, 0, ['import { side } from "./z-side-effect";'])]).specs).toEqual(ALL3);
     });
   });
 
-  it("does not place a header by its callers when the function's shape changes", () => {
-    // Dropping `export` breaks importers at link time; an accessor runs on access.
-    const ALL3 = ["e2e/a.spec.ts", "e2e/b.spec.ts", "e2e/c.spec.ts"];
-    expect(run([edit(4, 1, ["function alpha(n: number) {"])]).specs).toEqual(ALL3);
-    expect(run([edit(4, 1, ["export async function alpha(n: number) {"])]).specs).toEqual(ALL3);
-  });
-
-  it("selects every loader for a Svelte style change, wherever the block sits", () => {
-    const base = ["<script>", "  let a = 1;", "  function f() {", "    a++;", "  }", "</script>", "<style>", "  :global(p) { color: red; }", "</style>", "<p>{a}</p>"].join("\n");
+  it("selects every loader for a Svelte style or markup change", () => {
+    const base = ["<script>", "  let a = 1;", "  function f() {", "    a++;", "  }", "</script>", "<p>{a}</p>", "<style>", "  :global(p) { color: red; }", "</style>"].join("\n");
     const svelteImpact = mergeImpact([
-      { id: "s0", spec: "e2e/s.spec.ts", title: ["s0"], location: "e2e/s.spec.ts:1", loaded: ["src/lib/S.svelte"], exercised: ["src/lib/S.svelte"], lines: { "src/lib/S.svelte": [[1, 4], [10, 10]] } },
+      { id: "s0", spec: "e2e/s.spec.ts", title: ["s0"], location: "e2e/s.spec.ts:1", loaded: ["src/lib/S.svelte"], exercised: ["src/lib/S.svelte"], lines: { "src/lib/S.svelte": [[1, 7]] } },
       { id: "s1", spec: "e2e/t.spec.ts", title: ["s1"], location: "e2e/t.spec.ts:1", loaded: ["src/lib/S.svelte"], exercised: ["src/lib/S.svelte"], lines: { "src/lib/S.svelte": [[1, 2]] } },
-    ], [{ path: "src/lib/S.svelte", blob: "s", aligned: true, mapped: [[1, 6], [10, 10]], blocks: [[1, 10], [2, 10], [3, 5]] }],
+    ], [{ path: "src/lib/S.svelte", blob: "s", aligned: true, mapped: [[1, 7]], blocks: [[1, 10]] }],
     { commit: "c0ffee", generatedAt: new Date().toISOString() });
-    const out = selectFromImpact({ impact: svelteImpact, ts, exists, changed: [{
-      path: "src/lib/S.svelte", status: "modified", baseText: base, headText: base.replace("red", "blue"), baseBlob: "s",
-      hunks: [{ baseStart: 8, baseCount: 1, headStart: 8, headCount: 1 }],
-    }] });
-    expect([...out.specs].sort()).toEqual(["e2e/s.spec.ts", "e2e/t.spec.ts"]);
-  });
-
-  it("does not treat a declaration that shadows an existing name as a binding", () => {
-    // `helper` already appears in the file: a new declaration rebinds it.
-    expect(run([edit(13, 0, ["function helper() {", "  return 4;", "}"])]).specs).toEqual(["e2e/a.spec.ts", "e2e/b.spec.ts", "e2e/c.spec.ts"]);
-  });
-
-  it("does not treat a new export of a namespace-imported module as a binding", () => {
-    const r = run([edit(13, 0, ["export function gamma() {", "  return 4;", "}"])], { namespaceTargets: new Set(["src/lib/x.ts"]) });
-    expect(r.specs).toEqual(["e2e/a.spec.ts", "e2e/b.spec.ts", "e2e/c.spec.ts"]);
-  });
-
-  it("treats re-importing an already-loaded module as a binding change", () => {
-    expect(run([edit(1, 1, ['import { helper, other } from "./y";'])]).specs).toEqual([]);
-  });
-
-  it("selects every loader for an import of a module some loader never evaluated", () => {
-    const r = run([edit(1, 0, ['import "./z-side-effect";'])]);
-    expect(r.specs).toEqual(["e2e/a.spec.ts", "e2e/b.spec.ts", "e2e/c.spec.ts"]);
+    const sel = (headText: string, line: number) => [...selectFromImpact({ impact: svelteImpact, ts, exists, changed: [{
+      path: "src/lib/S.svelte", status: "modified", baseText: base, headText, baseBlob: "s",
+      hunks: [{ baseStart: line, baseCount: 1, headStart: line, headCount: 1 }],
+    }] }).specs].sort();
+    expect(sel(base.replace("red", "blue"), 9)).toEqual(["e2e/s.spec.ts", "e2e/t.spec.ts"]);
+    expect(sel(base.replace("<p>{a}</p>", "<b>{a}</b>"), 7)).toEqual(["e2e/s.spec.ts", "e2e/t.spec.ts"]);
+    // Inside the script's function: the tests that entered it.
+    expect(sel(base.replace("a++;", "a += 2;"), 4)).toEqual(["e2e/s.spec.ts"]);
   });
 
   it("uses the file level when the base text differs from the mapped version", () => {
@@ -201,22 +230,14 @@ describe("selectFromImpact: hunk level", () => {
     const r = run([{ path: "src/lib/x.ts", status: "modified", baseText: base, headText: head, baseBlob: "newer", toMapLine,
       hunks: [{ baseStart: 8, baseCount: 1, headStart: 8, headCount: 1 }] }]);
     expect(r.hunkLevel).toEqual(["src/lib/x.ts"]);
-    expect(r.specs).toEqual(["e2e/b.spec.ts"]);
+    expect(r.specs).toEqual(CALLERS);
   });
 
-  it("places a line edited since the map in the block around its shared neighbours", () => {
-    const toMapLine = lineTranslator(invertHunks([{ baseStart: 6, baseCount: 1, headStart: 6, headCount: 1 }]));
-    const r = run([{ ...edit(6, 1, ["    return 0;"]), baseBlob: "newer", toMapLine }]);
-    expect(r.hunkLevel).toEqual(["src/lib/x.ts"]);
-    expect(r.specs).toEqual(["e2e/b.spec.ts"]);
-  });
-
-  it("widens to the loaders when the edit since the map reaches the file's edges", () => {
-    // Every base line changed since the map: no shared neighbour to place it.
-    const toMapLine = lineTranslator(invertHunks([{ baseStart: 1, baseCount: 13, headStart: 1, headCount: 13 }]));
+  it("uses the file level when the function's header or end changed since the map", () => {
+    const toMapLine = lineTranslator(invertHunks([{ baseStart: 4, baseCount: 1, headStart: 4, headCount: 1 }]));
     const r = run([{ ...edit(6, 1, ["    return 0;"]), baseBlob: "newer", toMapLine }]);
     expect(r.fileLevel).toEqual(["src/lib/x.ts"]);
-    expect(r.specs).toEqual(["e2e/a.spec.ts", "e2e/b.spec.ts", "e2e/c.spec.ts"]);
+    expect(r.specs).toEqual(ALL3);
   });
 
   it("does not treat a Svelte comment edited since the map as inert", () => {
@@ -241,7 +262,7 @@ describe("selectFromImpact: hunk level", () => {
   it("stays fast and correct for a very large diff", () => {
     const big = Array.from({ length: 2000 }, (_, i) => edit(6, 1, [`    return ${i};`]));
     const started = performance.now();
-    expect(run(big).specs).toEqual(["e2e/b.spec.ts"]);
+    expect(run(big).specs).toEqual(CALLERS);
     expect(performance.now() - started).toBeLessThan(5000);
   });
 });

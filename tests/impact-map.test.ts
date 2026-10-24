@@ -171,6 +171,19 @@ describe("mergeImpact", () => {
     expect(map.specs).toEqual([]);
   });
 
+  it("marks a spec incomplete when a test's final attempt did not pass or its collector failed", () => {
+    const map = mergeImpact([
+      { ...record("t1", "e2e/a.spec.ts", ["src/x.ts"]), retry: 0, status: "passed" },
+      { ...record("t1", "e2e/a.spec.ts", ["src/x.ts"]), retry: 1, status: "timedOut" },
+      { ...record("t2", "e2e/b.spec.ts", ["src/x.ts"]), retry: 0, status: "failed" },
+      { ...record("t2", "e2e/b.spec.ts", ["src/x.ts"]), retry: 1, status: "passed" },
+      { ...record("t3", "e2e/c.spec.ts", ["src/x.ts"]), status: "passed", failures: ["page closed before its coverage was taken"] },
+      { ...record("t4", "e2e/d.spec.ts", ["src/x.ts"]), status: "skipped" },
+    ], []);
+    expect(map.incomplete).toEqual(["e2e/a.spec.ts", "e2e/c.spec.ts"]);
+    expect(map.specs).toEqual(["e2e/b.spec.ts", "e2e/d.spec.ts"]);
+  });
+
   it("reads the executed tests from a Playwright JSON report", () => {
     const report = { config: {}, suites: [{ specs: [], suites: [{ specs: [
       { id: "ran", file: "a.spec.ts", tests: [{ results: [{ status: "failed" }] }] },
@@ -234,13 +247,26 @@ describe("source facts", () => {
     expect(factsOf(ts, "src/x.ts", text)!.lines[0].specifier).toBe("./a");
   });
 
-  it("finds function declarations with names and export state", () => {
-    const text = "export function a() {\n  return 1;\n}\nconst b = () => {\n  return 2;\n};\nfunction outer() {\n  function inner() {}\n}";
-    expect(factsOf(ts, "src/x.ts", text)!.declarations).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: "a", exported: true, start: 1, end: 3 }),
-      expect.objectContaining({ name: "b", exported: false, start: 4, end: 6 }),
-      expect.objectContaining({ name: "inner", start: 8, end: 8 }),
-    ]));
+  it("finds every function with a body: start, body and end lines", () => {
+    const text = "export function a() {\n  return 1;\n}\nconst b = (\n  n: number,\n) => {\n  return n;\n};\nfunction outer() {\n  function inner() {}\n}\ndeclare function d(): void;";
+    expect(factsOf(ts, "src/x.ts", text)!.functions).toEqual([
+      { start: 1, body: 1, end: 3 },
+      { start: 4, body: 6, end: 8 },
+      { start: 9, body: 9, end: 11 },
+      { start: 10, body: 10, end: 10 },
+    ]);
+  });
+
+  it("lists imports in order; only `import type` is erased (verbatimModuleSyntax keeps `{ type A }`)", () => {
+    const text = 'import type { T } from "./t";\nimport { type A } from "./a";\nimport b, { c as d } from "./b";\nimport "./side";\nexport { e } from "./e";';
+    expect(factsOf(ts, "src/x.ts", text)!.imports).toEqual([
+      { specifier: "./t", bindings: [], erased: true },
+      { specifier: "./a", bindings: [], erased: false },
+      { specifier: "./b", bindings: ["b=default", "d=c"], erased: false },
+      { specifier: "./side", bindings: null, erased: false },
+      { specifier: "./e", bindings: null, erased: false },
+    ]);
+    expect(factsOf(ts, "src/x.ts", text)!.lines[1].kind).toBe("import");
   });
 
   it("classifies Svelte script content and treats markup and styles as code", () => {

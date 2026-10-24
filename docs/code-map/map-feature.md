@@ -375,6 +375,7 @@ backend for E2E/browser).
 ## Git SCM panel
 
 - `components/ScmSidebarView.svelte` — staged/unstaged/untracked tree, commit box
+- `components/scm/*.svelte` (`ScmSection`, `ScmCommitPanel`), `state/scm-sidebar-actions.ts`, `domain/scm-sidebar.ts` — ScmSidebarView's regions, action/toast orchestration and pure row-order/commit-admission rules (#1372 split; same DOM/classes)
 - `components/ScmPanel.svelte`, `components/ScmDiffView.svelte` — panel shell + inline diff. ScmPanel renders docked/flat by default (like the miller bar); `island` prop opts into floating-island chrome (#434) — vibrancy alone no longer floats it.
 - `components/GitGraphView.svelte` — commit graph / log; its filter popover
   carries an ephemeral file-path query through `state/git-graph-cache.ts` to

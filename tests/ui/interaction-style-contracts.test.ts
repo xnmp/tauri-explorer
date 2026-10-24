@@ -45,6 +45,7 @@ describe("interaction styling contracts", () => {
       "ProgressDialog.svelte",
       "QuickOpen.svelte",
       "ScmSidebarView.svelte",
+      ...readdirSync(resolve(componentRoot, "scm")).map((name) => `scm/${name}`),
       "UserReportDialog.svelte",
     ];
     const source = names.map(component).join("\n");

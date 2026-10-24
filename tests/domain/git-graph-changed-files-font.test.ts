@@ -31,7 +31,8 @@ const MONOSPACE = /\bmonospace\b|ui-monospace|Menlo|Consolas|Courier|SFMono/i;
 
 /** `:root` tokens live in the app shell; component CSS resolves against them. */
 const tokens = collectCustomProperties(repoFile("src/routes/+page.svelte"));
-const graphCss = repoFile("src/lib/components/GitGraphView.svelte");
+/** The changed-files list and its inline diffs render in the commit detail block. */
+const graphCss = repoFile("src/lib/components/git-graph/GitGraphCommitDetail.svelte");
 
 /** What `body { font-family }` actually computes to — the regular app font. */
 const appFont = resolveCssValue(

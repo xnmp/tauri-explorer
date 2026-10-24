@@ -87,6 +87,16 @@ export function buildStageFiles(buckets: StatusBucketsLike): StageFile[] {
   ];
 }
 
+/** The working-tree rows of a mixed file list: those tagged with both an
+ *  index section and a staged flag. Commit-file rows carry neither. */
+export function stageFilesOf<
+  T extends { readonly path: string; readonly status: string; readonly section?: StageSection; readonly staged?: boolean },
+>(files: readonly T[]): (T & StageFile)[] {
+  return files.filter(
+    (file): file is T & StageFile => file.section !== undefined && file.staged !== undefined,
+  );
+}
+
 /** Group a flat stage-file list into labelled sections, omitting empty ones. */
 export function groupStageFiles(files: StageFile[]): StageGroup[] {
   return SECTION_ORDER.map((section) => ({

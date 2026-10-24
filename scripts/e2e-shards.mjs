@@ -24,10 +24,14 @@
 //     unless it selects exactly the planned files (also `plan --verify`).
 //   node scripts/e2e-shards.mjs record run1.log [run2.log ...]
 //     Rebuilds scripts/e2e-shard-timings.json from GitHub Actions logs
-//     (`gh run view <id> --log > run.log`) of successful CI runs. The browser
-//     jobs run one worker, so the gap between consecutive test-start lines of a
-//     job is that test's duration; each file's per-run total is then the median
-//     across the given runs. Only `chromium (N)` / `webkit-tests (N)` jobs that
+//     (`gh run view <id> --log > run.log`) of successful CI runs. Each test
+//     attempt's duration comes from its `[e2e-timing]` line
+//     (scripts/e2e-timing-reporter.mjs), correct for any worker count. A job
+//     without those lines (logs from before #1368's phase 2) falls back to
+//     the gap between consecutive test-start lines, which is a duration only
+//     with one worker; a multi-worker job without them is not timed. Each
+//     file's per-run total is then the median across the given runs. Only
+//     `chromium (N)` / `webkit-tests (N)` jobs that
 //     executed (not cache replays) count; specs they did not time keep their
 //     previous timing, and deleted specs are dropped. The weekly
 //     e2e-shard-timings.yml workflow runs this against recent dev pushes.
@@ -127,6 +131,10 @@ const TEST_START =
   /^([^\t]+)\t[^\t]*\t(\d{4}-\d\d-\d\dT[\d:.]+)Z\s.*?\[\d+\/\d+\] (?:\(retries\) )?\[([\w-]+)\] › (?:e2e\/)?([^:\s]+):\d+/;
 // The line reporter's closing summary bounds the job's final test.
 const RUN_END = /^([^\t]+)\t[^\t]*\t(\d{4}-\d\d-\d\dT[\d:.]+)Z\s+\d+ passed\b/;
+// One finished attempt, from scripts/e2e-timing-reporter.mjs.
+const TIMING = /^[^\t]+\t[^\t]*\t\S+Z\s+\[e2e-timing\] ([\w-]+) (\S+) (\d+(?:\.\d+)?)\s*$/;
+// Playwright's run header: "Running 416 tests using 2 workers".
+const WORKERS = /\bRunning \d+ tests? using (\d+) workers?\b/;
 // Only the default-mode browser shards time the plan; the ALL_VIEW_MODES job
 // runs the same files several times over and would inflate them (#1367).
 const SHARD_JOB = /^(chromium|webkit-tests) \(\d+\)$/;
@@ -135,9 +143,12 @@ const CACHE_HIT = /: passed from the test-result cache\b/;
 const ANSI = /\x1b\[[0-9;]*[A-Za-z]|\^\[\[[0-9;]*[A-Za-z]/g;
 
 /**
- * Per-engine, per-file seconds observed in one GitHub Actions run log.
- * A test whose job has no later start line or closing summary (a cancelled or
- * truncated job) is not counted, rather than charged an unbounded duration.
+ * Per-engine, per-file seconds observed in one GitHub Actions run log, summed
+ * over every test attempt (retries included).
+ * A job's `[e2e-timing]` lines are authoritative. Without them, a one-worker
+ * job is timed by start-line gaps; a test whose job has no later start line or
+ * closing summary (a cancelled or truncated job) is not counted, rather than
+ * charged an unbounded duration, and a multi-worker job is not timed at all.
  * Only default-mode shard jobs count, and a job replayed from the test-result
  * cache counts not at all: its replayed lines carry no real durations.
  *
@@ -149,11 +160,24 @@ export function parseCiLog(log) {
   const jobs = new Map();
   /** @type {Set<string>} */
   const replayed = new Set();
+  /** @type {Map<string, { engine: string, spec: string, seconds: number }[]>} */
+  const timed = new Map();
+  /** @type {Map<string, number>} */
+  const workers = new Map();
   for (const raw of log.split("\n")) {
     const line = raw.replace(ANSI, "");
     const job = line.slice(0, line.indexOf("\t"));
     if (!SHARD_JOB.test(job)) continue;
     if (CACHE_HIT.test(line)) { replayed.add(job); continue; }
+    const timing = TIMING.exec(line);
+    if (timing) {
+      if (!timed.has(job)) timed.set(job, []);
+      /** @type {NonNullable<ReturnType<typeof timed.get>>} */ (timed.get(job))
+        .push({ engine: timing[1], spec: timing[2].replace(/^e2e\//, ""), seconds: Number(timing[3]) });
+      continue;
+    }
+    const header = WORKERS.exec(line);
+    if (header) { workers.set(job, Number(header[1])); continue; }
     const start = TEST_START.exec(line);
     const end = start ? null : RUN_END.exec(line);
     const event = start
@@ -167,14 +191,21 @@ export function parseCiLog(log) {
   }
   /** @type {Record<string, Record<string, number>>} */
   const totals = {};
-  for (const [job, events] of jobs) {
+  const add = (/** @type {string} */ engine, /** @type {string} */ spec, /** @type {number} */ seconds) => {
+    totals[engine] ??= {};
+    totals[engine][spec] = Math.round(((totals[engine][spec] ?? 0) + seconds) * 1000) / 1000;
+  };
+  for (const [job, attempts] of timed) {
     if (replayed.has(job)) continue;
+    for (const { engine, spec, seconds } of attempts) add(engine, spec, seconds);
+  }
+  for (const [job, events] of jobs) {
+    // Start-line gaps are durations only for a one-worker job.
+    if (replayed.has(job) || timed.has(job) || (workers.get(job) ?? 1) > 1) continue;
     for (let i = 0; i + 1 < events.length; i++) {
       const { engine, spec, at } = events[i];
       if (!spec || !engine) continue;
-      const seconds = Math.max(0, (events[i + 1].at - at) / 1000);
-      totals[engine] ??= {};
-      totals[engine][spec] = (totals[engine][spec] ?? 0) + seconds;
+      add(engine, spec, Math.max(0, (events[i + 1].at - at) / 1000));
     }
   }
   return totals;

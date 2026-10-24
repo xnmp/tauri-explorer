@@ -891,7 +891,7 @@ describe("ci.yml cache wiring", () => {
     const setup = all.findIndex((s) => (s.name ?? s.uses) === name);
     expect(probe).toBeGreaterThan(all.findIndex((s) => s.name === "Restore test-result cache"));
     expect(setup).toBeGreaterThan(probe);
-    expect(all[setup].if).toMatch(/&& steps\.test-cache-probe\.outputs\.hit != 'true'$/);
+    expect(all[setup].if).toMatch(/(^|&& )steps\.test-cache-probe\.outputs\.hit != 'true'$/);
     expect(all[probe].run).toMatch(/^node scripts\/test-cache\.mjs probe --task ci:(e2e|rust) --target "/);
   });
 

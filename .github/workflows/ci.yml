@@ -349,12 +349,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2]
     # Job-wide so the cache probe and the run hash the same environment. The
     # container, not the runner image, is this job's environment: name it in
     # the test-result cache's platform identity.
     env:
       E2E_ENGINE: chromium
+      # Two Playwright workers per runner (#1368): halves the runners per run
+      # with no new flakes measured on Chromium (run 40068235372). WebKit stays
+      # at one worker: two overran its 40-minute shard budget there.
+      PW_WORKERS: "2"
       ImageOS: playwright_noble
       ImageVersion: "1.60.0_9bd26ad900bb5e0f4dee75839e957a89ae89c2b7ab1e76050e559790e946b948"
       TEST_CACHE_NORMALIZE_VERSION: "1"
@@ -524,12 +528,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1]
     # Job-wide so the cache probe and the run hash the same environment. The
     # container, not the runner image, is this job's environment: name it in
     # the test-result cache's platform identity.
     env:
       E2E_ENGINE: chromium
+      # Two Playwright workers per runner (#1368): halves the runners per run
+      # with no new flakes measured on Chromium (run 40068235372). WebKit stays
+      # at one worker: two overran its 40-minute shard budget there.
+      PW_WORKERS: "2"
       ALL_VIEW_MODES: "1"
       ImageOS: playwright_noble
       ImageVersion: "1.60.0_9bd26ad900bb5e0f4dee75839e957a89ae89c2b7ab1e76050e559790e946b948"
@@ -970,7 +978,9 @@ jobs:
   rust-suite:
     name: rust-suite (${{ matrix.suite }})
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    # A NONE selection skips the job (no runner); the rust gate accepts that
+    # only for NONE.
+    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.rust != 'NONE'
     runs-on: ubuntu-latest
     # A cold cache build plus the lib suite has exceeded 30 minutes.
     timeout-minutes: 45
@@ -1009,32 +1019,26 @@ jobs:
 
       # Turborepo, which hashes the suite's inputs, is a devDependency.
       - uses: oven-sh/setup-bun@v2
-        if: env.RUST_SELECTION != 'NONE'
         with:
           bun-version: latest
 
       - name: Install dependencies
-        if: env.RUST_SELECTION != 'NONE'
         run: bun install --frozen-lockfile
 
       - uses: dtolnay/rust-toolchain@stable
-        if: env.RUST_SELECTION != 'NONE'
         with:
           components: rustfmt, clippy
 
       # Refreshed before the cache probe so the hashed apt versions are the
       # ones a miss installs.
       - name: Refresh apt package index
-        if: env.RUST_SELECTION != 'NONE'
         run: sudo apt-get update
 
       - name: Test-result cache key
         id: test-cache-key
-        if: env.RUST_SELECTION != 'NONE'
         run: node scripts/test-cache.mjs key --target "rust-${{ matrix.suite }}"
 
       - name: Restore test-result cache
-        if: env.RUST_SELECTION != 'NONE'
         env:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/test-cache.mjs restore --target "rust-${{ matrix.suite }}"
@@ -1043,11 +1047,10 @@ jobs:
       # libraries nor the ~1.5 GB build cache are needed.
       - name: Probe test-result cache
         id: test-cache-probe
-        if: env.RUST_SELECTION != 'NONE'
         run: node scripts/test-cache.mjs probe --task ci:rust --target "rust-${{ matrix.suite }}"
 
       - name: Install Tauri Linux system dependencies
-        if: env.RUST_SELECTION != 'NONE' && steps.test-cache-probe.outputs.hit != 'true'
+        if: steps.test-cache-probe.outputs.hit != 'true'
         run: sudo apt-get install -y $TEST_CACHE_APT_PACKAGES
 
       # Each suite builds different feature artifacts; separate cache keys
@@ -1055,7 +1058,7 @@ jobs:
       # Save only from dev so PR branches restore dev's caches instead of
       # adding ~1.5 GB entries each and evicting other workflows' caches.
       - uses: Swatinem/rust-cache@v2
-        if: env.RUST_SELECTION != 'NONE' && steps.test-cache-probe.outputs.hit != 'true'
+        if: steps.test-cache-probe.outputs.hit != 'true'
         with:
           workspaces: src-tauri
           key: ${{ matrix.suite }}
@@ -1063,23 +1066,18 @@ jobs:
 
       # tauri::generate_context! requires the frontendDist dir to exist.
       - name: Create empty frontend dist
-        if: env.RUST_SELECTION != 'NONE'
         run: mkdir -p build
 
       # scripts/ci-test-rust.sh runs fmt (default suite), clippy and the tests,
       # or the cache replays an unchanged passing result. PRs test only the
       # packages the diff touches plus their dependents (scripts/rust-affected.mjs,
-      # from cargo metadata); NONE also skips the toolchain, build and clippy.
-      # Other events run everything.
+      # from cargo metadata); NONE skips this job. Other events run everything.
       - name: Rust tests
         id: test-cache-run
         run: |
           case "$RUST_SELECTION" in
             ALL)
               echo "Rust tests: full suite ($RUST_REASON)" ;;
-            NONE)
-              echo "Rust tests: none selected ($RUST_REASON)"
-              exit 0 ;;
             *)
               echo "Rust tests: selected packages $RUST_SELECTION ($RUST_REASON)" ;;
           esac
@@ -1126,21 +1124,34 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/ci-jobs.mjs report rust-suite
 
-      # Skipped only on a docs-only PR; on code every suite must succeed, so a
-      # failed, cancelled or skipped suite still fails this check. A Rust NONE
-      # selection still runs the job; its steps skip themselves.
+      # On code every suite must succeed unless the Rust selection is NONE,
+      # which skips them; a failed, cancelled or otherwise skipped suite fails
+      # this check.
       - name: Require all Rust suite outcomes
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
           CODE: ${{ needs.changes.outputs.code }}
+          RUST: ${{ needs.changes.outputs.rust }}
           RUST_RESULT: ${{ needs.rust-suite.result }}
         run: |
-          test "$CHANGES_RESULT" = success
+          ok=true
+          expect() {
+            if [ "$2" = "$3" ]; then
+              echo "$1: $2"
+            else
+              echo "::error title=$1 $2::$1 is $2, expected $3"
+              ok=false
+            fi
+          }
+          # A job is skipped only when its selection is NONE (or on a docs-only PR).
+          selected() { [ "$1" = NONE ] && echo skipped || echo success; }
+          expect changes "$CHANGES_RESULT" success
           if [ "$CODE" = true ]; then
-            test "$RUST_RESULT" = success
+            expect rust-suite "$RUST_RESULT" "$(selected "$RUST")"
           else
-            test "$RUST_RESULT" = skipped
+            expect rust-suite "$RUST_RESULT" skipped
           fi
+          $ok
 
   # Hit rate and runner time across every cached test target (#1176). Each
   # target uploads one record; targets that ran nothing upload none.

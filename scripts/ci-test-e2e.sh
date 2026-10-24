@@ -17,14 +17,18 @@ limit=()
 if [ -n "${E2E_GLOBAL_TIMEOUT_MINUTES:-}" ]; then
   limit=("--global-timeout=$((E2E_GLOBAL_TIMEOUT_MINUTES * 60000))")
 fi
+# The timing reporter prints each test attempt's duration for the weekly
+# shard-timings refresh (scripts/e2e-shards.mjs record), which cannot read
+# durations from interleaved start lines when a job runs several workers.
+reporter=line,html,./scripts/e2e-timing-reporter.mjs
 case "$E2E_ENGINE" in
   chromium)
-    npx playwright test --project=chromium --test-list "$list" --reporter=line,html "${limit[@]}" ;;
+    npx playwright test --project=chromium --test-list "$list" --reporter="$reporter" "${limit[@]}" ;;
   webkit)
     # Only video decoder specs opt into GTK; other specs retain headless WPE.
     # The display belongs to this hosted runner and is destroyed after testing.
     xvfb-run -a --server-args="-screen 0 1920x1080x24 -nolisten tcp" \
-      npx playwright test --project=webkit --test-list "$list" --reporter=line,html "${limit[@]}" ;;
+      npx playwright test --project=webkit --test-list "$list" --reporter="$reporter" "${limit[@]}" ;;
   *)
     echo "ci-test-e2e: unknown engine $E2E_ENGINE" >&2
     exit 2 ;;

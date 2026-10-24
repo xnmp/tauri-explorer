@@ -593,7 +593,7 @@ backend for E2E/browser).
 
 ## Cross-cutting
 
-- **IPC pattern**: frontend `invoke("cmd", {args})` wrapped in `api/*.ts`; outside Tauri, `api/mock-invoke.ts` intercepts (detects `__TAURI_INTERNALS__`). Rust `#[tauri::command] async fn` registered in `src-tauri/src/lib.rs`.
+- **IPC pattern**: frontend `invoke("cmd", {args})` wrapped in `api/*.ts`; outside Tauri, `api/mock-invoke.ts` intercepts (detects `__TAURI_INTERNALS__`); its handlers live in per-family modules (`api/mock-files.ts`, `mock-git.ts`, `mock-git-history.ts`, `mock-git-state.ts`, `mock-preview.ts`, `mock-search.ts`, `mock-clipboard.ts`, `mock-file-recovery.ts`, `mock-ai.ts`, `mock-system.ts`) dispatched through `api/mock-dispatch.ts` (#1372). The PR selector treats the core (`mock-invoke`, `mock-dispatch`, `mock-control`, `mock-fixtures`) as ALL and places family modules through the test-impact map. Rust `#[tauri::command] async fn` registered in `src-tauri/src/lib.rs`.
 - **Refresh manager** (`state/refresh-manager.ts`): single choke point. WHEN=refresh-manager, WHETHER=pane-watch, HOW=pane-refresh. Don't add a 4th gate.
 - **Key event names**: `directory-changed` (fs_watcher.rs → use-file-watchers.ts → refresh), `git-status-changed` (git_watch.rs → git-status.svelte.ts). Cross-window: BroadcastChannel `explorer-file-changes` (file-events.ts) and `explorer-drag-data` in localStorage (drag.svelte.ts).
 - **Persistence**: UI/prefs via `state/persisted.ts` (localStorage: settings, keybindings, bookmarks, recent, tabs, drag). Durable config via `api/config.ts` → `config.rs` JSON files.

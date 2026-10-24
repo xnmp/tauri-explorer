@@ -26,7 +26,7 @@ async function prepare(page: Page, mode: string, listingDelay = 0) {
   // Non-listing IPC is immediate: otherwise
   // asynchronously imported IPC modules can schedule their 10ms timer after
   // runFor finishes and strand initial navigation on the frozen clock.
-  await page.route("**/src/lib/api/mock-invoke.ts", async route => {
+  await page.route("**/src/lib/api/mock-dispatch.ts", async route => {
     const response = await route.fetch();
     const body = await response.text();
     expect(body).toContain("setTimeout(resolve, 10)");

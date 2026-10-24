@@ -4,7 +4,7 @@
  * and the fake commit graph's shape/refs. Split out of mock-invoke.ts (#869)
  * so the ~700 lines of declarative test data don't sit between the dispatch
  * table's stateful simulation logic (trash, clipboard, git working-tree
- * mutation, recovery records) -- those stay in mock-invoke.ts, which imports
+ * mutation, recovery records) -- those live in the per-family mock modules (#1372), which import
  * this module's exports and, where a fixture is mutable (`mockDrives`), owns
  * its own copy so reassignment doesn't try to rebind another module's export
  * (ES module bindings from an import are read-only in the importing module).
@@ -549,7 +549,7 @@ export const mockFileContent: Record<string, string> = {
 
 // Mutable so manual/E2E testing can simulate ejecting a removable drive: the
 // drives store re-polls `list_drives` every ~1.5s, so replacing this list makes
-// the change propagate. mock-invoke.ts clones this into its own `let mockDrives`
+// the change propagate. mock-system.ts clones this into its own `let mockDrives`
 // and mutates that copy (`window.__mockControl.ejectDrive(path)`), since an
 // imported binding can't be reassigned from outside the module that owns it.
 export const mockDrivesFixture: { name: string; path: string; kind: string; detail?: string; provider?: string }[] = [

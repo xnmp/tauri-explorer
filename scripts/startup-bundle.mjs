@@ -61,13 +61,14 @@ export function normalizedClientName(file) {
  * @returns {string}
  */
 export function normalizeHashedNames(text, files) {
+  /** @type {Map<string, string>} */
   const names = new Map();
   for (const file of files) {
     const normalized = normalizedClientName(file);
-    if (normalized) names.set(file.split(/[\\/]/).pop(), normalized);
+    if (normalized) names.set(file.split(/[\\/]/).pop() ?? file, normalized);
   }
   if (names.size === 0) return text;
-  const escape = (name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const escape = (/** @type {string} */ name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const alternation = [...names.keys()].sort((a, b) => b.length - a.length).map(escape).join("|");
   const reference = new RegExp(`(?<![A-Za-z0-9_.-])(?:${alternation})(?![A-Za-z0-9_-])`, "g");
   return text.replace(reference, (name) => names.get(name) ?? name);

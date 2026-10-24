@@ -115,6 +115,10 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `RenameDialog`? see `dialogs.svelte.ts`; dialogs present: `DeleteDialog.svelte`, `ConflictDialog.svelte` (paste conflict overwrite/skip), `BulkRenameDialog.svelte`, `WorkspaceDialog.svelte` (save/restore workspaces), `ProgressDialog.svelte` (copy/move/extract progress), `InlineNewFolder.svelte` (inline new-entry input — folder or file, per `explorer.newEntryKind`), `FilePicker.svelte` (portal file-picker window).
 - `PreviewFolderList.svelte` — folder/ZIP children list in the Preview pane, with the collapsed single-folder indicator; rows go through the shared VirtualList so huge folders render only a windowed slice (#1040).
 - `PreviewPane.svelte` — file preview (image/text/markdown/syntax/CSV table); CSV rows use the shared VirtualList with one shared column template and an outer horizontal scroll surface (#666). Image to image, the previous image stays (spinner over it when slow) until the next is decoded, so a selection change never blanks or re-lays out the pane (`e2e/preview-selection-stability.spec.ts`).
+- `PreviewDiffView.svelte` — the preview's SCM diff region: working-tree diff with Open File/Stage/Unstage/Discard, or a graph-routed commit/comparison diff (#366); loads through `state/preview-diff.svelte.ts`, renders lines with `PreviewDiffLines`.
+- `PreviewDiffLines.svelte` — rendered diff lines: gutters, sigils, highlighted content and per-hunk stage/unstage/discard actions.
+- `PreviewCsvTable.svelte` — CSV table preview: sticky header + VirtualList rows sharing `domain/csv-preview.ts` column template (#666).
+- `PreviewTextDocument.svelte` — markdown / highlighted code / plain text preview bodies with their typography (frontmatter properties panel, #1039 fullscreen text zoom targets).
 - `HtmlPreview.svelte` — sandboxed no-script `srcdoc` HTML preview with browser-style page zoom: Fit (default) / stops / 100% controls and fullscreen toggle (#1332, #1352).
 - `PdfPreview.svelte` — lazy canvas PDF surface with centered fit/zoom, pointer-captured pan, annotation links, compact page controls and fullscreen keyboard ownership (#728–#730).
 - `TerminalPanel.svelte` — embedded xterm.js terminal panel (#139).
@@ -189,6 +193,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/state/modal-focus.ts` — pane dialog focus restoration tracks actual focus ownership across DOM detachment and releases listeners on cleanup; shared modal focus eligibility.
 - `src/lib/state/pane-dialogs.svelte.ts` — host-private pane capture handles, transient scope retirement, identity-bound overlay slots, retained portal mounts and shared inert registration for pane-owned content.
 - `src/lib/state/preview-diff-actions.ts` — Preview diff-header/hunk stage, unstage, discard admitted against the owning pane (`isPaneBlocked`); a covered owner makes them no-ops (#1099).
+- `src/lib/state/preview-diff.svelte.ts` — preview diff loading (working-tree + commit/comparison): one request generation, in-flight dedupe for polled UNC repos (#396), no-blank re-check, commit diffs never claimed by the working-tree cache.
 - `src/lib/state/dialog-presentation-context.ts` — private scope/visibility/focus context inherited by the shared SDK Modal.
 - `run-after-close.ts` — runs a command chosen from a modal launcher (the command palette) only after the launcher has released the top modal surface, so the dialog it opens is not closed as the caller.
 - `open-with.svelte.ts` — captured application-choice sessions, late-result rejection and single launch lifecycle.
@@ -377,6 +382,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `use-lazy-dialog.svelte.ts` — binds one dialog open predicate to its loader and retires it with the host effect.
 - `use-preview-fullscreen.svelte.ts` — Preview fullscreen controller shared by file images and plugin targets: toggle/exit, zoom/pan state, wheel/pointer/click handlers and keys (`createPreviewFullscreen`, effect-free and unit-tested), plus the window key listener and `data-preview-fullscreen` attribute (`usePreviewFullscreen`) (#1033).
+- `use-light-theme.svelte.ts` — reactive light/dark color-scheme flag (MutationObserver on `data-theme`) for picking the hljs palette.
 
 - `src/lib/composables/use-entry-appearance.svelte.ts` — reactive clipboard, manually-hidden/dotfile and empty-folder appearance shared by EntryCell and FileTile.
 - `use-item-interactions.svelte.ts` — shared click/select/activate logic across views.
@@ -485,7 +491,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `scm-tree.ts` — fold flat repo file list into a tree.
 - `scm-filter.ts` — fuzzy filter for the SCM sidebar's pending files (#517); `filterScmEntries`/`filterScmSummary` over `fuzzyScorePath`.
 - `scm-sidebar.ts` — SCM sidebar rules: status letter/class, row path split, visual row order for Up/Down (`visibleScmRowPaths`, `nextScmSelection`), commit admission (`canCommitScm`).
-- `diff.ts` — unified-diff parser (#55).
+- `diff.ts` — unified-diff parser (#55); `visibleDiffLines` / `diffSubtitle` for the preview diff view.
 - `css-tokens.ts` — parse a stylesheet's `--token` table and resolve `var()` the way the browser would, so a unit test can catch a `var(--undefined, fallback)` silently degrading (#499).
 - `file-batch-outcome.ts` — typed successful/failed path receipt and aggregate error formatting for best-effort file mutations.
 - `src/lib/domain/copy-session.ts` — ordered native session event, conflict-decision and positional result contracts, plus the copy and move incomplete-session presentations.
@@ -525,7 +531,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `file-icon-identity.ts` — pure file-icon identity and paint-category resolution, including filename precedence, aliases and folder identity.
 - `icon-themes.ts` — icon pack types and explicit-choice versus color-theme-suggestion policy.
 - `syntax-highlight.ts` — highlight.js wrapper for preview.
-- `csv-preview.ts` — quoted CSV parser for PreviewPane table data, bounded to the preview's data-row limit (#666).
+- `csv-preview.ts` — quoted CSV parser for PreviewPane table data, bounded to the preview's data-row limit (#666); `csvRowHeight` / `csvColumnTemplate` table layout.
 - `html-preview-zoom.ts` — pure HTML preview page-zoom model: unmeasurable sandboxed frame scales a fixed ≥1280px desktop layout like an image (#1361), Fit, zoom stops and labels (#1352).
 - `pdf-preview.ts` — pure PDF fit, zoom-anchor, measured pointer coordinates, pan bounds and safe-link policy (#728–#730).
 - `markdown.ts` — safe markdown render for preview.

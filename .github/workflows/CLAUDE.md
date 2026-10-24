@@ -82,7 +82,11 @@ It is the production bundle with E2E hooks off, as on the dev server, plus a
 chunk at the exact URL of each `/src/...` or `/node_modules/...` module that a
 spec imports in the page, so those specs share the app's module instance as
 they do under Vite (`scripts/e2e-browser-build.mjs`). Write such URLs as string
-literals in specs: a URL built at runtime is not emitted and 404s. Code gated
+literals in specs: a URL built at runtime is not emitted and 404s. Specs that
+intercept requests (directly or through a local helper), and specs carrying an
+`e2e-app-server: dev` marker with a `Retire-when` tag, run on a dev server
+beside the bundle (`e2e/app-server.ts`); `pane-viewport.spec.ts` is marked for
+#1384, a WebKit ResizeObserver loop that only the bundle's startup timing shows. Code gated
 on `import.meta.env.DEV` does not run in CI shards; gate test-visible
 diagnostics on the dev server or hooks explicitly. Local runs and
 `e2e-impact-map.yml` keep the dev server, because the impact collector

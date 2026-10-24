@@ -5,25 +5,29 @@
  * (`E2E_BUILD_DIR`, `scripts/serve-e2e-build.mjs`) and keep a Vite dev server
  * beside it. A spec that intercepts requests may target individual source
  * modules (a route handler for `**\/FilePicker.svelte*` that fails or delays a
- * lazy chunk, or one that serves a modified module). Keep the interception
- * call's literal spelling out of this file's comments: fixtures.ts imports
- * it, so every spec would match. A bundle has no such URLs, so the
+ * lazy chunk, or one that serves a modified module). A bundle has no such URLs, so the
  * route would never match and the spec could pass without exercising what it
  * tests. Every spec that routes requests therefore runs on the dev server;
  * all others run on the bundle. Without `E2E_BUILD_DIR` (local runs, the
  * impact map) everything runs on the dev server at the configured baseURL.
  */
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, resolve, sep } from "node:path";
+import { basename, dirname, resolve, sep } from "node:path";
 
 /** Port of the dev server that runs beside the bundle server. */
 export const DEV_BESIDE_BUNDLE_PORT = Number(process.env.E2E_DEV_PORT || 1421);
 
 const INTERCEPTS = /\.(?:route|unroute|routeFromHAR|routeWebSocket)\s*\(/;
+// An explicit opt-out for a spec the bundle breaks for a tracked reason; give
+// it a `Retire-when: #NNN closed` tag beside the marker.
+const DEV_MARKER = /\be2e-app-server:\s*dev\b/;
 
-/** True when a spec's source intercepts requests and so needs per-module URLs. */
+/**
+ * True when a spec's source intercepts requests (so it needs per-module URLs)
+ * or opts out of the bundle with the `e2e-app-server: dev` marker.
+ */
 export function needsDevServer(specSource: string): boolean {
-  return INTERCEPTS.test(specSource);
+  return INTERCEPTS.test(specSource) || DEV_MARKER.test(specSource);
 }
 
 const LOCAL_IMPORT = /\bfrom\s+["'](\.\.?\/[^"']+)["']/g;
@@ -33,7 +37,9 @@ const LOCAL_IMPORT = /\bfrom\s+["'](\.\.?\/[^"']+)["']/g;
  * routes requests moves its callers too. Throws if a file cannot be read.
  */
 function sourcesOf(file: string, seen = new Set<string>()): string[] {
-  if (seen.has(file)) return [];
+  // This classifier names the patterns it looks for; every spec imports it
+  // through fixtures.ts, so its own text must not count.
+  if (seen.has(file) || basename(file) === "app-server.ts") return [];
   seen.add(file);
   const text = readFileSync(file, "utf8");
   const nested = [...text.matchAll(LOCAL_IMPORT)]

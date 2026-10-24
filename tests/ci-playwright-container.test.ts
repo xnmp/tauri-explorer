@@ -50,6 +50,14 @@ describe("Playwright container pin", () => {
     expect(new Set(BROWSER_JOBS.map((id) => ci.jobs[id].container.image)).size).toBe(1);
   });
 
+  // The nightly coverage run that builds the test-impact map (#1368) must
+  // execute the browsers the PR shards run.
+  it("runs the impact-map coverage job in the same image and container bun", () => {
+    const impact = parse(readFileSync(new URL("../.github/workflows/e2e-impact-map.yml", import.meta.url), "utf8"));
+    expect(impact.jobs.coverage.container.image).toBe(ci.jobs.chromium.container.image);
+    expect(String(impact.env.CONTAINER_BUN_VERSION)).toBe(String(ci.env.CONTAINER_BUN_VERSION));
+  });
+
   describe("container bun", () => {
     const pinned = String(ci.env.CONTAINER_BUN_VERSION);
 

@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { HOME_URL, waitForEntries } from "./helpers";
 
 const shown = ".pane-tree:not(.retained)";

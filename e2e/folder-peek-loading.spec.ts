@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures";
 import { HOME_URL, waitForEntries } from "./helpers";
 
 // A peek's first listing is a read, not a watcher refresh: it must not wait

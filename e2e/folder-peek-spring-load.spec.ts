@@ -1,5 +1,5 @@
-import { test as base } from "@playwright/test";
-import { test, expect, type Page } from "./fixtures";
+import type { Browser } from "@playwright/test";
+import { test, unpinnedTest as base, expect, type Page } from "./fixtures";
 
 // Spring-loaded peeks (#1242, spec §5): holding a drag over a closed folder
 // for 600ms opens a temporary peek (a Details subtree, a List card, a Tiles
@@ -437,7 +437,7 @@ test("an HTML5 drag whose source row leaves the virtual window under a big sprin
 
 // The macOS/Windows in-app backend is a pointer drag driven by real mouse
 // input (navigator.platform "MacIntel" selects it); Escape cancels it.
-async function macPage(browser: import("@playwright/test").Browser, baseURL: string | undefined) {
+async function macPage(browser: Browser, baseURL: string | undefined) {
   const context = await browser.newContext({ baseURL });
   await context.addInitScript(() => Object.defineProperty(window.navigator, "platform", { get: () => "MacIntel" }));
   const page = await context.newPage();

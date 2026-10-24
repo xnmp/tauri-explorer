@@ -47,10 +47,12 @@ jobs:
   # matching the docs patterns, and every non-PR event, counts as code.
   changes:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     permissions:
       contents: read
       pull-requests: read
+      # Reads the nightly E2E impact map artifact (#1368).
+      actions: read
     # Per-tier test selection (#1175). Every selector reads only the git diff,
     # never PR text, labels or author claims, and any doubt runs that tier in
     # full: a failed selector, an unknown file type, an unusual path, or more
@@ -107,11 +109,57 @@ jobs:
         with:
           fetch-depth: 2
 
+      # The browser selectors parse changed modules with TypeScript to find
+      # the function around each hunk and prove comment- and type-only hunks
+      # inert (scripts/impact-regions.mjs). No
+      # install scripts run; without the dependency the impact selector uses
+      # its file level, never a narrower selection.
+      - uses: oven-sh/setup-bun@v2
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        with:
+          bun-version: latest
+
+      - name: Install selector dependencies
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        timeout-minutes: 3
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      # The newest map from a successful nightly e2e-impact-map.yml run on dev
+      # (#1368). No map, a failed download or an unusable map (malformed, or
+      # older than MAX_MAP_AGE_HOURS in scripts/impact-coverage.mjs) leaves
+      # the browser tiers on their selection without a map. The map's commit
+      # is fetched to re-run the tests that executed code changed on dev
+      # since then, and to translate lines; without it the map is unused.
+      - name: Fetch the E2E impact map
+        id: impact
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow e2e-impact-map.yml --branch dev --status success \
+            --limit 1 --json databaseId,headSha --jq '.[0] | select(.) | "\(.databaseId) \(.headSha)"')
+          if [ -z "$run" ]; then
+            echo "No successful impact map run on dev; browser tiers select without a map."
+            echo "- **impact map**: none available, browser tiers select without it" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          read -r id sha <<< "$run"
+          gh run download "$id" --repo "$GITHUB_REPOSITORY" -n e2e-impact-map -D "$RUNNER_TEMP/impact-map"
+          git fetch --no-tags --depth=1 origin "$sha" || echo "Map commit $sha unavailable; files changed since it use the file level."
+          echo "map=$RUNNER_TEMP/impact-map/e2e-impact-map.json" >> "$GITHUB_OUTPUT"
+          echo "- **impact map**: run $id at \`$sha\`" >> "$GITHUB_STEP_SUMMARY"
+
       # Each selector prints {mode, reason, items} JSON; a selector or parse
       # failure selects the full tier. rust-affected runs `cargo metadata`
       # (the runner image's cargo) only when a change reaches Rust.
       - id: select
         if: github.event_name == 'pull_request'
+        env:
+          IMPACT_MAP: ${{ steps.impact.outputs.map }}
         run: |
           select_tier() {
             local tier=$1 json mode
@@ -133,9 +181,11 @@ jobs:
             echo "- **$tier**: \`${selection:-NONE}\` — $reason" >> "$GITHUB_STEP_SUMMARY"
           }
           echo "### Test selection (limit $TEST_SELECTION_MAX_FILES changed files)" >> "$GITHUB_STEP_SUMMARY"
-          select_tier e2e scripts/e2e-affected.mjs --strict
-          select_tier webkit scripts/e2e-affected.mjs --webkit
-          select_tier view-modes scripts/e2e-affected.mjs --view-modes
+          impact=()
+          if [ -n "$IMPACT_MAP" ] && [ -s "$IMPACT_MAP" ]; then impact=("--impact-map=$IMPACT_MAP"); fi
+          select_tier e2e scripts/e2e-affected.mjs --strict "${impact[@]}"
+          select_tier webkit scripts/e2e-affected.mjs --webkit "${impact[@]}"
+          select_tier view-modes scripts/e2e-affected.mjs --view-modes "${impact[@]}"
           select_tier unit scripts/unit-affected.mjs
           select_tier rust scripts/rust-affected.mjs
 

@@ -45,7 +45,7 @@ const E2E_DIR = join(ROOT, "e2e");
 export const TIMINGS_PATH = join(ROOT, "scripts/e2e-shard-timings.json");
 
 // Playwright's default testMatch; playwright.config.ts does not override it.
-const SPEC_FILE = /\.(spec|test)\.(c|m)?[jt]sx?$/;
+export const SPEC_FILE = /\.(spec|test)\.(c|m)?[jt]sx?$/;
 
 /** @param {number[]} values */
 const median = (values) => {

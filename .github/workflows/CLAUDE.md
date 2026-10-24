@@ -53,11 +53,12 @@ in an ordinary PR. It fails with an error when no successful dev run exists.
 `chromium`, `chromium-view-modes` and `webkit-tests` run in
 `mcr.microsoft.com/playwright:v<version>-noble@sha256:<digest>`, whose tag must
 equal bun.lock's `@playwright/test` (`tests/ci-playwright-container.test.ts`).
-Bumping Playwright means bumping the three `container.image` references (tag
+Bumping Playwright means bumping the three `container.image` references, plus
+`e2e-impact-map.yml`'s coverage job (tag
 and digest, from `docker buildx imagetools inspect`) and `ImageVersion`
 (`<version>_<digest hex>`, the cache identity) in the same PR. The image has browsers, GStreamer, fonts and xvfb but no
 unzip, jq or gh: bun comes from the `@oven/bun-linux-x64` npm package at
-`CONTAINER_BUN_VERSION` (ci.yml's workflow env, the single pin), installed with
+`CONTAINER_BUN_VERSION` (ci.yml's workflow env, the single pin; e2e-impact-map.yml repeats it and a test keeps them equal), installed with
 `--ignore-scripts` and checked with `bun --version` (setup-bun needs unzip), the test cache extracts artifacts with `python3 -m zipfile`, and paths
 an action reads must come from `$RUNNER_TEMP` inside the container (exported
 to `GITHUB_ENV`), not `${{ runner.temp }}`, which names the host path. Git
@@ -73,7 +74,8 @@ diff (`HEAD^1...HEAD`) and nothing else: `scripts/e2e-affected.mjs` (browser
 specs), `scripts/unit-affected.mjs` (`vitest related` inputs) and
 `scripts/rust-affected.mjs` (`cargo test -p` members via `cargo metadata`).
 Each publishes `ALL`, `NONE` or a list plus a reason, and every test step logs
-which it ran and why. Browser selection is per engine (#1367): `e2e`
+which it ran and why. Browser selection is per engine (#1367); with a test-impact map the three
+tiers select by coverage instead (#1368, below). Without one: `e2e`
 (`--strict`, Chromium: every spec for any `src/` change), `webkit` (`--webkit`:
 the Chromium selection when narrow, else cluster-mapped plus the curated
 `browserName`/`@webkit` specs, or ALL for a `WEBKIT_SENSITIVE` path, component
@@ -99,6 +101,38 @@ list directories); a test reading a path it builds dynamically from neither is
 invisible to it, so name such inputs literally. Rust inputs outside `src-tauri/`
 count only when a string literal ends in their basename (`include_bytes!`,
 fixture joins), not when a comment mentions them.
+
+# E2E test-impact map (#1368)
+
+`e2e-impact-map.yml` (nightly on dev, and manual dispatch) runs every Chromium
+spec with `E2E_COVERAGE=1 ALL_VIEW_MODES=1` in six shards and merges the
+per-test V8 coverage records into the `e2e-impact-map` artifact (14 days).
+Test failures do not fail the coverage job; a spec with an executed test that
+left no record is marked incomplete, and PR selection always runs it. The map
+is never committed.
+
+On PRs the `changes` job installs dependencies with `--ignore-scripts`
+(TypeScript finds each hunk's function and proves comment/type-only hunks
+inert), downloads the newest map
+from a successful dev run, fetches the map's commit (`--depth=1`) for line
+translation, and passes `--impact-map=` to the three browser selectors. Each
+step is `continue-on-error`: no map, a failed download, a malformed map or one
+older than `MAX_MAP_AGE_HOURS` (72) selects exactly as before the map existed.
+With a map, Chromium runs the specs whose tests entered the innermost
+function around each changed hunk, or every spec that loaded the file for a
+hunk at module level, in markup or styles, or on a function's header or
+closing line (`scripts/impact-select.mjs`); plus the drift: tests that executed code
+changed between the map's commit and the merge base, and specs edited since
+then, because their coverage in the map is out of date (an unavailable map
+commit means no map). WebKit is the selection without a map united with the
+coverage and curated engine-specific specs (Chromium coverage cannot see a
+WebKit-only caller), and still runs in full for `WEBKIT_SENSITIVE` paths,
+component styling, engine detection or a change no Chromium test executed;
+view modes keep the view-mode specs among the Chromium selection. A new file,
+a file no spec loaded, an asset no spec fetched, the mock backend, config,
+lockfiles, selection inputs and the map's recorder (`impact-collect.mjs`,
+`impact-lines.mjs`, `e2e/impact-coverage.ts`, this workflow) still select ALL.
+Dev pushes, the nightly CI run and dispatch still run every spec.
 
 # Test-result cache (#1176)
 

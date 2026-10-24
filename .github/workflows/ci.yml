@@ -284,6 +284,40 @@ jobs:
           path: ${{ runner.temp }}/test-cache-report/
           if-no-files-found: ignore
 
+  # The browser-test bundle (#1381): built once per run and served to every
+  # browser shard by scripts/serve-e2e-build.mjs, instead of a Vite dev server
+  # transforming hundreds of modules on demand in each shard. A shard that
+  # cannot get it serves the dev server instead (same app, slower).
+  e2e-build:
+    needs: changes
+    if: >-
+      needs.changes.outputs.code == 'true' && (needs.changes.outputs.e2e != 'NONE' ||
+      needs.changes.outputs.view-modes != 'NONE' || needs.changes.outputs.webkit != 'NONE')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.CONTAINER_BUN_VERSION }}
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build the browser-test bundle
+        env:
+          E2E_BROWSER_BUILD: "1"
+        run: bun run build
+
+      - name: Upload the browser-test bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-browser-build
+          path: build/
+          retention-days: 1
+          if-no-files-found: error
+
   # Keep one browser worker per runner; split the growing suite across runners
   # so contention-sensitive tests retain their existing execution conditions.
   # Shards are whole spec files balanced by recorded CI duration
@@ -293,8 +327,11 @@ jobs:
   # four ~14-minute shards (#1367; the suite grew to ~56 recorded minutes).
   # Skipped when the PR selects no browser spec; the frontend gate accepts that.
   chromium:
-    needs: changes
-    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.e2e != 'NONE'
+    needs: [changes, e2e-build]
+    # Runs without the shared bundle if e2e-build fails (dev-server fallback).
+    if: >-
+      !cancelled() && needs.changes.result == 'success' &&
+      needs.changes.outputs.code == 'true' && needs.changes.outputs.e2e != 'NONE'
     runs-on: ubuntu-latest
     # The Playwright image carries the browsers and every system library they
     # need, so no shard downloads apt packages (#1367: --with-deps fetched
@@ -373,6 +410,28 @@ jobs:
         if: steps.plan.outputs.run == 'true'
         run: bun install --frozen-lockfile
 
+      # The shared bundle from the e2e-build job (#1381). Fetched before the
+      # cache key: E2E_BUILD_DIR is hashed, so a result is replayed only for
+      # the same kind of server. Without the bundle the shard serves the dev
+      # server, as before.
+      - name: Download browser-test bundle
+        if: steps.plan.outputs.run == 'true' && needs.e2e-build.result == 'success'
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: e2e-browser-build
+          path: build
+
+      - name: Choose the app server
+        if: steps.plan.outputs.run == 'true'
+        run: |
+          if [ -f build/index.html ]; then
+            echo "E2E_BUILD_DIR=build" >> "$GITHUB_ENV"
+            echo "Browser E2E: serving the shared browser-test bundle"
+          else
+            echo "::warning title=No browser-test bundle::serving the Vite dev server instead"
+          fi
+
       - name: Test-result cache key
         id: test-cache-key
         if: steps.plan.outputs.run == 'true'
@@ -442,8 +501,11 @@ jobs:
   # runs all of them; a PR runs those reached through a changed view-mode
   # component or spec (scripts/e2e-affected.mjs --view-modes), or none.
   chromium-view-modes:
-    needs: changes
-    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.view-modes != 'NONE'
+    needs: [changes, e2e-build]
+    # Runs without the shared bundle if e2e-build fails (dev-server fallback).
+    if: >-
+      !cancelled() && needs.changes.result == 'success' &&
+      needs.changes.outputs.code == 'true' && needs.changes.outputs.view-modes != 'NONE'
     runs-on: ubuntu-latest
     # The Playwright image carries the browsers and every system library they
     # need, so no shard downloads apt packages (#1367: --with-deps fetched
@@ -528,6 +590,28 @@ jobs:
       - name: Install dependencies
         if: steps.plan.outputs.run == 'true'
         run: bun install --frozen-lockfile
+
+      # The shared bundle from the e2e-build job (#1381). Fetched before the
+      # cache key: E2E_BUILD_DIR is hashed, so a result is replayed only for
+      # the same kind of server. Without the bundle the shard serves the dev
+      # server, as before.
+      - name: Download browser-test bundle
+        if: steps.plan.outputs.run == 'true' && needs.e2e-build.result == 'success'
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: e2e-browser-build
+          path: build
+
+      - name: Choose the app server
+        if: steps.plan.outputs.run == 'true'
+        run: |
+          if [ -f build/index.html ]; then
+            echo "E2E_BUILD_DIR=build" >> "$GITHUB_ENV"
+            echo "Browser E2E: serving the shared browser-test bundle"
+          else
+            echo "::warning title=No browser-test bundle::serving the Vite dev server instead"
+          fi
 
       - name: Test-result cache key
         id: test-cache-key
@@ -656,8 +740,11 @@ jobs:
   # cluster-mapped and curated engine-specific specs, or every spec for a
   # WKWebView-sensitive change. Skipped when that selects nothing.
   webkit-tests:
-    needs: changes
-    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.webkit != 'NONE'
+    needs: [changes, e2e-build]
+    # Runs without the shared bundle if e2e-build fails (dev-server fallback).
+    if: >-
+      !cancelled() && needs.changes.result == 'success' &&
+      needs.changes.outputs.code == 'true' && needs.changes.outputs.webkit != 'NONE'
     runs-on: ubuntu-latest
     # The Playwright image carries the browsers and every system library they
     # need, so no shard downloads apt packages (#1367: --with-deps fetched
@@ -741,6 +828,28 @@ jobs:
       - name: Install dependencies
         if: steps.plan.outputs.run == 'true'
         run: bun install --frozen-lockfile
+
+      # The shared bundle from the e2e-build job (#1381). Fetched before the
+      # cache key: E2E_BUILD_DIR is hashed, so a result is replayed only for
+      # the same kind of server. Without the bundle the shard serves the dev
+      # server, as before.
+      - name: Download browser-test bundle
+        if: steps.plan.outputs.run == 'true' && needs.e2e-build.result == 'success'
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: e2e-browser-build
+          path: build
+
+      - name: Choose the app server
+        if: steps.plan.outputs.run == 'true'
+        run: |
+          if [ -f build/index.html ]; then
+            echo "E2E_BUILD_DIR=build" >> "$GITHUB_ENV"
+            echo "Browser E2E: serving the shared browser-test bundle"
+          else
+            echo "::warning title=No browser-test bundle::serving the Vite dev server instead"
+          fi
 
       - name: Test-result cache key
         id: test-cache-key

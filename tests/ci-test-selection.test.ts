@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -303,7 +303,35 @@ describe.each([
   it("reads its own tier of the selection and skips itself when that is NONE", () => {
     const selection = { chromium: "e2e", "chromium-view-modes": "view-modes", "webkit-tests": "webkit" }[job];
     expect(e2e.env).toMatchObject({ E2E_SELECTION: `\${{ needs.changes.outputs.${selection} }}` });
-    expect(ci.jobs[job].if).toBe(`needs.changes.outputs.code == 'true' && needs.changes.outputs.${selection} != 'NONE'`);
+    expect(ci.jobs[job].if).toBe(
+      "!cancelled() && needs.changes.result == 'success' && " +
+        `needs.changes.outputs.code == 'true' && needs.changes.outputs.${selection} != 'NONE'`,
+    );
+  });
+
+  it("serves the shared browser-test bundle when it arrived, else the dev server (#1381)", () => {
+    expect(ci.jobs[job].needs).toEqual(["changes", "e2e-build"]);
+    const build = (ci.jobs["e2e-build"].steps as Step[]).find((s) => s.name === "Build the browser-test bundle")!;
+    expect(build).toMatchObject({ run: "bun run build", env: { E2E_BROWSER_BUILD: "1" } });
+    const steps = ci.jobs[job].steps as { name?: string; run?: string; uses?: string }[];
+    const names = steps.map((step) => step.name);
+    // E2E_BUILD_DIR is hashed by the test-result cache, so it is set before the key.
+    expect(names.indexOf("Choose the app server")).toBeLessThan(names.indexOf("Test-result cache key"));
+    const choose = steps.find((step) => step.name === "Choose the app server")!.run as string;
+    const dir = mkdtempSync(join(tmpdir(), "e2e-server-"));
+    try {
+      const env = join(dir, "env");
+      writeFileSync(env, "");
+      const run = () => execFileSync("bash", ["-c", choose], { cwd: dir, env: { ...process.env, GITHUB_ENV: env }, encoding: "utf8" });
+      expect(run()).toContain("serving the Vite dev server instead");
+      expect(readFileSync(env, "utf8")).toBe("");
+      mkdirSync(join(dir, "build"));
+      writeFileSync(join(dir, "build/index.html"), "");
+      expect(run()).toContain("serving the shared browser-test bundle");
+      expect(readFileSync(env, "utf8")).toBe("E2E_BUILD_DIR=build\n");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("verifies and runs exactly the shard's specs in the cached script", () => {

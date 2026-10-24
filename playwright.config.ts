@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
+import { DEV_BESIDE_BUNDLE_PORT } from "./e2e/app-server";
 
 const executablePath = process.env.PLAYWRIGHT_EXECUTABLE_PATH;
 
@@ -42,10 +43,32 @@ export default defineConfig({
         ]
       : []),
   ],
-  webServer: {
-    command: "bun run dev",
-    url: "http://localhost:1420",
-    reuseExistingServer: !process.env.CI,
-    timeout: 120 * 1000,
-  },
+  // CI's browser shards serve one prebuilt browser-test bundle (#1381:
+  // E2E_BROWSER_BUILD=1 bun run build, scripts/serve-e2e-build.mjs) instead of
+  // transforming modules on demand per shard. Local runs and the coverage map
+  // (e2e-impact-map.yml) keep the dev server: its per-module scripts are what
+  // the impact collector attributes coverage to. Beside the bundle, a dev
+  // server serves the specs that intercept module requests (e2e/app-server.ts).
+  webServer: process.env.E2E_BUILD_DIR
+    ? [
+        {
+          command: "node scripts/serve-e2e-build.mjs",
+          url: "http://localhost:1420",
+          reuseExistingServer: !process.env.CI,
+          timeout: 30 * 1000,
+        },
+        {
+          command: "bun run dev",
+          env: { DEV_PORT: String(DEV_BESIDE_BUNDLE_PORT) },
+          url: `http://localhost:${DEV_BESIDE_BUNDLE_PORT}`,
+          reuseExistingServer: !process.env.CI,
+          timeout: 120 * 1000,
+        },
+      ]
+    : {
+        command: "bun run dev",
+        url: "http://localhost:1420",
+        reuseExistingServer: !process.env.CI,
+        timeout: 120 * 1000,
+      },
 });

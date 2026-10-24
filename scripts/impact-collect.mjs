@@ -17,6 +17,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { repoPathFromUrl, scriptExercised, toRuns } from "./impact-coverage.mjs";
 import { scriptLines } from "./impact-lines.mjs";
+import { chunkCoverage, chunkEvaluated, chunkSegments } from "./impact-bundle.mjs";
 
 export const RECORD_VERSION = 1;
 
@@ -55,12 +56,15 @@ export function requestedRepoFile(url, origin, root) {
 
 /**
  * @param {RawScript[]} scripts every script of every page the test opened
- * @param {{ root: string, readFile?: (path: string) => Buffer | null, seen?: Map<string, FileMeta> }} options
+ * @param {{ root: string, readFile?: (path: string) => Buffer | null, seen?: Map<string, FileMeta | true>,
+ *   chunk?: (url: string) => (ReturnType<typeof chunkSegments> & { modules?: string[] }) | null }} options
  *   `seen` caches per-worker static data by served source, so each module
- *   version is source-mapped once.
+ *   version is source-mapped once. `chunk` resolves a bundled chunk's
+ *   mapping data (scripts/impact-bundle.mjs) for scripts served by the
+ *   browser-test bundle; other scripts are dev-server modules.
  * @returns {{ loaded: string[], exercised: string[], lines: Record<string, Array<[number, number]>>, metas: FileMeta[] }}
  */
-export function reduceCoverage(scripts, { root, readFile, seen = new Map() }) {
+export function reduceCoverage(scripts, { root, readFile, seen = new Map(), chunk }) {
   const read = readFile ?? ((/** @type {string} */ p) => { try { return readFileSync(join(root, p)); } catch { return null; } });
   /** @type {Set<string>} */
   const loaded = new Set();
@@ -70,7 +74,41 @@ export function reduceCoverage(scripts, { root, readFile, seen = new Map() }) {
   const covered = new Map();
   /** @type {FileMeta[]} */
   const metas = [];
+  const cover = (/** @type {string} */ path, /** @type {Array<[number, number]>} */ runs) => {
+    let set = covered.get(path);
+    if (!set) covered.set(path, (set = new Set()));
+    for (const [a, b] of runs) for (let n = a; n <= b; n++) set.add(n);
+  };
   for (const script of scripts) {
+    // A bundled chunk (#1386): many source files, mapped through its own map.
+    const segments = chunk?.(script.url);
+    if (segments) {
+      const key = `${script.url}\0chunk`;
+      const first = !seen.has(key);
+      const files = chunkCoverage(segments, script.functions ?? [], { blocks: first });
+      for (const [path, file] of files) {
+        if (first) {
+          const disk = read(path);
+          const meta = {
+            path,
+            blob: disk ? gitBlobId(disk) : null,
+            aligned: disk !== null && file.sourceText !== null && file.sourceText === disk.toString("utf8"),
+            mapped: file.mapped,
+            blocks: file.blocks,
+          };
+          metas.push(meta);
+        }
+        if (!file.loaded) continue;
+        loaded.add(path);
+        if (file.ran) exercised.add(path);
+        cover(path, file.covered);
+      }
+      // Modules that left no mapped code (stylesheets, constants) still
+      // evaluated with their chunk.
+      if (chunkEvaluated(script.functions ?? [])) for (const path of segments.modules ?? []) loaded.add(path);
+      if (first) seen.set(key, true);
+      continue;
+    }
     const path = repoPathFromUrl(script.url);
     if (!path) continue;
     const top = script.functions?.find((fn) => fn.ranges?.[0]?.startOffset === 0);

@@ -27,6 +27,9 @@ export default defineConfig(async ({ mode }) => ({
   // server, which specs were written against. Svelte and SvelteKit still
   // compile and resolve for production; only this literal changes.
   define: browserTestBuild ? { "import.meta.env.DEV": "true" } : {},
+  // Hidden maps (no sourceMappingURL comment) let the dev-push impact map
+  // attribute bundle coverage to source lines (#1386); release builds emit none.
+  build: browserTestBuild ? { sourcemap: "hidden" as const } : {},
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

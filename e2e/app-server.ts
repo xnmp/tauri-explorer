@@ -8,8 +8,10 @@
  * lazy chunk, or one that serves a modified module). A bundle has no such URLs, so the
  * route would never match and the spec could pass without exercising what it
  * tests. Every spec that routes requests therefore runs on the dev server;
- * all others run on the bundle. Without `E2E_BUILD_DIR` (local runs, the
- * impact map) everything runs on the dev server at the configured baseURL.
+ * all others run on the bundle; dev pushes record the impact map on both
+ * (#1386). Without `E2E_BUILD_DIR` (local runs, the nightly
+ * e2e-impact-map.yml) everything runs on the dev server at the configured
+ * baseURL.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, resolve, sep } from "node:path";

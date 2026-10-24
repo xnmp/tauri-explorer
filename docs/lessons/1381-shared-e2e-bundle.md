@@ -39,5 +39,6 @@ What a plain production bundle broke, and why:
 - **Range requests.** Video seeking needs `206 Partial Content`; the static
   server implements single ranges.
 
-The nightly impact map keeps the dev server: coverage is attributed to
-per-module scripts through their inline source maps.
+The nightly impact map keeps the dev server, attributing coverage to
+per-module scripts through their inline source maps; dev pushes record it on
+the bundle through hidden source maps instead (#1386).

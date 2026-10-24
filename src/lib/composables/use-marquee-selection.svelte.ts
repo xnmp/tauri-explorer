@@ -45,7 +45,9 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
   const config = { ...DEFAULT_OPTIONS, ...options };
 
   let isDragging = $state(false);
-  let dragEndTime = 0;
+  // No drag has ended yet: performance.now() starts near 0 at page load, so a
+  // 0 here made every click in the first DRAG_END_GRACE_MS a drag release (#1387).
+  let dragEndTime = Number.NEGATIVE_INFINITY;
   // The browser dispatches a `click` after the marquee's final mouseup; its
   // delay is engine-dependent (WebKit can exceed any small time window), so
   // suppression is consume-once with a generous expiry, not a fixed grace.

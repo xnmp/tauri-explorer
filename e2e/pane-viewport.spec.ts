@@ -1,3 +1,6 @@
+// e2e-app-server: dev (e2e/app-server.ts). Against the production bundle,
+// WebKit reports a ResizeObserver loop at dense island startup (#1384), which
+// the dev server's slower startup hides. Retire-when: #1384 closed
 import { expect, test, type Page } from "./fixtures";
 import { ALL_VIEW_VARIANTS } from "./helpers";
 import { installLayoutInspector } from "./layout-inspector";

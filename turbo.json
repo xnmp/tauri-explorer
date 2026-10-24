@@ -94,7 +94,8 @@
         "E2E_SHARD_SPECS",
         "WEBKIT",
         "PW_VIDEO_HEADED",
-        "ALL_VIEW_MODES"
+        "ALL_VIEW_MODES",
+        "E2E_BUILD_DIR"
       ],
       "inputs": [
         "$TURBO_DEFAULT$",

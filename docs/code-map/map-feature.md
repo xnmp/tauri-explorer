@@ -609,6 +609,7 @@ Planned move journal authority: `src-tauri/src/files/recovery/move_model.rs` own
 
 - FLOW (#1368): nightly `.github/workflows/e2e-impact-map.yml` → `E2E_COVERAGE=1` auto fixture in `e2e/fixtures.ts` → `e2e/impact-coverage.ts` records every page's V8 block coverage → `scripts/impact-collect.mjs` + `scripts/impact-lines.mjs` reduce it per test to source lines → `scripts/impact-coverage.mjs merge` builds the map artifact → PR `changes` job downloads it → `scripts/e2e-affected.mjs --impact-map=` → `scripts/impact-git.mjs` (hunks, blobs, namespace imports) → `scripts/impact-select.mjs` (+ `scripts/impact-regions.mjs` inert-change proofs) → specs per tier.
 - Safety rules: a new file, a file no spec loaded, an unplaceable asset, the mock backend, config and selection inputs select ALL; a hunk no Chromium test ran falls back to the file level and runs all of WebKit; a missing or stale map selects as before. Contracts: `tests/impact-map.test.ts`, `tests/impact-select.test.ts`, `tests/e2e-affected-coverage.test.ts`, `tests/e2e-fixture-imports.test.ts`.
+- Browser shards (#1381): ci.yml `e2e-build` → `E2E_BROWSER_BUILD=1 bun run build` (`scripts/e2e-browser-build.mjs` via `vite.config.ts`) → `e2e-browser-build` artifact → each shard's `E2E_BUILD_DIR=build` → `playwright.config.ts` webServer `scripts/serve-e2e-build.mjs`; no artifact → the dev server. Local runs and the impact map keep the dev server.
 
 ## Native release qualification
 

@@ -26,18 +26,27 @@
  * impact-coverage collector sees every spec: tests/e2e-fixture-imports.test.ts).
  */
 import { test as base, expect } from "@playwright/test";
+import { baseURLFor } from "./app-server";
 import { collectImpactCoverage, impactCoverageEnabled } from "./impact-coverage";
 
 // E2E_COVERAGE=1 records which source files each test executes, for the
 // test-impact map (#1368). An auto fixture, so tests that use only `browser`
 // are recorded too. Unset, specs get exactly the fixtures below.
-const recorded = impactCoverageEnabled
+const covered = impactCoverageEnabled
   ? base.extend<{ impactCoverage: void }>({
     impactCoverage: [async ({ browser, context }, use, testInfo) => {
       await collectImpactCoverage(browser, context, testInfo, () => use());
     }, { auto: true }],
   })
   : base;
+
+// Against CI's shared bundle, specs that intercept requests use the dev server
+// beside it (e2e/app-server.ts, #1381); everywhere else this is the config's.
+const recorded = covered.extend({
+  baseURL: async ({ baseURL }, use, testInfo) => {
+    await use(baseURLFor(testInfo.file, baseURL));
+  },
+});
 
 export const test = recorded.extend({
   page: async ({ page }, use) => {

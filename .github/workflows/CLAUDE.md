@@ -67,6 +67,31 @@ needs `safe.directory` because the container runs as root.
 to it. Each shard bounds Playwright with `E2E_GLOBAL_TIMEOUT_MINUTES`, below
 the step `timeout-minutes`, below the job cap.
 
+# Shared browser-test bundle (#1381)
+
+The `e2e-build` job builds the frontend once per run with
+`E2E_BROWSER_BUILD=1 bun run build` and uploads `build/` as the
+`e2e-browser-build` artifact (1 day). Every browser shard downloads it and sets
+`E2E_BUILD_DIR=build` before its test-result cache key (the variable is hashed
+in `turbo.json`, so a result is replayed only for the same kind of server);
+Playwright then serves it with `scripts/serve-e2e-build.mjs` instead of
+`bun run dev`. A shard without the artifact serves the dev server, as before;
+shards run even when `e2e-build` fails (`!cancelled()`).
+
+It is the production bundle with E2E hooks off, as on the dev server, plus a
+chunk at the exact URL of each `/src/...` or `/node_modules/...` module that a
+spec imports in the page, so those specs share the app's module instance as
+they do under Vite (`scripts/e2e-browser-build.mjs`). Write such URLs as string
+literals in specs: a URL built at runtime is not emitted and 404s. Specs that
+intercept requests (directly or through a local helper), and specs carrying an
+`e2e-app-server: dev` marker with a `Retire-when` tag, run on a dev server
+beside the bundle (`e2e/app-server.ts`); `pane-viewport.spec.ts` is marked for
+#1384, a WebKit ResizeObserver loop that only the bundle's startup timing shows. Code gated
+on `import.meta.env.DEV` does not run in CI shards; gate test-visible
+diagnostics on the dev server or hooks explicitly. Local runs and
+`e2e-impact-map.yml` keep the dev server, because the impact collector
+attributes coverage to per-module scripts and their inline source maps.
+
 # PR test selection (#1175)
 
 On `pull_request`, ci.yml's `changes` job narrows each tier from the PR merge

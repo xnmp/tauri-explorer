@@ -177,6 +177,47 @@ describe("parseCiLog", () => {
     expect(parseCiLog(log)).toEqual({ chromium: { "a.spec.ts": 4 } });
   });
 
+  it("times a multi-worker job by its reported attempt durations, not interleaved starts (#1368)", () => {
+    const timing = (job: string, time: string, engine: string, spec: string, seconds: string) =>
+      line(job, time, `[e2e-timing] ${engine} ${spec} ${seconds}`);
+    // Two workers: a.spec.ts runs 0-20 s while b.spec.ts runs 1-4 s and 4-9 s.
+    const log = [
+      line("chromium (1)", "10:00:00.0000000", "Running 3 tests using 2 workers"),
+      start("chromium (1)", "10:00:00.0000000", 1, "chromium", "a.spec.ts"),
+      start("chromium (1)", "10:00:01.0000000", 2, "chromium", "b.spec.ts"),
+      timing("chromium (1)", "10:00:04.0000000", "chromium", "b.spec.ts", "3.00"),
+      start("chromium (1)", "10:00:04.0000000", 3, "chromium", "b.spec.ts"),
+      timing("chromium (1)", "10:00:09.0000000", "chromium", "b.spec.ts", "5.00"),
+      timing("chromium (1)", "10:00:20.0000000", "chromium", "nested/a.spec.ts", "20.00"),
+      line("chromium (1)", "10:00:20.0000000", "  3 passed (20.0s)"),
+    ].join("\n");
+
+    expect(parseCiLog(log)).toEqual({ chromium: { "b.spec.ts": 8, "nested/a.spec.ts": 20 } });
+  });
+
+  it("does not time a multi-worker job from start-line gaps when it has no attempt durations", () => {
+    const log = [
+      line("chromium (1)", "10:00:00.0000000", "Running 2 tests using 2 workers"),
+      start("chromium (1)", "10:00:00.0000000", 1, "chromium", "a.spec.ts"),
+      start("chromium (1)", "10:00:01.0000000", 2, "chromium", "b.spec.ts"),
+      line("chromium (1)", "10:00:20.0000000", "  2 passed (20.0s)"),
+      line("webkit-tests (1)", "10:00:00.0000000", "Running 1 test using 1 worker"),
+      start("webkit-tests (1)", "10:00:00.0000000", 1, "webkit", "c.spec.ts"),
+      line("webkit-tests (1)", "10:00:07.0000000", "  1 passed (7.0s)"),
+    ].join("\n");
+
+    expect(parseCiLog(log)).toEqual({ webkit: { "c.spec.ts": 7 } });
+  });
+
+  it("ignores attempt durations replayed from the test-result cache", () => {
+    const log = [
+      line("chromium (2)", "10:00:00.0000000", "[e2e-timing] chromium a.spec.ts 9.00"),
+      line("chromium (2)", "10:00:00.0000000", "chromium-2: passed from the test-result cache (hash ab12; saved 9m 1s)"),
+    ].join("\n");
+
+    expect(parseCiLog(log)).toEqual({});
+  });
+
   it("returns nothing for an empty or unrelated log", () => {
     expect(parseCiLog("")).toEqual({});
     expect(parseCiLog("just\nsome\ntext")).toEqual({});

@@ -261,23 +261,11 @@ describe("Rust test step", () => {
     ]);
   });
 
-  it("skips the toolchain, build and tests when nothing reaches Rust, and says why", () => {
-    const log = runStep(rust.run as string, { RUST_SELECTION: "NONE", RUST_REASON: "none of 2 changed file(s) feeds a Rust crate" }, features);
-    expect(log).toContain("Rust tests: none selected (none of 2 changed file(s) feeds a Rust crate)");
-    expect(calls()).toEqual([]);
-    const gated = (job.steps as Step[]).filter((s) => s.if?.includes("env.RUST_SELECTION != 'NONE'")).map((s) => s.name ?? s["uses" as keyof Step]);
-    expect(gated).toEqual([
-      "oven-sh/setup-bun@v2",
-      "Install dependencies",
-      "dtolnay/rust-toolchain@stable",
-      "Refresh apt package index",
-      "Test-result cache key",
-      "Restore test-result cache",
-      "Probe test-result cache",
-      "Install Tauri Linux system dependencies",
-      "Swatinem/rust-cache@v2",
-      "Create empty frontend dist",
-    ]);
+  it("skips the whole job when nothing reaches Rust (#1368)", () => {
+    expect(job.if).toBe("needs.changes.outputs.code == 'true' && needs.changes.outputs.rust != 'NONE'");
+    // The job-level skip owns NONE: no step re-checks it.
+    expect((job.steps as Step[]).filter((s) => s.if?.includes("RUST_SELECTION"))).toEqual([]);
+    expect(rust.run).not.toContain("NONE");
     runScript("scripts/ci-test-rust.sh", { RUST_SUITE: "default", RUST_SELECTION: "NONE" });
     expect(calls()).toEqual([]);
   });
@@ -348,8 +336,8 @@ describe.each([
     expect(verify).toMatch(new RegExp(`^node scripts/e2e-shards.mjs verify --engine ${engine} --list \\S+$`));
     const list = verify.split(" ").at(-1) as string;
     const test = engine === "webkit"
-      ? `xvfb-run -a --server-args=-screen 0 1920x1080x24 -nolisten tcp npx playwright test --project=webkit --test-list ${list} --reporter=line,html`
-      : `npx playwright test --project=chromium --test-list ${list} --reporter=line,html`;
+      ? `xvfb-run -a --server-args=-screen 0 1920x1080x24 -nolisten tcp npx playwright test --project=webkit --test-list ${list} --reporter=line,html,./scripts/e2e-timing-reporter.mjs`
+      : `npx playwright test --project=chromium --test-list ${list} --reporter=line,html,./scripts/e2e-timing-reporter.mjs`;
     expect(run).toBe(test);
     expect(existsSync(list)).toBe(false);
   });

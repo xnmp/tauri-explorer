@@ -1019,32 +1019,26 @@ jobs:
 
       # Turborepo, which hashes the suite's inputs, is a devDependency.
       - uses: oven-sh/setup-bun@v2
-        if: env.RUST_SELECTION != 'NONE'
         with:
           bun-version: latest
 
       - name: Install dependencies
-        if: env.RUST_SELECTION != 'NONE'
         run: bun install --frozen-lockfile
 
       - uses: dtolnay/rust-toolchain@stable
-        if: env.RUST_SELECTION != 'NONE'
         with:
           components: rustfmt, clippy
 
       # Refreshed before the cache probe so the hashed apt versions are the
       # ones a miss installs.
       - name: Refresh apt package index
-        if: env.RUST_SELECTION != 'NONE'
         run: sudo apt-get update
 
       - name: Test-result cache key
         id: test-cache-key
-        if: env.RUST_SELECTION != 'NONE'
         run: node scripts/test-cache.mjs key --target "rust-${{ matrix.suite }}"
 
       - name: Restore test-result cache
-        if: env.RUST_SELECTION != 'NONE'
         env:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/test-cache.mjs restore --target "rust-${{ matrix.suite }}"
@@ -1053,11 +1047,10 @@ jobs:
       # libraries nor the ~1.5 GB build cache are needed.
       - name: Probe test-result cache
         id: test-cache-probe
-        if: env.RUST_SELECTION != 'NONE'
         run: node scripts/test-cache.mjs probe --task ci:rust --target "rust-${{ matrix.suite }}"
 
       - name: Install Tauri Linux system dependencies
-        if: env.RUST_SELECTION != 'NONE' && steps.test-cache-probe.outputs.hit != 'true'
+        if: steps.test-cache-probe.outputs.hit != 'true'
         run: sudo apt-get install -y $TEST_CACHE_APT_PACKAGES
 
       # Each suite builds different feature artifacts; separate cache keys
@@ -1065,7 +1058,7 @@ jobs:
       # Save only from dev so PR branches restore dev's caches instead of
       # adding ~1.5 GB entries each and evicting other workflows' caches.
       - uses: Swatinem/rust-cache@v2
-        if: env.RUST_SELECTION != 'NONE' && steps.test-cache-probe.outputs.hit != 'true'
+        if: steps.test-cache-probe.outputs.hit != 'true'
         with:
           workspaces: src-tauri
           key: ${{ matrix.suite }}
@@ -1073,23 +1066,18 @@ jobs:
 
       # tauri::generate_context! requires the frontendDist dir to exist.
       - name: Create empty frontend dist
-        if: env.RUST_SELECTION != 'NONE'
         run: mkdir -p build
 
       # scripts/ci-test-rust.sh runs fmt (default suite), clippy and the tests,
       # or the cache replays an unchanged passing result. PRs test only the
       # packages the diff touches plus their dependents (scripts/rust-affected.mjs,
-      # from cargo metadata); NONE also skips the toolchain, build and clippy.
-      # Other events run everything.
+      # from cargo metadata); NONE skips this job. Other events run everything.
       - name: Rust tests
         id: test-cache-run
         run: |
           case "$RUST_SELECTION" in
             ALL)
               echo "Rust tests: full suite ($RUST_REASON)" ;;
-            NONE)
-              echo "Rust tests: none selected ($RUST_REASON)"
-              exit 0 ;;
             *)
               echo "Rust tests: selected packages $RUST_SELECTION ($RUST_REASON)" ;;
           esac

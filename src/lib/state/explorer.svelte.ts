@@ -29,6 +29,8 @@ import { gitStatusStore } from "./git-status.svelte";
 import { archiveRoots, operationRoots } from "$lib/domain/file-operation-selection";
 import { createFolderPeekState } from "./folder-peek.svelte";
 import { canPeekAt, flatPeekEntries, flatPeekRows, peekCapability, rowClickOwnsPeek, shouldToggleOnRowClick, resolvePeekCommandTarget, resolvePeekEscape } from "$lib/domain/folder-peek-flat";
+import { prunePeekSelection, springPeekDropFolder } from "$lib/domain/folder-peek-pane";
+import { entriesLabel, withExternalEntry } from "$lib/domain/explorer-entries";
 import type { PeekLevelCache } from "$lib/domain/folder-peek";
 import type { RowClickInput, RowPeekTarget } from "$lib/domain/folder-peek-flat";
 import type { BandSide } from "$lib/domain/tile-panels";
@@ -234,17 +236,10 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   const detailRows = $derived(peek.policies?.buildPeekRows(peekTree, peek.listing, creationSession !== null) ?? flatPeekRows(peekTree, creationSession !== null));
 
   function pruneHiddenChildren(before: typeof peekTree, after: readonly FileEntry[]) {
-    const visible = new Set(after.map(e => e.path));
-    const hidden = new Set(before.entries.filter(e => (before.meta.get(e.path)?.depth ?? 0) > 0 && !visible.has(e.path)).map(e => e.path));
-    if (!hidden.size) return;
-    setSelection([...coreState.selectedPaths].filter(path => !hidden.has(path)));
-    const cursorHidden = coreState.cursorPath && hidden.has(coreState.cursorPath);
-    const anchorHidden = coreState.selectionAnchorPath && hidden.has(coreState.selectionAnchorPath);
-    if (cursorHidden || anchorHidden) {
-      let path = cursorHidden ? coreState.cursorPath : coreState.selectionAnchorPath;
-      while (path && !visible.has(path)) path = before.meta.get(path)?.parentPath ?? null;
-      coreState.cursorPath = path; coreState.selectionAnchorPath = null;
-    }
+    const pruned = prunePeekSelection(before, after, coreState.selectedPaths, coreState.cursorPath, coreState.selectionAnchorPath);
+    if (!pruned) return;
+    setSelection(pruned.selected);
+    if (pruned.refocus !== undefined) { coreState.cursorPath = pruned.refocus; coreState.selectionAnchorPath = null; }
   }
   let peekIntent = 0;
   /** The last user peek toggle (or collapse-all). Pruning, refreshes,
@@ -823,12 +818,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   }
 
   function getSelectedEntries(): FileEntry[] {
-    const entries = selection.getSelectedEntries(displayEntries, coreState.selectedPaths);
-    if (contextMenuExternalEntry && coreState.selectedPaths.has(contextMenuExternalEntry.path)) {
-      const alreadyIncluded = entries.some((e) => e.path === contextMenuExternalEntry!.path);
-      if (!alreadyIncluded) return [...entries, contextMenuExternalEntry];
-    }
-    return entries;
+    return withExternalEntry(selection.getSelectedEntries(displayEntries, coreState.selectedPaths), coreState.selectedPaths, contextMenuExternalEntry);
   }
 
   // A marquee drag replaces the selection on every frame. Consumers that do
@@ -970,8 +960,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     if (!result.ok) { toastStore.error(result.error); return; }
     entries = result.entries;
     if (!await clipboardStore.copy(entries)) return;
-    const label = entries.length === 1 ? entries[0].name : `${entries.length} items`;
-    toastStore.clipboard(`Copied: ${label}`, false);
+    toastStore.clipboard(`Copied: ${entriesLabel(entries)}`, false);
   }
 
   /** A selection may hold a peeked folder and its children; the archive
@@ -987,8 +976,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     if (!result.ok) { toastStore.error(result.error); return; }
     entries = result.entries;
     if (!await clipboardStore.cut(entries)) return;
-    const label = entries.length === 1 ? entries[0].name : `${entries.length} items`;
-    toastStore.clipboard(`Cut: ${label}`, true);
+    toastStore.clipboard(`Cut: ${entriesLabel(entries)}`, true);
   }
 
   // Paste result for UI feedback
@@ -1161,13 +1149,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
      * a peek-state row, named by its folder). Null outside temporary peeks,
      * where such rows keep their ordinary (non-)target behaviour. */
     springDropFolder(path: string, kind: "directory" | "file" | "state"): string | null {
-      const temporary = peek.temporary;
-      if (!temporary.length || capability === "none") return null;
-      const folder = kind === "file" ? peekTree.meta.get(path)?.parentPath : path;
-      for (let at = folder; at && at !== coreState.currentPath; at = peekTree.meta.get(at)?.parentPath) {
-        if (temporary.includes(at)) return folder!;
-      }
-      return null;
+      return capability === "none" ? null : springPeekDropFolder(path, kind, peekTree.meta, peek.temporary, coreState.currentPath);
     },
     peekWatchSnapshot: watch.peekSnapshot,
     togglePeek,

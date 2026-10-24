@@ -108,6 +108,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `Modal.svelte` + `modal.css` — base modal shell + shared modal styling.
 - `UserReportDialog.svelte` — in-app issue form; closes optimistically, submits through Rust, toasts background failures, and restores saved failed drafts when reopened.
 - `SettingsDialog.svelte` — general settings dialog; links to dedicated Keyboard Shortcuts and Plugins dialogs.
+- `settings/SettingRow.svelte` — one Settings row (label, description, optional `info` snippet, control slot); `hidden` while the search filter excludes it.
+- `settings/SettingToggle.svelte` — the Settings switch (restyled checkbox; extra input attributes forwarded).
+- `settings/TerminalShortcutSettings.svelte` — terminal line-editing shortcut list and key recorder (#375/#404); recording ends on dialog close or window blur.
 - `PluginsDialog.svelte`, `PluginSettings.svelte` — lazy Plugins configuration surface; installed packages, contribution toggles and descriptor-driven settings, using shared modal ownership and viewport/zoom bounds.
 - `KeybindingsSettings.svelte` — keybinding customization UI in settings.
 - `ShortcutCheatsheet.svelte` — keyboard shortcut cheatsheet overlay.
@@ -1023,6 +1026,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 TraceExplorer's image UI, provider adapters and SQLite journal are maintained in https://github.com/xnmp/TraceExplorer rather than compiled into this host. Core crop outcomes remain covered in `e2e/image-crop.spec.ts` and `e2e/image-editor.spec.ts`.
 
 - `src/lib/domain/settings-search.ts` — shared multi-token substring/subsequence filtering for general and plugin Settings.
+- `src/lib/domain/terminal-shortcut-binding.ts` — displayed binding for a terminal line-editing action (user override vs platform default); Settings-only, kept out of the startup `terminal-keys.ts`.
+- `src/lib/domain/settings-rows.ts` — general Settings search terms per row (`SETTINGS_ROWS`) and per-section row lists with platform-only rows (`settingsSectionRows`).
 
 ## Shared text services — new files
 

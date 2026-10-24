@@ -463,6 +463,7 @@ backend for E2E/browser).
 ## Settings
 
 - `components/SettingsDialog.svelte` — general settings and links to Keyboard Shortcuts and Plugins.
+- `components/settings/SettingRow.svelte`, `settings/SettingToggle.svelte`, `settings/TerminalShortcutSettings.svelte` — row/switch chrome and the terminal shortcut recorder; `domain/settings-rows.ts` holds the search terms driving row/section visibility.
 - `components/PluginsDialog.svelte`, `components/PluginSettings.svelte` — dedicated lazy Plugins menu; package installation, contribution toggles and descriptor settings. Plugin settings actions and the Plugins palette command open this surface.
 - `state/settings.svelte.ts` — `settingsStore` (persisted flags/values)
 - `state/persisted.ts` — localStorage load/save helpers

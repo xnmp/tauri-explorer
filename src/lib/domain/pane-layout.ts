@@ -299,3 +299,26 @@ export function dwindlePlacement(root: PaneNode, targetId: string, aspect = 16 /
   if (!rect) return "right";
   return rect.w * aspect >= rect.h ? "right" : "down";
 }
+
+/** The pane to focus after closing `closedId`: its predecessor in visual
+ *  order among the panes of `after` (the first pane when it was first). */
+export function focusAfterClosing(before: PaneNode, after: PaneNode, closedId: string): string {
+  const remaining = leafIds(after);
+  const closedIndex = leafIds(before).indexOf(closedId);
+  return remaining[Math.max(0, Math.min(closedIndex - 1, remaining.length - 1))];
+}
+
+/** Re-insert a closed leaf where it sat (#229): split its old sibling with
+ *  the recorded placement and ratio, or, when that sibling is gone, split
+ *  the focused leaf on the recorded side. */
+export function reinsertLeaf(
+  root: PaneNode,
+  focusedId: string,
+  context: LeafSiblingContext,
+  newId: string,
+  splitId: string,
+): PaneNode {
+  return hasNode(root, context.siblingId)
+    ? updateRatio(splitNode(root, context.siblingId, context.placement, newId, splitId), splitId, context.ratio)
+    : splitLeaf(root, focusedId, context.placement, newId, splitId);
+}

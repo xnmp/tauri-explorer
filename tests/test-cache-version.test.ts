@@ -43,7 +43,7 @@ describe("versionBlindManifest", () => {
   it("applies only to the browser target, whose suite reads no manifest version", () => {
     expect([...VERSION_BLIND_TASKS]).toEqual(["ci:e2e"]);
     // The mock backend reports its own version to the About dialog.
-    expect(readFileSync(new URL("../src/lib/api/mock-invoke.ts", import.meta.url), "utf8"))
+    expect(readFileSync(new URL("../src/lib/api/mock-system.ts", import.meta.url), "utf8"))
       .toContain('get_app_info: () => ({ version: "0.0.0-mock"');
   });
 });

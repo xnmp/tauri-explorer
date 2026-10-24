@@ -9,6 +9,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 ## Root installers — platform-specific source install entry points.
 
 - `arch_install.sh`, `PKGBUILD` — Arch source installation: early sudo authentication, checkout installation lock, isolated makepkg staging, locked dependency preparation, verified local frontend reuse and unchanged native release compilation; after installing, per-user copies that shadow `/usr` are moved aside so the package is the only install. `--rebuild` forces frontend regeneration; ordinary makepkg builds remain fresh.
+- `scripts/check-file-size.mjs`, `scripts/file-size-allowlist.json` — frontend file-size ratchet run by `bun run lint:arch` (#1372): `src/` `.ts`/`.js`/`.mjs`/`.svelte` files stay at or below 800 lines; pre-existing larger files are allowlisted at their line count, may shrink but never grow, and an entry fails once its file is at or below the limit or gone.
 - `scripts/build-arch-frontend.mjs` — content- and environment-verified local frontend build receipt; hashes source/config/dependencies/tool versions and output, locks builders through completion, and never publishes interrupted/changed-input builds.
 - `tests/arch-frontend-build.test.ts`, `tests/arch-install-script.test.ts` — frontend reuse/invalidation/failure/concurrency outcomes and the actual PKGBUILD preparation/native-build contract without package installation.
 - `windows_install.ps1` — Windows PowerShell source installer: validates Git/Rust/Bun and the VC toolchain, uses an existing checkout or temporary HTTPS clone, builds the MSI, invokes elevated `msiexec`, reports reboot-required success, and cleans temporary clones. Governed by `docs/adr/0003-windows-installer-trust-boundary.md`.
@@ -108,6 +109,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `Modal.svelte` + `modal.css` — base modal shell + shared modal styling.
 - `UserReportDialog.svelte` — in-app issue form; closes optimistically, submits through Rust, toasts background failures, and restores saved failed drafts when reopened.
 - `SettingsDialog.svelte` — general settings dialog; links to dedicated Keyboard Shortcuts and Plugins dialogs.
+- `settings/SettingRow.svelte` — one Settings row (label, description, optional `info` snippet, control slot); `hidden` while the search filter excludes it.
+- `settings/SettingToggle.svelte` — the Settings switch (restyled checkbox; extra input attributes forwarded).
+- `settings/TerminalShortcutSettings.svelte` — terminal line-editing shortcut list and key recorder (#375/#404); recording ends on dialog close or window blur.
 - `PluginsDialog.svelte`, `PluginSettings.svelte` — lazy Plugins configuration surface; installed packages, contribution toggles and descriptor-driven settings, using shared modal ownership and viewport/zoom bounds.
 - `KeybindingsSettings.svelte` — keybinding customization UI in settings.
 - `ShortcutCheatsheet.svelte` — keyboard shortcut cheatsheet overlay.
@@ -353,7 +357,18 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `frontend-log.ts` — forwards diagnosable webview failures to the native rotating log.
 - `load-diagnostics.ts` — `record_slow_load` / `recent_slow_loads` IPC for slow directory-load records (#1022).
 - `e2e-hooks.ts` — the single frontend E2E hook gate: `E2E_HOOKS_ENABLED` (literal `VITE_E2E_HOOKS === "1"`, not DEV) and `loadE2EHooks()`, the only importer of `src/test-support/`; documents the orphan-chunk rule (#457, #884).
-- `mock-invoke.ts` — mock command dispatch/simulation for browser/E2E (no Tauri): stateful git working tree, trash, clipboard, drives. Open when E2E data wrong.
+- `mock-invoke.ts` — mock backend core for browser/E2E (no Tauri): merges the command-family tables and applies the copy/move session and history receipts. Lazily imported by `common.ts` outside Tauri. Open when E2E data wrong, then follow the command's family module.
+- `mock-dispatch.ts` — raw mock dispatch: the installed command table, invocation counting, injected failures and latency; family modules re-enter through `invokeMockCommand` here (keeps the graph acyclic).
+- `mock-files.ts` — mock filesystem family: listings (incl. synthetic `/perf` dirs), create/rename/delete, Trash, archives, file history, ordered copy/move session.
+- `mock-file-recovery.ts` — mock File Recovery family: retained-destination records, budget and subscription snapshots.
+- `mock-preview.ts` — mock preview/media family: thumbnails, image/PDF/video previews, image crop, folder previews, media metadata.
+- `mock-git-state.ts` — shared mock Git repository state: working tree, hunks, commit graph, refs, synthetic load-test repos.
+- `mock-git.ts` — mock Git working-tree family: status, stage/discard, commit, diffs, aborts, watching, cancellable fetch/pull.
+- `mock-git-history.ts` — mock Git history family: log, refs, branches/tags, checkout/merge/rebase/reset, undo, comparisons, PR/CI.
+- `mock-clipboard.ts` — mock OS clipboard family: published file list, cut leases, report attachments.
+- `mock-search.ts` — mock search family: Quick Open, streaming name search, content search.
+- `mock-ai.ts` — mock AI and plugin-job family: operations, connections, presentation, generation jobs.
+- `mock-system.ts` — mock app/system family: drives, startup/crash diagnostics, updates, warm windows, terminals, config, plugins, themes.
 - `mock-control.ts` — single typed control surface (`MockControl`, `getMockControl()`) e2e specs/tests use to set fixture overrides, failure/latency injection, and call mock-invoke's test hooks, replacing ad hoc `globalThis.__mockXxx` globals; also `MOCK_LOCAL_KEYS`, the named localStorage flag keys mock-invoke reads/writes (#869).
 - `mock-fixtures.ts` — static fixture data for mock-invoke.ts: the seeded fake filesystem tree (`mockFiles`), fake file contents, the fake drives list, and the fake commit graph shape/refs (#869).
 - `mock-file-history.ts` — browser-only fixture history for UI tests; native policy lives in Rust.
@@ -431,6 +446,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/domain/folder-peek.ts` — pure preorder expansion, pruning/caps and Details tree row/index geometry.
 - `src/lib/domain/folder-peek-memory.ts` — bounded expansion membership and List stage choices, subtree collapse and deleted-branch pruning shared with the pending restore facade.
 - `src/lib/domain/folder-peek-flat.ts` — flat Details rows and command admission before first peek activation; caret-less click ownership (`rowClickOwnsPeek`: click toggles, double-click refused with a notice, #1298).
+- `src/lib/domain/folder-peek-pane.ts` — explorer-applied peek decisions: selection/cursor pruning after a projection hides peeked children, and spring-peek drop folders (#1242).
+- `src/lib/domain/explorer-entries.ts` — explorer entry-list helpers: multi-entry clipboard labels and merging a selected context-menu entry the listing lacks.
 - `src/lib/domain/file-operation-selection.ts` — Explorer recursive batch reduction, symlink-overlap admission, drag-primary remapping, and archive roots (same-basename refusal).
 - `src/lib/domain/bulk-rename.ts` — bulk rename plan: name-part find/replace previews, per-folder collision keys, and descendant-first rename order.
 - `src/lib/domain/file-drop.ts` — validated internal payloads, full path-set verification and explicit DOM/native transport authority.
@@ -514,7 +531,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `resize-size.ts` — bounded scalar normalization, visual/model delta conversion and axis-aware keyboard sizing.
 - `scroll-moves-handle.ts` — which scrolls end a panel drag: the document's, an ancestor's or a synced scroller's, never an unrelated list's.
 - `pane-viewport.ts` — pure descendant minima (`paneMinima` sizes the rendered canvas and split children without measurement), canvas placement, active-pane reveal and keyboard divider policy.
-- `pane-layout.ts` — pane split-tree pure logic (#228).
+- `pane-layout.ts` — pane split-tree pure logic (#228); `focusAfterClosing`/`reinsertLeaf` for closing and restoring panes (#229).
+- `window-tab-order.ts` — tab-strip index arithmetic: insertion after the active tab, Ctrl+Tab wrapping, drag reordering.
+- `closed-panes.ts` — bounded closed-pane stack, pane-vs-tab restore precedence, repeated last-tab close detection (#229).
 - `tab-title.ts` — VS Code-style tab title disambiguation.
 - `retained-tabs.ts` — which recently active tabs keep their pane tree mounted while hidden: stable render order plus LRU eviction (#1173).
 - `titlebar.ts` — title bar / tab strip visibility rules.
@@ -1022,6 +1041,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 TraceExplorer's image UI, provider adapters and SQLite journal are maintained in https://github.com/xnmp/TraceExplorer rather than compiled into this host. Core crop outcomes remain covered in `e2e/image-crop.spec.ts` and `e2e/image-editor.spec.ts`.
 
 - `src/lib/domain/settings-search.ts` — shared multi-token substring/subsequence filtering for general and plugin Settings.
+- `src/lib/domain/terminal-shortcut-binding.ts` — displayed binding for a terminal line-editing action (user override vs platform default); Settings-only, kept out of the startup `terminal-keys.ts`.
+- `src/lib/domain/settings-rows.ts` — general Settings search terms per row (`SETTINGS_ROWS`) and per-section row lists with platform-only rows (`settingsSectionRows`).
 
 ## Shared text services — new files
 

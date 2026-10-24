@@ -321,14 +321,22 @@ describe.each([
     const dir = mkdtempSync(join(tmpdir(), "e2e-server-"));
     try {
       const env = join(dir, "env");
+      const summary = join(dir, "summary");
       writeFileSync(env, "");
-      const run = () => execFileSync("bash", ["-c", choose], { cwd: dir, env: { ...process.env, GITHUB_ENV: env }, encoding: "utf8" });
+      writeFileSync(summary, "");
+      const run = () => execFileSync("bash", ["-c", choose], {
+        cwd: dir, env: { ...process.env, GITHUB_ENV: env, GITHUB_STEP_SUMMARY: summary }, encoding: "utf8",
+      });
       expect(run()).toContain("serving the Vite dev server instead");
       expect(readFileSync(env, "utf8")).toBe("");
+      // The fallback is visible in the job summary, not only as an annotation.
+      expect(readFileSync(summary, "utf8")).toMatch(/app server.*Vite dev server.*e2e-browser-build/);
+      writeFileSync(summary, "");
       mkdirSync(join(dir, "build"));
       writeFileSync(join(dir, "build/index.html"), "");
       expect(run()).toContain("serving the shared browser-test bundle");
       expect(readFileSync(env, "utf8")).toBe("E2E_BUILD_DIR=build\n");
+      expect(readFileSync(summary, "utf8")).toBe("");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

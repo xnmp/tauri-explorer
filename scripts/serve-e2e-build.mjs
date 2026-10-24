@@ -111,7 +111,19 @@ export function serve({ root, port }) {
       response.writeHead(target ? 404 : 400, { "content-type": "text/plain" }).end("not found");
       return;
     }
-    const size = statSync(target.file).size;
+    // A file that vanished or cannot be read is a 500 for that request, never
+    // an exception that takes the server (and every later test) down.
+    const fail = () => {
+      if (response.headersSent) response.destroy();
+      else response.writeHead(500, { "content-type": "text/plain" }).end("read failed");
+    };
+    let size;
+    try {
+      size = statSync(target.file).size;
+    } catch {
+      fail();
+      return;
+    }
     const headers = {
       "content-type": TYPES[extname(target.file).toLowerCase()] ?? "application/octet-stream",
       "cache-control": "no-cache",
@@ -123,17 +135,19 @@ export function serve({ root, port }) {
       response.writeHead(416, { "content-range": `bytes */${size}` }).end();
       return;
     }
-    if (range) {
-      response.writeHead(206, {
+    const head = () => range ? response.writeHead(206, {
         ...headers,
         "content-range": `bytes ${range.start}-${range.end}/${size}`,
         "content-length": range.end - range.start + 1,
-      });
-    } else {
-      response.writeHead(200, { ...headers, "content-length": size });
+      }) : response.writeHead(200, { ...headers, "content-length": size });
+    if (request.method === "HEAD") {
+      head().end();
+      return;
     }
-    if (request.method === "HEAD") response.end();
-    else createReadStream(target.file, range ?? {}).pipe(response);
+    // Headers go out only once the file opened, so an open failure is a 500.
+    const stream = createReadStream(target.file, range ?? {});
+    stream.once("error", fail);
+    stream.once("open", () => stream.pipe(head()));
   });
   return new Promise((done, fail) => {
     server.once("error", fail);

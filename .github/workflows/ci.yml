@@ -430,6 +430,7 @@ jobs:
             echo "Browser E2E: serving the shared browser-test bundle"
           else
             echo "::warning title=No browser-test bundle::serving the Vite dev server instead"
+            echo "- **app server**: Vite dev server (the \`e2e-browser-build\` artifact is missing; check the e2e-build job)" >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Test-result cache key
@@ -611,6 +612,7 @@ jobs:
             echo "Browser E2E: serving the shared browser-test bundle"
           else
             echo "::warning title=No browser-test bundle::serving the Vite dev server instead"
+            echo "- **app server**: Vite dev server (the \`e2e-browser-build\` artifact is missing; check the e2e-build job)" >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Test-result cache key
@@ -849,6 +851,7 @@ jobs:
             echo "Browser E2E: serving the shared browser-test bundle"
           else
             echo "::warning title=No browser-test bundle::serving the Vite dev server instead"
+            echo "- **app server**: Vite dev server (the \`e2e-browser-build\` artifact is missing; check the e2e-build job)" >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Test-result cache key

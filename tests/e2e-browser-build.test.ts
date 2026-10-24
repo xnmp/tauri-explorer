@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import type { Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -94,6 +94,20 @@ describe("shimSource", () => {
     });
     expect(component).toContain('["../../../_app/immutable/assets/Modal.css"]');
     expect(component).toContain('export { default } from "../../../_app/immutable/entry/PluginsDialog.def.js";');
+  });
+});
+
+describe("e2e console guards", () => {
+  // The bundle runs Svelte's production runtime (esm-env selects it; defining
+  // import.meta.env.DEV does not), which prints `https://svelte.dev/e/<code>`
+  // rather than `[svelte] <code>`. A filter on the dev prefix can never fail
+  // on CI shards, so guards must match the bare warning code.
+  it("never match Svelte's dev-only `[svelte] ` message prefix", () => {
+    const root = fileURLToPath(new URL("../e2e/", import.meta.url));
+    const offenders = readdirSync(root, { recursive: true, encoding: "utf8" })
+      .filter((file) => /\.(ts|js|mjs)$/.test(file))
+      .filter((file) => readFileSync(join(root, file), "utf8").includes("[svelte] "));
+    expect(offenders).toEqual([]);
   });
 });
 
@@ -238,5 +252,19 @@ describe("serve", () => {
     expect(response.headers.get("content-range")).toBe("bytes 7-11/25");
     expect(await response.text()).toBe("const");
     expect((await fetch(`${base}/index.html`, { headers: { range: "bytes=999-" } })).status).toBe(416);
+  });
+
+  // Root reads mode-000 files, so the failure cannot be produced there.
+  it.skipIf(process.getuid?.() === 0)("answers an unreadable file with 500 and keeps serving", async () => {
+    const file = join(dir, "src/lib/locked.ts");
+    writeFileSync(file, "export {};");
+    chmodSync(file, 0o000);
+    try {
+      const response = await fetch(`${base}/src/lib/locked.ts`);
+      expect(response.status).toBe(500);
+      expect((await fetch(`${base}/src/lib/module.svelte.ts`)).status).toBe(200);
+    } finally {
+      chmodSync(file, 0o644);
+    }
   });
 });

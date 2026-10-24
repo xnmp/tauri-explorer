@@ -25,6 +25,17 @@ What a plain production bundle broke, and why:
 - **`import.meta.env.DEV` gates.** The startup console summary and PDF worker
   receipts that specs read exist only in dev; the flavour defines that literal
   as `true` (Svelte/SvelteKit still build for production).
+- **Svelte runs its production runtime.** Defining `import.meta.env.DEV`
+  does not select Svelte's dev runtime; `esm-env` does, at build time. Its
+  warnings print `https://svelte.dev/e/<code>`, not `[svelte] <code>`, so a
+  console guard on the dev prefix can never fail on the bundle
+  (`inline-mutation-lifetime.spec.ts` did). Match the bare code;
+  `tests/e2e-browser-build.test.ts` rejects the prefix anywhere in `e2e/`.
+- **Faster startup exposes early-input races.** The first click after
+  `navigateTo` lands within ~500 ms of navigation start, where the marquee's
+  zero-initialised drag-end time treated it as a drag release and caret-less
+  Folder Peek ignored it (#1387). Look for clocks compared against an initial
+  `0` before blaming the bundle; retries hid it on CI.
 - **Range requests.** Video seeking needs `206 Partial Content`; the static
   server implements single ranges.
 

@@ -126,12 +126,15 @@ jobs:
         timeout-minutes: 3
         run: bun install --frozen-lockfile --ignore-scripts
 
-      # The newest map from a successful nightly e2e-impact-map.yml run on dev
-      # (#1368). No map, a failed download or an unusable map (malformed, or
-      # older than MAX_MAP_AGE_HOURS in scripts/impact-coverage.mjs) leaves
-      # the browser tiers on their selection without a map. The map's commit
-      # is fetched to re-run the tests that executed code changed on dev
-      # since then, and to translate lines; without it the map is unused.
+      # The newest map from a trusted dev producer (#1368, #1386): every
+      # ci.yml dev push and the nightly e2e-impact-map.yml backstop
+      # (scripts/impact-map-source.mjs checks the producing run's event,
+      # workflow, branch and repository, not just the artifact name). No map,
+      # a failed download or an unusable map (malformed, or older than
+      # MAX_MAP_AGE_HOURS in scripts/impact-coverage.mjs) leaves the browser
+      # tiers on their selection without a map. The map's commit is fetched to
+      # re-run the tests that executed code changed on dev since then, and to
+      # translate lines; without it the map is unused.
       - name: Fetch the E2E impact map
         id: impact
         if: github.event_name == 'pull_request'
@@ -140,18 +143,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          run=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow e2e-impact-map.yml --branch dev --status success \
-            --limit 1 --json databaseId,headSha --jq '.[0] | select(.) | "\(.databaseId) \(.headSha)"')
-          if [ -z "$run" ]; then
-            echo "No successful impact map run on dev; browser tiers select without a map."
+          picked=$(node scripts/impact-map-source.mjs "$GITHUB_REPOSITORY")
+          if [ -z "$picked" ]; then
+            echo "No impact map from a trusted dev run; browser tiers select without a map."
             echo "- **impact map**: none available, browser tiers select without it" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          read -r id sha <<< "$run"
+          read -r artifact id sha <<< "$picked"
           gh run download "$id" --repo "$GITHUB_REPOSITORY" -n e2e-impact-map -D "$RUNNER_TEMP/impact-map"
-          git fetch --no-tags --depth=1 origin "$sha" || echo "Map commit $sha unavailable; files changed since it use the file level."
-          echo "map=$RUNNER_TEMP/impact-map/e2e-impact-map.json" >> "$GITHUB_OUTPUT"
-          echo "- **impact map**: run $id at \`$sha\`" >> "$GITHUB_STEP_SUMMARY"
+          map="$RUNNER_TEMP/impact-map/e2e-impact-map.json"
+          commit=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).commit || "")' "$map")
+          git fetch --no-tags --depth=1 origin "${commit:-$sha}" || echo "Map commit ${commit:-$sha} unavailable; files changed since it use the file level."
+          echo "map=$map" >> "$GITHUB_OUTPUT"
+          echo "- **impact map**: artifact $artifact of run $id at \`${commit:-$sha}\`" >> "$GITHUB_STEP_SUMMARY"
 
       # Each selector prints {mode, reason, items} JSON; a selector or parse
       # failure selects the full tier. rust-affected runs `cargo metadata`
@@ -359,6 +363,10 @@ jobs:
       # with no new flakes measured on Chromium (run 40068235372). WebKit stays
       # at one worker: two overran its 40-minute shard budget there.
       PW_WORKERS: "2"
+      # Outside PRs, record function-level coverage for the dev-push
+      # test-impact map (#1386); it is not hashed, since it cannot change a
+      # result.
+      E2E_COVERAGE: ${{ github.event_name != 'pull_request' && 'function' || '' }}
       ImageOS: playwright_noble
       ImageVersion: "1.60.0_9bd26ad900bb5e0f4dee75839e957a89ae89c2b7ab1e76050e559790e946b948"
       TEST_CACHE_NORMALIZE_VERSION: "1"
@@ -437,6 +445,13 @@ jobs:
             echo "- **app server**: Vite dev server (the \`e2e-browser-build\` artifact is missing; check the e2e-build job)" >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      - name: Coverage record paths
+        if: steps.plan.outputs.run == 'true' && env.E2E_COVERAGE == 'function'
+        run: |
+          echo "IMPACT_DIR=$RUNNER_TEMP/impact" >> "$GITHUB_ENV"
+          echo "E2E_COVERAGE_DIR=$RUNNER_TEMP/impact/records" >> "$GITHUB_ENV"
+          echo "PLAYWRIGHT_JSON_OUTPUT_FILE=$RUNNER_TEMP/impact/report-chromium-${{ matrix.shard }}.json" >> "$GITHUB_ENV"
+
       - name: Test-result cache key
         id: test-cache-key
         if: steps.plan.outputs.run == 'true'
@@ -493,6 +508,16 @@ jobs:
           path: ${{ env.TEST_CACHE_REPORT }}/
           if-no-files-found: ignore
 
+      # Records for the impact-map job; none when the cache replayed a pass.
+      - name: Upload impact coverage records
+        if: always() && env.IMPACT_DIR != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: impact-records-chromium-${{ matrix.shard }}
+          path: ${{ env.IMPACT_DIR }}
+          if-no-files-found: ignore
+          retention-days: 3
+
       - name: Upload Playwright report on failure
         if: failure()
         uses: actions/upload-artifact@v7
@@ -539,6 +564,10 @@ jobs:
       # at one worker: two overran its 40-minute shard budget there.
       PW_WORKERS: "2"
       ALL_VIEW_MODES: "1"
+      # Outside PRs, record function-level coverage for the dev-push
+      # test-impact map (#1386); it is not hashed, since it cannot change a
+      # result.
+      E2E_COVERAGE: ${{ github.event_name != 'pull_request' && 'function' || '' }}
       ImageOS: playwright_noble
       ImageVersion: "1.60.0_9bd26ad900bb5e0f4dee75839e957a89ae89c2b7ab1e76050e559790e946b948"
       TEST_CACHE_NORMALIZE_VERSION: "1"
@@ -623,6 +652,13 @@ jobs:
             echo "- **app server**: Vite dev server (the \`e2e-browser-build\` artifact is missing; check the e2e-build job)" >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      - name: Coverage record paths
+        if: steps.plan.outputs.run == 'true' && env.E2E_COVERAGE == 'function'
+        run: |
+          echo "IMPACT_DIR=$RUNNER_TEMP/impact" >> "$GITHUB_ENV"
+          echo "E2E_COVERAGE_DIR=$RUNNER_TEMP/impact/records" >> "$GITHUB_ENV"
+          echo "PLAYWRIGHT_JSON_OUTPUT_FILE=$RUNNER_TEMP/impact/report-chromium-view-modes-${{ matrix.shard }}.json" >> "$GITHUB_ENV"
+
       - name: Test-result cache key
         id: test-cache-key
         if: steps.plan.outputs.run == 'true'
@@ -679,6 +715,16 @@ jobs:
           path: ${{ env.TEST_CACHE_REPORT }}/
           if-no-files-found: ignore
 
+      # Records for the impact-map job; none when the cache replayed a pass.
+      - name: Upload impact coverage records
+        if: always() && env.IMPACT_DIR != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: impact-records-chromium-view-modes-${{ matrix.shard }}
+          path: ${{ env.IMPACT_DIR }}
+          if-no-files-found: ignore
+          retention-days: 3
+
       - name: Upload Playwright report on failure
         if: failure()
         uses: actions/upload-artifact@v7
@@ -688,6 +734,70 @@ jobs:
           if-no-files-found: ignore
 
   # Preserve the protected-branch check name and require every Chromium shard.
+  # The dev-push test-impact map (#1386): merges the Chromium shards'
+  # function-level coverage records into the `e2e-impact-map` artifact PRs
+  # select with (scripts/impact-map-source.mjs). Published only when every
+  # shard recorded: a test-cache replay records nothing, and an older complete
+  # map (or the nightly e2e-impact-map.yml one) then stays the newest.
+  impact-map:
+    needs: [chromium, chromium-view-modes]
+    if: >-
+      !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/dev' &&
+      needs.chromium.result == 'success' && needs.chromium-view-modes.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # One Playwright report per shard: chromium (2) + chromium-view-modes (1)
+      # (tests/ci-test-selection.test.ts keeps this equal to the matrices).
+      EXPECTED_REPORTS: 3
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.CONTAINER_BUN_VERSION }}
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: impact-records-*
+          path: ${{ runner.temp }}/records
+
+      - name: Merge the impact map
+        id: merge
+        run: |
+          reports=()
+          while IFS= read -r report; do reports+=(--reports "$report"); done \
+            < <(find "$RUNNER_TEMP/records" -maxdepth 2 -name 'report-*.json' 2>/dev/null)
+          if [ "${#reports[@]}" -ne $((EXPECTED_REPORTS * 2)) ]; then
+            echo "Impact map: $(( ${#reports[@]} / 2 )) of $EXPECTED_REPORTS shard reports (a cached or failed shard); not published." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          dirs=()
+          while IFS= read -r dir; do dirs+=("$dir"); done < <(find "$RUNNER_TEMP/records" -mindepth 2 -maxdepth 2 -type d -name records)
+          node scripts/impact-coverage.mjs merge --out "$RUNNER_TEMP/e2e-impact-map.json" --commit "$GITHUB_SHA" \
+            "${reports[@]}" "${dirs[@]}" 2> "$RUNNER_TEMP/merge.log" || { cat "$RUNNER_TEMP/merge.log"; exit 1; }
+          cat "$RUNNER_TEMP/merge.log"
+          {
+            echo "### E2E impact map for \`$GITHUB_SHA\`"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/merge.log"
+            node scripts/impact-coverage.mjs stats "$RUNNER_TEMP/e2e-impact-map.json"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v7
+        if: steps.merge.outputs.publish == 'true'
+        with:
+          name: e2e-impact-map
+          path: ${{ runner.temp }}/e2e-impact-map.json
+          if-no-files-found: error
+          retention-days: 14
+
   frontend:
     if: always()
     needs: [changes, frontend-checks, chromium, chromium-view-modes]

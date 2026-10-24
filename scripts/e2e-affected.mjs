@@ -377,6 +377,9 @@ const SELECTION_INPUTS = new Set([
   // How the map is recorded: a change here can make later maps under-report.
   "scripts/impact-collect.mjs",
   "scripts/impact-lines.mjs",
+  "scripts/impact-bundle.mjs",
+  // Which dev map a PR trusts (#1386).
+  "scripts/impact-map-source.mjs",
   "e2e/impact-coverage.ts",
   ".github/workflows/e2e-impact-map.yml",
   // How the target runs through the test-result cache (#1176).

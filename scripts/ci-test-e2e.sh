@@ -21,6 +21,11 @@ fi
 # shard-timings refresh (scripts/e2e-shards.mjs record), which cannot read
 # durations from interleaved start lines when a job runs several workers.
 reporter=line,html,./scripts/e2e-timing-reporter.mjs
+# Coverage runs for the impact map (#1386) also write the JSON report the
+# merge needs to tell an unrecorded test from one that never ran.
+if [ -n "${E2E_COVERAGE:-}" ] && [ -n "${PLAYWRIGHT_JSON_OUTPUT_FILE:-}" ]; then
+  reporter="$reporter,json"
+fi
 case "$E2E_ENGINE" in
   chromium)
     npx playwright test --project=chromium --test-list "$list" --reporter="$reporter" "${limit[@]}" ;;

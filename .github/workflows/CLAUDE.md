@@ -67,7 +67,7 @@ Chromium runs 2 shards and view modes 1, each with `PW_WORKERS=2`; WebKit
 keeps 5 shards with one worker, because two workers per WebKit runner
 overran the 40-minute shard budget with new failures (#1368, run
 40068235372). Changing a matrix also changes `EXPECTED_REPORTS` in the
-dev-push impact-map job, when present.
+dev-push impact-map job.
 `ImageOS`/`ImageVersion` are set to the container so cached results are scoped
 to it. Each shard bounds Playwright with `E2E_GLOBAL_TIMEOUT_MINUTES`, below
 the step `timeout-minutes`, below the job cap.
@@ -94,8 +94,30 @@ beside the bundle (`e2e/app-server.ts`); `pane-viewport.spec.ts` is marked for
 #1384, a WebKit ResizeObserver loop that only the bundle's startup timing shows. Code gated
 on `import.meta.env.DEV` does not run in CI shards; gate test-visible
 diagnostics on the dev server or hooks explicitly. Local runs and
-`e2e-impact-map.yml` keep the dev server, because the impact collector
-attributes coverage to per-module scripts and their inline source maps.
+`e2e-impact-map.yml` keep the dev server.
+
+# Dev-push impact map (#1386)
+
+On dev pushes (and dispatches, never PRs) both Chromium jobs run with
+`E2E_COVERAGE=function`: CDP precise coverage without block counts, about 5%
+slower. On the bundle, `e2e/impact-coverage.ts` attributes each chunk through
+its hidden source map (`sourcemap: "hidden"` in browser-test builds) and
+`build/e2e-chunk-modules.json`, which lists every repository module a chunk
+contains, including CSS and fully tree-shaken modules, so an evaluated chunk
+marks all of them loaded (`scripts/impact-bundle.mjs`). A chunk without map
+data makes the test's record incomplete. Each shard uploads its records and
+Playwright JSON report; the `impact-map` job merges them with
+`--commit $GITHUB_SHA` and publishes `e2e-impact-map` only when all
+`EXPECTED_REPORTS` (3, the two matrices) are present: a shard replayed from
+the test-result cache records nothing, and the previous map then stays the
+newest. The nightly `e2e-impact-map.yml` run (block coverage, dev server,
+checked out at `github.sha` so map commit and coverage agree) is the backstop.
+
+PRs pick the map with `scripts/impact-map-source.mjs`: the newest unexpired
+`e2e-impact-map` artifact whose producing run is a push, schedule or dispatch
+of ci.yml or e2e-impact-map.yml on `dev` in this repository. The artifact name
+alone is not trusted, since any run (including a PR from a branch named `dev`)
+can upload one.
 
 # PR test selection (#1175)
 
@@ -161,8 +183,9 @@ WebKit-only caller), and still runs in full for `WEBKIT_SENSITIVE` paths,
 component styling, engine detection or a change no Chromium test executed;
 view modes keep the view-mode specs among the Chromium selection. A new file,
 a file no spec loaded, an asset no spec fetched, the mock backend, config,
-lockfiles, selection inputs and the map's recorder (`impact-collect.mjs`,
-`impact-lines.mjs`, `e2e/impact-coverage.ts`, this workflow) still select ALL.
+lockfiles, selection inputs and the map's recorder or source (`impact-collect.mjs`,
+`impact-lines.mjs`, `impact-bundle.mjs`, `impact-map-source.mjs`,
+`e2e/impact-coverage.ts`, this workflow) still select ALL.
 Dev pushes, the nightly CI run and dispatch still run every spec.
 
 # Test-result cache (#1176)

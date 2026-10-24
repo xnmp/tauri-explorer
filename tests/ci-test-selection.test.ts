@@ -125,27 +125,39 @@ describe("changes job selection", () => {
 
   describe("impact map download", () => {
     const fetch = step("changes", (s) => s.id === "impact");
-    const stubGh = (runList: string) => {
-      writeFileSync(join(dir, "gh"), `#!/bin/bash\necho "gh $*" >> "${dir}/calls"\ncase "$2" in list) printf '%s' '${runList}' ;; download) mkdir -p "\${9}"; echo "{}" > "\${9}/e2e-impact-map.json" ;; esac\n`);
+    // `picked` is what scripts/impact-map-source.mjs prints; the downloaded
+    // map records `commit` (empty: the producing run's head sha is used).
+    const stubGh = (picked: string, commit = "") => {
+      writeFileSync(join(dir, "gh"), `#!/bin/bash\necho "gh $*" >> "${dir}/calls"\ncase "$2" in download) mkdir -p "\${9}"; echo '{"commit":"${commit}"}' > "\${9}/e2e-impact-map.json" ;; esac\n`);
       chmodSync(join(dir, "gh"), 0o755);
       writeFileSync(join(dir, "git"), `#!/bin/bash\necho "git $*" >> "${dir}/calls"\n`);
       chmodSync(join(dir, "git"), 0o755);
+      const node = process.execPath;
+      writeFileSync(join(dir, "node"), `#!/bin/bash\nif [ "$1" = scripts/impact-map-source.mjs ]; then echo "node $*" >> "${dir}/calls"; printf '%s' '${picked}'; else exec "${node}" "$@"; fi\n`);
+      chmodSync(join(dir, "node"), 0o755);
     };
 
-    it("never fails the job and only trusts successful dev runs", () => {
+    it("never fails the job and picks the map through the trusted-producer check", () => {
       expect(fetch.if).toBe("github.event_name == 'pull_request'");
       expect((fetch as { "continue-on-error"?: boolean })["continue-on-error"]).toBe(true);
-      expect(fetch.run).toContain("--workflow e2e-impact-map.yml --branch dev --status success");
+      expect(fetch.run).toContain('node scripts/impact-map-source.mjs "$GITHUB_REPOSITORY"');
     });
 
-    it("downloads the newest map and fetches its commit", () => {
-      stubGh("42 abc123");
+    it("downloads the chosen map and fetches the commit the map records", () => {
+      stubGh("7 42 abc123", "def456");
       runStep(fetch.run as string, { GITHUB_REPOSITORY: "o/r" });
       expect(readFileSync(join(dir, "out"), "utf8").trim()).toBe(`map=${dir}/impact-map/e2e-impact-map.json`);
       expect(calls()).toEqual(expect.arrayContaining([
+        "node scripts/impact-map-source.mjs o/r",
         `gh run download 42 --repo o/r -n e2e-impact-map -D ${dir}/impact-map`,
-        "git fetch --no-tags --depth=1 origin abc123",
+        "git fetch --no-tags --depth=1 origin def456",
       ]));
+    });
+
+    it("falls back to the producing run's commit for a map without one", () => {
+      stubGh("7 42 abc123");
+      runStep(fetch.run as string, { GITHUB_REPOSITORY: "o/r" });
+      expect(calls()).toContain("git fetch --no-tags --depth=1 origin abc123");
     });
 
     it("publishes no map when no run exists", () => {
@@ -166,6 +178,37 @@ describe("changes job selection", () => {
     for (const tier of ["e2e", "webkit", "view-modes", "unit", "rust"]) {
       expect(out).toContain(`${tier}=ALL\n${tier}-reason=selection failed\n`);
     }
+  });
+});
+
+describe("dev-push impact map (#1386)", () => {
+  it("records coverage on both Chromium jobs outside PRs only", () => {
+    for (const job of ["chromium", "chromium-view-modes"]) {
+      expect(ci.jobs[job].env.E2E_COVERAGE).toBe("${{ github.event_name != 'pull_request' && 'function' || '' }}");
+    }
+    expect(ci.jobs["webkit-tests"].env.E2E_COVERAGE).toBeUndefined();
+  });
+
+  it("expects one report per Chromium shard", () => {
+    const shards = (job: string) => (ci.jobs[job].strategy.matrix.shard as number[]).length;
+    expect(ci.jobs["impact-map"].env.EXPECTED_REPORTS).toBe(shards("chromium") + shards("chromium-view-modes"));
+    expect(ci.jobs["impact-map"].needs).toEqual(["chromium", "chromium-view-modes"]);
+    expect(ci.jobs["impact-map"].if).toContain("github.ref == 'refs/heads/dev'");
+  });
+
+  it("publishes nothing unless every shard reported", () => {
+    const merge = step("impact-map", (s) => s.id === "merge");
+    mkdirSync(join(dir, "records/impact-records-chromium-1/records"), { recursive: true });
+    writeFileSync(join(dir, "records/impact-records-chromium-1/report-chromium-1.json"), "{}");
+    const log = runStep(merge.run as string, { EXPECTED_REPORTS: "3", GITHUB_SHA: "abc" });
+    expect(log).toContain("1 of 3 shard reports");
+    expect(existsSync(join(dir, "out"))).toBe(false);
+    expect(calls().some((c) => c.includes("impact-coverage.mjs merge"))).toBe(false);
+  });
+
+  it("adds the JSON report to coverage runs only", () => {
+    runScript("scripts/ci-test-e2e.sh", { E2E_ENGINE: "chromium", E2E_SHARD_SPECS: "e2e/a.spec.ts", E2E_COVERAGE: "function", PLAYWRIGHT_JSON_OUTPUT_FILE: "/tmp/r.json" });
+    expect(calls().at(-1)).toMatch(/--reporter=line,html,\.\/scripts\/e2e-timing-reporter\.mjs,json$/);
   });
 });
 

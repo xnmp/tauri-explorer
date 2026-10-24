@@ -46,7 +46,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event_name == 'schedule' && 'dev' || github.ref }}
+          # One commit for every shard and the merge: a later dev push must not
+          # mix into this map or change the commit it records.
+          ref: ${{ github.sha }}
 
       - name: Trust the checkout
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -99,7 +101,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event_name == 'schedule' && 'dev' || github.ref }}
+          # One commit for every shard and the merge: a later dev push must not
+          # mix into this map or change the commit it records.
+          ref: ${{ github.sha }}
 
       - uses: oven-sh/setup-bun@v2
         with:

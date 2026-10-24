@@ -120,6 +120,31 @@ function staticCss(fileName, bundle, seen = new Set()) {
   ];
 }
 
+/** Build-root file listing each chunk's repository source modules. */
+export const CHUNK_MODULES_FILE = "e2e-chunk-modules.json";
+
+/**
+ * Repository `src/` modules in each emitted chunk, keyed by chunk file name.
+ * @param {Record<string, any>} bundle Rollup's output bundle
+ * @param {string} root repository root
+ * @returns {Record<string, string[]>}
+ */
+export function chunkModules(bundle, root) {
+  /** @type {Record<string, string[]>} */
+  const out = {};
+  for (const output of Object.values(bundle)) {
+    if (output.type !== "chunk") continue;
+    const paths = new Set();
+    for (const id of Object.keys(output.modules ?? {})) {
+      const file = id.replace(/^\0/, "").split("?")[0];
+      const rel = posix.relative(root.split("\\").join("/"), file.split("\\").join("/"));
+      if (rel.startsWith("src/") && !rel.split("/").includes("node_modules")) paths.add(rel);
+    }
+    if (paths.size > 0) out[output.fileName] = [...paths].sort();
+  }
+  return out;
+}
+
 /**
  * @param {{enabled: boolean, root?: string, specDir?: string}} options
  * @returns {import("vite").Plugin}
@@ -156,6 +181,15 @@ export function e2eBrowserBuild({ enabled, root = process.cwd(), specDir = "e2e"
       }
     },
     generateBundle(_options, bundle) {
+      if (!enabled || ssr) return;
+      // Which source modules each chunk evaluates, including those that left
+      // no mapped code (stylesheets, constants-only modules): the dev-push
+      // impact map counts them as loaded with their chunk (#1386).
+      this.emitFile({
+        type: "asset",
+        fileName: CHUNK_MODULES_FILE,
+        source: JSON.stringify(chunkModules(bundle, root)),
+      });
       for (const { path, ref } of emitted) {
         const chunkFile = this.getFileName(ref);
         const chunk = bundle[chunkFile];

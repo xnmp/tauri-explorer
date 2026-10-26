@@ -144,6 +144,68 @@ static TEST_STREAM_WALK_COUNTS: std::sync::OnceLock<
     Mutex<std::collections::HashMap<PathBuf, usize>>,
 > = std::sync::OnceLock::new();
 
+/// Record a streaming-search worker phase. Compiles to nothing outside tests.
+#[inline]
+fn trace_stream_phase(_search_id: u64, _phase: &'static str, _detail: impl FnOnce() -> String) {
+    #[cfg(test)]
+    stream_trace::record(_search_id, _phase, _detail());
+}
+
+/// Test-only, bounded record of which phase each streaming search worker
+/// reached, so a completion wait that expires can report what was awaited
+/// instead of a bare channel timeout (#1215).
+#[cfg(test)]
+pub(crate) mod stream_trace {
+    use super::LockTestState;
+    use std::collections::{HashMap, VecDeque};
+    use std::sync::Mutex;
+    use std::time::Instant;
+
+    const MAX_TRACED_SEARCHES: usize = 256;
+    const MAX_PHASES_PER_SEARCH: usize = 16;
+
+    #[derive(Clone, Debug)]
+    pub(crate) struct Phase {
+        pub name: &'static str,
+        pub detail: String,
+        pub at: Instant,
+    }
+
+    #[derive(Default)]
+    struct Traces {
+        order: VecDeque<u64>,
+        phases: HashMap<u64, Vec<Phase>>,
+    }
+
+    static TRACES: Mutex<Option<Traces>> = Mutex::new(None);
+
+    pub(crate) fn record(search_id: u64, name: &'static str, detail: String) {
+        let at = Instant::now();
+        let mut guard = TRACES.lock_test_state();
+        let traces = guard.get_or_insert_with(Traces::default);
+        if !traces.phases.contains_key(&search_id) {
+            if traces.order.len() >= MAX_TRACED_SEARCHES {
+                if let Some(oldest) = traces.order.pop_front() {
+                    traces.phases.remove(&oldest);
+                }
+            }
+            traces.order.push_back(search_id);
+        }
+        let phases = traces.phases.entry(search_id).or_default();
+        if phases.len() < MAX_PHASES_PER_SEARCH {
+            phases.push(Phase { name, detail, at });
+        }
+    }
+
+    pub(crate) fn phases(search_id: u64) -> Vec<Phase> {
+        TRACES
+            .lock_test_state()
+            .as_ref()
+            .and_then(|traces| traces.phases.get(&search_id).cloned())
+            .unwrap_or_default()
+    }
+}
+
 pub(crate) fn invalidate_search_cache_for_change(changed_path: &Path) {
     SEARCH_ENTRY_CACHE.invalidate_for_change(changed_path);
 }
@@ -860,11 +922,25 @@ pub async fn start_streaming_search(
     limit: usize,
     boost_prefix: Option<String>,
 ) -> Result<u64, AppError> {
-    start_streaming_search_with_runtime(app, query, root, limit, boost_prefix).await
+    start_streaming_search_with_sink(app, query, root, limit, boost_prefix).await
 }
 
-async fn start_streaming_search_with_runtime<R: Runtime>(
-    app: AppHandle<R>,
+/// Where a streaming search publishes its progress and completion. The
+/// command publishes app events; tests substitute a channel because Tauri's
+/// Rust-side listeners are not a lossless observer (#1215, see
+/// `docs/lessons/1215-streaming-search-timeout.md`).
+trait SearchResultsSink: Send + 'static {
+    fn publish(&self, event: SearchResultsEvent);
+}
+
+impl<R: Runtime> SearchResultsSink for AppHandle<R> {
+    fn publish(&self, event: SearchResultsEvent) {
+        let _ = self.emit("search-results", event);
+    }
+}
+
+async fn start_streaming_search_with_sink<S: SearchResultsSink>(
+    sink: S,
     query: String,
     root: String,
     limit: usize,
@@ -900,6 +976,9 @@ async fn start_streaming_search_with_runtime<R: Runtime>(
 
     // Spawn search in background thread
     std::thread::spawn(move || {
+        trace_stream_phase(search_id, "worker-started", || {
+            format!("query={query:?} root={root_path:?}")
+        });
         let mut all_results: Vec<SearchResult> = Vec::new();
         let mut total_scanned = 0;
         let batch_size = 500;
@@ -917,7 +996,17 @@ async fn start_streaming_search_with_runtime<R: Runtime>(
             cancelled.clone(),
         );
         log::info!("quickfind: observation completed search_id={search_id} root={root_path:?} elapsed={}ms covered={cache_eligible} cancelled={}", registration_started.elapsed().as_millis(), cancelled.load(Ordering::Acquire));
+        trace_stream_phase(search_id, "registration-finished", || {
+            format!(
+                "covered={cache_eligible} cancelled={} elapsed={:?}",
+                cancelled.load(Ordering::Acquire),
+                registration_started.elapsed()
+            )
+        });
         if cancelled.load(Ordering::Acquire) {
+            trace_stream_phase(search_id, "completion-suppressed", || {
+                "cancelled during registration".into()
+            });
             SEARCHES.cleanup(search_id);
             return;
         }
@@ -925,13 +1014,21 @@ async fn start_streaming_search_with_runtime<R: Runtime>(
         let cached_entries = cache_eligible
             .then(|| SEARCH_ENTRY_CACHE.completed(&root_path))
             .flatten();
+        trace_stream_phase(search_id, "walk-started", || {
+            if cached_entries.is_some() {
+                "source=cache"
+            } else {
+                "source=filesystem"
+            }
+            .into()
+        });
         let mut accept_entry = |entry: Walked| {
             pending_entries.push(entry);
             total_scanned += 1;
 
             if pending_entries.len() >= batch_size {
                 let ctx = BatchContext {
-                    app: &app,
+                    sink: &sink,
                     search_id,
                     root_path: &root_path,
                     pattern: &pattern,
@@ -966,6 +1063,12 @@ async fn start_streaming_search_with_runtime<R: Runtime>(
                 &mut accept_entry,
             )
         };
+        trace_stream_phase(search_id, "walk-finished", || {
+            format!(
+                "scanned={total_scanned} cancelled={}",
+                cancelled.load(Ordering::Relaxed)
+            )
+        });
 
         if !cancelled.load(Ordering::Relaxed)
             && crate::files::fs_watcher::is_search_cache_watched(&root_path)
@@ -978,7 +1081,7 @@ async fn start_streaming_search_with_runtime<R: Runtime>(
         // Process remaining entries
         if !pending_entries.is_empty() && !cancelled.load(Ordering::Relaxed) {
             let ctx = BatchContext {
-                app: &app,
+                sink: &sink,
                 search_id,
                 root_path: &root_path,
                 pattern: &pattern,
@@ -997,15 +1100,20 @@ async fn start_streaming_search_with_runtime<R: Runtime>(
 
         // Emit final results with done=true
         if !cancelled.load(Ordering::Relaxed) {
-            let _ = app.emit(
-                "search-results",
-                SearchResultsEvent {
-                    search_id,
-                    results: all_results.into_iter().take(limit).collect(),
-                    done: true,
-                    total_scanned,
-                },
-            );
+            trace_stream_phase(search_id, "completion-publishing", || {
+                format!("matches={}", all_results.len().min(limit))
+            });
+            sink.publish(SearchResultsEvent {
+                search_id,
+                results: all_results.into_iter().take(limit).collect(),
+                done: true,
+                total_scanned,
+            });
+            trace_stream_phase(search_id, "completion-published", String::new);
+        } else {
+            trace_stream_phase(search_id, "completion-suppressed", || {
+                "cancelled during walk".into()
+            });
         }
 
         SEARCHES.cleanup(search_id);
@@ -1023,8 +1131,8 @@ mod issue_651_integration_tests;
 mod issue_651_streaming_integration_tests;
 
 /// Per-search constants shared by every `process_batch` call.
-struct BatchContext<'a, R: Runtime> {
-    app: &'a AppHandle<R>,
+struct BatchContext<'a, S: SearchResultsSink> {
+    sink: &'a S,
     search_id: u64,
     root_path: &'a Path,
     pattern: &'a Pattern,
@@ -1033,15 +1141,15 @@ struct BatchContext<'a, R: Runtime> {
     query_lower: &'a str,
 }
 
-fn process_batch<R: Runtime>(
-    ctx: &BatchContext<'_, R>,
+fn process_batch<S: SearchResultsSink>(
+    ctx: &BatchContext<'_, S>,
     pending: &mut Vec<Walked>,
     all_results: &mut Vec<SearchResult>,
     matcher: &mut Matcher,
     total_scanned: usize,
 ) {
     let BatchContext {
-        app,
+        sink,
         search_id,
         root_path,
         pattern,
@@ -1092,15 +1200,12 @@ fn process_batch<R: Runtime>(
     let current_top: Vec<SearchResult> = all_results.iter().take(limit).cloned().collect();
 
     if !current_top.is_empty() {
-        let _ = app.emit(
-            "search-results",
-            SearchResultsEvent {
-                search_id,
-                results: current_top,
-                done: false,
-                total_scanned,
-            },
-        );
+        sink.publish(SearchResultsEvent {
+            search_id,
+            results: current_top,
+            done: false,
+            total_scanned,
+        });
     }
 }
 

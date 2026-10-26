@@ -156,8 +156,8 @@ export interface CommandMatchFields {
   label: string;
   category: string;
   shortcut: string;
-  /** Hidden lowercased synonyms (see command-keywords.ts); optional. */
-  keywords?: readonly string[];
+  /** Hidden lowercased synonyms joined by "|" (see command-keywords.ts); optional. */
+  keywords?: string;
 }
 
 /** Cap frecency's contribution so it never dominates text relevance. */
@@ -190,7 +190,7 @@ export function scoreCommand(
   frecencyScore: number,
 ): number {
   const { label, category, shortcut } = fields;
-  const keywords = fields.keywords ?? [];
+  const { keywords = "" } = fields;
   const tokens = queryLower.split(/\s+/).filter(Boolean);
   if (tokens.length === 0) return 0;
 
@@ -213,11 +213,6 @@ export function scoreCommand(
     score += 40;
   }
 
-  // Match in a hidden synonym: always below any label hit (label >= 100)
-  if (keywords.some((k) => k.includes(queryLower))) {
-    score += 25;
-  }
-
   // Every token must land somewhere; label subsequence hits earn per-char
   // points so tighter label matches rank above category-only ones.
   for (const token of tokens) {
@@ -228,7 +223,7 @@ export function scoreCommand(
       score += 10;
     } else if (shortcut.includes(token)) {
       score += 10;
-    } else if (keywords.some((k) => k.includes(token))) {
+    } else if (keywords.includes(token)) {
       score += 8;
     } else {
       return 0;

@@ -178,7 +178,7 @@ describe("scoreCommand keywords (synonyms)", () => {
     label: "keyboard shortcuts",
     category: "general",
     shortcut: "",
-    keywords: ["hotkeys", "keybindings"],
+    keywords: "hotkeys|keybindings",
   };
   const noAlias = { label: "keyboard shortcuts", category: "general", shortcut: "" };
 
@@ -201,6 +201,6 @@ describe("scoreCommand keywords (synonyms)", () => {
     expect(scoreCommand(kb, "", 0)).toBe(0);
     expect(scoreCommand(kb, "   ", 0)).toBe(0);
     expect(scoreCommand(kb, "x".repeat(10_000), 0)).toBe(0);
-    expect(scoreCommand(noAlias, "keyboard", 0)).toBe(scoreCommand({ ...noAlias, keywords: [] }, "keyboard", 0));
+    expect(scoreCommand(noAlias, "keyboard", 0)).toBe(scoreCommand({ ...noAlias, keywords: "" }, "keyboard", 0));
   });
 });

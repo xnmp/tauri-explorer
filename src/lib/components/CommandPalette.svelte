@@ -15,6 +15,7 @@
   } from "$lib/state/commands.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { usePointerIntent } from "$lib/composables/use-pointer-intent.svelte";
+  import { keywordsFor } from "$lib/domain/command-keywords";
   import { commandFrecencyPoints, scoreCommand } from "$lib/domain/fuzzy-score";
   import { runAfterClose } from "$lib/state/run-after-close";
   import Modal from "./Modal.svelte";
@@ -68,6 +69,7 @@
             label: cmd.label.toLowerCase(),
             category: getCategoryLabel(cmd.category).toLowerCase(),
             shortcut: (getCommandShortcut(cmd.id) || "").toLowerCase(),
+            keywords: keywordsFor(cmd.id),
           },
           lowerQuery,
           frecency,

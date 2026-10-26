@@ -422,6 +422,7 @@ backend for E2E/browser).
 - `domain/quick-open-search.ts` — trailing debounce at the recursive backend-search boundary; active-pane/recent/frecency matches remain local and synchronous, while the merged rendered result set stays bounded (#600, #651)
 - `components/PickerQuickOpen.svelte` — variant used inside file picker
 - `domain/fuzzy-score.ts` — match scoring/ranking
+- `domain/command-keywords.ts` — hidden command-palette synonyms (hotkeys → Keyboard Shortcuts), consumed by `scoreCommand`
 - `api/search.ts` — `startStreamingSearch`, `fuzzySearch`, `cancelSearch`
 - `src-tauri/src/search.rs`, `search_cache.rs` — nucleo fuzzy engine, streaming emits, and a bounded short-lived cache of completed recursive listings (#651)
 - FLOW: query → bounded local matches render immediately; trailing `quick-open-search` scheduler → startStreamingSearch → recursively-covered watched-root completed listing cache or cold backend walk → backend emits result chunks (race-safe: listener before invoke) → sorted by fuzzy-score → Enter navigates/opens. Quick Open installs separate recursive invalidation coverage only for cache-eligible roots, leaving pane/thumbnail refresh watches non-recursive; uncovered or unwatched roots walk fresh. Descendant filesystem changes invalidate affected ancestor/descendant caches. Removing any recursive registration rebuilds all surviving registrations; coverage transitions advance exact-root revisions so overlapping parent/child roots retain real OS coverage without evicting unchanged listings. Cancelled cold walks are not published.

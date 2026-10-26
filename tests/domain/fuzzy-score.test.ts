@@ -172,3 +172,35 @@ describe("scoreCommand", () => {
     expect(hot - cold).toBe(30);
   });
 });
+
+describe("scoreCommand keywords (synonyms)", () => {
+  const kb = {
+    label: "keyboard shortcuts",
+    category: "general",
+    shortcut: "",
+    keywords: ["hotkeys", "keybindings"],
+  };
+  const noAlias = { label: "keyboard shortcuts", category: "general", shortcut: "" };
+
+  it("finds a command by a keyword that is not in its visible text", () => {
+    expect(scoreCommand(noAlias, "hotkeys", 0)).toBe(0);
+    expect(scoreCommand(kb, "hotkeys", 0)).toBeGreaterThan(0);
+    expect(scoreCommand(kb, "hotkeys keyboard", 0)).toBeGreaterThan(0);
+  });
+
+  it("ranks a label match above a keyword-only match", () => {
+    const labelHit = scoreCommand({ ...noAlias, label: "hotkeys panel" }, "hotkeys", 0);
+    expect(labelHit).toBeGreaterThan(scoreCommand(kb, "hotkeys", 0));
+  });
+
+  it("a token matching nothing still rejects the command", () => {
+    expect(scoreCommand(kb, "hotkeys zebra", 0)).toBe(0);
+  });
+
+  it("behaves as before for empty, whitespace and huge queries", () => {
+    expect(scoreCommand(kb, "", 0)).toBe(0);
+    expect(scoreCommand(kb, "   ", 0)).toBe(0);
+    expect(scoreCommand(kb, "x".repeat(10_000), 0)).toBe(0);
+    expect(scoreCommand(noAlias, "keyboard", 0)).toBe(scoreCommand({ ...noAlias, keywords: [] }, "keyboard", 0));
+  });
+});

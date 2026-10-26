@@ -28,7 +28,15 @@ function install({ source, ready }: { source: string; ready?: string }) {
     const probe = document.createElement("div");
     probe.style.cssText = "position:fixed;left:-10px;top:-10px;width:1px;height:1px;pointer-events:none";
     document.body.append(probe);
-    const observer = new ResizeObserver(() => samples.push(take()));
+    // A zero-size report means this rendering update ran no layout for the
+    // probe: WebKit builds no render tree while a lazy chunk's stylesheet is
+    // pending, so nothing laid out is painted. Snapshotting then would force
+    // that layout inside delivery and resize the probe, the shallowest
+    // observed node, which the engine cannot redeliver: WebKit reports a
+    // ResizeObserver loop the app never causes (#1384).
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry.contentRect.width > 0) samples.push(take());
+    });
     observer.observe(probe);
     let running = true;
     let frame = 0;

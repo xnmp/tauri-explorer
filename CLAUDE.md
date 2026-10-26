@@ -242,6 +242,10 @@ overlapping root is released while still reporting healthy; arm it with
 `arm_search_watch_for_test` before taking the revision a write must advance
 (#1152).
 
+Tauri Rust listeners (`app.listen`) are not a lossless test oracle: an emit
+contending with any other emit on the same app is parked until a later emit
+with a listener flushes it. Inject a sink for completion events (#1215).
+
 Anything whose failure mode involves races, watcher timing, git state, or cache staleness needs tier 3 or a Rust temp-repo test in `src-tauri` — a green mock E2E is not evidence for those.
 
 Config autoreload tests must write through the canonical target of any symlinked config file or theme directory; watching the link itself does not prove inotify observes the target.

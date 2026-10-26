@@ -6,7 +6,7 @@
 // (scripts/impact-collect.mjs). `merge` combines the records of a full run
 // into the map PR selection reads:
 //
-//   { version, commit, generatedAt,
+//   { version, commit, generatedAt, server,
 //     specs:     [spec files that recorded coverage],
 //     tests:     [{ id, spec, title, location }]     index = test number
 //     files:     { "src/x.ts": [specs that loaded it] }      (file level)
@@ -14,6 +14,12 @@
 //     assets:    { "static/x.png": [specs whose pages fetched it] }
 //     lines:     { "src/x.ts": { blob, aligned, mapped, blocks, tests, cover } }
 //     sets:      [test sets, encoded by encodeSet] }
+//
+// server is "bundle" when every record came from a run serving the
+// browser-test bundle (specs beside it on the dev server included, as in PR
+// shards), "dev" when none did, "mixed" when a shard fell back to the dev
+// server during a bundle run, and absent for older records. Module boundaries differ between the two, so a PR shard serving
+// another kind selects ALL rather than trust the map (#1391).
 //
 // files/exercised/assets are the file-level layer the selector uses today.
 // lines is the per-test, original-line layer (hunk/test-level selection):
@@ -152,15 +158,32 @@ export function decodeSet(encoded) {
 // --- merge ----------------------------------------------------------------
 
 /**
+ * The app server kind a run recorded on (see the header).
+ * @param {readonly TestRecord[]} records
+ * @returns {{ server?: "bundle" | "dev" }}
+ */
+export function mapServer(records) {
+  if (records.length === 0 || records.some((r) => typeof r.bundled !== "boolean")) return {};
+  if (records.every((r) => r.bundled)) return { server: "bundle" };
+  if (records.every((r) => !r.bundled)) return { server: "dev" };
+  // A shard that fell back to the dev server during a bundle run: its loader
+  // sets are not bundle loader sets, and no PR shard serves this mix.
+  return { server: "mixed" };
+}
+
+/**
  * @typedef {{ v?: number, id: string, spec: string, title?: string[], location?: string,
  *   loaded: string[], exercised: string[], lines?: Record<string, Array<[number, number]>>,
- *   requests?: string[], retry?: number, status?: string, failures?: string[] }} TestRecord
+ *   requests?: string[], retry?: number, status?: string, failures?: string[],
+ *   server?: "bundle" | "dev", bundled?: boolean }} TestRecord
+ *   bundled: whether the run served the browser-test bundle (E2E_BUILD_DIR).
  *   status: Playwright's status for that attempt; failures: what the
  *   collector could not record (a page closed early, a CDP error).
  * @typedef {import("./impact-collect.mjs").FileMeta} FileMeta
  * @typedef {{ blob: string | null, aligned: boolean, mapped: Array<[number, number]>,
  *   blocks: Array<[number, number]>, tests: number, cover: Array<[number, number, number]> }} FileLines
- * @typedef {{ version: number, commit: string, generatedAt: string, specs: string[], incomplete?: string[],
+ * @typedef {{ version: number, commit: string, generatedAt: string, server?: "bundle" | "dev" | "mixed",
+ *   specs: string[], incomplete?: string[],
  *   tests: Array<{ id: string, spec: string, title: string[], location: string }>,
  *   files: Record<string, string[]>, exercised: Record<string, string[]>, assets: Record<string, string[]>,
  *   lines: Record<string, FileLines>, sets: string[] }} ImpactMap
@@ -287,6 +310,7 @@ export function mergeImpact(records, metas, { commit = "unknown", generatedAt = 
     version: MAP_VERSION,
     commit,
     generatedAt,
+    ...mapServer(records),
     specs: [...new Set(tests.map((t) => t.spec))].filter((s) => !incomplete.includes(s)).sort(),
     incomplete,
     tests,

@@ -20,9 +20,9 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import type { Browser, BrowserContext, CDPSession, Page, TestInfo } from "@playwright/test";
-import { CHUNK_MODULES_FILE } from "../scripts/e2e-browser-build.mjs";
+import { CHUNK_MODULES_FILE, UNBUNDLED_MODULES_FILE } from "../scripts/e2e-browser-build.mjs";
 import { chunkSegments } from "../scripts/impact-bundle.mjs";
-import { RECORD_VERSION, reduceCoverage, requestedRepoFile, type FileMeta } from "../scripts/impact-collect.mjs";
+import { coverageOrigins, RECORD_VERSION, reduceCoverage, requestedRepoFile, type FileMeta } from "../scripts/impact-collect.mjs";
 import { repoPathFromUrl } from "../scripts/impact-coverage.mjs";
 
 type Entry = {
@@ -45,6 +45,7 @@ const seen = new Map<string, FileMeta | true>();
 /** Per-worker caches of bundle chunk mappings and dev-server module sources. */
 const chunks = new Map<string, (ReturnType<typeof chunkSegments> & { modules: string[] }) | null>();
 let chunkModules: Record<string, string[]> | undefined;
+let unbundled: string[] | null | undefined;
 const sources = new Map<string, string | null>();
 
 /** The bundle chunk a script URL names, with its hidden source map, if any. */
@@ -87,15 +88,37 @@ async function devSource(url: string): Promise<string | null> {
   return sources.get(url) ?? null;
 }
 
+/** The bundle's tree-shaken `src/` modules, read once per worker; null if unreadable. */
+function unbundledModules(buildDir: string): string[] | null {
+  if (unbundled === undefined) {
+    try {
+      unbundled = JSON.parse(readFileSync(join(buildDir, UNBUNDLED_MODULES_FILE), "utf8")) as string[];
+    } catch {
+      unbundled = null;
+    }
+  }
+  return unbundled;
+}
+
+/**
+ * @param specBaseURL the spec's resolved `baseURL` fixture: the dev server
+ *   beside the bundle for specs that need one (e2e/app-server.ts), so their
+ *   requests are attributed to the server they actually used (#1391).
+ */
 export async function collectImpactCoverage(
   browser: Browser,
   context: BrowserContext,
   testInfo: TestInfo,
   use: () => Promise<void>,
+  specBaseURL?: string,
 ) {
   const root = testInfo.config.configFile ? dirname(testInfo.config.configFile) : process.cwd();
-  const baseURL = testInfo.project.use.baseURL;
-  const origin = baseURL ? new URL(baseURL).origin : null;
+  const buildDir = process.env.E2E_BUILD_DIR ? resolve(root, process.env.E2E_BUILD_DIR) : null;
+  const { requests: origin, bundle: bundleOrigin, server } = coverageOrigins({
+    projectBaseURL: testInfo.project.use.baseURL,
+    specBaseURL,
+    bundled: buildDir !== null,
+  });
   const started = new Map<Page, Promise<void>>();
   const sessions = new Map<Page, CDPSession>();
   const collected: Entry[] = [];
@@ -191,13 +214,12 @@ export async function collectImpactCoverage(
     await Promise.all([...started.keys()].map(collect));
     for (const undo of restore.reverse()) undo();
     const spec = relative(root, testInfo.file).split("\\").join("/");
-    const buildDir = process.env.E2E_BUILD_DIR ? resolve(root, process.env.E2E_BUILD_DIR) : null;
-    const chunk = (url: string) => bundleChunk(url, origin, buildDir);
+    const chunk = (url: string) => bundleChunk(url, bundleOrigin, buildDir);
     if (functionMode) {
       // Modules from a dev server (specs beside the bundle, or no bundle)
       // carry their inline source map only in the served text.
       for (const script of collected) {
-        const fromBundle = Boolean(buildDir && origin && script.url.startsWith(`${origin}/`));
+        const fromBundle = Boolean(buildDir && bundleOrigin && script.url.startsWith(`${bundleOrigin}/`));
         // A bundle chunk without its mapping data would drop that chunk's
         // modules silently: mark the record incomplete instead.
         if (fromBundle && /\/_app\/.*\.js$/.test(new URL(script.url).pathname) && !chunk(script.url)) {
@@ -206,7 +228,11 @@ export async function collectImpactCoverage(
         if (!fromBundle && repoPathFromUrl(script.url)) script.source = (await devSource(script.url)) ?? undefined;
       }
     }
-    const { metas, ...summary } = reduceCoverage(collected, { root, seen, chunk });
+    // Without the tree-shaken module list, a bundle test's record could miss
+    // modules an edit brings into the bundle: mark it incomplete instead.
+    const shaken = buildDir ? unbundledModules(buildDir) : [];
+    if (server === "bundle" && shaken === null) failures.push(`no ${UNBUNDLED_MODULES_FILE} in ${buildDir}`);
+    const { metas, ...summary } = reduceCoverage(collected, { root, seen, chunk, unbundled: shaken ?? [] });
     const dir = process.env.E2E_COVERAGE_DIR ?? join(root, "test-results", "impact-coverage");
     mkdirSync(join(dir, "meta"), { recursive: true });
     for (const meta of metas) {
@@ -225,6 +251,8 @@ export async function collectImpactCoverage(
       failures,
       ...summary,
       requests: [...requests].sort(),
+      server,
+      bundled: buildDir !== null,
     }));
   }
 }

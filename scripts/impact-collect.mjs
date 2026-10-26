@@ -2,11 +2,13 @@
 // the test-impact map merges (#1368). Used by e2e/impact-coverage.ts.
 //
 // Record (one JSON file per test attempt):
-//   { v, id, spec, title, location, retry, status, failures,
+//   { v, id, spec, title, location, retry, status, failures, server,
 //     loaded:    [repo files whose module evaluated],
 //     exercised: [repo files with a non-top-level function that ran],
 //     lines:     { file: [[start, end], ...] }   covered original lines,
-//     requests:  [repo files the pages fetched (static assets, fixtures)] }
+//     requests:  [repo files the pages fetched (static assets, fixtures)],
+//     server:    "bundle" | "dev", the app server the spec ran against,
+//     bundled:   whether the run served the browser-test bundle at all }
 // Per file version, a meta record (written once, keyed by path + git blob):
 //   { path, blob, aligned, mapped: [[s, e]...], blocks: [[s, e]...] }
 // `aligned` is false when the served module's source map embeds text that
@@ -20,6 +22,25 @@ import { scriptLines } from "./impact-lines.mjs";
 import { chunkCoverage, chunkEvaluated, chunkSegments } from "./impact-bundle.mjs";
 
 export const RECORD_VERSION = 1;
+
+/**
+ * The origins one test's coverage is attributed against (#1391). Scripts
+ * from `bundle` map through the browser-test bundle's chunk data; requests
+ * count only on the spec's own app server, which for a spec beside the bundle
+ * (e2e/app-server.ts) is the dev server, not the project's baseURL.
+ * @param {{ projectBaseURL?: string, specBaseURL?: string, bundled: boolean }} options
+ *   bundled: whether the run serves the browser-test bundle (E2E_BUILD_DIR)
+ * @returns {{ requests: string | null, bundle: string | null, server: "bundle" | "dev" }}
+ */
+export function coverageOrigins({ projectBaseURL, specBaseURL, bundled }) {
+  const origin = (/** @type {string | undefined} */ url) => {
+    try { return url ? new URL(url).origin : null; } catch { return null; }
+  };
+  const project = origin(projectBaseURL);
+  const spec = origin(specBaseURL ?? projectBaseURL);
+  const onBundle = bundled && project !== null && spec === project;
+  return { requests: spec, bundle: bundled ? project : null, server: onBundle ? "bundle" : "dev" };
+}
 
 /** Git's blob id for file content. @param {Buffer | string} content */
 export function gitBlobId(content) {
@@ -57,14 +78,18 @@ export function requestedRepoFile(url, origin, root) {
 /**
  * @param {RawScript[]} scripts every script of every page the test opened
  * @param {{ root: string, readFile?: (path: string) => Buffer | null, seen?: Map<string, FileMeta | true>,
- *   chunk?: (url: string) => (ReturnType<typeof chunkSegments> & { modules?: string[] }) | null }} options
+ *   chunk?: (url: string) => (ReturnType<typeof chunkSegments> & { modules?: string[] }) | null,
+ *   unbundled?: readonly string[] }} options
  *   `seen` caches per-worker static data by served source, so each module
  *   version is source-mapped once. `chunk` resolves a bundled chunk's
  *   mapping data (scripts/impact-bundle.mjs) for scripts served by the
- *   browser-test bundle; other scripts are dev-server modules.
+ *   browser-test bundle; other scripts are dev-server modules. `unbundled`
+ *   lists the build's `src/` modules that no chunk contains (tree-shaken
+ *   away entirely); a test that evaluated any chunk counts as loading them
+ *   all, so an edit that brings one into the bundle selects every such test.
  * @returns {{ loaded: string[], exercised: string[], lines: Record<string, Array<[number, number]>>, metas: FileMeta[] }}
  */
-export function reduceCoverage(scripts, { root, readFile, seen = new Map(), chunk }) {
+export function reduceCoverage(scripts, { root, readFile, seen = new Map(), chunk, unbundled = [] }) {
   const read = readFile ?? ((/** @type {string} */ p) => { try { return readFileSync(join(root, p)); } catch { return null; } });
   /** @type {Set<string>} */
   const loaded = new Set();
@@ -74,6 +99,7 @@ export function reduceCoverage(scripts, { root, readFile, seen = new Map(), chun
   const covered = new Map();
   /** @type {FileMeta[]} */
   const metas = [];
+  let bundleEvaluated = false;
   const cover = (/** @type {string} */ path, /** @type {Array<[number, number]>} */ runs) => {
     let set = covered.get(path);
     if (!set) covered.set(path, (set = new Set()));
@@ -105,7 +131,10 @@ export function reduceCoverage(scripts, { root, readFile, seen = new Map(), chun
       }
       // Modules that left no mapped code (stylesheets, constants) still
       // evaluated with their chunk.
-      if (chunkEvaluated(script.functions ?? [])) for (const path of segments.modules ?? []) loaded.add(path);
+      if (chunkEvaluated(script.functions ?? [])) {
+        bundleEvaluated = true;
+        for (const path of segments.modules ?? []) loaded.add(path);
+      }
       if (first) seen.set(key, true);
       continue;
     }
@@ -139,6 +168,7 @@ export function reduceCoverage(scripts, { root, readFile, seen = new Map(), chun
     if (!set) covered.set(path, (set = new Set()));
     for (const [a, b] of lines.covered) for (let n = a; n <= b; n++) set.add(n);
   }
+  if (bundleEvaluated) for (const path of unbundled) loaded.add(path);
   /** @type {Record<string, Array<[number, number]>>} */
   const lines = {};
   for (const path of [...covered.keys()].sort()) {

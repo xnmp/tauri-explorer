@@ -565,7 +565,10 @@ retain the intermediate-height, inert-ghost and reduced-motion assertions (#1275
 Spring peek state becomes observable before its List card finishes opening.
 Synthetic drag probes that target row edges must await populated rows and the
 end of live List motion before reading hit-test coordinates; a bounding box
-can include pixels still clipped by the opening card (#1292).
+can include pixels still clipped by the opening card (#1292). Rows also
+hit-test before the first rendered frame, whose ResizeObserver delivery sizes
+the List (until then it flows at its 4-row floor): settle across rendered
+frames, not DOM visibility (#1388).
 
 List peek stages never move a folder's header (#1365): every open header uses
 the `SPRING_CARD_FIT` rule in `sizeListModel`, "+N more" spills rows (cut while

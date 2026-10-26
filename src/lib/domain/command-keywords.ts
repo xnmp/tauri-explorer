@@ -51,7 +51,7 @@ export const COMMAND_KEYWORDS: Readonly<Record<string, readonly string[]>> = {
   "help.openLogs": ["debug", "diagnostics"],
 };
 
-/** Lowercased synonyms joined by "|" (empty when the command has none). */
-export function keywordsFor(commandId: string): string {
-  return (COMMAND_KEYWORDS[commandId] ?? []).join("|").toLowerCase();
+/** Lowercased synonyms for a command (empty when it has none). */
+export function keywordsFor(commandId: string): string[] {
+  return (COMMAND_KEYWORDS[commandId] ?? []).map((k) => k.toLowerCase());
 }

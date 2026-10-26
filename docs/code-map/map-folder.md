@@ -485,6 +485,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `quick-access.ts` — default sidebar system-folder rows under the resolved home directory; an unknown home yields none, so no row can navigate to a fabricated path while `get_home_directory` is in flight (#702).
 - `fuzzy-score.ts` — fuzzy match scorer for QuickOpen.
 - `command-keywords.ts` — hidden palette search synonyms per command ID (#1247).
+- `command-score.ts` — pure command-palette scorer (`scoreCommand`, frecency points); split from `fuzzy-score.ts` so it stays out of the startup graph (#1247).
 - `quick-open-search.ts` — trailing scheduler for the expensive recursive Quick Open search; local results remain immediate while a rapid query produces one backend request (#600).
 - `lazy-dialog.ts` — failure-safe loading for code-split dialogs: rejected import (#584) or mount crash via svelte:boundary (#585) rolls back the dialog open-flag + notifies, preventing the hasModalOpen hotkey soft-lock.
 - `theme-list.ts` — dedupe discovered themes by id, last wins (user CSS overrides built-ins; duplicate ids crashed ThemePicker's keyed each, #585).

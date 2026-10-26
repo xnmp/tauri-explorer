@@ -15,7 +15,8 @@
   } from "$lib/state/commands.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { usePointerIntent } from "$lib/composables/use-pointer-intent.svelte";
-  import { commandFrecencyPoints, scoreCommand } from "$lib/domain/fuzzy-score";
+  import { keywordsFor } from "$lib/domain/command-keywords";
+  import { commandFrecencyPoints, scoreCommand } from "$lib/domain/command-score";
   import { runAfterClose } from "$lib/state/run-after-close";
   import Modal from "./Modal.svelte";
 
@@ -25,15 +26,6 @@
   }
 
   let { open, onClose }: Props = $props();
-
-  // Synonym table is code-split (startup bundle cap); until it arrives,
-  // scoring simply uses no keywords and re-scores when it lands.
-  let keywordsFor = $state<((id: string) => string) | null>(null);
-  $effect(() => {
-    if (open && !keywordsFor) {
-      import("$lib/domain/command-keywords").then((m) => (keywordsFor = m.keywordsFor), () => {});
-    }
-  });
 
   let query = $state("");
   let selectedIndex = $state(0);
@@ -69,7 +61,7 @@
     const lowerQuery = query.toLowerCase();
     return available
       .map((cmd) => {
-        // Scoring math lives in domain/fuzzy-score.ts (scoreCommand).
+        // Scoring math lives in domain/command-score.ts (scoreCommand).
         const frecency = getCommandFrecencyScore(cmd.id);
         const frecencyPts = commandFrecencyPoints(frecency);
         const total = scoreCommand(
@@ -77,7 +69,7 @@
             label: cmd.label.toLowerCase(),
             category: getCategoryLabel(cmd.category).toLowerCase(),
             shortcut: (getCommandShortcut(cmd.id) || "").toLowerCase(),
-            keywords: keywordsFor?.(cmd.id),
+            keywords: keywordsFor(cmd.id),
           },
           lowerQuery,
           frecency,

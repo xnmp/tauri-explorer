@@ -554,6 +554,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `html-preview-zoom.ts` — pure HTML preview page-zoom model: unmeasurable sandboxed frame scales a fixed ≥1280px desktop layout like an image (#1361), Fit, zoom stops and labels (#1352).
 - `pdf-preview.ts` — pure PDF fit, zoom-anchor, measured pointer coordinates, pan bounds and safe-link policy (#728–#730).
 - `markdown.ts` — safe markdown render for preview.
+- `markdown-math.ts` — Marked extension for TeX math (`$…$`, `\(…\)`, `$$…$$`, `\[…\]`); typesetter injected (#1393).
+- `katex-typesetter.ts` — lazy KaTeX typesetter + bundled woff2 fonts, loaded only for math documents (#1393).
 - `marquee-rect.ts` — marquee band geometry as compositor-only `transform`s for five container-sized layers (fill + four 1px edges sized to the client box, scaled down so fractional zoom rasterises exactly); a resized band element repainted its layer over every image tile per frame on WebKitGTK (#1051).
 - `zoom.ts` — CSS zoom level utils.
 - `raf-coalesce.ts` — coalesce high-freq value streams via rAF.

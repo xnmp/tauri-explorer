@@ -117,6 +117,24 @@
     }
   }
 
+  /* KaTeX math (#1393): colour inherits the preview text; the KaTeX stylesheet
+     is lazy-loaded with the typesetter. Display math scrolls inside the pane
+     instead of widening it. */
+  .preview-markdown :global(.katex) {
+    color: inherit;
+  }
+
+  .preview-markdown :global(.md-math-block) {
+    margin: 0.8em 0;
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .preview-markdown :global(.md-math-block .katex-display) {
+    margin: 0;
+  }
+
   .preview-markdown :global(.md-property + .md-property) {
     border-top: 1px solid var(--divider);
   }

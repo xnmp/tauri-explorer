@@ -2,7 +2,10 @@
 //! Each case owns a private profile and calls the production mutation entry
 //! points. Only the candidate preflight, which starts a native process, is a
 //! counter; every claim, fence, queue and index write is the real one.
-use super::super::{backend, package};
+use super::super::{
+    ai_operations::{exclusive_host_profile, HostProfile},
+    backend, package,
+};
 use super::{set_enabled, uninstall, upgrade, Profile};
 use crate::{
     error::AppError,
@@ -47,9 +50,12 @@ struct Fixture {
     provider: package::Installed,
     /// Version 2.0.0 archives, by role.
     next: [PathBuf; 2],
+    /// Declared last so it is released after the profile is torn down.
+    _host: HostProfile,
 }
 impl Fixture {
     fn new(case: &str) -> Self {
+        let host = exclusive_host_profile();
         let profile = tempfile::tempdir().unwrap();
         let root = profile.path().join("installed-plugins");
         let archives = profile.path().join("archives");
@@ -87,6 +93,7 @@ impl Fixture {
             store,
             consumer,
             provider,
+            _host: host,
         }
     }
     fn package(&self, role: Role) -> &package::Installed {

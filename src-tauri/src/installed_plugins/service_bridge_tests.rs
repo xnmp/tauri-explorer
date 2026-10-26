@@ -33,12 +33,12 @@ fn target() -> ServiceTarget {
     }
 }
 // These business fixtures share the host's process-wide package admission
-// identities. Keep unrelated private profiles out of each other's fences;
-// threads inside one fixture still exercise the real interleavings.
-static FIXTURE_PROFILES: Mutex<()> = Mutex::new(());
+// identities and AI action gate. Keep unrelated private profiles out of each
+// other's fences; threads inside one fixture still exercise the real
+// interleavings.
 struct FixtureRoot {
     directory: tempfile::TempDir,
-    _profile: std::sync::MutexGuard<'static, ()>,
+    _profile: super::ai_operations::HostProfile,
 }
 impl FixtureRoot {
     fn path(&self) -> &Path {
@@ -46,9 +46,7 @@ impl FixtureRoot {
     }
 }
 fn fixture_root() -> FixtureRoot {
-    let profile = FIXTURE_PROFILES
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let profile = super::ai_operations::exclusive_host_profile();
     FixtureRoot {
         directory: tempfile::tempdir().unwrap(),
         _profile: profile,

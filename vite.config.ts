@@ -1,7 +1,21 @@
-import { defineConfig, loadEnv } from "vite";
+import { defineConfig, loadEnv, type Plugin } from "vite";
 import { sveltekit } from "@sveltejs/kit/vite";
 import { releaseHookGuard } from "./scripts/release-hook-leaks.mjs";
 import { e2eBrowserBuild } from "./scripts/e2e-browser-build.mjs";
+
+// KaTeX's stylesheet lists woff2, woff and ttf for every face; every webview
+// Tauri targets supports woff2, so drop the fallbacks and ship a third of the
+// font bytes (#1393).
+function katexWoff2Only(): Plugin {
+  return {
+    name: "katex-woff2-only",
+    enforce: "pre",
+    transform(code, id) {
+      if (!/katex[\\/]dist[\\/]katex(\.min)?\.css$/.test(id.split("?")[0])) return null;
+      return code.replace(/,url\([^)]*\.(?:woff|ttf)\) format\("(?:woff|truetype)"\)/g, "");
+    },
+  };
+}
 
 const host = process.env.TAURI_DEV_HOST;
 const port = parseInt(process.env.DEV_PORT || "1420", 10);
@@ -14,6 +28,7 @@ const browserTestBuild = process.env.E2E_BROWSER_BUILD === "1";
 export default defineConfig(async ({ mode }) => ({
   plugins: [
     sveltekit(),
+    katexWoff2Only(),
     // A build without VITE_E2E_HOOKS=1 fails if it bundles src/test-support (#884).
     releaseHookGuard({
       hooksEnabled:

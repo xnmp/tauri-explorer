@@ -77,6 +77,6 @@ background rate.
    lands.
 5. To tell whether a parked page finished booting without scripting it, pair
    its `[window tab seed]` app-log line with `[warm parked]`
-   (`Retire-when: #931 closed`). A missing `[warm parked]` line is meaningful
+   (permanent diagnostic since #931 closed). A missing `[warm parked]` line is meaningful
    only if the app kept running: a spec that ends within a second of priming
    kills the page before it registers.

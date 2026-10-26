@@ -11,9 +11,10 @@
  *   syntax-highlight.ts, so previews keep syntax highlighting
  */
 
-import { Marked, type Tokens } from "marked";
+import { Marked, type MarkedExtension, type Tokens } from "marked";
 import { isMap, isScalar, isSeq, parseDocument } from "yaml";
 import { highlightLanguage } from "./syntax-highlight";
+import { mathExtension, mayContainMath } from "./markdown-math";
 
 function escapeHtml(text: string): string {
   return text
@@ -32,7 +33,7 @@ function safeUrl(href: string): string | null {
   return null;
 }
 
-const marked = new Marked({
+const markedOptions: MarkedExtension = {
   gfm: true,
   renderer: {
     code({ text, lang }: Tokens.Code): string {
@@ -67,7 +68,9 @@ const marked = new Marked({
       return `<span class="md-image-placeholder">${escapeHtml(token.text || token.href)}</span>`;
     },
   },
-});
+};
+
+const marked = new Marked(markedOptions);
 
 type ScalarFrontmatterProperty = {
   kind: "scalar";
@@ -136,10 +139,39 @@ function renderProperties(properties: FrontmatterProperty[]): string {
   return `<section class="md-properties" aria-label="Properties"><dl>${rows}</dl></section>`;
 }
 
-/** Render markdown to HTML safe for {@html} injection. */
-export function renderMarkdown(md: string): string {
+function render(parser: Marked, md: string): string {
   const frontmatter = extractFrontmatter(md);
   const body = frontmatter?.body ?? md;
-  const renderedBody = marked.parse(body, { async: false });
+  const renderedBody = parser.parse(body, { async: false });
   return frontmatter ? `${renderProperties(frontmatter.properties)}${renderedBody}` : renderedBody;
+}
+
+/** Render markdown to HTML safe for {@html} injection (TeX stays literal). */
+export function renderMarkdown(md: string): string {
+  return render(marked, md);
+}
+
+let mathMarked: Promise<Marked> | null = null;
+
+function loadMathMarked(): Promise<Marked> {
+  mathMarked ??= import("./katex-typesetter").then(
+    ({ typesetTex }) => new Marked(markedOptions, mathExtension(typesetTex)),
+  );
+  // A failed chunk load must not poison later previews.
+  mathMarked.catch(() => { mathMarked = null; });
+  return mathMarked;
+}
+
+/**
+ * Like `renderMarkdown`, plus TeX math (#1393). KaTeX (JS, CSS, fonts) is
+ * loaded on first use and only for documents that may contain math; if it
+ * fails to load the document still renders with the TeX left literal.
+ */
+export async function renderMarkdownWithMath(md: string): Promise<string> {
+  if (!mayContainMath(md)) return renderMarkdown(md);
+  try {
+    return render(await loadMathMarked(), md);
+  } catch {
+    return renderMarkdown(md);
+  }
 }

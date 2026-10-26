@@ -58,8 +58,8 @@ runner image did not change. The rate change is not attributed to any commit.
   clocks when a WebContent process dies. WebKit does not reload the page and
   Wry does not log it, so this renderer loss was silent before.
 - `Startup(webview-progress)` lines mirror each main-window mark as it happens,
-  with a heartbeat each second until ready (heartbeat: `Retire-when: #936
-  closed`). How to read them:
+  with a heartbeat each second until ready (permanent since #936 closed; the qualifier's timeout
+  description reads them). How to read them:
   - Heartbeats continue after the last mark: the page is alive but waiting,
     most likely on an IPC response.
   - Heartbeats stop: the page hung or died.

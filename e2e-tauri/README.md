@@ -130,9 +130,10 @@ Production worker cleanup is not independently measured by this AX-only route.
 
 ## Session-loss failure evidence (`diagnostics/`)
 
-Investigation-only scaffolding lives in `e2e-tauri/diagnostics/`; each module
-names the open issue that justifies it with a `Retire-when: #NNN closed` line
-(see CONTRIBUTING.md). `artifact.ts` is the shared best-effort writer: it
+Failure-evidence diagnostics live in `e2e-tauri/diagnostics/`. Modules
+promoted when their flake issue closed (#710, #781) are permanent; new
+investigation-only ones name their open issue with a `Retire-when: #NNN closed`
+line (see CONTRIBUTING.md). `artifact.ts` is the shared best-effort writer: it
 digests untrusted labels into file names (ADR 0021) and never lets a failed
 write replace the error being documented. `process-timeline.ts` is the
 process-only `/proc` sampler shared by the fresh-window and warm-claim records

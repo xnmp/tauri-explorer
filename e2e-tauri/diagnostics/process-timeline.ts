@@ -1,7 +1,8 @@
 /**
  * Process-only evidence for native WebDriver session loss.
  *
- * Retire-when: #781 closed
+ * Permanent harness diagnostic (promoted when #781 closed): local /proc
+ * sampling only, no WebDriver traffic, kept so a recurrence carries evidence.
  *
  * WebKitWebDriver deletes its automation session when it believes a page
  * crashed or hung, after which no WebDriver command can answer anything. This
@@ -9,7 +10,7 @@
  * binary, WebKit's auxiliary processes and the drivers. Renderers are
  * identified by PID plus start time, so PID reuse cannot make a dead renderer
  * appear to survive. It originated in #703 (closed; see
- * `docs/lessons/703-native-webdriver-session-loss.md`) and is kept for #781.
+ * `docs/lessons/703-native-webdriver-session-loss.md`) and is kept as a permanent harness diagnostic.
  */
 import fs from "node:fs";
 import path from "node:path";

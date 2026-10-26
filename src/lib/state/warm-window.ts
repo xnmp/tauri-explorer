@@ -238,7 +238,7 @@ export function runWarmWindow(measure: boolean): { ready: Promise<boolean>; disp
     void owner.ready.then((ready) => ready ? owner.activate({ path: resolveLaunchHomePath() ?? "/", x: 100, y: 100, measure: true }) : undefined);
     started = performance.now();
   } else {
-    // Retire-when: #931 closed. Brackets a parked page's boot in the app log
+    // Permanent diagnostic (promoted when #931 closed). Brackets a parked page's boot in the app log
     // (its "window tab seed" line marks the start), so a page that wedges
     // before registering is visible without scripting it through WebDriver.
     void owner.ready.then(

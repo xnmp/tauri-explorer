@@ -6,8 +6,9 @@
  * Successful phases are high-volume and only useful while investigating a
  * native flake, so they are logged only in hook builds.
  *
- * Retire-when: #710 closed (the hook-build progress trace only; failure
- * logging is permanent product behaviour)
+ * Permanent diagnostic (promoted when #710 closed): the hook-build progress
+ * trace costs nothing in shipped builds and is the evidence a recurrence of
+ * the native transfer flake needs.
  */
 import { logFrontendDiagnostic } from "$lib/api/frontend-log";
 import { E2E_HOOKS_ENABLED } from "$lib/api/e2e-hooks";

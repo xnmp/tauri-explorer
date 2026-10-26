@@ -35,9 +35,9 @@ Code and tests added only to investigate an open issue — an extra sampler, a f
 
 ```ts
 /**
- * Process-only evidence for native WebDriver session loss.
+ * Process-only evidence for a native flake.
  *
- * Retire-when: #781 closed
+ * Retire-when: #NNN closed
  */
 ```
 

@@ -453,6 +453,7 @@
     min-height: 0;
     border-left: 1px solid var(--layout-hairline, var(--divider));
     background: var(--layout-surface, var(--background-card-secondary));
+    border-radius: inherit; /* follow a layout's rounded preview island */
     overflow: hidden;
     /* Horizontal inset of the Preview chrome and info rows. Plugin
        Preview-info sections inherit it so their rows line up with the host's
@@ -591,6 +592,7 @@
      otherwise 100vw/100vh are laid out pre-zoom and render zoom× the screen
      size, pushing the image off-center and off-screen (#236). */
   .preview-pane.fullscreen {
+    border-radius: 0;
     position: fixed;
     inset: 0;
     zoom: calc(1 / var(--app-zoom, 1));

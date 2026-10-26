@@ -4,7 +4,7 @@
   "src/lib/components/FilesSidebarView.svelte": 869,
   "src/lib/components/GitGraphView.svelte": 837,
   "src/lib/components/NavigationBar.svelte": 807,
-  "src/lib/components/PreviewPane.svelte": 893,
+  "src/lib/components/PreviewPane.svelte": 895,
   "src/lib/components/QuickOpen.svelte": 978,
   "src/lib/components/SettingsDialog.svelte": 803,
   "src/lib/components/WindowTabBar.svelte": 962,

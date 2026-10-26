@@ -122,17 +122,25 @@
   border-radius: 0;
 }
 
+/* Navigation buttons: square, ruled. */
+:root [data-region="toolbar"] > div:not([data-region]) > button {
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--layout-hairline);
+}
+
 :root [data-region="address-bar"] {
-  border: none;
+  height: 24px;
+  border: 1px solid var(--layout-hairline);
   border-radius: 0;
-  background: transparent;
+  background: var(--background-solid);
   box-shadow: none;
   padding: 0 4px;
   font-family: var(--ledger-mono);
 }
 
 :root [data-region="address-bar"]:focus-within {
-  box-shadow: inset 0 0 0 1px var(--accent);
+  border-color: var(--accent);
 }
 
 :root [data-region="address-bar"] button {
@@ -162,6 +170,10 @@
 :root [data-region="row"] {
   border-radius: 0;
   border-color: transparent;
+}
+
+/* Rows are ruled where they form lines (Details, List), not in the grid. */
+:root [data-region="file-list"]:not([data-view="tiles"]) [data-region="row"] {
   box-shadow: inset 0 -1px 0 var(--ledger-rule-soft);
 }
 

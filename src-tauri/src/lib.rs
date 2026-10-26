@@ -681,7 +681,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             // enabled. Like macOS vibrancy this is a startup decision (the
             // transparent flag can't be toggled at runtime), so it requires a
             // restart. The DWM system backdrop keeps the window's rounded
-            // corners; the frontend's [data-vibrancy] CSS makes the app
+            // corners; the frontend's [data-native-backdrop] CSS makes the app
             // background transparent so the effect shows through.
             #[cfg(target_os = "windows")]
             {

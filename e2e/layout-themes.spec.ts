@@ -8,7 +8,7 @@
  * failure.
  */
 import { test, expect, type Page } from "./fixtures";
-import { HOME_URL, VIEW_VARIANTS, applySettingsAndReload, pressShortcut, seedSettings, switchViewMode, waitForEntries } from "./helpers";
+import { HOME_URL, VIEW_VARIANTS, applySettingsAndReload, pressShortcut, runPaletteCommand, seedSettings, switchViewMode, waitForEntries } from "./helpers";
 
 const SEED_KEY = "mock-config-files";
 
@@ -144,6 +144,31 @@ test.describe("Layout themes (#1306)", () => {
     expect(await css(page, ".sidebar-container", "border-radius")).toBe("4px");
   });
 
+  test("the layout picker previews live, survives a layouts reload, and reverts on Escape", async ({ page }) => {
+    await seedLayouts(page, { "roomy.css": ROOMY });
+    await page.goto(HOME_URL);
+    await waitForEntries(page);
+    const html = page.locator("html");
+    await runPaletteCommand(page, "Switch Layout...");
+    const picker = page.locator(".theme-picker-dialog");
+    await expect(picker).toBeVisible();
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowDown");
+    await expect(html).toHaveAttribute("data-layout", "hairline-ledger");
+
+    // A layouts/ change while previewing keeps the preview on screen.
+    await page.evaluate(async () => {
+      const watch = await (new Function("return import('/src/lib/state/config-watch.ts')"))();
+      await watch.handleConfigFileChanged("layouts/roomy.css");
+    });
+    await expect(html).toHaveAttribute("data-layout", "hairline-ledger");
+    await expect(picker).toBeVisible();
+
+    await page.keyboard.press("Escape");
+    await expect(picker).toBeHidden();
+    await expect(html).toHaveAttribute("data-layout", "default");
+  });
+
   test("a missing layout falls back to Default with a notice and a reset", async ({ page }) => {
     await page.goto(HOME_URL);
     await waitForEntries(page);
@@ -196,11 +221,12 @@ test.describe("Layout themes (#1306)", () => {
       await entry.click();
       // Selection inverts ink and background in every view.
       const selected = page.locator('[data-region="row"][aria-selected="true"]:visible').first();
-      if (await selected.count()) {
-        const [bg, fg] = await selected.evaluate(el => [getComputedStyle(el).backgroundColor, getComputedStyle(el).color]);
-        expect(bg).not.toBe("rgba(0, 0, 0, 0)");
-        expect(bg).not.toBe(fg);
-      }
+      await expect(selected).toBeVisible();
+      const [bg, fg] = await selected.evaluate(el => [getComputedStyle(el).backgroundColor, getComputedStyle(el).color]);
+      expect(bg).not.toBe("rgba(0, 0, 0, 0)");
+      expect(bg).not.toBe(fg);
+      expect(parseFloat(await selected.evaluate(el => getComputedStyle(el).borderTopLeftRadius))).toBe(0);
+      await expect(page.locator(`[data-region="file-list"][data-view="${variant.viewMode}"]:visible`)).toHaveCount(1);
     });
   }
 });

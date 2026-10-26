@@ -338,10 +338,7 @@ fn list_user_layouts_in(dir: &Path) -> Result<Vec<UserLayoutFile>, AppError> {
         let (css, error) = match fs::metadata(&path) {
             Ok(meta) if !meta.is_file() => continue,
             Ok(meta) if meta.len() > MAX_LAYOUT_CSS_BYTES => (None, Some("too-large")),
-            Ok(_) => match fs::read_to_string(&path) {
-                Ok(css) => (Some(css), None),
-                Err(_) => (None, Some("unreadable")),
-            },
+            Ok(_) => read_bounded_layout(&path),
             Err(_) => (None, Some("unreadable")),
         };
         layouts.push(UserLayoutFile {
@@ -352,6 +349,23 @@ fn list_user_layouts_in(dir: &Path) -> Result<Vec<UserLayoutFile>, AppError> {
     }
     layouts.sort_by(|a, b| a.filename.cmp(&b.filename));
     Ok(layouts)
+}
+
+/// Read at most one byte past the limit, so a file that grows after its
+/// metadata was read (or reports no length) cannot be read unbounded.
+fn read_bounded_layout(path: &Path) -> (Option<String>, Option<&'static str>) {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    let read = fs::File::open(path)
+        .and_then(|file| file.take(MAX_LAYOUT_CSS_BYTES + 1).read_to_end(&mut bytes));
+    match read {
+        Err(_) => (None, Some("unreadable")),
+        Ok(_) if bytes.len() as u64 > MAX_LAYOUT_CSS_BYTES => (None, Some("too-large")),
+        Ok(_) => match String::from_utf8(bytes) {
+            Ok(css) => (Some(css), None),
+            Err(_) => (None, Some("unreadable")),
+        },
+    }
 }
 
 /// Create `<config>/layouts/` if needed and return its absolute path, for

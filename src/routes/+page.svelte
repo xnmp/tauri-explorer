@@ -118,6 +118,9 @@
   $effect(() => {
     document.documentElement.toggleAttribute("data-native-backdrop",
       (settingsStore.macOsVibrancy && settingsStore.vibrancyBlur) || settingsStore.windowsBackdrop !== "off");
+    // macOS vibrancy makes the window transparent even with blur off (lib.rs);
+    // without material behind it, the body must stay opaque in every layout.
+    document.documentElement.toggleAttribute("data-transparent-window", settingsStore.macOsVibrancy);
   });
 
   // Windows Mica/Acrylic: apply the native backdrop with a theme-matched tint
@@ -578,6 +581,10 @@
   :global([data-native-backdrop]) :global(body) {
     background: transparent;
     box-shadow: none;
+  }
+
+  :global([data-transparent-window]:not([data-native-backdrop])) :global(body) {
+    background: var(--background-solid);
   }
 
   :global([data-native-backdrop]) .explorer {

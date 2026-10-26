@@ -40,19 +40,30 @@ const LAZY_BASE_SHEETS: Partial<Record<BuiltinLayoutId, () => Promise<{ default:
 
 let catalog = $state.raw<LayoutCatalog>(BUILTIN_LAYOUT_CATALOG);
 let listed: Promise<LayoutCatalog> | null = null;
+let listing = 0;
 let fallback = $state.raw<LayoutFallback | null>(null);
 let generation = 0;
+/** Last layout applied to this window: the saved choice or a picker preview. */
+let lastRequested: string | null = null;
 
-/** Read the layouts folder once until the next change notification. */
+/** Read the layouts folder once until the next change notification. Only the
+ *  newest listing publishes, and a failed one is not cached. */
 function loadCatalog(): Promise<LayoutCatalog> {
-  listed ??= listUserLayouts().then((result) => {
-    // A failed listing is reported per layout as "missing" rather than
-    // failing the whole application: built-ins never depend on it.
-    if (!result.ok) console.error("Failed to list user layouts:", result.error);
-    catalog = buildLayoutCatalog(result.ok ? result.data : []);
-    return catalog;
+  if (listed) return listed;
+  const ticket = ++listing;
+  const pending = listUserLayouts().then((result) => {
+    if (!result.ok) {
+      // Keep the last known catalog; the next request lists again.
+      console.error("Failed to list user layouts:", result.error);
+      if (listed === pending) listed = null;
+      return catalog;
+    }
+    const next = buildLayoutCatalog(result.data);
+    if (ticket === listing) catalog = next;
+    return next;
   });
-  return listed;
+  listed = pending;
+  return pending;
 }
 
 async function stylesheetsFor(theme: LayoutThemeInfo, from: LayoutCatalog): Promise<string[]> {
@@ -87,6 +98,7 @@ function reportFallback(next: LayoutFallback | null, requestedName: string): voi
  */
 export async function applyLayout(requested: string): Promise<void> {
   const ticket = ++generation;
+  lastRequested = requested;
   try {
     let from = isBuiltinLayoutId(requested) ? catalog : await loadCatalog();
     if (ticket !== generation) return;
@@ -105,6 +117,7 @@ export async function applyLayout(requested: string): Promise<void> {
       const user = resolution.theme.source === "user" ? elements.at(-1) : undefined;
       if (user?.sheet && user.sheet.cssRules.length === 0) {
         from = catalog = withLayoutFailure(from, resolution.theme.id, "no-rules");
+        listed = Promise.resolve(from);
         continue;
       }
       layoutStore.setRowHeight(measureRowHeight());
@@ -116,13 +129,15 @@ export async function applyLayout(requested: string): Promise<void> {
     console.error("Failed to apply layout theme:", error);
     if (ticket !== generation) return;
     layoutStore.commit({ id: "default", base: "default", sheets: [], rowHeight: 32 });
+    reportFallback({ requested, reason: "load-failed" }, requested);
   }
 }
 
-/** A `layouts/*.css` file was added, edited or removed. */
+/** A `layouts/*.css` file was added, edited or removed. Re-applies what the
+ *  window shows, so an open picker keeps its preview. */
 export function reloadLayouts(): Promise<void> {
   listed = null;
-  return applyLayout(settingsStore.layoutTheme);
+  return applyLayout(lastRequested ?? settingsStore.layoutTheme);
 }
 
 /** Catalog for the settings selector and picker, refreshed from disk. */

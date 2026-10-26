@@ -29,7 +29,7 @@ import {
   resolveEffectivePreviewPanePosition,
 } from "$lib/domain/preview-pane-position";
 import { windowSizeStore } from "./window-size.svelte";
-import { DEFAULT_LAYOUT_ID, legacyLayoutThemeId } from "$lib/domain/layout-theme-ids";
+import { DEFAULT_LAYOUT_ID, legacyLayoutThemeId, withLegacyLayoutMirror } from "$lib/domain/layout-theme-ids";
 import {
   CURRENT_SETTINGS_VERSION,
   SETTINGS_VERSION_KEY,
@@ -109,8 +109,8 @@ export interface Settings {
   integratedTitleBar: boolean; // macOS: render tabs in title bar with overlay traffic lights
   macOsVibrancy: boolean; // macOS: native window vibrancy (translucent frosted glass), requires restart
   vibrancyBlur: boolean; // macOS: enable native blur behind vibrancy (off = theme background, no blur)
-  /** @deprecated Superseded by `layoutTheme` (#1306). Read once by the
-   *  settings migration and kept so a downgraded build still sees it. */
+  /** @deprecated Superseded by `layoutTheme` (#1306): read by the migration,
+   *  mirrored from built-in layout choices for downgraded builds. */
   floatingIslands: boolean;
   layoutTheme: string; // layout theme id: a built-in ("default", "floating-islands", "hairline-ledger") or a `<config>/layouts/*.css` file name (#1306)
   windowsBackdrop: WindowsBackdrop; // Windows: translucent system backdrop (Mica/Acrylic), requires restart
@@ -421,7 +421,7 @@ function createSettingsStore() {
   }
 
   function update(partial: Partial<Settings>): void {
-    settings = { ...settings, ...normalizeSettingsInput(partial) };
+    settings = { ...settings, ...withLegacyLayoutMirror(normalizeSettingsInput(partial)) };
     saveSettings(settings);
   }
 

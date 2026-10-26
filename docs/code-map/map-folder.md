@@ -112,7 +112,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `settings/SettingRow.svelte` — one Settings row (label, description, optional `info` snippet, control slot); `hidden` while the search filter excludes it.
 - `settings/SettingToggle.svelte` — the Settings switch (restyled checkbox; extra input attributes forwarded).
 - `settings/TerminalShortcutSettings.svelte` — terminal line-editing shortcut list and key recorder (#375/#404); recording ends on dialog close or window blur.
-- `settings/LayoutThemeSetting.svelte` — Settings → Appearance → Layout: selector, Open layouts folder, Reset to Default, fallback reason (#1306).
+- `settings/LayoutThemeSetting.svelte` — Settings → Appearance → Layout: selector, Open folder (layouts), Reset to Default, fallback reason (#1306).
 - `settings/settings-select.css` — shared Settings dropdown styling (`.settings-select`).
 - `PluginsDialog.svelte`, `PluginSettings.svelte` — lazy Plugins configuration surface; installed packages, contribution toggles and descriptor-driven settings, using shared modal ownership and viewport/zoom bounds.
 - `KeybindingsSettings.svelte` — keybinding customization UI in settings.

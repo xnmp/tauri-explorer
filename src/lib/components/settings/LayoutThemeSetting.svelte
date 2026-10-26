@@ -1,6 +1,6 @@
 <!--
   LayoutThemeSetting — the Appearance "Layout" control (#1306): the layout
-  selector, "Open layouts folder", "Reset to Default" and the fallback
+  selector, "Open folder" (the layouts folder), "Reset to Default" and the fallback
   explanation. Lives in the lazily loaded Settings dialog, so it
   may import the layout controller.
 -->
@@ -48,7 +48,7 @@
     {/if}
   </select>
   <div class="layout-actions">
-    <button class="layout-action open-layouts-folder" onclick={openLayoutsFolder}>Open layouts folder</button>
+    <button class="layout-action open-layouts-folder" title="Open the layouts folder" onclick={openLayoutsFolder}>Open folder</button>
     <button class="layout-action reset-layout" disabled={selected === DEFAULT_LAYOUT_ID}
       onclick={() => settingsStore.update({ layoutTheme: DEFAULT_LAYOUT_ID })}>Reset to Default</button>
   </div>
@@ -65,7 +65,8 @@
     flex-direction: column;
     align-items: flex-end;
     gap: 6px;
-    min-width: 0;
+    flex-shrink: 0;
+    min-width: max-content;
   }
 
   .layout-actions {
@@ -81,6 +82,7 @@
     color: var(--text-primary);
     font: inherit;
     font-size: var(--font-size-caption);
+    white-space: nowrap;
     cursor: pointer;
   }
 

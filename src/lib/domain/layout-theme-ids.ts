@@ -44,3 +44,13 @@ export function legacyLayoutThemeId(persisted: unknown): BuiltinLayoutId {
     (typeof blob.windowsBackdrop === "string" && blob.windowsBackdrop !== "off");
   return islands ? FLOATING_ISLANDS_LAYOUT_ID : DEFAULT_LAYOUT_ID;
 }
+
+/**
+ * Mirror a built-in layout choice into the deprecated `floatingIslands` flag,
+ * so a build from before layout themes keeps the chosen arrangement after a
+ * downgrade. A user layout leaves the flag as it was.
+ */
+export function withLegacyLayoutMirror<T extends { layoutTheme?: string; floatingIslands?: boolean }>(patch: T): T {
+  if (patch.floatingIslands !== undefined || !isBuiltinLayoutId(patch.layoutTheme)) return patch;
+  return { ...patch, floatingIslands: patch.layoutTheme === FLOATING_ISLANDS_LAYOUT_ID };
+}

@@ -16,7 +16,7 @@ import {
   resolveLayoutTheme,
   withLayoutFailure,
 } from "$lib/domain/layout-theme";
-import { legacyLayoutThemeId } from "$lib/domain/layout-theme-ids";
+import { legacyLayoutThemeId, withLegacyLayoutMirror } from "$lib/domain/layout-theme-ids";
 import { migrateSettings } from "$lib/domain/settings-migration";
 
 const COMPACT = `/*
@@ -78,6 +78,7 @@ describe("parseUserLayout", () => {
     ["sub/dir.css", "a{}", "invalid-filename"],
     [".hidden.css", "a{}", "invalid-filename"],
     ["notes.txt", "a{}", "invalid-filename"],
+    ["SHOUT.CSS", "a{}", "invalid-filename"],
     [null, "a{}", "invalid-filename"],
     ["empty.css", "", "empty"],
     ["blank.css", "  \n\t ", "empty"],
@@ -207,9 +208,22 @@ describe("legacy Floating Islands preference (#277, #434)", () => {
   });
 });
 
+describe("withLegacyLayoutMirror", () => {
+  it("mirrors built-in choices into the deprecated toggle for downgraded builds", () => {
+    expect(withLegacyLayoutMirror({ layoutTheme: "floating-islands" })).toEqual({ layoutTheme: "floating-islands", floatingIslands: true });
+    expect(withLegacyLayoutMirror({ layoutTheme: "hairline-ledger" })).toEqual({ layoutTheme: "hairline-ledger", floatingIslands: false });
+  });
+
+  it("leaves user layouts, explicit toggles and unrelated patches alone", () => {
+    expect(withLegacyLayoutMirror({ layoutTheme: "mine.css" })).toEqual({ layoutTheme: "mine.css" });
+    expect(withLegacyLayoutMirror({ layoutTheme: "default", floatingIslands: true })).toEqual({ layoutTheme: "default", floatingIslands: true });
+    expect(withLegacyLayoutMirror({})).toEqual({});
+  });
+});
+
 describe("describeLayoutFallback", () => {
   it("explains every reason", () => {
-    for (const reason of ["missing", "invalid-filename", "unreadable", "empty", "too-large", "unterminated-comment", "no-rules"] as const) {
+    for (const reason of ["missing", "invalid-filename", "unreadable", "empty", "too-large", "unterminated-comment", "no-rules", "load-failed"] as const) {
       expect(describeLayoutFallback(reason)).toMatch(/\w/);
     }
   });

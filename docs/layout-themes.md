@@ -20,7 +20,7 @@ command palette (live preview while you move through the list), or with
 
 ## Installing a custom layout
 
-1. Settings → Appearance → Layout → **Open layouts folder**. This creates and
+1. Settings → Appearance → Layout → **Open folder**. This creates and
    opens `<config>/layouts/`:
    - Linux: `~/.config/tauri-explorer/layouts/`
    - macOS: `~/Library/Application Support/tauri-explorer/layouts/`
@@ -32,7 +32,7 @@ command palette (live preview while you move through the list), or with
 Saving the file re-applies it in every open window. Adding or removing files
 updates the selector the next time it opens.
 
-File rules: a plain file name ending in `.css` (no sub-folders, no leading
+File rules: a plain file name ending in lowercase `.css` (no sub-folders, no leading
 dot), UTF-8 text, at most 512 KiB. The file name is the layout's id and is what
 settings store, so renaming a file deselects it.
 
@@ -108,9 +108,9 @@ names are internal and change without notice; `data-region` names do not.
 | `split-divider` | Divider between split panes | `aria-orientation` |
 | `toolbar` | Pane navigation bar | |
 | `address-bar` | Breadcrumb / path field | |
-| `file-list` | File list of any view (Details, List, Tiles) | |
+| `file-list` | File list of any view | `data-view="details\|list\|tiles"` |
 | `column-header` | Details column header | |
-| `row` | One entry, in every view | `aria-selected="true"` when selected |
+| `row` | One entry, in every view (scope with `[data-view]` on `file-list`) | `aria-selected="true"` when selected |
 | `[data-cell]` | Details cells: `name`, `date`, `type`, `size`, `length`, `resolution` | |
 | `preview` | Preview panel wrapper | |
 | `preview-body` | Preview panel content | `data-fullscreen` while fullscreen |
@@ -126,6 +126,7 @@ Root (`<html>`) attributes describe the window and can scope rules:
 | `data-layout-base` | Applied built-in base. |
 | `data-theme` | Active colour theme id. |
 | `data-native-backdrop` | Native window material is on (macOS vibrancy with blur, Windows Mica/Acrylic). The body is transparent; paint opaque surfaces only where you want them. |
+| `data-transparent-window` | The window was created transparent (macOS vibrancy). Without `data-native-backdrop` the body is painted opaque. |
 | `data-win-backdrop` | Windows material kind (`mica`, `acrylic`, ...). |
 | `data-preview-fullscreen` | A preview is fullscreen. |
 
@@ -171,8 +172,8 @@ same contract and is a larger reference.
 ## Fallback and recovery
 
 The selected layout falls back to **Default** when its file is missing,
-unreadable, empty, over the size limit, has an unclosed leading comment, or
-parses to no CSS rules. The selection itself is kept, so restoring the file
+unreadable, empty, over the size limit, has an unclosed leading comment,
+parses to no CSS rules, or (for a built-in) its stylesheet fails to load. The selection itself is kept, so restoring the file
 restores the layout. A notice explains the failure once, and the Layout
 setting shows the reason with **Reset to Default**.
 
@@ -185,8 +186,8 @@ If a layout makes the window unusable:
 - Or set `"layoutTheme": "default"` in `<config>/settings.json`.
 
 The last applied layout is cached so it paints on the first frame after a
-restart. Files larger than 256 KiB are not cached and briefly paint Default
-at startup.
+restart. Layouts whose stylesheets total more than 256K characters are not
+cached and briefly paint Default at startup.
 
 ## Migration
 

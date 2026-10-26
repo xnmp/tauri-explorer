@@ -62,7 +62,7 @@ export type LayoutLoadFailure =
   | "no-rules";
 
 /** Why the requested layout is not the one applied. */
-export type LayoutFallbackReason = LayoutLoadFailure | "missing";
+export type LayoutFallbackReason = LayoutLoadFailure | "missing" | "load-failed";
 
 /** Largest layout stylesheet accepted. Layout CSS is small; anything larger is
  *  almost certainly the wrong file and would stall style recalculation. The
@@ -149,7 +149,7 @@ export function isLayoutFilename(filename: unknown): filename is string {
     typeof filename === "string" &&
     filename.length > 4 &&
     filename.length <= 255 &&
-    filename.toLowerCase().endsWith(".css") &&
+    filename.endsWith(".css") && // lowercase, as the native listing and watcher match
     !/[\\/]/.test(filename) &&
     !filename.startsWith(".") &&
     !filename.includes("\0")
@@ -336,5 +336,7 @@ export function describeLayoutFallback(reason: LayoutFallbackReason): string {
       return "its leading comment is never closed";
     case "no-rules":
       return "it contains no CSS rules";
+    case "load-failed":
+      return "its stylesheet could not be loaded";
   }
 }

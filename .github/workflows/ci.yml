@@ -233,6 +233,11 @@ jobs:
       - name: Type check
         run: bun run check
 
+      # The native WebdriverIO suite's own tsconfig; formerly a Vitest test
+      # that only spawned this command (#1123).
+      - name: Native-suite type check
+        run: bun run check:e2e:tauri
+
       - name: Architecture boundaries
         run: bun run lint:arch
 

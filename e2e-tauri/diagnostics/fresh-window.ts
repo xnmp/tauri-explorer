@@ -1,7 +1,8 @@
 /**
  * Fresh-child-window evidence for native WebDriver session loss.
  *
- * Retire-when: #781 closed
+ * Permanent harness diagnostic (promoted when #781 closed): failure-path
+ * only, so it costs nothing on success and is the evidence a recurrence needs.
  *
  * The session can be lost while launching a fresh child, while selecting its
  * handle, while snapshotting its page, or on its first element lookup. Each

@@ -930,15 +930,14 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `e2e-tauri/crop-pixel-oracle.ts` — serializable, bounded first-frame pixel and intrinsic-preview observers for native crop verification; preserves exact comparisons when decoder promises stall.
 - `e2e-tauri/specs/external-job-timeout.spec.ts` — real CLI timeout/reap, withheld output and Jobs-panel error outcome.
 - `e2e-tauri/diagnostics/artifact.ts` — shared best-effort diagnostic artifact writer: per-investigation log directory, ADR 0021 hashed file names, never masks the documented failure. Contract in `tests/qualification/diagnostic-artifact.test.ts`.
-- `e2e-tauri/diagnostics/process-timeline.ts` — process-only `/proc` session-loss sampler: renderer/driver classification, bounded rolling samples, PID+start-time renderer lifetimes (`Retire-when: #781 closed`).
-- `e2e-tauri/diagnostics/fresh-window.ts` — fresh-child launch/selection/first-lookup evidence records and `monitorFreshWindowOpen` (`Retire-when: #781 closed`).
-- `e2e-tauri/diagnostics/warm-claim.ts` — `monitorWarmClaimExpiry`: abandoned warm-claim expiry artifact with pre-close renderer identities and first observed disappearances (`Retire-when: #781 closed`).
+- `e2e-tauri/diagnostics/process-timeline.ts` — process-only `/proc` session-loss sampler: renderer/driver classification, bounded rolling samples, PID+start-time renderer lifetimes.
+- `e2e-tauri/diagnostics/fresh-window.ts` — fresh-child launch/selection/first-lookup evidence records and `monitorFreshWindowOpen`.
+- `e2e-tauri/diagnostics/warm-claim.ts` — `monitorWarmClaimExpiry`: abandoned warm-claim expiry artifact with pre-close renderer identities and first observed disappearances.
 - `tests/qualification/warm-claim-process-timeline.test.ts` — contract for native warm-claim failure artifact, bounded late sample and no artifact on success.
 - `tests/qualification/fresh-native-window.test.ts` — fresh-window selection skips pre-existing handles without executing script in them.
 - `e2e-tauri/window-transfer-waits.ts` — renderer-side token and listing observers for a single asynchronous native WebDriver command.
 - `e2e-tauri/owned-windows.ts` — the one handle scan: reads each URL through the driver and scripts only known, non-warm pages (fails closed on empty URLs; #885, #931). `specs/helpers.ts` binds it to the browser (`switchToWindowLabel`, `closeOtherWindows`, `parkedWarmWindow`).
-- `e2e-tauri/diagnostics/window-transfer.ts` — incrementally persisted native runtime and per-window failure evidence (`Retire-when: #710 closed`).
-- `e2e-tauri/specs/window-transfer-diagnostics.spec.ts` — real-native negative control for retained JSON and screenshot artifacts.
+- `e2e-tauri/diagnostics/window-transfer.ts` — incrementally persisted native runtime and per-window failure evidence.
 - `e2e-tauri/soak/native-soak.spec.ts` — opt-in native window, plugin, preview, theme, DPI and input scenarios.
 - `e2e-tauri/wdio.soak.conf.ts` — separate hours-long native qualification suite configuration.
 - `scripts/build-native-qualification.ts` — clean-worktree debug/release native build (both hook gates when hooks are on) and exact binary provenance.

@@ -16,6 +16,7 @@
   import { settingsStore } from "$lib/state/settings.svelte";
   import { usePointerIntent } from "$lib/composables/use-pointer-intent.svelte";
   import { commandFrecencyPoints, scoreCommand } from "$lib/domain/fuzzy-score";
+  import { paletteSelectionIndex, stepPaletteSelection } from "$lib/domain/palette-selection";
   import { runAfterClose } from "$lib/state/run-after-close";
   import Modal from "./Modal.svelte";
 
@@ -27,7 +28,10 @@
   let { open, onClose }: Props = $props();
 
   let query = $state("");
-  let selectedIndex = $state(0);
+  // Highlight by command id, not row index: the result list is live (#1236),
+  // so dynamic targets arriving under an unchanged query must not move the
+  // highlight onto a different command. null = follow the top result.
+  let selectedId = $state<string | null>(null);
   let inputRef = $state<HTMLInputElement | null>(null);
   let commandsContainerRef = $state<HTMLElement | null>(null);
   // Suppress hover-selection until the user makes a DELIBERATE mouse move —
@@ -83,6 +87,8 @@
 
   // Flat list for keyboard navigation
   const flatCommands = $derived(filteredCommands);
+  const flatIds = $derived(flatCommands.map((cmd) => cmd.id));
+  const selectedIndex = $derived(paletteSelectionIndex(flatIds, selectedId));
 
   // Escape is handled by Modal; everything else lands here.
   function handleKeydown(event: KeyboardEvent): void {
@@ -90,7 +96,7 @@
       case "ArrowDown":
         event.preventDefault();
         if (flatCommands.length > 0) {
-          selectedIndex = (selectedIndex + 1) % flatCommands.length;
+          selectedId = stepPaletteSelection(flatIds, selectedId, 1);
           pointer.reset();
           scrollToSelected();
         }
@@ -98,7 +104,7 @@
       case "ArrowUp":
         event.preventDefault();
         if (flatCommands.length > 0) {
-          selectedIndex = (selectedIndex - 1 + flatCommands.length) % flatCommands.length;
+          selectedId = stepPaletteSelection(flatIds, selectedId, -1);
           pointer.reset();
           scrollToSelected();
         }
@@ -124,14 +130,14 @@
   }
 
   function handleInput(): void {
-    selectedIndex = 0;
+    selectedId = null;
   }
 
   // Focus input when dialog opens; tear down pointer tracking when it closes.
   $effect(() => {
     if (open && inputRef) {
       query = "";
-      selectedIndex = 0;
+      selectedId = null;
       pointer.arm();
       tick().then(() => inputRef?.focus());
     } else if (!open) {
@@ -183,7 +189,7 @@
                 role="option"
                 aria-selected={isSelected}
                 onclick={() => executeSelected(cmd)}
-                onmouseenter={() => { if (pointer.moved) selectedIndex = index; }}
+                onmouseenter={() => { if (pointer.moved) selectedId = cmd.id; }}
               >
                 <span class="command-category">{getCategoryLabel(cmd.category)}</span>
                 <span class="command-label">{cmd.label}</span>

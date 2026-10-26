@@ -41,10 +41,10 @@ test.describe("Island / panel layout (#434)", () => {
   test("SCM panel renders docked (flat), not a floating hover card, under island mode", async ({ page }) => {
     await page.goto(HOME_URL);
     await waitForEntries(page);
-    await withSettings(page, { floatingIslands: true, showGitStatus: true, showScmPanel: true });
+    await withSettings(page, { layoutTheme: "floating-islands", showGitStatus: true, showScmPanel: true });
 
     // Island mode is on...
-    await expect(page.locator("html")).toHaveAttribute("data-vibrancy", "");
+    await expect(page.locator("html")).toHaveAttribute("data-layout-base", "floating-islands");
 
     await navigateActivePaneToRepo(page);
     const panel = page.locator(".scm-panel").first();
@@ -85,14 +85,14 @@ test.describe("Island / panel layout (#434)", () => {
   test("miller columns render exactly once in island mode with no sidebar", async ({ page }) => {
     await page.goto(HOME_URL);
     await waitForEntries(page);
-    await withSettings(page, { floatingIslands: true, showSidebar: false, millerLayers: 1 });
+    await withSettings(page, { layoutTheme: "floating-islands", showSidebar: false, millerLayers: 1 });
 
     // Descend one level so ancestor columns exist.
     await page.locator(".entry-item").first().dblclick();
 
     // Exactly one miller strip — previously the inline copy AND the left island
     // both mounted (count 2) because the suppression keyed off macOsVibrancy
-    // while the island hoist keyed off the broader islandMode.
+    // while the island hoist keyed off the broader island mode.
     await expect(page.locator(".miller-columns")).toHaveCount(1);
   });
 });

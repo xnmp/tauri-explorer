@@ -24,6 +24,8 @@
  * will silently keep the old value and you will be debugging #471/#506 again.
  */
 
+import { legacyLayoutThemeId } from "./layout-theme-ids";
+
 /** Key holding the schema version inside the persisted settings blob. */
 export const SETTINGS_VERSION_KEY = "settingsVersion";
 
@@ -33,6 +35,9 @@ export interface SettingsMigration {
   readonly version: number;
   /** Persisted keys to discard in favour of their current default value. */
   readonly resetToDefault: readonly string[];
+  /** Values derived from the blob as it was persisted, applied after the
+   *  resets. Used when a preference moves to a new key (#1306). */
+  readonly derive?: (persisted: Readonly<Record<string, unknown>>) => Record<string, unknown>;
   /** Why the persisted value must be dropped — cite the issue. */
   readonly reason: string;
 }
@@ -46,6 +51,16 @@ export const SETTINGS_MIGRATIONS: readonly SettingsMigration[] = [
       "#471 flipped tabTitleGitRoot's default to true, but whole-object " +
       "persistence pinned every existing install to the original false, so " +
       "the git-repo tab icon never appeared (#506).",
+  },
+  {
+    version: 2,
+    resetToDefault: [],
+    derive: (persisted) =>
+      Object.hasOwn(persisted, "layoutTheme") ? {} : { layoutTheme: legacyLayoutThemeId(persisted) },
+    reason:
+      "#1306 replaced the floatingIslands toggle (and the island layout that " +
+      "macOS vibrancy and Windows backdrops implied) with the layoutTheme " +
+      "selection; existing island users keep Floating Islands.",
   },
 ];
 
@@ -108,6 +123,7 @@ export function migrateSettings<T extends object>(
       // "toString") must not copy a prototype member onto the blob.
       if (Object.hasOwn(defaulted, key)) merged[key] = defaulted[key];
     }
+    if (migration.derive) Object.assign(merged, migration.derive(saved));
   }
 
   merged[SETTINGS_VERSION_KEY] = Math.max(from, target);

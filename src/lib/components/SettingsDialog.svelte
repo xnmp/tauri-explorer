@@ -15,6 +15,8 @@
   import SettingRow from "./settings/SettingRow.svelte";
   import SettingToggle from "./settings/SettingToggle.svelte";
   import TerminalShortcutSettings from "./settings/TerminalShortcutSettings.svelte";
+  import LayoutThemeSetting from "./settings/LayoutThemeSetting.svelte";
+  import "./settings/settings-select.css";
   import { matchesSettingsQuery } from "$lib/domain/settings-search";
   import { SETTINGS_ROWS, settingsSectionRows } from "$lib/domain/settings-rows";
   import { tick } from "svelte";
@@ -145,7 +147,7 @@
             description="Choose the color theme for the app"
             hidden={!matchesSearch(...rows.theme)}>
             <select
-              class="theme-select color-theme-select"
+              class="settings-select color-theme-select"
               value={themeStore.currentThemeId}
               onchange={(e) => themeStore.setTheme(e.currentTarget.value)}
             >
@@ -155,11 +157,17 @@
             </select>
           </SettingRow>
 
+          <SettingRow label="Layout"
+            description="Panel spacing, borders, rounding and density. Add your own CSS layouts to the layouts folder"
+            hidden={!matchesSearch(...rows.layoutTheme)}>
+            <LayoutThemeSetting {onClose} />
+          </SettingRow>
+
           <SettingRow label="Icon Theme"
             description="Choose file icon style"
             hidden={!matchesSearch(...rows.iconTheme)}>
             <select
-              class="theme-select icon-theme-select"
+              class="settings-select icon-theme-select"
               value={settingsStore.iconTheme}
               onchange={(e) => settingsStore.update({ iconTheme: e.currentTarget.value as IconTheme })}
             >
@@ -173,7 +181,7 @@
             description="Size of image thumbnails in tiles view"
             hidden={!matchesSearch(...rows.thumbnailSize)}>
             <select
-              class="theme-select"
+              class="settings-select"
               value={settingsStore.thumbnailSize}
               onchange={(e) => settingsStore.update({ thumbnailSize: e.currentTarget.value as ThumbnailSize })}
             >
@@ -223,7 +231,7 @@
             description="Translucent frosted-glass effect (enabling from Off requires restart)"
             hidden={!matchesSearch(...rows.windowsBackdrop)}>
             <select
-              class="theme-select"
+              class="settings-select"
               value={settingsStore.windowsBackdrop}
               onchange={(e) => settingsStore.setWindowsBackdrop(e.currentTarget.value as WindowsBackdrop)}
             >
@@ -249,12 +257,6 @@
           </SettingRow>
           {/if}
           {/if}
-
-          <SettingRow label="Floating Islands"
-            description="Panels float as rounded islands over the backdrop — works on every platform, pairs with native transparency where available (#277)"
-            hidden={!matchesSearch(...rows.floatingIslands)}>
-            <SettingToggle checked={settingsStore.floatingIslands} onchange={() => settingsStore.update({ floatingIslands: !settingsStore.floatingIslands })} />
-          </SettingRow>
 
           <SettingRow label="Premium Theme Effects"
             description="Aurora-style surface treatment: accent-tinted hairlines, soft glow shadows, breadcrumb pills, translucent panels and a subtle depth backdrop. Off = flatter, higher-contrast look"
@@ -357,7 +359,7 @@
             description="How the New Pane command places panes: dwindle splits along the longer axis (Hyprland-style), or always right/down"
             hidden={!matchesSearch(...rows.defaultPaneLayout)}>
             <select
-              class="theme-select"
+              class="settings-select"
               value={settingsStore.defaultPaneLayout}
               onchange={(e) => settingsStore.setDefaultPaneLayout(e.currentTarget.value as PaneLayoutMode)}
             >
@@ -494,7 +496,7 @@
             description="Choose an installed terminal (Auto-detect picks the first available)"
             hidden={!matchesSearch(...rows.terminalApp)}>
             <select
-              class="theme-select"
+              class="settings-select"
               value={settingsStore.terminalApp}
               onchange={(e) => settingsStore.update({ terminalApp: e.currentTarget.value })}
             >
@@ -785,36 +787,6 @@
     cursor: pointer;
   }
 
-  .theme-select {
-    appearance: none;
-    -webkit-appearance: none;
-    padding: 6px 28px 6px 12px;
-    background: var(--control-fill);
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 5l3 3 3-3' fill='none' stroke='%238a95b8' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 8px center;
-    border: 1px solid var(--control-stroke);
-    border-radius: var(--radius-sm);
-    font-family: inherit;
-    font-size: 13px;
-    color: var(--text-primary);
-    cursor: pointer;
-    outline: none;
-    transition: border-color var(--transition-fast);
-  }
-
-  .theme-select:hover {
-    background-color: var(--control-fill-secondary);
-  }
-
-  .theme-select:focus {
-    border-color: var(--accent);
-  }
-
-  .theme-select option {
-    background: var(--background-solid);
-    color: var(--text-primary);
-  }
 
   /* The confirm-delete row keeps its original `.setting-item` markup;
      SettingRow owns the equivalent rules for converted rows. */

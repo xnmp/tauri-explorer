@@ -90,7 +90,7 @@ fn plan(config: &Path, target: &Path) -> WatchPlan {
             RecursiveMode::Recursive,
         )],
         external_files: HashMap::from([(target.to_path_buf(), "settings.json".into())]),
-        external_themes_dir: None,
+        external_css_dirs: Vec::new(),
     }
 }
 

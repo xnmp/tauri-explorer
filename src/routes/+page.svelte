@@ -10,6 +10,8 @@
   import { loadE2EHooks } from "$lib/api/e2e-hooks";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { applyWindowsBackdrop } from "$lib/state/window-backdrop";
+  import { layoutStore } from "$lib/state/layout.svelte";
+  import "$lib/layouts/floating-islands.css";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { resolveLaunchHomePath } from "$lib/state/window-title.svelte";
   import { markStartup, reportStartupReady } from "$lib/state/startup-timing";
@@ -42,15 +44,11 @@
   const leftExplorer = $derived(windowTabsManager.getActiveExplorer());
   const launchHomePath = resolveLaunchHomePath();
 
-  // ONE island-mode condition (#407, #434): macOS vibrancy, a Windows native
-  // backdrop, and the platform-independent Floating Islands setting all drive
-  // the same [data-vibrancy] island CSS. The derived now lives on settingsStore
-  // so the in-pane miller suppression (ExplorerPane) keys off the exact same
-  // condition — a local copy here drifted from ExplorerPane's `macOsVibrancy`
-  // check and double-mounted the columns (#434).
-  const islandMode = $derived(settingsStore.islandMode);
+  // The island arrangement belongs to the applied layout theme (#1306), so
+  // the in-pane miller suppression (ExplorerPane) keys off the exact same
+  // condition — a divergent copy once double-mounted the columns (#434).
   const millerAsLeftIsland = $derived(
-    islandMode && !settingsStore.showSidebar && (leftExplorer?.millerLayers ?? 0) > 0
+    layoutStore.islands && !settingsStore.showSidebar && (leftExplorer?.millerLayers ?? 0) > 0
   );
 
   /** Convert a filesystem path to a URL usable in src/background-image. */
@@ -113,27 +111,13 @@
     }
   });
 
-  // Apply vibrancy mode attribute. It drives the "floating island" CSS shared
-  // by macOS vibrancy, the Windows Mica/Acrylic backdrop, and the
-  // platform-independent floatingIslands setting (#277). Native backdrops
-  // need the app background to go transparent so the effect shows through;
-  // without one, the no-blur path paints a themed depth gradient instead —
-  // same island layout, no transparency required (works on Linux).
+  // Native window material (macOS vibrancy with blur, Windows Mica/Acrylic)
+  // is a capability independent of the layout theme (#1306): the window
+  // background goes transparent so the material shows wherever the layout
+  // leaves the window uncovered. Layouts may react to [data-native-backdrop].
   $effect(() => {
-    const windowsBackdrop = settingsStore.windowsBackdrop !== "off";
-    const nativeBackdrop =
-      (settingsStore.macOsVibrancy && settingsStore.vibrancyBlur) || windowsBackdrop;
-    if (islandMode) {
-      document.documentElement.setAttribute("data-vibrancy", "");
-      if (nativeBackdrop) {
-        document.documentElement.removeAttribute("data-vibrancy-no-blur");
-      } else {
-        document.documentElement.setAttribute("data-vibrancy-no-blur", "");
-      }
-    } else {
-      document.documentElement.removeAttribute("data-vibrancy");
-      document.documentElement.removeAttribute("data-vibrancy-no-blur");
-    }
+    document.documentElement.toggleAttribute("data-native-backdrop",
+      (settingsStore.macOsVibrancy && settingsStore.vibrancyBlur) || settingsStore.windowsBackdrop !== "off");
   });
 
   // Windows Mica/Acrylic: apply the native backdrop with a theme-matched tint
@@ -249,6 +233,7 @@
 <!-- Theme background layer - sits behind glassmorphism stack, targetable by themes via --theme-background-image -->
 <div
   class="theme-background-layer"
+  data-region="backdrop"
   aria-hidden="true"
   style:background-image={settingsStore.backgroundImage ? `url('${convertFileSrc(settingsStore.backgroundImage)}')` : undefined}
   style:filter={settingsStore.backgroundImage && settingsStore.backgroundBlur > 0 ? `blur(${settingsStore.backgroundBlur}px)` : undefined}
@@ -256,14 +241,14 @@
 <AnimatedBackground />
 
 {#if !pickerInfo}
-<main class="explorer">
+<main class="explorer" data-region="app">
   <TitleBar />
-  <div class="main-content" class:no-sidebar={!settingsStore.showSidebar}>
+  <div class="main-content" data-region="main" class:no-sidebar={!settingsStore.showSidebar}>
     {#if settingsStore.showSidebar}
       <Sidebar />
     {/if}
     {#if millerAsLeftIsland && leftExplorer}
-      <div class="miller-island" data-pane-id={windowTabsManager.activePaneId}>
+      <div class="miller-island" data-region="miller-island" data-pane-id={windowTabsManager.activePaneId}>
         <MillerColumns explorer={leftExplorer} paneId={windowTabsManager.activePaneId} />
       </div>
     {/if}
@@ -271,7 +256,7 @@
       <PaneContainer />
       {#if settingsStore.showPreviewPane}
         {#await import("$lib/components/PreviewPane.svelte") then { default: PreviewPane }}
-          <div class="preview-island" class:vertical={settingsStore.resolvedPreviewPanePosition !== "right"}>
+          <div class="preview-island" data-region="preview" class:vertical={settingsStore.resolvedPreviewPanePosition !== "right"}>
             <PreviewPane />
           </div>
         {/await}
@@ -536,10 +521,6 @@
     -webkit-backdrop-filter: none;
   }
 
-  :global([data-preview-fullscreen][data-vibrancy]) .preview-island {
-    overflow: visible;
-  }
-
   /* Fullscreen is inside this stacking context. It must cover the later
      status bar (1) and terminal resize handle (2), below root dialogs (#970). */
   :global([data-preview-fullscreen]) .main-content {
@@ -579,179 +560,59 @@
     .workspace-layout { flex-direction: column; }
   }
 
-  :global([data-vibrancy]) .workspace-layout,
-  :global([data-vibrancy]) .workspace-panes {
-    gap: 8px;
+  /* Layout-theme spacing (#1306): unset, panels sit edge to edge. */
+  .main-content {
+    gap: var(--layout-gap, 0px);
+    padding: var(--layout-inset, 0px);
   }
 
-  /* Floating-island mode: macOS vibrancy, Windows Mica/Acrylic, or the
-     platform-independent floatingIslands setting (#277). */
-  :global([data-vibrancy]) {
-    --titlebar-opacity: 0;
-    --sidebar-opacity: 0;
-    --statusbar-opacity: 0;
-    --vibrancy-island-bg:
-      linear-gradient(
-        180deg,
-        rgba(255, 255, 255, 0.04) 0%,
-        transparent 40%,
-        rgba(0, 0, 0, 0.02) 100%
-      ),
-      color-mix(in srgb, var(--vibrancy-island-card, var(--background-card)) 98%, transparent);
-    /* Material weight encodes hierarchy: structural surfaces (sidebar) sit
-       heavier — receded toward the backdrop — so content islands read as
-       the lighter, foreground material. */
-    --vibrancy-island-bg-structural:
-      linear-gradient(
-        180deg,
-        rgba(255, 255, 255, 0.03) 0%,
-        transparent 40%,
-        rgba(0, 0, 0, 0.03) 100%
-      ),
-      color-mix(in srgb, var(--vibrancy-island-card, var(--background-card)) 72%, transparent);
-    --vibrancy-island-filter: blur(12px) brightness(1.08) saturate(1.2);
-    --vibrancy-island-stroke: var(--surface-stroke);
-    --vibrancy-island-radius: 14px;
-    --vibrancy-island-glow:
-      inset 0 0.5px 0 rgba(255, 255, 255, 0.09),
-      inset 0 -0.5px 0 rgba(0, 0, 0, 0.2),
-      0 1px 3px rgba(0, 0, 0, 0.15),
-      0 4px 12px rgba(0, 0, 0, 0.2),
-      0 12px 32px rgba(0, 0, 0, 0.15);
+  .workspace-layout,
+  .workspace-panes,
+  .pane-preview-stack {
+    gap: var(--layout-gap, 0px);
   }
 
-  /* Translucent surfaces go frosty/solid when the user asks for it. */
-  @media (prefers-reduced-transparency: reduce) {
-    :global([data-vibrancy]) {
-      --vibrancy-island-filter: none;
-      --vibrancy-island-bg:
-        linear-gradient(var(--background-card), var(--background-card)),
-        var(--background-solid);
-      --vibrancy-island-bg-structural:
-        linear-gradient(var(--background-card), var(--background-card)),
-        var(--background-solid);
-    }
-  }
-
-  :global([data-vibrancy]) :global(body) {
+  /* Native window material (macOS vibrancy, Windows Mica/Acrylic) is
+     independent of the layout theme: the window background goes transparent
+     so the material shows wherever the layout leaves it uncovered. */
+  :global([data-native-backdrop]) :global(body) {
     background: transparent;
     box-shadow: none;
   }
 
-  :global([data-vibrancy]) .explorer {
+  :global([data-native-backdrop]) .explorer {
     background: var(--vibrancy-tint, transparent);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }
 
-  /* Windows Acrylic strength: a theme-coloured tint over the whole window
-     (behind every island), driven by the Backdrop Opacity slider. Higher
-     alpha = more opaque = less of the native Acrylic blur shows through. Must
-     follow the [data-vibrancy] body rule above to win the equal-specificity
-     tie. The native Acrylic tint colour is ignored on Windows 11, so this is
-     the only reliable strength control. */
+  /* Windows Acrylic strength: a theme-coloured tint over the whole window,
+     driven by the Backdrop Opacity slider. Higher alpha = more opaque = less
+     of the native Acrylic blur shows through. Must follow the
+     [data-native-backdrop] body rule above to win the equal-specificity tie.
+     The native Acrylic tint colour is ignored on Windows 11, so this is the
+     only reliable strength control. */
   :global([data-win-acrylic]) :global(body) {
     background: var(--win-acrylic-tint, transparent);
   }
 
-  /* Windows Mica/Acrylic (#382): the macOS island tint (a white sheen over a
-     lighter, translucent card) washes the UI out, but the previous fix —
-     fully OPAQUE islands — meant the native backdrop only peeked through the
-     chrome gaps and "transparency" read as broken. Islands now use the
-     theme's dark SOLID colour at the Backdrop Opacity slider's strength
-     (default 85%): dark enough not to wash out, translucent enough that the
-     Mica/Acrylic material actually shows through the whole UI. Must follow
-     the [data-vibrancy] var block to win the specificity tie. */
-  :global([data-win-backdrop]) {
-    --vibrancy-island-bg:
-      linear-gradient(
-        180deg,
-        rgba(255, 255, 255, 0.04) 0%,
-        transparent 40%,
-        rgba(0, 0, 0, 0.02) 100%
-      ),
-      color-mix(
-        in srgb,
-        var(--background-solid) calc(var(--win-backdrop-strength, 0.85) * 100%),
-        transparent
-      );
-    --vibrancy-island-bg-structural:
-      color-mix(
-        in srgb,
-        var(--background-solid) calc(var(--win-backdrop-strength, 0.85) * 88%),
-        transparent
-      );
-  }
-
-  /* No-blur mode: the island layout without any native transparency —
-     macOS with blur off, and every platform (Linux) via floatingIslands
-     (#277). Islands become opaque (blur over an opaque backdrop is wasted
-     GPU), and the backdrop gets a quiet depth gradient — a whisper of the
-     accent falling from the top, edges receding — so the islands still
-     read as floating above a lit surface rather than painted on a flat
-     wall. */
-  :global([data-vibrancy-no-blur]) {
-    --vibrancy-island-filter: none;
-    --vibrancy-island-bg:
-      linear-gradient(
-        180deg,
-        rgba(255, 255, 255, 0.04) 0%,
-        transparent 40%,
-        rgba(0, 0, 0, 0.02) 100%
-      ),
-      linear-gradient(var(--background-card), var(--background-card)),
-      var(--background-solid);
-    --vibrancy-island-bg-structural:
-      linear-gradient(
-        var(--background-card-secondary, var(--background-card)),
-        var(--background-card-secondary, var(--background-card))
-      ),
-      var(--background-solid);
-  }
-
-  :global([data-vibrancy-no-blur]) :global(body) {
-    background: var(--background-solid);
-    box-shadow: none;
-  }
-
-  :global([data-vibrancy-no-blur]) .explorer {
-    background:
-      radial-gradient(
-        120% 90% at 50% -10%,
-        color-mix(in srgb, var(--accent) 7%, transparent) 0%,
-        transparent 55%
-      ),
-      linear-gradient(
-        180deg,
-        color-mix(in srgb, var(--background-mica, var(--background-solid)) 97%, white) 0%,
-        var(--background-mica, var(--background-solid)) 40%,
-        color-mix(in srgb, var(--background-mica, var(--background-solid)) 95%, black) 100%
-      );
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-  }
-
-  :global([data-vibrancy]) .main-content {
-    padding: 0 6px 6px 6px;
-    gap: 8px;
-  }
-
-  /* Miller columns as left island (when sidebar hidden + vibrancy) */
+  /* Miller columns hoisted beside the panes (island arrangement only). Its
+     chrome comes from the layout theme. */
   .miller-island {
     flex-shrink: 0;
-    border-radius: var(--vibrancy-island-radius);
-    background: var(--vibrancy-island-bg);
-    box-shadow: var(--vibrancy-island-glow);
     overflow: hidden;
     display: flex;
     min-height: 0;
   }
 
-  /* Preview pane as right island (vibrancy mode) */
+  /* Preview pane wrapper: a top-level layout panel. */
   .preview-island {
     flex-shrink: 0;
     display: flex;
     min-height: 0;
+    border-radius: var(--layout-radius, 0px);
+    border: var(--layout-border, none);
+    box-shadow: var(--layout-shadow, none);
   }
 
   /* Bottom/top dock: island is a column so the preview dock's inline height
@@ -763,14 +624,6 @@
     max-height: max(4px, calc(100% - 120px));
     min-height: 0;
     min-width: 0;
-  }
-
-  :global([data-vibrancy]) .preview-island {
-    border-radius: var(--vibrancy-island-radius);
-    background: var(--vibrancy-island-bg);
-    box-shadow: var(--vibrancy-island-glow);
-    border: 1px solid var(--vibrancy-island-stroke);
-    overflow: hidden;
   }
 
   /* Center column when the preview is docked bottom (default order) or top
@@ -786,13 +639,5 @@
 
   .pane-preview-stack.preview-top {
     flex-direction: column-reverse;
-  }
-
-  :global([data-vibrancy]) .pane-preview-stack {
-    gap: 8px;
-  }
-
-  :global([data-vibrancy]) .theme-background-layer {
-    display: none;
   }
 </style>

@@ -59,7 +59,7 @@ test.describe("Image preview click-to-fullscreen", () => {
   test("fullscreen surface stays opaque in island/vibrancy mode (#391)", async ({ page }) => {
     await openPicturesWithPreview(page);
     // Island mode is what Windows Mica/Acrylic (and macOS vibrancy) turn on.
-    await page.evaluate(() => document.documentElement.setAttribute("data-vibrancy", ""));
+    await page.evaluate(() => document.documentElement.setAttribute("data-layout-base", "floating-islands"));
     const img = await selectAndWaitForImage(page, "photo1.jpg");
     const pane = page.locator(".preview-pane");
 

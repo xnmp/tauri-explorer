@@ -276,6 +276,8 @@
 <div
   id={paneId}
   class="preview-pane"
+  data-region="preview-body"
+  data-fullscreen={fullscreen.active || undefined}
   class:resizing={resize.isResizing}
   class:fullscreen={fullscreen.active}
   class:vertical={isVertical}
@@ -449,8 +451,8 @@
     flex: 1 1 0;
     min-width: 0;
     min-height: 0;
-    border-left: 1px solid var(--divider);
-    background: var(--background-card-secondary);
+    border-left: 1px solid var(--layout-hairline, var(--divider));
+    background: var(--layout-surface, var(--background-card-secondary));
     overflow: hidden;
     /* Horizontal inset of the Preview chrome and info rows. Plugin
        Preview-info sections inherit it so their rows line up with the host's
@@ -818,7 +820,6 @@
     to { transform: rotate(360deg); }
   }
 
-
   .image-preview-note { position: absolute; bottom: 8px; left: 8px; right: 8px; margin: 0; padding: 4px 8px; background: var(--background-solid); color: var(--text-secondary); font-size: var(--font-size-caption); pointer-events: none; }
 
   .preview-truncated {
@@ -889,18 +890,4 @@
     white-space: nowrap;
   }
 
-  /* Vibrancy: own island, no left border needed */
-  :global([data-vibrancy]) .preview-pane {
-    background: transparent;
-    border-left: none;
-  }
-
-  /* …but the fullscreen surface must stay opaque (#391). The rule above has
-     the same specificity as `.preview-pane.fullscreen` and is declared later,
-     so in every island mode (macOS vibrancy, Windows Mica/Acrylic,
-     floatingIslands) it stripped the fullscreen background — the app behind
-     the image kept showing through, reading as a second preview. */
-  :global([data-vibrancy]) .preview-pane.fullscreen {
-    background: var(--background-solid, var(--background-card-secondary));
-  }
 </style>

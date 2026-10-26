@@ -39,7 +39,7 @@
   const currentPath = $derived(explorer?.currentPath ?? "");
 </script>
 
-<div class="status-bar">
+<div class="status-bar" data-region="status-bar">
   <div class="status-left">
     <span class="status-item">
       {totalCount} item{totalCount !== 1 ? "s" : ""}
@@ -76,9 +76,9 @@
     justify-content: space-between;
     height: 28px;
     padding: 0 16px;
-    background: color-mix(in srgb, var(--background-card-secondary) calc(var(--statusbar-opacity, 1) * 100%), transparent);
+    background: var(--layout-chrome-surface, color-mix(in srgb, var(--background-card-secondary) calc(var(--statusbar-opacity, 1) * 100%), transparent));
     border-top: none;
-    box-shadow: 0 -1px 0 var(--divider);
+    box-shadow: 0 -1px 0 var(--layout-hairline, var(--divider));
     font-size: var(--font-size-caption);
     color: var(--text-secondary);
     flex-shrink: 0;
@@ -127,10 +127,4 @@
     text-align: right;
   }
 
-  /* Vibrancy: status bar floats as bare text, no container */
-  :global([data-vibrancy]) .status-bar {
-    background: transparent;
-    box-shadow: none;
-    height: 18px;
-  }
 </style>

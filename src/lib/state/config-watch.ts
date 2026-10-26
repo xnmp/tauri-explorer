@@ -17,6 +17,7 @@ import { settingsStore } from "./settings.svelte";
 import { bookmarksStore } from "./bookmarks.svelte";
 import { folderViewsStore } from "./folder-views.svelte";
 import { themeStore } from "./theme.svelte";
+import { layoutStore } from "./layout.svelte";
 import { toastStore } from "./toast.svelte";
 
 export const CONFIG_CHANGED_EVENT = "config-file-changed";
@@ -24,6 +25,7 @@ const SETTINGS_FILE = "settings.json";
 const BOOKMARKS_FILE = "bookmarks.json";
 const FOLDER_VIEWS_FILE = "folder-views.json";
 const THEME_PREFIX = "themes/";
+const LAYOUT_PREFIX = "layouts/";
 
 /**
  * Handle one change notification. Exported for direct testing: it is the whole
@@ -62,6 +64,13 @@ export async function handleConfigFileChanged(filename: string): Promise<void> {
     // current id — which is also what makes an edit to the *active* theme
     // repaint rather than sit in the DOM unused.
     await themeStore.initTheme();
+    return;
+  }
+
+  if (filename.startsWith(LAYOUT_PREFIX)) {
+    // Re-list the layouts folder and re-apply the selection: an edit to the
+    // active layout repaints, and a selected file that reappears is restored.
+    await layoutStore.reload();
     return;
   }
 

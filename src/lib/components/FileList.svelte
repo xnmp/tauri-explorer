@@ -494,7 +494,7 @@
 />
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="file-list" bind:this={fileListRef} onfocusin={handleFocusIn} onkeydown={handleKeydown} onclick={handleBackgroundClick} oncontextmenu={handleBackgroundContextMenu} tabindex="-1">
+<div class="file-list" data-region="file-list" bind:this={fileListRef} onfocusin={handleFocusIn} onkeydown={handleKeydown} onclick={handleBackgroundClick} oncontextmenu={handleBackgroundContextMenu} tabindex="-1">
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="content"

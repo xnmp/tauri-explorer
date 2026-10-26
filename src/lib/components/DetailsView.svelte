@@ -14,6 +14,7 @@
   import { fixedMenuPosition, getZoomFactor, probeSingleScaleFixedOffset } from "$lib/domain/zoom";
   import FileItem from "./FileItem.svelte";
   import VirtualList from "./VirtualList.svelte";
+  import { layoutStore } from "$lib/state/layout.svelte";
   import PeekGuides from "./PeekGuides.svelte";
   import InlineNewFolder from "./InlineNewFolder.svelte";
 
@@ -96,9 +97,9 @@
     onkeydown={event => columnResize.keydown(column, event)}></div>
 {/snippet}
 
-<div id={viewId} class="details-view" class:resizing={columnResize.isResizing} style="--col-name: {columnResize.columnWidths.name}px; --col-date: {columnResize.columnWidths.date}px; --col-type: {columnResize.columnWidths.type}px; --col-size: {columnResize.columnWidths.size}px; --col-length: {columnResize.columnWidths.length}px; --col-resolution: {columnResize.columnWidths.resolution}px; --details-grid-columns: {columnResize.gridTemplateColumns};">
+<div id={viewId} class="details-view" class:resizing={columnResize.isResizing} style="--col-name: {columnResize.columnWidths.name}px; --col-date: {columnResize.columnWidths.date}px; --col-type: {columnResize.columnWidths.type}px; --col-size: {columnResize.columnWidths.size}px; --col-length: {columnResize.columnWidths.length}px; --col-resolution: {columnResize.columnWidths.resolution}px; --details-grid-columns: {columnResize.gridTemplateColumns}; --details-row-height: {layoutStore.detailsRowHeight}px;">
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="column-headers" style="grid-template-columns: {columnResize.gridTemplateColumns};" oncontextmenu={handleColumnHeaderContextMenu}>
+  <div class="column-headers" data-region="column-header" style="grid-template-columns: {columnResize.gridTemplateColumns};" oncontextmenu={handleColumnHeaderContextMenu}>
     <div class="column-header-wrapper">
       <button
         class="column-header name-column"
@@ -219,7 +220,7 @@
     tabindex={fallbackTabStop ? 0 : -1}
     bind:containsIndex={rowContainsIndex}
     items={listItems}
-    itemHeight={32}
+    itemHeight={layoutStore.detailsRowHeight}
     getKey={(row) => row.key}
     {onviewportscroll}
     {onlayoutchange}
@@ -257,7 +258,7 @@
 </div>
 
 <style>
-  .peek-state { position: relative; height: 32px; display: flex; align-items: center; color: var(--text-tertiary); font-size: 13px; box-sizing: border-box; }
+  .peek-state { position: relative; height: var(--details-row-height, 32px); display: flex; align-items: center; color: var(--text-tertiary); font-size: 13px; box-sizing: border-box; }
   .details-view {
     display: flex;
     flex-direction: column;
@@ -277,8 +278,8 @@
     display: grid;
     gap: 0;
     padding: 6px 16px;
-    background: var(--background-solid);
-    border-bottom: 1px solid var(--divider);
+    background: var(--layout-chrome-surface, var(--background-solid));
+    border-bottom: 1px solid var(--layout-hairline, var(--divider));
     position: sticky;
     top: 0;
     z-index: 5;

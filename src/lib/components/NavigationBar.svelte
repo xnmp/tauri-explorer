@@ -288,7 +288,7 @@
 </script>
 
 {#if settingsStore.showAddressBar || explorer.showFilter}
-<div class="navigation-bar" class:address-bar-hidden={!settingsStore.showAddressBar}>
+<div class="navigation-bar" data-region="toolbar" class:address-bar-hidden={!settingsStore.showAddressBar}>
   {#if settingsStore.showAddressBar}
   <!-- Navigation controls next to address bar -->
   <div class="nav-controls">
@@ -362,7 +362,7 @@
   {#if settingsStore.showAddressBar}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="breadcrumbs-container" class:editing={editingPath} onclick={editingPath ? undefined : startPathEdit} bind:this={breadcrumbsEl}>
+  <div class="breadcrumbs-container" data-region="address-bar" class:editing={editingPath} onclick={editingPath ? undefined : startPathEdit} bind:this={breadcrumbsEl}>
     {#if editingPath}
       <BreadcrumbAutocomplete
         currentPath={explorer.currentPath}
@@ -517,8 +517,8 @@
     align-items: center;
     gap: 6px;
     padding: 4px 10px;
-    background: var(--background-card-secondary);
-    border-bottom: var(--navbar-border-bottom, 1px solid var(--divider));
+    background: var(--layout-chrome-surface, var(--background-card-secondary));
+    border-bottom: var(--navbar-border-bottom, 1px solid var(--layout-hairline, var(--divider)));
     height: 40px;
     container-type: inline-size;
   }
@@ -804,9 +804,4 @@
     color: var(--text-primary);
   }
 
-  /* Vibrancy: transparent inside island */
-  :global([data-vibrancy]) .navigation-bar {
-    background: transparent;
-    border-bottom-color: var(--vibrancy-island-stroke);
-  }
 </style>

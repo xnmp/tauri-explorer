@@ -1,9 +1,10 @@
 import { afterEach, expect, it } from "vitest";
 import { createWindowTabsManager } from "$lib/state/window-tabs.svelte";
-import { settingsStore } from "$lib/state/settings.svelte";
+import { layoutStore } from "$lib/state/layout.svelte";
+const arrange = (base: "default" | "floating-islands") => layoutStore.commit({ id: base, base, sheets: [], rowHeight: 32 });
 const managers: ReturnType<typeof createWindowTabsManager>[] = [];
 afterEach(async () => {
-  settingsStore.update({ floatingIslands: false });
+  arrange("default");
   for (const manager of managers.splice(0)) await manager.dispose();
 });
 
@@ -69,7 +70,7 @@ it("minima follow the island-mode divider width without waiting for a measuremen
   manager.paneViewport.measure(900, 400);
   // Three 240px panes with two 6px dividers.
   expect(manager.paneViewport.minima?.get("root")).toEqual({ width: 732, height: 200 });
-  settingsStore.update({ floatingIslands: true });
+  arrange("floating-islands");
   // The CSS divider widens to 8px in this render; the minima must widen with it.
   expect(manager.paneViewport.minima?.get("root")).toEqual({ width: 736, height: 200 });
   expect(manager.paneViewport.minima?.get("right")).toEqual({ width: 488, height: 200 });

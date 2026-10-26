@@ -472,6 +472,7 @@
      visual space as it would zoomed. -->
 <div
   class="terminal-panel"
+  data-region="terminal"
   class:hidden={!visible}
   style:zoom={1 / zoomFactor}
   style:height="{resize.value * zoomFactor}px"

@@ -339,7 +339,7 @@
     aria-label="Bookmarks - drop folders here to bookmark"
   >
     <button
-      class="section-header"
+      data-region="sidebar-section-header" class="section-header"
       onclick={() => quickAccessExpanded = !quickAccessExpanded}
       oncontextmenu={onBookmarksHeaderContextMenu}
       aria-expanded={quickAccessExpanded}
@@ -357,7 +357,7 @@
       <div class="section-content">
         {#each quickAccessFolders as folder}
           <div
-            class="nav-item folder-item bookmark-drop-target"
+            data-region="sidebar-item" class="nav-item folder-item bookmark-drop-target"
             data-path={folder.path}
             onclick={() => { if (folder.path) navigateTo(folder.path); }}
             onkeydown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && folder.path) { e.preventDefault(); navigateTo(folder.path); }}}
@@ -366,32 +366,32 @@
             tabindex="0"
           >
             {#if folder.icon === "download"}
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: {folder.color}">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" data-region="sidebar-icon" class="nav-icon" style="color: {folder.color}">
                 <path d="M8 2V10M8 10L5 7M8 10L11 7M3 12H13" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
               </svg>
             {:else if folder.icon === "document"}
-              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: {folder.color}">
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" data-region="sidebar-icon" class="nav-icon" style="color: {folder.color}">
                 <path d="M4 2C4 1.44772 4.44772 1 5 1H11L15 5V14C15 14.5523 14.5523 15 14 15H5C4.44772 15 4 14.5523 4 14V2Z" stroke="currentColor" stroke-width="1.25"/>
                 <path d="M11 1V4C11 4.55228 11.4477 5 12 5H15" stroke="currentColor" stroke-width="1.25"/>
                 <path d="M6.5 7.5H12.5M6.5 10H12.5M6.5 12.5H10" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
               </svg>
             {:else if folder.icon === "picture"}
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: {folder.color}">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" data-region="sidebar-icon" class="nav-icon" style="color: {folder.color}">
                 <rect x="2" y="3" width="12" height="10" rx="1" stroke="currentColor" stroke-width="1.25"/>
                 <circle cx="5.5" cy="6.5" r="1" fill="currentColor"/>
                 <path d="M2 10L5 7L8 10L11 7L14 10V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V10Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
               </svg>
             {:else if folder.icon === "video"}
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: {folder.color}">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" data-region="sidebar-icon" class="nav-icon" style="color: {folder.color}">
                 <rect x="2" y="4" width="9" height="8" rx="1" stroke="currentColor" stroke-width="1.25"/>
                 <path d="M11 7L14 5V11L11 9" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
               </svg>
             {:else if folder.icon === "music"}
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: {folder.color}">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" data-region="sidebar-icon" class="nav-icon" style="color: {folder.color}">
                 <path d="M6 11.5C6 12.3284 5.32843 13 4.5 13C3.67157 13 3 12.3284 3 11.5C3 10.6716 3.67157 10 4.5 10C5.32843 10 6 10.6716 6 11.5ZM6 11.5V3L13 2V9.5M13 9.5C13 10.3284 12.3284 11 11.5 11C10.6716 11 10 10.3284 10 9.5C10 8.67157 10.6716 8 11.5 8C12.3284 8 13 8.67157 13 9.5Z" stroke="currentColor" stroke-width="1.25"/>
               </svg>
             {/if}
-            <span>{folder.name}</span>
+            <span data-region="sidebar-label">{folder.name}</span>
             <button
               class="remove-bookmark"
               onclick={(e) => { e.stopPropagation(); hideSystemFolder(folder.name); }}
@@ -406,7 +406,7 @@
 
         {#each bookmarksStore.list as bookmark, index}
           <div
-            class="nav-item folder-item user-bookmark bookmark-drop-target"
+            data-region="sidebar-item" class="nav-item folder-item user-bookmark bookmark-drop-target"
             data-path={bookmark.path}
             class:dragging={draggedBookmarkIndex === index}
             class:drop-target={dropTargetIndex === index && draggedBookmarkIndex !== index}
@@ -422,11 +422,11 @@
             tabindex="0"
           >
             {#if isCodeFolder(bookmark.name)}
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: {getBookmarkIconColor(bookmark.name) ?? 'var(--icon-folder, #ffb900)'}">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" data-region="sidebar-icon" class="nav-icon" style="color: {getBookmarkIconColor(bookmark.name) ?? 'var(--icon-folder, #ffb900)'}">
                 <path d="M5 4L2 8L5 12M11 4L14 8L11 12M9 3L7 13" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
               </svg>
             {:else}
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: {getBookmarkIconColor(bookmark.name) ?? 'var(--icon-folder, #ffb900)'}">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" data-region="sidebar-icon" class="nav-icon" style="color: {getBookmarkIconColor(bookmark.name) ?? 'var(--icon-folder, #ffb900)'}">
                 <path
                   d="M2 5.5C2 4.67157 2.67157 4 3.5 4H6.17157C6.43679 4 6.69114 4.10536 6.87868 4.29289L8.12132 5.53553C8.30886 5.72307 8.56321 5.82843 8.82843 5.82843H13C13.8284 5.82843 14.5 6.5 14.5 7.32843V12.5C14.5 13.3284 13.8284 14 13 14H3C2.17157 14 1.5 13.3284 1.5 12.5V5.5"
                   stroke="currentColor"
@@ -436,7 +436,7 @@
                 />
               </svg>
             {/if}
-            <span>{bookmark.name}</span>
+            <span data-region="sidebar-label">{bookmark.name}</span>
             <button
               class="remove-bookmark"
               onclick={(e) => removeBookmark(e, bookmark.path)}
@@ -450,12 +450,12 @@
         {/each}
 
         {#if settingsStore.showRecycleBin}
-          <button class="nav-item recycle-bin-item" onclick={handleOpenRecycleBin} aria-label="Open Recycle Bin">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: #d97706" aria-hidden="true">
+          <button data-region="sidebar-item" class="nav-item recycle-bin-item" onclick={handleOpenRecycleBin} aria-label="Open Recycle Bin">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" data-region="sidebar-icon" class="nav-icon" style="color: #d97706" aria-hidden="true">
               <path d="M3.5 4.5H12.5L11.7 14H4.3L3.5 4.5ZM6 2H10L10.75 3.5H5.25L6 2ZM2.5 3.5H13.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
               <path d="M6.5 7V11.5M9.5 7V11.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
             </svg>
-            <span>Recycle Bin</span>
+            <span data-region="sidebar-label">Recycle Bin</span>
           </button>
         {/if}
       </div>
@@ -487,7 +487,7 @@
 
     <div class="nav-section">
       <button
-        class="section-header"
+        data-region="sidebar-section-header" class="section-header"
         onclick={() => drivesExpanded = !drivesExpanded}
         aria-expanded={drivesExpanded}
       >
@@ -500,13 +500,13 @@
       {#if drivesExpanded}
         <div class="section-content">
           {#each drivesStore.removable as drive (drive.deviceId ?? drive.path)}
-            <button class="nav-item drive-item" onclick={() => openDrive(drive)} title={drive.path ?? `Mount ${drive.name}`}>
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: #10b981">
+            <button data-region="sidebar-item" class="nav-item drive-item" onclick={() => openDrive(drive)} title={drive.path ?? `Mount ${drive.name}`}>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" data-region="sidebar-icon" class="nav-icon" style="color: #10b981">
                 <rect x="2" y="4" width="12" height="8" rx="1.5" stroke="currentColor" stroke-width="1.25"/>
                 <circle cx="11" cy="8" r="0.9" fill="currentColor"/>
                 <path d="M4 4V3M6 4V3" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
               </svg>
-              <span class="drive-name">{drive.name}</span>
+              <span data-region="sidebar-label" class="drive-name">{drive.name}</span>
               {#if drive.path === null || drive.detail}
                 <span class="drive-detail">{drive.path === null ? "Not mounted" : drive.detail}</span>
               {/if}
@@ -522,7 +522,7 @@
 
     <div class="nav-section">
       <button
-        class="section-header"
+        data-region="sidebar-section-header" class="section-header"
         onclick={() => cloudExpanded = !cloudExpanded}
         aria-expanded={cloudExpanded}
       >
@@ -535,10 +535,10 @@
       {#if cloudExpanded}
         <div class="section-content">
           {#each drivesStore.cloud as drive (drive.deviceId ?? drive.path)}
-            <button class="nav-item drive-item" onclick={() => openDrive(drive)} title={drive.path ?? `Mount ${drive.name}`}>
+            <button data-region="sidebar-item" class="nav-item drive-item" onclick={() => openDrive(drive)} title={drive.path ?? `Mount ${drive.name}`}>
               {#if drive.provider === "googledrive"}
                 <!-- Google "G" multi-colour mark -->
-                <svg width="16" height="16" viewBox="0 0 48 48" class="nav-icon">
+                <svg width="16" height="16" viewBox="0 0 48 48" data-region="sidebar-icon" class="nav-icon">
                   <path fill="#4285F4" d="M45.12 24.5c0-1.56-.14-3.06-.4-4.5H24v8.51h11.84c-.51 2.75-2.06 5.08-4.39 6.64v5.52h7.11c4.16-3.83 6.56-9.47 6.56-16.17z"/>
                   <path fill="#34A853" d="M24 46c5.94 0 10.92-1.97 14.56-5.33l-7.11-5.52c-1.97 1.32-4.49 2.1-7.45 2.1-5.73 0-10.58-3.87-12.31-9.07H4.34v5.7C7.96 41.07 15.4 46 24 46z"/>
                   <path fill="#FBBC05" d="M11.69 28.18c-.44-1.32-.69-2.73-.69-4.18s.25-2.86.69-4.18v-5.7H4.34A21.99 21.99 0 0 0 2 24c0 3.55.85 6.91 2.34 9.88l7.35-5.7z"/>
@@ -546,13 +546,13 @@
                 </svg>
               {:else if drive.provider === "wsl"}
                 <!-- Tux: the official Linux mascot asset (static/tux.svg) -->
-                <img src="/tux.svg" alt="" class="nav-icon tux-icon" width="16" height="16" />
+                <img src="/tux.svg" alt="" data-region="sidebar-icon" class="nav-icon tux-icon" width="16" height="16" />
               {:else}
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: #3b82f6">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" data-region="sidebar-icon" class="nav-icon" style="color: #3b82f6">
                   <path d="M4 11a3 3 0 0 1 0-6 4 4 0 0 1 7.6-1.2A3 3 0 0 1 12 11H4z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
                 </svg>
               {/if}
-              <span class="drive-name">{drive.name}</span>
+              <span data-region="sidebar-label" class="drive-name">{drive.name}</span>
               {#if drive.detail}
                 <span class="drive-detail">{drive.detail}</span>
               {/if}
@@ -568,7 +568,7 @@
 
     <div class="nav-section">
       <button
-        class="section-header"
+        data-region="sidebar-section-header" class="section-header"
         onclick={() => recentExpanded = !recentExpanded}
         aria-expanded={recentExpanded}
       >
@@ -582,7 +582,7 @@
         <div class="section-content">
           {#each recentLocations as loc (loc.path)}
             <div
-              class="nav-item folder-item recent-item"
+              data-region="sidebar-item" class="nav-item folder-item recent-item"
               onclick={() => navigateTo(loc.path)}
               onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigateTo(loc.path); }}}
               title={loc.path}
@@ -594,10 +594,10 @@
               ondragend={usesHtml5Drag ? recentDrag.end : undefined}
               onmousedown={usesPointerDrag ? (e) => sidebarDrag!.handlePointerDown(e, loc.path, loc.name) : undefined}
             >
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" data-drag-icon>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" data-region="sidebar-icon" class="nav-icon" data-drag-icon>
                 <path d="M2 5C2 4.44772 2.44772 4 3 4H5.58579C5.851 4 6.10536 4.10536 6.29289 4.29289L7 5H13C13.5523 5 14 5.44772 14 6V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V5Z" fill="var(--icon-folder, #FFB900)" opacity="0.7"/>
               </svg>
-              <span data-drag-name>{loc.name}</span>
+              <span data-region="sidebar-label" data-drag-name>{loc.name}</span>
               <button
                 class="remove-bookmark"
                 onclick={(e) => { e.stopPropagation(); frecencyStore.dismissRecent(loc.path); }}

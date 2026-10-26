@@ -29,6 +29,7 @@ import {
   resolveEffectivePreviewPanePosition,
 } from "$lib/domain/preview-pane-position";
 import { windowSizeStore } from "./window-size.svelte";
+import { DEFAULT_LAYOUT_ID, legacyLayoutThemeId } from "$lib/domain/layout-theme-ids";
 import {
   CURRENT_SETTINGS_VERSION,
   SETTINGS_VERSION_KEY,
@@ -108,7 +109,10 @@ export interface Settings {
   integratedTitleBar: boolean; // macOS: render tabs in title bar with overlay traffic lights
   macOsVibrancy: boolean; // macOS: native window vibrancy (translucent frosted glass), requires restart
   vibrancyBlur: boolean; // macOS: enable native blur behind vibrancy (off = theme background, no blur)
-  floatingIslands: boolean; // island layout on any OS — panels float as rounded islands; composes with native macOS/Windows transparency, plain themed backdrop elsewhere (#277)
+  /** @deprecated Superseded by `layoutTheme` (#1306). Read once by the
+   *  settings migration and kept so a downgraded build still sees it. */
+  floatingIslands: boolean;
+  layoutTheme: string; // layout theme id: a built-in ("default", "floating-islands", "hairline-ledger") or a `<config>/layouts/*.css` file name (#1306)
   windowsBackdrop: WindowsBackdrop; // Windows: translucent system backdrop (Mica/Acrylic), requires restart
   windowsBackdropOpacity: number; // Windows: acrylic tint opacity 0-100 (lower = more see-through)
   yaziNavigation: boolean; // left/right arrows navigate up/into folders in Details view (and List when folderPeek is off)
@@ -186,6 +190,7 @@ const DEFAULT_SETTINGS: Settings = {
   macOsVibrancy: false,
   vibrancyBlur: true,
   floatingIslands: false,
+  layoutTheme: DEFAULT_LAYOUT_ID,
   windowsBackdrop: "off",
   windowsBackdropOpacity: 65,
   yaziNavigation: true,
@@ -291,7 +296,13 @@ export function normalizeSettingsInput(value: unknown): Partial<Settings> {
 
 function createSettingsStore() {
   const initialPersisted = boundedPersistedInput(loadPersisted<unknown>(STORAGE_KEY, {}));
-  let settings = $state<Settings>({ ...DEFAULT_SETTINGS, ...normalizeSettingsInput(initialPersisted) });
+  // A cache written before #1306 has no layoutTheme; derive it as the ledger
+  // will when settings.json loads, so first paint already shows that layout.
+  let settings = $state<Settings>({
+    ...DEFAULT_SETTINGS,
+    layoutTheme: legacyLayoutThemeId(initialPersisted),
+    ...normalizeSettingsInput(initialPersisted),
+  });
   let extras: Record<string, unknown> = persistedExtras(initialPersisted);
 
   function saveSettings(next: Settings): void {
@@ -650,20 +661,8 @@ function createSettingsStore() {
     get vibrancyBlur() {
       return settings.vibrancyBlur;
     },
-    get floatingIslands() {
-      return settings.floatingIslands;
-    },
-    // ONE island-mode condition (#407, #434): macOS vibrancy, a Windows native
-    // backdrop, and the platform-independent Floating Islands setting all drive
-    // the same [data-vibrancy] island layout. Every island-layout decision
-    // (miller-as-island hoist, in-pane suppression) must key off this single
-    // derived, never off one platform's flag.
-    get islandMode() {
-      return (
-        settings.macOsVibrancy ||
-        settings.windowsBackdrop !== "off" ||
-        settings.floatingIslands
-      );
+    get layoutTheme() {
+      return settings.layoutTheme;
     },
     get windowsBackdrop() {
       return settings.windowsBackdrop;
@@ -860,7 +859,6 @@ export const TOGGLE_SETTINGS: ToggleSettingMeta[] = [
   { key: "integratedTitleBar", label: "Toggle Integrated Title Bar" },
   { key: "macOsVibrancy", label: "Toggle macOS Vibrancy" },
   { key: "vibrancyBlur", label: "Toggle Vibrancy Blur" },
-  { key: "floatingIslands", label: "Toggle Floating Islands" },
   { key: "premiumTheme", label: "Toggle Premium Theme Effects" },
   { key: "terminalFollowsExplorer", label: "Toggle Terminal Follows Explorer" },
   { key: "explorerFollowsTerminal", label: "Toggle Explorer Follows Terminal" },

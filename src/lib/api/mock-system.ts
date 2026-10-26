@@ -303,5 +303,12 @@ export const systemCommands: Record<string, CommandHandler> = {
       .filter(([k]) => k.startsWith("themes/"))
       .map(([k, v]) => [k.slice("themes/".length), v]),
 
+  // Layout themes (#1306): `layouts/<name>.css` entries of the seeded config.
+  list_user_layouts: () =>
+    Object.entries(mockConfigFiles)
+      .filter(([k]) => k.startsWith("layouts/"))
+      .map(([k, css]) => ({ filename: k.slice("layouts/".length), css, error: null })),
+  ensure_layouts_dir: () => "/home/user/.config/tauri-explorer/layouts",
+
   get_app_info: () => ({ version: "0.0.0-mock", os: "linux", arch: "x86_64" }),
 };

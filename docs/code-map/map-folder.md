@@ -489,6 +489,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `bookmark-drop-feedback.ts` — bookmark drop action feedback and effective local/cross-window drag-kind resolution (#675).
 - `quick-access.ts` — default sidebar system-folder rows under the resolved home directory; an unknown home yields none, so no row can navigate to a fabricated path while `get_home_directory` is in flight (#702).
 - `fuzzy-score.ts` — fuzzy match scorer for QuickOpen.
+- `palette-selection.ts` — command-palette highlight by command id over a live result list (#1236).
 - `quick-open-search.ts` — trailing scheduler for the expensive recursive Quick Open search; local results remain immediate while a rapid query produces one backend request (#600).
 - `lazy-dialog.ts` — failure-safe loading for code-split dialogs: rejected import (#584) or mount crash via svelte:boundary (#585) rolls back the dialog open-flag + notifies, preventing the hasModalOpen hotkey soft-lock.
 - `theme-list.ts` — dedupe discovered themes by id, last wins (user CSS overrides built-ins; duplicate ids crashed ThemePicker's keyed each, #585).
@@ -561,6 +562,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `html-preview-zoom.ts` — pure HTML preview page-zoom model: unmeasurable sandboxed frame scales a fixed ≥1280px desktop layout like an image (#1361), Fit, zoom stops and labels (#1352).
 - `pdf-preview.ts` — pure PDF fit, zoom-anchor, measured pointer coordinates, pan bounds and safe-link policy (#728–#730).
 - `markdown.ts` — safe markdown render for preview.
+- `markdown-math.ts` — Marked extension for TeX math (`$…$`, `\(…\)`, `$$…$$`, `\[…\]`); typesetter injected (#1393).
+- `katex-typesetter.ts` — lazy KaTeX typesetter + bundled woff2 fonts, loaded only for math documents (#1393).
 - `marquee-rect.ts` — marquee band geometry as compositor-only `transform`s for five container-sized layers (fill + four 1px edges sized to the client box, scaled down so fractional zoom rasterises exactly); a resized band element repainted its layer over every image tile per frame on WebKitGTK (#1051).
 - `zoom.ts` — CSS zoom level utils.
 - `raf-coalesce.ts` — coalesce high-freq value streams via rAF.
@@ -940,15 +943,14 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `e2e-tauri/crop-pixel-oracle.ts` — serializable, bounded first-frame pixel and intrinsic-preview observers for native crop verification; preserves exact comparisons when decoder promises stall.
 - `e2e-tauri/specs/external-job-timeout.spec.ts` — real CLI timeout/reap, withheld output and Jobs-panel error outcome.
 - `e2e-tauri/diagnostics/artifact.ts` — shared best-effort diagnostic artifact writer: per-investigation log directory, ADR 0021 hashed file names, never masks the documented failure. Contract in `tests/qualification/diagnostic-artifact.test.ts`.
-- `e2e-tauri/diagnostics/process-timeline.ts` — process-only `/proc` session-loss sampler: renderer/driver classification, bounded rolling samples, PID+start-time renderer lifetimes (`Retire-when: #781 closed`).
-- `e2e-tauri/diagnostics/fresh-window.ts` — fresh-child launch/selection/first-lookup evidence records and `monitorFreshWindowOpen` (`Retire-when: #781 closed`).
-- `e2e-tauri/diagnostics/warm-claim.ts` — `monitorWarmClaimExpiry`: abandoned warm-claim expiry artifact with pre-close renderer identities and first observed disappearances (`Retire-when: #781 closed`).
+- `e2e-tauri/diagnostics/process-timeline.ts` — process-only `/proc` session-loss sampler: renderer/driver classification, bounded rolling samples, PID+start-time renderer lifetimes.
+- `e2e-tauri/diagnostics/fresh-window.ts` — fresh-child launch/selection/first-lookup evidence records and `monitorFreshWindowOpen`.
+- `e2e-tauri/diagnostics/warm-claim.ts` — `monitorWarmClaimExpiry`: abandoned warm-claim expiry artifact with pre-close renderer identities and first observed disappearances.
 - `tests/qualification/warm-claim-process-timeline.test.ts` — contract for native warm-claim failure artifact, bounded late sample and no artifact on success.
 - `tests/qualification/fresh-native-window.test.ts` — fresh-window selection skips pre-existing handles without executing script in them.
 - `e2e-tauri/window-transfer-waits.ts` — renderer-side token and listing observers for a single asynchronous native WebDriver command.
 - `e2e-tauri/owned-windows.ts` — the one handle scan: reads each URL through the driver and scripts only known, non-warm pages (fails closed on empty URLs; #885, #931). `specs/helpers.ts` binds it to the browser (`switchToWindowLabel`, `closeOtherWindows`, `parkedWarmWindow`).
-- `e2e-tauri/diagnostics/window-transfer.ts` — incrementally persisted native runtime and per-window failure evidence (`Retire-when: #710 closed`).
-- `e2e-tauri/specs/window-transfer-diagnostics.spec.ts` — real-native negative control for retained JSON and screenshot artifacts.
+- `e2e-tauri/diagnostics/window-transfer.ts` — incrementally persisted native runtime and per-window failure evidence.
 - `e2e-tauri/soak/native-soak.spec.ts` — opt-in native window, plugin, preview, theme, DPI and input scenarios.
 - `e2e-tauri/wdio.soak.conf.ts` — separate hours-long native qualification suite configuration.
 - `scripts/build-native-qualification.ts` — clean-worktree debug/release native build (both hook gates when hooks are on) and exact binary provenance.

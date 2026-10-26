@@ -74,6 +74,9 @@ export const mockFiles: Record<string, FileEntry[]> = {
   ],
   // Keep preview fixtures out of the shared home directory. Many browser
   // tests deliberately search or count that directory's baseline contents.
+  "/home/math-preview": [
+    file("math.md", "/home/math-preview/math.md", 1024),
+  ],
   "/home/csv-preview": [
     file("people.csv", "/home/csv-preview/people.csv", 256),
     file("broken.csv", "/home/csv-preview/broken.csv", 128),
@@ -482,6 +485,24 @@ export const mockFileContent: Record<string, string> = {
   "/home/user/Documents/project/tsconfig.json": '{\n  "compilerOptions": {\n    "strict": true\n  }\n}\n',
   "/home/user/Documents/project/README.md": '# Project\n\nA sample project.\n',
   "/home/user/readme.txt": "This is a readme file.\n",
+  "/home/math-preview/math.md": [
+    "# Math",
+    "",
+    "Inline Euler: $e^{i\\pi} + 1 = 0$ and also \\(a^2 + b^2 = c^2\\).",
+    "",
+    "Prices stay text: it costs $5 and $10 in total.",
+    "",
+    "$$",
+    "\\int_0^1 x^2 \\, dx = \\frac{1}{3}",
+    "$$",
+    "",
+    "Code stays literal: `$x^2$`",
+    "",
+    "```",
+    "$$ not math $$",
+    "```",
+    "",
+  ].join("\n"),
   "/home/csv-preview/people.csv": 'name,note\nAda,"first, second"\nGrace,"said ""hello""\nand left"\n',
   "/home/csv-preview/broken.csv": 'name,note\nAda,"unterminated',
   "/home/csv-preview/many-people.csv": ["name,note", ...Array.from({ length: 250 }, (_, index) => `Person ${index + 1},record ${index + 1}`)].join("\n"),

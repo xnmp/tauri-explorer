@@ -1,7 +1,8 @@
 /**
  * Per-window evidence for a failed native window-transfer or clipboard step.
  *
- * Retire-when: #710 closed
+ * Permanent harness diagnostic (promoted when #710 closed): failure-path
+ * only, so it costs nothing on success and is the evidence a recurrence needs.
  *
  * The JSON record is persisted before and after every driver request, so a
  * request that never returns still leaves the evidence gathered so far. The

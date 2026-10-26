@@ -54,7 +54,8 @@ which WebView owned a renderer; compare the failing artifact with the driver
 log before attributing cause. No real recurrence has been classified yet.
 
 The sampler and both record types live in `e2e-tauri/diagnostics/`
-(`process-timeline.ts`, `fresh-window.ts`, `warm-claim.ts`), each tagged
-`Retire-when: #781 closed`. When #781 closes, delete them, unwrap
-`monitorFreshWindowOpen`/`monitorWarmClaimExpiry` in their specs and reduce
-`switchToFreshWindow`/`waitForFreshWindowElement` to their WebDriver waits.
+(`process-timeline.ts`, `fresh-window.ts`, `warm-claim.ts`), now
+permanent harness diagnostics. #781 was closed after about 3.5 weeks without a
+recurrence, and the close comment promised that failure-path evidence stays so
+any recurrence carries it; the original plan to delete and unwrap them was
+therefore dropped. They are failure-path only and cost nothing on success.

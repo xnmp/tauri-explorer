@@ -2,7 +2,8 @@
  * Process-only evidence for a lost WebDriver session during abandoned
  * warm-claim expiry.
  *
- * Retire-when: #781 closed
+ * Permanent harness diagnostic (promoted when #781 closed): failure-path
+ * only, so it costs nothing on success and is the evidence a recurrence needs.
  *
  * See `docs/lessons/781-fresh-window-selection-diagnostics.md`. The samples
  * do not establish which WebView owned a renderer; compare a failing artifact

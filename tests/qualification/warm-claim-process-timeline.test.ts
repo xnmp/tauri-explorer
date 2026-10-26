@@ -1,7 +1,5 @@
 /**
  * #781: preserve renderer identities when abandoned warm-claim expiry loses the session.
- *
- * Retire-when: #781 closed
  */
 import fs from "node:fs";
 import os from "node:os";

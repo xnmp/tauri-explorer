@@ -354,7 +354,7 @@ backend for E2E/browser).
 - `state/settings.svelte.ts` — `previewPanePosition` (raw stored mode, may be "auto") vs `resolvedPreviewPanePosition` (concrete right/bottom/top, the one layout code reads; #467)
 - `domain/syntax-highlight.ts` — `highlightCode`, `highlightDiffLine` (hljs)
 - `domain/csv-preview.ts` — quoted CSV table parser; malformed input leaves PreviewPane on its existing text path (#666)
-- `domain/diff.ts`, `domain/markdown.ts` — diff parsing, markdown render
+- `domain/diff.ts`, `domain/markdown.ts` — diff parsing, markdown render; `domain/markdown-math.ts` + lazy `domain/katex-typesetter.ts` — TeX math in markdown (#1393)
 - `api/files.ts` (readTextFile, readImageAsBlobUrl, listArchiveContents, gitDiff); `state/preview-image.ts` drives `readImageAsBlobUrl` as the image fallback
 - `themes/syntax.css` — shared hljs token colors
 - FLOW: selection change → preview-content classifies and loads a content union → PreviewPane renders by kind → CSV parses to a shared-column virtual table or text highlights/renders. 512KB read cap, 200 CSV data-row cap, 50KB highlight cap.

@@ -160,7 +160,7 @@ export function decodeSet(encoded) {
 /**
  * The app server kind a run recorded on (see the header).
  * @param {readonly TestRecord[]} records
- * @returns {{ server?: "bundle" | "dev" }}
+ * @returns {{ server?: "bundle" | "dev" | "mixed" }}
  */
 export function mapServer(records) {
   if (records.length === 0 || records.some((r) => typeof r.bundled !== "boolean")) return {};

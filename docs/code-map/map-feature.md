@@ -439,7 +439,7 @@ backend for E2E/browser).
 
 - About: `state/commands/general-commands.ts` → `state/dialogs.svelte.ts` → `components/WindowDialogs.svelte` → `components/AboutDialog.svelte` → `api/crash.ts::getAppInfo`. Shows the packaged running version from existing `get_app_info`; browser interaction coverage is in `e2e/about-command.spec.ts`.
 
-- `components/CommandPalette.svelte` — searchable command list
+- `components/CommandPalette.svelte` — searchable command list; results are live over the reactive registry, highlight is by command id via `domain/palette-selection.ts` (#1236)
 - `src/lib/domain/command-admission.ts`, `state/commands.svelte.ts` — shared destination admission and registry (`registerCommand`, `executeCommand`, frecency); each command declares pane/window destination scope, and multi-pane operations resolve their actual affected panes. Registry execution and keyboard admission (including fallback surface keys) consume those declarations regardless of focus or launcher.
 - `state/command-definitions.ts` — command type/category defs
 - `state/commands/` — `file-commands.ts`, `view-commands.ts`, `navigation-commands.ts`, `pane-commands.ts`, `general-commands.ts`, `system-actions.ts`, `shared.ts`

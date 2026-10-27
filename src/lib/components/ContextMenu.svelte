@@ -22,6 +22,7 @@
   import { getZoomFactor, fixedFromClient, fixedMenuPosition, isChromiumEngine, probeSingleScaleFixedOffset } from "$lib/domain/zoom";
   import type { ViewMode } from "$lib/state/types";
   import { fileViewRegistry } from "$lib/plugins/file-view-registry.svelte";
+  import { showLineageLabel } from "$lib/plugins/entry-lineage-registry.svelte";
   import { getPaneIdContext } from "$lib/state/pane-context";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { contextMenuItems } from "$lib/state/context-menu-items.svelte";
@@ -798,6 +799,32 @@
           {/if}
         </button>
       {/each}
+      {#if !shownFileView}
+        <!-- Lineage peek: per-pane "Show <title>" for each lineage offered here. -->
+        {#each explorer.lineageOptions as lineage (lineage.id)}
+          {@const shown = explorer.isEntryLineageShown(lineage.id)}
+          <button
+            class="menu-item"
+            class:selected={shown}
+            data-lineage-option={lineage.id}
+            onclick={() => { if (paneId) windowTabsManager.toggleEntryLineage(paneId, lineage.id); else explorer.setEntryLineageShown(lineage.id, !shown); contextMenuStore.close(); }}
+            role="menuitemcheckbox"
+            aria-checked={shown}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M4 2.5V9.5C4 10.6 4.9 11.5 6 11.5H9M4 6.5H9" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+              <circle cx="11" cy="6.5" r="1.75" stroke="currentColor" stroke-width="1.25"/>
+              <circle cx="11" cy="11.5" r="1.75" stroke="currentColor" stroke-width="1.25"/>
+            </svg>
+            <span>{showLineageLabel(lineage.title)}</span>
+            {#if shown}
+              <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
+                <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            {/if}
+          </button>
+        {/each}
+      {/if}
       <button
         class="menu-item"
         class:selected={settingsStore.showHidden}

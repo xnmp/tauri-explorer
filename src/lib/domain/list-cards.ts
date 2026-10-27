@@ -166,7 +166,7 @@ export function buildListStructure(rows: PeekRows, fullFlowPaths: ReadonlySet<st
     const row = rows.rows[i];
     if (flow && (i >= flow.endRow || (row.kind === "entry" && row.depth === 0))) closeFlow();
     if (row.kind === "create") { items.push({ key: row.key, entryIndex: null, card: null }); i++; continue; }
-    if (row.kind === "peek-state") {
+    if (row.kind === "peek-state" || row.kind === "lineage-group") {
       items.push({ key: row.key, entryIndex: null, rowIndex: i, card: null }); i++; continue;
     }
     const itemIndex = items.length;

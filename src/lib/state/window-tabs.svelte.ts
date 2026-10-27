@@ -309,6 +309,20 @@ function createWindowTabsManager(options: {
     return live ? live.fileViewChoice : tab.panes[paneId]?.fileView;
   }
 
+  /** A pane's lineage contributions turned off, live or restored. */
+  function paneLineageHidden(tab: WindowTab, paneId: PaneId): readonly string[] {
+    const live = sessions.get(paneId);
+    return (live ? live.lineageHidden : tab.panes[paneId]?.lineageHidden) ?? [];
+  }
+
+  /** Toggle "Show <title>" for a lineage contribution on one pane. */
+  function toggleEntryLineage(paneId: PaneId, id: string): void {
+    const explorer = sessions.get(paneId);
+    if (!explorer) return;
+    explorer.setEntryLineageShown(id, !explorer.isEntryLineageShown(id));
+    saveState();
+  }
+
   /** Choose a pane's plugin file view (null returns to its built-in view). */
   function setPaneFileView(paneId: PaneId, id: string | null): void {
     const explorer = sessions.get(paneId);
@@ -327,6 +341,7 @@ function createWindowTabsManager(options: {
             path: panePath(tab, node.id),
             ...(tab.panes[node.id]?.gitGraph ? { gitGraph: tab.panes[node.id].gitGraph } : {}),
             ...(paneFileView(tab, node.id) !== undefined ? { fileView: paneFileView(tab, node.id) } : {}),
+            ...(paneLineageHidden(tab, node.id).length ? { lineageHidden: [...paneLineageHidden(tab, node.id)] } : {}),
           }
         : {
             type: "split",
@@ -441,6 +456,7 @@ function createWindowTabsManager(options: {
     sessions.create(paneId, () => {
       const explorer = createExplorerState(seed, () => !getPaneGitGraph(paneId), initialPeeks);
       if (sourceExplorer?.fileViewChoice !== undefined) explorer.setFileView(sourceExplorer.fileViewChoice);
+      for (const id of sourceExplorer?.lineageHidden ?? []) explorer.setEntryLineageShown(id, false);
       return explorer;
     }, async (explorer) => {
       await (seed || !track ? explorer.initialLoad(path) : explorer.navigateTo(path));
@@ -579,6 +595,7 @@ function createWindowTabsManager(options: {
         const isActiveTarget = node.id === persisted.activePaneId && !!opts.overridePath;
         const path = isActiveTarget ? opts.overridePath! : node.path;
         const fileView = node.fileView;
+        const lineageHidden = node.lineageHidden ?? [];
         const peeks = opts.peeks?.get(node.id);
         if (peeks?.length) pendingPeeks.set(paneId, peeks);
         sessions.reserve(paneId, () => {
@@ -588,9 +605,10 @@ function createWindowTabsManager(options: {
           // (it shows the built-in view until the view registers). An explicit
           // built-in choice (null) overrides the default view for new panes.
           if (fileView !== undefined) explorer.setFileView(fileView);
+          for (const id of lineageHidden) explorer.setEntryLineageShown(id, false);
           return explorer;
         }, (explorer) => explorer.initialLoad(path));
-        panes[paneId] = { path, ...(node.gitGraph ? { gitGraph: node.gitGraph } : {}), ...(fileView !== undefined ? { fileView } : {}) };
+        panes[paneId] = { path, ...(node.gitGraph ? { gitGraph: node.gitGraph } : {}), ...(fileView !== undefined ? { fileView } : {}), ...(lineageHidden.length ? { lineageHidden } : {}) };
         return leaf(paneId);
       }
       return {
@@ -1310,6 +1328,7 @@ function createWindowTabsManager(options: {
     getPaneGitGraph,
     setPaneGitGraph,
     setPaneFileView,
+    toggleEntryLineage,
     showGitGraphInPane,
     toggleGitGraphInActivePane,
     getPaneScmVisible,

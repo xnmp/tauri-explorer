@@ -69,6 +69,8 @@ export interface TabPane {
    *  has not been opened yet: a view id, `null` for an explicit built-in
    *  view, absent when never chosen. Once open, the explorer owns the value. */
   fileView?: string | null;
+  /** Restored lineage contributions turned off for a pane not yet opened. */
+  lineageHidden?: readonly string[];
   /** Per-pane SCM panel visibility override (#434). `undefined` = follow the
    *  global `showScmPanel` setting; `true`/`false` = an explicit per-pane
    *  choice made via the toggle command. In-memory only (not persisted). */

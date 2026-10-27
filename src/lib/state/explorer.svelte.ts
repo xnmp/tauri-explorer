@@ -32,6 +32,12 @@ import { canPeekAt, flatPeekEntries, flatPeekRows, occurrencePath, peekCapabilit
 import { prunePeekSelection, springPeekDropFolder } from "$lib/domain/folder-peek-pane";
 import { entriesLabel, withExternalEntry } from "$lib/domain/explorer-entries";
 import type { PeekLevelCache } from "$lib/domain/folder-peek";
+import { entryLineageRegistry } from "$lib/plugins/entry-lineage-registry.svelte";
+import type { PaneLineage } from "./pane-lineage.svelte";
+import type { LineageGroup } from "$lib/domain/entry-lineage";
+
+/** Owner of host-made Preview targets for lineage group rows. */
+const LINEAGE_PREVIEW_OWNER = "host.lineage";
 import type { RowClickInput, RowPeekTarget } from "$lib/domain/folder-peek-flat";
 import type { BandSide } from "$lib/domain/tile-panels";
 import { isVirtualPath } from "$lib/domain/virtual-path";
@@ -209,6 +215,48 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     plainLocation: !isVirtualPath(coreState.currentPath) && !providerFor(coreState.currentPath),
     mode: coreState.viewMode,
   }));
+  // ---- Lineage peek (#1431) ---------------------------------------------------
+  // "Show <title>" is per pane and on by default: the pane records the
+  // contributions its user turned off. The controller loads lazily with the
+  // first registered contribution.
+  let lineageHidden = $state.raw<ReadonlySet<string>>(new Set());
+  let paneLineage = $state.raw<PaneLineage | null>(null);
+  let lineageLoading = $state(false);
+  let lineageDisposed = false;
+  /** The pane's visible depth-0 listing without the name filter. */
+  const lineageListing = $derived(filterQuery
+    ? (coreState.viewMode === "details" ? sortEntries(visibleEntriesFor(coreState.entries, coreState.currentPath), coreState.sortBy, coreState.sortAscending)
+      : sortEntries(visibleEntriesFor(coreState.entries, coreState.currentPath), "name", true))
+    : ownDisplayEntries);
+  const disposeLineageLoader = $effect.root(() => {
+    $effect(() => {
+      if (paneLineage || lineageLoading || lineageDisposed || !entryLineageRegistry.items.length) return;
+      lineageLoading = true;
+      void import("./pane-lineage.svelte").then(({ createPaneLineage }) => {
+        if (lineageDisposed) return;
+        paneLineage = createPaneLineage({
+          directory: () => coreState.currentPath,
+          hidden: () => lineageHidden,
+          enabled: () => capability !== "none",
+          listing: () => lineageListing,
+          windows: isWindows,
+        });
+      }).finally(() => { lineageLoading = false; });
+    });
+    // Grouping needs the tree policies; load them as soon as it applies.
+    $effect(() => { if (lineageGrouping && !peek.policies) void peek.activate(); });
+  });
+  /** The grouping the tree shows: a name filter suspends it, so matches show flat. */
+  const lineageGrouping = $derived.by(() => {
+    const projection = capability !== "none" && !filterQuery ? paneLineage?.projection : null;
+    return projection?.kind === "grouped" ? projection : null;
+  });
+  // Also while the controller module itself loads, so a provider registered
+  // before navigation never shows a flat first frame.
+  const lineageHolding = $derived(capability !== "none" && (paneLineage ? paneLineage.holding || (!!lineageGrouping && !peek.policies) : lineageLoading));
+  /** A directory, or a file with lineage children here. */
+  const canPeekEntry = (entry: FileEntry): boolean => entry.kind === "directory" || !!lineageGrouping?.children(entry.path);
+
   // Each peek level is projected once per listing snapshot and projection
   // inputs, so a root keystroke or one peek's publish leaves other levels be.
   let peekLevels: PeekLevelCache | undefined;
@@ -223,13 +271,16 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     const policies = peek.policies;
     if (!policies) return flatPeekEntries(coreState.currentPath, ownDisplayEntries);
     peekLevels ??= policies.createPeekLevelCache(isWindows);
+    // Lineage grouping: depth 0 is the roots; edits open beneath their parents.
+    const grouping = lineageGrouping;
     return policies.flattenPeekEntries({
       // Spring-loaded peeks (#1242) project exactly like expanded folders.
-      root: coreState.currentPath, entries: ownDisplayEntries, expanded: peek.projected,
+      root: coreState.currentPath, entries: grouping ? grouping.roots : ownDisplayEntries, expanded: peek.projected,
       listing: path => peek.listing(path)?.entries,
       project: (entries, parent) => sortEntries(visibleEntriesFor(entries, parent), ...peekSort()),
       capability: peek.projected.size ? capability : "none", windows: isWindows,
       levels: peekLevels, projectionKey: peekProjectionKey,
+      ...(grouping ? { lineage: grouping } : {}),
     });
   });
   const displayEntries = $derived(peekTree.entries as FileEntry[]);
@@ -282,17 +333,29 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
       await peek.activate();
       if (destroyed || generation !== navGeneration || intent !== peekIntent) return;
     }
-    const entry = displayEntries.find(e => e.path === path);
-    if (!peeksAllowed() || entry?.kind !== "directory" || isVirtualPath(path) || providerFor(path)) return;
+    // A lineage group row toggles by its id; a file by its path when it has
+    // lineage children here (it opens with its group rows open).
+    const group = lineageGroupAt(path);
+    const entry = group ? undefined : displayEntries.find(e => e.path === path);
+    if (!peeksAllowed() || (!group && !(entry && canPeekEntry(entry))) || isVirtualPath(path) || providerFor(path)) return;
     // Never change membership this view does not show: a Tiles panel's
     // subfolder is a leaf, so toggling it would record a hidden expansion.
-    if (!canPeekAt(capability, peekTree.meta.get(path)?.depth ?? 0)) return;
+    if (entry?.kind === "directory" && !canPeekAt(capability, peekTree.meta.get(path)?.depth ?? 0)) return;
     if (peek.watchFactory) watch.enablePeeks(peek.watchFactory);
     const before = peekTree;
+    const opening = !peek.expanded.has(path);
     peek.toggle(path);
+    if (opening && entry && entry.kind !== "directory") {
+      for (const { id } of lineageGrouping?.children(entry.path)?.groups ?? []) if (!peek.expanded.has(id)) peek.toggle(id);
+    }
     notePeekChange(path);
     pruneHiddenChildren(before, displayEntries);
     reconcilePeekResources();
+  }
+  /** The lineage group a toggle id names, while it is shown. */
+  function lineageGroupAt(id: string) {
+    if (!id.startsWith("group:")) return null;
+    return peekTree.headers?.find(header => header.group.id === id)?.group ?? null;
   }
   /** Carets are drawn only while peeking is available and the option is on;
    * Tiles always draws them (the option applies to Details and List, #1241). */
@@ -885,9 +948,29 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     coreState.cursorPath = result.cursorPath;
   }
 
+  /** Depth 0 only (folder-peek §3): with lineage grouping, its roots. */
   function selectAll() {
-    setSelection(ownDisplayEntries.map((e) => e.path));
-    coreState.selectionAnchorPath = ownDisplayEntries[0]?.path ?? null;
+    const own = lineageGrouping ? lineageGrouping.roots : ownDisplayEntries;
+    setSelection(own.map((e) => e.path));
+    coreState.selectionAnchorPath = own[0]?.path ?? null;
+  }
+
+  /** "Select with edits": add every lineage descendant of the selected files,
+   * opening their lineages so nothing selected is hidden (folder-peek §14). */
+  async function selectWithEdits() {
+    const grouping = lineageGrouping;
+    if (!grouping || !coreState.selectedPaths.size) return;
+    const descendants = grouping.descendants(coreState.selectedPaths);
+    if (!descendants.length) return;
+    if (!peek.policies) await peek.activate();
+    if (grouping !== lineageGrouping) return;
+    for (const path of [...coreState.selectedPaths, ...descendants]) {
+      const children = grouping.children(path);
+      if (!children) continue;
+      for (const id of [path, ...children.groups.map(group => group.id)]) if (!peek.expanded.has(id)) peek.toggle(id);
+    }
+    notePeekChange(coreState.currentPath);
+    setSelection(new Set([...coreState.selectedPaths, ...descendants]));
   }
 
   // ===================
@@ -1216,7 +1299,29 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     },
     get peekCaretsShown() { return caretsShown(); },
     collapseAllPeeks,
-    get peekCommandTarget() { return resolvePeekCommandTarget(focusedEntry, peekTree.meta, capability, focusedKey); },
+    get peekCommandTarget() { return resolvePeekCommandTarget(focusedEntry, peekTree.meta, capability, focusedKey, canPeekEntry); },
+    /** A directory, or a file with lineage children in this folder. */
+    canPeekEntry,
+    // ---- Lineage peek ----
+    /** Contributions offered here, for the View menu's "Show <title>". */
+    get lineageOptions() { return paneLineage?.offered ?? []; },
+    isEntryLineageShown(id: string) { return !lineageHidden.has(id); },
+    /** Turns "Show <title>" on or off for this pane. */
+    setEntryLineageShown(id: string, shown: boolean) {
+      if (shown === !lineageHidden.has(id)) return;
+      const next = new Set(lineageHidden);
+      if (shown) next.delete(id); else next.add(id);
+      lineageHidden = next;
+    },
+    /** Contribution ids this pane turned off (persisted with the pane). */
+    get lineageHidden(): readonly string[] { return [...lineageHidden]; },
+    /** Grouping is shown (a provider's lineage applies and no filter suspends it). */
+    get lineageGrouped() { return lineageGrouping !== null; },
+    /** First paint waits (bounded) for this folder's lineage. */
+    get lineageHolding() { return lineageHolding; },
+    /** Lineage descendants of the selection exist ("Select with edits"). */
+    get canSelectWithEdits() { return !!lineageGrouping && coreState.selectedPaths.size > 0 && lineageGrouping.descendants(coreState.selectedPaths).length > 0; },
+    selectWithEdits,
     get canEscapePeek() { return capability !== "none" && resolvePeekEscape(focusedEntry, peekTree.meta, focusedKey) !== null; },
     escapeSelectionOrPeek() {
       // A pending lazy renderer has no mounted editor to own its Escape.
@@ -1226,9 +1331,13 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
       const placement = focusedKey === undefined ? undefined : peekTree.meta.get(focusedKey);
       const parent = resolvePeekEscape(focusedEntry, peekTree.meta, focusedKey);
       if (!parent) return;
+      // A lineage group row is not a cursor target: the cursor lands on the
+      // file the group belongs to.
+      let landing = placement?.parentKey ?? parent;
+      if (lineageGroupAt(parent)) landing = peekTree.headers?.find(header => header.key === landing)?.parentKey ?? landing;
       togglePeek(parent);
-      coreState.cursorPath = parent; coreState.selectionAnchorPath = null;
-      cursorKey = placement?.parentKey ?? parent;
+      coreState.cursorPath = occurrencePath(landing); coreState.selectionAnchorPath = null;
+      cursorKey = landing;
       onRevealCallback?.();
     },
     get currentPath() {
@@ -1304,6 +1413,20 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
       setSelection([]);
       coreState.selectionAnchorPath = null;
       previewTarget = { owner, target, directory: coreState.currentPath };
+    },
+    /** Preview of a lineage group row: the parents it combines and its size.
+     * A host-owned target, so it yields to any later file selection. */
+    showLineageGroupPreview(group: LineageGroup) {
+      const names = group.coParents.map(parent => parent.kind === "entry" ? parent.name : `${parent.label} (outside this folder)`);
+      const owner = basename(group.parent);
+      this.setPreviewTarget(LINEAGE_PREVIEW_OWNER, {
+        id: group.id, title: `${owner} ${group.label}`, typeLabel: "Lineage group",
+        ...(group.thumbnailPath ? { imagePath: group.thumbnailPath } : {}),
+        details: [
+          { label: "Parents", value: [owner, ...names].join(", ") },
+          { label: "Files", value: String(group.members.length) },
+        ],
+      });
     },
     clearPreviewTargetsOwnedBy(owner: string) {
       if (previewTarget?.owner === owner) previewTarget = null;
@@ -1446,6 +1569,9 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
       pendingNavigationFocus?.request?.cancel();
       pendingNavigationFocus = null;
       disposePeekEffects();
+      lineageDisposed = true;
+      disposeLineageLoader();
+      paneLineage?.dispose();
       fileViewPresentation.dispose();
       creationSession = null;
       navGeneration += 1;

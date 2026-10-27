@@ -3,7 +3,7 @@
  * spring-loaded peeks (#1242). Imported only by the explorer store. */
 import type { FileEntry } from "./file";
 import type { PeekMeta, PeekTree } from "./folder-peek";
-import { occurrencePath, parentKeyOf, peekKeyAt } from "./folder-peek-flat";
+import { OCCURRENCE_SEPARATOR, occurrencePath, parentKeyOf, peekKeyAt } from "./folder-peek-flat";
 
 /** Peeked children a projection change hid, and where a hidden cursor (or,
  * failing that, anchor) lands: its nearest still-shown ancestor, or null when
@@ -30,8 +30,11 @@ export function prunePeekSelection(before: Pick<PeekTree, "entries" | "meta" | "
   const fromKey = cursorHidden ? cursorKey : anchorKey;
   let key: string | null = fromKey !== null && occurrencePath(fromKey) === from && before.meta.has(fromKey) ? fromKey : from;
   while (key && !visible.has(occurrencePath(key))) {
+    // A lineage occurrence key ends with its own segment, so its prefix is its
+    // parent (a group row has no placement of its own).
+    const at = key.lastIndexOf(OCCURRENCE_SEPARATOR);
     const placement = before.meta.get(key);
-    key = placement ? parentKeyOf(placement) : null;
+    key = at > 0 ? key.slice(0, at) : placement ? parentKeyOf(placement) : null;
   }
   const refocus = key && occurrencePath(key);
   // `refocusKey` only when it differs from `refocus` (a nested lineage occurrence).

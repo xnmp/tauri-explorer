@@ -266,6 +266,15 @@ export const selectionCommands: Command[] = [
     handler: () => getActiveExplorer()?.selectAll(),
   },
   {
+    // Lineage peek: extend the selection to every edit made from it.
+    id: "selection.selectWithEdits",
+    scope: "pane",
+    label: "Select with Edits",
+    category: "selection",
+    when: () => !!getActiveExplorer()?.canSelectWithEdits,
+    handler: () => getActiveExplorer()?.selectWithEdits(),
+  },
+  {
     id: "selection.clearSelection",
     scope: "pane",
     label: "Clear Selection",

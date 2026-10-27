@@ -63,7 +63,8 @@
   // A plugin view replaces the listing only where it applies; elsewhere the
   // pane shows its built-in view while retaining the preference.
   const resolution = $derived(presentation.resolution);
-  const holdingView = $derived(resolution.kind === "hold");
+  // A plugin view, or this folder's lineage (lineage peek), may hold first paint (bounded).
+  const holdingView = $derived(resolution.kind === "hold" || (resolution.kind === "builtin" && explorer.lineageHolding));
   const pluginView = $derived(paneId && resolution.kind === "plugin" ? fileViewRegistry.get(resolution.id) : null);
 
 

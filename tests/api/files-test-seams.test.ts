@@ -1,4 +1,4 @@
-import { encodeDirectoryListing } from "$lib/api/directory-wire";
+import { encodeDirectoryListing } from "$lib/api/directory-wire-encode";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const { invokeMock, mutationMock } = vi.hoisted(() => ({ invokeMock: vi.fn(), mutationMock: vi.fn() }));

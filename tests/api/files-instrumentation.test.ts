@@ -18,7 +18,7 @@ vi.mock("$lib/api/native-resource-session", () => ({ getNativeResourceSession: a
 vi.mock("$lib/plugins/fs-providers", () => ({ providerFor: () => undefined }));
 
 import { readImageAsBlobUrl, readTextFile, loadDirectory } from "$lib/api/files";
-import { encodeDirectoryListing } from "$lib/api/directory-wire";
+import { encodeDirectoryListing } from "$lib/api/directory-wire-encode";
 
 
 const emptyListing = (path: string, extra: Record<string, unknown> = {}) =>

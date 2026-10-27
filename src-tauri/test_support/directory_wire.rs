@@ -97,6 +97,8 @@ fn utf16_lengths_count_surrogate_pairs() {
     assert_eq!(utf16_len("雪"), 1);
     assert_eq!(utf16_len("😀"), 2);
     assert_eq!(utf16_len(""), 0);
+    assert_eq!(utf16_len(&"日本語😀é".repeat(400)), 2_400);
+    assert_eq!(utf16_len(&"a".repeat(4_096)), 4_096);
 }
 
 #[test]

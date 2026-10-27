@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import fixtures from "../fixtures/directory-wire.json";
-import { decodeDirectoryListing, decodeDirectoryListingExtra, encodeDirectoryListing } from "$lib/api/directory-wire";
+import { decodeDirectoryListing, decodeDirectoryListingExtra } from "$lib/api/directory-wire";
+import { encodeDirectoryListing } from "$lib/api/directory-wire-encode";
 import type { DirectoryListing, FileEntry } from "$lib/domain/file";
 
 const bytesOf = (hex: string) => Uint8Array.from(hex.match(/../g) ?? [], (byte) => parseInt(byte, 16));
@@ -44,6 +45,41 @@ describe("native directory transport", () => {
     expect(decode(encodeDirectoryListing(listing(entries)))).toEqual(listing(entries));
     const unprefixed = [file("a", "/x/a"), file("é", "/y/é")];
     expect(decode(encodeDirectoryListing(listing(unprefixed)))).toEqual(listing(unprefixed));
+  });
+
+  it("round-trips very long ASCII and non-ASCII names and paths", () => {
+    const longWide = "日本語😀é".repeat(400); // 2,400 UTF-16 units, 4,000 UTF-8 bytes
+    const longAscii = "a".repeat(4_096);
+    const entries = [file(longWide), file(longAscii), { ...file("link", `/elsewhere/${longWide}/link`), symlink_target: longWide }];
+    expect(decode(encodeDirectoryListing(listing(entries)))).toEqual(listing(entries));
+  });
+
+  it("rejects a header that declares more rows than the body holds before allocating them", () => {
+    const encoded = encodeDirectoryListing(listing([file("a")]));
+    const { headerEnd, header } = layout(encoded);
+    const next = new TextEncoder().encode(JSON.stringify({ ...header, count: 2 ** 31 }));
+    const out = new Uint8Array(8 + next.length + encoded.length - headerEnd);
+    out.set(encoded.subarray(0, 4));
+    new DataView(out.buffer).setUint32(4, next.length, true);
+    out.set(next, 8);
+    out.set(encoded.subarray(headerEnd), 8 + next.length);
+    expect(() => decodeDirectoryListing(out)).toThrow(INVALID);
+  });
+
+  it("keeps a leading U+FEFF in every string column instead of dropping it as a BOM", () => {
+    const bom = "\ufeff";
+    const entries = [
+      { ...file(`${bom}first`, `/x/${bom}first`), is_symlink: true, symlink_target: `${bom}target` },
+      file(`${bom}second`, `/y/${bom}second`),
+    ];
+    expect(decode(encodeDirectoryListing(listing(entries)))).toEqual(listing(entries));
+  });
+
+  it("accepts the number array that Tauri's postMessage IPC fallback delivers", () => {
+    const entries = [file("a"), file("é")];
+    const encoded = encodeDirectoryListing(listing(entries), { watch_lease: { id: "l", path: "/d" } });
+    expect(decode(Array.from(encoded) as unknown as Uint8Array)).toEqual(listing(entries));
+    expect(decodeDirectoryListingExtra(Array.from(encoded))).toEqual({ watch_lease: { id: "l", path: "/d" } });
   });
 
   it("decodes an empty listing", () => {

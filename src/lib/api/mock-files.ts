@@ -10,7 +10,7 @@ import type { FileBatchOutcome } from "$lib/domain/file-batch-outcome";
 import type { HistoryDirection, HistorySummary, UndoAction } from "$lib/domain/file-history";
 import { basename, parentDir, sameDirectory } from "$lib/domain/path";
 import { broadcastFileChange } from "$lib/state/file-events";
-import { encodeDirectoryListing } from "./directory-wire";
+import { encodeDirectoryListing } from "./directory-wire-encode";
 import { getMockControl } from "./mock-control";
 import { createMockFileHistory } from "./mock-file-history";
 import { dir, file, mockDirEmpty, mockFileContent, mockFiles, TIMESTAMP_BASE } from "./mock-fixtures";

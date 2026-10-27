@@ -88,7 +88,8 @@ globalThis.TextDecoder ??= class {
 
 const HARNESS = `
 ${TEXT_CODING}
-import { decodeDirectoryListing, encodeDirectoryListing } from ${lib("api/directory-wire.ts")};
+import { decodeDirectoryListing } from ${lib("api/directory-wire.ts")};
+import { encodeDirectoryListing } from ${lib("api/directory-wire-encode.ts")};
 import { filterHidden, sortEntries } from ${lib("domain/file.ts")};
 import { flatPeekEntries, flatPeekRows } from ${lib("domain/folder-peek-flat.ts")};
 import { resolveFileCursor } from ${lib("domain/file-list-navigation.ts")};

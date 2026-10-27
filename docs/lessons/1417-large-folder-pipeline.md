@@ -1,7 +1,9 @@
 # #1417 — large-folder pipeline: where a 100k-500k open spent its time
 
-**Symptom.** Opening the 100k fixture took ~250 ms and the 500k one ~1.25-1.65 s
-(`docs/performance.md`), with no breakdown below "scan is ~37%".
+**Symptom.** Opening the 100k fixture took ~250-295 ms and the 500k one
+~1.25-1.65 s (`docs/performance.md`), with no breakdown below "scan is ~37%".
+After: ~205 ms and ~910 ms on the same machine and load (interleaved, n = 10 ×
+2); navigation in a 100k folder ~280 → ~190 ms.
 
 **Measure first, per phase.** `TAURI_EXPLORER_LISTING_TIMING=1` makes the
 native side log every closed span of a listing's load trace
@@ -37,14 +39,35 @@ frontend's `decode` phase (`ipcAndParse`).
    before hashing. Also `pruneExpanded` (no remembered peeks → no scan) and
    `isSystemHidden` (length gate before lowercasing).
 
+**Costs accepted.** Decode (+4 / +23 ms at 100k / 500k) and the frontend
+projection (+2 / +19 ms) are slower, and re-sorting by name is 5-21 ms slower:
+names are substrings of one decoded column and paths are prefix + name ropes,
+which the first filter/sort/compare resolves. One surviving entry also keeps
+its listing's column strings alive.
+
 **Not causes (ruled out by experiment).** `malloc_trim` timing (LD_PRELOAD
 no-op), web heap state, the loading spinner, and refresh republishing (pane
 refresh already reconciles unchanged listings without publishing).
 
 **Gotchas.**
-- `jsc`'s `gcHeapSize` counts substring cells (≈40 B) above JSON-parsed
-  strings (≈23 B), so `perf:listing-heap` rose slightly per entry while the
-  real app's PSS did not; check the end-to-end memory scenario, not only `jsc`.
+- `TextDecoder` strips a leading U+FEFF unless `ignoreBOM: true`. With
+  per-row unit counts over one decoded column, a file whose name starts with
+  U+FEFF (first in the non-ASCII name column, or the first symlink target or
+  unprefixed path) shifted every later row and the folder failed to open. The
+  shared fixture has such a row.
+- A raw `tauri::ipc::Response` arrives as an `ArrayBuffer` through the
+  custom-protocol IPC, but Tauri 2's postMessage fallback on macOS delivers a
+  JSON number array (as `read_pdf_bytes` already handles): the decoder takes
+  both.
+- The startup bundle has almost no headroom: the TypeScript encoder (mock and
+  tests only) must live in its own module, `api/directory-wire-encode.ts`, or
+  Rollup keeps it in the startup chunk next to the decoder.
+- A phase that reads 0 in one session can be an artifact: the first run's
+  100k watch registration showed 9 → 0 ms, and the rerun measured 9-10 ms in
+  both builds. Re-measure before attributing a gain.
+- Check the end-to-end memory scenario, not only `perf:listing-heap`: `jsc`
+  counts string cells differently from the app's PSS (the harness's
+  TextDecoder shim must return flat strings, as WebKit's does).
 - `explorer.svelte.ts` is on the file-size allowlist: instrumentation lines
   count against it.
 - `build/` holds whatever the last `bun run build` produced; an

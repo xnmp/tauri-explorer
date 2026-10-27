@@ -31,10 +31,12 @@ const LARGE_LISTING_ENTRIES: usize = 10_000;
 /// When to release, as a pure function of completed listings.
 ///
 /// A large listing releases right after its reply is encoded, which returns
-/// the scan's transient memory; the reply and the entries themselves are freed
-/// only once the webview has taken the reply. That memory is owed one more
-/// release, paid when the next listing of any size is encoded, by which time
-/// the previous reply has been delivered.
+/// the scan's transient memory; the reply bytes are freed only once the
+/// webview has taken them. (A large listing's entries are freed by
+/// `files::listing_reaper`, which releases on its own through
+/// [`listing_freed`]; smaller or still-cached ones are freed inline.) That
+/// memory is owed one more release, paid when the next listing of any size is
+/// encoded, by which time the previous reply has been delivered.
 #[derive(Debug, Default)]
 pub(crate) struct ReleasePolicy {
     owed: bool,

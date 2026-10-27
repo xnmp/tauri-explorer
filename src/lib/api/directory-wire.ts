@@ -9,19 +9,26 @@
  */
 import type { DirectoryListing, FileEntry } from "$lib/domain/file";
 
-/** A native listing reply as Tauri delivers a raw body. */
-export type DirectoryListingBytes = ArrayBuffer | ArrayBufferView;
+// The encoder (`directory-wire-encode.ts`) serves the mock backend and tests
+// only; it lives apart so it stays out of the startup bundle.
 
-const MAGIC = [0x54, 0x45, 0x4c, 0x31]; // "TEL1"
-const FLAG_DIRECTORY = 1;
-const FLAG_SYMLINK = 1 << 1;
-const FLAG_GIT_REPO = 1 << 2;
-const FLAG_WIDE_NAME = 1 << 3;
-const FLAG_SYMLINK_TARGET = 1 << 4;
-const EMPTY_SHIFT = 5;
+/**
+ * A native listing reply as Tauri delivers a raw body: an ArrayBuffer through
+ * the custom-protocol IPC, but a JSON number array through the postMessage
+ * fallback on macOS (Tauri 2's `format_result` for a raw reply).
+ */
+export type DirectoryListingBytes = ArrayBuffer | ArrayBufferView | readonly number[];
+
+export const MAGIC = [0x54, 0x45, 0x4c, 0x31]; // "TEL1"
+export const FLAG_DIRECTORY = 1;
+export const FLAG_SYMLINK = 1 << 1;
+export const FLAG_GIT_REPO = 1 << 2;
+export const FLAG_WIDE_NAME = 1 << 3;
+export const FLAG_SYMLINK_TARGET = 1 << 4;
+export const EMPTY_SHIFT = 5;
 const FLAG_BITS = (1 << 7) - 1;
 
-interface Header {
+export interface Header {
   path: string;
   path_prefix: string | null;
   count: number;
@@ -33,63 +40,16 @@ interface Header {
 
 function invalid(): never { throw new Error("Invalid native directory snapshot"); }
 
-const isAscii = (value: string) => {
-  for (let i = 0; i < value.length; i++) if (value.charCodeAt(i) > 0x7f) return false;
-  return true;
-};
-
-/**
- * The inverse of `decodeDirectoryListing`, byte for byte the Rust encoder:
- * the browser mock replies through this so the mock-backed tiers exercise
- * the same decoder as native listings (#868). `extra` fields join the header,
- * after the listing's own, as the watch lease does natively.
- */
-export function encodeDirectoryListing(listing: DirectoryListing, extra: Record<string, unknown> = {}): Uint8Array {
-  const { entries } = listing;
-  const first = entries[0];
-  const candidate = first && first.path.endsWith(first.name)
-    ? first.path.slice(0, first.path.length - first.name.length)
-    : null;
-  const prefix = candidate !== null && entries.every((e) => e.path === candidate + e.name) ? candidate : null;
-  const hasTargets = entries.some((e) => e.symlink_target !== undefined && e.symlink_target !== null);
-  const utf8 = new TextEncoder();
-  const columns = [
-    entries.filter((e) => isAscii(e.name)).map((e) => e.name).join(""),
-    entries.filter((e) => !isAscii(e.name)).map((e) => e.name).join(""),
-    entries.map((e) => e.modified).join(""),
-    prefix === null ? entries.map((e) => e.path).join("") : "",
-    entries.map((e) => e.symlink_target ?? "").join(""),
-  ].map((column) => utf8.encode(column));
-  const header: Header = {
-    path: listing.path, path_prefix: prefix, count: entries.length,
-    bytes: columns.map((column) => column.length) as Header["bytes"],
-    ...(hasTargets ? { targets: true as const } : {}),
-    ...extra,
-  };
-  const headerBytes = utf8.encode(JSON.stringify(header));
-  const unitColumns = 2 + (prefix === null ? 1 : 0) + (hasTargets ? 1 : 0);
-  const rows = entries.length * (8 + 4 * unitColumns + 1);
-  const out = new Uint8Array(8 + headerBytes.length + rows + columns.reduce((sum, c) => sum + c.length, 0));
-  const view = new DataView(out.buffer);
-  out.set(MAGIC, 0);
-  view.setUint32(4, headerBytes.length, true);
-  out.set(headerBytes, 8);
-  let at = 8 + headerBytes.length;
-  for (const e of entries) { view.setFloat64(at, e.size, true); at += 8; }
-  const units = (values: string[]) => { for (const value of values) { view.setUint32(at, value.length, true); at += 4; } };
-  units(entries.map((e) => e.name));
-  units(entries.map((e) => e.modified));
-  if (prefix === null) units(entries.map((e) => e.path));
-  if (hasTargets) units(entries.map((e) => e.symlink_target ?? ""));
-  for (const e of entries) {
-    const empty = e.is_empty === undefined || e.is_empty === null ? 0 : e.is_empty ? 2 : 1;
-    out[at++] = (e.kind === "directory" ? FLAG_DIRECTORY : 0) | (e.is_symlink ? FLAG_SYMLINK : 0)
-      | (e.is_git_repo ? FLAG_GIT_REPO : 0) | (isAscii(e.name) ? 0 : FLAG_WIDE_NAME)
-      | (e.symlink_target !== undefined && e.symlink_target !== null ? FLAG_SYMLINK_TARGET : 0) | (empty << EMPTY_SHIFT);
-  }
-  for (const column of columns) { out.set(column, at); at += column.length; }
-  return out;
+/** The reply as bytes, or null when it is not a byte payload at all. */
+function bytesOf(payload: unknown): Uint8Array | null {
+  if (payload instanceof ArrayBuffer) return new Uint8Array(payload);
+  if (ArrayBuffer.isView(payload)) return new Uint8Array(payload.buffer, payload.byteOffset, payload.byteLength);
+  if (Array.isArray(payload)) return Uint8Array.from(payload as number[]);
+  return null;
 }
+
+/** `ignoreBOM`: a name may start with U+FEFF, which must stay part of it. */
+const utf8Decoder = () => new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 /** A slice whose unit counts cut a surrogate pair in two. ASCII slices never do. */
 const splitsPair = (value: string) => value.length > 0 &&
@@ -122,9 +82,10 @@ function parseHeader(bytes: Uint8Array, decoder: TextDecoder): { header: Header;
  */
 export function decodeDirectoryListingExtra(payload: DirectoryListingBytes): Record<string, unknown> | null {
   try {
-    const bytes = payload instanceof ArrayBuffer ? new Uint8Array(payload) : new Uint8Array(payload.buffer, payload.byteOffset, payload.byteLength);
+    const bytes = bytesOf(payload);
+    if (!bytes) return null;
     const { path: _path, path_prefix: _prefix, count: _count, bytes: _bytes, targets: _targets, ...extra } =
-      parseHeader(bytes, new TextDecoder("utf-8", { fatal: true })).header;
+      parseHeader(bytes, utf8Decoder()).header;
     return extra;
   } catch {
     return null;
@@ -138,11 +99,8 @@ export function decodeDirectoryListingExtra(payload: DirectoryListingBytes): Rec
  * a watch lease) are returned as `extra` for the caller to validate.
  */
 export function decodeDirectoryListing(payload: DirectoryListingBytes): DirectoryListing & { extra: Record<string, unknown> } {
-  if (!(payload instanceof ArrayBuffer) && !ArrayBuffer.isView(payload)) return invalid();
-  const bytes = payload instanceof ArrayBuffer
-    ? new Uint8Array(payload)
-    : new Uint8Array(payload.buffer, payload.byteOffset, payload.byteLength);
-  const decoder = new TextDecoder("utf-8", { fatal: true });
+  const bytes = bytesOf(payload) ?? invalid();
+  const decoder = utf8Decoder();
   const { header, end } = parseHeader(bytes, decoder);
   const { count, path_prefix: prefix } = header;
   const hasPaths = prefix === null;

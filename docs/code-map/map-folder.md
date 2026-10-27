@@ -355,7 +355,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/api/copy-session.ts` — the ordered-session transport: one acknowledged request with request-local events, single-use conflict replies, cancellation handshake and native history settlement; copy and move share its registry.
 - `src/lib/api/move-session.ts` — the ordered move request over that transport.
 - `file-mutations.ts` — acknowledged forward mutation IPC; applies the settled native history summary before returning a receipt or warning.
-- `directory-wire.ts` — decodes (and, for the mock backend, encodes) the binary native listing format, validating every column, and reconstructs exact immutable domain entries.
+- `directory-wire.ts` — decodes the binary native listing format, validating every column, and reconstructs exact immutable domain entries.
+- `directory-wire-encode.ts` — byte-identical TypeScript encoder of that format for the mock backend and tests, kept out of the startup bundle.
 - `files.ts` — all file-op IPC (list, create, rename, copy, move, delete, estimate), including typed per-path trash/restore outcomes. Hot.
 - `media.ts` — `get_media_durations` IPC wrapper (Details Length column, #995).
 - `frontend-log.ts` — forwards diagnosable webview failures to the native rotating log.

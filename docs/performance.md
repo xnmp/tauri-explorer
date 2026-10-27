@@ -272,7 +272,8 @@ desktop; memory is far less load-sensitive than time) and 0.8-5.0 during the
 ### Budgets
 
 - `bun run perf:listing-heap`: fails above 380 B/entry of live JS heap for a
-  100k flat listing (now 352 with the #1417 binary reply, 317 after #1416; before 499). Needs the WebKitGTK `jsc` shell.
+  100k flat listing (now 305 with the #1417 binary reply, 317 after #1416;
+  before 499). Needs the WebKitGTK `jsc` shell.
 - `perf-real-app.mjs --scenarios memory --memory-cycles 4 --gc-pressure-mb 4096
   --max-retained-mb 80 --max-live-bytes-per-entry 1600`: fails when total PSS
   after navigating away exceeds idle by more than 80 MB, or the open folder
@@ -292,31 +293,41 @@ parsing it. `project` is filtering, sorting and peek projection of the new
 listing; `settledToRows` the time from the load settling to the rows being in
 the DOM; `rowsToFrames` the two animation frames after that.
 
-Medians, ms, release build, same machine and runner as above (n = 10 per
-round, 2 interleaved rounds per binary; first round shown, the second agreed
-within 10 ms at 100k and 20 ms at 500k):
+Medians, ms, release build, n = 10. "Before" is the base of this change (the
+#1416 branch, `a2d387d6`) with only the timing instrumentation added, measured
+on 2026-10-28 00:10 (1-minute load average 1.9-4.5); "after" is the final
+build, measured on 2026-10-28 09:40 (load 4.5-6.7, desktop in use). A second
+round of each agreed within 6 ms at 100k and 20 ms at 500k on every phase.
 
 | Phase | 100k before | 100k after | 500k before | 500k after |
 |---|---|---|---|---|
-| Rust: watch registration | 9 | 0 | 45 | 44 |
-| Rust: read directory | 52 | 53 | 244 | 236 |
-| Rust: entry metadata | 24 | 24 | 110 | 111 |
-| Rust: sort | 25 | 14 | 161 | 91 |
-| Rust: encode reply | 21 | 16 | 115 | 70 |
-| Rust total | 131 | 105 | 674 | 550 |
-| Reply to webview + parse (`ipcAndParse`) | 58 | 22 | 376 | 98 |
-| Decode | 3 | 7 | 11 | 31 |
-| Project (filter, sort, peek) | 14 | 16 | 83 | 100 |
-| Settled → rows in DOM | 25 | 21 | 98 | 55 |
-| Rows → two frames | 17 | 15 | 27 | 27 |
-| **Open, complete** | **260** | **194** | **1,285** | **873** |
+| Rust: watch registration | 9 | 10 | 45 | 44 |
+| Rust: read directory | 52 | 61 | 244 | 248 |
+| Rust: entry metadata | 24 | 26 | 110 | 119 |
+| Rust: sort | 25 | 14 | 161 | 89 |
+| Rust: encode reply | 21 | 16 | 115 | 72 |
+| Rust total | 131 | 125 | 674 | 579 |
+| Reply to webview + parse (`ipcAndParse`) | 58 | 22 | 376 | 101 |
+| Decode | 3 | 7 | 11 | 34 |
+| Project (filter, sort, peek) | 14 | 16 | 83 | 102 |
+| Settled → rows in DOM | 25 | 19 | 98 | 56 |
+| Rows → two frames | 17 | 15 | 27 | 24 |
+| **Open, complete** | **260** | **208** | **1,285** | **907** |
 
-`ipcAndParse` before included Tauri dropping the returned listing after
-encoding it and before sending it: 1.5 M heap strings at 500k, 134-146 ms
-(11-21 ms at 100k), measured by timing that drop in an instrumented build.
-The 100k watch-registration figure is mostly the first open of a run (its
-p95 is 9 ms in both builds). Phases are medians of their own, so they do not
-sum exactly to the open time.
+The scan phases (read directory, entry metadata) did not change; their
+higher "after" values follow the higher load. An earlier run of the final
+code at the "before" session's load measured Rust total 105 / 550 ms and open
+194 / 873 ms. `ipcAndParse` before included Tauri dropping the returned
+listing after encoding it and before sending it: 1.5 M heap strings at 500k,
+134-146 ms (11-21 ms at 100k), measured by timing that drop in an
+instrumented build. Phases are medians of their own, so they do not sum
+exactly to the open time.
+
+Two phases got slower. Decoding builds every entry in JavaScript instead of
+taking objects from `JSON.parse` (+4 ms at 100k, +23 ms at 500k), and
+`project` rose by 2 / 19 ms: names are now substrings of one decoded column
+and paths are prefix + name concatenations, which the frontend's filter and
+sort pay to resolve the first time they read them.
 
 ### Changes
 
@@ -328,8 +339,9 @@ sum exactly to the open time.
   returned as raw bytes (`tauri::ipc::Response`): a JSON header, fixed-width
   little-endian columns and UTF-8 string columns, each decoded with one
   `TextDecoder` call and sliced per row. ASCII and non-ASCII names are
-  separate columns. The format is documented in `directory_wire.rs`; Rust and
-  TypeScript encoders are byte-identical against
+  separate columns. The format is documented in `directory_wire.rs`; the Rust
+  encoder and the mock/test encoder (`api/directory-wire-encode.ts`, kept out
+  of the startup bundle) are byte-identical against
   `tests/fixtures/directory-wire.json`.
 - `dir_listing.rs`: `par_sort_by_cached_key` from 8,192 entries (same order as
   the stable sequential sort).
@@ -341,42 +353,44 @@ sum exactly to the open time.
 ### Before and after
 
 End-to-end, complete median / p95 in ms, two interleaved rounds of n = 10
-per binary (round 1, round 2). Before: base of this change (`a2d387d6`, the
-#1416 branch) plus the timing instrumentation only.
+per binary (round 1, round 2), on 2026-10-28 09:36-09:48. Before: `origin/dev`
+at `5942f66d` (which includes #1416); after: this change on top of it. Both
+release builds, same machine, fixtures and runner; 1-minute load average
+5.3-6.7 throughout (desktop in use).
 
 | Operation | Before | After |
 |---|---|---|
-| Open 10k | 70 / 88, 55 / 58 | 54 / 60, 51 / 55 |
-| Open 100k | 260 / 276, 250 / 279 | 194 / 265, 188 / 232 |
-| Open 500k | 1,285 / 1,355, 1,266 / 1,339 | 873 / 930, 856 / 892 |
-| 100k: enter folder | 252 / 319, 276 / 305 | 188 / 197, 185 / 251 |
-| 100k: go up | 239 / 280, 239 / 276 | 187 / 193, 189 / 242 |
-| 100k: back | 237 / 277, 238 / 326 | 186 / 193, 187 / 259 |
-| 100k: forward | 243 / 263, 244 / 295 | 186 / 191, 186 / 287 |
-| 100k: sort Name → Size | 113 / 129, 110 / 129 | 110 / 130, 107 / 207 |
-| 100k: sort Size → Name | 66 / 73, 65 / 71 | 75 / 83, 76 / 112 |
+| Open 1k | 35 / 37, 35 / 39 | 35 / 41, 34 / 40 |
+| Open 10k | 61 / 75, 61 / 70 | 55 / 70, 53 / 57 |
+| Open 100k | 295 / 329, 294 / 311 | 208 / 245, 205 / 239 |
+| Open 500k | 1,429 / 1,512, 1,395 / 1,480 | 907 / 975, 907 / 958 |
+| 100k: enter folder | 306 / 378, 295 / 344 | 203 / 231, 212 / 230 |
+| 100k: go up | 281 / 296, 277 / 296 | 187 / 193, 191 / 209 |
+| 100k: back | 278 / 311, 277 / 344 | 188 / 204, 194 / 248 |
+| 100k: forward | 279 / 312, 263 / 294 | 197 / 216, 193 / 203 |
+| 100k: sort Name → Size | 117 / 134, 114 / 143 | 118 / 139, 117 / 126 |
+| 100k: sort Size → Name | 75 / 86, 72 / 82 | 80 / 105, 93 / 101 |
 | 100k: scroll frame interval | 17 | 17 |
 
-Sort changes are frontend-only work (`sortEntries` and re-rendering) that
-this change does not touch; their differences are within run-to-run spread
-(the Size → Name pair was measured at the most loaded point of each round).
+Opening a 100k folder is 29-30% faster and a 500k folder 35-37% faster;
+navigating within a 100k folder 27-34% faster. Sorting by size is unchanged.
+Sorting back to name is slower by 5-21 ms (7-29%) in both rounds, consistent
+with the earlier session (66 → 75 ms): it is the same substring/rope cost as
+the `project` phase above, paid by the name comparison. It was accepted for
+the open and navigation gains; flattening names during decode would likely
+move that cost into every open instead (not measured).
 
-Memory (`--scenarios memory`, same flags as the #1416 budget, one session
-each, PSS): the fixed build passed the budget, retaining 23 MB (100k) and
-20 MB (500k) after navigating away, live 660 and 471 B/entry. The app
-process with the 500k folder open measured 169 MB against 277-283 MB before:
-the reply no longer keeps a second copy of the entries alive while it is sent.
-The base session failed its own 500k budget (377 MB retained, sampled after
-the allocation-pressure step raised web-content PSS from 246 to 583 MB), so
-its 500k figures are not a reliable before value; the 100k ones (33 MB,
-1,092 B/entry) are in line with #1416's. `bun run perf:listing-heap`:
-352 B/entry (was 317; budget 380). The decoded entry costs 267 B against 232
-B from JSON in `jsc`, because `jsc` counts a substring of a decoded column
-(~40 B) above a JSON-parsed string (~23 B); the real app's live figure above
-fell rather than rose.
-
-Conditions: 2026-10-28, same machine; 1-minute load average 1.9-4.5 during
-the timing rounds (desktop in use).
+Memory (`--scenarios memory`, the #1416 budget flags, one session per binary,
+PSS, same conditions): both builds passed the budget. After navigating away,
+26 MB (100k) and 32 MB (500k) stay retained against 29 and 32 MB before. With
+the folder open, after the allocation-pressure step, the live cost per entry
+fell from 1,319 to 697 B (100k) and from 1,042 to 483 B (500k), and the app
+process measured 149 MB with the 500k folder open against 351-390 MB before
+(idle 148-151 MB): the reply no longer keeps a second copy of the entries alive
+while it is sent. `bun run perf:listing-heap`: 305 B/entry (317 before; budget
+380). A decoded entry's strings are substrings of the decoded columns, so one
+entry that outlives its listing (history, clipboard, another pane) keeps those
+column strings alive: up to roughly 10-20 MB for a 500k listing.
 
 ## Reproducing
 

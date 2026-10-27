@@ -3,6 +3,12 @@
 //!
 //!   scan_directory_parallel/10k_files   time: [5.7315 ms 5.7472 ms 5.7648 ms]
 //!
+//! Opt-in real-fixture mode (#983, docs/performance.md): set
+//! `TAURI_EXPLORER_BENCH_FIXTURES` to a root created by
+//! `node scripts/perf-fixtures.mjs create --root DIR` and every `files-*`
+//! folder in it is benchmarked as `scan_directory_parallel/fixture/<name>`
+//! (10 samples each, so the 500k folder finishes in reasonable time).
+//!
 //! Re-run `cargo bench` after touching `scan_directory_parallel` or
 //! `sort_entries` (src/files/dir_listing.rs) and compare against this
 //! baseline — criterion also prints its own historical comparison from
@@ -37,5 +43,36 @@ fn bench_scan_directory_parallel(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_scan_directory_parallel);
+fn bench_scan_fixtures(c: &mut Criterion) {
+    let Some(root) = std::env::var_os("TAURI_EXPLORER_BENCH_FIXTURES") else {
+        return;
+    };
+    let mut folders: Vec<PathBuf> = fs::read_dir(&root)
+        .expect("read TAURI_EXPLORER_BENCH_FIXTURES")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.is_dir()
+                && path
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy().starts_with("files-"))
+        })
+        .collect();
+    folders.sort_by_key(|path| fs::read_dir(path).map(|it| it.count()).unwrap_or(0));
+
+    let mut group = c.benchmark_group("scan_directory_parallel/fixture");
+    group.sample_size(10);
+    for folder in folders {
+        let name = folder.file_name().unwrap().to_string_lossy().into_owned();
+        group.bench_function(name, |b| {
+            b.iter(|| {
+                scan_directory_parallel(std::hint::black_box(&folder))
+                    .expect("scan fixture directory")
+            });
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(benches, bench_scan_directory_parallel, bench_scan_fixtures);
 criterion_main!(benches);

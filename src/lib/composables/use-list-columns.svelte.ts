@@ -11,6 +11,8 @@ export interface ListVisibleItem {
   readonly item: ListTopItem;
   readonly header: Extract<PeekRow, { kind: "entry" }> | null;
   readonly state: Extract<PeekRow, { kind: "peek-state" }> | null;
+  /** A lineage group row placed in its own slot (full flow). */
+  readonly group?: Extract<PeekRow, { kind: "lineage-group" }> | null;
 }
 import { dropHover } from "$lib/state/drop-hover";
 import { createRafCoalescer } from "$lib/domain/raf-coalesce";
@@ -100,7 +102,8 @@ export function useListColumns(deps: ListColumnsDeps) {
         const header = item.entryIndex === null ? null : peekRows.rows[peekRows.entryToRow[item.entryIndex]] as ListVisibleItem["header"];
         const row = item.rowIndex === undefined ? null : peekRows.rows[item.rowIndex];
         const state = row?.kind === "peek-state" ? row : null;
-        visible = { placement, item, header, state };
+        const group = row?.kind === "lineage-group" ? row : null;
+        visible = group ? { placement, item, header, state, group } : { placement, item, header, state };
         visibleObjects.set(placement, visible);
       }
       return visible;

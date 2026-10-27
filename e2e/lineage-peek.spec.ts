@@ -216,3 +216,33 @@ test("first paint waits for a slow lineage instead of showing a flat listing", a
   await expect(rows(page, "c.png")).toHaveCount(0);
   expect(await page.evaluate(() => (window as unknown as { __flat: string[] }).__flat)).toEqual([]);
 });
+
+test("List shows an open lineage as a card with its group row", async ({ page }) => {
+  await start(page, "list");
+  await rows(page, "A.png").getByRole("button", { name: "Expand A.png", exact: true }).click();
+  const card = page.locator(`${pane} [data-card-scroll][data-path="${P("A.png")}"]`);
+  await expect(card.locator(`[data-lineage-group="group:${P("A.png")}|${P("B.png")}"]`)).toContainText("with B.png");
+  for (const name of ["m.png", "c.png", "d.png"]) await expect(card.locator(`.entry-item[data-path="${P(name)}"]`)).toBeVisible();
+  await page.screenshot({ path: "screenshots/feat/lineage-peek/list-lineage-card.png" });
+});
+
+test("Tiles opens lineage panels, and spatial keys keep each duplicate's own panel", async ({ page }) => {
+  await start(page, "tiles");
+  const tile = (name: string) => page.locator(`${pane} .tile-row .entry-item[data-path="${P(name)}"]`);
+  await tile("A.png").getByRole("button", { name: "Expand A.png", exact: true }).click();
+  await tile("B.png").getByRole("button", { name: "Expand B.png", exact: true }).click();
+  const panelOf = (name: string) => page.locator(`${pane} .tile-panel[data-path="${P(name)}"]`);
+  await expect(panelOf("A.png").locator(`.entry-item[data-path="${P("m.png")}"]`)).toBeVisible();
+  await expect(panelOf("B.png").locator(`.entry-item[data-path="${P("m.png")}"]`)).toBeVisible();
+  await page.screenshot({ path: "screenshots/feat/lineage-peek/tiles-lineage-panels.png" });
+  const focusedPanel = () => page.evaluate(() => document.activeElement?.closest(".tile-panel")?.getAttribute("data-path") ?? null);
+  // A's panel takes the band below the row, so B's opens above it.
+  for (const [name, key] of [["A.png", "ArrowDown"], ["B.png", "ArrowUp"]] as const) {
+    await tile(name).click();
+    await page.keyboard.press(key);
+    await expect.poll(focusedPanel).toBe(P(name));
+    await expect.poll(() => page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.path)).toBe(P("m.png"));
+    // Both occurrences of m highlight, but the cursor is this panel's.
+    await expect(page.locator(`${pane} .tile-panel .entry-item.selected[data-path="${P("m.png")}"]`)).toHaveCount(2);
+  }
+});

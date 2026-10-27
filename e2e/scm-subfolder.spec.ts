@@ -22,7 +22,8 @@ async function openScmInSubfolder(page: Page): Promise<void> {
   const srcEntry = page.locator('.file-list .entry-item.directory', { hasText: "src" });
   await srcEntry.waitFor({ timeout: 5000 });
   await srcEntry.dblclick();
-  await page.waitForTimeout(500);
+  // The pane has entered src/ (its staged App.tsx is listed).
+  await page.locator(".file-list .entry-item", { hasText: "App.tsx" }).first().waitFor({ timeout: 5000 });
 }
 
 test.describe("SCM panel in repo subfolder", () => {
@@ -33,9 +34,7 @@ test.describe("SCM panel in repo subfolder", () => {
     const changesSection = page.locator('[data-section="changes"]');
     await expect(changesSection).toBeVisible();
 
-    const changesRows = changesSection.locator(".row");
-    const count = await changesRows.count();
-    expect(count).toBeGreaterThan(0);
+    await expect(changesSection.locator(".row").first()).toBeVisible();
   });
 
   test("does not show 'Working tree clean' when repo has changes in current subfolder", async ({ page }) => {

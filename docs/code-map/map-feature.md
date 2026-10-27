@@ -121,6 +121,7 @@ backend for E2E/browser).
 - `domain/history.ts`, `api/history.ts`, `state/shared-history.ts`, `state/recent-files.svelte.ts`, `state/frecency.svelte.ts` — bounded validated local mirrors and native granular IPC writes; refresh canonical shared history before Quick Open and flush accepted writes before picker response.
 - `src-tauri/src/shared_history/mod.rs`, `src-tauri/src/shared_history/model.rs`, `src-tauri/src/shared_history/store.rs`, `src-tauri/test_support/shared_history.rs` — async commands, pure policy, one-time legacy import and SQLite IMMEDIATE read-modify-write transactions; separate process contracts verify coherence and concurrent additions.
 - `src-tauri/src/portal.rs`, `src-tauri/src/portal/parent.rs` — OpenFile/SaveFile carry the exported parent-window identifier into GTK main-thread parenting before show. Wayland imports xdg_foreign handles; X11 uses a foreign window and source-relative geometry. Invalid or backend-mismatched identifiers fall back to ordinary placement.
+- `src-tauri/src/portal.rs`, `src-tauri/src/portal/idle.rs` — the activated backend exits after 60 s with no request or picker window (releasing its bus name first, immediately once its executable was replaced), exits at once if it cannot own the name, and never owns the plugin profile (`installed_plugins::bootstrap_services_in`). Isolated-bus contract: `src-tauri/tests/portal_lifecycle.rs` via `bun run test:portal-lifecycle` (#1427).
 
 ## Navigation, address bar, breadcrumb, autocomplete
 

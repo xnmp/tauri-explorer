@@ -672,6 +672,8 @@ struct ProfileFixture {
     provider: package::Installed,
     second_consumer: package::Installed,
     next: [PathBuf; 2],
+    /// Declared last so it is released after the profile is torn down.
+    _host: ai_operations::HostProfile,
 }
 impl ProfileFixture {
     fn id(&self, role: Role) -> &str {
@@ -776,6 +778,7 @@ impl Machine {
             consumer,
             provider,
             next,
+            _host: host,
         } = Fixture::new(&format!(
             "model-{}",
             NEXT_CASE.fetch_add(1, Ordering::Relaxed)
@@ -802,6 +805,7 @@ impl Machine {
             provider,
             second_consumer,
             next,
+            _host: host,
         };
         let limits = Limits {
             disk_bytes: 200 * 1024 * 1024 + 16 * 1024,
@@ -5058,6 +5062,41 @@ fn run(cases: u32, steps: usize) {
 #[test]
 fn ai_operations_reference_state_machine() {
     run(64, 40)
+}
+/// #1405: shrunk counterexample recorded during a loaded full-suite run. It
+/// passes alone: a parallel fixture held the process-wide AI action gate until
+/// this machine's settlement budget elapsed. Fixtures now own the host profile.
+#[test]
+fn model_issue_1405_counterexample() {
+    use Command::*;
+    let trace = [
+        SpoolManifest(2),
+        SpoolReply(2),
+        Admit(0, true),
+        ConsumerReceive(1, false),
+        PausedProviderMutation(1, 2, 0),
+        SpoolReserve(2, true, true),
+        SpoolSeal(0),
+        ProviderComplete(2),
+        Admit(2, true),
+        Stage(0, false, true),
+        Seal(0),
+        Seal(0),
+        SpoolSeal(0),
+        CancelExitRace(2, true),
+        DelayedReceipt(1, true),
+        AggregateCrash(2, 3, 12, false),
+        Register(0),
+        RecoveryWriterGc(1),
+        CancelPreparation(1),
+    ];
+    let mut m = Machine::new();
+    for command in trace {
+        m.apply(command)
+            .unwrap_or_else(|cause| panic!("at={command:?}: {cause}"));
+    }
+    m.quiesce()
+        .unwrap_or_else(|cause| panic!("quiesce: {cause}"));
 }
 #[test]
 fn model_standalone_unbound_spool_does_not_revive_settled_execution() {

@@ -146,7 +146,8 @@ describe("changes job selection", () => {
     it("downloads the chosen map and fetches the commit the map records", () => {
       stubGh("7 42 abc123", "def456");
       runStep(fetch.run as string, { GITHUB_REPOSITORY: "o/r" });
-      expect(readFileSync(join(dir, "out"), "utf8").trim()).toBe(`map=${dir}/impact-map/e2e-impact-map.json`);
+      // The stubbed node reads no map, so its server kind is unknown (#1391).
+      expect(readFileSync(join(dir, "out"), "utf8").trim()).toBe(`map=${dir}/impact-map/e2e-impact-map.json\nserver=unknown`);
       expect(calls()).toEqual(expect.arrayContaining([
         "node scripts/impact-map-source.mjs o/r",
         `gh run download 42 --repo o/r -n e2e-impact-map -D ${dir}/impact-map`,
@@ -393,11 +394,57 @@ describe.each([
     expect(existsSync(list)).toBe(false);
   });
 
+  it("logs the full suite when the plan overrode a mismatched impact map (#1391)", () => {
+    writeFileSync(join(dir, "e2e-shard.txt"), "e2e/a.spec.ts\n");
+    const log = runStep(e2e.run as string, {
+      E2E_SELECTION: "e2e/a.spec.ts", E2E_REASON: "1 spec(s) from 1 changed file(s)", E2E_SERVER_OVERRIDE: "map on another server",
+    }, shard);
+    expect(log).toContain(`${label}: full suite (map on another server), shard of 1 spec file(s)`);
+  });
+
   it("logs a selected subset with nothing left in this shard and runs nothing", () => {
     const log = runStep(e2e.run as string, { E2E_SELECTION: "e2e/a.spec.ts", E2E_REASON: "1 spec(s) from 1 changed file(s)" }, { "steps.plan.outputs.run": "false", "matrix.shard": "2" });
     expect(log).toContain(`${label}: nothing to run in this shard; selected subset (1 spec(s) from 1 changed file(s))`);
     expect(calls()).toEqual([]);
   });
+});
+
+// #1391: a map recorded on one kind of app server does not prove the
+// selection on the other (chunks vs per-module scripts), so such a shard
+// plans every spec of its tier.
+describe.each([["chromium", "e2e"], ["webkit-tests", "webkit"]] as const)("%s shard plan under the impact map's server kind", (job, tier) => {
+  const plan = step(job, (s) => s.id === "plan");
+  const planned = (env: Record<string, string>) => {
+    runStep(plan.run as string, { E2E_SELECTION: "e2e/a.spec.ts", E2E_REASON: "1 spec(s) from 1 changed file(s)", GITHUB_ENV: join(dir, "env"), ...env },
+      { "matrix.shard": "1", "strategy.job-total": "2" });
+    return readFileSync(join(dir, "e2e-selection.txt"), "utf8");
+  };
+
+  it("reads the map's server kind and its own", () => {
+    expect(plan.env).toMatchObject({
+      IMPACT_SERVER: "${{ needs.changes.outputs.impact-server }}",
+      APP_SERVER: "${{ steps.server.outputs.server }}",
+      E2E_SELECTION: `\${{ needs.changes.outputs.${tier} }}`,
+    });
+    const names = (ci.jobs[job].steps as Step[]).map((s) => s.name);
+    expect(names.indexOf("Choose the app server")).toBeLessThan(names.indexOf("Plan duration-balanced shard"));
+    expect(ci.jobs.changes.outputs["impact-server"]).toBe("${{ github.event_name == 'pull_request' && steps.impact.outputs.server || '' }}");
+  });
+
+  it.each([
+    ["bundle", "dev"], ["dev", "bundle"], ["unknown", "bundle"], ["unknown", "dev"], ["mixed", "bundle"], ["mixed", "dev"],
+  ])("plans every spec when the map was recorded on %s and the shard serves %s", (mapServer, appServer) => {
+    expect(planned({ IMPACT_SERVER: mapServer, APP_SERVER: appServer })).toBe("ALL\n");
+    expect(readFileSync(join(dir, "env"), "utf8")).toContain(`E2E_SERVER_OVERRIDE=the impact map was recorded on the ${mapServer} app server`);
+    expect(readFileSync(join(dir, "summary"), "utf8")).toContain(`recorded on the ${mapServer} app server, this shard serves the ${appServer} server`);
+  });
+
+  it.each([["bundle", "bundle"], ["dev", "dev"], ["", "bundle"], ["", "dev"]])(
+    "keeps the selection when the map was recorded on '%s' and the shard serves %s",
+    (mapServer, appServer) => {
+      expect(planned({ IMPACT_SERVER: mapServer, APP_SERVER: appServer })).toBe("e2e/a.spec.ts\n");
+    },
+  );
 });
 
 describe("view-mode shard plan", () => {

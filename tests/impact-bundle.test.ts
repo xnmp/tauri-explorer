@@ -1,8 +1,9 @@
 import { encode } from "@jridgewell/sourcemap-codec";
 import { describe, expect, it } from "vitest";
-import { chunkModules } from "../scripts/e2e-browser-build.mjs";
+import { chunkModules, unbundledModules } from "../scripts/e2e-browser-build.mjs";
 import { bundleSourcePath, chunkCoverage, chunkEvaluated, chunkSegments } from "../scripts/impact-bundle.mjs";
-import { reduceCoverage } from "../scripts/impact-collect.mjs";
+import { coverageOrigins, reduceCoverage } from "../scripts/impact-collect.mjs";
+import { mapServer, mergeImpact } from "../scripts/impact-coverage.mjs";
 import { pickMapArtifact, trustedProducer } from "../scripts/impact-map-source.mjs";
 
 const CHUNK = "_app/immutable/chunks/x.js";
@@ -93,6 +94,20 @@ describe("reduceCoverage with bundle chunks", () => {
     const result = reduceCoverage([{ url, functions: [fn(0, code.length, 0)] as never }], { root: "/r", readFile: read, chunk: () => segments });
     expect(result.loaded).toEqual([]);
   });
+
+  // #1391: a module tree-shaken out of every chunk has no code to cover, but
+  // an edit can bring it into the bundle; every bundle test counts as loading it.
+  it("counts tree-shaken modules as loaded by every test that evaluated the bundle", () => {
+    const unbundled = ["src/lib/shaken.ts"];
+    const ran = reduceCoverage([{ url, functions: [top, bFn] as never }], { root: "/r", readFile: read, chunk: () => segments, unbundled });
+    expect(ran.loaded).toContain("src/lib/shaken.ts");
+    expect(ran.exercised).not.toContain("src/lib/shaken.ts");
+    const idle = reduceCoverage([{ url, functions: [fn(0, code.length, 0)] as never }], { root: "/r", readFile: read, chunk: () => segments, unbundled });
+    expect(idle.loaded).toEqual([]);
+    // Dev-server scripts are per module: their own coverage decides.
+    const dev = reduceCoverage([{ url: "http://localhost:1421/src/lib/c.ts", functions: [top] as never }], { root: "/r", readFile: read, unbundled });
+    expect(dev.loaded).toEqual(["src/lib/c.ts"]);
+  });
 });
 
 describe("chunkModules", () => {
@@ -106,6 +121,58 @@ describe("chunkModules", () => {
       "style.css": { type: "asset", fileName: "_app/s.css" },
     };
     expect(chunkModules(bundle, "/repo")).toEqual({ "_app/a.js": ["src/lib/C.svelte", "src/lib/x.ts"] });
+  });
+});
+
+describe("unbundledModules", () => {
+  it("lists src/ modules in the build graph that no chunk contains", () => {
+    const chunks = { "_app/a.js": ["src/lib/C.svelte", "src/lib/x.ts"] };
+    const ids = [
+      "/repo/src/lib/x.ts", "/repo/src/lib/C.svelte?svelte&type=style&lang.css", "/repo/src/lib/C.svelte",
+      "/repo/src/lib/shaken.ts", "/repo/src/lib/types.ts", "/repo/node_modules/svelte/src/index.js", "\0vite/preload-helper.js",
+    ];
+    expect(unbundledModules(ids, chunks, "/repo")).toEqual(["src/lib/shaken.ts", "src/lib/types.ts"]);
+    expect(unbundledModules([], chunks, "/repo")).toEqual([]);
+  });
+});
+
+describe("coverage origins (#1391)", () => {
+  it("attributes a spec beside the bundle to its own dev server, not the project's", () => {
+    expect(coverageOrigins({ projectBaseURL: "http://localhost:1420", specBaseURL: "http://localhost:1421/", bundled: true }))
+      .toEqual({ requests: "http://localhost:1421", bundle: "http://localhost:1420", server: "dev" });
+    expect(coverageOrigins({ projectBaseURL: "http://localhost:1420", specBaseURL: "http://localhost:1420/", bundled: true }))
+      .toEqual({ requests: "http://localhost:1420", bundle: "http://localhost:1420", server: "bundle" });
+  });
+
+  it("is the dev server everywhere without a bundle", () => {
+    expect(coverageOrigins({ projectBaseURL: "http://localhost:1420", bundled: false }))
+      .toEqual({ requests: "http://localhost:1420", bundle: null, server: "dev" });
+    expect(coverageOrigins({ bundled: true })).toEqual({ requests: null, bundle: null, server: "dev" });
+    expect(coverageOrigins({ projectBaseURL: "not a url", bundled: true })).toEqual({ requests: null, bundle: null, server: "dev" });
+  });
+});
+
+describe("map server kind (#1391)", () => {
+  const record = (bundled?: boolean, server: "bundle" | "dev" = bundled ? "bundle" : "dev") =>
+    ({ id: `t${bundled}`, spec: "e2e/a.spec.ts", loaded: [], exercised: [], server, ...(bundled === undefined ? {} : { bundled }) });
+
+  it("is bundle only when every record came from a bundle run", () => {
+    // A spec beside the bundle runs on the dev server in PR shards too.
+    expect(mapServer([record(true), record(true, "dev")])).toEqual({ server: "bundle" });
+    expect(mapServer([record(false)])).toEqual({ server: "dev" });
+    expect(mergeImpact([record(true)], []).server).toBe("bundle");
+  });
+
+  // Review of #1391: a dev-push shard that lost the bundle artifact records
+  // dev-server loader sets beside bundle ones; no PR shard matches that map.
+  it("is mixed when a shard fell back to the dev server during a bundle run", () => {
+    expect(mapServer([record(true), record(false)])).toEqual({ server: "mixed" });
+  });
+
+  it("is absent for records that predate the field", () => {
+    expect(mapServer([record(true), record()])).toEqual({});
+    expect(mapServer([])).toEqual({});
+    expect("server" in mergeImpact([record()], [])).toBe(false);
   });
 });
 
@@ -146,5 +213,22 @@ describe("impact map source", () => {
     expect(pickMapArtifact(artifacts, (id) => runs[id] ?? null, repo)).toEqual({ artifact: 3, run: 11, sha: "sha3" });
     expect(pickMapArtifact([], () => null, repo)).toBeNull();
     expect(pickMapArtifact([art(2, 10, "2026-10-23T00:00:00Z")], (id) => runs[id] ?? null, repo)).toBeNull();
+  });
+
+  // #1391: shards serve the bundle, so a newer nightly dev-server map would
+  // make every shard run in full; the newest ci.yml map wins over it.
+  it("prefers the newest ci.yml map over a newer nightly one, falling back to the nightly", () => {
+    const art = (id: number, runId: number, created: string) => ({
+      id, name: "e2e-impact-map", expired: false, created_at: created,
+      workflow_run: { id: runId, head_branch: "dev", head_sha: `sha${id}` },
+    });
+    const runs: Record<number, ReturnType<typeof run>> = {
+      20: run({ id: 20, event: "schedule", path: ".github/workflows/e2e-impact-map.yml" }),
+      21: run({ id: 21, path: ".github/workflows/ci.yml@refs/heads/dev" }),
+    };
+    const nightly = art(1, 20, "2026-10-25T00:00:00Z");
+    const push = art(2, 21, "2026-10-24T00:00:00Z");
+    expect(pickMapArtifact([nightly, push], (id) => runs[id] ?? null, repo)).toEqual({ artifact: 2, run: 21, sha: "sha2" });
+    expect(pickMapArtifact([nightly], (id) => runs[id] ?? null, repo)).toEqual({ artifact: 1, run: 20, sha: "sha1" });
   });
 });

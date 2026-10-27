@@ -35,8 +35,9 @@ import { gatePrototype } from "./evidence-shots";
 // are recorded too. Unset, specs get exactly the fixtures below.
 const covered = impactCoverageEnabled
   ? base.extend<{ impactCoverage: void }>({
-    impactCoverage: [async ({ browser, context }, use, testInfo) => {
-      await collectImpactCoverage(browser, context, testInfo, () => use());
+    // `baseURL` resolves to the override below: the spec's own app server.
+    impactCoverage: [async ({ browser, context, baseURL }, use, testInfo) => {
+      await collectImpactCoverage(browser, context, testInfo, () => use(), baseURL);
     }, { auto: true }],
   })
   : base;

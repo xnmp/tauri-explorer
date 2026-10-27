@@ -33,8 +33,11 @@ A 15 ms → 3 ms "5×" win on search is invisible: both are under one frame.
 Findings are static analysis + cost reasoning, **not** profiler flame-graphs — the dev
 server runs on mock IPC (`mock-invoke.ts`), so it cannot time real filesystem/IPC cost.
 Bundle sizes (below) are measured from a real `bun run build`. The two `O(n²)` findings
-and the streaming architecture were verified by reading the source directly. Treat all
-"~Xms" as engineering estimates until [instrumentation](#0-add-real-timing-first) lands.
+and the streaming architecture were verified by reading the source directly. The "~Xms"
+figures in the findings below are engineering estimates from June 2026. **Measured
+end-to-end, Rust and frontend numbers now live in [performance.md](performance.md)**
+(release binary, real filesystem and IPC, reproducible fixtures; #983); prefer those
+wherever the two disagree.
 
 ---
 
@@ -106,6 +109,10 @@ coreState.entries = [...coreState.entries, ...entries];
 buffer, assign `coreState.entries = buffer` **once** on `onDone` (or throttle to ~one
 assignment per 250 ms for very large dirs). The first-100 inline paint already gives
 instant perceived response; this just stops the main thread thrashing during fill-in.
+_(Superseded: listings are no longer streamed in batches. The backend now returns one
+complete snapshot that is published in a single update, so there is no early first-100
+paint — first rows and the complete listing appear together; measured in
+[performance.md](performance.md).)_
 `O(n²·log n)` → `O(n·log n)`, 50 reactive flushes → 1–2.
 
 ### Cluster B — input responsiveness (#3 + #4 + #5)
@@ -232,6 +239,10 @@ The gap between the two numbers _is_ the win. After implementing the buffer fix 
    true filesystem/IPC latency. See next section.
 
 ### 0. Add real timing first
+
+_Navigation timing on the real release binary now exists without app instrumentation:
+`scripts/perf-real-app.mjs` (see [performance.md](performance.md#reproducing)). It times
+each navigation from the page side; it does not split Rust, IPC and render phases._
 
 Before/after numbers on the paths that actually matter (nav IPC, first paint, cold start)
 require timing the **real Tauri binary**, not the mock dev server. Two low-cost options:

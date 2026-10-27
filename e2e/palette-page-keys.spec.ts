@@ -2,7 +2,8 @@
  * E2E: PgUp/PgDn move the highlighted row by 10 in Quick Open and the command
  * palette, clamping at the ends (#1419).
  */
-import { test, expect, type Page, type Locator } from "./fixtures";
+import type { Locator } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 
 const rowIndex = (rows: Locator) =>
   rows.evaluateAll((els) => els.findIndex((e) => e.classList.contains("selected")));
@@ -25,9 +26,7 @@ async function exercise(page: Page, dialog: Locator, rows: Locator, list: Locato
   await page.keyboard.press("PageDown");
   await expect.poll(() => rowIndex(rows)).toBe(10);
   await expectSelectedVisible(list, dialog.locator(".selected"));
-  if (process.env.CAPTURE_EVIDENCE === "1") {
-    await page.screenshot({ path: "/home/chong/Repos/tauri-explorer/.worktrees/palette-page-keys/screenshots/feat/palette-page-keys/pgdn-highlight.png" });
-  }
+  await page.screenshot({ path: "screenshots/feat/palette-page-keys/pgdn-highlight.png" });
 
   await page.keyboard.press("PageUp");
   await expect.poll(() => rowIndex(rows)).toBe(0);

@@ -206,7 +206,7 @@
 
   // Type-ahead selection composable
   const typeAhead = useTypeAhead(
-    () => explorer.ownDisplayEntries,
+    () => explorer.topLevelEntries,
     (entry) => {
       explorer.selectEntry(entry, {});
       scrollToSelected(entry);

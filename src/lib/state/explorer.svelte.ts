@@ -303,7 +303,9 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   const detailRows = $derived(peek.policies?.buildPeekRows(peekTree, peek.listing, creationSession !== null) ?? flatPeekRows(peekTree, creationSession !== null));
 
   function pruneHiddenChildren(before: typeof peekTree, after: readonly FileEntry[]) {
-    const pruned = prunePeekSelection(before, after, coreState.selectedPaths, coreState.cursorPath, coreState.selectionAnchorPath, cursorKey, anchorKey);
+    const grouping = lineageGrouping;
+    const pruned = prunePeekSelection(before, after, coreState.selectedPaths, coreState.cursorPath, coreState.selectionAnchorPath, cursorKey, anchorKey,
+      grouping ? path => grouping.revealChain(path).length > 0 : undefined);
     if (!pruned) return;
     setSelection(pruned.selected);
     if (pruned.refocus !== undefined) {
@@ -1240,6 +1242,8 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     fileViewPresentation,
     get ownEntries() { return coreState.entries; },
     get ownDisplayEntries() { return ownDisplayEntries; },
+    /** Depth 0 for typeahead: with lineage grouping, its roots (§4.2). */
+    get topLevelEntries(): readonly FileEntry[] { return lineageGrouping ? lineageGrouping.roots : ownDisplayEntries; },
     get entryMeta() { return peekTree.meta; },
     get detailRows() { return detailRows; },
     get peekEnabled() { return capability !== "none"; },
@@ -1484,7 +1488,24 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
       revealedPath = path;
       filterQuery = "";
       showFilter = false;
-      selectEntry(entry);
+      // Lineage peek: a held arrival is released, and a grouped file opens
+      // the peeks down to one occurrence of it before it is selected.
+      paneLineage?.release(path);
+      const grouping = lineageGrouping;
+      const chain = grouping?.revealChain(path) ?? [];
+      const open = () => {
+        for (const id of chain) if (!peek.expanded.has(id)) peek.toggle(id);
+        notePeekChange(chain[0]);
+        selectEntry(entry);
+      };
+      if (!chain.length) selectEntry(entry);
+      else if (peek.policies) open();
+      else {
+        const generation = navGeneration;
+        void peek.activate().then(() => {
+          if (!destroyed && generation === navGeneration && grouping === lineageGrouping) open();
+        });
+      }
       onRevealCallback?.();
       return true;
     },

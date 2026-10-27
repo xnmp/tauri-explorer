@@ -16,11 +16,14 @@ import { OCCURRENCE_SEPARATOR, occurrencePath, parentKeyOf, peekKeyAt } from "./
  * file; `refocusKey` names that occurrence. */
 export function prunePeekSelection(before: Pick<PeekTree, "entries" | "meta" | "keys">, after: readonly FileEntry[],
   selected: Iterable<string>, cursor: string | null, anchor: string | null,
-  cursorKey: string | null = cursor, anchorKey: string | null = anchor): { selected: string[]; refocus?: string | null; refocusKey?: string } | null {
+  cursorKey: string | null = cursor, anchorKey: string | null = anchor,
+  /** A depth-0 path that left the visible entries but is still listed and now
+   * grouped under a closed parent (lineage peek) is hidden too. */
+  regrouped: (path: string) => boolean = () => false): { selected: string[]; refocus?: string | null; refocusKey?: string } | null {
   const visible = new Set(after.map(e => e.path));
   const hidden = new Set<string>();
   before.entries.forEach((entry, index) => {
-    if (!visible.has(entry.path) && (before.meta.get(peekKeyAt(before, index))?.depth ?? 0) > 0) hidden.add(entry.path);
+    if (!visible.has(entry.path) && ((before.meta.get(peekKeyAt(before, index))?.depth ?? 0) > 0 || regrouped(entry.path))) hidden.add(entry.path);
   });
   if (!hidden.size) return null;
   const kept = [...selected].filter(path => !hidden.has(path));

@@ -96,12 +96,16 @@
   function navigateSibling(delta: number): void {
     const explorer = windowTabsManager.getActiveExplorer();
     if (!explorer || !selectedFile) return;
-    const files = explorer.displayEntries.filter((e) => e.kind !== "directory");
+    // Indices into the visible entries, so a path listed twice (lineage
+    // peek) steps from the cursor's own occurrence.
+    const entries = explorer.displayEntries;
+    const files = entries.flatMap((e, index) => e.kind !== "directory" ? [index] : []);
     if (files.length === 0) return;
-    const idx = files.findIndex((e) => e.path === selectedFile!.path);
+    const cursor = entries[explorer.cursorIndex]?.path === selectedFile.path ? explorer.cursorIndex : entries.findIndex((e) => e.path === selectedFile!.path);
+    const idx = files.indexOf(cursor);
     if (idx < 0) return;
-    const next = files[(idx + delta + files.length) % files.length];
-    explorer.selectEntry(next);
+    const nextIndex = files[(idx + delta + files.length) % files.length];
+    explorer.selectEntry(entries[nextIndex], {}, nextIndex);
     fullscreen.resetZoom();
   }
 

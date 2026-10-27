@@ -246,3 +246,25 @@ test("Tiles opens lineage panels, and spatial keys keep each duplicate's own pan
     await expect(page.locator(`${pane} .tile-panel .entry-item.selected[data-path="${P("m.png")}"]`)).toHaveCount(2);
   }
 });
+
+test("revealing a grouped edit opens its lineage to one occurrence and selects it", async ({ page }) => {
+  await start(page);
+  await expect(rows(page, "m.png")).toHaveCount(0);
+  const revealed = await page.evaluate(async path => (await import("/src/lib/state/window-tabs.svelte.ts")).windowTabsManager.getActiveExplorer()!.revealEntry(path), P("m.png"));
+  expect(revealed).toBe(true);
+  await expect(rows(page, "m.png").first()).toBeVisible();
+  await expect(rows(page, "m.png").first()).toHaveClass(/selected/);
+  expect(await level(rows(page, "m.png").first())).toBe("3");
+});
+
+test("typeahead stays at depth 0 while grouped edits are hidden", async ({ page }) => {
+  await start(page);
+  await rows(page, "notes.txt").click();
+  await page.keyboard.type("c");
+  // c.png is hidden under A; typing "c" must not select it.
+  const selected = await page.evaluate(async () => [...(await import("/src/lib/state/window-tabs.svelte.ts")).windowTabsManager.getActiveExplorer()!.selectedPaths]);
+  expect(selected).not.toContain(P("c.png"));
+  await page.waitForTimeout(900);
+  await page.keyboard.type("b");
+  await expect(rows(page, "B.png")).toHaveClass(/selected/);
+});

@@ -57,6 +57,9 @@ export type LineageProjection =
     children(path: string): LineageChildren | undefined;
     /** Every lineage descendant of `paths` (excluding `paths`), in listing order. */
     descendants(paths: Iterable<string>): string[];
+    /** The peeks to open to show `path` once: each ancestor file (root first),
+     * and the group id it sits in under that ancestor. Empty for a root. */
+    revealChain(path: string): string[];
   }
   /** Grouping is off: a cycle (or nothing to group). `reason` "cycle" is counted. */
   | { kind: "flat"; reason: "cycle" | "empty" };
@@ -105,7 +108,8 @@ export function projectLineage(listing: readonly FileEntry[], lineage: EntryLine
       if (parent?.kind === "entry" && typeof parent.path === "string") {
         const key = paths.key(parent.path);
         const entry = key === null ? undefined : byKey.get(key);
-        if (!entry || key === childKey || seen.has(key!)) continue;
+        // A folder cannot be peeked as a lineage parent: the edge is dropped.
+        if (!entry || entry.kind === "directory" || key === childKey || seen.has(key!)) continue;
         seen.add(key!); entryParents.push(key!);
         set.push({ kind: "entry", path: entry.path, name: entry.name });
       } else if (parent?.kind === "external" && typeof parent.key === "string") {
@@ -168,6 +172,21 @@ export function projectLineage(listing: readonly FileEntry[], lineage: EntryLine
     children(path) {
       const key = paths.key(path);
       return key === null ? undefined : children.get(key);
+    },
+    revealChain(path) {
+      const chain: string[] = [];
+      const visited = new Set<string>();
+      let key = paths.key(path);
+      while (key !== null && edges.has(key) && !visited.has(key)) {
+        visited.add(key);
+        const parentKey = edges.get(key)![0];
+        const set = sets.get(key)!;
+        const parent = byKey.get(parentKey)!.path;
+        if (set.length > 1) chain.unshift(safe(`group:${parent}|${set.filter(item => keyOf(item) !== parentKey).map(keyOf).sort().join("|")}`));
+        chain.unshift(parent);
+        key = parentKey;
+      }
+      return chain;
     },
     descendants(start) {
       const found = new Set<string>();

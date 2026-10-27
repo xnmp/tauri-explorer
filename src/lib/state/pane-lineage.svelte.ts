@@ -134,10 +134,11 @@ export function createPaneLineage(inputs: PaneLineageInputs) {
         }
         const known = new Set<string | null>();
         for (const [child, parents] of lineage.parents) {
-          known.add(paths.key(child));
-          for (const parent of parents) if (parent.kind === "entry") known.add(paths.key(parent.path));
+          if (typeof child === "string") known.add(paths.key(child));
+          if (Array.isArray(parents)) for (const parent of parents) if (parent?.kind === "entry" && typeof parent.path === "string") known.add(paths.key(parent.path));
         }
-        const arrivals = listing.filter(entry => !before.has(entry.path) && !held.has(entry.path) && !known.has(paths.key(entry.path)));
+        // Only files can be lineage outputs: a new folder never waits.
+        const arrivals = listing.filter(entry => entry.kind !== "directory" && !before.has(entry.path) && !held.has(entry.path) && !known.has(paths.key(entry.path)));
         const kept = [...held].filter(path => now.has(path));
         if (!arrivals.length && kept.length === held.size) return;
         held = new Set([...kept, ...arrivals.map(entry => entry.path)]);
@@ -171,6 +172,8 @@ export function createPaneLineage(inputs: PaneLineageInputs) {
     get holding() { return holding; },
     /** New files held back while the lineage catches up. */
     get held(): ReadonlySet<string> { return held; },
+    /** Show a held arrival now (it is being revealed or selected). */
+    release(path: string) { if (held.has(path)) held = new Set([...held].filter(item => item !== path)); },
     /** The grouping for the current listing, or null (no lineage here, or not loaded). */
     get projection() { return projection; },
   };

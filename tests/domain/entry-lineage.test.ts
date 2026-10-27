@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 import type { FileEntry } from "$lib/domain/file";
 import { projectLineage, lineageGroupLabel, type EntryLineage, type LineageParent } from "$lib/domain/entry-lineage";
-import { buildPeekRows, flattenPeekEntries, type PeekRows, type PeekTree } from "$lib/domain/folder-peek";
+import { buildPeekRows, flattenPeekEntries, LINEAGE_OCCURRENCE_CAP, type PeekRows, type PeekTree } from "$lib/domain/folder-peek";
 import { occurrencePath, peekKeyAt } from "$lib/domain/folder-peek-flat";
 import { prunePeekSelection } from "$lib/domain/folder-peek-pane";
 import { collapseSubtree, pruneExpanded } from "$lib/domain/folder-peek-memory";
@@ -216,6 +216,51 @@ describe("§5 invariants", () => {
     const closedBoth = tree(listing, worked, [A.path]);
     const result = prunePeekSelection(open, closedBoth.entries, [m.path, z.path], m.path, null, mUnderB, null);
     expect(result).toEqual({ selected: [z.path], refocus: B.path });
+  });
+});
+
+describe("review fixes", () => {
+  it("ignores a folder named as a lineage parent, so its child stays a root", () => {
+    const dir = file("dir", "directory");
+    const projection = projectLineage([dir, c], lineageOf({ "c.png": [p("dir")] }), false);
+    expect(outline(tree([dir, c], lineageOf({ "c.png": [p("dir")] }), [dir.path]))).not.toContain("  c.png");
+    expect(projection.kind === "grouped" ? projection.roots.map(e => e.name) : ["dir", "c.png"]).toContain("c.png");
+  });
+  it("revealChain names the peeks that show a file once: ancestors root first, with their groups", () => {
+    const projection = projectLineage(listing, worked, false);
+    if (projection.kind !== "grouped") throw new Error("expected grouping");
+    expect(projection.revealChain(A.path)).toEqual([]);
+    expect(projection.revealChain(c.path)).toEqual([A.path]);
+    expect(projection.revealChain(m.path)).toEqual([A.path, groupA]);
+    const opened = tree(listing, worked, projection.revealChain(m.path));
+    expect(opened.entries.some(e => e.path === m.path)).toBe(true);
+  });
+  it("revealChain terminates on a malformed chain and on deep chains", () => {
+    const chain = Array.from({ length: 50 }, (_, i) => file(`n${i}.png`));
+    const lineage = lineageOf(Object.fromEntries(chain.slice(1).map((e, i) => [e.name, [p(chain[i].name)]])));
+    const projection = projectLineage(chain, lineage, false);
+    if (projection.kind !== "grouped") throw new Error("expected grouping");
+    expect(projection.revealChain(chain[49].path)).toHaveLength(49);
+  });
+  it("bounds a merge lattice: repeated occurrences stop opening past the cap", () => {
+    // Each layer merges both files of the layer before: occurrences double per layer.
+    const layers = 20;
+    const files = Array.from({ length: layers * 2 }, (_, i) => file(`l${Math.floor(i / 2)}_${i % 2}.png`));
+    const parents: Record<string, LineageParent[]> = {};
+    for (let i = 2; i < files.length; i++) parents[files[i].name] = [p(files[Math.floor(i / 2) * 2 - 2].name), p(files[Math.floor(i / 2) * 2 - 1].name)];
+    const lineage = lineageOf(parents);
+    const projection = projectLineage(files, lineage, false);
+    if (projection.kind !== "grouped") throw new Error("expected grouping");
+    const open = files.flatMap(f => [f.path, ...projection.revealChain(f.path)]);
+    const t = tree(files, lineage, [...new Set(open)]);
+    expect(t.entries.length).toBeLessThan(LINEAGE_OCCURRENCE_CAP * 4);
+    expect(new Set(t.entries.map(e => e.path)).size).toBe(files.length);
+  });
+  it("prunes a depth-0 selection that became grouped under a closed parent", () => {
+    const flat = tree(listing, lineageOf({}));
+    const grouped = tree(listing, worked);
+    const result = prunePeekSelection(flat, grouped.entries, [c.path, z.path], c.path, null, undefined, undefined, path => path === c.path);
+    expect(result?.selected).toEqual([z.path]);
   });
 });
 

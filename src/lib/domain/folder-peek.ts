@@ -105,6 +105,9 @@ export function createPeekLevelCache(windows: boolean): PeekLevelCache {
   };
 }
 
+/** Visible rows past which repeated lineage occurrences stay closed. */
+export const LINEAGE_OCCURRENCE_CAP = 5_000;
+
 /** Lineage children of the listed files (lineage peek, `entry-lineage.ts`). */
 export interface PeekLineage { children(path: string): LineageChildren | undefined }
 
@@ -196,6 +199,10 @@ export function flattenPeekEntries(options: {
     }
     const children = lineage?.children(entry.path);
     if (!children || (!children.groups.length && !children.direct.length)) continue;
+    // A merge lattice repeats subtrees under every parent. Past the cap, a
+    // path's lineage opens at its first occurrence only, which bounds the
+    // tree by files × parents.
+    if (lineageOpen.has(entry.path) && entries.length > LINEAGE_OCCURRENCE_CAP) continue;
     lineageOpen.add(entry.path);
     stack.push({ kind: "lineage", items: [...children.groups, ...children.direct], offset: 0, parentKey: key, depth: placement.depth + 1 });
   }

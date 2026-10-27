@@ -570,6 +570,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `katex-typesetter.ts` — lazy KaTeX typesetter + bundled woff2 fonts, loaded only for math documents (#1393).
 - `marquee-rect.ts` — marquee band geometry as compositor-only `transform`s for five container-sized layers (fill + four 1px edges sized to the client box, scaled down so fractional zoom rasterises exactly); a resized band element repainted its layer over every image tile per frame on WebKitGTK (#1051).
 - `zoom.ts` — CSS zoom level utils.
+- `anchored-popup.ts` — rect-space placement of a fixed pop-up above an anchor, with the CSS offset solved from a measured offset response (zoom/engine independent); used by the video volume pop-up (#1425).
 - `raf-coalesce.ts` — coalesce high-freq value streams via rAF.
 - `scroll-jank-monitor.ts` — pure rAF-gap sampler (rAF/cancel injected) reporting long-frame counts for scroll-jank diagnostics; wired into `TilesView.svelte` (#593).
 - `theme-from-palette.ts` — build theme from extracted image palette (#203); text tokens solved in OKLCH for WCAG AA on every composited surface (#791).

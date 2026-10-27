@@ -59,8 +59,8 @@ async function cleanup(identity?:NativeFileIdentity){let stats=await videoStats(
 
   it("controls remain operable in all three docks at app zoom 150%",async()=>{
     await select(colors);await videoCommand("Reset Zoom");for(let n=0;n<5;n++)await videoCommand("Zoom In");
-    for(const dock of ["Right","Top","Bottom"]){await $(entryPathSelector(colors)).click();await videoCommand(`Dock Preview Pane ${dock}`);await ready();await revealVolume();
-      const bounds=await browser.execute(()=>{const pane=document.querySelector(".video-preview")!.getBoundingClientRect();return Array.from(document.querySelectorAll(".video-controls button,.video-controls input")).map(element=>{const r=element.getBoundingClientRect();return {label:element.getAttribute("aria-label"),inside:r.width>0&&r.height>0&&r.x>=pane.x-1&&r.right<=pane.right+1&&r.y>=pane.y-1&&r.bottom<=pane.bottom+1};});});expect(bounds.every(v=>v.inside)).toBe(true);
+    for(const dock of ["Right","Top","Bottom"]){await $(entryPathSelector(colors)).click();await videoCommand(`Dock Preview Pane ${dock}`);await ready();
+      const bounds=await browser.execute(()=>{const pane=document.querySelector(".video-preview")!.getBoundingClientRect();return Array.from(document.querySelectorAll(".video-controls button,.video-controls input:not(.volume-slider)")).map(element=>{const r=element.getBoundingClientRect();return {label:element.getAttribute("aria-label"),inside:r.width>0&&r.height>0&&r.x>=pane.x-1&&r.right<=pane.right+1&&r.y>=pane.y-1&&r.bottom<=pane.bottom+1};});});expect(bounds.every(v=>v.inside)).toBe(true);
       await playAndPause();await seekFour();report(`native-dock-${dock.toLowerCase()}.json`,{bounds,state:await videoState()});await browser.saveScreenshot(path.join(proof,`native-dock-${dock.toLowerCase()}-150.png`));
     }
   });

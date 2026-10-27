@@ -13,6 +13,7 @@
   import type { VideoLoadJob, VideoSource } from "$lib/state/video-preview-lifetime";
   import { followVideo, needsCompanionAudio } from "$lib/state/video-companion-audio";
   import { isMac, isWindows } from "$lib/domain/platform";
+  import { measuredFixedOffset, popupAbove } from "$lib/domain/anchored-popup";
   let { path, name, fullscreen, ontogglefullscreen }: {path:string;name:string;fullscreen:boolean;ontogglefullscreen:()=>void} = $props();
   let video = $state<HTMLVideoElement | null>(null);
   let source = $state<VideoSource | null>(null);
@@ -33,6 +34,7 @@
   let volumeDismissed = $state(false);
   let muteButton = $state<HTMLButtonElement | null>(null);
   let volumeControl = $state<HTMLDivElement | null>(null);
+  let volumePopup = $state<HTMLDivElement | null>(null);
   const volumeOpen = $derived(ready && !error && (volumeHovered || volumeFocused) && !volumeDismissed);
   // Companion audio when WebKitGTK dropped an undecodable audio track (#1171).
   let audio = $state<HTMLAudioElement | null>(null);
@@ -156,6 +158,34 @@
   function volumeFocusOut(event: FocusEvent) {
     if (!volumeControl?.contains(event.relatedTarget as Node | null)) volumeFocused = false;
   }
+  /**
+   * The popup is `position: fixed` so the scrollable player cannot clip it. Its
+   * offsets scale with root and fullscreen zoom differently per engine, so they
+   * are solved from the popup's measured response to a known offset.
+   */
+  function placeVolumePopup() {
+    const popup = volumePopup;
+    if (!popup || !muteButton) return;
+    popup.style.left = popup.style.top = "0px";
+    const origin = popup.getBoundingClientRect();
+    popup.style.left = popup.style.top = "100px";
+    const probe = popup.getBoundingClientRect();
+    const target = popupAbove(muteButton.getBoundingClientRect(), origin,
+      { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight });
+    popup.style.left = `${measuredFixedOffset(target.x, origin.left, probe.left)}px`;
+    popup.style.top = `${measuredFixedOffset(target.y, origin.top, probe.top)}px`;
+  }
+  $effect(() => {
+    if (!volumeOpen) return;
+    placeVolumePopup();
+    // Scrolling the constrained player or resizing moves the speaker under a fixed popup.
+    window.addEventListener("scroll", placeVolumePopup, true);
+    window.addEventListener("resize", placeVolumePopup);
+    return () => {
+      window.removeEventListener("scroll", placeVolumePopup, true);
+      window.removeEventListener("resize", placeVolumePopup);
+    };
+  });
   $effect(() => {
     // Non-passive, so wheeling over the speaker adjusts volume instead of scrolling the pane.
     const element = volumeControl;
@@ -238,18 +268,6 @@
     <div class="transport">
       <button type="button" aria-label={playing ? "Pause video" : "Play video"} title={playing ? "Pause (Space)" : "Play (Space)"}
         disabled={!ready || !!error} onclick={togglePlay}>{playing ? "Ⅱ" : "▶"}</button>
-      <span class="video-time" aria-label="Video time">{mediaTime(current)} / {mediaTime(duration)}</span>
-      <button type="button" class="fullscreen-button" aria-label={fullscreen ? "Exit video fullscreen" : "View video fullscreen"}
-        title="Fullscreen (F)" onclick={ontogglefullscreen}>⛶</button>
-    </div>
-    <input class="seek" type="range" aria-label="Seek video" aria-valuetext="{mediaTime(current)} of {mediaTime(duration)}"
-      min="0" max={duration || 1} step="0.1" value={current} disabled={!ready || duration <= 0 || !!error}
-      oninput={event => seek(event.currentTarget.valueAsNumber)} />
-    <div class="sound">
-      {#if audioNote}
-        <span class="audio-note" role="status" title={audioNote === "preparing" ? "Decoding this video's audio track" : audioNote.error}>
-          {audioNote === "preparing" ? "Preparing audio…" : "Audio unavailable"}</span>
-      {/if}
       <!-- svelte-ignore a11y_no_static_element_interactions -- hover/focus reveal and Escape collapse for the speaker's slider; the button and range keep native semantics. -->
       <div class="volume" class:open={volumeOpen} data-level={level} bind:this={volumeControl}
         onpointerenter={() => { volumeHovered = true; volumeDismissed = false; }} onpointerleave={() => volumeHovered = false}
@@ -266,10 +284,27 @@
             {/if}
           </svg>
         </button>
-        <input class="volume-slider" type="range" aria-label="Video volume" aria-valuetext={volumeText(sound)} min="0" max="1" step={VOLUME_STEP}
-          value={audibleVolume(sound)} disabled={!ready || !!error}
-          oninput={event => setVolume(event.currentTarget.valueAsNumber)} />
+        <!-- Above the speaker, outside the controls' layout; its transparent bottom padding bridges the hover gap. -->
+        <div class="volume-popup" bind:this={volumePopup}>
+          <div class="volume-panel">
+            <input class="volume-slider" type="range" aria-label="Video volume" aria-valuetext={volumeText(sound)} min="0" max="1" step={VOLUME_STEP}
+              value={audibleVolume(sound)} disabled={!ready || !!error}
+              oninput={event => setVolume(event.currentTarget.valueAsNumber)} />
+          </div>
+        </div>
       </div>
+      <span class="video-time" aria-label="Video time">{mediaTime(current)} / {mediaTime(duration)}</span>
+      <button type="button" class="fullscreen-button" aria-label={fullscreen ? "Exit video fullscreen" : "View video fullscreen"}
+        title="Fullscreen (F)" onclick={ontogglefullscreen}>⛶</button>
+    </div>
+    <input class="seek" type="range" aria-label="Seek video" aria-valuetext="{mediaTime(current)} of {mediaTime(duration)}"
+      min="0" max={duration || 1} step="0.1" value={current} disabled={!ready || duration <= 0 || !!error}
+      oninput={event => seek(event.currentTarget.valueAsNumber)} />
+    <div class="sound">
+      {#if audioNote}
+        <span class="audio-note" role="status" title={audioNote === "preparing" ? "Decoding this video's audio track" : audioNote.error}>
+          {audioNote === "preparing" ? "Preparing audio…" : "Audio unavailable"}</span>
+      {/if}
     </div>
   </div>
 </div>
@@ -288,10 +323,15 @@
   .sound {display:flex;align-items:center;gap:4px;}
   .volume {display:flex;align-items:center;}
   .volume-button {display:inline-flex;align-items:center;justify-content:center;}
-  /* Collapsed: no width and out of the tab order; the speaker alone carries mute. */
-  .volume-slider {width:0;margin:0;opacity:0;visibility:hidden;transition:width 120ms ease-out,opacity 120ms ease-out,visibility 0s 120ms;}
-  .volume.open .volume-slider {width:64px;margin:0 2px 0 4px;opacity:1;visibility:visible;transition:width 120ms ease-out,opacity 120ms ease-out,visibility 0s;}
-  @media (prefers-reduced-motion: reduce) { .volume-slider,.volume.open .volume-slider {transition:none;} }
+  /* Hidden (and out of the tab order) until revealed; it never takes layout space in the controls row. */
+  .volume-popup {position:fixed;left:0;top:0;z-index:var(--z-menu);box-sizing:border-box;width:36px;height:120px;padding-bottom:6px;
+    visibility:hidden;opacity:0;transition:opacity 120ms ease-out,visibility 0s 120ms;}
+  .volume.open .volume-popup {visibility:visible;opacity:1;transition:opacity 120ms ease-out,visibility 0s;}
+  @media (prefers-reduced-motion: reduce) { .volume-popup,.volume.open .volume-popup {transition:none;} }
+  .volume-panel {position:relative;box-sizing:border-box;height:100%;border:1px solid var(--surface-stroke-flyout,var(--divider));border-radius:var(--radius-lg,6px);
+    background:var(--background-solid);box-shadow:var(--shadow-flyout);}
+  /* A horizontal range turned upright: rotation draws and hit-tests the same on every engine, unlike vertical writing modes on older WebKit. */
+  .volume-slider {position:absolute;left:50%;top:50%;width:88px;margin:0;transform:translate(-50%,-50%) rotate(-90deg);}
   .audio-note {font-size:var(--font-size-caption);color:var(--text-secondary);white-space:nowrap;}
   button {min-width:28px;min-height:28px;border:0;border-radius:4px;padding:0 6px;background:transparent;color:var(--text-secondary);font:inherit;font-size:var(--font-size-caption);cursor:pointer;}
   button:hover:enabled {background:var(--subtle-fill-tertiary);color:var(--text-primary);}

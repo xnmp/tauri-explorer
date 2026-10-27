@@ -97,7 +97,8 @@ for (const dock of ["right", "top", "bottom"]) {
       await expect(control).toBeInViewport();
       expect(await control.evaluate(element => {
         const rect = element.getBoundingClientRect();
-        return element.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+        const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+        return element.contains(hit) || `${element.getAttribute("aria-label")} hit ${hit?.className} rect ${JSON.stringify(rect)}`;
       })).toBe(true);
     }
     await player.evaluate(element => { element.scrollTop = 0; });
@@ -305,9 +306,26 @@ test("the speaker icon mutes and restores the previous volume; its slider reveal
   const player = await openVideo(page);
   const speaker = player.locator(".volume-button");
   const slider = player.getByRole("slider", { name: "Video volume", exact: true });
+  const seek = player.getByRole("slider", { name: "Seek video", exact: true });
+  const seekBefore = await seek.boundingBox();
+  const speakerBefore = await speaker.boundingBox();
   await expect(slider).toBeHidden();
   await player.locator(".volume").hover();
   await expect(slider).toBeVisible();
+  // The pop-up overlays the player: nothing in the controls row moves or resizes.
+  expect(await seek.boundingBox()).toEqual(seekBefore);
+  expect(await speaker.boundingBox()).toEqual(speakerBefore);
+  const [speakerBox, sliderBox] = [(await speaker.boundingBox())!, (await slider.boundingBox())!];
+  expect(sliderBox.height).toBeGreaterThan(sliderBox.width * 2);
+  expect(sliderBox.y + sliderBox.height).toBeLessThanOrEqual(speakerBox.y);
+  expect(Math.abs(sliderBox.x + sliderBox.width / 2 - (speakerBox.x + speakerBox.width / 2))).toBeLessThan(2);
+  // Pressing near the top of the upright slider is loud, near the bottom quiet; the pointer
+  // crosses the hover bridge on the way, so the pop-up stays open.
+  await page.mouse.move(sliderBox.x + sliderBox.width / 2, sliderBox.y + 4, { steps: 4 });
+  await page.mouse.down(); await page.mouse.up();
+  await expect.poll(async () => (await sound(page)).volume).toBeGreaterThan(0.85);
+  await page.mouse.click(sliderBox.x + sliderBox.width / 2, sliderBox.y + sliderBox.height - 4);
+  await expect.poll(async () => (await sound(page)).volume).toBeLessThan(0.15);
   await slider.fill("0.4");
   expect(await sound(page)).toEqual({ volume: 0.4, muted: false });
   await expect(slider).toHaveAttribute("aria-valuetext", "40%");
@@ -342,7 +360,7 @@ test("the volume control is keyboard operable and Escape collapses its slider (#
   const player = await openVideo(page);
   const speaker = player.locator(".volume-button");
   const slider = player.getByRole("slider", { name: "Video volume", exact: true });
-  await player.getByRole("slider", { name: "Seek video", exact: true }).focus();
+  await player.getByRole("button", { name: "Play video", exact: true }).focus();
   await page.keyboard.press("Tab");
   await expect(speaker).toBeFocused();
   await expect(slider).toBeVisible();

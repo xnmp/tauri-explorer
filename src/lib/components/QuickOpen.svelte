@@ -15,6 +15,7 @@ import { openFile } from "$lib/api/open";
   import { parentDir, basename, directoryKey, toForwardSlashes, expandTilde as expandTildePath } from "$lib/domain/path";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { navigateFromQuickOpen } from "$lib/state/quick-open-navigation";
+  import { clampedStep, pageKeyDelta } from "$lib/domain/palette-selection";
   import { usePointerIntent } from "$lib/composables/use-pointer-intent.svelte";
   import FileIcon from "./FileIcon.svelte";
   import Modal from "./Modal.svelte";
@@ -394,23 +395,19 @@ import { openFile } from "$lib/api/open";
       }
       return;
     }
+    const n = displayResults.length;
+    const page = pageKeyDelta(event);
+    const step =
+      page !== null ? clampedStep(selectedIndex, page, n)
+      : event.key === "ArrowDown" ? (selectedIndex + 1) % Math.max(n, 1)
+      : event.key === "ArrowUp" ? (selectedIndex - 1 + n) % Math.max(n, 1)
+      : null;
+    if (step !== null) {
+      event.preventDefault();
+      if (n > 0) { selectedIndex = step; pointer.reset(); scrollToSelected(); }
+      return;
+    }
     switch (event.key) {
-      case "ArrowDown":
-        event.preventDefault();
-        if (displayResults.length > 0) {
-          selectedIndex = (selectedIndex + 1) % displayResults.length;
-          pointer.reset();
-          scrollToSelected();
-        }
-        break;
-      case "ArrowUp":
-        event.preventDefault();
-        if (displayResults.length > 0) {
-          selectedIndex = (selectedIndex - 1 + displayResults.length) % displayResults.length;
-          pointer.reset();
-          scrollToSelected();
-        }
-        break;
       case "Enter":
         event.preventDefault();
         // If query looks like a path (starts with / or ~), navigate directly

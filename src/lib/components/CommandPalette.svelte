@@ -17,7 +17,7 @@
   import { usePointerIntent } from "$lib/composables/use-pointer-intent.svelte";
   import { keywordsFor } from "$lib/domain/command-keywords";
   import { commandFrecencyPoints, scoreCommand } from "$lib/domain/command-score";
-  import { paletteSelectionIndex, stepPaletteSelection } from "$lib/domain/palette-selection";
+  import { paletteSelectionIndex, stepPaletteSelection, clampedStep, pageKeyDelta } from "$lib/domain/palette-selection";
   import { runAfterClose } from "$lib/state/run-after-close";
   import Modal from "./Modal.svelte";
 
@@ -94,6 +94,16 @@
 
   // Escape is handled by Modal; everything else lands here.
   function handleKeydown(event: KeyboardEvent): void {
+    const page = pageKeyDelta(event);
+    if (page !== null) {
+      event.preventDefault();
+      if (flatCommands.length > 0) {
+        selectedId = flatIds[clampedStep(selectedIndex, page, flatIds.length)];
+        pointer.reset();
+        scrollToSelected();
+      }
+      return;
+    }
     switch (event.key) {
       case "ArrowDown":
         event.preventDefault();

@@ -139,16 +139,24 @@ function renderProperties(properties: FrontmatterProperty[]): string {
   return `<section class="md-properties" aria-label="Properties"><dl>${rows}</dl></section>`;
 }
 
-function render(parser: Marked, md: string): string {
+/**
+ * Rendered Markdown as its top-level blocks, in document order (#1418): the
+ * properties panel, then one HTML string per top-level Marked token. Joined,
+ * they are exactly the whole-document HTML. Lazy, so a caller can typeset a
+ * few blocks at a time and stop when the document is no longer wanted.
+ */
+function* renderBlocks(parser: Marked, md: string): Generator<string, void, undefined> {
   const frontmatter = extractFrontmatter(md);
-  const body = frontmatter?.body ?? md;
-  const renderedBody = parser.parse(body, { async: false });
-  return frontmatter ? `${renderProperties(frontmatter.properties)}${renderedBody}` : renderedBody;
+  if (frontmatter) yield renderProperties(frontmatter.properties);
+  for (const token of parser.lexer(frontmatter?.body ?? md)) {
+    const html = parser.parser([token]);
+    if (html) yield html;
+  }
 }
 
 /** Render markdown to HTML safe for {@html} injection (TeX stays literal). */
 export function renderMarkdown(md: string): string {
-  return render(marked, md);
+  return [...renderBlocks(marked, md)].join("");
 }
 
 let mathMarked: Promise<Marked> | null = null;
@@ -162,16 +170,28 @@ function loadMathMarked(): Promise<Marked> {
   return mathMarked;
 }
 
+export interface MarkdownBlocks {
+  readonly blocks: Iterable<string>;
+  /** KaTeX failed to load, so TeX stays literal: worth retrying later. */
+  readonly degraded: boolean;
+}
+
 /**
- * Like `renderMarkdown`, plus TeX math (#1393). KaTeX (JS, CSS, fonts) is
- * loaded on first use and only for documents that may contain math; if it
- * fails to load the document still renders with the TeX left literal.
+ * Like `renderMarkdown`, plus TeX math (#1393), as lazily rendered blocks
+ * (see `renderBlocks`). KaTeX (JS, CSS, fonts) is loaded on first use and only
+ * for documents that may contain math; if it fails to load the document still
+ * renders with the TeX left literal. Typesetting happens as blocks are pulled.
  */
-export async function renderMarkdownWithMath(md: string): Promise<string> {
-  if (!mayContainMath(md)) return renderMarkdown(md);
+export async function renderMarkdownBlocks(md: string): Promise<MarkdownBlocks> {
+  if (!mayContainMath(md)) return { blocks: renderBlocks(marked, md), degraded: false };
   try {
-    return render(await loadMathMarked(), md);
+    return { blocks: renderBlocks(await loadMathMarked(), md), degraded: false };
   } catch {
-    return renderMarkdown(md);
+    return { blocks: renderBlocks(marked, md), degraded: true };
   }
+}
+
+/** The whole document from `renderMarkdownBlocks`, as one HTML string. */
+export async function renderMarkdownWithMath(md: string): Promise<string> {
+  return [...(await renderMarkdownBlocks(md)).blocks].join("");
 }

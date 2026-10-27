@@ -91,3 +91,23 @@ describe("Markdown math (#1393)", () => {
     expect(await render(plain)).toBe(renderMarkdown(plain));
   });
 });
+
+describe("renderMarkdownBlocks (#1418)", () => {
+  it("yields top-level blocks that join to the whole document", async () => {
+    const { renderMarkdownBlocks } = await import("../../src/lib/domain/markdown");
+    const doc = "---\ntitle: Notes\n---\n\n# Heading\n\nInline $e^{i\\pi}$ text.\n\n$$\n\\frac{1}{2}\n$$\n\n- one\n- two\n\n```ts\nconst x = 1;\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n[ref]: https://example.com\n\nSee [ref].\n";
+    const blocks = [...(await renderMarkdownBlocks(doc)).blocks];
+    expect(blocks.length).toBeGreaterThanOrEqual(7);
+    expect(blocks.every((block) => block.length > 0)).toBe(true);
+    expect(blocks[0]).toContain("md-properties");
+    expect(blocks.join("")).toBe(await renderMarkdownWithMath(doc));
+    expect(blocks.join("")).toContain('href="https://example.com"');
+  });
+
+  it("yields blocks in document order, typesetting math blocks", async () => {
+    const { renderMarkdownBlocks } = await import("../../src/lib/domain/markdown");
+    const iterator = (await renderMarkdownBlocks("# A\n\n$x$\n\n$y$\n")).blocks[Symbol.iterator]();
+    expect(iterator.next().value).toContain("<h1>A</h1>");
+    expect(iterator.next().value).toContain("katex");
+  });
+});

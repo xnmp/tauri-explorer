@@ -103,6 +103,10 @@ bun install
 bun run start
 ```
 
+## Performance
+
+Measured on Linux (release build, warm cache): a flat 100,000-entry folder opens in a median 266 ms and a 500,000-entry one in 1.65 s; back/forward/up into the 100k folder take 250–270 ms. Method, hardware, component benchmarks and reproduction steps: [docs/performance.md](docs/performance.md).
+
 ## Status
 
 Actively developed — see the [changelog](CHANGELOG.md) and [releases](https://github.com/xnmp/tauri-explorer/releases) for what's new. If you hit a bug: Command Palette → "Report Issue", or [open an issue](https://github.com/xnmp/tauri-explorer/issues/new/choose). Submitted reports and selected images become public. If in-app submission fails, text is saved for retry and images remain available until the app window closes. The GitHub issue form opens when a new issue is safe to create; add images manually there.

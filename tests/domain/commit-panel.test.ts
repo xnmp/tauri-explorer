@@ -13,8 +13,22 @@ import {
   startCommit,
   commitSucceeded,
   commitFailed,
+  stageFilesOf,
   type StatusBucketsLike,
 } from "../../src/lib/domain/commit-panel";
+
+describe("stageFilesOf", () => {
+  it("keeps only working-tree rows tagged with a section and staged flag", () => {
+    const working = { path: "a.ts", status: "M", section: "staged" as const, staged: true, extra: 1 };
+    const files = [
+      { path: "commit.ts", status: "A" },
+      working,
+      { path: "half.ts", status: "M", section: "unstaged" as const },
+    ];
+    expect(stageFilesOf(files)).toEqual([working]);
+    expect(stageFilesOf([])).toEqual([]);
+  });
+});
 
 function buckets(partial: Partial<StatusBucketsLike>): StatusBucketsLike {
   return {

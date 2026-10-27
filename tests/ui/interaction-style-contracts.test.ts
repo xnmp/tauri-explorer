@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -40,10 +40,12 @@ describe("interaction styling contracts", () => {
   it("uses the shared semantic status variables instead of inactive aliases", () => {
     const names = [
       "GitGraphView.svelte",
+      ...readdirSync(resolve(componentRoot, "git-graph")).map((name) => `git-graph/${name}`),
       "PickerQuickOpen.svelte",
       "ProgressDialog.svelte",
       "QuickOpen.svelte",
       "ScmSidebarView.svelte",
+      ...readdirSync(resolve(componentRoot, "scm")).map((name) => `scm/${name}`),
       "UserReportDialog.svelte",
     ];
     const source = names.map(component).join("\n");

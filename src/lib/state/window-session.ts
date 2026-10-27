@@ -9,6 +9,7 @@ import { useNativeDropHandler } from "$lib/composables/use-native-drop-handler";
 import { useFileWatchers } from "$lib/composables/use-file-watchers";
 import { useWindowLifecycle } from "$lib/composables/use-window-lifecycle";
 import { themeStore } from "./theme.svelte";
+import { layoutStore } from "./layout.svelte";
 import { settingsStore } from "./settings.svelte";
 import { pluginRegistry } from "$lib/plugins/registry.svelte";
 import { startWindowStartup } from "./window-startup";
@@ -62,6 +63,7 @@ export function startWindowSession(options: WindowSessionOptions) {
   try {
     markStartup("mount");
     void themeStore.initTheme().catch(reportError);
+    stops.push(layoutStore.start());
     // Own discovery before settings IO and tab initialization. A restored
     // plugin choice may reach first paint before initPlugins even starts.
     const finishPluginDiscovery = !options.picker && isTauri()

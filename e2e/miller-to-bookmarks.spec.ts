@@ -13,9 +13,9 @@ test.describe("Miller columns drag to bookmarks", () => {
 
     await applySettingsAndReload(page, { millerLayers: 1 });
     await page.waitForSelector(".entry-item", { timeout: 5000 });
-    await page.waitForTimeout(500);
 
     const entry = page.locator(".col-entry").first();
+    await expect(entry).toBeVisible();
     const isMac = await page.evaluate(() => navigator.platform.startsWith("Mac"));
 
     // On macOS, draggable is false (uses pointer-based drag instead of HTML5 DnD)

@@ -35,7 +35,7 @@ const variants: Variant[] = [
 function useVariant(page: Page, { dock, island, zoom }: Variant) {
   return page.addInitScript((settings) => {
     localStorage.setItem("explorer-settings", JSON.stringify(settings));
-  }, { previewPanePosition: dock, floatingIslands: island, zoomLevel: zoom });
+  }, { previewPanePosition: dock, layoutTheme: island ? "floating-islands" : "default", zoomLevel: zoom });
 }
 
 async function openTilesWithImagePreview(page: Page, variant: Variant) {

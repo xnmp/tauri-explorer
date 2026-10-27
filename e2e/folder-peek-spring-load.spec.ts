@@ -1,5 +1,5 @@
-import { test as base } from "@playwright/test";
-import { test, expect, type Page } from "./fixtures";
+import type { Browser } from "@playwright/test";
+import { test, unpinnedTest as base, expect, type Page } from "./fixtures";
 
 // Spring-loaded peeks (#1242, spec §5): holding a drag over a closed folder
 // for 600ms opens a temporary peek (a Details subtree, a List card, a Tiles
@@ -27,6 +27,7 @@ async function open(page: Page, view: View) {
   await page.setViewportSize({ width: 900, height: 700 });
   await page.goto(`/?path=${root}&viewMode=${view}`);
   await expect(page.locator(`${shown} .entry-item[data-path="${P("Inbox")}"]`).first()).toBeVisible();
+  await settled(page);
 }
 const explorer = <T>(page: Page, body: string, arg?: unknown) => page.evaluate(async ([source, value]) => {
   const { windowTabsManager } = await import("/src/lib/state/window-tabs.svelte.ts");
@@ -100,7 +101,35 @@ const endDrag = (page: Page) => page.evaluate(() => {
   w.__spring.transfer.dropEffect = "none";
   document.body.dispatchEvent(new DragEvent("dragend", { bubbles: true, dataTransfer: w.__spring.transfer }));
 });
-const opened = (page: Page, paths: string[]) => expect.poll(() => springPeeks(page), { timeout: 4000 }).toEqual(paths);
+const springIs = (page: Page, paths: string[]) => expect.poll(() => springPeeks(page), { timeout: 4000 }).toEqual(paths);
+/** Rendered geometry has caught up with the DOM (#1388). Rows exist (and hit
+ * test) before the browser renders a frame, but a view's ResizeObserver size
+ * arrives only in a rendering update: until then a List lays out for its
+ * 4-row floor, so a spring card starts the next column and moves its folder.
+ * Under CPU load that first frame can lag by seconds. A peek's listing, its
+ * opening motion (List slot styles and ghosts, rAF-driven Tiles panel frames)
+ * also finish after the spring state. Settled: no peek is loading, no motion
+ * artifact remains, and every row, card, panel and bridge rect is unchanged
+ * across two rendered frames (the second frame follows the first frame's
+ * ResizeObserver delivery). */
+async function settled(page: Page) {
+  await expect.poll(async () => page.evaluate(async ([pane, paths]) => {
+    const { windowTabsManager } = await import("/src/lib/state/window-tabs.svelte.ts");
+    const explorer = windowTabsManager.getActiveExplorer()!;
+    if (paths.some(path => explorer.peekStatus(path) === "loading")) return "loading";
+    const motion = `${pane} [data-motion-key][style*="transform"], ${pane} [data-motion-key][style*="clip-path"], ${pane} .list-motion-layer > *, ${pane} .tile-panel-ghost`;
+    const geometry = () => [...document.querySelectorAll(`${pane} :is(.entry-item[data-path], [data-card-scroll], .tile-panel, [data-spring-bridge], [data-peek-state])`)]
+      .map(el => { const r = el.getBoundingClientRect(); return `${el.tagName}|${el.getAttribute("data-path")}:${r.x},${r.y},${r.width},${r.height}`; });
+    const before = geometry();
+    for (let frame = 0; frame < 2; frame++) await new Promise(requestAnimationFrame);
+    if (document.querySelector(motion)) return "motion";
+    const after = geometry();
+    const moved = after.findIndex((rect, i) => rect !== before[i]);
+    return moved < 0 && after.length === before.length ? "settled" : `moved ${before[moved] ?? "-"} -> ${after[moved] ?? "-"}`;
+  }, [shown, [...await springPeeks(page), ...await explorer<string[]>(page, "return [...explorer.expandedPaths]")]] as const)).toBe("settled");
+}
+/** The spring holds exactly `paths`, rendered and settled. */
+const opened = async (page: Page, paths: string[]) => { await springIs(page, paths); await settled(page); };
 
 // Per-view selectors: the folder's own row, a child row inside its peek, the
 // peek's surface, and a point in the gap between folder and peek.
@@ -177,7 +206,7 @@ for (const view of ["details", "list", "tiles"] as const) {
       await page.clock.runFor(599);
       expect(await springPeeks(page)).toEqual([]);
       await page.clock.runFor(2);
-      await opened(page, [P("Archive")]);
+      await springIs(page, [P("Archive")]);
       await page.clock.resume();
       await expect(page.locator(v.child(P("Archive/old.txt")))).toBeVisible();
       // Temporary: never in the expanded set, no card or panel height stored.
@@ -239,9 +268,7 @@ for (const view of ["details", "list", "tiles"] as const) {
       await startDrag(page);
       await dragTo(page, v.folder(P("Inbox")));
       await opened(page, [P("Inbox")]);
-      // Spring state precedes the List card's rows and opening motion (#1292).
       for (const child of ["Inbox/alpha.txt", "Inbox/beta.txt"]) await expect(page.locator(v.child(P(child)))).toBeVisible();
-      await expect(page.locator(`${shown} [data-motion-key][style*="transform"], ${shown} [data-motion-key][style*="clip-path"], ${shown} .list-motion-layer > *`)).toHaveCount(0);
       for (const child of ["Inbox/alpha.txt", "Inbox/beta.txt"]) await dragTo(page, v.child(P(child)), { related: false });
       await dragTo(page, v.folder(P("Inbox")), { related: false });
       await page.waitForTimeout(100);
@@ -269,9 +296,6 @@ for (const view of ["details", "list", "tiles"] as const) {
       await opened(page, [P("Inbox")]);
       const rows = ["Inbox/Nested", "Inbox/alpha.txt", "Inbox/beta.txt"].map(child => v.child(P(child)));
       for (const row of rows) await expect(page.locator(row)).toBeVisible();
-      // Spring state precedes the rendered card's opening motion. Hit-test
-      // settled rows: an edge in the final box can still be clipped mid-motion.
-      await expect(page.locator(`${shown} [data-motion-key][style*="transform"], ${shown} [data-motion-key][style*="clip-path"], ${shown} .list-motion-layer > *`)).toHaveCount(0);
       if (view === "tiles") {
         // The band gap between the tile and its panel hit-tests as the panel's bridge.
         expect(await dragTo(page, v.folder(P("Inbox")), { below: 5 })).toBe(`bridge:${P("Inbox")}`);
@@ -437,7 +461,7 @@ test("an HTML5 drag whose source row leaves the virtual window under a big sprin
 
 // The macOS/Windows in-app backend is a pointer drag driven by real mouse
 // input (navigator.platform "MacIntel" selects it); Escape cancels it.
-async function macPage(browser: import("@playwright/test").Browser, baseURL: string | undefined) {
+async function macPage(browser: Browser, baseURL: string | undefined) {
   const context = await browser.newContext({ baseURL });
   await context.addInitScript(() => Object.defineProperty(window.navigator, "platform", { get: () => "MacIntel" }));
   const page = await context.newPage();
@@ -570,9 +594,6 @@ test.describe("list: spring cards keep the hovered row in place", () => {
     await page.setViewportSize({ width, height: 400 + rows * LIST_SLOT + 27 - client });
     await expect(page.locator(`${shown} .list-view`)).toHaveAttribute("data-rows", String(rows));
   }
-
-  /** Card motion has settled (it clips and moves the live slots). */
-  const settled = (page: Page) => expect(page.locator(`${shown} .list-motion-layer > *, ${shown} [data-motion-key][style*="transform"], ${shown} [data-motion-key][style*="clip-path"]`)).toHaveCount(0);
 
   // R=7: Archive, Bulk, Empty, then Inbox in rows 3..6; with Archive open too,
   // Inbox no longer fits below Empty and starts column 1.

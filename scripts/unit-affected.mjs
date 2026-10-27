@@ -22,6 +22,8 @@
 //      test that lists directories is one when it names a changed file's
 //      directory. A matched helper selects the tests that import it.
 //   Nothing affected -> none.
+//   A release version bump (scripts/version-only.mjs) skips rule 3: only the
+//   tests that read the bumped files as text are related (#1367).
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -35,6 +37,7 @@ const SELECTION_INPUTS = new Set([
   ".github/workflows/ci.yml",
   "scripts/unit-affected.mjs",
   "scripts/test-selection.mjs",
+  "scripts/version-only.mjs",
   // How the target runs through the test-result cache (#1176).
   "turbo.json",
   "scripts/test-cache.mjs",
@@ -84,10 +87,11 @@ function ancestorDirs(file) {
 /**
  * @param {string[]} changed
  * @param {TestSource[]} tests
- * @param {{ maxFiles: number, exists?: (file: string) => boolean }} options
+ * @param {{ maxFiles: number, exists?: (file: string) => boolean, versionOnly?: boolean }} options
+ *   versionOnly: the diff only bumps release versions (scripts/version-only.mjs)
  * @returns {Selection}
  */
-export function selectUnit(changed, tests, { maxFiles, exists = (f) => existsSync(join(ROOT, f)) }) {
+export function selectUnit(changed, tests, { maxFiles, exists = (f) => existsSync(join(ROOT, f)), versionOnly = false }) {
   if (changed.length === 0) return { mode: "none", reason: "no changed files", items: [] };
   const shared = sharedEscalation(changed, maxFiles);
   if (shared) return allOf([shared]);
@@ -98,7 +102,7 @@ export function selectUnit(changed, tests, { maxFiles, exists = (f) => existsSyn
   const related = new Set();
   for (const f of changed) {
     if (SELECTION_INPUTS.has(f)) { reasons.push(`CI test-selection change: ${f}`); continue; }
-    if (isConfig(f)) { reasons.push(`config or lockfile change: ${f}`); continue; }
+    if (isConfig(f) && !versionOnly) { reasons.push(`config or lockfile change: ${f}`); continue; }
     if (f.startsWith("tests/") && !isTestFile(f)) { reasons.push(`shared test setup, utility or fixture change: ${f}`); continue; }
     if (isModule(f)) {
       if (!exists(f)) { reasons.push(`deleted module: ${f}`); continue; }
@@ -115,14 +119,16 @@ export function selectUnit(changed, tests, { maxFiles, exists = (f) => existsSyn
   }
   if (reasons.length > 0) return allOf(reasons);
   const items = [...related].sort();
-  if (items.length === 0) return { mode: "none", reason: `none of ${changed.length} changed file(s) reaches a unit test`, items };
+  const prefix = versionOnly ? "version-only change: " : "";
+  if (items.length === 0) return { mode: "none", reason: `${prefix}none of ${changed.length} changed file(s) reaches a unit test`, items };
   return {
     mode: "selected",
-    reason: `tests related to ${items.length} input(s) from ${changed.length} changed file(s)`,
+    reason: `${prefix}tests related to ${items.length} input(s) from ${changed.length} changed file(s)`,
     items,
   };
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  runCli("unit-affected", (changed, maxFiles) => selectUnit(changed, loadTestSources(), { maxFiles }));
+  runCli("unit-affected", (changed, maxFiles, { versionOnly }) =>
+    selectUnit(changed, loadTestSources(), { maxFiles, versionOnly }));
 }

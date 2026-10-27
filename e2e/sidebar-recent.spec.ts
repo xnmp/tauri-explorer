@@ -18,9 +18,7 @@ test.describe("Sidebar recent locations", () => {
 
     // Navigate to a few directories to populate frecency
     await page.locator(".entry-item").first().dblclick();
-    await page.waitForTimeout(500);
     await page.keyboard.press("Alt+ArrowLeft"); // Go back
-    await page.waitForTimeout(500);
 
     // After navigation, the Recent section may appear if frecency has entries
     // (depends on localStorage state from prior tests)

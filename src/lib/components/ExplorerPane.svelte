@@ -8,6 +8,7 @@
   import { createPanePointerFocus, focusFirstAccepting } from "$lib/state/pane-pointer-focus";
   import { resolveFileListMove } from "$lib/domain/file-list-navigation";
   import { tick, untrack } from "svelte";
+  import { layoutStore } from "$lib/state/layout.svelte";
   import { createDeferredFocusRequest } from "$lib/state/deferred-focus";
   import { setPaneIdContext } from "$lib/state/pane-context";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
@@ -221,7 +222,6 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     );
   });
 
-
   const isActive = $derived(windowTabsManager.activePaneId === paneId);
   const dualPaneEnabled = $derived(windowTabsManager.dualPaneEnabled);
 
@@ -230,7 +230,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   // island shows the active explorer). When hoisted, suppress the inline copy
   // so the columns render exactly once (#434). Mirrors `millerAsLeftIsland`.
   const millerHoistedToIsland = $derived(
-    settingsStore.islandMode && !settingsStore.showSidebar && isActive,
+    layoutStore.islands && !settingsStore.showSidebar && isActive,
   );
   const isInactive = $derived(dualPaneEnabled && !isActive);
   const showActiveBorder = $derived(dualPaneEnabled && isActive);
@@ -355,6 +355,8 @@ import { nextRemovableRoot } from "$lib/domain/drives";
 <section
   bind:this={paneRef}
   class="explorer-pane"
+  data-region="pane"
+  data-active={showActiveBorder || undefined}
   class:active={showActiveBorder}
   class:inactive={isInactive}
   aria-label="file browser pane"
@@ -400,7 +402,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
       <!-- Miller columns render inline UNLESS they are hoisted to the left
            island (island mode + no sidebar, active pane only). The hoist
            condition here must mirror `millerAsLeftIsland` in +page.svelte,
-           keyed off the single `islandMode` derived — not one platform's flag —
+           keyed off the single `layoutStore.islands` arrangement — not one platform's flag —
            or the columns double-mount inline AND as the island (#434). -->
       {#if paneExplorer.millerLayers > 0 && !millerHoistedToIsland}
         <MillerColumns explorer={paneExplorer} {paneId} {reserveInlineWidth} />
@@ -459,7 +461,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     flex: 1;
     min-width: 0;
     overflow: hidden;
-    background: color-mix(in srgb, var(--background-card) calc(var(--content-opacity, 1) * 100%), transparent);
+    background: var(--layout-surface, color-mix(in srgb, var(--background-card) calc(var(--content-opacity, 1) * 100%), transparent));
     border-radius: 0;
     border: 1px solid transparent;
     transition:
@@ -515,31 +517,4 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     z-index: var(--z-modal, 1000);
   }
 
-  /* Vibrancy: flatten inside the island */
-  :global([data-vibrancy]) .explorer-pane {
-    background: transparent;
-    border-radius: 0;
-    border-color: transparent;
-    box-shadow: none;
-  }
-
-  /* Vibrancy + split panes: the container island steps aside (PaneContainer)
-     and each pane becomes its own island. */
-  :global([data-vibrancy] .multi-pane) .explorer-pane {
-    border-radius: var(--vibrancy-island-radius);
-    background: var(--vibrancy-island-bg);
-    border: 1px solid var(--vibrancy-island-stroke);
-    box-shadow: var(--vibrancy-island-glow);
-    backdrop-filter: var(--vibrancy-island-filter, blur(12px) brightness(1.08) saturate(1.2));
-    -webkit-backdrop-filter: var(--vibrancy-island-filter, blur(12px) brightness(1.08) saturate(1.2));
-    overflow: hidden;
-  }
-
-  /* Keep the active-pane cue in island mode. */
-  :global([data-vibrancy] .multi-pane) .explorer-pane.active {
-    border-color: var(--accent);
-    box-shadow:
-      var(--vibrancy-island-glow),
-      0 0 6px -2px var(--accent);
-  }
 </style>

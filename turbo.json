@@ -18,7 +18,6 @@
         "!screenshots/**",
         "!**/CLAUDE.md",
         "!AGENTS.md",
-        "!CHANGELOG.md",
         "!CONTRIBUTING.md",
         "!SECURITY.md",
         "!new_todo.md",
@@ -95,7 +94,8 @@
         "E2E_SHARD_SPECS",
         "WEBKIT",
         "PW_VIDEO_HEADED",
-        "ALL_VIEW_MODES"
+        "ALL_VIEW_MODES",
+        "E2E_BUILD_DIR"
       ],
       "inputs": [
         "$TURBO_DEFAULT$",
@@ -111,7 +111,8 @@
         "!tests/**/*.test.ts",
         "!e2e-load/**",
         "!e2e-sweep/**",
-        "!e2e-tauri/specs/**"
+        "!e2e-tauri/specs/**",
+        "!PKGBUILD"
       ],
       "outputs": []
     }

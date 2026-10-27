@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures";
 import { HOME_URL, waitForEntries, runPaletteCommand, pressShortcut } from "./helpers";
 
 // The Folder Peek setting (#1238): off is the classic flat Details view, and

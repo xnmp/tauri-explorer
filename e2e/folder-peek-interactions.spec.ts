@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures";
 import { HOME_URL, MULTI_SELECT_MODIFIER, waitForEntries, runPaletteCommand } from "./helpers";
 const root = "/folder-peek";
 const row = (page: Page, path: string) => page.locator(`.pane-tree:not(.retained) .entry-item[data-path="${path}"]`);

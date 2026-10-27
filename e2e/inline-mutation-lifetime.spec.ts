@@ -69,7 +69,7 @@ for (const viewMode of ALL_VIEW_MODES) {
     test("successful rename teardown stays single-owned without stale derived reads", async ({ page }) => {
       const derivedWarnings: string[] = [];
       page.on("console", (message) => {
-        if (message.type() === "warning" && message.text().includes("[svelte] derived_inert")) {
+        if (message.type() === "warning" && message.text().includes("derived_inert")) {
           derivedWarnings.push(message.text());
         }
       });

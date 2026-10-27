@@ -5,6 +5,7 @@
 import type { Command } from "../commands.svelte";
 import { settingsStore, generateToggleCommands } from "../settings.svelte";
 import { themeStore } from "../theme.svelte";
+import { DEFAULT_LAYOUT_ID, FLOATING_ISLANDS_LAYOUT_ID } from "$lib/domain/layout-theme-ids";
 import { folderViewsStore } from "../folder-views.svelte";
 import { folderTileSize } from "../folder-tile-size";
 import { isThumbnailSize } from "$lib/domain/tile-layout";
@@ -269,6 +270,25 @@ export const viewCommands: Command[] = [
     label: "Switch Theme...",
     category: "view",
     handler: () => dialogStore.openThemePicker(),
+  },
+  {
+    id: "view.switchLayout",
+    scope: "window",
+    label: "Switch Layout...",
+    category: "view",
+    handler: () => dialogStore.openThemePicker("layout"),
+  },
+  {
+    // Keeps the id of the retired floatingIslands toggle so existing
+    // keybindings still work; it now switches the layout theme (#1306).
+    id: "setting.toggle.floatingIslands",
+    scope: "window",
+    label: "Toggle Floating Islands Layout",
+    category: "view",
+    toggleState: () => settingsStore.layoutTheme === FLOATING_ISLANDS_LAYOUT_ID,
+    handler: () => settingsStore.update({
+      layoutTheme: settingsStore.layoutTheme === FLOATING_ISLANDS_LAYOUT_ID ? DEFAULT_LAYOUT_ID : FLOATING_ISLANDS_LAYOUT_ID,
+    }),
   },
   {
     id: 'view.switchIconTheme',

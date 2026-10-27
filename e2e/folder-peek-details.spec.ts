@@ -1,9 +1,9 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures";
 import { waitForEntries, HOME_URL } from "./helpers";
 
 const root = "/home/user/Documents";
-const row = (page: import("@playwright/test").Page, path: string) => page.locator(`.pane-tree:not(.retained) .entry-item[data-path="${path}"]`);
-async function start(page: import("@playwright/test").Page) {
+const row = (page: Page, path: string) => page.locator(`.pane-tree:not(.retained) .entry-item[data-path="${path}"]`);
+async function start(page: Page) {
   await page.goto(HOME_URL);
   await waitForEntries(page);
   await page.evaluate(async path => {

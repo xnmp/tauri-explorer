@@ -1,18 +1,20 @@
 import { defineConfig } from "vitest/config";
 import { sveltekit } from "@sveltejs/kit/vite";
 import { resolve } from "path";
+import { SERIAL_UNIT_FILES } from "./tests/serial-unit-files";
 
 /**
  * Perf benchmarks run under their own config: one file at a time with no
  * worker parallelism, so their absolute-time thresholds measure the code
  * rather than scheduler contention from the unit suite running alongside.
  * Invoked by `bun run test:perf` (and by `bun run test` after the unit
- * suite); see vitest.config.ts for the matching exclusion.
+ * suite); see vitest.config.ts for the matching exclusion. The same holds
+ * for the contention-sensitive unit files in tests/serial-unit-files.ts.
  */
 export default defineConfig({
   plugins: [sveltekit()],
   test: {
-    include: ["tests/perf/**/*.test.ts", "tests/perf/**/*.bench.ts"],
+    include: ["tests/perf/**/*.test.ts", "tests/perf/**/*.bench.ts", ...SERIAL_UNIT_FILES],
     environment: "node",
     setupFiles: ["./tests/setup.ts"],
     fileParallelism: false,

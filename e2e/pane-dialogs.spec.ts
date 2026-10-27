@@ -129,7 +129,7 @@ for (const mode of modes) {
         const { settingsStore } = await import("/src/lib/state/settings.svelte.ts");
         // @ts-expect-error Vite serves test source modules.
         const { windowTabsManager: manager } = await import("/src/lib/state/window-tabs.svelte.ts");
-        settingsStore.update({ floatingIslands: true, showSidebar: false });
+        settingsStore.update({ layoutTheme: "floating-islands", showSidebar: false });
         manager.getActiveExplorer().setMillerLayers(2);
       });
       await install(page);

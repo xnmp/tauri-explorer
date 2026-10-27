@@ -9,6 +9,7 @@
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { classifyVersionOnly, onlyVersionFiles } from "./version-only.mjs";
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -83,6 +84,40 @@ export function gitChangedFiles(base, head, root = ROOT) {
 }
 
 /**
+ * Read files on both sides of `base...head`: "base" is their merge base (what
+ * the diff compares against), "head" the head commit. Absent files read null.
+ * @param {string} base
+ * @param {string} head
+ * @returns {import("./version-only.mjs").BlobReader}
+ */
+export function gitBlobReader(base, head, root = ROOT) {
+  /** @type {string | undefined} */
+  let mergeBase;
+  return (side, path) => {
+    if (side === "base") {
+      mergeBase ??= execFileSync("git", ["merge-base", base, head], { cwd: root, encoding: "utf8" }).trim();
+    }
+    const rev = side === "base" ? mergeBase : head;
+    try {
+      return execFileSync("git", ["show", `${rev}:${path}`], {
+        cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 * 1024 * 1024,
+      });
+    } catch {
+      return null;
+    }
+  };
+}
+
+/**
+ * Whether the diff is a release version bump (scripts/version-only.mjs).
+ * Blobs are read only when every changed path is a version file.
+ * @param {string[]} changed
+ * @param {import("./version-only.mjs").BlobReader} read
+ */
+export const versionOnlyChange = (changed, read) =>
+  onlyVersionFiles(changed) && classifyVersionOnly(changed, read).versionOnly;
+
+/**
  * Parse `[--max-files N] [base] [head]` shared by the selector CLIs.
  * @param {string[]} argv
  */
@@ -110,7 +145,7 @@ export function parseArgs(argv) {
  * Run a selector against the git diff and print its Selection as JSON. Any
  * failure, including in git or the selector itself, prints a full run.
  * @param {string} tier label for diagnostics
- * @param {(changed: string[], maxFiles: number) => Selection} select
+ * @param {(changed: string[], maxFiles: number, context: { versionOnly: boolean }) => Selection} select
  */
 export function runCli(tier, select) {
   /** @type {Selection} */
@@ -118,7 +153,7 @@ export function runCli(tier, select) {
   try {
     const { base, head, maxFiles } = parseArgs(process.argv.slice(2));
     const changed = gitChangedFiles(base, head);
-    result = select(changed, maxFiles);
+    result = select(changed, maxFiles, { versionOnly: versionOnlyChange(changed, gitBlobReader(base, head)) });
   } catch (e) {
     const message = e instanceof Error ? e.message.split("\n")[0] : String(e);
     process.stderr.write(`[${tier}] selection failed: ${message}\n`);

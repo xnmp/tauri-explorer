@@ -163,3 +163,20 @@ function stripPrefix(p: string): string {
   if (p.startsWith("a/") || p.startsWith("b/")) return p.slice(2);
   return p;
 }
+
+/** Lines a diff view renders: file headers and git metadata are dropped. */
+export function visibleDiffLines(parsed: ParsedDiff | null): DiffLine[] {
+  if (!parsed) return [];
+  return parsed.lines.filter((l) => l.kind !== "header" && l.kind !== "meta");
+}
+
+/** The diff badge: added / deleted / renamed, else the side being shown. */
+export function diffSubtitle(parsed: ParsedDiff | null, staged: boolean): string {
+  if (!parsed) return "";
+  if (parsed.added) return "added";
+  if (parsed.deleted) return "deleted";
+  if (parsed.oldPath && parsed.newPath && parsed.oldPath !== parsed.newPath) {
+    return `renamed from ${parsed.oldPath}`;
+  }
+  return staged ? "staged" : "unstaged";
+}

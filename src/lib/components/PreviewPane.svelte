@@ -14,23 +14,14 @@
   import { createLatestOnlyRunner } from "$lib/domain/latest-only";
   import { usePreviewFullscreen } from "$lib/composables/use-preview-fullscreen.svelte";
   import PreviewImageSurface from "./PreviewImageSurface.svelte";
-import { gitDiff } from "$lib/api/git";
-import { openFile } from "$lib/api/open";
-  import { toastStore } from "$lib/state/toast.svelte";
   import { getFileType, formatDate } from "$lib/domain/file-types";
   import VideoIndicator from "./VideoIndicator.svelte";
   import { formatResolution, formatSize, isSystemHidden, type FileEntry } from "$lib/domain/file";
-  import { highlightDiffLine } from "$lib/domain/syntax-highlight";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { frecencyStore } from "$lib/state/frecency.svelte";
   import { getScmStore } from "$lib/state/scm.svelte";
-  import { dialogStore } from "$lib/state/dialogs.svelte";
-  import { createPreviewDiffActions, type HunkAction } from "$lib/state/preview-diff-actions";
-  import { gitCommitFileDiff, gitCompareCommitFileDiff } from "$lib/api/git-log";
-  import VirtualList from "./VirtualList.svelte";
   import HtmlPreview from "./HtmlPreview.svelte";
   import type { HtmlZoom } from "$lib/domain/html-preview-zoom";
-  import { type CsvPreview } from "$lib/domain/csv-preview";
   import { subscribeToLocalFileChanges } from "$lib/state/file-events";
   import { parentDir } from "$lib/domain/path";
   let localPreviewRevision = $state(0);
@@ -52,23 +43,15 @@ import { openFile } from "$lib/api/open";
     if (sidebarScmStore.activeDiff || sidebarScmStore.commitDiff) return sidebarScmStore;
     return paneScmStore;
   });
-  import { parseUnifiedDiff, type ParsedDiff, type DiffLine } from "$lib/domain/diff";
+  import { useLightTheme } from "$lib/composables/use-light-theme.svelte";
+  import PreviewDiffView from "./PreviewDiffView.svelte";
+  import PreviewCsvTable from "./PreviewCsvTable.svelte";
+  import PreviewTextDocument from "./PreviewTextDocument.svelte";
   import PreviewFolderList from "./PreviewFolderList.svelte";
   import PluginPreviewTarget from "./PluginPreviewTarget.svelte";
   import { previewInfoRegistry, type PreviewSubject } from "$lib/plugins/preview-registry.svelte";
-  /** Detect if the current theme uses a light color scheme.
-   * Recomputed via a MutationObserver on the documentElement's `data-theme`
-   * attribute (set by theme.svelte.ts) — getComputedStyle only reflects the
-   * new theme after the attribute has actually been applied to the DOM. */
-  let isLightTheme = $state(false);
-  $effect(() => {
-    const compute = () =>
-      (isLightTheme = getComputedStyle(document.documentElement).colorScheme === "light");
-    compute();
-    const observer = new MutationObserver(compute);
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
-    return () => observer.disconnect();
-  });
+  /** Light/dark hljs palette for markdown and code previews. */
+  const lightTheme = useLightTheme();
 
   const paneId = $props.id();
   const position = $derived(settingsStore.resolvedPreviewPanePosition);
@@ -206,22 +189,6 @@ import { openFile } from "$lib/api/open";
   });
   let lastPreviewKey: string | null = null;
 
-  function csvRowHeight(row: string[]): number {
-    return Math.max(28, 12 + Math.max(...row.map((cell) => cell.split("\n").length)) * 16);
-  }
-
-  /** One column template shared by the sticky header and every virtual row. */
-  function csvColumnTemplate(csv: CsvPreview): string {
-    return csv.header
-      .map((header, column) => {
-        const longestCell = Math.max(header.length, ...csv.rows.map((row) => row[column]?.length ?? 0));
-        // Pixels keep a track's computed width identical in the bold header
-        // and normal-weight data rows; `ch` varies with font weight.
-        return `${Math.max(128, longestCell * 8 + 20)}px`;
-      })
-      .join(" ");
-  }
-
   // --- Git diff preview state ---
   const activeDiff = $derived(scmStore.activeDiff);
   // Commit file diff routed from the git graph (#366); wins over the
@@ -233,147 +200,6 @@ import { openFile } from "$lib/api/open";
     !!selectedFile && !activeDiff && !commitDiff &&
     (content.kind === "markdown" || content.kind === "code" || content.kind === "text"),
   );
-  const diffPath = $derived(commitDiff?.path ?? activeDiff?.path ?? "");
-  let diffParsed = $state<ParsedDiff | null>(null);
-  let diffLoading = $state(false);
-  let diffError = $state<string | null>(null);
-  let diffRequestGen = 0;
-
-  const diffVisibleLines = $derived.by<DiffLine[]>(() => {
-    if (!diffParsed) return [];
-    return diffParsed.lines.filter((l) => l.kind !== "header" && l.kind !== "meta");
-  });
-
-  const diffSubtitle = $derived.by(() => {
-    if (!diffParsed) return "";
-    if (diffParsed.added) return "added";
-    if (diffParsed.deleted) return "deleted";
-    if (diffParsed.oldPath && diffParsed.newPath && diffParsed.oldPath !== diffParsed.newPath) {
-      return `renamed from ${diffParsed.oldPath}`;
-    }
-    return activeDiff?.staged ? "staged" : "unstaged";
-  });
-
-  // Diff header actions — restore the stage / unstage / discard / open-file
-  // affordances directly on the diff so a file can be staged from its diff
-  // (VSCode parity). Operates on the currently-open diff target.
-  // Admission is against the pane owning the diff, shared with command routing.
-  let ownershipRevision = $state(0);
-  $effect(() => dialogStore.subscribeOwnership(() => { ownershipRevision++; }));
-  const diffActions = createPreviewDiffActions({
-    scm: () => scmStore,
-    ownerPaneId: () => windowTabsManager.activePaneId,
-    isPaneBlocked: (id) => dialogStore.isPaneBlocked(id),
-    onError: (message) => toastStore.error(message),
-    confirm: (message) => window.confirm(message),
-  });
-  const diffActionsBlocked = $derived.by(() => {
-    void ownershipRevision;
-    return diffActions.blocked();
-  });
-  const stageFromDiff = () => diffActions.stage();
-  const unstageFromDiff = () => diffActions.unstage();
-  const discardFromDiff = () => diffActions.discard();
-  const applyHunk = (patch: string, action: HunkAction) => diffActions.applyHunk(patch, action);
-  async function openDiffFileInEditor(): Promise<void> {
-    if (!activeDiff || !scmStore.repoRoot) return;
-    const abs = `${scmStore.repoRoot.replace(/\/$/, "")}/${activeDiff.path}`;
-    await openFile(abs);
-  }
-
-  $effect(() => {
-    if (commitDiff) {
-      void loadCommitDiff(commitDiff);
-      return;
-    }
-    if (!activeDiff || !scmStore.repoRoot) {
-      diffRequestGen++; // invalidate any in-flight request
-      diffInFlight = null;
-      diffRenderedTarget = null;
-      diffParsed = null;
-      diffError = null;
-      diffLoading = false;
-      return;
-    }
-    // Depend on the summary object itself (replaced wholesale on refresh) —
-    // counts can stay identical while file contents change, so a count-based
-    // key would miss content updates.
-    void scmStore.summary;
-    loadDiff(scmStore.repoRoot, activeDiff.path, activeDiff.staged);
-  });
-
-  /** Load a commit file diff for the graph-routed target (#366). */
-  async function loadCommitDiff(cd: { repoPath: string; oid: string; path: string; baseOid?: string }): Promise<void> {
-    const gen = ++diffRequestGen;
-    // `diffParsed` is about to hold a COMMIT diff — the working-tree render
-    // cache must not claim it, or reopening that target would briefly show
-    // the commit's hunks under a working-tree badge.
-    diffRenderedTarget = null;
-    diffInFlight = null;
-    diffLoading = true;
-    diffError = null;
-    try {
-      const text = cd.baseOid
-        ? await gitCompareCommitFileDiff(cd.repoPath, cd.baseOid, cd.oid, cd.path)
-        : await gitCommitFileDiff(cd.repoPath, cd.oid, cd.path);
-      if (gen !== diffRequestGen || scmStore.commitDiff !== cd) return;
-      diffParsed = parseUnifiedDiff(text);
-    } catch (err) {
-      if (gen !== diffRequestGen) return;
-      diffError = err instanceof Error ? err.message : String(err);
-      diffParsed = null;
-    } finally {
-      if (gen === diffRequestGen) diffLoading = false;
-    }
-  }
-
-  // The target currently being fetched, and the one `diffParsed` belongs to,
-  // both as `${repoRoot}|${path}|${staged}` (repo included: the pane and
-  // sidebar stores can sit on different repos that share a relative path).
-  let diffInFlight: string | null = null;
-  let diffRenderedTarget: string | null = null;
-
-  async function loadDiff(repoRoot: string, path: string, staged: boolean): Promise<void> {
-    const target = `${repoRoot}|${path}|${staged}`;
-    // A repo on a UNC path is polled every 3s (#387), and each poll replaces
-    // `summary` — which this effect depends on — so a re-run would supersede
-    // the request already fetching this same target. Over a slow share the diff
-    // then never lands: the pane flashes a spinner forever and settles empty
-    // (#396). A redundant reload of a target we're already loading is dropped.
-    if (diffInFlight === target) return;
-    diffInFlight = target;
-    const gen = ++diffRequestGen;
-    // Re-checking the diff we're already showing must not blank it — that's the
-    // flash. A different target must, or the old file's diff would linger under
-    // the new file's header.
-    if (diffRenderedTarget !== target) {
-      diffParsed = null;
-      diffLoading = true;
-    }
-    diffError = null;
-    try {
-      const r = await gitDiff(repoRoot, path, { staged });
-      // Drop stale responses: a newer request superseded this one, or the
-      // target (path OR staged flag) changed while we were fetching.
-      if (gen !== diffRequestGen) return;
-      const current = scmStore.activeDiff;
-      if (!current || current.path !== path || current.staged !== staged) return;
-      if (!r.ok) {
-        diffError = r.error;
-        diffParsed = null;
-        diffRenderedTarget = null;
-      } else {
-        diffParsed = parseUnifiedDiff(r.data);
-        diffRenderedTarget = target;
-      }
-      diffLoading = false;
-    } finally {
-      // Always release the target, and never leave a superseded request's
-      // spinner up: the winning request owns `diffLoading` from here.
-      if (diffInFlight === target) diffInFlight = null;
-      if (gen === diffRequestGen) diffLoading = false;
-    }
-  }
 
   // Clear activeDiff when explorer file selection changes (not on initial render)
   let prevSelectedPath: string | null = null;
@@ -450,6 +276,8 @@ import { openFile } from "$lib/api/open";
 <div
   id={paneId}
   class="preview-pane"
+  data-region="preview-body"
+  data-fullscreen={fullscreen.active || undefined}
   class:resizing={resize.isResizing}
   class:fullscreen={fullscreen.active}
   class:vertical={isVertical}
@@ -479,86 +307,7 @@ import { openFile } from "$lib/api/open";
     {/if}
   {/if}
   {#if activeDiff || commitDiff}
-    <div class="preview-header">
-      <span class="preview-filename" title={diffPath}>{diffPath.split("/").pop()}</span>
-      {#if commitDiff}
-        <span class="preview-type-badge diff-commit" title={commitDiff.baseOid ? `${commitDiff.baseOid} → ${commitDiff.oid}` : commitDiff.oid}>
-          {commitDiff.baseOid ? `compare ${commitDiff.baseOid.slice(0, 7)} → ${commitDiff.oid.slice(0, 7)}` : `commit ${commitDiff.oid.slice(0, 7)}`}
-        </span>
-      {:else if activeDiff}
-        <span class="preview-type-badge" class:diff-staged={activeDiff.staged} class:diff-unstaged={!activeDiff.staged}>
-          {diffSubtitle || "git diff"}
-        </span>
-      {/if}
-    </div>
-    <div class="diff-actions">
-      {#if commitDiff}
-        <!-- Historical diff: stage/unstage/discard don't apply (#366). -->
-        <button type="button" class="diff-action-btn" title="Close diff (Esc)" onclick={() => scmStore.closeCommitDiff()}>Close</button>
-      {:else if activeDiff}
-        <button type="button" class="diff-action-btn" disabled={diffActionsBlocked} onclick={openDiffFileInEditor}>Open File</button>
-        {#if activeDiff.staged}
-          <button type="button" class="diff-action-btn" disabled={diffActionsBlocked} onclick={unstageFromDiff}>Unstage</button>
-        {:else}
-          <button type="button" class="diff-action-btn" disabled={diffActionsBlocked} onclick={stageFromDiff}>Stage</button>
-          {#if !diffParsed?.added}
-            <button type="button" class="diff-action-btn danger" disabled={diffActionsBlocked} onclick={discardFromDiff}>Discard</button>
-          {/if}
-        {/if}
-        <button type="button" class="diff-action-btn" title="Close diff (Esc)" onclick={() => scmStore.closeDiff()}>Close</button>
-      {/if}
-    </div>
-    <!-- svelte-ignore a11y_no_noninteractive_tabindex -- a scrollable region must be keyboard-focusable (WCAG 2.1.1, #797). -->
-    <div class="preview-content" role="region" aria-label="Diff of {diffPath}" tabindex="0">
-      {#if diffLoading}
-        <div class="preview-loading"><div class="spinner"></div></div>
-      {:else if diffError}
-        <div class="preview-empty"><span class="preview-error-text">{diffError}</span></div>
-      {:else if diffParsed?.binary}
-        <div class="preview-empty"><span>Binary file changed</span></div>
-      {:else if diffVisibleLines.length === 0}
-        <div class="preview-empty"><span>No changes to display</span></div>
-      {:else}
-        <div class="diff-lines">
-          {#each diffVisibleLines as line (line.index)}
-            <div class="diff-line {line.kind}" data-line-kind={line.kind}>
-              <span class="diff-gutter old">{line.oldLine ?? ""}</span>
-              <span class="diff-gutter new">{line.newLine ?? ""}</span>
-              <span class="diff-sigil">{line.kind === "add" ? "+" : line.kind === "remove" ? "−" : line.kind === "hunk" ? "@" : " "}</span>
-              {#if line.kind === "hunk"}
-                {@const hunk = diffParsed?.hunks.find((candidate) => candidate.lineIndex === line.index)}
-                <span class="diff-content hunk-content">
-                  <span class="hunk-range">{line.text}</span>
-                  {#if activeDiff && hunk}
-                    <span class="hunk-actions">
-                      {#if activeDiff.staged}
-                        <button type="button" class="hunk-action" disabled={diffActionsBlocked} onclick={() => applyHunk(hunk.patch, "unstage")}>Unstage hunk</button>
-                      {:else}
-                        <button type="button" class="hunk-action" disabled={diffActionsBlocked} onclick={() => applyHunk(hunk.patch, "stage")}>Stage hunk</button>
-                        {#if !diffParsed?.added}
-                          <button type="button" class="hunk-action danger" disabled={diffActionsBlocked} onclick={() => applyHunk(hunk.patch, "discard")}>Discard hunk</button>
-                        {/if}
-                      {/if}
-                    </span>
-                  {/if}
-                </span>
-              {:else if line.kind === "meta" || line.kind === "header"}
-                <span class="diff-content">{line.text}</span>
-              {:else}
-                <!-- highlightDiffLine output is hljs-generated/escaped HTML — safe sink (#227). -->
-                <span class="diff-content">{@html highlightDiffLine(line.text, diffPath)}</span>
-              {/if}
-            </div>
-          {/each}
-        </div>
-      {/if}
-    </div>
-    <div class="preview-info">
-      <div class="info-row">
-        <span class="info-label">Path</span>
-        <span class="info-value" title={diffPath}>{diffPath}</span>
-      </div>
-    </div>
+    <PreviewDiffView {scmStore} />
   {:else if pluginTarget}
     {#key pluginTarget.target.id}
       <PluginPreviewTarget target={pluginTarget.target} showInfo={settingsStore.showPreviewInfo} {fullscreen}>
@@ -620,34 +369,13 @@ import { openFile } from "$lib/api/open";
           <div class="preview-empty"><span>No preview available</span></div>
         {/if}
       {:else if content.kind === "csv"}
-        <div class="preview-csv" role="table" aria-label="CSV preview">
-          <div class="preview-csv-table" style={`--csv-column-template: ${csvColumnTemplate(content.csv)};`}>
-            <div class="preview-csv-row preview-csv-header" role="row">
-              {#each content.csv.header as cell, index (index)}
-                <div class="preview-csv-cell" role="columnheader">{cell}</div>
-              {/each}
-            </div>
-            <VirtualList items={content.csv.rows} itemHeight={28} getItemHeight={csvRowHeight} getKey={(_row, index) => index} itemOverflow="visible" class="preview-csv-rows">
-              {#snippet children(row)}
-                <div class="preview-csv-row" role="row">
-                  {#each row as cell, index (index)}
-                    <div class="preview-csv-cell" role="cell">{cell}</div>
-                  {/each}
-                </div>
-              {/snippet}
-            </VirtualList>
-          </div>
-        </div>
+        <PreviewCsvTable csv={content.csv} />
       {:else if content.kind === "html"}
         <HtmlPreview source={content.document} zoom={htmlZoom}
           onzoom={(zoom) => (htmlZoom = zoom)}
           fullscreen={fullscreen.active} ontogglefullscreen={fullscreen.toggle} />
-      {:else if content.kind === "markdown"}
-        <div class="preview-markdown" class:hljs-light={isLightTheme} class:hljs-dark={!isLightTheme}>{@html content.html}</div>
-      {:else if content.kind === "code"}
-        <pre class="preview-text preview-code" class:hljs-light={isLightTheme} class:hljs-dark={!isLightTheme}><code class="hljs">{@html content.html}</code></pre>
-      {:else if content.kind === "text"}
-        <pre class="preview-text">{content.text}</pre>
+      {:else if content.kind === "markdown" || content.kind === "code" || content.kind === "text"}
+        <PreviewTextDocument {content} light={lightTheme.light} />
       {:else if content.kind === "error"}
         <div class="preview-empty"><span class="preview-error-text">{content.message}</span></div>
       {:else}
@@ -723,8 +451,9 @@ import { openFile } from "$lib/api/open";
     flex: 1 1 0;
     min-width: 0;
     min-height: 0;
-    border-left: 1px solid var(--divider);
-    background: var(--background-card-secondary);
+    border-left: 1px solid var(--layout-hairline, var(--divider));
+    background: var(--layout-surface, var(--background-card-secondary));
+    border-radius: inherit; /* follow a layout's rounded preview island */
     overflow: hidden;
     /* Horizontal inset of the Preview chrome and info rows. Plugin
        Preview-info sections inherit it so their rows line up with the host's
@@ -863,6 +592,7 @@ import { openFile } from "$lib/api/open";
      otherwise 100vw/100vh are laid out pre-zoom and render zoom× the screen
      size, pushing the image off-center and off-screen (#236). */
   .preview-pane.fullscreen {
+    border-radius: 0;
     position: fixed;
     inset: 0;
     zoom: calc(1 / var(--app-zoom, 1));
@@ -1027,7 +757,7 @@ import { openFile } from "$lib/api/open";
     overflow-x: hidden;
     overflow-y: auto;
   }
-  .preview-pane.fullscreen .preview-content.fs-text > :is(.preview-text, .preview-markdown) {
+  .preview-pane.fullscreen .preview-content.fs-text > :global(:is(.preview-text, .preview-markdown)) {
     zoom: calc(var(--app-zoom, 1) * var(--fs-text-zoom, 1));
   }
   .preview-pane.fullscreen .preview-content.fs-text > .preview-truncated {
@@ -1092,80 +822,7 @@ import { openFile } from "$lib/api/open";
     to { transform: rotate(360deg); }
   }
 
-
   .image-preview-note { position: absolute; bottom: 8px; left: 8px; right: 8px; margin: 0; padding: 4px 8px; background: var(--background-solid); color: var(--text-secondary); font-size: var(--font-size-caption); pointer-events: none; }
-
-  .preview-text {
-    padding: 16px;
-    font-family: "Cascadia Code", "Fira Code", "Consolas", monospace;
-    font-size: var(--preview-font-size, 12px);
-    line-height: 1.6;
-    color: var(--text-secondary);
-    white-space: pre-wrap;
-    word-break: break-all;
-    margin: 0;
-    flex: 1;
-  }
-
-  .preview-code code {
-    font-family: inherit;
-  }
-
-  .preview-csv {
-    display: flex;
-    flex: 1;
-    flex-direction: column;
-    min-height: 0;
-    overflow-x: auto;
-    overflow-y: hidden;
-    font-size: var(--preview-font-size, 12px);
-    color: var(--text-secondary);
-  }
-
-  .preview-csv-table {
-    display: flex;
-    flex: 1;
-    flex-direction: column;
-    width: max-content;
-    min-width: 100%;
-    min-height: 0;
-  }
-
-  .preview-csv-row {
-    display: grid;
-    grid-template-columns: var(--csv-column-template);
-  }
-
-  .preview-csv-header {
-    position: sticky;
-    top: 0;
-    z-index: 1;
-    background: var(--background-solid);
-    border-bottom: 1px solid var(--divider);
-    font-weight: 600;
-  }
-
-  .preview-csv-cell {
-    min-width: 0;
-    padding: 6px 10px;
-    border-right: 1px solid var(--divider);
-    border-bottom: 1px solid color-mix(in srgb, var(--divider) 65%, transparent);
-    white-space: pre;
-    line-height: 16px;
-  }
-
-  .preview-csv-rows {
-    min-height: 0;
-  }
-
-  .preview-csv-table :global(.preview-csv-rows) {
-    overflow-x: visible;
-  }
-
-  .preview-code :global(.hljs) {
-    background: transparent;
-    padding: 0;
-  }
 
   .preview-truncated {
     padding: 8px 16px;
@@ -1175,199 +832,6 @@ import { openFile } from "$lib/api/open";
     border-top: 1px solid var(--divider);
     flex-shrink: 0;
   }
-
-  /* Rendered markdown (Obsidian-style). Content comes from {@html}, so
-     descendants need :global. */
-  .preview-markdown {
-    padding: 16px;
-    font-size: var(--preview-font-size, 12px);
-    line-height: 1.65;
-    color: var(--text-secondary);
-    flex: 1;
-    overflow-wrap: break-word;
-    container: preview-markdown / inline-size;
-  }
-
-  .preview-markdown :global(h1),
-  .preview-markdown :global(h2),
-  .preview-markdown :global(h3),
-  .preview-markdown :global(h4),
-  .preview-markdown :global(h5),
-  .preview-markdown :global(h6) {
-    color: var(--accent-light);
-    font-weight: 600;
-    line-height: 1.3;
-    margin: 14px 0 6px;
-  }
-
-  .preview-markdown :global(h1) { font-size: 1.416667em; padding-bottom: 4px; border-bottom: 1px solid var(--divider); }
-  .preview-markdown :global(h2) { font-size: 1.25em; padding-bottom: 3px; border-bottom: 1px solid var(--divider); }
-  .preview-markdown :global(h3) { font-size: 1.083333em; }
-  .preview-markdown :global(h4) { font-size: 1em; }
-
-  .preview-markdown :global(h1:first-child),
-  .preview-markdown :global(h2:first-child),
-  .preview-markdown :global(p:first-child) {
-    margin-top: 0;
-  }
-
-  .preview-markdown :global(p) {
-    margin: 6px 0;
-  }
-
-  .preview-markdown :global(.md-properties) {
-    margin: 0 0 14px;
-    padding: 8px 10px;
-    border: 1px solid var(--divider);
-    border-radius: var(--radius-sm);
-    background: var(--subtle-fill-secondary);
-  }
-
-  .preview-markdown :global(.md-properties dl) {
-    margin: 0;
-  }
-
-  .preview-markdown :global(.md-property) {
-    display: grid;
-    grid-template-columns: minmax(76px, 0.38fr) minmax(0, 1fr);
-    gap: 8px;
-    padding: 3px 0;
-  }
-
-  /* In a narrow pane the key column would squeeze each value to a few
-     characters per line; stack the key above its value instead (#792).
-     Side by side needs the properties box's 22px of padding and border, the
-     76px key column, the 8px gap and a 96px value: 202px. */
-  @container preview-markdown (width < 202px) {
-    .preview-markdown :global(.md-property) {
-      grid-template-columns: minmax(0, 1fr);
-      gap: 0;
-    }
-  }
-
-  .preview-markdown :global(.md-property + .md-property) {
-    border-top: 1px solid var(--divider);
-  }
-
-  .preview-markdown :global(.md-property-key) {
-    color: var(--text-tertiary);
-    font-weight: 600;
-    overflow-wrap: anywhere;
-  }
-
-  .preview-markdown :global(.md-property dd) {
-    min-width: 0;
-    margin: 0;
-    color: var(--text-primary);
-    overflow-wrap: anywhere;
-  }
-
-  .preview-markdown :global(.md-property-values) {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    margin: 0;
-    padding: 0;
-    list-style: none;
-  }
-
-  .preview-markdown :global(.md-property-values li) {
-    margin: 0;
-    padding: 1px 5px;
-    border-radius: 999px;
-    background: var(--subtle-fill-tertiary, var(--subtle-fill-secondary));
-  }
-
-  .preview-markdown :global(a) {
-    color: var(--accent-text, var(--accent));
-    text-decoration: none;
-  }
-
-  .preview-markdown :global(a:hover) {
-    text-decoration: underline;
-  }
-
-  .preview-markdown :global(code) {
-    font-family: "Cascadia Code", "Fira Code", "Consolas", monospace;
-    font-size: 1em;
-    background: var(--subtle-fill-secondary);
-    padding: 1px 4px;
-    border-radius: 3px;
-  }
-
-  .preview-markdown :global(pre.md-code) {
-    background: var(--subtle-fill-secondary);
-    border: 1px solid var(--divider);
-    border-radius: var(--radius-sm);
-    padding: 10px 12px;
-    margin: 8px 0;
-    overflow-x: auto;
-  }
-
-  .preview-markdown :global(pre.md-code code) {
-    background: transparent;
-    padding: 0;
-    white-space: pre;
-  }
-
-  .preview-markdown :global(blockquote) {
-    margin: 8px 0;
-    padding: 2px 12px;
-    border-left: 3px solid var(--accent);
-    color: var(--text-tertiary);
-  }
-
-  .preview-markdown :global(ul),
-  .preview-markdown :global(ol) {
-    margin: 6px 0;
-    padding-left: 22px;
-  }
-
-  .preview-markdown :global(li) {
-    margin: 2px 0;
-  }
-
-  .preview-markdown :global(li input[type="checkbox"]) {
-    margin-right: 6px;
-  }
-
-  .preview-markdown :global(hr) {
-    border: none;
-    border-top: 1px solid var(--divider);
-    margin: 12px 0;
-  }
-
-  .preview-markdown :global(table) {
-    border-collapse: collapse;
-    margin: 8px 0;
-    font-size: inherit;
-    display: block;
-    overflow-x: auto;
-  }
-
-  .preview-markdown :global(th),
-  .preview-markdown :global(td) {
-    border: 1px solid var(--divider);
-    padding: 4px 8px;
-    text-align: left;
-  }
-
-  .preview-markdown :global(th) {
-    background: var(--subtle-fill-secondary);
-    color: var(--text-primary);
-    font-weight: 600;
-  }
-
-  /* Markdown never emits <img> (CSP img-src excludes https:, see
-     domain/markdown.ts) — images degrade to this placeholder, a link for
-     remote URLs or plain alt text otherwise. */
-  .preview-markdown :global(.md-image-placeholder) {
-    color: var(--text-tertiary);
-    font-style: italic;
-  }
-
-  /* hljs token colors are shared app-wide in themes/syntax.css (#246);
-     the .hljs-dark/.hljs-light scheme class lives on <html>. */
 
   .preview-error-text {
     color: var(--system-critical-text, var(--system-critical));
@@ -1428,150 +892,4 @@ import { openFile } from "$lib/api/open";
     white-space: nowrap;
   }
 
-  /* --- Git diff styles --- */
-  .preview-type-badge.diff-staged {
-    background: color-mix(in srgb, #22c55e 20%, transparent);
-    color: #16a34a;
-  }
-
-  .preview-type-badge.diff-unstaged {
-    background: color-mix(in srgb, var(--accent) 15%, transparent);
-    color: var(--accent-text, var(--accent));
-  }
-
-  .diff-actions {
-    display: flex;
-    gap: 6px;
-    padding: 6px 12px;
-    border-bottom: 1px solid var(--divider);
-    flex-wrap: wrap;
-  }
-
-  .diff-action-btn {
-    padding: 3px 10px;
-    background: transparent;
-    border: 1px solid var(--divider);
-    border-radius: var(--radius-sm);
-    color: var(--text-secondary);
-    font-family: inherit;
-    font-size: 12px;
-    cursor: pointer;
-    transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
-  }
-
-  .diff-action-btn:hover {
-    background: var(--subtle-fill-secondary);
-    color: var(--text-primary);
-  }
-
-  .diff-action-btn.danger:hover {
-    color: var(--system-critical-text, var(--system-critical, #dc2626));
-    border-color: var(--system-critical, #dc2626);
-  }
-
-  .diff-lines {
-    flex: 1;
-    overflow: auto;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 11px;
-    line-height: 18px;
-  }
-
-  .diff-line {
-    display: grid;
-    grid-template-columns: 36px 36px 14px 1fr;
-    min-height: 18px;
-    white-space: pre;
-    padding-right: 8px;
-  }
-
-  .diff-line.context { background: transparent; }
-  .diff-line.add { background: color-mix(in srgb, #22c55e 12%, transparent); }
-  .diff-line.remove { background: color-mix(in srgb, #ef4444 14%, transparent); }
-  .diff-line.hunk { background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--text-tertiary); }
-  .diff-line.binary { color: var(--text-tertiary); font-style: italic; }
-
-  .diff-gutter {
-    padding-right: 4px;
-    text-align: right;
-    color: var(--text-tertiary);
-    user-select: none;
-    border-right: 1px solid color-mix(in srgb, var(--divider) 50%, transparent);
-  }
-
-  .diff-sigil {
-    text-align: center;
-    color: var(--text-tertiary);
-    user-select: none;
-  }
-
-  .diff-line.add .diff-sigil { color: #16a34a; }
-  .diff-line.remove .diff-sigil { color: #dc2626; }
-
-  .diff-content {
-    padding-left: 4px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    user-select: text;
-  }
-
-  .hunk-content, .hunk-actions {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  /* In a narrow pane a hunk's actions wrap below its range, the range
-     ellipsizes, and each action's label wraps, so no action is ever clipped
-     out of reach (#792). */
-  .hunk-content {
-    flex-wrap: wrap;
-    row-gap: 2px;
-  }
-
-  .hunk-range {
-    flex: 1 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .hunk-actions {
-    flex: 1 0 100%;
-    flex-wrap: wrap;
-    min-width: 0;
-    max-width: 100%;
-  }
-
-  .hunk-action {
-    min-width: 0;
-    max-width: 100%;
-    padding: 1px 3px;
-    border: 1px solid var(--divider);
-    border-radius: var(--radius-sm);
-    background: var(--background-card);
-    color: var(--text-secondary);
-    cursor: pointer;
-    font: inherit;
-    font-size: 10px;
-    white-space: normal;
-    overflow-wrap: anywhere;
-  }
-
-  .hunk-action.danger { color: var(--system-critical-text, var(--system-critical, #dc2626)); }
-
-  /* Vibrancy: own island, no left border needed */
-  :global([data-vibrancy]) .preview-pane {
-    background: transparent;
-    border-left: none;
-  }
-
-  /* …but the fullscreen surface must stay opaque (#391). The rule above has
-     the same specificity as `.preview-pane.fullscreen` and is declared later,
-     so in every island mode (macOS vibrancy, Windows Mica/Acrylic,
-     floatingIslands) it stripped the fullscreen background — the app behind
-     the image kept showing through, reading as a second preview. */
-  :global([data-vibrancy]) .preview-pane.fullscreen {
-    background: var(--background-solid, var(--background-card-secondary));
-  }
 </style>

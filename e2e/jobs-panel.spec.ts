@@ -98,6 +98,9 @@ test.describe("File-operation progress dialog", () => {
   test("cancelling a running copy stops it before the remaining files are copied", async ({
     page,
   }) => {
+    // The page clock (real-time until advanced) lets the end of the test jump
+    // over the copy latency instead of sleeping through it (#1123).
+    await page.clock.install();
     // 2s per file: at the 1.5s dialog gate the first file is still copying, so
     // cancelling then guarantees files #2 and #3 never start.
     await page.goto("/?path=/home/user/Documents&mockLatency=copy_entries:2000");
@@ -123,8 +126,9 @@ test.describe("File-operation progress dialog", () => {
 
     // Outcome: the batch was interrupted — not all three files were copied.
     // (Cancellation breaks the paste loop, so at least the last queued file
-    // never lands.) Give any cancelled in-flight copy time to settle first.
-    await page.waitForTimeout(2500);
+    // never lands.) Advance past the time an uncancelled batch would need to
+    // copy every file, so a cancellation that failed to stop it shows here.
+    await page.clock.runFor(6_500);
     const names = await page.locator(".entry-item .entry-name").allTextContents();
     const copied = ["report.pdf", "budget.xlsx", "presentation.pptx"].filter((n) =>
       names.includes(n),

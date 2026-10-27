@@ -34,6 +34,30 @@ pub(super) fn action_guard() -> Result<ActionGuard, AppError> {
     ACTION_DEPTH.set(ACTION_DEPTH.get() + 1);
     Ok(ActionGuard { _guard: guard })
 }
+/// A production process hosts one profile, so `ACTIONS` and the other
+/// process-wide AI gates are never shared between independent ledgers. Test
+/// profiles share one process: a fixture that drives those gates holds this
+/// for its lifetime, or a parallel fixture's recovery work consumes its native
+/// budget and automatic settlement is deferred (#1405). Threads inside one
+/// fixture still race the real gates. Nested fixtures on one thread share it.
+#[cfg(test)]
+pub(super) type HostProfile = std::rc::Rc<std::sync::MutexGuard<'static, ()>>;
+#[cfg(test)]
+pub(super) fn exclusive_host_profile() -> HostProfile {
+    static PROFILES: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    thread_local! {
+        static HELD: std::cell::RefCell<std::rc::Weak<std::sync::MutexGuard<'static, ()>>> =
+            const { std::cell::RefCell::new(std::rc::Weak::new()) };
+    }
+    HELD.with(|held| {
+        if let Some(profile) = held.borrow().upgrade() {
+            return profile;
+        }
+        let profile = std::rc::Rc::new(PROFILES.lock().unwrap_or_else(|e| e.into_inner()));
+        *held.borrow_mut() = std::rc::Rc::downgrade(&profile);
+        profile
+    })
+}
 fn error(message: &str) -> AppError {
     AppError::Other(message.into())
 }

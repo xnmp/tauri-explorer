@@ -1,0 +1,54 @@
+name: Tauri Linux system dependencies
+description: >-
+  Install apt packages with a per-attempt timeout and retries, reusing .debs
+  cached by package list and install plan (#1371). Give the calling step a
+  timeout-minutes so a stalled mirror fails in setup, where ci-auto-rerun can
+  re-run it.
+inputs:
+  packages:
+    description: Space-separated apt packages.
+    required: true
+  update-index:
+    description: Refresh the package index first ('false' when the job already did).
+    default: "true"
+  save-cache:
+    description: >-
+      Save new .debs. PRs restore the base branch's entry but do not add their
+      own, which would only evict other caches.
+    default: ${{ github.event_name != 'pull_request' }}
+runs:
+  using: composite
+  steps:
+    - name: Refresh apt package index
+      if: inputs.update-index == 'true'
+      shell: bash
+      run: '"$GITHUB_ACTION_PATH/apt.sh" update'
+
+    - name: Apt cache key
+      id: key
+      shell: bash
+      env:
+        APT_PACKAGES: ${{ inputs.packages }}
+      run: '"$GITHUB_ACTION_PATH/apt.sh" key >> "$GITHUB_OUTPUT"'
+
+    - name: Restore apt archives
+      id: restore
+      uses: actions/cache/restore@v6
+      with:
+        path: ~/.cache/tauri-apt-archives
+        key: ${{ steps.key.outputs.key }}
+        restore-keys: ${{ steps.key.outputs.restore-prefix }}
+
+    - name: Install apt packages
+      shell: bash
+      env:
+        APT_PACKAGES: ${{ inputs.packages }}
+      # actions/cache expands ~; apt needs the absolute path.
+      run: APT_ARCHIVES="$HOME/.cache/tauri-apt-archives" "$GITHUB_ACTION_PATH/apt.sh" install
+
+    - name: Save apt archives
+      if: inputs.save-cache == 'true' && steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: ~/.cache/tauri-apt-archives
+        key: ${{ steps.key.outputs.key }}

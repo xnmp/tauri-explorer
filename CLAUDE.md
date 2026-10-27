@@ -182,11 +182,23 @@ Rules that bite:
 - Relationship tooling (blocking, sub-issues) is the `jwilger/gh-issue-ext` extension (`gh issue-ext …`).
 - Issue bodies need a `## Screenshots` section with checkboxes; files go in `screenshots/<branch>/` and the merge hook verifies they exist. "None required" is only for changes with no user-visible effect; behavioral fixes still need one showing the corrected behavior. Verify a screenshot actually demonstrates the feature before counting it.
 - Keep `evidence/` available for committed image-only PR acceptance proof: the automated review gate renders those files directly from the PR. It is distinct from issue screenshots, so do not add a blanket `evidence/` ignore rule.
+- Browser specs write PNGs into `screenshots/` and `evidence/` only under `CAPTURE_EVIDENCE=1` (`e2e/evidence-shots.ts`, #1123); ordinary and CI runs skip them, so run the spec with that flag when producing issue or PR evidence.
 - The merge hook does **not** close issues — close them yourself (`gh issue close N --comment`) when the work lands on dev.
 - Before ending a session that merged UI work: `ALL_VIEW_MODES=1 npx playwright test`.
 - Make sure to clean up the worktree after merging. 
 
 ## Verification
+
+CI selection (#1367, details in `.github/workflows/CLAUDE.md`): PR Chromium runs
+every spec for any `src/` change; PR WebKit narrows unless a WKWebView-sensitive
+path changes (CSS/themes, zoom/overlays, FileList/FileItem, marquee, preview,
+DnD, peek, component styling); `ALL_VIEW_MODES` Chromium runs on dev pushes,
+nightly, and for PRs touching view-mode components, stylesheets, themes or
+global markup. Mock backend, e2e helpers,
+fixtures, configs and lockfiles still select everything. Version-only bumps run
+no browser or Rust tests. PRs into main run only the `release-gate` check:
+release.yml requires green dev-push CI for the same tree, so merge to main only
+after dev CI passes and `release-gate` is green.
 
 The three test tiers see different things; pick by what could actually break:
 
@@ -212,10 +224,11 @@ Playwright `page.clock.install()` still advances with real time. Tests that
 assert exact elapsed or remaining labels must install a fixed time and pause
 after page readiness, then advance only with `runFor()`; otherwise flooring
 can turn an expected 20s remaining into 19s without any application defect.
-The graph-lineage unit file includes a wall-clock hover budget. Its ordered
-Vitest project must finish before ordinary parallel unit transforms, retaining
-the unchanged budget and worker overrides; scheduler contention is not graph
-execution time. Qualification tests verify actual worker admission ordering.
+The graph-lineage unit file includes a wall-clock hover budget, and the
+5,001-activation registry churn file a deadline that competing transforms can
+exhaust. Both run one file at a time in `vitest.perf.config.ts`, after the
+parallel unit suite (`tests/serial-unit-files.ts`, #1123), with their budgets
+unchanged; scheduler contention is not graph execution time.
 Native crop oracles measure loaded first-frame pixels and intrinsic preview
 dimensions. Use bounded load/error callbacks rather than an unbounded injected
 `Image.decode()` promise, retaining exact pixel assertions. The fake external
@@ -230,6 +243,10 @@ cannot advance the protocol. Recursive (Quick Open) coverage can be mid-rebuild 
 overlapping root is released while still reporting healthy; arm it with
 `arm_search_watch_for_test` before taking the revision a write must advance
 (#1152).
+
+Tauri Rust listeners (`app.listen`) are not a lossless test oracle: an emit
+contending with any other emit on the same app is parked until a later emit
+with a listener flushes it. Inject a sink for completion events (#1215).
 
 Anything whose failure mode involves races, watcher timing, git state, or cache staleness needs tier 3 or a Rust temp-repo test in `src-tauri` — a green mock E2E is not evidence for those.
 
@@ -331,9 +348,9 @@ When a bug resists quick diagnosis: search `docs/lessons/` + the frozen `lessons
 
 The unit suite defaults to four workers to bound concurrent cold transforms;
 explicit Vitest worker overrides remain available, and perf tests stay serial.
-Runner setup gives only the compiler-command suite a ten-second compilation
-budget; it asserts exit status, not compiler speed. Existing behavioral test
-files remain unchanged and keep their five-second deadlines (#993 PR repair).
+Behavioral test files keep their five-second deadlines (#993 PR repair). The
+native suite's `bun run check:e2e:tauri` is a CI step of its own, not a Vitest
+test (#1123).
 
 For Windows native transfer waits, use one renderer-side observer through
 `executeAsync` to correlate the requested operation token or listing mutation.
@@ -432,15 +449,6 @@ See ADR 0005 and ADR 0006.
 
 GitHub PR mutations (#1082): keep `--repo github.com/owner/name` explicit. Pending work belongs to `git-pr-mutations.svelte.ts`, not a mounted graph session; Rust admission spans windows/worktrees of the same target. After gh starts, a failure may follow remote acceptance: invalidate badges, retain the uncertain warning, and require an explicit GitHub check before retrying (ADR 0006).
 
-The unchanged 5,001-activation registry churn file runs in the first Vitest
-project group, followed by the unchanged native-suite compiler check, then
-parallel unit files. Keep the projects exhaustive and
-non-overlapping; inherited include arrays concatenate, so define each project's
-include explicitly instead of inheriting the unit glob. Keep existing test
-assertions, deadlines and CLI worker overrides intact. Use positive group orders:
-Vitest puts isolated order-zero projects last with `maxWorkers=1`. Verify actual
-worker admission as well as resolved config (#1082).
-
 Graph reference disclosures capture the scroller's actual position when opened.
 A native scroll notification can arrive after the click for positioning that
 already happened. Compare positions rather than dismissing on every delivery;
@@ -451,8 +459,6 @@ The native suite's public TypeScript command uses incremental compiler metadata
 under node_modules/.cache. Repeated typechecks must still validate changed imported
 contracts and recover after errors; do not alter the existing five-second test
 deadline to compensate for host load. Metadata is disposable, not acceptance proof.
-
-The new native cache contract probe also runs before parallel unit transforms, in its own ordered project after the unchanged public compiler check. Preserve exhaustive selection and worker overrides.
 
 Compiler regression probes resolve TypeScript's CLI through Node package
 resolution from the test module. Review checkouts may inherit dependencies from
@@ -554,7 +560,10 @@ retain the intermediate-height, inert-ghost and reduced-motion assertions (#1275
 Spring peek state becomes observable before its List card finishes opening.
 Synthetic drag probes that target row edges must await populated rows and the
 end of live List motion before reading hit-test coordinates; a bounding box
-can include pixels still clipped by the opening card (#1292).
+can include pixels still clipped by the opening card (#1292). Rows also
+hit-test before the first rendered frame, whose ResizeObserver delivery sizes
+the List (until then it flows at its 4-row floor): settle across rendered
+frames, not DOM visibility (#1388).
 
 List peek stages never move a folder's header (#1365): every open header uses
 the `SPRING_CARD_FIT` rule in `sizeListModel`, "+N more" spills rows (cut while

@@ -376,7 +376,8 @@ describe("Turborepo task cache", () => {
     ["lessons", "docs/lessons/1-x.md", []],
     ["an ADR the unit tests read", "docs/adr/0001-x.md", ["ci:unit"]],
     ["the README the unit tests read", "README.md", ["ci:unit"]],
-    ["the changelog", "CHANGELOG.md", []],
+    // The version-only classifier names CHANGELOG.md (#1367).
+    ["the changelog", "CHANGELOG.md", ["ci:unit"]],
     ["a folder CLAUDE.md", "src-tauri/CLAUDE.md", []],
     ["committed evidence", "evidence/1-proof.png", []],
     ["the website page", "website/index.html", []],
@@ -833,6 +834,7 @@ describe("ci.yml cache wiring", () => {
   const targets: Record<string, string> = {
     "frontend-checks": "unit",
     chromium: "chromium-${{ matrix.shard }}",
+    "chromium-view-modes": "chromium-view-modes-${{ matrix.shard }}",
     "webkit-tests": "webkit-${{ matrix.shard }}",
     "rust-suite": "rust-${{ matrix.suite }}",
   };
@@ -872,13 +874,15 @@ describe("ci.yml cache wiring", () => {
     const read = (github: object, inputs: object = {}, vars: object = {}) => evaluate(ci.env.TEST_CACHE_READ, { github, inputs, vars });
     for (const event of Object.values(events)) expect(read(event, event.event_name === "workflow_dispatch" ? { test_cache: true } : {})).toBe("true");
     expect(read(events["manual run"], { test_cache: false })).toBe("false");
+    // The nightly run executes every target (#1367).
+    expect(read({ ...events["dev push"], event_name: "schedule" })).toBe("false");
     expect(read(events["dev push"], {}, { TEST_CACHE: "off" })).toBe("false");
     expect(read(events["fork PR"], {}, { TEST_CACHE: "off" })).toBe("false");
   });
 
+  // Browser jobs install nothing per shard: they run in the Playwright image
+  // (#1367, tests/ci-playwright-container.test.ts).
   it.each([
-    ["chromium", "Install Playwright browser"],
-    ["webkit-tests", "Install Playwright WebKit"],
     ["rust-suite", "Install Tauri Linux system dependencies"],
     ["rust-suite", "Swatinem/rust-cache@v2"],
   ])("%s skips '%s' only on a probed cache hit", (job, name) => {
@@ -887,7 +891,7 @@ describe("ci.yml cache wiring", () => {
     const setup = all.findIndex((s) => (s.name ?? s.uses) === name);
     expect(probe).toBeGreaterThan(all.findIndex((s) => s.name === "Restore test-result cache"));
     expect(setup).toBeGreaterThan(probe);
-    expect(all[setup].if).toMatch(/&& steps\.test-cache-probe\.outputs\.hit != 'true'$/);
+    expect(all[setup].if).toMatch(/(^|&& )steps\.test-cache-probe\.outputs\.hit != 'true'$/);
     expect(all[probe].run).toMatch(/^node scripts\/test-cache\.mjs probe --task ci:(e2e|rust) --target "/);
   });
 
@@ -917,7 +921,8 @@ describe("ci.yml cache wiring", () => {
     expect(all.indexOf(run as Step)).toBeLessThan(all.indexOf(save as Step));
     const upload = all.find((s) => s.uses?.startsWith("actions/upload-artifact@") && String(s.with?.name).startsWith("test-cache-"));
     expect(upload?.with).toMatchObject({ name: `test-cache-${target}`, "if-no-files-found": "ignore" });
-    expect(upload?.if).toBe("always()");
+    // Container jobs read the record path from the container's RUNNER_TEMP.
+    expect(upload?.if).toMatch(/^always\(\)( && env\.TEST_CACHE_REPORT != '')?$/);
   });
 
   it("hashes the same unit selection during restore and execution", () => {

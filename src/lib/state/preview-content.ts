@@ -3,7 +3,7 @@ import type { FileEntry } from "$lib/domain/file";
 import { classifyPreview, shouldHoldPreviewImage, type PreviewKind } from "$lib/domain/preview-kind";
 import { parseCsvPreview, type CsvPreview } from "$lib/domain/csv-preview";
 import { highlightCode, hasLanguageSupport } from "$lib/domain/syntax-highlight";
-import { renderMarkdown } from "$lib/domain/markdown";
+import { renderMarkdownWithMath } from "$lib/domain/markdown";
 import { readTextFile, fetchDirectory } from "$lib/api/files";
 import { listArchiveContents } from "$lib/api/archive";
 import { getVideoThumbnailData } from "$lib/api/thumbnails";
@@ -52,7 +52,7 @@ export interface PreviewContentOptions {
   readonly imageOptions: PreviewImageOptions;
 }
 
-function textContent(file: FileEntry, kind: PreviewKind, text: string): TextContent {
+async function textContent(file: FileEntry, kind: PreviewKind, text: string): Promise<TextContent> {
   if (kind === "csv") {
     const csv = parseCsvPreview(text);
     if (csv) return { kind: "csv", csv, truncatedLines: csv.totalRows > csv.rows.length ? csv.totalRows : 0, truncatedLabel: "rows" };
@@ -61,7 +61,7 @@ function textContent(file: FileEntry, kind: PreviewKind, text: string): TextCont
   const displayText = lines.length > 200 ? lines.slice(0, 200).join("\n") : text;
   const truncation = { truncatedLines: lines.length > 200 ? lines.length : 0, truncatedLabel: "lines" as const };
   if (kind === "markdown" && displayText.length < 200_000) {
-    try { return { kind: "markdown", html: renderMarkdown(displayText), ...truncation }; }
+    try { return { kind: "markdown", html: await renderMarkdownWithMath(displayText), ...truncation }; }
     catch { /* Keep the existing highlighted/plain-text fallback. */ }
   }
   if (displayText.length < 50_000 && hasLanguageSupport(file.name)) {
@@ -180,7 +180,7 @@ export function createPreviewContentLoader<PdfViewer, VideoViewer>(
         if (!result.ok) return { kind: "error", message: result.error };
         // HTML is already bounded by the reader. Do not truncate its structure
         // at the source-preview line limit or syntax-highlight it on the UI thread.
-        return kind === "html" ? { kind, document: result.data } : textContent(file, kind, result.data);
+        return kind === "html" ? { kind, document: result.data } : await textContent(file, kind, result.data);
       }
       case "unsupported": return { kind };
     }

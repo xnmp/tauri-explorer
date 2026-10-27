@@ -25,18 +25,24 @@ import {
   paneInDirection,
   countLeaves,
   splitLeaf,
-  splitNode,
-  hasNode,
   findNode,
   removeLeaf,
   updateRatio,
   dwindlePlacement,
   leafSiblingContext,
+  focusAfterClosing,
+  reinsertLeaf,
 } from "$lib/domain/pane-layout";
+import { cycledTabIndex, movedItem, tabInsertIndex } from "$lib/domain/window-tab-order";
+import {
+  type ClosedPaneSnapshot,
+  prefersPaneRestore,
+  pushClosedPane,
+  repeatsWindowClose,
+} from "$lib/domain/closed-panes";
 import { createExplorerState, type ExplorerInstance } from "./explorer.svelte";
 import { emptyRetainedTabs, retainTabs } from "$lib/domain/retained-tabs";
 import { createPaneViewport } from "./pane-viewport.svelte";
-import { paneDividerSize } from "$lib/domain/pane-viewport";
 import { createPaneSessions } from "./pane-sessions";
 import { createPaneDialogHost } from "./pane-dialogs.svelte";
 import { modalOwnership } from "./modal-ownership.svelte";
@@ -51,6 +57,7 @@ import { traceError, traceWindowFailure, traceWindowProgress } from "./window-tr
 import { isFreshSeed, isRecord, normalizeDirectorySeed, windowSeedFitsBudget, WINDOW_SEED_MAX_CHARS, type ExplorerSeed } from "$lib/domain/window-input";
 import { createTabDisplay } from "./tab-display.svelte";
 import { settingsStore } from "./settings.svelte";
+import { layoutStore } from "./layout.svelte";
 import { workspacesStore } from "./workspaces.svelte";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
@@ -221,19 +228,6 @@ function createWindowTabsManager(options: {
   // closed surface, ghostty-style — a pane back into its split position, or
   // the last closed tab when that's more recent. In-memory: a pane snapshot
   // is only meaningful while its tab still lives in this window.
-  interface ClosedPaneSnapshot {
-    tabId: string;
-    path: string;
-    /** Node the pane was split against (leaf or subtree), with placement/ratio. */
-    siblingId: string;
-    placement: SplitPlacement;
-    ratio: number;
-    /** The pane's view choice (plugin view id, or null for built-in). */
-    fileView: string | null | undefined;
-    peeks: readonly string[];
-    ts: number;
-  }
-  const MAX_CLOSED_PANES = 20;
   let closedPanes: ClosedPaneSnapshot[] = [];
 
   // Pick up snapshots written by other windows when this window regains
@@ -259,7 +253,7 @@ function createWindowTabsManager(options: {
 
   const paneViewport = createPaneViewport(
     () => activeTab?.kind === "explorer" ? activeTab.layout : undefined,
-    () => paneDividerSize(settingsStore.islandMode),
+    () => layoutStore.paneDividerSize,
   );
 
   /** The active tab's focused pane id ("" for non-explorer tabs). */
@@ -474,13 +468,7 @@ function createWindowTabsManager(options: {
 
   /** Insert a tab after the active one and activate it. */
   function insertTab(tab: ManagedTab, index?: number): void {
-    const activeIndex = tabs.findIndex((t) => t.id === activeTabId);
-    const at =
-      index !== undefined
-        ? Math.max(0, Math.min(index, tabs.length))
-        : activeIndex >= 0
-          ? activeIndex + 1
-          : tabs.length;
+    const at = tabInsertIndex(tabs.length, tabs.findIndex((t) => t.id === activeTabId), index);
     const newTabs = [...tabs];
     newTabs.splice(at, 0, tab);
     tabs = newTabs;
@@ -501,12 +489,18 @@ function createWindowTabsManager(options: {
     return tab;
   }
 
-  /** The repo whose commit graph a pane is showing, if any (#272). */
-  function getPaneGitGraph(paneId: PaneId): string | undefined {
+  /** A pane's presentation state, from the first tab that holds it. */
+  function findPane(paneId: PaneId): TabPane | undefined {
     for (const tab of tabs) {
-      if (tab.panes[paneId]) return tab.panes[paneId].gitGraph;
+      const pane = tab.panes[paneId];
+      if (pane) return pane;
     }
     return undefined;
+  }
+
+  /** The repo whose commit graph a pane is showing, if any (#272). */
+  function getPaneGitGraph(paneId: PaneId): string | undefined {
+    return findPane(paneId)?.gitGraph;
   }
 
   /** Point a pane's open commit graph at a different repo, or close it
@@ -514,27 +508,20 @@ function createWindowTabsManager(options: {
    *  showing — the graph follows the navigation instead of pinning the old
    *  repo (#362). No-op when the pane isn't showing a graph. */
   function setPaneGitGraph(paneId: PaneId, repoPath: string | null): void {
-    for (const tab of tabs) {
-      const pane = tab.panes[paneId];
-      if (!pane) continue;
-      if (!pane.gitGraph) return;
-      if (repoPath) pane.gitGraph = repoPath;
-      else delete pane.gitGraph;
-      saveState();
-      return;
-    }
+    const pane = findPane(paneId);
+    if (!pane?.gitGraph) return;
+    if (repoPath) pane.gitGraph = repoPath;
+    else delete pane.gitGraph;
+    saveState();
   }
 
   /** Show the graph for one specific pane. Unlike the active-pane toggle,
    *  this is idempotent so SCM row actions can safely target their owner. */
   function showGitGraphInPane(paneId: PaneId, repoPath: string): void {
-    for (const tab of tabs) {
-      const pane = tab.panes[paneId];
-      if (!pane) continue;
-      pane.gitGraph = repoPath;
-      saveState();
-      return;
-    }
+    const pane = findPane(paneId);
+    if (!pane) return;
+    pane.gitGraph = repoPath;
+    saveState();
   }
 
   /** Toggle the commit graph in the active pane (#272): showing → back to
@@ -555,11 +542,7 @@ function createWindowTabsManager(options: {
    *  when the pane made no explicit choice, fall back to the global
    *  `showScmPanel` setting so new panes and existing tests track the default. */
   function getPaneScmVisible(paneId: PaneId): boolean {
-    for (const tab of tabs) {
-      const pane = tab.panes[paneId];
-      if (pane) return pane.scmPanel ?? settingsStore.showScmPanel;
-    }
-    return settingsStore.showScmPanel;
+    return findPane(paneId)?.scmPanel ?? settingsStore.showScmPanel;
   }
 
   /** Toggle the SCM panel in the active pane only (#434). Sets an explicit
@@ -798,19 +781,7 @@ function createWindowTabsManager(options: {
       closedTs: Date.now(),
     };
 
-    // Closing the last tab snapshots then attempts native destruction, which can
-    // fail silently — repeated Ctrl+W would stack identical snapshots.
-    if (fromClosedWindow) {
-      const top = closedTabs.peek();
-      if (
-        top &&
-        top.fromClosedWindow &&
-        top.path === snapshot.path &&
-        top.closedAt === snapshot.closedAt
-      ) {
-        return;
-      }
-    }
+    if (repeatsWindowClose(closedTabs.peek(), snapshot)) return;
 
     closedTabs.push(snapshot, new Map(Object.keys(tab.panes).map(id => [id, panePeeks(id)])));
   }
@@ -948,21 +919,12 @@ function createWindowTabsManager(options: {
     createAndRegisterExplorer(paneId, snapshot.path, undefined, undefined, false, snapshot.peeks);
     if (snapshot.fileView !== undefined) sessions.get(paneId)?.setFileView(snapshot.fileView);
     const splitId = generateId("split");
-    updateActiveExplorerTab((t) => {
-      const layout = hasNode(t.layout, snapshot.siblingId)
-        ? updateRatio(
-            splitNode(t.layout, snapshot.siblingId, snapshot.placement, paneId, splitId),
-            splitId,
-            snapshot.ratio,
-          )
-        : splitLeaf(t.layout, t.activePaneId, snapshot.placement, paneId, splitId);
-      return {
-        ...t,
-        layout,
-        panes: { ...t.panes, [paneId]: { path: snapshot.path } },
-        activePaneId: paneId,
-      };
-    });
+    updateActiveExplorerTab((t) => ({
+      ...t,
+      layout: reinsertLeaf(t.layout, t.activePaneId, snapshot, paneId, splitId),
+      panes: { ...t.panes, [paneId]: { path: snapshot.path } },
+      activePaneId: paneId,
+    }));
     saveState();
   }
 
@@ -974,7 +936,7 @@ function createWindowTabsManager(options: {
     closedTabs.refresh();
     pruneClosedPanes();
     const topPane = closedPanes[closedPanes.length - 1];
-    if (topPane && topPane.ts >= (closedTabs.peek()?.closedTs ?? 0)) {
+    if (prefersPaneRestore(topPane, closedTabs.peek()?.closedTs)) {
       closedPanes.pop();
       restorePane(topPane);
       return { restored: true };
@@ -1009,9 +971,7 @@ function createWindowTabsManager(options: {
 
   function cycleTab(delta: number): void {
     if (closing || disposal || tabs.length <= 1) return;
-    const currentIndex = tabs.findIndex((t) => t.id === activeTabId);
-    const nextIndex = (currentIndex + delta + tabs.length) % tabs.length;
-    activeTabId = tabs[nextIndex].id;
+    activeTabId = tabs[cycledTabIndex(tabs.findIndex((t) => t.id === activeTabId), delta, tabs.length)].id;
     activateTabResources(activeTabId);
     saveState();
   }
@@ -1195,26 +1155,20 @@ function createWindowTabsManager(options: {
     // sibling, so restore re-splits at the original position.
     const context = leafSiblingContext(tab.layout, target);
     if (context) {
-      closedPanes.push({
+      closedPanes = pushClosedPane(closedPanes, {
+        ...context,
         tabId: tab.id,
         path: panePath(tab, target),
-        siblingId: context.siblingId,
-        placement: context.placement,
-        ratio: context.ratio,
         fileView: paneFileView(tab, target),
         peeks: panePeeks(target),
         ts: Date.now(),
       });
-      if (closedPanes.length > MAX_CLOSED_PANES) closedPanes.shift();
     }
 
     sessions.remove(target);
 
-    const remaining = leafIds(newLayout);
-    const oldOrder = leafIds(tab.layout);
     // Focus the nearest surviving pane (previous in visual order).
-    const closedIndex = oldOrder.indexOf(target);
-    const fallback = remaining[Math.max(0, Math.min(closedIndex - 1, remaining.length - 1))];
+    const fallback = focusAfterClosing(tab.layout, newLayout, target);
     if (tab.activePaneId === target) sessions.activate(fallback);
     updateActiveExplorerTab((t) => {
       const { [target]: _closed, ...panes } = t.panes;
@@ -1224,7 +1178,7 @@ function createWindowTabsManager(options: {
         panes,
         activePaneId: t.activePaneId === target ? fallback : t.activePaneId,
         // A single-pane tab is no longer renameable — drop a stale custom name.
-        ...(remaining.length === 1 ? { name: undefined } : {}),
+        ...(countLeaves(newLayout) === 1 ? { name: undefined } : {}),
       };
     });
     saveState();
@@ -1296,13 +1250,8 @@ function createWindowTabsManager(options: {
 
   /** Reorder tabs within the strip */
   function reorderTabs(fromIndex: number, toIndex: number): void {
-    if (fromIndex < 0 || fromIndex >= tabs.length) return;
-    if (toIndex < 0 || toIndex >= tabs.length) return;
-    if (fromIndex === toIndex) return;
-
-    const newTabs = [...tabs];
-    const [moved] = newTabs.splice(fromIndex, 1);
-    newTabs.splice(toIndex, 0, moved);
+    const newTabs = movedItem(tabs, fromIndex, toIndex);
+    if (!newTabs) return;
     tabs = newTabs;
     saveState();
   }

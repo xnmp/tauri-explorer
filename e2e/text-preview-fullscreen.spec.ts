@@ -21,14 +21,30 @@ async function open(page: Page, appZoom: number) {
   await expect.poll(() => page.evaluate(() => document.documentElement.style.zoom)).toBe(`${appZoom}%`);
 }
 
-/** On-screen height of the first character: font size times every zoom above it. */
-const glyphHeight = (page: Page) =>
-  page.locator(".preview-text").evaluate((pre) => {
-    const range = document.createRange();
-    range.setStart(pre.firstChild!, 0);
-    range.setEnd(pre.firstChild!, 1);
-    return range.getBoundingClientRect().height;
-  });
+/**
+ * On-screen line pitch: font size times line-height times every zoom above it.
+ * Measured between line starts ten lines apart rather than as one glyph's box,
+ * whose height comes from the resolved font's rounded ascent/descent and so
+ * does not scale linearly on every font configuration (#1367).
+ */
+const LINE_SPAN = 10;
+const linePitch = (page: Page) =>
+  page.locator(".preview-text").evaluate((pre, lines) => {
+    const text = pre.firstChild!;
+    const top = (offset: number) => {
+      const range = document.createRange();
+      range.setStart(text, offset);
+      range.setEnd(text, offset + 1);
+      return range.getBoundingClientRect().top;
+    };
+    let offset = 0;
+    for (let line = 0; line < lines; line++) {
+      const next = text.textContent!.indexOf("\n", offset);
+      if (next < 0) throw new Error(`preview text has fewer than ${lines + 1} lines`);
+      offset = next + 1;
+    }
+    return (top(offset) - top(0)) / lines;
+  }, LINE_SPAN);
 
 async function fullscreenText(page: Page) {
   await page.locator(".entry-item").filter({ hasText: "beach.jpg" }).first().click();
@@ -45,24 +61,27 @@ test.describe("Fullscreen text preview", () => {
       await open(page, appZoom);
       await page.locator(".entry-item").filter({ hasText: "itinerary.txt" }).first().click();
       await expect(page.locator(".preview-text")).toBeVisible();
-      const docked = await glyphHeight(page);
+      const docked = await linePitch(page);
+      // A 12px font at line-height 1.6: a degenerate measurement cannot pass.
+      expect(docked).toBeGreaterThan(10);
 
       await fullscreenText(page);
-      expect(await glyphHeight(page)).toBeCloseTo(docked, 0);
+      expect(await linePitch(page)).toBeCloseTo(docked, 0);
     });
   }
 
   test("the wheel zooms the text and shows the percentage; the keys still step", async ({ page }) => {
     await open(page, 100);
     await fullscreenText(page);
-    const base = await glyphHeight(page);
+    const base = await linePitch(page);
+    expect(base).toBeGreaterThan(10);
     const pane = page.locator(".preview-pane");
     await expect(pane.locator(".fs-text-zoom-indicator")).toHaveText("100%");
 
     await page.mouse.move(400, 300);
     await page.mouse.wheel(0, -100);
     await expect(pane.locator(".fs-text-zoom-indicator")).toHaveText("115%");
-    expect(await glyphHeight(page)).toBeCloseTo(base * 1.15, 0);
+    expect(await linePitch(page)).toBeCloseTo(base * 1.15, 0);
 
     // A zoomed image would pan on ArrowRight; zoomed text still steps on.
     await page.keyboard.press("ArrowRight");
@@ -72,7 +91,7 @@ test.describe("Fullscreen text preview", () => {
     await expect(page.locator(".preview-text")).toBeVisible();
     // Stepping resets the zoom.
     await expect(pane.locator(".fs-text-zoom-indicator")).toHaveText("100%");
-    expect(await glyphHeight(page)).toBeCloseTo(base, 0);
+    expect(await linePitch(page)).toBeCloseTo(base, 0);
 
     await page.mouse.wheel(0, 100);
     await expect(pane.locator(".fs-text-zoom-indicator")).toHaveText("100%");

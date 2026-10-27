@@ -1,0 +1,71 @@
+/*
+ * @name Soft Cards
+ * @description Roomy rounded cards on a quiet backdrop, with taller rows.
+ * @extends default
+ *
+ * Example user layout for tauri-explorer (#1306). Copy it into your layouts
+ * folder (Settings → Appearance → Layout → "Open folder"), then pick
+ * "Soft Cards" in the Layout selector. Edits apply as soon as you save.
+ *
+ * It uses only the documented contract (docs/layout-themes.md): --layout-*
+ * variables, [data-region] hooks and root attributes. Colours come from the
+ * active colour theme's variables, so it works with every palette.
+ */
+
+/* 1. Spacing, borders, radii, surfaces and density through variables. */
+:root {
+  --layout-gap: 10px;
+  --layout-inset: 0 10px 10px 10px;
+  --layout-radius: 12px;
+  --layout-border: 1px solid var(--surface-stroke);
+  --layout-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+  --layout-surface: var(--background-card);
+  --layout-chrome-surface: color-mix(in srgb, var(--background-card) 70%, var(--background-solid));
+  --layout-hairline: color-mix(in srgb, var(--text-primary) 10%, transparent);
+  --layout-row-height: 34px;
+}
+
+/* 2. Regions the variables do not cover: prefix with :root so the rule
+      outranks the application's single-class selectors. */
+:root [data-region="app"] {
+  background: color-mix(in srgb, var(--background-solid) 92%, var(--accent));
+}
+
+:root [data-region="backdrop"] {
+  display: none;
+}
+
+:root [data-region="tab"] {
+  border-radius: 10px 10px 0 0;
+}
+
+:root [data-region="sidebar-item"] {
+  border-radius: 8px;
+  margin: 0 6px;
+}
+
+:root [data-region="row"] {
+  border-radius: 8px;
+}
+
+:root [data-region="row"][aria-selected="true"] {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+/* 3. Split panes become separate cards with the active one outlined. */
+:root [data-region="panes"][data-split] [data-region="pane"] {
+  border-radius: var(--layout-radius);
+  border: var(--layout-border);
+  overflow: hidden;
+}
+
+:root [data-region="panes"][data-split] [data-region="pane"][data-active] {
+  border-color: var(--accent);
+}
+
+/* 4. Root attributes describe the window. Native window material (macOS
+      vibrancy, Windows Mica/Acrylic) is optional: keep the backdrop opaque
+      without it, let it show through when it is there. */
+:root[data-native-backdrop] [data-region="app"] {
+  background: transparent;
+}

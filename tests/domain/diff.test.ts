@@ -4,7 +4,7 @@
  * detection, and binary-file handling.
  */
 import { describe, it, expect } from "vitest";
-import { extractDiffHunks, parseUnifiedDiff } from "$lib/domain/diff";
+import { diffSubtitle, extractDiffHunks, parseUnifiedDiff, visibleDiffLines } from "$lib/domain/diff";
 
 describe("parseUnifiedDiff", () => {
   it("classifies add, remove, and context lines with line numbers", () => {
@@ -276,5 +276,35 @@ describe("extractDiffHunks", () => {
 
   it("returns no fragments when a diff has no hunk headers", () => {
     expect(extractDiffHunks("diff --git a/image.png b/image.png\nBinary files differ\n", [])).toEqual([]);
+  });
+});
+
+describe("visibleDiffLines", () => {
+  it("drops file headers and metadata, keeping hunks and content", () => {
+    const parsed = parseUnifiedDiff("diff --git a/a b/a\nindex 1..2 100644\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n-x\n+y\n");
+    const kinds = visibleDiffLines(parsed).map((line) => line.kind);
+    expect(kinds).toEqual(["hunk", "remove", "add"]);
+  });
+
+  it("is empty with nothing parsed", () => {
+    expect(visibleDiffLines(null)).toEqual([]);
+  });
+});
+
+describe("diffSubtitle", () => {
+  it("names added, deleted and renamed files before the staged side", () => {
+    const added = parseUnifiedDiff("--- /dev/null\n+++ b/new.ts\n@@ -0,0 +1 @@\n+x\n");
+    const deleted = parseUnifiedDiff("--- a/old.ts\n+++ /dev/null\n@@ -1 +0,0 @@\n-x\n");
+    const renamed = parseUnifiedDiff("diff --git a/old.ts b/new.ts\nrename from old.ts\nrename to new.ts\n");
+    expect(diffSubtitle(added, true)).toBe("added");
+    expect(diffSubtitle(deleted, false)).toBe("deleted");
+    expect(diffSubtitle(renamed, false)).toBe("renamed from old.ts");
+  });
+
+  it("falls back to the side shown, and to nothing before a diff loads", () => {
+    const modified = parseUnifiedDiff("--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-x\n+y\n");
+    expect(diffSubtitle(modified, true)).toBe("staged");
+    expect(diffSubtitle(modified, false)).toBe("unstaged");
+    expect(diffSubtitle(null, true)).toBe("");
   });
 });

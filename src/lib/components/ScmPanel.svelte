@@ -37,6 +37,8 @@
 
 <div
   id={panelId} class="scm-panel"
+  data-region="scm"
+  data-island={island || undefined}
   class:island
   class:resizing={resize.isResizing}
   style="width: {resize.value}px"
@@ -65,20 +67,4 @@
     min-height: 0;
   }
 
-  /* Vibrancy, integrated (default): flatten into the pane like the miller bar
-     — transparent background, no elevation/overlay chrome (#434). */
-  :global([data-vibrancy]) .scm-panel {
-    background: transparent;
-  }
-
-  /* Vibrancy, island surface (opt-in via the `island` prop): floating card
-     chrome, matching the other island surfaces. */
-  :global([data-vibrancy]) .scm-panel.island {
-    border-radius: var(--vibrancy-island-radius);
-    border: 1px solid var(--vibrancy-island-stroke);
-    background: var(--vibrancy-island-bg);
-    box-shadow: var(--vibrancy-island-glow);
-    backdrop-filter: var(--vibrancy-island-filter, blur(12px) brightness(1.08) saturate(1.2));
-    -webkit-backdrop-filter: var(--vibrancy-island-filter, blur(12px) brightness(1.08) saturate(1.2));
-  }
 </style>

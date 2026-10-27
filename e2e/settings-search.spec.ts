@@ -12,7 +12,6 @@ test.describe("Settings search filter", () => {
 
     // Open settings
     await page.evaluate(() => window.dispatchEvent(new KeyboardEvent("keydown", { key: ",", ctrlKey: true, bubbles: true, cancelable: true })));
-    await page.waitForTimeout(500);
 
     // Type in search
     const search = page.locator(".settings-search");

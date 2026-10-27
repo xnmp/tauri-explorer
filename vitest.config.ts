@@ -1,6 +1,7 @@
 import { defineConfig } from "vitest/config";
 import { sveltekit } from "@sveltejs/kit/vite";
 import { resolve } from "path";
+import { SERIAL_UNIT_FILES } from "./tests/serial-unit-files";
 
 export default defineConfig({
   plugins: [sveltekit()],
@@ -9,65 +10,17 @@ export default defineConfig({
     // and flake when run in parallel with the unit files (worker contention
     // inflates timings). `bun run test` runs this suite, then the perf suite
     // sequentially via vitest.perf.config.ts — see package.json.
-    exclude: ["tests/perf/**", "**/node_modules/**"],
     environment: "node",
-    setupFiles: ["./tests/setup.ts", "./tests/runner-setup.ts"],
+    setupFiles: ["./tests/setup.ts"],
     // Hundreds of cold Svelte transforms otherwise contend across every core,
     // exhausting behavior-test timers. Keep the default bounded like browser
     // tests; explicit Vitest --maxWorkers overrides still take precedence.
     maxWorkers: 4,
-    // The 5,001-activation lifecycle regression has no timing assertion, but
-    // competing transforms can exhaust its unchanged five-second deadline.
-    // Ordered projects keep it and the unchanged subprocess compiler gate in
-    // every full run, before parallel unit work starts. Positive orders avoid
-    // Vitest's special trailing group for
-    // order zero when maxWorkers=1. CLI overrides and deadlines still apply.
-    projects: [
-      {
-        extends: true,
-        test: {
-          name: "registry-churn",
-          include: ["tests/plugins/registry-churn.test.ts"],
-          sequence: { groupOrder: 1 },
-        },
-      },
-      {
-        extends: true,
-        test: {
-          name: "native-suite-typecheck",
-          include: ["tests/native-suite-typecheck.test.ts"],
-          sequence: { groupOrder: 2 },
-        },
-      },
-      {
-        extends: true,
-        test: {
-          name: "native-cache-contract",
-          include: ["tests/qualification/native-typecheck-cache.test.ts"],
-          sequence: { groupOrder: 3 },
-        },
-      },
-      {
-        extends: true,
-        test: {
-          // This unchanged suite contains a wall-clock hover budget. Finish it
-          // before parallel transforms so scheduler contention is not charged
-          // to the graph classifier, while retaining its timing assertion.
-          name: "graph-lineage-timing",
-          include: ["tests/domain/git-graph-branch-line.test.ts"],
-          sequence: { groupOrder: 4 },
-        },
-      },
-      {
-        extends: true,
-        test: {
-          name: "unit",
-          include: ["tests/**/*.test.ts", "tests/**/*.bench.ts"],
-          exclude: ["tests/plugins/registry-churn.test.ts", "tests/native-suite-typecheck.test.ts", "tests/qualification/native-typecheck-cache.test.ts", "tests/domain/git-graph-branch-line.test.ts"],
-          sequence: { groupOrder: 5 },
-        },
-      },
-    ],
+    // Two unchanged files whose deadlines are sensitive to scheduler
+    // contention (the 5,001-activation registry churn and the graph-lineage
+    // hover budget) run in the sequential perf config instead (#1123).
+    include: ["tests/**/*.test.ts", "tests/**/*.bench.ts"],
+    exclude: [...SERIAL_UNIT_FILES, "tests/perf/**", "**/node_modules/**"],
   },
   resolve: {
     alias: {

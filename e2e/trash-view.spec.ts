@@ -7,6 +7,7 @@
  * covered by the Rust tests in `src-tauri/test_support/trash_inventory.rs`.
  */
 import { test, expect, type Page } from "./fixtures";
+import { captureEvidence } from "./evidence-shots";
 import { switchViewMode, waitForEntries } from "./helpers";
 
 type Control = { __mockControl?: { invokeCounts?: Record<string, number>; failures?: Record<string, string>; trashIssues?: { source: string; error: string }[] } };
@@ -110,7 +111,7 @@ test.describe("In-app Trash (#863)", () => {
     );
     await expect(trashRow(page, "notes.md")).toHaveCount(1);
     await expect(page.getByRole("alert")).toBeVisible();
-    await page.waitForTimeout(400); // let the toast's entrance settle for the evidence capture
+    if (captureEvidence) await page.waitForTimeout(400); // let the toast's entrance settle for the evidence capture
     await page.screenshot({ path: "evidence/863-trash-restore-collision.png" });
   });
 
@@ -129,7 +130,7 @@ test.describe("In-app Trash (#863)", () => {
     // A failed listing leaves the pane on its previous path with an in-pane error.
     await page.getByRole("button", { name: "Open Recycle Bin" }).click();
     await expect(page.getByText("Could not read the Trash: Permission denied")).toBeVisible();
-    await page.waitForTimeout(400); // let the error state's entrance settle for the evidence capture
+    if (captureEvidence) await page.waitForTimeout(400); // let the error state's entrance settle for the evidence capture
     await page.screenshot({ path: "evidence/863-trash-unavailable.png" });
 
     await page.evaluate(() => {

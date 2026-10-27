@@ -54,7 +54,8 @@ const streamsProgress = windowLabel === "main";
  * mean the page is alive but waiting (e.g. on IPC); heartbeats that stop mean
  * the renderer hung or died. Bounded beyond the 30 s qualification timeout.
  *
- * Retire-when: #936 closed
+ * Permanent diagnostic (promoted when #936 closed): the startup qualifier's
+ * timeout description (`startup-progress.ts`) reads these lines.
  */
 export const STARTUP_HEARTBEAT_INTERVAL_MS = 1_000;
 export const STARTUP_HEARTBEAT_LIMIT = 60;

@@ -73,3 +73,21 @@ export function parseCsvPreview(text: string, maxRows = 200): CsvPreview | null 
     totalRows: dataRows.length,
   };
 }
+
+/** Virtual-row height: a 28px single-line floor, then 16px per wrapped line
+ *  of the row's tallest cell plus its 12px vertical padding. */
+export function csvRowHeight(row: readonly string[]): number {
+  return Math.max(28, 12 + Math.max(...row.map((cell) => cell.split("\n").length)) * 16);
+}
+
+/** One column template shared by the sticky header and every virtual row. */
+export function csvColumnTemplate(csv: CsvPreview): string {
+  return csv.header
+    .map((header, column) => {
+      const longestCell = Math.max(header.length, ...csv.rows.map((row) => row[column]?.length ?? 0));
+      // Pixels keep a track's computed width identical in the bold header
+      // and normal-weight data rows; `ch` varies with font weight.
+      return `${Math.max(128, longestCell * 8 + 20)}px`;
+    })
+    .join(" ");
+}

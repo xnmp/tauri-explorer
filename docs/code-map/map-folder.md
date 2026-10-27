@@ -9,6 +9,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 ## Root installers — platform-specific source install entry points.
 
 - `arch_install.sh`, `PKGBUILD` — Arch source installation: early sudo authentication, checkout installation lock, isolated makepkg staging, locked dependency preparation, verified local frontend reuse and unchanged native release compilation; after installing, per-user copies that shadow `/usr` are moved aside so the package is the only install. `--rebuild` forces frontend regeneration; ordinary makepkg builds remain fresh.
+- `scripts/check-file-size.mjs`, `scripts/file-size-allowlist.json` — frontend file-size ratchet run by `bun run lint:arch` (#1372): `src/` `.ts`/`.js`/`.mjs`/`.svelte` files stay at or below 800 lines; pre-existing larger files are allowlisted at their line count, may shrink but never grow, and an entry fails once its file is at or below the limit or gone.
 - `scripts/build-arch-frontend.mjs` — content- and environment-verified local frontend build receipt; hashes source/config/dependencies/tool versions and output, locks builders through completion, and never publishes interrupted/changed-input builds.
 - `tests/arch-frontend-build.test.ts`, `tests/arch-install-script.test.ts` — frontend reuse/invalidation/failure/concurrency outcomes and the actual PKGBUILD preparation/native-build contract without package installation.
 - `windows_install.ps1` — Windows PowerShell source installer: validates Git/Rust/Bun and the VC toolchain, uses an existing checkout or temporary HTTPS clone, builds the MSI, invokes elevated `msiexec`, reports reboot-required success, and cleans temporary clones. Governed by `docs/adr/0003-windows-installer-trust-boundary.md`.
@@ -83,9 +84,21 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `Sidebar.svelte` — activity-bar + hosts registered sidebar views.
 - `FilesSidebarView.svelte` — Files sidebar: bookmarks, recent, drives tree.
 - `ScmSidebarView.svelte` — Source Control sidebar panel (#54).
+- `scm/ScmSection.svelte` — one SCM section (Merge/Staged/Changes/Untracked): collapsible header + flat list or folder tree rows with hover actions (history, stage/unstage, discard/remove, archive, Trash, .gitignore).
+- `scm/ScmCommitPanel.svelte` — branch line + flat/tree toggle, commit message (Enter commits, Ctrl/Cmd+Enter amends), Amend toggle, Commit button.
 - `ScmPanel.svelte` — standalone SCM panel (stage/unstage/commit lists).
 - `ScmDiffView.svelte` — unified diff viewer replacing FileList for a diff.
 - `GitGraphView.svelte` — commit-graph pane content (#51/#58); the uncommitted-changes node opens an inline stage/unstage/commit panel (#466, logic in `domain/commit-panel.ts`), arbitrary commit comparison transitions live in `git-graph-comparison.ts` (#512), failed GitHub Actions checks can expose their failed `gh` log inline from an open-PR badge (#521), branch/tag delete, branch rename, merge, and pull record session undo snapshots with a confirmed Ctrl+Z inverse (#513), and `GitAuthorAvatar.svelte` renders opt-out round author images with deterministic local fallbacks (#514).
+- `git-graph/GitGraphBanners.svelte` — PR action toolbar/status, standing detached-HEAD banner (#524) and cancellable network-operation banner (#528).
+- `git-graph/GitGraphHeader.svelte` — graph column header: graph/author/date resize separators (#341) and the branch-filter slot.
+- `git-graph/GitGraphBranchFilter.svelte` — branch-filter button + popover: fork-point jump (#1083), file-path filter (#529), local-only/remote-only toggles, author and branch checkboxes (semantics in `domain/git-graph-branch-filter.ts`).
+- `git-graph/GitGraphColumnMenu.svelte` — header right-click menu over `state/git-graph-view-prefs.svelte.ts` (columns, avatars/Gravatar, detail metadata, merge muting, branch tracing).
+- `git-graph/GitGraphLanes.svelte` — windowed lane SVG: branch lines, traced lineage overlay and vertices.
+- `git-graph/GitGraphCommitRow.svelte` — one windowed commit row: ref chips, PR and branch-status badges, avatar and metadata columns.
+- `git-graph/GitGraphCommitDetail.svelte` — inline commit details contents: message/metadata, comparison controls, changed files + inline diffs, uncommitted commit box (#466).
+- `git-graph/GitGraphPrDetail.svelte` — inline PR dropdown contents: actions, description/comments, failed CI checks + logs, review threads (#459, #521).
+- `git-graph/GitGraphCommitMenu.svelte` — commit context menu and references disclosure (anchor in `composables/use-git-graph-menu.svelte.ts`).
+- `git-graph/GitGraphDialogs.svelte` — rename/name prompts, pull offer, reset/delete suboption modals, PR action and undo confirmations.
 - `icons/FilesIcon.svelte`, `icons/ScmIcon.svelte` — activity-bar SVG icons.
 - `CommandPalette.svelte` — Ctrl+Shift+P command palette UI.
 - `QuickOpen.svelte` — Ctrl+P fuzzy file finder.
@@ -96,6 +109,11 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `Modal.svelte` + `modal.css` — base modal shell + shared modal styling.
 - `UserReportDialog.svelte` — in-app issue form; closes optimistically, submits through Rust, toasts background failures, and restores saved failed drafts when reopened.
 - `SettingsDialog.svelte` — general settings dialog; links to dedicated Keyboard Shortcuts and Plugins dialogs.
+- `settings/SettingRow.svelte` — one Settings row (label, description, optional `info` snippet, control slot); `hidden` while the search filter excludes it.
+- `settings/SettingToggle.svelte` — the Settings switch (restyled checkbox; extra input attributes forwarded).
+- `settings/TerminalShortcutSettings.svelte` — terminal line-editing shortcut list and key recorder (#375/#404); recording ends on dialog close or window blur.
+- `settings/LayoutThemeSetting.svelte` — Settings → Appearance → Layout: selector, Open folder (layouts), Reset to Default, fallback reason (#1306).
+- `settings/settings-select.css` — shared Settings dropdown styling (`.settings-select`).
 - `PluginsDialog.svelte`, `PluginSettings.svelte` — lazy Plugins configuration surface; installed packages, contribution toggles and descriptor-driven settings, using shared modal ownership and viewport/zoom bounds.
 - `KeybindingsSettings.svelte` — keybinding customization UI in settings.
 - `ShortcutCheatsheet.svelte` — keyboard shortcut cheatsheet overlay.
@@ -103,6 +121,10 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `RenameDialog`? see `dialogs.svelte.ts`; dialogs present: `DeleteDialog.svelte`, `ConflictDialog.svelte` (paste conflict overwrite/skip), `BulkRenameDialog.svelte`, `WorkspaceDialog.svelte` (save/restore workspaces), `ProgressDialog.svelte` (copy/move/extract progress), `InlineNewFolder.svelte` (inline new-entry input — folder or file, per `explorer.newEntryKind`), `FilePicker.svelte` (portal file-picker window).
 - `PreviewFolderList.svelte` — folder/ZIP children list in the Preview pane, with the collapsed single-folder indicator; rows go through the shared VirtualList so huge folders render only a windowed slice (#1040).
 - `PreviewPane.svelte` — file preview (image/text/markdown/syntax/CSV table); CSV rows use the shared VirtualList with one shared column template and an outer horizontal scroll surface (#666). Image to image, the previous image stays (spinner over it when slow) until the next is decoded, so a selection change never blanks or re-lays out the pane (`e2e/preview-selection-stability.spec.ts`).
+- `PreviewDiffView.svelte` — the preview's SCM diff region: working-tree diff with Open File/Stage/Unstage/Discard, or a graph-routed commit/comparison diff (#366); loads through `state/preview-diff.svelte.ts`, renders lines with `PreviewDiffLines`.
+- `PreviewDiffLines.svelte` — rendered diff lines: gutters, sigils, highlighted content and per-hunk stage/unstage/discard actions.
+- `PreviewCsvTable.svelte` — CSV table preview: sticky header + VirtualList rows sharing `domain/csv-preview.ts` column template (#666).
+- `PreviewTextDocument.svelte` — markdown / highlighted code / plain text preview bodies with their typography (frontmatter properties panel, #1039 fullscreen text zoom targets).
 - `HtmlPreview.svelte` — sandboxed no-script `srcdoc` HTML preview with browser-style page zoom: Fit (default) / stops / 100% controls and fullscreen toggle (#1332, #1352).
 - `PdfPreview.svelte` — lazy canvas PDF surface with centered fit/zoom, pointer-captured pan, annotation links, compact page controls and fullscreen keyboard ownership (#728–#730).
 - `TerminalPanel.svelte` — embedded xterm.js terminal panel (#139).
@@ -141,6 +163,13 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-pr-session.svelte.ts` — mounted GitHub badge, PR detail and CI log requests; immutable snapshots, invocation identities and disposal.
 - `git-branch-status.svelte.ts` — newest-reload-only owner of the graph's trunk-aware branch-status badges (#1081); disposal and superseded reloads cannot publish.
 - `git-graph-branches.svelte.ts` — lazy branch/author metadata and cancellable merge-base jump owner; known-coverage fallback and query/popover request coordination.
+- `git-graph-actions.svelte.ts` — git-graph mutations (checkout, cherry-pick, merge, reset, branch/tag create/rename/delete, remote delete, pull offer, confirmed undo, F5 fetch) and the prompt/modal state they drive; every mutation ends in `refreshAfterGitMutation`.
+- `git-graph-expansion.svelte.ts` — the graph's single inline expansion (commit details XOR PR dropdown) with its measured heights.
+- `git-graph-history-filter.svelte.ts` — per-repo branch subset / local-only / remote-only filters (persisted) and the ephemeral file-path filter.
+- `git-graph-view-prefs.svelte.ts` — global persisted git-graph layout preferences (columns, avatars, detail metadata, merge muting, branch tracing).
+- `git-graph-pr-dialog.svelte.ts` — PR mutation confirmation dialog state, including the explicit retry acknowledgement after an uncertain failure (ADR 0006).
+- `git-graph-working-tree.ts` — uncommitted-node stage/unstage/commit orchestration and per-file diff routing (inline or preview pane, #366, #466).
+- `git-graph-repo-refresh.ts` — mounted graph's repository watch + debounced external-change reload (#365, #432).
 - `git-graph-debounced-reload.ts` — trailing debounce for the path-filter reload; cancelled when a merge-base jump starts (#1281).
 
 - `window-startup.ts` — window-owned settings/theme/plugin startup; disposal prevents late settings from activating plugins.
@@ -170,6 +199,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/state/modal-focus.ts` — pane dialog focus restoration tracks actual focus ownership across DOM detachment and releases listeners on cleanup; shared modal focus eligibility.
 - `src/lib/state/pane-dialogs.svelte.ts` — host-private pane capture handles, transient scope retirement, identity-bound overlay slots, retained portal mounts and shared inert registration for pane-owned content.
 - `src/lib/state/preview-diff-actions.ts` — Preview diff-header/hunk stage, unstage, discard admitted against the owning pane (`isPaneBlocked`); a covered owner makes them no-ops (#1099).
+- `src/lib/state/preview-diff.svelte.ts` — preview diff loading (working-tree + commit/comparison): one request generation, in-flight dedupe for polled UNC repos (#396), no-blank re-check, commit diffs never claimed by the working-tree cache.
 - `src/lib/state/dialog-presentation-context.ts` — private scope/visibility/focus context inherited by the shared SDK Modal.
 - `run-after-close.ts` — runs a command chosen from a modal launcher (the command palette) only after the launcher has released the top modal surface, so the dialog it opens is not closed as the caller.
 - `open-with.svelte.ts` — captured application-choice sessions, late-result rejection and single launch lifecycle.
@@ -216,6 +246,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-status.svelte.ts` — per-entry git status cache store.
 - `git-summary-cache.ts` — shared per-repo `git_status` (working-tree summary) fetch: in-flight dedup + short TTL, used by SCM store + git-graph so one change is one scan, not several (#431); Git-change events revoke cached/joinable reads, publication uses current-flight identity, and successful summaries use a bounded 64-entry LRU.
 - `scm.svelte.ts` — Source Control state (staged/unstaged/commit, #54).
+- `scm-sidebar-actions.ts` — SCM sidebar actions + toasts: init, commit, discard/remove, .gitignore, archive, Trash, abort/continue operation.
 - `commit-panel.svelte.ts` — per-pane rune store holding the git-graph uncommitted-node commit editor's live state (#466); wraps `domain/commit-panel` transitions so the in-flight commit guard survives close+reopen (`begin()`/`resetIfIdle()`). Disposed with the pane (like `disposeScmStore`).
 - `image-resolution.ts` — bounded cancellable metadata queue and event-owned observation.
 - `image-resolution-service.ts` — metadata API admission and shared directory-change subscription.
@@ -289,6 +320,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `icon-theme.svelte.ts` — transient icon-pack preview and reactive resolution against saved settings and applied color-theme CSS revisions; previews never persist.
 - `window-size.svelte.ts` — reactive `window.innerWidth`/`innerHeight` tracker (`windowSizeStore`); `+page.svelte` syncs on mount/resize. Feeds preview-pane auto-dock (#467).
 - `theme.svelte.ts` — active theme state + CSS var application.
+- `layout.svelte.ts` — eager layout-theme half (#1306): `layoutStore` paints `data-layout`/`data-layout-base` and injected layout sheets from a localStorage cache before mount, exposes the island arrangement, pane divider size and Details row height; `start()` follows `settings.layoutTheme` through the lazy controller.
+- `layout-controller.svelte.ts` — lazy layout-theme half (#1306): lists `layouts/`, resolves/falls back with one notice, loads Hairline Ledger's sheet, detects rule-less user CSS, generation-guards concurrent applications; used by the settings UI and layout picker.
 - `config-watch.ts` — applies `config-file-changed` to the settings/theme stores; `handleConfigFileChanged` is the routing seam (#599).
 - `terminal.svelte.ts` — embedded terminal panel state (#139).
 - `jobs.svelte.ts` — background jobs store (Ctrl+J); `retryJob` runs a failed job's `retry` once, then drops the entry or keeps it with the new error; a retrying entry is active (`isJobActive`: not dismissable or cleared); `dropRetries(owner)` for retired plugins.
@@ -328,7 +361,18 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `frontend-log.ts` — forwards diagnosable webview failures to the native rotating log.
 - `load-diagnostics.ts` — `record_slow_load` / `recent_slow_loads` IPC for slow directory-load records (#1022).
 - `e2e-hooks.ts` — the single frontend E2E hook gate: `E2E_HOOKS_ENABLED` (literal `VITE_E2E_HOOKS === "1"`, not DEV) and `loadE2EHooks()`, the only importer of `src/test-support/`; documents the orphan-chunk rule (#457, #884).
-- `mock-invoke.ts` — mock command dispatch/simulation for browser/E2E (no Tauri): stateful git working tree, trash, clipboard, drives. Open when E2E data wrong.
+- `mock-invoke.ts` — mock backend core for browser/E2E (no Tauri): merges the command-family tables and applies the copy/move session and history receipts. Lazily imported by `common.ts` outside Tauri. Open when E2E data wrong, then follow the command's family module.
+- `mock-dispatch.ts` — raw mock dispatch: the installed command table, invocation counting, injected failures and latency; family modules re-enter through `invokeMockCommand` here (keeps the graph acyclic).
+- `mock-files.ts` — mock filesystem family: listings (incl. synthetic `/perf` dirs), create/rename/delete, Trash, archives, file history, ordered copy/move session.
+- `mock-file-recovery.ts` — mock File Recovery family: retained-destination records, budget and subscription snapshots.
+- `mock-preview.ts` — mock preview/media family: thumbnails, image/PDF/video previews, image crop, folder previews, media metadata.
+- `mock-git-state.ts` — shared mock Git repository state: working tree, hunks, commit graph, refs, synthetic load-test repos.
+- `mock-git.ts` — mock Git working-tree family: status, stage/discard, commit, diffs, aborts, watching, cancellable fetch/pull.
+- `mock-git-history.ts` — mock Git history family: log, refs, branches/tags, checkout/merge/rebase/reset, undo, comparisons, PR/CI.
+- `mock-clipboard.ts` — mock OS clipboard family: published file list, cut leases, report attachments.
+- `mock-search.ts` — mock search family: Quick Open, streaming name search, content search.
+- `mock-ai.ts` — mock AI and plugin-job family: operations, connections, presentation, generation jobs.
+- `mock-system.ts` — mock app/system family: drives, startup/crash diagnostics, updates, warm windows, terminals, config, plugins, themes.
 - `mock-control.ts` — single typed control surface (`MockControl`, `getMockControl()`) e2e specs/tests use to set fixture overrides, failure/latency injection, and call mock-invoke's test hooks, replacing ad hoc `globalThis.__mockXxx` globals; also `MOCK_LOCAL_KEYS`, the named localStorage flag keys mock-invoke reads/writes (#869).
 - `mock-fixtures.ts` — static fixture data for mock-invoke.ts: the seeded fake filesystem tree (`mockFiles`), fake file contents, the fake drives list, and the fake commit graph shape/refs (#869).
 - `mock-file-history.ts` — browser-only fixture history for UI tests; native policy lives in Rust.
@@ -340,6 +384,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `thumbnails.ts` — image/video thumbnail, folder preview, palette-extract IPC.
 - `archive.ts` — zip compress/extract/preview IPC.
 - `config.ts` — JSON config persistence + user theme CSS file IPC.
+- `layouts.ts` — `list_user_layouts` / `ensure_layouts_dir` IPC for user layout themes (#1306).
 - `os-clipboard.ts` — native file clipboard publish/snapshot/CAS IPC plus text and image helpers.
 - `terminal.ts` — embedded terminal spawn/write/resize IPC (#139).
 - `activate.ts` — resolve what double-click/Enter activation targets.
@@ -357,6 +402,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `use-lazy-dialog.svelte.ts` — binds one dialog open predicate to its loader and retires it with the host effect.
 - `use-preview-fullscreen.svelte.ts` — Preview fullscreen controller shared by file images and plugin targets: toggle/exit, zoom/pan state, wheel/pointer/click handlers and keys (`createPreviewFullscreen`, effect-free and unit-tested), plus the window key listener and `data-preview-fullscreen` attribute (`usePreviewFullscreen`) (#1033).
+- `use-light-theme.svelte.ts` — reactive light/dark color-scheme flag (MutationObserver on `data-theme`) for picking the hljs palette.
 
 - `src/lib/composables/use-entry-appearance.svelte.ts` — reactive clipboard, manually-hidden/dotfile and empty-folder appearance shared by EntryCell and FileTile.
 - `use-item-interactions.svelte.ts` — shared click/select/activate logic across views.
@@ -384,6 +430,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-pane-dividers.svelte.ts` — single captured divider gesture per workspace; pointer/keyboard adapter with geometry and lifetime validation.
 - `use-inline-panel-width.svelte.ts` — mount-owned contribution of visible inline accessories to the pane viewport.
 - `use-panel-resize.svelte.ts` — localStorage width preference adapter for Sidebar, SCM, Miller and Git columns.
+- `use-git-graph-menu.svelte.ts` — git-graph commit menu / references disclosure anchor: cursor or trigger positioning under zoom, viewport clamp, captured scroller position and focus (#1082).
 - `use-resize-owner.svelte.ts` — shared axis-aware pointer capture, geometry, keyboard and activity lifetime.
 - `use-controlled-size.svelte.ts` — external-source size adapter; transient drafts, final commits and value-based source supersession.
 - `use-list-columns.svelte.ts` — List column virtualizer over `buildListModel`; synchronous content-box sizing, wheel ownership (a scrollable card first), editor pinning, card scroll offsets, the grip drag session (window-level release, clamped to the card's column) and preview, entry/card reveal and settled callbacks.
@@ -404,6 +451,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/domain/folder-peek.ts` — pure preorder expansion, pruning/caps and Details tree row/index geometry.
 - `src/lib/domain/folder-peek-memory.ts` — bounded expansion membership and List stage choices, subtree collapse and deleted-branch pruning shared with the pending restore facade.
 - `src/lib/domain/folder-peek-flat.ts` — flat Details rows and command admission before first peek activation; caret-less click ownership (`rowClickOwnsPeek`: click toggles, double-click refused with a notice, #1298).
+- `src/lib/domain/folder-peek-pane.ts` — explorer-applied peek decisions: selection/cursor pruning after a projection hides peeked children, and spring-peek drop folders (#1242).
+- `src/lib/domain/explorer-entries.ts` — explorer entry-list helpers: multi-entry clipboard labels and merging a selected context-menu entry the listing lacks.
 - `src/lib/domain/file-operation-selection.ts` — Explorer recursive batch reduction, symlink-overlap admission, drag-primary remapping, and archive roots (same-basename refusal).
 - `src/lib/domain/bulk-rename.ts` — bulk rename plan: name-part find/replace previews, per-folder collision keys, and descendant-first rename order.
 - `src/lib/domain/file-drop.ts` — validated internal payloads, full path-set verification and explicit DOM/native transport authority.
@@ -440,6 +489,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `bookmark-drop-feedback.ts` — bookmark drop action feedback and effective local/cross-window drag-kind resolution (#675).
 - `quick-access.ts` — default sidebar system-folder rows under the resolved home directory; an unknown home yields none, so no row can navigate to a fabricated path while `get_home_directory` is in flight (#702).
 - `fuzzy-score.ts` — fuzzy match scorer for QuickOpen.
+- `command-keywords.ts` — hidden palette search synonyms per command ID (#1247).
+- `command-score.ts` — pure command-palette scorer (`scoreCommand`, frecency points); split from `fuzzy-score.ts` so it stays out of the startup graph (#1247).
+- `palette-selection.ts` — command-palette highlight by command id over a live result list (#1236).
 - `quick-open-search.ts` — trailing scheduler for the expensive recursive Quick Open search; local results remain immediate while a rapid query produces one backend request (#600).
 - `lazy-dialog.ts` — failure-safe loading for code-split dialogs: rejected import (#584) or mount crash via svelte:boundary (#585) rolls back the dialog open-flag + notifies, preventing the hasModalOpen hotkey soft-lock.
 - `theme-list.ts` — dedupe discovered themes by id, last wins (user CSS overrides built-ins; duplicate ids crashed ThemePicker's keyed each, #585).
@@ -454,6 +506,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `shortcut-recording.ts` — pure two-step recording transitions and shared chord deadline.
 - `git.ts` — git status letter/indicator conversion.
 - `git-graph.ts` — commit-graph lane layout (#58/#179).
+- `git-graph-view.ts` — git-graph table geometry: row offsets with an inline expansion, render window, lane windowing, table minimum width, menu clamp, synthetic uncommitted row and date cells.
+- `git-graph-branch-filter.ts` — branch-filter popover semantics (all/none/subset toggles, author batch toggles, remote-only exclusion).
 - `git-branch-status.ts` — branch-status badge presenter (merged / squashed / stale; `unknown` shows none) and status index (#1081).
 - `git-graph-comparison.ts` — pure normal-detail/comparison transitions, chronological pair ordering, and stale-request generation checks (#512).
 - `git-graph-undo.ts` — immutable undo snapshot union, pure bounded per-repository ledger, confirmation labels, and structural action comparison (#513).
@@ -461,7 +515,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `commit-panel.ts` — pure state machine + derivations for the git-graph uncommitted-node inline commit panel: stage-status grouping, commit-button enablement/label, ephemeral message-editor transitions (#466).
 - `scm-tree.ts` — fold flat repo file list into a tree.
 - `scm-filter.ts` — fuzzy filter for the SCM sidebar's pending files (#517); `filterScmEntries`/`filterScmSummary` over `fuzzyScorePath`.
-- `diff.ts` — unified-diff parser (#55).
+- `scm-sidebar.ts` — SCM sidebar rules: status letter/class, row path split, visual row order for Up/Down (`visibleScmRowPaths`, `nextScmSelection`), commit admission (`canCommitScm`).
+- `diff.ts` — unified-diff parser (#55); `visibleDiffLines` / `diffSubtitle` for the preview diff view.
 - `css-tokens.ts` — parse a stylesheet's `--token` table and resolve `var()` the way the browser would, so a unit test can catch a `var(--undefined, fallback)` silently degrading (#499).
 - `file-batch-outcome.ts` — typed successful/failed path receipt and aggregate error formatting for best-effort file mutations.
 - `src/lib/domain/copy-session.ts` — ordered native session event, conflict-decision and positional result contracts, plus the copy and move incomplete-session presentations.
@@ -484,12 +539,16 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `resize-size.ts` — bounded scalar normalization, visual/model delta conversion and axis-aware keyboard sizing.
 - `scroll-moves-handle.ts` — which scrolls end a panel drag: the document's, an ancestor's or a synced scroller's, never an unrelated list's.
 - `pane-viewport.ts` — pure descendant minima (`paneMinima` sizes the rendered canvas and split children without measurement), canvas placement, active-pane reveal and keyboard divider policy.
-- `pane-layout.ts` — pane split-tree pure logic (#228).
+- `pane-layout.ts` — pane split-tree pure logic (#228); `focusAfterClosing`/`reinsertLeaf` for closing and restoring panes (#229).
+- `window-tab-order.ts` — tab-strip index arithmetic: insertion after the active tab, Ctrl+Tab wrapping, drag reordering.
+- `closed-panes.ts` — bounded closed-pane stack, pane-vs-tab restore precedence, repeated last-tab close detection (#229).
 - `tab-title.ts` — VS Code-style tab title disambiguation.
 - `retained-tabs.ts` — which recently active tabs keep their pane tree mounted while hidden: stable render order plus LRU eviction (#1173).
 - `titlebar.ts` — title bar / tab strip visibility rules.
 - `config-reload.ts` — pure decision for whether an observed config-file change is an external edit or our own write echoing back (#599).
 - `settings-migration.ts` — versioned one-shot migrations for the persisted settings blob; `migrateSettings` + the append-only ledger (#506).
+- `layout-theme.ts` — layout-theme catalog (#1306): built-ins, leading-comment metadata, user-file validation, resolution/fallback reasons, row-height parsing.
+- `layout-theme-ids.ts` — eager built-in layout ids and the legacy Floating Islands → `layoutTheme` mapping used by settings migration.
 - `settings-numbers.ts` — Numeric preference consumer contracts shared by persisted validation and interactive setters.
 - `folder-preview.ts` — folder preview image selection (#146).
 - `src/lib/domain/preview-kind.ts` — single file-preview precedence classifier and hold-image policy, shared by dispatch and viewer presentation.
@@ -501,10 +560,12 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `file-icon-identity.ts` — pure file-icon identity and paint-category resolution, including filename precedence, aliases and folder identity.
 - `icon-themes.ts` — icon pack types and explicit-choice versus color-theme-suggestion policy.
 - `syntax-highlight.ts` — highlight.js wrapper for preview.
-- `csv-preview.ts` — quoted CSV parser for PreviewPane table data, bounded to the preview's data-row limit (#666).
+- `csv-preview.ts` — quoted CSV parser for PreviewPane table data, bounded to the preview's data-row limit (#666); `csvRowHeight` / `csvColumnTemplate` table layout.
 - `html-preview-zoom.ts` — pure HTML preview page-zoom model: unmeasurable sandboxed frame scales a fixed ≥1280px desktop layout like an image (#1361), Fit, zoom stops and labels (#1352).
 - `pdf-preview.ts` — pure PDF fit, zoom-anchor, measured pointer coordinates, pan bounds and safe-link policy (#728–#730).
 - `markdown.ts` — safe markdown render for preview.
+- `markdown-math.ts` — Marked extension for TeX math (`$…$`, `\(…\)`, `$$…$$`, `\[…\]`); typesetter injected (#1393).
+- `katex-typesetter.ts` — lazy KaTeX typesetter + bundled woff2 fonts, loaded only for math documents (#1393).
 - `marquee-rect.ts` — marquee band geometry as compositor-only `transform`s for five container-sized layers (fill + four 1px edges sized to the client box, scaled down so fractional zoom rasterises exactly); a resized band element repainted its layer over every image tile per frame on WebKitGTK (#1051).
 - `zoom.ts` — CSS zoom level utils.
 - `raf-coalesce.ts` — coalesce high-freq value streams via rAF.
@@ -560,6 +621,11 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `index.css` (aggregator), `syntax.css` (code highlight), and per-theme: `dark.css`, `light.css`, `aurora.css`, `catppuccin.css`, `desert.css`, `gruvbox.css`, `hacker.css`, `horizon.css`, `nord.css`, `ocean-blue.css`, `solarized-light.css`, `tahoe.css`.
 
+## src/lib/layouts/ — built-in layout themes (#1306; contract in docs/layout-themes.md).
+
+- `floating-islands.css` — Floating Islands, bundled in startup CSS and scoped to `[data-layout-base="floating-islands"]`.
+- `hairline-ledger.css` — Hairline Ledger, lazy `?inline` sheet injected like a user layout.
+
 ## src/lib/types/
 
 - `pretext.d.ts` — ambient TS type declarations.
@@ -578,7 +644,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `error.rs` — unified command error type.
 - `config.rs` — JSON config file persistence.
 - `config_watch.rs` — watches the config dir and emits `config-file-changed` for reloadable JSON / `themes/*.css` so external edits apply live (#599); `watched_config_name` is the allowlist. Symlink handover restores surviving descendant coverage after recursive ancestor retirement (#938, ADR 0004); Linux contracts live in `src-tauri/test_support/config_watch_nested_roots_test.rs`.
-- `search.rs` — fuzzy search (nucleo). Two-pass walk: fast pass, then build-output trees (`target`, `node_modules`, …) deferred + score-penalized (#393); WSL UNC roots delegate the walk to the distro's `find` (#414); complete walks feed the shared listing cache (#651).
+- `search.rs` — fuzzy search (nucleo). Two-pass walk: fast pass, then build-output trees (`target`, `node_modules`, …) deferred + score-penalized (#393); WSL UNC roots delegate the walk to the distro's `find` (#414); complete walks feed the shared listing cache (#651). Walks run on a dedicated bounded rayon pool, and any walk error (other than an unreadable directory) marks the walk incomplete and uncacheable (#1404, `test_support/issue_1404_walk_pool_test.rs`).
 - `search_cache.rs` — bounded five-second cache of completed recursive Quick Open listings for watched roots; per-root invalidation revisions prevent an in-flight cold walk from republishing stale entries without discarding unrelated roots, and incomplete/cancelled walks are never published (#651).
 - `wsl.rs` — WSL UNC path parsing (`\\wsl.localhost\<distro>\…` → distro + Linux path), shared by terminal/search/git delegation.
 - `content_search.rs` — grep-across-files (ripgrep/grep crate).
@@ -879,15 +945,14 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `e2e-tauri/crop-pixel-oracle.ts` — serializable, bounded first-frame pixel and intrinsic-preview observers for native crop verification; preserves exact comparisons when decoder promises stall.
 - `e2e-tauri/specs/external-job-timeout.spec.ts` — real CLI timeout/reap, withheld output and Jobs-panel error outcome.
 - `e2e-tauri/diagnostics/artifact.ts` — shared best-effort diagnostic artifact writer: per-investigation log directory, ADR 0021 hashed file names, never masks the documented failure. Contract in `tests/qualification/diagnostic-artifact.test.ts`.
-- `e2e-tauri/diagnostics/process-timeline.ts` — process-only `/proc` session-loss sampler: renderer/driver classification, bounded rolling samples, PID+start-time renderer lifetimes (`Retire-when: #781 closed`).
-- `e2e-tauri/diagnostics/fresh-window.ts` — fresh-child launch/selection/first-lookup evidence records and `monitorFreshWindowOpen` (`Retire-when: #781 closed`).
-- `e2e-tauri/diagnostics/warm-claim.ts` — `monitorWarmClaimExpiry`: abandoned warm-claim expiry artifact with pre-close renderer identities and first observed disappearances (`Retire-when: #781 closed`).
+- `e2e-tauri/diagnostics/process-timeline.ts` — process-only `/proc` session-loss sampler: renderer/driver classification, bounded rolling samples, PID+start-time renderer lifetimes.
+- `e2e-tauri/diagnostics/fresh-window.ts` — fresh-child launch/selection/first-lookup evidence records and `monitorFreshWindowOpen`.
+- `e2e-tauri/diagnostics/warm-claim.ts` — `monitorWarmClaimExpiry`: abandoned warm-claim expiry artifact with pre-close renderer identities and first observed disappearances.
 - `tests/qualification/warm-claim-process-timeline.test.ts` — contract for native warm-claim failure artifact, bounded late sample and no artifact on success.
 - `tests/qualification/fresh-native-window.test.ts` — fresh-window selection skips pre-existing handles without executing script in them.
 - `e2e-tauri/window-transfer-waits.ts` — renderer-side token and listing observers for a single asynchronous native WebDriver command.
 - `e2e-tauri/owned-windows.ts` — the one handle scan: reads each URL through the driver and scripts only known, non-warm pages (fails closed on empty URLs; #885, #931). `specs/helpers.ts` binds it to the browser (`switchToWindowLabel`, `closeOtherWindows`, `parkedWarmWindow`).
-- `e2e-tauri/diagnostics/window-transfer.ts` — incrementally persisted native runtime and per-window failure evidence (`Retire-when: #710 closed`).
-- `e2e-tauri/specs/window-transfer-diagnostics.spec.ts` — real-native negative control for retained JSON and screenshot artifacts.
+- `e2e-tauri/diagnostics/window-transfer.ts` — incrementally persisted native runtime and per-window failure evidence.
 - `e2e-tauri/soak/native-soak.spec.ts` — opt-in native window, plugin, preview, theme, DPI and input scenarios.
 - `e2e-tauri/wdio.soak.conf.ts` — separate hours-long native qualification suite configuration.
 - `scripts/build-native-qualification.ts` — clean-worktree debug/release native build (both hook gates when hooks are on) and exact binary provenance.
@@ -895,8 +960,28 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `scripts/grant-macos-accessibility.sh` — CI-only, SIP-guarded Xcode Helper Accessibility grant for the Appium Mac2 pilot.
 - `.github/workflows/macos-native-ui.yml` — hosted macOS production bundle build, Appium Mac2 run and outcome artifact upload.
 - `scripts/run-native-soak.ts` — native soak configuration, run ownership and report finalization.
-- `scripts/e2e-shards.mjs` + `scripts/e2e-shard-timings.json` — CI browser shards as whole spec files balanced by recorded per-file CI durations (`plan` → `--test-list`; `record` refreshes timings from `gh run view --log`); contracts in `tests/e2e-shards.test.ts` (#1123). On PRs each shard plans only the specs `scripts/e2e-affected.mjs` selects from the PR diff (`--only`), skipping when its share is empty; pushes run everything (#1131).
-- `scripts/e2e-affected.mjs` — maps a diff to affected browser specs through `map-feature.md` clusters; ignores files the mock-backed suite never executes (src-tauri, tests, evidence, docs) and falls back to ALL for mock-invoke, hubs, config, dev-server scripts, e2e support and CI selection changes; contracts in `tests/e2e-affected.test.ts`.
+- `scripts/e2e-shards.mjs` + `scripts/e2e-shard-timings.json` — CI browser shards as whole spec files balanced by recorded per-file CI durations (`plan` → `--test-list`; `record` refreshes timings from `gh run view --log`, reading each test attempt's duration from the `[e2e-timing]` lines `scripts/e2e-timing-reporter.mjs` prints, so multi-worker jobs time correctly, #1368); contracts in `tests/e2e-shards.test.ts` (#1123). On PRs each shard plans only the specs `scripts/e2e-affected.mjs` selects from the PR diff (`--only`), skipping when its share is empty; pushes run everything (#1131).
+- `scripts/e2e-affected.mjs` — maps a diff to affected browser specs through `map-feature.md` clusters (the union of the base and head maps when the map changes); ignores files the mock-backed suite never executes (src-tauri, tests, evidence, docs) and falls back to ALL for mock-invoke, hubs, config, dev-server scripts, e2e support and CI selection changes. With `--impact-map=` (#1368) the three PR tiers select through the coverage map (`scripts/impact-select.mjs`; `tests/e2e-affected-coverage.test.ts`), else per-engine PR selections (#1367): `--strict` (Chromium: ALL for any `src/` change), `--webkit` (cluster-mapped plus curated `browserName`/`@webkit` specs; ALL for `WEBKIT_SENSITIVE` paths or component styling), `--view-modes` (specs iterating `VIEW_MODES` reached through a view-mode component, run with `ALL_VIEW_MODES=1`), `--list-view-mode-specs`; a version-only diff selects none. Contracts in `tests/e2e-affected.test.ts`.
+- `scripts/e2e-browser-build.mjs` + `scripts/serve-e2e-build.mjs` — the browser-test bundle (#1381): with `E2E_BROWSER_BUILD=1` the build emits every `/src/...` / `/node_modules/...` module a spec `import()`s in the page as a chunk at that URL (one shared instance with the app) and copies fetched fixtures; the server serves `build/` with SPA fallback, JS MIME for those chunks and 404 (never HTML) for a missing module. CI's browser shards use it via `E2E_BUILD_DIR` (`playwright.config.ts`). Contracts in `tests/e2e-browser-build.test.ts`.
+- `scripts/impact-coverage.mjs` — the browser E2E test-impact map (#1368): Vite URL → repo path, the "exercised beyond module evaluation" rule, `merge` of per-test coverage records into `{commit, generatedAt, specs, tests, files, exercised, assets, lines, sets}` (per-file original-line test sets, git blob, mapped lines and V8 blocks), incomplete-spec detection from Playwright JSON reports, and `loadImpactMap` validation (malformed/empty/older than `MAX_MAP_AGE_HOURS` → fall back). Contracts in `tests/impact-map.test.ts`.
+- `scripts/impact-collect.mjs` + `scripts/impact-lines.mjs` — collector side of the map: reduce one test's V8 block coverage to loaded/exercised files, covered original lines through each module's inline source map, fetched repo assets, and per-file-version metas (`e2e/impact-coverage.ts` calls them under `E2E_COVERAGE=1`).
+- `scripts/impact-bundle.mjs` — bundle side of the collector (#1386): resolves a browser-test chunk's hidden source map to repository files and turns CDP function coverage into per-file covered/mapped lines; with `e2e-chunk-modules.json` (emitted by `scripts/e2e-browser-build.mjs`) an evaluated chunk loads every module it contains. Contracts in `tests/impact-bundle.test.ts`.
+- `scripts/impact-map-source.mjs` — which `e2e-impact-map` artifact a PR trusts: the newest one produced by a dev push/schedule/dispatch run of ci.yml or e2e-impact-map.yml in this repository (#1386).
+- `scripts/impact-regions.mjs` — static facts about diff lines (trivia / type-only / import / code), every function's start/body/end lines and import statements in order, from the TypeScript parser (Svelte script blocks offset; markup and styles are code).
+- `scripts/impact-select.mjs` — pure coverage selection: per hunk the tests that entered the innermost enclosing function (method-level TIA), else every loader of the file; comment/type-only and new-import-binding proofs, import removal/reorder → file level, zero-coverage fallback, drift union (`withDrift`).
+- `.github/workflows/e2e-impact-map.yml` — nightly backstop to ci.yml's dev-push `impact-map` job (#1386): full Chromium run with `E2E_COVERAGE=1 ALL_VIEW_MODES=1` that publishes the `e2e-impact-map` artifact PR selection downloads (#1368).
+- `e2e/evidence-shots.ts` — gates `page`/`locator.screenshot({ path })` writes into the tracked `screenshots/` and `evidence/` dirs behind `CAPTURE_EVIDENCE=1` (worker fixture in `e2e/fixtures.ts`, #1123); contracts in `tests/e2e-evidence-shots.test.ts`.
+- `e2e/impact-coverage.ts` — opt-in (`E2E_COVERAGE=1`) per-test coverage collector wired as an auto fixture in `e2e/fixtures.ts`; covers every page, context and popup a test opens. `tests/e2e-fixture-imports.test.ts` keeps every spec on the shared fixtures so none escapes it.
+- `scripts/version-only.mjs` — recognises a release version bump (only `version` in package.json/tauri.conf.json, `[package] version` in Cargo.toml, local-crate versions in Cargo.lock, `pkgver` in PKGBUILD, plus CHANGELOG.md) by structured per-format comparison; anything else, malformed or added/deleted files are not version-only. Selectors then run e2e NONE, rust NONE and only text-related unit tests; contracts in `tests/version-only.test.ts` (#1367).
+- `scripts/ci-jobs.mjs` — `report`: ci.yml gate jobs print each upstream shard's result and the step a failed/cancelled one stopped at (Actions API, diagnostics only); `auto-rerun`: decides whether `.github/workflows/ci-auto-rerun.yml` re-runs a failed first attempt (only install/setup-step failures, once). Contracts in `tests/ci-jobs.test.ts` (#1367).
+- `scripts/release-ci-gate.mjs` — run by `.github/workflows/release.yml` before tagging/building: requires a dev commit with the released tree to have a successful dev-push CI run and `smoke (ubuntu-latest)`, waiting for in-progress runs; contracts in `tests/release-ci-gate.test.ts` (#1367).
+- `scripts/perf-fixtures.mjs` — deterministic flat large-folder fixtures (1k/10k/100k/500k sparse files, mixed names/sizes/mtimes, `manifest.json`) in a temp root outside the repo; `create`/`remove` (#983, `docs/performance.md`).
+- `scripts/perf-real-app.mjs` — end-to-end folder-open and navigation timings (n/median/p95) against a real binary through tauri-driver under Xvfb with private XDG dirs; in-page MutationObserver + animation-frame marks, no app instrumentation (#983, `docs/performance.md`).
+- `.github/actions/tauri-linux-deps/action.yml` + `apt.sh` — the one place CI installs Tauri's Linux apt packages: per-attempt timeout with retries and a `.deb` cache keyed by package list and simulated install plan (#1371). Contracts in `tests/ci-apt-install.test.ts`.
+- `.github/workflows/ci-auto-rerun.yml` — `workflow_run` re-run of install/setup-bound CI and native-smoke failures, first attempt only (#1367).
+- `.github/workflows/e2e-shard-timings.yml` — weekly re-record of `scripts/e2e-shard-timings.json` from successful dev push logs, opened as a PR (#1367).
+- `tests/ci-playwright-container.test.ts` — the browser jobs' Playwright container tag equals bun.lock's `@playwright/test`, no per-shard install, and nested step/global timeouts (#1367).
+- `tests/test-cache-version.test.ts` — the browser target hashes package.json with its version replaced by a placeholder, and nothing else (#1367).
 - `scripts/unit-affected.mjs` — maps a PR diff to `vitest related` inputs: changed modules plus tests/helpers whose text names a changed file (or, for directory-scanning tests, its directory); config, lockfile, shared test setup/helpers/fixtures, deleted modules and CI selection changes run the full unit suite; contracts in `tests/unit-affected.test.ts` (#1175).
 - `scripts/rust-affected.mjs` — maps a PR diff to the Cargo workspace members to `cargo test -p`: touched local packages (deepest package directory, or a Rust string literal naming an external fixture) plus their dependents from `cargo metadata`; Cargo.lock / workspace manifest / toolchain changes run everything; contracts in `tests/rust-affected.test.ts` (#1175).
 - `scripts/test-selection.mjs` — shared selector rules for the three CI tiers: the git-diff input, the `{mode, reason, items}` result, and the escalations to a full run (more than `--max-files` changed files, unusual paths, unknown file types, selector failure). `tests/ci-test-selection.test.ts` runs ci.yml's own selection and test-step scripts against stubs.
@@ -978,6 +1063,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 TraceExplorer's image UI, provider adapters and SQLite journal are maintained in https://github.com/xnmp/TraceExplorer rather than compiled into this host. Core crop outcomes remain covered in `e2e/image-crop.spec.ts` and `e2e/image-editor.spec.ts`.
 
 - `src/lib/domain/settings-search.ts` — shared multi-token substring/subsequence filtering for general and plugin Settings.
+- `src/lib/domain/terminal-shortcut-binding.ts` — displayed binding for a terminal line-editing action (user override vs platform default); Settings-only, kept out of the startup `terminal-keys.ts`.
+- `src/lib/domain/settings-rows.ts` — general Settings search terms per row (`SETTINGS_ROWS`) and per-section row lists with platform-only rows (`settingsSectionRows`).
 
 ## Shared text services — new files
 

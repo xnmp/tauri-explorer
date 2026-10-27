@@ -1,10 +1,17 @@
 name: CI
 
 on:
+  # Not main: a dev->main PR carries code whose dev push already ran this
+  # whole workflow, and release.yml refuses a release whose tree lacks that
+  # passing dev run (scripts/release-ci-gate.mjs, #1367). Main pushes still run.
   pull_request:
-    branches: [dev, main]
+    branches: [dev]
   push:
     branches: [dev, main]
+  # Nightly full run without the test-result cache, on the default branch
+  # (dev): catches environment drift and flakes that cached replays hide.
+  schedule:
+    - cron: "23 3 * * *"
   workflow_dispatch:
     inputs:
       test_cache:
@@ -21,8 +28,11 @@ permissions:
   actions: read
 
 env:
+  # bun inside the Playwright container (the host jobs use setup-bun). Exact
+  # version, released at least two weeks before it is pinned.
+  CONTAINER_BUN_VERSION: "1.4.3"
   TEST_CACHE_WRITE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
-  TEST_CACHE_READ: ${{ vars.TEST_CACHE != 'off' && !(github.event_name == 'workflow_dispatch' && !inputs.test_cache) }}
+  TEST_CACHE_READ: ${{ vars.TEST_CACHE != 'off' && github.event_name != 'schedule' && !(github.event_name == 'workflow_dispatch' && !inputs.test_cache) }}
 
 # Only PRs share a group. Unique non-PR groups preserve every dev run,
 # including pending runs that GitHub would otherwise replace.
@@ -37,10 +47,12 @@ jobs:
   # matching the docs patterns, and every non-PR event, counts as code.
   changes:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     permissions:
       contents: read
       pull-requests: read
+      # Reads the nightly E2E impact map artifact (#1368).
+      actions: read
     # Per-tier test selection (#1175). Every selector reads only the git diff,
     # never PR text, labels or author claims, and any doubt runs that tier in
     # full: a failed selector, an unknown file type, an unusual path, or more
@@ -54,6 +66,14 @@ jobs:
       # so dev keeps full Chromium and WebKit coverage after each merge.
       e2e: ${{ github.event_name == 'pull_request' && steps.select.outputs.e2e || 'ALL' }}
       e2e-reason: ${{ github.event_name == 'pull_request' && steps.select.outputs.e2e-reason || format('{0} event runs every test', github.event_name) }}
+      # WebKit specs (e2e-affected.mjs --webkit, #1367): narrower than e2e only
+      # when no WKWebView-sensitive area changed; ALL outside PRs.
+      webkit: ${{ github.event_name == 'pull_request' && steps.select.outputs.webkit || 'ALL' }}
+      webkit-reason: ${{ github.event_name == 'pull_request' && steps.select.outputs.webkit-reason || format('{0} event runs every test', github.event_name) }}
+      # Specs to run with ALL_VIEW_MODES=1 (e2e-affected.mjs --view-modes);
+      # ALL means every spec that iterates the view modes.
+      view-modes: ${{ github.event_name == 'pull_request' && steps.select.outputs.view-modes || 'ALL' }}
+      view-modes-reason: ${{ github.event_name == 'pull_request' && steps.select.outputs.view-modes-reason || format('{0} event runs every test', github.event_name) }}
       # Vitest inputs for `vitest related` (scripts/unit-affected.mjs): "ALL",
       # "NONE" or space-separated repo paths.
       unit: ${{ github.event_name == 'pull_request' && steps.select.outputs.unit || 'ALL' }}
@@ -62,10 +82,14 @@ jobs:
       # "NONE" or space-separated workspace member names.
       rust: ${{ github.event_name == 'pull_request' && steps.select.outputs.rust || 'ALL' }}
       rust-reason: ${{ github.event_name == 'pull_request' && steps.select.outputs.rust-reason || format('{0} event runs every test', github.event_name) }}
+      # The app server kind the impact map was recorded on ("bundle", "dev" or
+      # "unknown"), empty without a map. Browser shards serving another kind
+      # run every spec (#1391).
+      impact-server: ${{ github.event_name == 'pull_request' && steps.impact.outputs.server || '' }}
     steps:
       - id: filter
         if: github.event_name == 'pull_request'
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@v4
         with:
           # A file is code unless it matches a docs exclusion.
           predicate-quantifier: every
@@ -73,8 +97,14 @@ jobs:
             code:
               - '**'
               - '!docs/**'
-              - '!**/*.md'
+              # Root-level Markdown only: Markdown under e2e/, src/, tests/ and
+              # elsewhere can be a fixture or a text contract, so it stays code.
+              - '!*.md'
               - '!output/**'
+              # Written by browser specs as issue/acceptance proof; no test,
+              # build or script reads them (#1367).
+              - '!screenshots/**'
+              - '!evidence/**'
 
       # The PR merge commit's first parent is the base tip, so HEAD^1...HEAD is
       # exactly the PR's change. Any selector failure falls back to ALL.
@@ -83,11 +113,63 @@ jobs:
         with:
           fetch-depth: 2
 
+      # The browser selectors parse changed modules with TypeScript to find
+      # the function around each hunk and prove comment- and type-only hunks
+      # inert (scripts/impact-regions.mjs). No
+      # install scripts run; without the dependency the impact selector uses
+      # its file level, never a narrower selection.
+      - uses: oven-sh/setup-bun@v2
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        with:
+          bun-version: latest
+
+      - name: Install selector dependencies
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        timeout-minutes: 3
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      # The newest map from a trusted dev producer (#1368, #1386): every
+      # ci.yml dev push and the nightly e2e-impact-map.yml backstop
+      # (scripts/impact-map-source.mjs checks the producing run's event,
+      # workflow, branch and repository, not just the artifact name). No map,
+      # a failed download or an unusable map (malformed, or older than
+      # MAX_MAP_AGE_HOURS in scripts/impact-coverage.mjs) leaves the browser
+      # tiers on their selection without a map. The map's commit is fetched to
+      # re-run the tests that executed code changed on dev since then, and to
+      # translate lines; without it the map is unused.
+      - name: Fetch the E2E impact map
+        id: impact
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          picked=$(node scripts/impact-map-source.mjs "$GITHUB_REPOSITORY")
+          if [ -z "$picked" ]; then
+            echo "No impact map from a trusted dev run; browser tiers select without a map."
+            echo "- **impact map**: none available, browser tiers select without it" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          read -r artifact id sha <<< "$picked"
+          gh run download "$id" --repo "$GITHUB_REPOSITORY" -n e2e-impact-map -D "$RUNNER_TEMP/impact-map"
+          map="$RUNNER_TEMP/impact-map/e2e-impact-map.json"
+          commit=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).commit || "")' "$map")
+          git fetch --no-tags --depth=1 origin "${commit:-$sha}" || echo "Map commit ${commit:-$sha} unavailable; files changed since it use the file level."
+          echo "map=$map" >> "$GITHUB_OUTPUT"
+          server=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).server || "unknown")' "$map" || echo unknown)
+          echo "server=${server:-unknown}" >> "$GITHUB_OUTPUT"
+          echo "- **impact map**: artifact $artifact of run $id at \`${commit:-$sha}\`, recorded on the $server app server" >> "$GITHUB_STEP_SUMMARY"
+
       # Each selector prints {mode, reason, items} JSON; a selector or parse
       # failure selects the full tier. rust-affected runs `cargo metadata`
       # (the runner image's cargo) only when a change reaches Rust.
       - id: select
         if: github.event_name == 'pull_request'
+        env:
+          IMPACT_MAP: ${{ steps.impact.outputs.map }}
         run: |
           select_tier() {
             local tier=$1 json mode
@@ -109,7 +191,11 @@ jobs:
             echo "- **$tier**: \`${selection:-NONE}\` — $reason" >> "$GITHUB_STEP_SUMMARY"
           }
           echo "### Test selection (limit $TEST_SELECTION_MAX_FILES changed files)" >> "$GITHUB_STEP_SUMMARY"
-          select_tier e2e scripts/e2e-affected.mjs --strict
+          impact=()
+          if [ -n "$IMPACT_MAP" ] && [ -s "$IMPACT_MAP" ]; then impact=("--impact-map=$IMPACT_MAP"); fi
+          select_tier e2e scripts/e2e-affected.mjs --strict "${impact[@]}"
+          select_tier webkit scripts/e2e-affected.mjs --webkit "${impact[@]}"
+          select_tier view-modes scripts/e2e-affected.mjs --view-modes "${impact[@]}"
           select_tier unit scripts/unit-affected.mjs
           select_tier rust scripts/rust-affected.mjs
 
@@ -152,6 +238,11 @@ jobs:
 
       - name: Type check
         run: bun run check
+
+      # The native WebdriverIO suite's own tsconfig; formerly a Vitest test
+      # that only spawned this command (#1123).
+      - name: Native-suite type check
+        run: bun run check:e2e:tauri
 
       - name: Architecture boundaries
         run: bun run lint:arch
@@ -208,37 +299,143 @@ jobs:
           path: ${{ runner.temp }}/test-cache-report/
           if-no-files-found: ignore
 
+  # The browser-test bundle (#1381): built once per run and served to every
+  # browser shard by scripts/serve-e2e-build.mjs, instead of a Vite dev server
+  # transforming hundreds of modules on demand in each shard. A shard that
+  # cannot get it serves the dev server instead (same app, slower).
+  e2e-build:
+    needs: changes
+    if: >-
+      needs.changes.outputs.code == 'true' && (needs.changes.outputs.e2e != 'NONE' ||
+      needs.changes.outputs.view-modes != 'NONE' || needs.changes.outputs.webkit != 'NONE')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.CONTAINER_BUN_VERSION }}
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build the browser-test bundle
+        env:
+          E2E_BROWSER_BUILD: "1"
+        run: bun run build
+
+      - name: Upload the browser-test bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-browser-build
+          path: build/
+          retention-days: 1
+          if-no-files-found: error
+
   # Keep one browser worker per runner; split the growing suite across runners
   # so contention-sensitive tests retain their existing execution conditions.
-  # Two shards of 561 tests ran 19-20m and began hitting the timeout.
   # Shards are whole spec files balanced by recorded CI duration
   # (scripts/e2e-shards.mjs, #1123): Playwright's count-based --shard left one
   # shard ~1.8x longer than another, and the slowest shard sets wall time.
+  # Chromium runs every spec for any frontend change, so it sets PR wall time:
+  # four ~14-minute shards (#1367; the suite grew to ~56 recorded minutes).
+  # Skipped when the PR selects no browser spec; the frontend gate accepts that.
   chromium:
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
+    needs: [changes, e2e-build]
+    # Runs without the shared bundle if e2e-build fails (dev-server fallback).
+    if: >-
+      !cancelled() && needs.changes.result == 'success' &&
+      needs.changes.outputs.code == 'true' && needs.changes.outputs.e2e != 'NONE'
     runs-on: ubuntu-latest
-    # ~1.5x the planned ~15 min shard, like webkit's 40 for ~26: runner speed
-    # varies by ~30%, and a 20-minute cap cancelled a shard whose tests passed
-    # in 19.3 min. WebKit sets CI wall time, so this costs none.
+    # The Playwright image carries the browsers and every system library they
+    # need, so no shard downloads apt packages (#1367: --with-deps fetched
+    # 117 MB from a mirror that was sometimes ~54 kB/s). Its tag must equal
+    # bun.lock's @playwright/test version (tests/ci-playwright-container.test.ts).
+    container:
+      image: mcr.microsoft.com/playwright:v1.60.0-noble@sha256:9bd26ad900bb5e0f4dee75839e957a89ae89c2b7ab1e76050e559790e946b948
+      # Chromium needs more shared memory than Docker's 64 MB default.
+      options: --ipc=host
+    # Steps use bash features (here-strings); do not fall back to sh.
+    defaults:
+      run:
+        shell: bash
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2]
+    # Job-wide so the cache probe and the run hash the same environment. The
+    # container, not the runner image, is this job's environment: name it in
+    # the test-result cache's platform identity.
     env:
       E2E_ENGINE: chromium
+      # Two Playwright workers per runner (#1368): halves the runners per run
+      # with no new flakes measured on Chromium (run 40068235372). WebKit stays
+      # at one worker: two overran its 40-minute shard budget there.
+      PW_WORKERS: "2"
+      # Dev pushes record function-level coverage for the dev-push test-impact
+      # map (#1386), the only runs that publish it; it is not hashed, since it
+      # cannot change a result.
+      E2E_COVERAGE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' && 'function' || '' }}
+      ImageOS: playwright_noble
+      ImageVersion: "1.60.0_9bd26ad900bb5e0f4dee75839e957a89ae89c2b7ab1e76050e559790e946b948"
+      TEST_CACHE_NORMALIZE_VERSION: "1"
+      # Below the step cap, so a stall reports interrupted tests (#1367).
+      E2E_GLOBAL_TIMEOUT_MINUTES: "24"
     steps:
       - uses: actions/checkout@v7
 
+      # The container runs as root over a runner-owned checkout; Turborepo
+      # lists inputs through git, which refuses an unowned repository.
+      - name: Trust the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      # The shared bundle from the e2e-build job (#1381). Fetched before the
+      # cache key: E2E_BUILD_DIR is hashed, so a result is replayed only for
+      # the same kind of server. Without the bundle the shard serves the dev
+      # server, as before. Fetched before planning too, since the server kind
+      # decides whether the impact map's selection holds (#1391).
+      - name: Download browser-test bundle
+        if: needs.e2e-build.result == 'success'
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: e2e-browser-build
+          path: build
+
+      - name: Choose the app server
+        id: server
+        run: |
+          if [ -f build/index.html ]; then
+            echo "E2E_BUILD_DIR=build" >> "$GITHUB_ENV"
+            echo "server=bundle" >> "$GITHUB_OUTPUT"
+            echo "Browser E2E: serving the shared browser-test bundle"
+          else
+            echo "server=dev" >> "$GITHUB_OUTPUT"
+            echo "::warning title=No browser-test bundle::serving the Vite dev server instead"
+            echo "- **app server**: Vite dev server (the \`e2e-browser-build\` artifact is missing; check the e2e-build job)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       # Plans only the specs this PR can affect (all of them outside PRs). A
       # shard left with nothing to run skips the remaining steps and passes.
+      # A selection made with an impact map recorded on another kind of app
+      # server than this shard serves is not trusted: the shard plans ALL.
       - name: Plan duration-balanced shard
         id: plan
         env:
+          IMPACT_SERVER: ${{ needs.changes.outputs.impact-server }}
+          APP_SERVER: ${{ steps.server.outputs.server }}
           E2E_SELECTION: ${{ needs.changes.outputs.e2e }}
           E2E_REASON: ${{ needs.changes.outputs.e2e-reason }}
         run: |
+          if [ -n "$IMPACT_SERVER" ] && [ "$IMPACT_SERVER" != "$APP_SERVER" ] && [ "$E2E_SELECTION" != ALL ]; then
+            E2E_SELECTION=ALL
+            E2E_REASON="the impact map was recorded on the $IMPACT_SERVER app server, this shard serves the $APP_SERVER server"
+            echo "- **selection**: ALL ($E2E_REASON)" >> "$GITHUB_STEP_SUMMARY"
+            # The test step logs the selection it actually runs.
+            echo "E2E_SERVER_OVERRIDE=$E2E_REASON" >> "$GITHUB_ENV"
+          fi
           if [ "$E2E_SELECTION" = ALL ]; then
             echo "chromium E2E: full suite ($E2E_REASON)"
           else
@@ -246,6 +443,9 @@ jobs:
           fi
           tr ' ' '\n' <<< "$E2E_SELECTION" > "$RUNNER_TEMP/e2e-selection.txt"
           node scripts/e2e-shards.mjs plan --engine chromium --shard ${{ matrix.shard }}/${{ strategy.job-total }} --only "$RUNNER_TEMP/e2e-selection.txt" --out "$RUNNER_TEMP/e2e-shard.txt"
+          # Report records live outside the checkout; actions read this path
+          # inside the container, where runner.temp would name the host's.
+          echo "TEST_CACHE_REPORT=$RUNNER_TEMP/test-cache-report" >> "$GITHUB_ENV"
           if [ -s "$RUNNER_TEMP/e2e-shard.txt" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
             # The shard's spec list is hashed into its test-result cache key.
@@ -255,14 +455,27 @@ jobs:
             echo "No affected chromium specs in this shard." >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - uses: oven-sh/setup-bun@v2
+      # setup-bun extracts with unzip, which the image lacks. The platform
+      # package is bun's prebuilt binary; --ignore-scripts runs no install
+      # script. CONTAINER_BUN_VERSION (workflow env) is the single pin.
+      - name: Install bun
         if: steps.plan.outputs.run == 'true'
-        with:
-          bun-version: latest
+        run: |
+          npm install --global --ignore-scripts "@oven/bun-linux-x64@${CONTAINER_BUN_VERSION}"
+          ln -sf "$(npm root --global)/@oven/bun-linux-x64/bin/bun" /usr/local/bin/bun
+          ln -sf /usr/local/bin/bun /usr/local/bin/bunx
+          test "$(bun --version)" = "$CONTAINER_BUN_VERSION"
 
       - name: Install dependencies
         if: steps.plan.outputs.run == 'true'
         run: bun install --frozen-lockfile
+
+      - name: Coverage record paths
+        if: steps.plan.outputs.run == 'true' && env.E2E_COVERAGE == 'function'
+        run: |
+          echo "IMPACT_DIR=$RUNNER_TEMP/impact" >> "$GITHUB_ENV"
+          echo "E2E_COVERAGE_DIR=$RUNNER_TEMP/impact/records" >> "$GITHUB_ENV"
+          echo "PLAYWRIGHT_JSON_OUTPUT_FILE=$RUNNER_TEMP/impact/report-chromium-${{ matrix.shard }}.json" >> "$GITHUB_ENV"
 
       - name: Test-result cache key
         id: test-cache-key
@@ -275,30 +488,28 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/test-cache.mjs restore --target "chromium-${{ matrix.shard }}"
 
-      # A hit replays the shard's passing result, so its browser is not needed.
       - name: Probe test-result cache
         id: test-cache-probe
         if: steps.plan.outputs.run == 'true'
         run: node scripts/test-cache.mjs probe --task ci:e2e --target "chromium-${{ matrix.shard }}"
 
-      - name: Install Playwright browser
-        if: steps.plan.outputs.run == 'true' && steps.test-cache-probe.outputs.hit != 'true'
-        run: npx playwright install --with-deps chromium
-
       # scripts/ci-test-e2e.sh verifies the shard selection and runs it, or the
-      # cache replays an unchanged passing result.
+      # cache replays an unchanged passing result. Playwright's global timeout
+      # (E2E_GLOBAL_TIMEOUT_MINUTES) fires first; this cap is the backstop.
       - name: E2E tests
         id: test-cache-run
+        timeout-minutes: 26
         env:
           E2E_SELECTION: ${{ needs.changes.outputs.e2e }}
           E2E_REASON: ${{ needs.changes.outputs.e2e-reason }}
         run: |
+          if [ -n "${E2E_SERVER_OVERRIDE:-}" ]; then E2E_SELECTION=ALL; E2E_REASON=$E2E_SERVER_OVERRIDE; fi
           mode=$([ "$E2E_SELECTION" = ALL ] && echo "full suite" || echo "selected subset")
           if [ "${{ steps.plan.outputs.run }}" != true ]; then
-            echo "E2E: nothing to run in this shard; $mode ($E2E_REASON)"
+            echo "chromium E2E: nothing to run in this shard; $mode ($E2E_REASON)"
             exit 0
           fi
-          echo "E2E: $mode ($E2E_REASON), shard of $(wc -l < "$RUNNER_TEMP/e2e-shard.txt") spec file(s)"
+          echo "chromium E2E: $mode ($E2E_REASON), shard of $(wc -l < "$RUNNER_TEMP/e2e-shard.txt") spec file(s)"
           node scripts/test-cache.mjs run --task ci:e2e --target "chromium-${{ matrix.shard }}"
 
       - name: Pack test-result cache
@@ -316,12 +527,22 @@ jobs:
           if-no-files-found: error
 
       - name: Upload test-result cache record
-        if: always()
+        if: always() && env.TEST_CACHE_REPORT != ''
         uses: actions/upload-artifact@v7
         with:
           name: test-cache-chromium-${{ matrix.shard }}
-          path: ${{ runner.temp }}/test-cache-report/
+          path: ${{ env.TEST_CACHE_REPORT }}/
           if-no-files-found: ignore
+
+      # Records for the impact-map job; none when the cache replayed a pass.
+      - name: Upload impact coverage records
+        if: always() && env.IMPACT_DIR != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: impact-records-chromium-${{ matrix.shard }}
+          path: ${{ env.IMPACT_DIR }}
+          if-no-files-found: ignore
+          retention-days: 3
 
       - name: Upload Playwright report on failure
         if: failure()
@@ -331,68 +552,461 @@ jobs:
           path: playwright-report/
           if-no-files-found: ignore
 
+  # List and Tiles coverage (#1367): the specs that iterate VIEW_MODES run
+  # with ALL_VIEW_MODES=1 on Chromium. Every dev push, nightly run and dispatch
+  # runs all of them; a PR runs those reached through a changed view-mode
+  # component or spec (scripts/e2e-affected.mjs --view-modes), or none.
+  chromium-view-modes:
+    needs: [changes, e2e-build]
+    # Runs without the shared bundle if e2e-build fails (dev-server fallback).
+    if: >-
+      !cancelled() && needs.changes.result == 'success' &&
+      needs.changes.outputs.code == 'true' && needs.changes.outputs.view-modes != 'NONE'
+    runs-on: ubuntu-latest
+    # The Playwright image carries the browsers and every system library they
+    # need, so no shard downloads apt packages (#1367: --with-deps fetched
+    # 117 MB from a mirror that was sometimes ~54 kB/s). Its tag must equal
+    # bun.lock's @playwright/test version (tests/ci-playwright-container.test.ts).
+    container:
+      image: mcr.microsoft.com/playwright:v1.60.0-noble@sha256:9bd26ad900bb5e0f4dee75839e957a89ae89c2b7ab1e76050e559790e946b948
+      # Chromium needs more shared memory than Docker's 64 MB default.
+      options: --ipc=host
+    # Steps use bash features (here-strings); do not fall back to sh.
+    defaults:
+      run:
+        shell: bash
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1]
+    # Job-wide so the cache probe and the run hash the same environment. The
+    # container, not the runner image, is this job's environment: name it in
+    # the test-result cache's platform identity.
+    env:
+      E2E_ENGINE: chromium
+      # Two Playwright workers per runner (#1368): halves the runners per run
+      # with no new flakes measured on Chromium (run 40068235372). WebKit stays
+      # at one worker: two overran its 40-minute shard budget there.
+      PW_WORKERS: "2"
+      ALL_VIEW_MODES: "1"
+      # Dev pushes record function-level coverage for the dev-push test-impact
+      # map (#1386), the only runs that publish it; it is not hashed, since it
+      # cannot change a result.
+      E2E_COVERAGE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' && 'function' || '' }}
+      ImageOS: playwright_noble
+      ImageVersion: "1.60.0_9bd26ad900bb5e0f4dee75839e957a89ae89c2b7ab1e76050e559790e946b948"
+      TEST_CACHE_NORMALIZE_VERSION: "1"
+      # Below the step cap, so a stall reports interrupted tests (#1367).
+      E2E_GLOBAL_TIMEOUT_MINUTES: "24"
+    steps:
+      - uses: actions/checkout@v7
+
+      # The container runs as root over a runner-owned checkout; Turborepo
+      # lists inputs through git, which refuses an unowned repository.
+      - name: Trust the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      # The shared bundle from the e2e-build job (#1381). Fetched before the
+      # cache key: E2E_BUILD_DIR is hashed, so a result is replayed only for
+      # the same kind of server. Without the bundle the shard serves the dev
+      # server, as before. Fetched before planning too, since the server kind
+      # decides whether the impact map's selection holds (#1391).
+      - name: Download browser-test bundle
+        if: needs.e2e-build.result == 'success'
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: e2e-browser-build
+          path: build
+
+      - name: Choose the app server
+        id: server
+        run: |
+          if [ -f build/index.html ]; then
+            echo "E2E_BUILD_DIR=build" >> "$GITHUB_ENV"
+            echo "server=bundle" >> "$GITHUB_OUTPUT"
+            echo "Browser E2E: serving the shared browser-test bundle"
+          else
+            echo "server=dev" >> "$GITHUB_OUTPUT"
+            echo "::warning title=No browser-test bundle::serving the Vite dev server instead"
+            echo "- **app server**: Vite dev server (the \`e2e-browser-build\` artifact is missing; check the e2e-build job)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # Plans only the specs this PR can affect (all of them outside PRs). A
+      # shard left with nothing to run skips the remaining steps and passes.
+      # A selection made with an impact map recorded on another kind of app
+      # server than this shard serves is not trusted: the shard plans ALL.
+      - name: Plan duration-balanced shard
+        id: plan
+        env:
+          IMPACT_SERVER: ${{ needs.changes.outputs.impact-server }}
+          APP_SERVER: ${{ steps.server.outputs.server }}
+          E2E_SELECTION: ${{ needs.changes.outputs.view-modes }}
+          E2E_REASON: ${{ needs.changes.outputs.view-modes-reason }}
+        run: |
+          if [ -n "$IMPACT_SERVER" ] && [ "$IMPACT_SERVER" != "$APP_SERVER" ] && [ "$E2E_SELECTION" != ALL ]; then
+            E2E_SELECTION=ALL
+            E2E_REASON="the impact map was recorded on the $IMPACT_SERVER app server, this shard serves the $APP_SERVER server"
+            echo "- **selection**: ALL ($E2E_REASON)" >> "$GITHUB_STEP_SUMMARY"
+            # The test step logs the selection it actually runs.
+            echo "E2E_SERVER_OVERRIDE=$E2E_REASON" >> "$GITHUB_ENV"
+          fi
+          if [ "$E2E_SELECTION" = ALL ]; then
+            echo "chromium ALL_VIEW_MODES E2E: full suite ($E2E_REASON)"
+          else
+            echo "chromium ALL_VIEW_MODES E2E: selected subset ($E2E_REASON)"
+          fi
+          # ALL means every spec that iterates the view modes; the others run
+          # identically with or without ALL_VIEW_MODES.
+          if [ "$E2E_SELECTION" = ALL ]; then
+            node scripts/e2e-affected.mjs --list-view-mode-specs > "$RUNNER_TEMP/e2e-selection.txt"
+          else
+            tr ' ' '\n' <<< "$E2E_SELECTION" > "$RUNNER_TEMP/e2e-selection.txt"
+          fi
+          node scripts/e2e-shards.mjs plan --engine chromium --shard ${{ matrix.shard }}/${{ strategy.job-total }} --only "$RUNNER_TEMP/e2e-selection.txt" --out "$RUNNER_TEMP/e2e-shard.txt"
+          # Report records live outside the checkout; actions read this path
+          # inside the container, where runner.temp would name the host's.
+          echo "TEST_CACHE_REPORT=$RUNNER_TEMP/test-cache-report" >> "$GITHUB_ENV"
+          if [ -s "$RUNNER_TEMP/e2e-shard.txt" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            # The shard's spec list is hashed into its test-result cache key.
+            printf 'E2E_SHARD_SPECS<<E2E_SHARD_SPECS_EOF\n%s\nE2E_SHARD_SPECS_EOF\n' "$(cat "$RUNNER_TEMP/e2e-shard.txt")" >> "$GITHUB_ENV"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "No affected chromium specs in this shard." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # setup-bun extracts with unzip, which the image lacks. The platform
+      # package is bun's prebuilt binary; --ignore-scripts runs no install
+      # script. CONTAINER_BUN_VERSION (workflow env) is the single pin.
+      - name: Install bun
+        if: steps.plan.outputs.run == 'true'
+        run: |
+          npm install --global --ignore-scripts "@oven/bun-linux-x64@${CONTAINER_BUN_VERSION}"
+          ln -sf "$(npm root --global)/@oven/bun-linux-x64/bin/bun" /usr/local/bin/bun
+          ln -sf /usr/local/bin/bun /usr/local/bin/bunx
+          test "$(bun --version)" = "$CONTAINER_BUN_VERSION"
+
+      - name: Install dependencies
+        if: steps.plan.outputs.run == 'true'
+        run: bun install --frozen-lockfile
+
+      - name: Coverage record paths
+        if: steps.plan.outputs.run == 'true' && env.E2E_COVERAGE == 'function'
+        run: |
+          echo "IMPACT_DIR=$RUNNER_TEMP/impact" >> "$GITHUB_ENV"
+          echo "E2E_COVERAGE_DIR=$RUNNER_TEMP/impact/records" >> "$GITHUB_ENV"
+          echo "PLAYWRIGHT_JSON_OUTPUT_FILE=$RUNNER_TEMP/impact/report-chromium-view-modes-${{ matrix.shard }}.json" >> "$GITHUB_ENV"
+
+      - name: Test-result cache key
+        id: test-cache-key
+        if: steps.plan.outputs.run == 'true'
+        run: node scripts/test-cache.mjs key --target "chromium-view-modes-${{ matrix.shard }}"
+
+      - name: Restore test-result cache
+        if: steps.plan.outputs.run == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/test-cache.mjs restore --target "chromium-view-modes-${{ matrix.shard }}"
+
+      - name: Probe test-result cache
+        id: test-cache-probe
+        if: steps.plan.outputs.run == 'true'
+        run: node scripts/test-cache.mjs probe --task ci:e2e --target "chromium-view-modes-${{ matrix.shard }}"
+
+      # scripts/ci-test-e2e.sh verifies the shard selection and runs it, or the
+      # cache replays an unchanged passing result. Playwright's global timeout
+      # (E2E_GLOBAL_TIMEOUT_MINUTES) fires first; this cap is the backstop.
+      - name: E2E tests (all view modes)
+        id: test-cache-run
+        timeout-minutes: 26
+        env:
+          E2E_SELECTION: ${{ needs.changes.outputs.view-modes }}
+          E2E_REASON: ${{ needs.changes.outputs.view-modes-reason }}
+        run: |
+          if [ -n "${E2E_SERVER_OVERRIDE:-}" ]; then E2E_SELECTION=ALL; E2E_REASON=$E2E_SERVER_OVERRIDE; fi
+          mode=$([ "$E2E_SELECTION" = ALL ] && echo "full suite" || echo "selected subset")
+          if [ "${{ steps.plan.outputs.run }}" != true ]; then
+            echo "chromium ALL_VIEW_MODES E2E: nothing to run in this shard; $mode ($E2E_REASON)"
+            exit 0
+          fi
+          echo "chromium ALL_VIEW_MODES E2E: $mode ($E2E_REASON), shard of $(wc -l < "$RUNNER_TEMP/e2e-shard.txt") spec file(s)"
+          node scripts/test-cache.mjs run --task ci:e2e --target "chromium-view-modes-${{ matrix.shard }}"
+
+      - name: Pack test-result cache
+        id: test-cache-pack
+        if: success() && env.TEST_CACHE_WRITE == 'true' && steps.test-cache-run.outputs.stored == 'true'
+        run: node scripts/test-cache.mjs pack --target "chromium-view-modes-${{ matrix.shard }}"
+
+      - name: Save test-result cache
+        if: success() && env.TEST_CACHE_WRITE == 'true' && steps.test-cache-run.outputs.stored == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: trusted-${{ steps.test-cache-key.outputs.key }}
+          path: ${{ steps.test-cache-pack.outputs.archive }}
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Upload test-result cache record
+        if: always() && env.TEST_CACHE_REPORT != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-cache-chromium-view-modes-${{ matrix.shard }}
+          path: ${{ env.TEST_CACHE_REPORT }}/
+          if-no-files-found: ignore
+
+      # Records for the impact-map job; none when the cache replayed a pass.
+      - name: Upload impact coverage records
+        if: always() && env.IMPACT_DIR != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: impact-records-chromium-view-modes-${{ matrix.shard }}
+          path: ${{ env.IMPACT_DIR }}
+          if-no-files-found: ignore
+          retention-days: 3
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-chromium-view-modes-${{ matrix.shard }}
+          path: playwright-report/
+          if-no-files-found: ignore
+
   # Preserve the protected-branch check name and require every Chromium shard.
+  # The dev-push test-impact map (#1386): merges the Chromium shards'
+  # function-level coverage records into the `e2e-impact-map` artifact PRs
+  # select with (scripts/impact-map-source.mjs). Published only when every
+  # shard recorded: a test-cache replay records nothing, and an older complete
+  # map (or the nightly e2e-impact-map.yml one) then stays the newest.
+  impact-map:
+    needs: [chromium, chromium-view-modes]
+    # Advisory: the map only narrows later PRs. A failure here (install,
+    # artifact transfer, a truncated record) must not fail the dev push,
+    # whose conclusion gates releases (scripts/release-ci-gate.mjs).
+    continue-on-error: true
+    if: >-
+      !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/dev' &&
+      needs.chromium.result == 'success' && needs.chromium-view-modes.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # One Playwright report per shard: chromium (2) + chromium-view-modes (1)
+      # (tests/ci-test-selection.test.ts keeps this equal to the matrices).
+      EXPECTED_REPORTS: 3
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.CONTAINER_BUN_VERSION }}
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: impact-records-*
+          path: ${{ runner.temp }}/records
+
+      - name: Merge the impact map
+        id: merge
+        run: |
+          reports=()
+          while IFS= read -r report; do reports+=(--reports "$report"); done \
+            < <(find "$RUNNER_TEMP/records" -maxdepth 2 -name 'report-*.json' 2>/dev/null)
+          if [ "${#reports[@]}" -ne $((EXPECTED_REPORTS * 2)) ]; then
+            echo "Impact map: $(( ${#reports[@]} / 2 )) of $EXPECTED_REPORTS shard reports (a cached or failed shard); not published." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          dirs=()
+          while IFS= read -r dir; do dirs+=("$dir"); done < <(find "$RUNNER_TEMP/records" -mindepth 2 -maxdepth 2 -type d -name records)
+          node scripts/impact-coverage.mjs merge --out "$RUNNER_TEMP/e2e-impact-map.json" --commit "$GITHUB_SHA" \
+            "${reports[@]}" "${dirs[@]}" 2> "$RUNNER_TEMP/merge.log" || { cat "$RUNNER_TEMP/merge.log"; exit 1; }
+          cat "$RUNNER_TEMP/merge.log"
+          {
+            echo "### E2E impact map for \`$GITHUB_SHA\`"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/merge.log"
+            node scripts/impact-coverage.mjs stats "$RUNNER_TEMP/e2e-impact-map.json"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v7
+        if: steps.merge.outputs.publish == 'true'
+        with:
+          name: e2e-impact-map
+          path: ${{ runner.temp }}/e2e-impact-map.json
+          if-no-files-found: error
+          retention-days: 14
+
   frontend:
     if: always()
-    needs: [changes, frontend-checks, chromium]
+    needs: [changes, frontend-checks, chromium, chromium-view-modes]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      # Upstream jobs are skipped only on a docs-only PR; on code every one must
-      # succeed, so a failed, cancelled or skipped shard still fails this check.
+      # Diagnostics only: name each upstream shard's result and the step a
+      # failed or cancelled one stopped at. The check below decides.
+      - uses: actions/checkout@v7
+        continue-on-error: true
+        with:
+          sparse-checkout: scripts
+      - name: Report upstream job results
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci-jobs.mjs report frontend-checks chromium chromium-view-modes
+
+      # Upstream jobs are skipped only on a docs-only PR, or a browser job when
+      # its selection is NONE; otherwise every one must succeed, so a failed,
+      # cancelled or skipped shard still fails this check.
       - name: Require frontend validation and browser outcomes
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
           CODE: ${{ needs.changes.outputs.code }}
+          E2E: ${{ needs.changes.outputs.e2e }}
+          VIEW_MODES: ${{ needs.changes.outputs.view-modes }}
           CHECKS_RESULT: ${{ needs.frontend-checks.result }}
           CHROMIUM_RESULT: ${{ needs.chromium.result }}
+          VIEW_MODES_RESULT: ${{ needs.chromium-view-modes.result }}
         run: |
-          test "$CHANGES_RESULT" = success
+          ok=true
+          expect() {
+            if [ "$2" = "$3" ]; then
+              echo "$1: $2"
+            else
+              echo "::error title=$1 $2::$1 is $2, expected $3"
+              ok=false
+            fi
+          }
+          # A job is skipped only when its selection is NONE (or on a docs-only PR).
+          selected() { [ "$1" = NONE ] && echo skipped || echo success; }
+          expect changes "$CHANGES_RESULT" success
           if [ "$CODE" = true ]; then
-            test "$CHECKS_RESULT" = success && test "$CHROMIUM_RESULT" = success
+            expect frontend-checks "$CHECKS_RESULT" success
+            expect chromium "$CHROMIUM_RESULT" "$(selected "$E2E")"
+            expect chromium-view-modes "$VIEW_MODES_RESULT" "$(selected "$VIEW_MODES")"
           else
-            test "$CHECKS_RESULT" = skipped && test "$CHROMIUM_RESULT" = skipped
+            expect frontend-checks "$CHECKS_RESULT" skipped
+            expect chromium "$CHROMIUM_RESULT" skipped
+            expect chromium-view-modes "$VIEW_MODES_RESULT" skipped
           fi
+          $ok
 
   # WebKit ≈ WKWebView — the closest automated proxy for the macOS webview
   # (no WKWebView WebDriver exists). Catches Safari-family CSS/JS breakage.
+  # Keep one worker on each runner and the per-runner bound (#932); five
+  # duration-balanced shards (#1123). Dev pushes, nightly runs and dispatches
+  # run every spec; a PR runs scripts/e2e-affected.mjs --webkit (#1367): the
+  # cluster-mapped and curated engine-specific specs, or every spec for a
+  # WKWebView-sensitive change. Skipped when that selects nothing.
   webkit-tests:
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
+    needs: [changes, e2e-build]
+    # Runs without the shared bundle if e2e-build fails (dev-server fallback).
+    if: >-
+      !cancelled() && needs.changes.result == 'success' &&
+      needs.changes.outputs.code == 'true' && needs.changes.outputs.webkit != 'NONE'
     runs-on: ubuntu-latest
-    # The full 777-test suite exceeded 40m, and two shards still ran 24-38m,
-    # so runner contention pushed them past the bound (#932). Keep one worker
-    # on each runner and the per-runner bound. Five duration-balanced shards
-    # (~20m each from recorded CI timings, #1123) replace four count-based
-    # ones whose slowest ran 30m.
-    timeout-minutes: 40
+    # The Playwright image carries the browsers and every system library they
+    # need, so no shard downloads apt packages (#1367: --with-deps fetched
+    # 117 MB from a mirror that was sometimes ~54 kB/s). Its tag must equal
+    # bun.lock's @playwright/test version (tests/ci-playwright-container.test.ts).
+    container:
+      image: mcr.microsoft.com/playwright:v1.60.0-noble@sha256:9bd26ad900bb5e0f4dee75839e957a89ae89c2b7ab1e76050e559790e946b948
+      # Chromium needs more shared memory than Docker's 64 MB default.
+      options: --ipc=host
+    # Steps use bash features (here-strings); do not fall back to sh.
+    defaults:
+      run:
+        shell: bash
+    # Shards are planned at ~24 min, but container runs of the same plan took
+    # 22-30 min. Headroom rather than a sixth shard: browser, Rust and smoke
+    # jobs already queue for runners on a full PR run, and each extra shard
+    # adds its own setup (#1367).
+    timeout-minutes: 46
     strategy:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4, 5]
-    # Job-wide so the cache probe and the run hash the same environment.
+    # Job-wide so the cache probe and the run hash the same environment. The
+    # container, not the runner image, is this job's environment: name it in
+    # the test-result cache's platform identity.
     env:
       E2E_ENGINE: webkit
       WEBKIT: "1"
       PW_VIDEO_HEADED: "1"
+      ImageOS: playwright_noble
+      ImageVersion: "1.60.0_9bd26ad900bb5e0f4dee75839e957a89ae89c2b7ab1e76050e559790e946b948"
+      TEST_CACHE_NORMALIZE_VERSION: "1"
+      # Below the step cap, so a stall reports interrupted tests (#1367).
+      E2E_GLOBAL_TIMEOUT_MINUTES: "40"
     steps:
       - uses: actions/checkout@v7
 
+      # The container runs as root over a runner-owned checkout; Turborepo
+      # lists inputs through git, which refuses an unowned repository.
+      - name: Trust the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      # The shared bundle from the e2e-build job (#1381). Fetched before the
+      # cache key: E2E_BUILD_DIR is hashed, so a result is replayed only for
+      # the same kind of server. Without the bundle the shard serves the dev
+      # server, as before. Fetched before planning too, since the server kind
+      # decides whether the impact map's selection holds (#1391).
+      - name: Download browser-test bundle
+        if: needs.e2e-build.result == 'success'
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: e2e-browser-build
+          path: build
+
+      - name: Choose the app server
+        id: server
+        run: |
+          if [ -f build/index.html ]; then
+            echo "E2E_BUILD_DIR=build" >> "$GITHUB_ENV"
+            echo "server=bundle" >> "$GITHUB_OUTPUT"
+            echo "Browser E2E: serving the shared browser-test bundle"
+          else
+            echo "server=dev" >> "$GITHUB_OUTPUT"
+            echo "::warning title=No browser-test bundle::serving the Vite dev server instead"
+            echo "- **app server**: Vite dev server (the \`e2e-browser-build\` artifact is missing; check the e2e-build job)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       # Plans only the specs this PR can affect (all of them outside PRs). A
       # shard left with nothing to run skips the remaining steps and passes.
+      # A selection made with an impact map recorded on another kind of app
+      # server than this shard serves is not trusted: the shard plans ALL.
       - name: Plan duration-balanced shard
         id: plan
         env:
-          E2E_SELECTION: ${{ needs.changes.outputs.e2e }}
-          E2E_REASON: ${{ needs.changes.outputs.e2e-reason }}
+          IMPACT_SERVER: ${{ needs.changes.outputs.impact-server }}
+          APP_SERVER: ${{ steps.server.outputs.server }}
+          E2E_SELECTION: ${{ needs.changes.outputs.webkit }}
+          E2E_REASON: ${{ needs.changes.outputs.webkit-reason }}
         run: |
+          if [ -n "$IMPACT_SERVER" ] && [ "$IMPACT_SERVER" != "$APP_SERVER" ] && [ "$E2E_SELECTION" != ALL ]; then
+            E2E_SELECTION=ALL
+            E2E_REASON="the impact map was recorded on the $IMPACT_SERVER app server, this shard serves the $APP_SERVER server"
+            echo "- **selection**: ALL ($E2E_REASON)" >> "$GITHUB_STEP_SUMMARY"
+            # The test step logs the selection it actually runs.
+            echo "E2E_SERVER_OVERRIDE=$E2E_REASON" >> "$GITHUB_ENV"
+          fi
           if [ "$E2E_SELECTION" = ALL ]; then
-            echo "webkit E2E: full suite ($E2E_REASON)"
+            echo "WebKit E2E: full suite ($E2E_REASON)"
           else
-            echo "webkit E2E: selected subset ($E2E_REASON)"
+            echo "WebKit E2E: selected subset ($E2E_REASON)"
           fi
           tr ' ' '\n' <<< "$E2E_SELECTION" > "$RUNNER_TEMP/e2e-selection.txt"
           node scripts/e2e-shards.mjs plan --engine webkit --shard ${{ matrix.shard }}/${{ strategy.job-total }} --only "$RUNNER_TEMP/e2e-selection.txt" --out "$RUNNER_TEMP/e2e-shard.txt"
+          # Report records live outside the checkout; actions read this path
+          # inside the container, where runner.temp would name the host's.
+          echo "TEST_CACHE_REPORT=$RUNNER_TEMP/test-cache-report" >> "$GITHUB_ENV"
           if [ -s "$RUNNER_TEMP/e2e-shard.txt" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
             # The shard's spec list is hashed into its test-result cache key.
@@ -402,10 +1016,16 @@ jobs:
             echo "No affected webkit specs in this shard." >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - uses: oven-sh/setup-bun@v2
+      # setup-bun extracts with unzip, which the image lacks. The platform
+      # package is bun's prebuilt binary; --ignore-scripts runs no install
+      # script. CONTAINER_BUN_VERSION (workflow env) is the single pin.
+      - name: Install bun
         if: steps.plan.outputs.run == 'true'
-        with:
-          bun-version: latest
+        run: |
+          npm install --global --ignore-scripts "@oven/bun-linux-x64@${CONTAINER_BUN_VERSION}"
+          ln -sf "$(npm root --global)/@oven/bun-linux-x64/bin/bun" /usr/local/bin/bun
+          ln -sf /usr/local/bin/bun /usr/local/bin/bunx
+          test "$(bun --version)" = "$CONTAINER_BUN_VERSION"
 
       - name: Install dependencies
         if: steps.plan.outputs.run == 'true'
@@ -422,24 +1042,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/test-cache.mjs restore --target "webkit-${{ matrix.shard }}"
 
-      # A hit replays the shard's passing result, so its browser is not needed.
       - name: Probe test-result cache
         id: test-cache-probe
         if: steps.plan.outputs.run == 'true'
         run: node scripts/test-cache.mjs probe --task ci:e2e --target "webkit-${{ matrix.shard }}"
 
-      - name: Install Playwright WebKit
-        if: steps.plan.outputs.run == 'true' && steps.test-cache-probe.outputs.hit != 'true'
-        run: npx playwright install --with-deps webkit
-
-      # scripts/ci-test-e2e.sh verifies the shard selection and runs it under
-      # xvfb-run, or the cache replays an unchanged passing result.
+      # scripts/ci-test-e2e.sh verifies the shard selection and runs it, or the
+      # cache replays an unchanged passing result. Playwright's global timeout
+      # (E2E_GLOBAL_TIMEOUT_MINUTES) fires first; this cap is the backstop.
       - name: E2E tests (WebKit)
         id: test-cache-run
+        timeout-minutes: 43
         env:
-          E2E_SELECTION: ${{ needs.changes.outputs.e2e }}
-          E2E_REASON: ${{ needs.changes.outputs.e2e-reason }}
+          E2E_SELECTION: ${{ needs.changes.outputs.webkit }}
+          E2E_REASON: ${{ needs.changes.outputs.webkit-reason }}
         run: |
+          if [ -n "${E2E_SERVER_OVERRIDE:-}" ]; then E2E_SELECTION=ALL; E2E_REASON=$E2E_SERVER_OVERRIDE; fi
           mode=$([ "$E2E_SELECTION" = ALL ] && echo "full suite" || echo "selected subset")
           if [ "${{ steps.plan.outputs.run }}" != true ]; then
             echo "WebKit E2E: nothing to run in this shard; $mode ($E2E_REASON)"
@@ -463,11 +1081,11 @@ jobs:
           if-no-files-found: error
 
       - name: Upload test-result cache record
-        if: always()
+        if: always() && env.TEST_CACHE_REPORT != ''
         uses: actions/upload-artifact@v7
         with:
           name: test-cache-webkit-${{ matrix.shard }}
-          path: ${{ runner.temp }}/test-cache-report/
+          path: ${{ env.TEST_CACHE_REPORT }}/
           if-no-files-found: ignore
 
       - name: Upload Playwright report on failure
@@ -485,18 +1103,43 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      # Diagnostics only: name each upstream shard's result and the step a
+      # failed or cancelled one stopped at. The check below decides.
+      - uses: actions/checkout@v7
+        continue-on-error: true
+        with:
+          sparse-checkout: scripts
+      - name: Report upstream job results
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci-jobs.mjs report webkit-tests
+
       - name: Require all WebKit browser outcomes
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
           CODE: ${{ needs.changes.outputs.code }}
+          WEBKIT: ${{ needs.changes.outputs.webkit }}
           WEBKIT_RESULT: ${{ needs.webkit-tests.result }}
         run: |
-          test "$CHANGES_RESULT" = success
+          ok=true
+          expect() {
+            if [ "$2" = "$3" ]; then
+              echo "$1: $2"
+            else
+              echo "::error title=$1 $2::$1 is $2, expected $3"
+              ok=false
+            fi
+          }
+          # A job is skipped only when its selection is NONE (or on a docs-only PR).
+          selected() { [ "$1" = NONE ] && echo skipped || echo success; }
+          expect changes "$CHANGES_RESULT" success
           if [ "$CODE" = true ]; then
-            test "$WEBKIT_RESULT" = success
+            expect webkit-tests "$WEBKIT_RESULT" "$(selected "$WEBKIT")"
           else
-            test "$WEBKIT_RESULT" = skipped
+            expect webkit-tests "$WEBKIT_RESULT" skipped
           fi
+          $ok
 
   # The default-feature and opt-in feature suites each compile a different lib
   # test binary and run the full ~6 min lib suite, so run them on parallel
@@ -505,7 +1148,9 @@ jobs:
   rust-suite:
     name: rust-suite (${{ matrix.suite }})
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    # A NONE selection skips the job (no runner); the rust gate accepts that
+    # only for NONE.
+    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.rust != 'NONE'
     runs-on: ubuntu-latest
     # A cold cache build plus the lib suite has exceeded 30 minutes.
     timeout-minutes: 45
@@ -544,32 +1189,27 @@ jobs:
 
       # Turborepo, which hashes the suite's inputs, is a devDependency.
       - uses: oven-sh/setup-bun@v2
-        if: env.RUST_SELECTION != 'NONE'
         with:
           bun-version: latest
 
       - name: Install dependencies
-        if: env.RUST_SELECTION != 'NONE'
         run: bun install --frozen-lockfile
 
       - uses: dtolnay/rust-toolchain@stable
-        if: env.RUST_SELECTION != 'NONE'
         with:
           components: rustfmt, clippy
 
       # Refreshed before the cache probe so the hashed apt versions are the
-      # ones a miss installs.
+      # ones a miss installs. Bounded like the install (#1371).
       - name: Refresh apt package index
-        if: env.RUST_SELECTION != 'NONE'
-        run: sudo apt-get update
+        timeout-minutes: 8
+        run: .github/actions/tauri-linux-deps/apt.sh update
 
       - name: Test-result cache key
         id: test-cache-key
-        if: env.RUST_SELECTION != 'NONE'
         run: node scripts/test-cache.mjs key --target "rust-${{ matrix.suite }}"
 
       - name: Restore test-result cache
-        if: env.RUST_SELECTION != 'NONE'
         env:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/test-cache.mjs restore --target "rust-${{ matrix.suite }}"
@@ -578,19 +1218,25 @@ jobs:
       # libraries nor the ~1.5 GB build cache are needed.
       - name: Probe test-result cache
         id: test-cache-probe
-        if: env.RUST_SELECTION != 'NONE'
         run: node scripts/test-cache.mjs probe --task ci:rust --target "rust-${{ matrix.suite }}"
 
+      # Reuses .debs cached by package list and install plan, with bounded
+      # retried attempts, so a stalled mirror fails here in setup, where
+      # ci-auto-rerun re-runs it, not at the job timeout (#1371).
       - name: Install Tauri Linux system dependencies
-        if: env.RUST_SELECTION != 'NONE' && steps.test-cache-probe.outputs.hit != 'true'
-        run: sudo apt-get install -y $TEST_CACHE_APT_PACKAGES
+        if: steps.test-cache-probe.outputs.hit != 'true'
+        timeout-minutes: 25
+        uses: ./.github/actions/tauri-linux-deps
+        with:
+          packages: ${{ env.TEST_CACHE_APT_PACKAGES }}
+          update-index: "false"
 
       # Each suite builds different feature artifacts; separate cache keys
       # keep the two matrix jobs from overwriting each other's target dir.
       # Save only from dev so PR branches restore dev's caches instead of
       # adding ~1.5 GB entries each and evicting other workflows' caches.
       - uses: Swatinem/rust-cache@v2
-        if: env.RUST_SELECTION != 'NONE' && steps.test-cache-probe.outputs.hit != 'true'
+        if: steps.test-cache-probe.outputs.hit != 'true'
         with:
           workspaces: src-tauri
           key: ${{ matrix.suite }}
@@ -598,23 +1244,18 @@ jobs:
 
       # tauri::generate_context! requires the frontendDist dir to exist.
       - name: Create empty frontend dist
-        if: env.RUST_SELECTION != 'NONE'
         run: mkdir -p build
 
       # scripts/ci-test-rust.sh runs fmt (default suite), clippy and the tests,
       # or the cache replays an unchanged passing result. PRs test only the
       # packages the diff touches plus their dependents (scripts/rust-affected.mjs,
-      # from cargo metadata); NONE also skips the toolchain, build and clippy.
-      # Other events run everything.
+      # from cargo metadata); NONE skips this job. Other events run everything.
       - name: Rust tests
         id: test-cache-run
         run: |
           case "$RUST_SELECTION" in
             ALL)
               echo "Rust tests: full suite ($RUST_REASON)" ;;
-            NONE)
-              echo "Rust tests: none selected ($RUST_REASON)"
-              exit 0 ;;
             *)
               echo "Rust tests: selected packages $RUST_SELECTION ($RUST_REASON)" ;;
           esac
@@ -649,26 +1290,52 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      # Skipped only on a docs-only PR; on code every suite must succeed, so a
-      # failed, cancelled or skipped suite still fails this check.
+      # Diagnostics only: name each suite's result and the step a failed or
+      # cancelled one stopped at. The check below decides.
+      - uses: actions/checkout@v7
+        continue-on-error: true
+        with:
+          sparse-checkout: scripts
+      - name: Report upstream job results
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci-jobs.mjs report rust-suite
+
+      # On code every suite must succeed unless the Rust selection is NONE,
+      # which skips them; a failed, cancelled or otherwise skipped suite fails
+      # this check.
       - name: Require all Rust suite outcomes
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
           CODE: ${{ needs.changes.outputs.code }}
+          RUST: ${{ needs.changes.outputs.rust }}
           RUST_RESULT: ${{ needs.rust-suite.result }}
         run: |
-          test "$CHANGES_RESULT" = success
+          ok=true
+          expect() {
+            if [ "$2" = "$3" ]; then
+              echo "$1: $2"
+            else
+              echo "::error title=$1 $2::$1 is $2, expected $3"
+              ok=false
+            fi
+          }
+          # A job is skipped only when its selection is NONE (or on a docs-only PR).
+          selected() { [ "$1" = NONE ] && echo skipped || echo success; }
+          expect changes "$CHANGES_RESULT" success
           if [ "$CODE" = true ]; then
-            test "$RUST_RESULT" = success
+            expect rust-suite "$RUST_RESULT" "$(selected "$RUST")"
           else
-            test "$RUST_RESULT" = skipped
+            expect rust-suite "$RUST_RESULT" skipped
           fi
+          $ok
 
   # Hit rate and runner time across every cached test target (#1176). Each
   # target uploads one record; targets that ran nothing upload none.
   test-cache:
     if: always()
-    needs: [changes, frontend-checks, chromium, webkit-tests, rust-suite]
+    needs: [changes, frontend-checks, chromium, chromium-view-modes, webkit-tests, rust-suite]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

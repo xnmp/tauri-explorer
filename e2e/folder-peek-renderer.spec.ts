@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { HOME_URL, waitForEntries, switchViewMode, focusBeforeFileList } from "./helpers";
 
 for (const action of ["cancel", "focus"] as const) {

@@ -14,13 +14,13 @@ export interface MarqueeRect {
 
 export interface MarqueeOptions {
   headerHeight?: number;
+  /** Fixed Details row height; omitted, it follows the layout theme (#1306). */
   itemHeight?: number;
   backgroundClasses?: string[];
 }
 
-const DEFAULT_OPTIONS: Required<MarqueeOptions> = {
+const DEFAULT_OPTIONS: Required<Omit<MarqueeOptions, "itemHeight">> = {
   headerHeight: 32,
-  itemHeight: 32,
   backgroundClasses: [
     "file-rows",
     "content",
@@ -40,12 +40,15 @@ const DEFAULT_OPTIONS: Required<MarqueeOptions> = {
 };
 
 import { clientToCSSRelative, rectDimToCSS, cssToRect } from "$lib/domain/zoom";
+import { layoutStore } from "$lib/state/layout.svelte";
 
 export function useMarqueeSelection(options: MarqueeOptions = {}) {
   const config = { ...DEFAULT_OPTIONS, ...options };
 
   let isDragging = $state(false);
-  let dragEndTime = 0;
+  // No drag has ended yet: performance.now() starts near 0 at page load, so a
+  // 0 here made every click in the first DRAG_END_GRACE_MS a drag release (#1387).
+  let dragEndTime = Number.NEGATIVE_INFINITY;
   // The browser dispatches a `click` after the marquee's final mouseup; its
   // delay is engine-dependent (WebKit can exceed any small time window), so
   // suppression is consume-once with a generous expiry, not a fixed grace.
@@ -175,13 +178,14 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
    * @param totalItems Total number of items in the list
    */
   function getSelectedIndices(scrollTop: number, totalItems: number, headerHeight?: number): number[] {
+    const itemHeight = options.itemHeight ?? layoutStore.detailsRowHeight;
     if (!marqueeRect || marqueeRect.width === 0 || marqueeRect.height === 0) return [];
 
     const marqueeTop = marqueeRect.top + scrollTop - (headerHeight ?? config.headerHeight);
     const marqueeBottom = marqueeTop + marqueeRect.height;
 
-    const startIndex = Math.max(0, Math.floor(marqueeTop / config.itemHeight));
-    const endIndex = Math.min(totalItems - 1, Math.ceil(marqueeBottom / config.itemHeight) - 1);
+    const startIndex = Math.max(0, Math.floor(marqueeTop / itemHeight));
+    const endIndex = Math.min(totalItems - 1, Math.ceil(marqueeBottom / itemHeight) - 1);
 
     if (startIndex > endIndex) return [];
     return Array.from({ length: endIndex - startIndex + 1 }, (_, i) => startIndex + i);

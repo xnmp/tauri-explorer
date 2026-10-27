@@ -2,6 +2,35 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.14.0 — 2026-10-27
+
+### Added
+
+- Layout themes: choose Default, Floating Islands or Hairline Ledger, or drop
+  your own CSS layouts into `<config>/layouts/*.css` (#1306).
+- Markdown previews render LaTeX math with KaTeX (#1393).
+- The command palette matches common synonyms, so "trash" or "erase" finds Delete,
+  "unpin" finds Remove Bookmark, and so on (#1247).
+- Measured folder-load and navigation numbers with reproducible fixtures, in
+  `docs/performance.md` (#983).
+
+### Fixed
+
+- An open command palette updates when Git targets arrive late, and highlights
+  match by command ID (#1236).
+- Quick Open's recursive walk runs on its own thread pool, so a busy pool can no
+  longer stall it, and incomplete walks are never cached (#1404).
+- The startup frame sampler no longer forces a WebKit ResizeObserver loop
+  (#1384).
+
+### Changed
+
+- Large components (Git Graph, SCM sidebar, preview pane, settings) are split
+  into smaller modules with no behaviour change (#1372).
+- CI runs fewer, better-targeted jobs: specs are selected from a coverage impact
+  map, browser shards share one frontend build, and apt dependencies are cached
+  (#1123, #1367, #1368, #1371, #1381).
+
 ## v1.13.3 — 2026-10-23
 
 ### Added

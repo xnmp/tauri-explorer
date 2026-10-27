@@ -55,3 +55,66 @@ export function unsupportedVideoMessage(info: VideoCodecInfo | null): string {
 export function classifyVideoFailure(code: number | undefined): "unsupported" | "unavailable" {
   return code === 3 || code === 4 ? "unsupported" : "unavailable";
 }
+
+/** The player's sound state as the media element holds it: mute keeps the volume. */
+export interface VolumeState { readonly volume: number; readonly muted: boolean; }
+export type VolumeLevel = "muted" | "low" | "high";
+
+/** Unmuting from zero with no remembered audible volume lands here (#1425). */
+export const DEFAULT_UNMUTE_VOLUME = 0.5;
+/** One arrow-key or wheel notch. */
+export const VOLUME_STEP = 0.05;
+const LOW_VOLUME_BELOW = 0.5;
+
+function clampVolume(value: number): number {
+  return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
+}
+
+/** What is actually heard: a muted player, or one at zero volume, is silent. */
+export function audibleVolume(state: VolumeState): number {
+  return state.muted ? 0 : clampVolume(state.volume);
+}
+
+export function volumeLevel(state: VolumeState): VolumeLevel {
+  const audible = audibleVolume(state);
+  return audible <= 0 ? "muted" : audible < LOW_VOLUME_BELOW ? "low" : "high";
+}
+
+/** Slider value text: "Muted" or a whole percentage. */
+export function volumeText(state: VolumeState): string {
+  const audible = audibleVolume(state);
+  return audible <= 0 ? "Muted" : `${Math.round(audible * 100)}%`;
+}
+
+/** The last audible volume, carried forward so unmuting from zero can restore it. */
+export function rememberAudible(previous: number, state: VolumeState): number {
+  const audible = audibleVolume(state);
+  return audible > 0 ? audible : previous;
+}
+
+/** Sets a volume; any audible value unmutes, as dragging a muted player's slider does. */
+export function setVolumeTo(state: VolumeState, value: number): VolumeState {
+  const volume = clampVolume(value);
+  return { volume, muted: volume > 0 ? false : state.muted };
+}
+
+/** Steps from the element's volume, so a muted player resumes near its previous level. */
+export function stepVolume(state: VolumeState, delta: number): VolumeState {
+  return setVolumeTo(state, clampVolume(state.volume) + delta);
+}
+
+/**
+ * The speaker button: silence an audible player by muting (keeping its volume),
+ * or make a silent one audible again at its own volume, the last audible volume,
+ * or a default when there has never been one.
+ */
+export function toggleMuted(state: VolumeState, lastAudible: number): VolumeState {
+  if (audibleVolume(state) > 0) return { volume: clampVolume(state.volume), muted: true };
+  const restore = [state.volume, lastAudible, DEFAULT_UNMUTE_VOLUME].map(clampVolume).find(value => value > 0)!;
+  return { volume: restore, muted: false };
+}
+
+/** Wheel over the volume control: one step per event, up raises; horizontal-only wheels do nothing. */
+export function wheelVolumeDelta(deltaY: number): number {
+  return !Number.isFinite(deltaY) || deltaY === 0 ? 0 : deltaY < 0 ? VOLUME_STEP : -VOLUME_STEP;
+}

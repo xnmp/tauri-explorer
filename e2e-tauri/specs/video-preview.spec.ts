@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { createNativeFixtureDirectory } from "../native-qualification";
 import { nativeFileIdentity, type NativeFileIdentity } from "../native-resources";
 import { entryPathSelector, navigateTo } from "./helpers";
-import { videoStats, videoCommand, videoState, rangeKeys, screenshotPixels,
+import { videoStats, videoCommand, videoState, rangeKeys, revealVolume, screenshotPixels,
   observeRetirement, retiredObservation, sampleVideoResources, mediaFileHandles } from "../video-observations";
 
 const enabled=process.platform==="linux"&&!!process.env.TAURI_NATIVE_VIDEO_PROFILE;
@@ -46,8 +46,9 @@ async function cleanup(identity?:NativeFileIdentity){let stats=await videoStats(
     const hash=await hashFile(colors);const state=await select(colors);expect(state.paused).toBe(true);expect(state.currentTime).toBe(0);
     await playAndPause();await pixel("native-playing-red","red");await seekFour();await pixel("native-seek-blue","blue");
     await $('[aria-label="Mute video"]').click();expect((await videoState())?.muted).toBe(true);
-    await rangeKeys('[aria-label="Video volume"]',5);expect((await videoState())?.volume).toBeCloseTo(0.25,5);expect((await videoState())?.muted).toBe(false);
+    await revealVolume();await rangeKeys('[aria-label="Video volume"]',5);expect((await videoState())?.volume).toBeCloseTo(0.25,5);expect((await videoState())?.muted).toBe(false);
     await $('[aria-label="View video fullscreen"]').click();await $(".preview-pane.fullscreen").waitForDisplayed();await pixel("native-fullscreen-blue","blue");
+    await revealVolume();
     const fullscreenControls=await browser.execute(()=>Array.from(document.querySelectorAll(".video-controls button,.video-controls input")).map(element=>{const rect=element.getBoundingClientRect();const x=rect.x+rect.width/2;const y=rect.y+rect.height/2;const hit=document.elementFromPoint(x,y);return {label:element.getAttribute("aria-label"),rect:rect.toJSON(),visibleWithinViewport:rect.width>0&&rect.height>0&&rect.left>=0&&rect.top>=0&&rect.right<=innerWidth+1&&rect.bottom<=innerHeight+1,centerReachesControl:!!hit&&(hit===element||element.contains(hit)),hit:hit?.outerHTML.slice(0,300)};}));
     report("native-fullscreen-controls.json",fullscreenControls);expect(fullscreenControls.length).toBeGreaterThan(0);expect(fullscreenControls.every(control=>control.visibleWithinViewport&&control.centerReachesControl)).toBe(true);
     await $(".video-preview").click();await browser.keys("Home");await pixel("native-keyboard-start-red","red");
@@ -58,7 +59,7 @@ async function cleanup(identity?:NativeFileIdentity){let stats=await videoStats(
 
   it("controls remain operable in all three docks at app zoom 150%",async()=>{
     await select(colors);await videoCommand("Reset Zoom");for(let n=0;n<5;n++)await videoCommand("Zoom In");
-    for(const dock of ["Right","Top","Bottom"]){await $(entryPathSelector(colors)).click();await videoCommand(`Dock Preview Pane ${dock}`);await ready();
+    for(const dock of ["Right","Top","Bottom"]){await $(entryPathSelector(colors)).click();await videoCommand(`Dock Preview Pane ${dock}`);await ready();await revealVolume();
       const bounds=await browser.execute(()=>{const pane=document.querySelector(".video-preview")!.getBoundingClientRect();return Array.from(document.querySelectorAll(".video-controls button,.video-controls input")).map(element=>{const r=element.getBoundingClientRect();return {label:element.getAttribute("aria-label"),inside:r.width>0&&r.height>0&&r.x>=pane.x-1&&r.right<=pane.right+1&&r.y>=pane.y-1&&r.bottom<=pane.bottom+1};});});expect(bounds.every(v=>v.inside)).toBe(true);
       await playAndPause();await seekFour();report(`native-dock-${dock.toLowerCase()}.json`,{bounds,state:await videoState()});await browser.saveScreenshot(path.join(proof,`native-dock-${dock.toLowerCase()}-150.png`));
     }

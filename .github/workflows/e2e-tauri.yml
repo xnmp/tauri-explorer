@@ -51,7 +51,7 @@ jobs:
     steps:
       - id: filter
         if: github.event_name == 'pull_request'
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@v4
         with:
           # A file is code unless it matches a docs exclusion.
           predicate-quantifier: every

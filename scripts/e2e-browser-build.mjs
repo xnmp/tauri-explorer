@@ -134,15 +134,41 @@ export function chunkModules(bundle, root) {
   const out = {};
   for (const output of Object.values(bundle)) {
     if (output.type !== "chunk") continue;
-    const paths = new Set();
-    for (const id of Object.keys(output.modules ?? {})) {
-      const file = id.replace(/^\0/, "").split("?")[0];
-      const rel = posix.relative(root.split("\\").join("/"), file.split("\\").join("/"));
-      if (rel.startsWith("src/") && !rel.split("/").includes("node_modules")) paths.add(rel);
-    }
-    if (paths.size > 0) out[output.fileName] = [...paths].sort();
+    const paths = new Set(Object.keys(output.modules ?? {}).map((id) => repoSource(id, root)).filter(Boolean));
+    if (paths.size > 0) out[output.fileName] = /** @type {string[]} */ ([...paths]).sort();
   }
   return out;
+}
+
+/** Build-root file listing the `src/` modules no chunk contains. */
+export const UNBUNDLED_MODULES_FILE = "e2e-unbundled-modules.json";
+
+/**
+ * The repository `src/` path of a Rollup module id, or null.
+ * @param {string} id
+ * @param {string} root
+ */
+function repoSource(id, root) {
+  const file = id.replace(/^\0/, "").split("?")[0];
+  const rel = posix.relative(root.split("\\").join("/"), file.split("\\").join("/"));
+  return rel.startsWith("src/") && !rel.split("/").includes("node_modules") ? rel : null;
+}
+
+/**
+ * `src/` modules in the build graph that no chunk contains (#1391). Rollup's
+ * `chunk.modules` omits a module whose code was tree-shaken away entirely, so
+ * no test can be seen loading it; an edit that gives it a top-level side
+ * effect would put it in the bundle with no loaders in a map built before.
+ * The impact collector counts these as loaded by every bundle test.
+ * @param {Iterable<string>} moduleIds every module id in the build graph
+ * @param {Record<string, string[]>} chunks output of `chunkModules`
+ * @param {string} root repository root
+ * @returns {string[]}
+ */
+export function unbundledModules(moduleIds, chunks, root) {
+  const bundled = new Set(Object.values(chunks).flat());
+  const paths = new Set([...moduleIds].map((id) => repoSource(id, root)).filter(Boolean));
+  return /** @type {string[]} */ ([...paths].filter((path) => !bundled.has(/** @type {string} */ (path)))).sort();
 }
 
 /**
@@ -185,10 +211,12 @@ export function e2eBrowserBuild({ enabled, root = process.cwd(), specDir = "e2e"
       // Which source modules each chunk evaluates, including those that left
       // no mapped code (stylesheets, constants-only modules): the dev-push
       // impact map counts them as loaded with their chunk (#1386).
+      const chunks = chunkModules(bundle, root);
+      this.emitFile({ type: "asset", fileName: CHUNK_MODULES_FILE, source: JSON.stringify(chunks) });
       this.emitFile({
         type: "asset",
-        fileName: CHUNK_MODULES_FILE,
-        source: JSON.stringify(chunkModules(bundle, root)),
+        fileName: UNBUNDLED_MODULES_FILE,
+        source: JSON.stringify(unbundledModules(this.getModuleIds(), chunks, root)),
       });
       for (const { path, ref } of emitted) {
         const chunkFile = this.getFileName(ref);

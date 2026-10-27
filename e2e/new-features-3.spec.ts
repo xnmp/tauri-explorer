@@ -103,28 +103,6 @@ for (const viewMode of VIEW_MODES) {
       }
     });
 
-    test("Shift+Delete opens permanent delete dialog", async ({ page }) => {
-      const file = page.locator(".entry-item").first();
-      await file.click();
-
-      await pressShortcut(page, "Delete", { shiftKey: true });
-
-      const dialog = page.locator("[role='alertdialog']");
-      await expect(dialog).toBeVisible();
-    });
-
-    test("permanent delete dialog shows permanent delete text", async ({ page }) => {
-      const file = page.locator(".entry-item").first();
-      await file.click();
-
-      await pressShortcut(page, "Delete", { shiftKey: true });
-
-      const dialog = page.locator("[role='alertdialog']");
-      await expect(dialog).toBeVisible();
-      // Dialog should mention "permanently deleted" or "Permanently delete"
-      await expect(dialog).toContainText(/permanent/i);
-    });
-
     test("regular Delete shows recycle bin text (not permanent)", async ({ page }) => {
       const file = page.locator(".entry-item").first();
       await file.click();
@@ -136,14 +114,17 @@ for (const viewMode of VIEW_MODES) {
       await expect(dialog).toContainText("Recycle Bin");
     });
 
-    test("cancel closes permanent delete dialog", async ({ page }) => {
+    test("Shift+Delete asks for a permanent delete, and cancel closes it", async ({ page }) => {
       const file = page.locator(".entry-item").first();
       await file.click();
 
       await pressShortcut(page, "Delete", { shiftKey: true });
 
+      // Shift+Delete asks for a permanent delete (delete-restore.spec.ts
+      // carries out one and checks that it cannot be undone).
       const dialog = page.locator("[role='alertdialog']");
       await expect(dialog).toBeVisible();
+      await expect(dialog).toContainText(/permanent/i);
 
       await page.getByRole("button", { name: /cancel/i }).click();
       await expect(dialog).not.toBeVisible();
@@ -244,36 +225,5 @@ test.describe("Syntax Highlighting Preview", () => {
     await expect(infoSection).toBeVisible();
     await expect(infoSection).toContainText("Size");
     await expect(infoSection).toContainText("Modified");
-  });
-});
-
-// ==========================================================
-// 5. Paste to Same Folder
-// ==========================================================
-test.describe("Paste to Same Folder", () => {
-  test("copy + paste in same directory does not show conflict dialog", async ({ page }) => {
-    await page.goto("/?path=/home/user");
-    await waitForEntries(page);
-
-    // Select a file
-    const file = page.locator(".entry-item:not(.directory)", { hasText: "readme.txt" });
-    await file.click();
-
-    // Copy it
-    await pressShortcut(page, "c", { ctrlKey: true });
-    const toast = page.locator(".toast.clipboard");
-    await expect(toast).toBeVisible({ timeout: 2000 });
-
-    // Paste in same directory
-    await pressShortcut(page, "v", { ctrlKey: true });
-    await page.waitForTimeout(1000);
-
-    // The key behavior: no conflict dialog should appear for copy-to-same-dir
-    const conflictDialog = page.locator(".conflict-dialog");
-    await expect(conflictDialog).not.toBeVisible();
-
-    // Also verify no error toast appeared
-    const errorToast = page.locator(".toast.error");
-    await expect(errorToast).not.toBeVisible();
   });
 });

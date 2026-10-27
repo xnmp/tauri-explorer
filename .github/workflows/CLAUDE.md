@@ -48,6 +48,21 @@ GITHUB_TOKEN open PRs. It uploads the regenerated timings as the
 `e2e-shard-timings` artifact and writes the drift to the job summary; apply it
 in an ordinary PR. It fails with an error when no successful dev run exists.
 
+# Tauri Linux apt packages (#1371)
+
+Every job that needs Tauri's Linux system libraries installs them through
+`.github/actions/tauri-linux-deps` (a step with `timeout-minutes` and an
+`install` name, so ci-auto-rerun treats a failure as setup), never a bare
+`apt-get`. Each apt attempt is bounded (`apt.sh`: 120 s per index refresh,
+240 s per install, 3 attempts) and downloaded `.deb`s are cached under
+`tauri-apt-v1-<ImageOS>-<package list>-<install plan>`; PRs restore but do not
+save. apt fetches whatever the refreshed index selects and only reuses a
+cached `.deb` whose filename (package_version_arch) matches, so a stale entry
+only costs downloads. The step timeout (25 min) covers the worst case of all
+attempts (~19 min) plus cache restore. `rust-suite` refreshes the index in its own step
+before the test-result probe (the hashed candidate versions) and passes
+`update-index: "false"`. Contracts: `tests/ci-apt-install.test.ts`.
+
 # Browser jobs in the Playwright container (#1367)
 
 `chromium`, `chromium-view-modes` and `webkit-tests` run in
@@ -103,9 +118,15 @@ which publish) both Chromium jobs run with `E2E_COVERAGE=function`: CDP precise 
 slower. On the bundle, `e2e/impact-coverage.ts` attributes each chunk through
 its hidden source map (`sourcemap: "hidden"` in browser-test builds) and
 `build/e2e-chunk-modules.json`, which lists every repository module a chunk
-contains, including CSS and fully tree-shaken modules, so an evaluated chunk
+contains, including CSS and constants-only modules, so an evaluated chunk
 marks all of them loaded (`scripts/impact-bundle.mjs`). A chunk without map
-data makes the test's record incomplete. Each shard uploads its records and
+data makes the test's record incomplete. Rollup's chunk lists omit modules
+tree-shaken away entirely; `build/e2e-unbundled-modules.json` lists the
+build graph's other `src/` modules, and every test that evaluated a chunk
+counts as loading them, so an edit that brings one into the bundle
+over-selects (#1391). Requests are attributed to each spec's own app server
+(the `baseURL` fixture), so specs on the dev server beside the bundle record
+their assets too, and every record names its `server`. Each shard uploads its records and
 Playwright JSON report; the `impact-map` job (`continue-on-error`: an
 advisory artifact must never fail the dev push whose conclusion gates
 releases) merges them with
@@ -117,7 +138,15 @@ checked out at `github.sha` so map commit and coverage agree) is the backstop.
 
 PRs pick the map with `scripts/impact-map-source.mjs`: the newest unexpired
 `e2e-impact-map` artifact whose producing run is a push, schedule or dispatch
-of ci.yml or e2e-impact-map.yml on `dev` in this repository. The artifact name
+of ci.yml (preferred) or else e2e-impact-map.yml on `dev` in this repository.
+The map records the app server kind it ran on (`server`: `bundle` for
+ci.yml, `dev` for the nightly, `mixed` when a dev-push shard fell back to the
+dev server; absent on older maps, read as `unknown`), the
+`changes` job publishes it as `impact-server`, and a browser shard whose own
+server differs (a missing `e2e-browser-build` artifact, a nightly map, an old
+map) plans ALL for its tier: module boundaries differ between chunks and
+per-module scripts, and the equivalence is unverified (#1391). Shards
+therefore download the bundle and choose their server before planning. The artifact name
 alone is not trusted, since any run (including a PR from a branch named `dev`)
 can upload one. Newest is by artifact `created_at`, not commit order; that is
 safe because drift is a two-way tree diff between the map's commit and the

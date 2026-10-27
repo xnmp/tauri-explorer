@@ -48,7 +48,7 @@ describe("selectUnit", () => {
     ["svelte.config.js", "config or lockfile change: svelte.config.js"],
     ["tsconfig.json", "config or lockfile change: tsconfig.json"],
     ["tests/setup.ts", "shared test setup, utility or fixture change: tests/setup.ts"],
-    ["tests/runner-setup.ts", "shared test setup, utility or fixture change: tests/runner-setup.ts"],
+    ["tests/serial-unit-files.ts", "shared test setup, utility or fixture change: tests/serial-unit-files.ts"],
     ["tests/helpers/drop-policy.ts", "shared test setup, utility or fixture change: tests/helpers/drop-policy.ts"],
     ["tests/perf/helpers.ts", "shared test setup, utility or fixture change: tests/perf/helpers.ts"],
     ["tests/fixtures/sidebar-cloud-mounts.json", "shared test setup, utility or fixture change: tests/fixtures/sidebar-cloud-mounts.json"],

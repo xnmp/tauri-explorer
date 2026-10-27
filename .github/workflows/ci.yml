@@ -82,10 +82,14 @@ jobs:
       # "NONE" or space-separated workspace member names.
       rust: ${{ github.event_name == 'pull_request' && steps.select.outputs.rust || 'ALL' }}
       rust-reason: ${{ github.event_name == 'pull_request' && steps.select.outputs.rust-reason || format('{0} event runs every test', github.event_name) }}
+      # The app server kind the impact map was recorded on ("bundle", "dev" or
+      # "unknown"), empty without a map. Browser shards serving another kind
+      # run every spec (#1391).
+      impact-server: ${{ github.event_name == 'pull_request' && steps.impact.outputs.server || '' }}
     steps:
       - id: filter
         if: github.event_name == 'pull_request'
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@v4
         with:
           # A file is code unless it matches a docs exclusion.
           predicate-quantifier: every
@@ -155,7 +159,9 @@ jobs:
           commit=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).commit || "")' "$map")
           git fetch --no-tags --depth=1 origin "${commit:-$sha}" || echo "Map commit ${commit:-$sha} unavailable; files changed since it use the file level."
           echo "map=$map" >> "$GITHUB_OUTPUT"
-          echo "- **impact map**: artifact $artifact of run $id at \`${commit:-$sha}\`" >> "$GITHUB_STEP_SUMMARY"
+          server=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).server || "unknown")' "$map" || echo unknown)
+          echo "server=${server:-unknown}" >> "$GITHUB_OUTPUT"
+          echo "- **impact map**: artifact $artifact of run $id at \`${commit:-$sha}\`, recorded on the $server app server" >> "$GITHUB_STEP_SUMMARY"
 
       # Each selector prints {mode, reason, items} JSON; a selector or parse
       # failure selects the full tier. rust-affected runs `cargo metadata`
@@ -232,6 +238,11 @@ jobs:
 
       - name: Type check
         run: bun run check
+
+      # The native WebdriverIO suite's own tsconfig; formerly a Vitest test
+      # that only spawned this command (#1123).
+      - name: Native-suite type check
+        run: bun run check:e2e:tauri
 
       - name: Architecture boundaries
         run: bun run lint:arch
@@ -380,14 +391,51 @@ jobs:
       - name: Trust the checkout
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
+      # The shared bundle from the e2e-build job (#1381). Fetched before the
+      # cache key: E2E_BUILD_DIR is hashed, so a result is replayed only for
+      # the same kind of server. Without the bundle the shard serves the dev
+      # server, as before. Fetched before planning too, since the server kind
+      # decides whether the impact map's selection holds (#1391).
+      - name: Download browser-test bundle
+        if: needs.e2e-build.result == 'success'
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: e2e-browser-build
+          path: build
+
+      - name: Choose the app server
+        id: server
+        run: |
+          if [ -f build/index.html ]; then
+            echo "E2E_BUILD_DIR=build" >> "$GITHUB_ENV"
+            echo "server=bundle" >> "$GITHUB_OUTPUT"
+            echo "Browser E2E: serving the shared browser-test bundle"
+          else
+            echo "server=dev" >> "$GITHUB_OUTPUT"
+            echo "::warning title=No browser-test bundle::serving the Vite dev server instead"
+            echo "- **app server**: Vite dev server (the \`e2e-browser-build\` artifact is missing; check the e2e-build job)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       # Plans only the specs this PR can affect (all of them outside PRs). A
       # shard left with nothing to run skips the remaining steps and passes.
+      # A selection made with an impact map recorded on another kind of app
+      # server than this shard serves is not trusted: the shard plans ALL.
       - name: Plan duration-balanced shard
         id: plan
         env:
+          IMPACT_SERVER: ${{ needs.changes.outputs.impact-server }}
+          APP_SERVER: ${{ steps.server.outputs.server }}
           E2E_SELECTION: ${{ needs.changes.outputs.e2e }}
           E2E_REASON: ${{ needs.changes.outputs.e2e-reason }}
         run: |
+          if [ -n "$IMPACT_SERVER" ] && [ "$IMPACT_SERVER" != "$APP_SERVER" ] && [ "$E2E_SELECTION" != ALL ]; then
+            E2E_SELECTION=ALL
+            E2E_REASON="the impact map was recorded on the $IMPACT_SERVER app server, this shard serves the $APP_SERVER server"
+            echo "- **selection**: ALL ($E2E_REASON)" >> "$GITHUB_STEP_SUMMARY"
+            # The test step logs the selection it actually runs.
+            echo "E2E_SERVER_OVERRIDE=$E2E_REASON" >> "$GITHUB_ENV"
+          fi
           if [ "$E2E_SELECTION" = ALL ]; then
             echo "chromium E2E: full suite ($E2E_REASON)"
           else
@@ -422,29 +470,6 @@ jobs:
         if: steps.plan.outputs.run == 'true'
         run: bun install --frozen-lockfile
 
-      # The shared bundle from the e2e-build job (#1381). Fetched before the
-      # cache key: E2E_BUILD_DIR is hashed, so a result is replayed only for
-      # the same kind of server. Without the bundle the shard serves the dev
-      # server, as before.
-      - name: Download browser-test bundle
-        if: steps.plan.outputs.run == 'true' && needs.e2e-build.result == 'success'
-        continue-on-error: true
-        uses: actions/download-artifact@v8
-        with:
-          name: e2e-browser-build
-          path: build
-
-      - name: Choose the app server
-        if: steps.plan.outputs.run == 'true'
-        run: |
-          if [ -f build/index.html ]; then
-            echo "E2E_BUILD_DIR=build" >> "$GITHUB_ENV"
-            echo "Browser E2E: serving the shared browser-test bundle"
-          else
-            echo "::warning title=No browser-test bundle::serving the Vite dev server instead"
-            echo "- **app server**: Vite dev server (the \`e2e-browser-build\` artifact is missing; check the e2e-build job)" >> "$GITHUB_STEP_SUMMARY"
-          fi
-
       - name: Coverage record paths
         if: steps.plan.outputs.run == 'true' && env.E2E_COVERAGE == 'function'
         run: |
@@ -478,6 +503,7 @@ jobs:
           E2E_SELECTION: ${{ needs.changes.outputs.e2e }}
           E2E_REASON: ${{ needs.changes.outputs.e2e-reason }}
         run: |
+          if [ -n "${E2E_SERVER_OVERRIDE:-}" ]; then E2E_SELECTION=ALL; E2E_REASON=$E2E_SERVER_OVERRIDE; fi
           mode=$([ "$E2E_SELECTION" = ALL ] && echo "full suite" || echo "selected subset")
           if [ "${{ steps.plan.outputs.run }}" != true ]; then
             echo "chromium E2E: nothing to run in this shard; $mode ($E2E_REASON)"
@@ -581,14 +607,51 @@ jobs:
       - name: Trust the checkout
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
+      # The shared bundle from the e2e-build job (#1381). Fetched before the
+      # cache key: E2E_BUILD_DIR is hashed, so a result is replayed only for
+      # the same kind of server. Without the bundle the shard serves the dev
+      # server, as before. Fetched before planning too, since the server kind
+      # decides whether the impact map's selection holds (#1391).
+      - name: Download browser-test bundle
+        if: needs.e2e-build.result == 'success'
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: e2e-browser-build
+          path: build
+
+      - name: Choose the app server
+        id: server
+        run: |
+          if [ -f build/index.html ]; then
+            echo "E2E_BUILD_DIR=build" >> "$GITHUB_ENV"
+            echo "server=bundle" >> "$GITHUB_OUTPUT"
+            echo "Browser E2E: serving the shared browser-test bundle"
+          else
+            echo "server=dev" >> "$GITHUB_OUTPUT"
+            echo "::warning title=No browser-test bundle::serving the Vite dev server instead"
+            echo "- **app server**: Vite dev server (the \`e2e-browser-build\` artifact is missing; check the e2e-build job)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       # Plans only the specs this PR can affect (all of them outside PRs). A
       # shard left with nothing to run skips the remaining steps and passes.
+      # A selection made with an impact map recorded on another kind of app
+      # server than this shard serves is not trusted: the shard plans ALL.
       - name: Plan duration-balanced shard
         id: plan
         env:
+          IMPACT_SERVER: ${{ needs.changes.outputs.impact-server }}
+          APP_SERVER: ${{ steps.server.outputs.server }}
           E2E_SELECTION: ${{ needs.changes.outputs.view-modes }}
           E2E_REASON: ${{ needs.changes.outputs.view-modes-reason }}
         run: |
+          if [ -n "$IMPACT_SERVER" ] && [ "$IMPACT_SERVER" != "$APP_SERVER" ] && [ "$E2E_SELECTION" != ALL ]; then
+            E2E_SELECTION=ALL
+            E2E_REASON="the impact map was recorded on the $IMPACT_SERVER app server, this shard serves the $APP_SERVER server"
+            echo "- **selection**: ALL ($E2E_REASON)" >> "$GITHUB_STEP_SUMMARY"
+            # The test step logs the selection it actually runs.
+            echo "E2E_SERVER_OVERRIDE=$E2E_REASON" >> "$GITHUB_ENV"
+          fi
           if [ "$E2E_SELECTION" = ALL ]; then
             echo "chromium ALL_VIEW_MODES E2E: full suite ($E2E_REASON)"
           else
@@ -629,29 +692,6 @@ jobs:
         if: steps.plan.outputs.run == 'true'
         run: bun install --frozen-lockfile
 
-      # The shared bundle from the e2e-build job (#1381). Fetched before the
-      # cache key: E2E_BUILD_DIR is hashed, so a result is replayed only for
-      # the same kind of server. Without the bundle the shard serves the dev
-      # server, as before.
-      - name: Download browser-test bundle
-        if: steps.plan.outputs.run == 'true' && needs.e2e-build.result == 'success'
-        continue-on-error: true
-        uses: actions/download-artifact@v8
-        with:
-          name: e2e-browser-build
-          path: build
-
-      - name: Choose the app server
-        if: steps.plan.outputs.run == 'true'
-        run: |
-          if [ -f build/index.html ]; then
-            echo "E2E_BUILD_DIR=build" >> "$GITHUB_ENV"
-            echo "Browser E2E: serving the shared browser-test bundle"
-          else
-            echo "::warning title=No browser-test bundle::serving the Vite dev server instead"
-            echo "- **app server**: Vite dev server (the \`e2e-browser-build\` artifact is missing; check the e2e-build job)" >> "$GITHUB_STEP_SUMMARY"
-          fi
-
       - name: Coverage record paths
         if: steps.plan.outputs.run == 'true' && env.E2E_COVERAGE == 'function'
         run: |
@@ -685,6 +725,7 @@ jobs:
           E2E_SELECTION: ${{ needs.changes.outputs.view-modes }}
           E2E_REASON: ${{ needs.changes.outputs.view-modes-reason }}
         run: |
+          if [ -n "${E2E_SERVER_OVERRIDE:-}" ]; then E2E_SELECTION=ALL; E2E_REASON=$E2E_SERVER_OVERRIDE; fi
           mode=$([ "$E2E_SELECTION" = ALL ] && echo "full suite" || echo "selected subset")
           if [ "${{ steps.plan.outputs.run }}" != true ]; then
             echo "chromium ALL_VIEW_MODES E2E: nothing to run in this shard; $mode ($E2E_REASON)"
@@ -911,14 +952,51 @@ jobs:
       - name: Trust the checkout
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
+      # The shared bundle from the e2e-build job (#1381). Fetched before the
+      # cache key: E2E_BUILD_DIR is hashed, so a result is replayed only for
+      # the same kind of server. Without the bundle the shard serves the dev
+      # server, as before. Fetched before planning too, since the server kind
+      # decides whether the impact map's selection holds (#1391).
+      - name: Download browser-test bundle
+        if: needs.e2e-build.result == 'success'
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: e2e-browser-build
+          path: build
+
+      - name: Choose the app server
+        id: server
+        run: |
+          if [ -f build/index.html ]; then
+            echo "E2E_BUILD_DIR=build" >> "$GITHUB_ENV"
+            echo "server=bundle" >> "$GITHUB_OUTPUT"
+            echo "Browser E2E: serving the shared browser-test bundle"
+          else
+            echo "server=dev" >> "$GITHUB_OUTPUT"
+            echo "::warning title=No browser-test bundle::serving the Vite dev server instead"
+            echo "- **app server**: Vite dev server (the \`e2e-browser-build\` artifact is missing; check the e2e-build job)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       # Plans only the specs this PR can affect (all of them outside PRs). A
       # shard left with nothing to run skips the remaining steps and passes.
+      # A selection made with an impact map recorded on another kind of app
+      # server than this shard serves is not trusted: the shard plans ALL.
       - name: Plan duration-balanced shard
         id: plan
         env:
+          IMPACT_SERVER: ${{ needs.changes.outputs.impact-server }}
+          APP_SERVER: ${{ steps.server.outputs.server }}
           E2E_SELECTION: ${{ needs.changes.outputs.webkit }}
           E2E_REASON: ${{ needs.changes.outputs.webkit-reason }}
         run: |
+          if [ -n "$IMPACT_SERVER" ] && [ "$IMPACT_SERVER" != "$APP_SERVER" ] && [ "$E2E_SELECTION" != ALL ]; then
+            E2E_SELECTION=ALL
+            E2E_REASON="the impact map was recorded on the $IMPACT_SERVER app server, this shard serves the $APP_SERVER server"
+            echo "- **selection**: ALL ($E2E_REASON)" >> "$GITHUB_STEP_SUMMARY"
+            # The test step logs the selection it actually runs.
+            echo "E2E_SERVER_OVERRIDE=$E2E_REASON" >> "$GITHUB_ENV"
+          fi
           if [ "$E2E_SELECTION" = ALL ]; then
             echo "WebKit E2E: full suite ($E2E_REASON)"
           else
@@ -953,29 +1031,6 @@ jobs:
         if: steps.plan.outputs.run == 'true'
         run: bun install --frozen-lockfile
 
-      # The shared bundle from the e2e-build job (#1381). Fetched before the
-      # cache key: E2E_BUILD_DIR is hashed, so a result is replayed only for
-      # the same kind of server. Without the bundle the shard serves the dev
-      # server, as before.
-      - name: Download browser-test bundle
-        if: steps.plan.outputs.run == 'true' && needs.e2e-build.result == 'success'
-        continue-on-error: true
-        uses: actions/download-artifact@v8
-        with:
-          name: e2e-browser-build
-          path: build
-
-      - name: Choose the app server
-        if: steps.plan.outputs.run == 'true'
-        run: |
-          if [ -f build/index.html ]; then
-            echo "E2E_BUILD_DIR=build" >> "$GITHUB_ENV"
-            echo "Browser E2E: serving the shared browser-test bundle"
-          else
-            echo "::warning title=No browser-test bundle::serving the Vite dev server instead"
-            echo "- **app server**: Vite dev server (the \`e2e-browser-build\` artifact is missing; check the e2e-build job)" >> "$GITHUB_STEP_SUMMARY"
-          fi
-
       - name: Test-result cache key
         id: test-cache-key
         if: steps.plan.outputs.run == 'true'
@@ -1002,6 +1057,7 @@ jobs:
           E2E_SELECTION: ${{ needs.changes.outputs.webkit }}
           E2E_REASON: ${{ needs.changes.outputs.webkit-reason }}
         run: |
+          if [ -n "${E2E_SERVER_OVERRIDE:-}" ]; then E2E_SELECTION=ALL; E2E_REASON=$E2E_SERVER_OVERRIDE; fi
           mode=$([ "$E2E_SELECTION" = ALL ] && echo "full suite" || echo "selected subset")
           if [ "${{ steps.plan.outputs.run }}" != true ]; then
             echo "WebKit E2E: nothing to run in this shard; $mode ($E2E_REASON)"
@@ -1144,9 +1200,10 @@ jobs:
           components: rustfmt, clippy
 
       # Refreshed before the cache probe so the hashed apt versions are the
-      # ones a miss installs.
+      # ones a miss installs. Bounded like the install (#1371).
       - name: Refresh apt package index
-        run: sudo apt-get update
+        timeout-minutes: 8
+        run: .github/actions/tauri-linux-deps/apt.sh update
 
       - name: Test-result cache key
         id: test-cache-key
@@ -1163,9 +1220,16 @@ jobs:
         id: test-cache-probe
         run: node scripts/test-cache.mjs probe --task ci:rust --target "rust-${{ matrix.suite }}"
 
+      # Reuses .debs cached by package list and install plan, with bounded
+      # retried attempts, so a stalled mirror fails here in setup, where
+      # ci-auto-rerun re-runs it, not at the job timeout (#1371).
       - name: Install Tauri Linux system dependencies
         if: steps.test-cache-probe.outputs.hit != 'true'
-        run: sudo apt-get install -y $TEST_CACHE_APT_PACKAGES
+        timeout-minutes: 25
+        uses: ./.github/actions/tauri-linux-deps
+        with:
+          packages: ${{ env.TEST_CACHE_APT_PACKAGES }}
+          update-index: "false"
 
       # Each suite builds different feature artifacts; separate cache keys
       # keep the two matrix jobs from overwriting each other's target dir.

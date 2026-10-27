@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createVitest } from "vitest/node";
 
 describe("native compiler metadata reuse", () => {
   it("persists successful checks and still rejects a changed imported contract", () => {
@@ -41,18 +40,3 @@ describe("native compiler metadata reuse", () => {
     }
   }, 20_000);
 });
-
-// Compiler subprocess probes must finish before the transform-heavy unit group.
-it("schedules the cache contract check before ordinary unit work", async () => {
-  const runner = await createVitest({ config: resolve("vitest.config.ts"), watch: false, maxWorkers: 2 });
-  try {
-    const specs = await runner.globTestSpecifications([
-      "tests/native-suite-typecheck.test.ts", "tests/qualification/native-typecheck-cache.test.ts",
-      "tests/domain/git-pr-target.test.ts",
-    ]);
-    expect(specs).toHaveLength(3);
-    const order = (suffix: string) => specs.find(spec => spec.moduleId.endsWith(suffix))!.project.config.sequence.groupOrder;
-    expect(order("/native-typecheck-cache.test.ts")).toBeGreaterThan(order("/native-suite-typecheck.test.ts"));
-    expect(order("/native-typecheck-cache.test.ts")).toBeLessThan(order("/git-pr-target.test.ts"));
-  } finally { await runner.close(); }
-}, 20_000);

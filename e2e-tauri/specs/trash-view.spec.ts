@@ -19,13 +19,31 @@ const isWindows = process.platform === "win32";
 const samePath = (left: string, right: string) =>
   isWindows ? left.toLowerCase() === right.toLowerCase() : left === right;
 
-/** The Trash row named `name`, or undefined while it is not listed. */
+// Retained hidden tabs (#1173) keep their rows mounted; read the shown tab only.
+const SHOWN_ROWS = ".pane-tree:not(.retained) .entry-item";
+
+/**
+ * The opaque `trash://` path of the shown row named `name`, or null while it is
+ * not listed. One atomic DOM snapshot: a Restore refreshes the listing, so
+ * WebDriver row handles enumerated before that refresh can name removed rows
+ * (#1228). The path is built from the native entry ID, so it stays valid for
+ * the next action across refreshes.
+ */
+async function trashRowPath(name: string): Promise<string | null> {
+  return browser.execute((rows: string, wanted: string) => {
+    for (const row of Array.from(document.querySelectorAll(rows))) {
+      if (row.querySelector(".entry-name")?.textContent?.trim() === wanted) return row.getAttribute("data-path");
+    }
+    return null;
+  }, SHOWN_ROWS, name);
+}
+
+/** The listed row named `name`, re-resolved by its stable identity at each action. */
 async function trashRow(name: string) {
-  for (const row of await $$(".pane-tree:not(.retained) .entry-item").getElements()) {
-    const text = ((await row.$(".entry-name").getProperty("textContent")) as string | null)?.trim();
-    if (text === name) return row;
-  }
-  return undefined;
+  const entryPath = await browser.waitUntil(() => trashRowPath(name), {
+    timeout: 20_000, timeoutMsg: "the deleted file is not listed in the Trash",
+  });
+  return $(entryPathSelector(entryPath, SHOWN_ROWS));
 }
 
 async function clickMenuItem(label: string): Promise<void> {
@@ -83,10 +101,7 @@ async function clickMenuItem(label: string): Promise<void> {
       timeoutMsg: "the sidebar did not open the in-app Trash",
     });
     for (const { name } of fixtures) {
-      await browser.waitUntil(async () => (await trashRow(name)) !== undefined, {
-        timeout: 20_000, timeoutMsg: "the deleted file is not listed in the Trash",
-      });
-      const row = (await trashRow(name))!;
+      const row = await trashRow(name);
       const location = ((await row.$(".type-cell").getProperty("textContent")) as string | null)?.trim() ?? "";
       expect(samePath(location, directory)).toBe(true);
       // A matching textContent alone can still produce a clipped screenshot.
@@ -109,14 +124,13 @@ async function clickMenuItem(label: string): Promise<void> {
     }
 
     for (const { name, original, bytes } of fixtures) {
-      const row = (await trashRow(name))!;
-      await row.click({ button: "right" });
+      await (await trashRow(name)).click({ button: "right" });
       await clickMenuItem("Restore");
       await browser.waitUntil(() => fs.existsSync(original), {
         timeout: 25_000, timeoutMsg: "Restore did not return the file to its original path",
       });
       expect(fs.readFileSync(original).equals(bytes)).toBe(true);
-      await browser.waitUntil(async () => (await trashRow(name)) === undefined, {
+      await browser.waitUntil(async () => (await trashRowPath(name)) === null, {
         timeout: 15_000, timeoutMsg: "the restored item is still listed in the Trash",
       });
     }

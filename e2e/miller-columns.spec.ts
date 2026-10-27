@@ -12,7 +12,6 @@ test.describe("Miller columns panel", () => {
 
     // Enable 1 miller layer
     await applySettingsAndReload(page, { millerLayers: 1 });
-    await page.waitForTimeout(1000);
     await waitForEntries(page);
 
     // Navigate to a subdirectory so ancestor columns appear
@@ -40,7 +39,6 @@ test.describe("Miller columns panel", () => {
     await waitForEntries(page);
 
     await applySettingsAndReload(page, { millerLayers: 1 });
-    await page.waitForTimeout(1000);
     await waitForEntries(page);
 
     await page.locator(".entry-item").first().dblclick();
@@ -60,7 +58,6 @@ test.describe("Miller columns panel", () => {
     await waitForEntries(page);
 
     await applySettingsAndReload(page, { millerLayers: 1 });
-    await page.waitForTimeout(1000);
     await waitForEntries(page);
 
     await page.locator(".entry-item").first().dblclick();

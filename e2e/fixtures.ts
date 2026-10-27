@@ -28,24 +28,37 @@
 import { test as base, expect } from "@playwright/test";
 import { baseURLFor } from "./app-server";
 import { collectImpactCoverage, impactCoverageEnabled } from "./impact-coverage";
+import { gatePrototype } from "./evidence-shots";
 
 // E2E_COVERAGE=1 records which source files each test executes, for the
 // test-impact map (#1368). An auto fixture, so tests that use only `browser`
 // are recorded too. Unset, specs get exactly the fixtures below.
 const covered = impactCoverageEnabled
   ? base.extend<{ impactCoverage: void }>({
-    impactCoverage: [async ({ browser, context }, use, testInfo) => {
-      await collectImpactCoverage(browser, context, testInfo, () => use());
+    // `baseURL` resolves to the override below: the spec's own app server.
+    impactCoverage: [async ({ browser, context, baseURL }, use, testInfo) => {
+      await collectImpactCoverage(browser, context, testInfo, () => use(), baseURL);
     }, { auto: true }],
   })
   : base;
 
 // Against CI's shared bundle, specs that intercept requests use the dev server
 // beside it (e2e/app-server.ts, #1381); everywhere else this is the config's.
-const recorded = covered.extend({
+// Evidence screenshots into screenshots/ and evidence/ are written only with
+// CAPTURE_EVIDENCE=1 (e2e/evidence-shots.ts, #1123); the gate patches the
+// Page and Locator prototypes once per worker, before any test opens a page.
+const recorded = covered.extend<object, { evidenceGate: void }>({
   baseURL: async ({ baseURL }, use, testInfo) => {
     await use(baseURLFor(testInfo.file, baseURL));
   },
+  evidenceGate: [async ({ browser }, use) => {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    gatePrototype(Object.getPrototypeOf(page));
+    gatePrototype(Object.getPrototypeOf(page.locator("body")));
+    await context.close();
+    await use();
+  }, { scope: "worker", auto: true }],
 });
 
 export const test = recorded.extend({

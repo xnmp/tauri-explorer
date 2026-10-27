@@ -36,11 +36,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'schedule' && 'dev' || '' }}
       - uses: dtolnay/rust-toolchain@stable
+      # Bounded and cached (#1371): a stalled mirror fails here, in setup.
       - name: Install Linux native dependencies
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev nasm
+        timeout-minutes: 25
+        uses: ./.github/actions/tauri-linux-deps
+        with:
+          packages: libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev nasm
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri

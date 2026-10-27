@@ -29,6 +29,13 @@ impl<T> Default for CacheState<T> {
     }
 }
 
+/// A loaded listing and whether it covers the whole tree. A walk that hit an
+/// error is still returned to its caller but never cached (#1404).
+pub(crate) struct WalkedListing<T> {
+    pub(crate) entries: Vec<T>,
+    pub(crate) complete: bool,
+}
+
 /// Process-local store for completed recursive Quick Open listings.
 ///
 /// A listing is published only after its walk completes, so a later query can
@@ -155,16 +162,32 @@ impl<T> SearchEntryCache<T> {
             .retain(|root, _| !changed_path.starts_with(root) && !root.starts_with(changed_path));
     }
 
+    #[cfg(test)]
     pub(crate) fn get_or_load<F>(&self, root: &Path, load: F) -> Arc<Vec<T>>
     where
         F: FnOnce() -> Vec<T>,
+    {
+        self.get_or_load_listing(root, || WalkedListing {
+            entries: load(),
+            complete: true,
+        })
+    }
+
+    /// Reuse a completed listing, or load one and publish it only if the load
+    /// was complete and no invalidation raced it.
+    pub(crate) fn get_or_load_listing<F>(&self, root: &Path, load: F) -> Arc<Vec<T>>
+    where
+        F: FnOnce() -> WalkedListing<T>,
     {
         if let Some(entries) = self.completed(root) {
             return entries;
         }
         let load_revision = self.begin_load(root);
-        let entries = Arc::new(load());
-        self.publish_if_unchanged(root, Arc::clone(&entries), load_revision);
+        let WalkedListing { entries, complete } = load();
+        let entries = Arc::new(entries);
+        if complete {
+            self.publish_if_unchanged(root, Arc::clone(&entries), load_revision);
+        }
         entries
     }
 }

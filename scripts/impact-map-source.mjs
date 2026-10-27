@@ -4,8 +4,12 @@
 //
 // Maps come from two producers on dev: every ci.yml dev push (function-level
 // coverage on the shared bundle) and the nightly e2e-impact-map.yml backstop
-// (block coverage on the dev server). The newest trustworthy one wins; drift
-// since its commit is handled by the selector (scripts/e2e-affected.mjs).
+// (block coverage on the dev server). The newest trustworthy ci.yml map wins,
+// else the newest trustworthy nightly one; drift since its commit is handled
+// by the selector (scripts/e2e-affected.mjs). ci.yml maps come first because
+// they are recorded on the shared bundle that PR shards serve: a shard serving
+// another kind of app server than the map's runs every spec (#1391), so a
+// newer dev-server map would make every bundle shard run in full.
 //
 // Trust: an artifact's name proves nothing, since any workflow run can upload
 // one called `e2e-impact-map`, including a pull_request run whose head branch
@@ -23,6 +27,8 @@ import { resolve } from "node:path";
 
 export const MAP_ARTIFACT = "e2e-impact-map";
 export const PRODUCER_WORKFLOWS = [".github/workflows/ci.yml", ".github/workflows/e2e-impact-map.yml"];
+/** The producer whose maps share PR shards' app server (the bundle). */
+const PREFERRED_PRODUCER = ".github/workflows/ci.yml";
 const PRODUCER_EVENTS = new Set(["push", "schedule", "workflow_dispatch"]);
 
 /**
@@ -47,7 +53,8 @@ export function trustedProducer(run, repo) {
 }
 
 /**
- * The newest unexpired map artifact from a trusted producer.
+ * The newest unexpired map artifact from a trusted ci.yml run, else from any
+ * trusted producer.
  * @param {Artifact[]} artifacts
  * @param {(runId: number) => Run | null} runOf
  * @param {string} repo
@@ -57,13 +64,17 @@ export function pickMapArtifact(artifacts, runOf, repo) {
   const candidates = artifacts
     .filter((a) => a.name === MAP_ARTIFACT && !a.expired && a.workflow_run?.id && a.workflow_run.head_branch === "dev")
     .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+  /** @type {{ artifact: number, run: number, sha: string } | null} */
+  let fallback = null;
   for (const artifact of candidates) {
     const run = runOf(/** @type {number} */ (artifact.workflow_run?.id));
     if (run && trustedProducer(run, repo) && artifact.workflow_run?.head_sha) {
-      return { artifact: artifact.id, run: run.id, sha: artifact.workflow_run.head_sha };
+      const pick = { artifact: artifact.id, run: run.id, sha: artifact.workflow_run.head_sha };
+      if ((run.path ?? "").split("@")[0] === PREFERRED_PRODUCER) return pick;
+      fallback ??= pick;
     }
   }
-  return null;
+  return fallback;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

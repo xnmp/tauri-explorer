@@ -2,8 +2,8 @@
 //! Issue: tauri-explorer-az6w, tauri-explorer-nv2y
 
 use crate::error::AppError;
-use crate::search_cache::{SearchEntryCache, MAX_CACHED_LISTING_ENTRIES};
-use jwalk::WalkDir;
+use crate::search_cache::{SearchEntryCache, WalkedListing, MAX_CACHED_LISTING_ENTRIES};
+use jwalk::{Parallelism, WalkDir};
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use serde::{Deserialize, Serialize};
@@ -52,6 +52,155 @@ const DEFERRED_PENALTY: u32 = 40;
 /// `target` pair can hold hundreds of thousands of files; the fast pass has
 /// already produced results by then, so this pass is a bonus, not a promise.
 const DEFERRED_SCAN_CAP: usize = 200_000;
+
+/// Upper bound on the dedicated walk pool. Walking is syscall-bound; more
+/// threads than this mostly add contention on the directory cache.
+const MAX_WALK_THREADS: usize = 8;
+
+/// How long a walk waits for the walk pool to start it before giving up as an
+/// incomplete walk. Walks hold every pool thread until they finish, so a walk
+/// queues behind any earlier, uncancelled one; a cancelled walk releases its
+/// threads at its next entry. Only a pool wedged by a `read_dir` that never
+/// returns (a dead network or FUSE mount) should reach this bound, and without
+/// it every later search would wait, ignoring cancellation, forever.
+const WALK_POOL_BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Thread pool shared by every recursive Quick Open walk (#1404).
+///
+/// jwalk's default runs on rayon's *global* pool and gives up with
+/// `ThreadpoolBusy` when that pool cannot start the walk within 1 s; directory
+/// listings fan their per-entry stats out on the same global pool, so a large
+/// listing silently turned a search into an empty "complete" result. A pool
+/// owned by search cannot be occupied by unrelated work. A walk is consumed
+/// only from a search thread outside this pool, so the pool never waits on
+/// itself; a walk it cannot start within [`WALK_POOL_BUSY_TIMEOUT`] reports
+/// `ThreadpoolBusy`, which makes that search incomplete and uncacheable.
+fn walk_pool() -> Option<&'static Arc<rayon::ThreadPool>> {
+    static POOL: std::sync::OnceLock<Option<Arc<rayon::ThreadPool>>> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| {
+        let threads = std::thread::available_parallelism()
+            .map_or(2, usize::from)
+            .clamp(2, MAX_WALK_THREADS);
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .thread_name(|index| format!("quick-open-walk-{index}"))
+            .build()
+            .map(Arc::new)
+            .map_err(|error| {
+                log::warn!("quickfind: walk pool unavailable, walking serially: {error}");
+            })
+            .ok()
+    })
+    .as_ref()
+}
+
+/// How every walk of `root` schedules its directory reads.
+fn walk_parallelism(root: &Path) -> Parallelism {
+    #[cfg(test)]
+    if let Some(parallelism) = take_walk_parallelism_override(root) {
+        return parallelism;
+    }
+    #[cfg(not(test))]
+    let _ = root;
+    match walk_pool() {
+        Some(pool) => Parallelism::RayonExistingPool {
+            pool: Arc::clone(pool),
+            busy_timeout: Some(WALK_POOL_BUSY_TIMEOUT),
+        },
+        // Serial cannot be refused by a busy pool; it is only slower.
+        None => Parallelism::Serial,
+    }
+}
+
+#[cfg(test)]
+static TEST_WALK_PARALLELISM: std::sync::OnceLock<
+    Mutex<std::collections::HashMap<PathBuf, Parallelism>>,
+> = std::sync::OnceLock::new();
+
+/// Make the next walk of `root` schedule its reads with `parallelism`.
+#[cfg(test)]
+fn override_walk_parallelism_for_test(root: &Path, parallelism: Parallelism) {
+    TEST_WALK_PARALLELISM
+        .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+        .lock_test_state()
+        .insert(root.to_path_buf(), parallelism);
+}
+
+#[cfg(test)]
+fn take_walk_parallelism_override(root: &Path) -> Option<Parallelism> {
+    TEST_WALK_PARALLELISM
+        .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+        .lock_test_state()
+        .remove(root)
+}
+
+/// Whether a walk saw everything it set out to visit. Cancellation and the
+/// deliberate scan caps are tracked by their callers; this records failures
+/// that leave unknown gaps, so the entries must never be cached as the tree
+/// (#1404).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WalkCompleteness {
+    Complete,
+    Incomplete,
+}
+
+impl WalkCompleteness {
+    fn and(self, other: Self) -> Self {
+        if self == Self::Complete {
+            other
+        } else {
+            Self::Incomplete
+        }
+    }
+}
+
+/// An unreadable or vanished directory is a deterministic part of what the
+/// tree *is*: a deletion reaches the recursive watcher as a name change, and a
+/// later `chmod` (a metadata event the recursive watch ignores) is bounded by
+/// the cache TTL like any other metadata. Treating these as failures would
+/// disable the cache for any root holding such a directory. Any other failure
+/// (a refused pool, descriptor exhaustion, an I/O error) says nothing about
+/// the missing entries, so it makes the walk incomplete.
+fn directory_error_completeness(error: &jwalk::Error) -> WalkCompleteness {
+    match error.io_error().map(std::io::Error::kind) {
+        Some(std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::NotFound) => {
+            WalkCompleteness::Complete
+        }
+        _ => WalkCompleteness::Incomplete,
+    }
+}
+
+/// Completeness contributed by one walk item: an item error is always a gap,
+/// and a directory whose children could not be read may be one.
+fn entry_completeness(entry: &jwalk::Result<jwalk::DirEntry<((), ())>>) -> WalkCompleteness {
+    match entry {
+        Err(_) => WalkCompleteness::Incomplete,
+        Ok(entry) => entry
+            .read_children
+            .as_ref()
+            .and_then(|read| read.error())
+            .map_or(WalkCompleteness::Complete, directory_error_completeness),
+    }
+}
+
+/// Fold one walk item into the walk's completeness, logging the first gap.
+fn noted_completeness(
+    root: &Path,
+    so_far: WalkCompleteness,
+    entry: &jwalk::Result<jwalk::DirEntry<((), ())>>,
+) -> WalkCompleteness {
+    let observed = entry_completeness(entry);
+    if so_far == WalkCompleteness::Complete && observed == WalkCompleteness::Incomplete {
+        match entry {
+            Err(error) => log::warn!("quickfind: walk of {root:?} is incomplete: {error}"),
+            Ok(entry) => log::warn!(
+                "quickfind: walk of {root:?} is incomplete: {:?} could not be read",
+                entry.path()
+            ),
+        }
+    }
+    so_far.and(observed)
+}
 
 fn is_hard_skip(name: &str) -> bool {
     HARD_SKIP_DIRS.contains(&name)
@@ -392,14 +541,14 @@ fn stream_find(
 }
 
 #[cfg(any(windows, test))]
-/// Both walk passes via the distro's native `find` (#414). Returns false when
+/// Both walk passes via the distro's native `find` (#414). Returns `None` when
 /// find could not run — the caller falls back to the jwalk implementation.
 fn find_walk_passes(
     make_cmd: &dyn Fn() -> std::process::Command,
     linux_path: &str,
     stop: &dyn Fn() -> bool,
     on_entry: &mut dyn FnMut(Walked),
-) -> bool {
+) -> Option<WalkCompleteness> {
     let mut deferred_roots: Vec<String> = Vec::new();
     let mut fast_count = 0usize;
     let ok = stream_find(
@@ -425,8 +574,9 @@ fn find_walk_passes(
     );
     if !ok {
         log::warn!("quickfind: find_walk_passes fast pass could not run; falling back to jwalk");
-        return false;
+        return None;
     }
+    let mut completeness = WalkCompleteness::Complete;
     log::info!(
         "quickfind: find_walk_passes fast pass emitted {fast_count} entries; deferred_roots={deferred_roots:?}"
     );
@@ -446,7 +596,7 @@ fn find_walk_passes(
         }
         let before = scanned.get();
         let abs = format!("{}/{}", linux_path.trim_end_matches('/'), root_rel);
-        stream_find(
+        let ran = stream_find(
             {
                 let mut c = make_cmd();
                 c.args(find_deferred_args(&abs));
@@ -464,25 +614,29 @@ fn find_walk_passes(
                 });
             },
         );
+        if !ran {
+            completeness = WalkCompleteness::Incomplete;
+        }
         log::info!(
             "quickfind: find_walk_passes deferred root {root_rel:?} scanned {} entries (running total {})",
             scanned.get() - before,
             scanned.get()
         );
     }
-    true
+    Some(completeness)
 }
 
 /// Walk `root`, calling `on_entry` for every visible entry: the fast pass
 /// first (build-output trees pruned, but still reported as entries themselves),
 /// then those pruned trees, marked `deferred`. Stops early when `stop` returns
-/// true. Returns once both passes are done.
+/// true. Returns once both passes are done, reporting whether a walk error
+/// left gaps in what was emitted.
 fn walk_passes(
     root: &Path,
     stop: &dyn Fn() -> bool,
     fast_cap: usize,
     on_entry: &mut dyn FnMut(Walked),
-) {
+) -> WalkCompleteness {
     // WSL UNC roots delegate to the distro's native find (#414); on any
     // failure (wsl.exe missing, no find) fall through to the jwalk passes.
     #[cfg(windows)]
@@ -498,9 +652,10 @@ fn walk_passes(
                     c.args(wsl_find_argv(&distro));
                     c
                 };
-                if find_walk_passes(&make_cmd, &linux_path, stop, on_entry) {
+                if let Some(completeness) = find_walk_passes(&make_cmd, &linux_path, stop, on_entry)
+                {
                     log::info!("quickfind: WSL find delegation completed for {linux_path:?}");
-                    return;
+                    return completeness;
                 }
                 log::warn!(
                     "quickfind: WSL find delegation returned false for {linux_path:?}; falling back to jwalk"
@@ -516,10 +671,14 @@ fn walk_passes(
         }
     }
     let deferred_roots = Arc::new(Mutex::new(Vec::<PathBuf>::new()));
+    let parallelism = walk_parallelism(root);
+    let mut completeness = WalkCompleteness::Complete;
 
     let collect = deferred_roots.clone();
-    let fast = WalkDir::new(root).skip_hidden(true).process_read_dir(
-        move |_depth, _path, _state, children| {
+    let fast = WalkDir::new(root)
+        .skip_hidden(true)
+        .parallelism(parallelism.clone())
+        .process_read_dir(move |_depth, _path, _state, children| {
             for e in children.iter_mut().flatten() {
                 let name = e.file_name().to_string_lossy().to_string();
                 if is_hard_skip(&name) {
@@ -532,8 +691,7 @@ fn walk_passes(
                     e.read_children = None;
                 }
             }
-        },
-    );
+        });
 
     let mut emit = |entry: jwalk::DirEntry<((), ())>, deferred: bool| {
         let path = entry.path();
@@ -561,8 +719,9 @@ fn walk_passes(
     let mut fast_count = 0usize;
     for entry in fast.into_iter().take(fast_cap) {
         if stop() {
-            return;
+            return completeness;
         }
+        completeness = noted_completeness(root, completeness, &entry);
         if let Ok(e) = entry {
             emit(e, false);
             fast_count += 1;
@@ -573,7 +732,7 @@ fn walk_passes(
     // Pass two: the build-output trees, deprioritized and capped.
     let roots = match deferred_roots.lock() {
         Ok(r) => r.clone(),
-        Err(_) => return,
+        Err(_) => return WalkCompleteness::Incomplete,
     };
     let mut scanned = 0usize;
     let roots_len = roots.len();
@@ -583,11 +742,12 @@ fn walk_passes(
                 "quickfind: jwalk deferred cap/stop hit after {scanned} entries; {} of {roots_len} roots left unwalked",
                 roots_len - i
             );
-            return;
+            return completeness;
         }
         let before = scanned;
         let walker = WalkDir::new(deferred_root)
             .skip_hidden(true)
+            .parallelism(parallelism.clone())
             .process_read_dir(|_depth, _path, _state, children| {
                 for e in children.iter_mut().flatten() {
                     if is_hard_skip(&e.file_name().to_string_lossy()) {
@@ -600,9 +760,10 @@ fn walk_passes(
                 log::warn!(
                     "quickfind: jwalk deferred cap/stop hit mid-root {deferred_root:?} after {scanned} entries"
                 );
-                return;
+                return completeness;
             }
             scanned += 1;
+            completeness = noted_completeness(root, completeness, &entry);
             if let Ok(e) = entry {
                 // Depth 0 is the deferred root itself, which the fast pass
                 // already emitted — a second copy would show up as a
@@ -618,6 +779,7 @@ fn walk_passes(
             scanned - before
         );
     }
+    completeness
 }
 
 /// Search result from fuzzy file search.
@@ -675,6 +837,11 @@ fn normalize_rel_separators(p: String) -> String {
 /// Collect file/directory entries under `root_path` (both passes).
 /// Capped at `WALK_SAFETY_CAP` to bound memory for the non-streaming path.
 fn walk_entries(root_path: &Path) -> Vec<Walked> {
+    walk_listing(root_path).entries
+}
+
+/// [`walk_entries`] plus whether the walk may be cached as the whole tree.
+fn walk_listing(root_path: &Path) -> WalkedListing<Walked> {
     #[cfg(test)]
     {
         *TEST_WALK_COUNTS
@@ -684,10 +851,13 @@ fn walk_entries(root_path: &Path) -> Vec<Walked> {
             .or_default() += 1;
     }
     let mut entries: Vec<Walked> = Vec::new();
-    walk_passes(root_path, &|| false, WALK_SAFETY_CAP, &mut |w| {
+    let completeness = walk_passes(root_path, &|| false, WALK_SAFETY_CAP, &mut |w| {
         entries.push(w)
     });
-    entries
+    WalkedListing {
+        entries,
+        complete: completeness == WalkCompleteness::Complete,
+    }
 }
 
 #[cfg(test)]
@@ -716,7 +886,7 @@ fn walk_streaming_entries(
     let mut completed_entries = Some(Vec::new());
     #[cfg(test)]
     let mut paused = false;
-    walk_passes(root_path, cancelled, usize::MAX, &mut |entry| {
+    let completeness = walk_passes(root_path, cancelled, usize::MAX, &mut |entry| {
         #[cfg(test)]
         if !paused {
             let gate = TEST_STREAM_GATES
@@ -741,7 +911,8 @@ fn walk_streaming_entries(
         on_entry(entry);
     });
 
-    if cancelled() {
+    // A cancelled or failed walk is partial; only a complete one is cacheable.
+    if cancelled() || completeness == WalkCompleteness::Incomplete {
         None
     } else {
         completed_entries
@@ -773,7 +944,7 @@ fn stream_walk_count_for_test(root_path: &Path) -> usize {
 
 fn cached_walk_entries(root_path: &Path) -> Arc<Vec<Walked>> {
     if crate::files::fs_watcher::ensure_search_cache_watched(root_path) {
-        SEARCH_ENTRY_CACHE.get_or_load(root_path, || walk_entries(root_path))
+        SEARCH_ENTRY_CACHE.get_or_load_listing(root_path, || walk_listing(root_path))
     } else {
         Arc::new(walk_entries(root_path))
     }
@@ -1130,6 +1301,10 @@ mod issue_651_integration_tests;
 #[path = "../test_support/issue_651_streaming_integration.rs"]
 mod issue_651_streaming_integration_tests;
 
+#[cfg(test)]
+#[path = "../test_support/issue_1404_walk_pool_test.rs"]
+mod issue_1404_walk_pool_tests;
+
 /// Per-search constants shared by every `process_batch` call.
 struct BatchContext<'a, S: SearchResultsSink> {
     sink: &'a S,
@@ -1365,8 +1540,13 @@ mod tests {
         let root_str = root.to_string_lossy().to_string();
         let make_cmd = || std::process::Command::new("find");
         let mut entries: Vec<Walked> = Vec::new();
-        let ok = find_walk_passes(&make_cmd, &root_str, &|| false, &mut |w| entries.push(w));
-        assert!(ok, "find walk should run");
+        let completeness =
+            find_walk_passes(&make_cmd, &root_str, &|| false, &mut |w| entries.push(w));
+        assert_eq!(
+            completeness,
+            Some(WalkCompleteness::Complete),
+            "find walk should run to completion"
+        );
 
         let listing = fmt_walked(&entries);
         // Fast-pass entries, not deferred.
@@ -1427,8 +1607,12 @@ mod tests {
         // stand-in for the shell-mangled find that returned nothing.
         let make_cmd = || std::process::Command::new("false");
         let mut entries: Vec<Walked> = Vec::new();
-        let ok = find_walk_passes(&make_cmd, "/whatever", &|| false, &mut |w| entries.push(w));
-        assert!(!ok, "a non-zero exit with no output must return false");
+        let completeness =
+            find_walk_passes(&make_cmd, "/whatever", &|| false, &mut |w| entries.push(w));
+        assert!(
+            completeness.is_none(),
+            "a non-zero exit with no output must report that find could not run"
+        );
         assert!(entries.is_empty(), "no entries should have been emitted");
     }
 

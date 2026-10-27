@@ -71,8 +71,10 @@ test.describe("Markdown preview navigation", () => {
 
     // The preview ends on nav-11, completely typeset (every block revealed).
     await expect(markdown.locator("h1")).toHaveText("Navigation 11");
-    await expect(page.locator(".preview-content")).toHaveAttribute("aria-busy", "false");
-    await expect(markdown.locator(".katex")).toHaveCount(140, { timeout: 15_000 });
+    // Completion only (latency is asserted in-page below): the frame-paced
+    // reveal of a whole math document can outlast 5 s on loaded WebKit (#1422).
+    await expect(page.locator(".preview-content")).toHaveAttribute("aria-busy", "false", { timeout: 15_000 });
+    await expect(markdown.locator(".katex")).toHaveCount(140);
     await expect(markdown.locator(".katex-display")).toHaveCount(28);
     await expect(markdown.locator("h2").last()).toHaveText("Section 27 of file 11");
 

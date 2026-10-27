@@ -64,6 +64,7 @@ pub fn run_process_supervisor() -> Option<i32> {
 }
 mod load_diagnostics;
 mod media_duration;
+mod memory_release;
 mod nano_banana;
 mod palette;
 mod platform;
@@ -179,6 +180,8 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         .map(|duration| duration.as_secs_f64() * 1000.0)
         .unwrap_or(f64::NAN);
 
+    // Keep large transient listing buffers from pinning glibc arenas (#1416).
+    memory_release::configure_allocator();
     // Avoid WebKitGTK's DMABuf Wayland protocol errors without giving up
     // composited painting (#1057); see webkit_renderer.
     #[cfg(target_os = "linux")]

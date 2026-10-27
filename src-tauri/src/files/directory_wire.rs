@@ -128,7 +128,10 @@ impl Serialize for DirectoryListing {
                 prefix,
             },
         )?;
-        result.end()
+        let ended = result.end();
+        // Every listing reply passes through here once it is encoded (#1416).
+        crate::memory_release::listing_encoded(self.entries.len());
+        ended
     }
 }
 

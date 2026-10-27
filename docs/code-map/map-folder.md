@@ -39,6 +39,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `ImageResolutionCell.svelte` — lazy intrinsic image metadata for mounted Details rows.
 - `DetailsView.svelte` — virtual-scrolled table view (columns, resize, sort headers).
 - `ListColumnsView.svelte` — Folder Peek List: column-major tree (`role=tree`, per-level `aria-posinset`/`setsize` from `peekTreePositionLookup`, arithmetic while nothing is expanded; a listbox without peek) with horizontal windowing and shared reveal/navigation snapshot; an open top-level folder keeps its header row and renders a `ListCard`, and its inert `.list-motion-layer` holds `use-list-motion` ghosts (#1240).
+- `LineageGroupRow.svelte` — Details lineage group row ("with B"): caret, co-parent icon, label and count; toggles and previews the parents it combines; never a file (lineage peek #1431).
+- `ListLineageGroup.svelte` — the List counterpart of `LineageGroupRow`, inside cards and in full flow.
 - `ListPeekState.svelte` — shared loading/empty/error treeitem for compact List cards and full-flow columns; preserves parent identity for drops.
 - `ListCard.svelte` — one List card's descendant scroll area (`role=group`, virtualized rows, nested guides, treeitem pseudo-rows) ; the header owns the clickable “+N more” action; its surface is a `.peek-drop-target` for the folder.
 - `ListCardGrip.svelte` — a List card's bottom-edge grip control (separator with arrow/Home/End keys), rendered inside the folder's header treeitem because a tree owns only groups and treeitems; its drag session lives in `use-list-columns`.
@@ -224,6 +226,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `pane-resize.ts` — owns captured divider geometry, one coalesced pointer frame, and cancellation on release, blur or component retirement.
 - `pane-watch.ts` — per-pane observed navigation tickets, lease commit/rollback, pending-change replay and refresh admission.
 - `directory-events.ts` — shared native directory event subscription with explicit readiness, retry and late-listener retirement.
+- `pane-lineage.svelte.ts` — lazy per-pane entry lineage (#1431): the applicable contribution, debounced `changed` reloads, the 400ms first-paint hold, 300ms held arrivals and the `projectLineage` grouping; counts cycle fallbacks.
 - `folder-peek.svelte.ts` — per-pane facade that loads peek policies and resources on first use.
 - `folder-peek-session.svelte.ts` — lazy expansion membership, bounded List spill/full-flow/column stage choices (forgotten when a folder closes, #1365), and independently retired child-listing resources.
 - `pane-peek-watch.ts` — lazy pane-watch extension for capped child-directory and repository observation.
@@ -452,6 +455,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/domain/folder-peek.ts` — pure preorder expansion, pruning/caps and Details tree row/index geometry.
 - `src/lib/domain/folder-peek-memory.ts` — bounded expansion membership and List stage choices, subtree collapse and deleted-branch pruning shared with the pending restore facade.
 - `src/lib/domain/folder-peek-flat.ts` — flat Details rows and command admission before first peek activation; caret-less click ownership (`rowClickOwnsPeek`: click toggles, double-click refused with a notice, #1298).
+- `src/lib/domain/entry-lineage.ts` — lineage peek grouping (#1431): validates a provider's parent relation against the listing (foreign/self edges dropped, cycles fall back to flat) and groups children under each parent (`projectLineage`: direct children, "with B" groups, roots, descendants).
+- `src/lib/domain/lineage-co-parent.ts` — file-shaped stand-in for a lineage co-parent's icon, kept off the grouping module.
 - `src/lib/domain/folder-peek-pane.ts` — explorer-applied peek decisions: selection/cursor pruning after a projection hides peeked children, and spring-peek drop folders (#1242).
 - `src/lib/domain/explorer-entries.ts` — explorer entry-list helpers: multi-entry clipboard labels and merging a selected context-menu entry the listing lacks.
 - `src/lib/domain/file-operation-selection.ts` — Explorer recursive batch reduction, symlink-overlap admission, drag-primary remapping, and archive roots (same-basename refusal).
@@ -599,6 +604,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `dialog-registry.svelte.ts` — registry for plugin modal dialogs; PluginContext wiring injects the window-owned pane host.
 - `settings-registry.svelte.ts` — registry for plugin settings sections.
 - `inspector-registry.svelte.ts` — ordered, owner-disposed registry for selection-aware inspector contributions.
+- `entry-lineage-registry.svelte.ts` — `registerEntryLineage` contributions (capability `entryLineage`, #1431): owner-disposed, ordered, `available()` errors normalized to false; `showLineageLabel`.
 - `file-view-registry.svelte.ts` — SDK 2 file view contributions (ordered, owner-disposed) and the pane handle type a view receives.
 - `preview-registry.svelte.ts` — SDK 2 Preview extension points: plugin preview targets (non-file subjects) and Preview-info sections.
 - `src/lib/plugins/image-editor-registry.svelte.ts` — ordered, owner-disposed image editing tool contributions with immutable captured source revisions and opaque service ports.
@@ -1064,6 +1070,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/process_ext/pipe_capture.rs` — shared Unix/Windows bounded stdout pipe capture with optional streaming and independently truncated prefix/suffix diagnostics; process-exit retirement drains queued bytes without a scheduling deadline.
 - `src-tauri/src/process_ext/windows_job.rs` — attach suspended launchers to kill-on-close JobObjects before descendants can start.
 - `src/lib/plugins/installed.ts` — load/remove installed contributions and synchronize package changes between windows.
+- `src/test-support/lineage-provider.ts` — browser-test `entryLineage` provider over the mock filesystem: install, update (fires `changed`), optional load delay (`e2e/lineage-peek.spec.ts`).
 - `src/test-support/file-view-eligibility.svelte.ts` — reactive pending/answer and activation gate for browser file-view first-paint tests; imported only by the intercepted demo fixture.
 - `src/lib/plugins/runtime-sdk.ts`, `src/lib/plugins/svelte-runtime.d.ts` — frozen SDK and exact shared Svelte compiler/runtime bindings; host modules `ui/modal`, `ui/image-editor`, `ui/file-tiles` (capability `fileTiles`), `ui/file-tile` (capability `fileTile`, including `tileGridMetrics`); capability `tileSize` (`FileViewPane.tileSize`, file-tiles `size`); capability `jobRetry` (`PluginJobs.accept` registration `retry`).
 - `src/lib/components/InstalledPluginSettings.svelte` — install, enable, remove and activation errors in Settings.

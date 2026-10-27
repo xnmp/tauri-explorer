@@ -1,6 +1,7 @@
 # Lineage peek: show an image's edits with Folder Peek (design, 2026-10-28)
 
-Status: design, not started. Host phases come first; the TraceExplorer plugin phase follows
+Status: host phases H1–H3 implemented (#1431; Tiles uses the flattened-panel fallback of §4.3,
+without stacked per-level panels or section labels yet). The TraceExplorer plugin phase follows
 and detects the new capability.
 
 ## 1. Goal
@@ -109,7 +110,7 @@ Ship H1 alone, with the full peek suite passing unchanged. It is the risky refac
   }
   type LineageParent =
     | { kind: "entry"; path: string }
-    | { kind: "external"; label: string; thumbnailPath?: string };
+    | { kind: "external"; key: string; label: string; thumbnailPath?: string };
   ```
 - **Pane option "Show traces"** (the contribution's title):
   - It sits in the View section of the context menu and has a command.

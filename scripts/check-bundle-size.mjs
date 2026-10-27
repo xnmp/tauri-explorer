@@ -73,7 +73,15 @@ const STARTUP_RAW_BUDGET = 866_617;
 // (146 bytes under the old cap) and 276,101 normalized, plus the same 146.
 // Under the old measure, a lazy-only SettingsDialog split (+9 bytes raw)
 // moved startup gzip +356 bytes through renamed chunks alone.
-const STARTUP_GZIP_BUDGET = 276_247;
+// Raised 276,247 -> 278,528 (+2,281) for #1431 (lineage peek): dev measured
+// 275,499; the feature measured 278,380 (+2,881 gzip). Eager by nature: the
+// SDK registration and its registry, occurrence keys for cursor/anchor/Shift
+// ranges (every pane), the per-pane "Show <title>" state with its persistence,
+// the View-menu items, two palette commands and the first-paint hold. The
+// lineage controller and grouping (pane-lineage, entry-lineage), its tree
+// walk (folder-peek session) and the group-row components load lazily, only
+// once a plugin registers a lineage.
+const STARTUP_GZIP_BUDGET = 278_528;
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const clientDir = resolve(repoRoot, ".svelte-kit/output/client");

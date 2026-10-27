@@ -8,7 +8,7 @@
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import type { PeekGroup } from "$lib/domain/folder-peek";
   import type { LineageGroup } from "$lib/domain/entry-lineage";
-  import { lineageCoParentEntry } from "$lib/domain/entry-lineage";
+  import { lineageCoParentEntry } from "$lib/domain/lineage-co-parent";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { getPaneIdContext } from "$lib/state/pane-context";
   import FileIcon from "./FileIcon.svelte";

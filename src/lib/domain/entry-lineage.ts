@@ -220,9 +220,3 @@ export function lineageGroupParent(id: string): string | null {
   return at < 0 ? null : id.slice(6, at);
 }
 
-/** A file-shaped stand-in for a co-parent's icon or thumbnail (never listed). */
-export function lineageCoParentEntry(parent: LineageCoParent): FileEntry {
-  return parent.kind === "entry"
-    ? { name: parent.name, path: parent.path, kind: "file", size: 0, modified: "" }
-    : { name: parent.label, path: parent.thumbnailPath ?? parent.label, kind: "file", size: 0, modified: "" };
-}

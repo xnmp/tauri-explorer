@@ -1149,9 +1149,10 @@ jobs:
           components: rustfmt, clippy
 
       # Refreshed before the cache probe so the hashed apt versions are the
-      # ones a miss installs.
+      # ones a miss installs. Bounded like the install (#1371).
       - name: Refresh apt package index
-        run: sudo apt-get update
+        timeout-minutes: 8
+        run: .github/actions/tauri-linux-deps/apt.sh update
 
       - name: Test-result cache key
         id: test-cache-key
@@ -1168,9 +1169,16 @@ jobs:
         id: test-cache-probe
         run: node scripts/test-cache.mjs probe --task ci:rust --target "rust-${{ matrix.suite }}"
 
+      # Reuses .debs cached by package list and install plan, with bounded
+      # retried attempts, so a stalled mirror fails here in setup, where
+      # ci-auto-rerun re-runs it, not at the job timeout (#1371).
       - name: Install Tauri Linux system dependencies
         if: steps.test-cache-probe.outputs.hit != 'true'
-        run: sudo apt-get install -y $TEST_CACHE_APT_PACKAGES
+        timeout-minutes: 25
+        uses: ./.github/actions/tauri-linux-deps
+        with:
+          packages: ${{ env.TEST_CACHE_APT_PACKAGES }}
+          update-index: "false"
 
       # Each suite builds different feature artifacts; separate cache keys
       # keep the two matrix jobs from overwriting each other's target dir.

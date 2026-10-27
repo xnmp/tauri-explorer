@@ -48,6 +48,21 @@ GITHUB_TOKEN open PRs. It uploads the regenerated timings as the
 `e2e-shard-timings` artifact and writes the drift to the job summary; apply it
 in an ordinary PR. It fails with an error when no successful dev run exists.
 
+# Tauri Linux apt packages (#1371)
+
+Every job that needs Tauri's Linux system libraries installs them through
+`.github/actions/tauri-linux-deps` (a step with `timeout-minutes` and an
+`install` name, so ci-auto-rerun treats a failure as setup), never a bare
+`apt-get`. Each apt attempt is bounded (`apt.sh`: 120 s per index refresh,
+240 s per install, 3 attempts) and downloaded `.deb`s are cached under
+`tauri-apt-v1-<ImageOS>-<package list>-<install plan>`; PRs restore but do not
+save. apt fetches whatever the refreshed index selects and only reuses a
+cached `.deb` whose filename (package_version_arch) matches, so a stale entry
+only costs downloads. The step timeout (25 min) covers the worst case of all
+attempts (~19 min) plus cache restore. `rust-suite` refreshes the index in its own step
+before the test-result probe (the hashed candidate versions) and passes
+`update-index: "false"`. Contracts: `tests/ci-apt-install.test.ts`.
+
 # Browser jobs in the Playwright container (#1367)
 
 `chromium`, `chromium-view-modes` and `webkit-tests` run in

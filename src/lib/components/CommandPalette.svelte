@@ -15,7 +15,8 @@
   } from "$lib/state/commands.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { usePointerIntent } from "$lib/composables/use-pointer-intent.svelte";
-  import { commandFrecencyPoints, scoreCommand } from "$lib/domain/fuzzy-score";
+  import { keywordsFor } from "$lib/domain/command-keywords";
+  import { commandFrecencyPoints, scoreCommand } from "$lib/domain/command-score";
   import { paletteSelectionIndex, stepPaletteSelection } from "$lib/domain/palette-selection";
   import { runAfterClose } from "$lib/state/run-after-close";
   import Modal from "./Modal.svelte";
@@ -64,7 +65,7 @@
     const lowerQuery = query.toLowerCase();
     return available
       .map((cmd) => {
-        // Scoring math lives in domain/fuzzy-score.ts (scoreCommand).
+        // Scoring math lives in domain/command-score.ts (scoreCommand).
         const frecency = getCommandFrecencyScore(cmd.id);
         const frecencyPts = commandFrecencyPoints(frecency);
         const total = scoreCommand(
@@ -72,6 +73,7 @@
             label: cmd.label.toLowerCase(),
             category: getCategoryLabel(cmd.category).toLowerCase(),
             shortcut: (getCommandShortcut(cmd.id) || "").toLowerCase(),
+            keywords: keywordsFor(cmd.id),
           },
           lowerQuery,
           frecency,

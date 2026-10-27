@@ -17,7 +17,9 @@ test.describe("Markdown preview colours", () => {
     await page.locator(".entry-item", { hasText: "notes.md" }).first().click();
 
     const markdown = page.locator(".preview-markdown");
-    await expect(markdown).toBeVisible();
+    // Markdown is revealed a slice per frame (#1418): wait for the whole document.
+    await expect(page.locator(".preview-content")).toHaveAttribute("aria-busy", "false");
+    await expect(markdown.locator('a[href="https://example.com"]')).toBeAttached();
 
     const colours = await markdown.evaluate((element) => {
       const heading = element.querySelector("h1");

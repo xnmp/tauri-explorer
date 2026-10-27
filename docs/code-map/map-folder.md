@@ -183,7 +183,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-repo-watch.ts` — shared graph/SCM adapter over ordered watch ownership; retains unique native leases until acknowledged release, including retries.
 - `git-graph-coverage.ts` — repository observation leases shared by pending graph reads and retained snapshots; listener/watch acknowledgement precedes reads, final release drains acquisition, and UNC polling roots stay uncached.
 - `directory-watch.ts` — generic ordered path-lease ownership plus the directory adapter; retains exact release authority across failed teardown and drains late acquisition; reused by Git, thumbnails, Miller columns and drives.
-- `src/lib/state/preview-content.ts` — file-kind loaders produce one PreviewContent union; owns per-pane image cache/lifetime, held-image replacement, lazy PDF/video viewers, text fallbacks and rendition upgrades.
+- `src/lib/state/preview-content.ts` — file-kind loaders produce one PreviewContent union; owns per-pane image cache/lifetime, held-image replacement, progressive Markdown reveal + rendered-Markdown LRU (#1418), lazy PDF/video viewers, text fallbacks and rendition upgrades.
 - `preview-lifetime.ts` — full-revision preview request and object-URL ownership; stale results cannot publish or revoke a replacement.
 - `preview-image.ts` — Preview image load for files and plugin targets: optional display-sized rendition first (`get_preview_image`, any failure falls back to the original, #1054), then asset protocol + off-screen decode, then the backend `read_image_data_url` fallback (paths outside the asset scope, cloud placeholders; the only path in browser mode); blob ownership through the caller's lifetime (#1033).
 - `preview-image-cache.ts` — pane-scoped memory of shown Preview images per file version (path + mtime/size/local revision; original or rendition-at-edge): a revisit is a synchronous hit with no request; bounded by count and decoded pixels, never evicts the on-screen entry, owns and revokes its blobs, cleared on unmount (#1014).
@@ -563,7 +563,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `csv-preview.ts` — quoted CSV parser for PreviewPane table data, bounded to the preview's data-row limit (#666); `csvRowHeight` / `csvColumnTemplate` table layout.
 - `html-preview-zoom.ts` — pure HTML preview page-zoom model: unmeasurable sandboxed frame scales a fixed ≥1280px desktop layout like an image (#1361), Fit, zoom stops and labels (#1352).
 - `pdf-preview.ts` — pure PDF fit, zoom-anchor, measured pointer coordinates, pan bounds and safe-link policy (#728–#730).
-- `markdown.ts` — safe markdown render for preview.
+- `markdown.ts` — safe markdown render for preview; `renderMarkdownBlocks` yields lazily typeset top-level blocks (#1418).
+- `progressive-reveal.ts` — reveals a lazily rendered document one bounded slice per frame, starting the frame after the request and stopping once it is stale (#1418).
+- `versioned-lru.ts` — bounded LRU holding one version per key; storing a version drops the older one (Markdown preview cache, #1418).
 - `markdown-math.ts` — Marked extension for TeX math (`$…$`, `\(…\)`, `$$…$$`, `\[…\]`); typesetter injected (#1393).
 - `katex-typesetter.ts` — lazy KaTeX typesetter + bundled woff2 fonts, loaded only for math documents (#1393).
 - `marquee-rect.ts` — marquee band geometry as compositor-only `transform`s for five container-sized layers (fill + four 1px edges sized to the client box, scaled down so fractional zoom rasterises exactly); a resized band element repainted its layer over every image tile per frame on WebKitGTK (#1051).

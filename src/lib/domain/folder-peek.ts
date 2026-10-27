@@ -9,7 +9,10 @@ import { pathComparison } from "./path";
 import type { ExpandedPaths } from "./folder-peek-memory";
 export { toggleExpanded, collapseSubtree, pruneExpanded } from "./folder-peek-memory";
 export type { ExpandedPaths } from "./folder-peek-memory";
-export interface PeekMeta { depth: number; parentPath: string }
+/** An occurrence's placement. `parentPath` is the folder holding the file;
+ * `parentKey`, present only beneath a lineage occurrence, is the parent
+ * row's occurrence key (a file or a lineage group). */
+export interface PeekMeta { depth: number; parentPath: string; parentKey?: string }
 export interface PeekListing {
   status: "loading" | "loaded" | "error";
   entries: readonly FileEntry[];
@@ -52,8 +55,14 @@ export function choosePeekWatches(reachable: readonly string[], expanded: Expand
 export interface PeekTree {
   /** The listed directory: the parent of every depth-0 entry. */
   root: string;
+  /** Visible file occurrences in order; a path may repeat (lineage merges). */
   entries: readonly FileEntry[];
+  /** Occurrence key per entry (`peekKeyAt`); absent when every key is its path. */
+  keys?: readonly string[];
+  /** Placement by occurrence key; a repeated path also answers by its path
+   * with its first occurrence. */
   meta: ReadonlyMap<string, PeekMeta>;
+  /** Open folder peeks: the folders whose listings are loaded and watched. */
   expanded: readonly string[];
 }
 
@@ -178,10 +187,11 @@ export function peekTreePositions(rows: readonly PeekRow[]): PeekTreePositions {
   const parents: string[] = [];
   for (const row of rows) {
     if (row.kind !== "entry") continue;
-    const position = (counts.get(row.parentPath) ?? 0) + 1;
-    counts.set(row.parentPath, position);
+    const parent = row.parentKey ?? row.parentPath;
+    const position = (counts.get(parent) ?? 0) + 1;
+    counts.set(parent, position);
     posinset[row.entryIndex] = position;
-    parents[row.entryIndex] = row.parentPath;
+    parents[row.entryIndex] = parent;
   }
   return { posinset, setsize: parents.map(parent => counts.get(parent)!) };
 }

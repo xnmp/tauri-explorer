@@ -86,7 +86,7 @@
   {role}
   aria-label={isVideoMediaFile(entry) ? `${entry.name}, video` : owns ? entry.name : undefined}
   aria-owns={owns}
-  tabindex={!isRenaming && explorer.focusedEntry?.path === entry.path ? 0 : -1}
+  tabindex={!isRenaming && explorer.focusedEntry?.path === entry.path && (!explorer.displayKeys || explorer.cursorIndex === index) ? 0 : -1}
   aria-selected={explorer.isSelected(entry)}
   class="{className} entry-item"
   data-region="row"

@@ -3,22 +3,39 @@
  * spring-loaded peeks (#1242). Imported only by the explorer store. */
 import type { FileEntry } from "./file";
 import type { PeekMeta, PeekTree } from "./folder-peek";
+import { occurrencePath, parentKeyOf, peekKeyAt } from "./folder-peek-flat";
 
 /** Peeked children a projection change hid, and where a hidden cursor (or,
  * failing that, anchor) lands: its nearest still-shown ancestor, or null when
  * none is shown. Null when nothing hid; `refocus` is absent when neither the
- * cursor nor the anchor hid. */
-export function prunePeekSelection(before: Pick<PeekTree, "entries" | "meta">, after: readonly FileEntry[],
-  selected: Iterable<string>, cursor: string | null, anchor: string | null): { selected: string[]; refocus?: string | null } | null {
+ * cursor nor the anchor hid.
+ *
+ * A path hides only when no occurrence of it stays visible (a lineage merge
+ * output shows under each parent). The walk climbs from the cursor's own
+ * occurrence (`cursorKey`, else its first) and lands on the first visible
+ * file; `refocusKey` names that occurrence. */
+export function prunePeekSelection(before: Pick<PeekTree, "entries" | "meta" | "keys">, after: readonly FileEntry[],
+  selected: Iterable<string>, cursor: string | null, anchor: string | null,
+  cursorKey: string | null = cursor, anchorKey: string | null = anchor): { selected: string[]; refocus?: string | null; refocusKey?: string } | null {
   const visible = new Set(after.map(e => e.path));
-  const hidden = new Set(before.entries.filter(e => (before.meta.get(e.path)?.depth ?? 0) > 0 && !visible.has(e.path)).map(e => e.path));
+  const hidden = new Set<string>();
+  before.entries.forEach((entry, index) => {
+    if (!visible.has(entry.path) && (before.meta.get(peekKeyAt(before, index))?.depth ?? 0) > 0) hidden.add(entry.path);
+  });
   if (!hidden.size) return null;
   const kept = [...selected].filter(path => !hidden.has(path));
   const cursorHidden = cursor && hidden.has(cursor);
   if (!cursorHidden && !(anchor && hidden.has(anchor))) return { selected: kept };
-  let path = cursorHidden ? cursor : anchor;
-  while (path && !visible.has(path)) path = before.meta.get(path)?.parentPath ?? null;
-  return { selected: kept, refocus: path };
+  const from = cursorHidden ? cursor : anchor;
+  const fromKey = cursorHidden ? cursorKey : anchorKey;
+  let key: string | null = fromKey !== null && occurrencePath(fromKey) === from && before.meta.has(fromKey) ? fromKey : from;
+  while (key && !visible.has(occurrencePath(key))) {
+    const placement = before.meta.get(key);
+    key = placement ? parentKeyOf(placement) : null;
+  }
+  const refocus = key && occurrencePath(key);
+  // `refocusKey` only when it differs from `refocus` (a nested lineage occurrence).
+  return key === refocus || key === null ? { selected: kept, refocus } : { selected: kept, refocus, refocusKey: key };
 }
 
 /** The folder a drop on a row targets while it lies inside a temporary peek:

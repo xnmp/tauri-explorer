@@ -20,7 +20,7 @@ import { reconcileDirectorySelection } from "$lib/domain/directory-reconciliatio
 import { isFileViewId } from "$lib/domain/file-view-id";
 import { createFileViewPresentation } from "./file-view-presentation.svelte";
 import { fileViewRegistry } from "$lib/plugins/file-view-registry.svelte";
-import { resolveFileCursor } from "$lib/domain/file-list-navigation";
+import { resolveCursorIndex } from "$lib/domain/file-list-navigation";
 import { clampNumericSetting } from "$lib/domain/settings-numbers";
 import { SvelteSet } from "svelte/reactivity";
 import { untrack } from "svelte";
@@ -28,7 +28,7 @@ import { toastStore } from "./toast.svelte";
 import { gitStatusStore } from "./git-status.svelte";
 import { archiveRoots, operationRoots } from "$lib/domain/file-operation-selection";
 import { createFolderPeekState } from "./folder-peek.svelte";
-import { canPeekAt, flatPeekEntries, flatPeekRows, peekCapability, rowClickOwnsPeek, shouldToggleOnRowClick, resolvePeekCommandTarget, resolvePeekEscape } from "$lib/domain/folder-peek-flat";
+import { canPeekAt, flatPeekEntries, flatPeekRows, occurrencePath, peekCapability, peekKeyAt, rowClickOwnsPeek, shouldToggleOnRowClick, resolvePeekCommandTarget, resolvePeekEscape } from "$lib/domain/folder-peek-flat";
 import { prunePeekSelection, springPeekDropFolder } from "$lib/domain/folder-peek-pane";
 import { entriesLabel, withExternalEntry } from "$lib/domain/explorer-entries";
 import type { PeekLevelCache } from "$lib/domain/folder-peek";
@@ -233,13 +233,32 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     });
   });
   const displayEntries = $derived(peekTree.entries as FileEntry[]);
+  /** The occurrence key of a visible entry index (its path unless repeated). */
+  const keyAt = (index: number): string | null => index >= 0 && index < displayEntries.length ? peekKeyAt(peekTree, index) : null;
+  // The cursor and range anchor are paths (what file operations, refresh
+  // reconciliation and plugins read). A path listed more than once (a lineage
+  // merge output) also records which occurrence: a key that names another
+  // path is stale and ignored, so a path-only update needs no key update.
+  let cursorKey = $state<string | null>(null);
+  let anchorKey = $state<string | null>(null);
+  /** The occurrence key at `index` when it holds `path`, else null (first occurrence). */
+  const occurrenceAt = (index: number | undefined, path: string): string | null =>
+    index !== undefined && displayEntries[index]?.path === path ? keyAt(index) : null;
+  const indexOfKey = (key: string | null, path: string | null): number | undefined => {
+    if (key === null || path === null || occurrencePath(key) !== path || !peekTree.keys) return undefined;
+    const index = peekTree.keys.indexOf(key);
+    return index >= 0 ? index : undefined;
+  };
   const detailRows = $derived(peek.policies?.buildPeekRows(peekTree, peek.listing, creationSession !== null) ?? flatPeekRows(peekTree, creationSession !== null));
 
   function pruneHiddenChildren(before: typeof peekTree, after: readonly FileEntry[]) {
-    const pruned = prunePeekSelection(before, after, coreState.selectedPaths, coreState.cursorPath, coreState.selectionAnchorPath);
+    const pruned = prunePeekSelection(before, after, coreState.selectedPaths, coreState.cursorPath, coreState.selectionAnchorPath, cursorKey, anchorKey);
     if (!pruned) return;
     setSelection(pruned.selected);
-    if (pruned.refocus !== undefined) { coreState.cursorPath = pruned.refocus; coreState.selectionAnchorPath = null; }
+    if (pruned.refocus !== undefined) {
+      coreState.cursorPath = pruned.refocus; coreState.selectionAnchorPath = null;
+      cursorKey = pruned.refocusKey ?? pruned.refocus;
+    }
   }
   let peekIntent = 0;
   /** The last user peek toggle (or collapse-all). Pruning, refreshes,
@@ -793,20 +812,28 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   // Selection Actions
   // ===================
 
-  function selectEntry(entry: FileEntry, options: SelectOptions = {}) {
+  /** `index`, when given, is the clicked occurrence's visible index. */
+  function selectEntry(entry: FileEntry, options: SelectOptions = {}, index?: number) {
+    const key = occurrenceAt(index, entry.path) ?? (coreState.cursorPath === entry.path ? cursorKey : null);
     const result = selection.calculateSelection(
       displayEntries,
       entry,
       coreState.selectedPaths,
       coreState.selectionAnchorPath,
-      options
+      options,
+      { clicked: indexOfKey(key, entry.path) ?? index, anchor: indexOfKey(anchorKey, coreState.selectionAnchorPath) },
     );
     setSelection(result.selectedPaths);
+    // A Shift range keeps its anchor occurrence; any other click anchors here.
+    if (!(options.shiftKey && result.anchorPath === coreState.selectionAnchorPath)) anchorKey = key;
     coreState.selectionAnchorPath = result.anchorPath;
     coreState.cursorPath = entry.path;
+    cursorKey = key;
   }
 
-  const focusedEntry = $derived(resolveFileCursor(displayEntries, coreState.cursorPath, coreState.selectedPaths));
+  const cursorIndex = $derived(resolveCursorIndex(displayEntries, peekTree.keys, coreState.cursorPath, cursorKey, coreState.selectedPaths));
+  const focusedEntry = $derived(cursorIndex >= 0 ? displayEntries[cursorIndex] : undefined);
+  const focusedKey = $derived(keyAt(cursorIndex) ?? undefined);
 
   function clearSelection() {
     setSelection([]);
@@ -1189,17 +1216,19 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     },
     get peekCaretsShown() { return caretsShown(); },
     collapseAllPeeks,
-    get peekCommandTarget() { return resolvePeekCommandTarget(focusedEntry, peekTree.meta, capability); },
-    get canEscapePeek() { return capability !== "none" && resolvePeekEscape(focusedEntry, peekTree.meta) !== null; },
+    get peekCommandTarget() { return resolvePeekCommandTarget(focusedEntry, peekTree.meta, capability, focusedKey); },
+    get canEscapePeek() { return capability !== "none" && resolvePeekEscape(focusedEntry, peekTree.meta, focusedKey) !== null; },
     escapeSelectionOrPeek() {
       // A pending lazy renderer has no mounted editor to own its Escape.
       if (creationSession) { cancelInlineNewFolder(); return; }
       // Without peeks Escape is exactly the classic Clear Selection.
       if (coreState.selectedPaths.size || capability === "none") { clearSelection(); return; }
-      const parent = resolvePeekEscape(focusedEntry, peekTree.meta);
+      const placement = focusedKey === undefined ? undefined : peekTree.meta.get(focusedKey);
+      const parent = resolvePeekEscape(focusedEntry, peekTree.meta, focusedKey);
       if (!parent) return;
       togglePeek(parent);
       coreState.cursorPath = parent; coreState.selectionAnchorPath = null;
+      cursorKey = placement?.parentKey ?? parent;
       onRevealCallback?.();
     },
     get currentPath() {
@@ -1316,7 +1345,15 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     clearFilter() { filterQuery = ""; },
     // Selection and independent keyboard cursor
     get focusedEntry() { return focusedEntry; },
-    focusEntry(entry: FileEntry) { coreState.cursorPath = entry.path; },
+    /** The cursor's visible index (its occurrence when the path repeats); -1 when empty. */
+    get cursorIndex() { return cursorIndex; },
+    /** Occurrence keys parallel to `displayEntries`; absent when every key is the path. */
+    get displayKeys() { return peekTree.keys; },
+    /** `index`, when given, is the focused occurrence's visible index. */
+    focusEntry(entry: FileEntry, index?: number) {
+      cursorKey = occurrenceAt(index, entry.path) ?? (coreState.cursorPath === entry.path ? cursorKey : null);
+      coreState.cursorPath = entry.path;
+    },
     selectEntry,
     revealEntry(path: string): boolean {
       const entry = coreState.entries.find((entry) => entry.path === path);

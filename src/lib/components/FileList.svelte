@@ -90,7 +90,7 @@
   // Scroll-to-entry-index method, bound from whichever view is active
   // (Details/List/Tiles all virtualize and own their scroll container).
   let viewContainsIndex = $state<((index: number) => boolean) | undefined>();
-  const cursorIndex = $derived(explorer.focusedEntry ? explorer.displayEntries.indexOf(explorer.focusedEntry) : -1);
+  const cursorIndex = $derived(explorer.cursorIndex);
   let viewMembershipRevision = $state(0);
   const fallbackTabStop = $derived.by(() => {
     void viewMembershipRevision;
@@ -250,7 +250,8 @@
 
   function scrollToSelected(entry: FileEntry): void {
     const entries = explorer.displayEntries;
-    const index = entries.indexOf(entry);
+    // A repeated path (lineage peek) reveals the cursor's own occurrence.
+    const index = entry === explorer.focusedEntry ? explorer.cursorIndex : entries.indexOf(entry);
     if (index < 0) return;
 
     retainCursorReveal(entry);
@@ -279,7 +280,7 @@
     if (target.matches(".entry-item")) {
       const index = Number(target.dataset.index);
       const entry = explorer.displayEntries[index];
-      if (entry?.path === target.dataset.path) explorer.focusEntry(entry);
+      if (entry?.path === target.dataset.path) explorer.focusEntry(entry, index);
     } else if (target.matches('.virtual-viewport:is([role="grid"], [role="treegrid"], [role="tree"], [role="listbox"])') && explorer.focusedEntry) {
       scrollToSelected(explorer.focusedEntry);
     } else {
@@ -298,10 +299,18 @@
   const endedDrag = (event: MouseEvent) => marquee.dragJustEnded
     || (pressPoint !== null && Math.hypot(event.clientX - pressPoint.x, event.clientY - pressPoint.y) >= 5);
 
+  /** The clicked occurrence's visible index, read from its row (a lineage
+   * merge output is listed under each parent). */
+  function occurrenceIndex(event: Event, entry: FileEntry): number | undefined {
+    const row = event.currentTarget instanceof Element ? event.currentTarget.closest<HTMLElement>(".entry-item") : null;
+    const index = row?.dataset.path === entry.path ? Number(row.dataset.index) : NaN;
+    return Number.isSafeInteger(index) ? index : undefined;
+  }
+
   function handleClick(entry: FileEntry, event: MouseEvent): void {
     const effect = clickSelectionEffect(event, paneId ?? "", windowTabsManager.activePaneId);
     retainCursorReveal(entry);
-    explorer.selectEntry(entry, effect.selectionModifiers);
+    explorer.selectEntry(entry, effect.selectionModifiers, occurrenceIndex(event, entry));
     // Caret-less Folder Peek: the click also toggles (decided in the domain).
     void explorer.toggleOnRowClick(entry, event, endedDrag(event));
     // Windows/macOS pointer-drag acquisition prevents mousedown's default

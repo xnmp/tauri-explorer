@@ -1,6 +1,32 @@
 import type { FileEntry, ViewMode } from "./file";
 import { resolveListMove, type ListNavigationSnapshot } from "./list-column-flow";
 import type { TileNavigationSnapshot } from "./tile-panel-navigation";
+import { occurrencePath } from "./folder-peek-flat";
+
+/**
+ * The cursor's index in the visible entries. `cursorKey` names the cursor's
+ * occurrence when a path is listed more than once (lineage peek); it counts
+ * only while it still names `cursorPath`, else the path's first occurrence
+ * is the cursor. -1 for an empty listing.
+ */
+export function resolveCursorIndex(
+  entries: readonly FileEntry[],
+  keys: readonly string[] | undefined,
+  cursorPath: string | null,
+  cursorKey: string | null,
+  selectedPaths: ReadonlySet<string>,
+): number {
+  if (cursorPath !== null) {
+    if (keys && cursorKey !== null && occurrencePath(cursorKey) === cursorPath) {
+      const index = keys.indexOf(cursorKey);
+      if (index >= 0) return index;
+    }
+    const index = entries.findIndex((entry) => entry.path === cursorPath);
+    if (index >= 0) return index;
+  }
+  const selected = selectedPaths.size ? entries.findIndex((entry) => selectedPaths.has(entry.path)) : -1;
+  return selected >= 0 ? selected : entries.length ? 0 : -1;
+}
 
 /** A keyboard cursor is independent of the selected set and survives sorting. */
 export function resolveFileCursor(

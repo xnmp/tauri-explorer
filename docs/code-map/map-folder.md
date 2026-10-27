@@ -112,6 +112,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `settings/SettingRow.svelte` — one Settings row (label, description, optional `info` snippet, control slot); `hidden` while the search filter excludes it.
 - `settings/SettingToggle.svelte` — the Settings switch (restyled checkbox; extra input attributes forwarded).
 - `settings/TerminalShortcutSettings.svelte` — terminal line-editing shortcut list and key recorder (#375/#404); recording ends on dialog close or window blur.
+- `settings/LayoutThemeSetting.svelte` — Settings → Appearance → Layout: selector, Open folder (layouts), Reset to Default, fallback reason (#1306).
+- `settings/settings-select.css` — shared Settings dropdown styling (`.settings-select`).
 - `PluginsDialog.svelte`, `PluginSettings.svelte` — lazy Plugins configuration surface; installed packages, contribution toggles and descriptor-driven settings, using shared modal ownership and viewport/zoom bounds.
 - `KeybindingsSettings.svelte` — keybinding customization UI in settings.
 - `ShortcutCheatsheet.svelte` — keyboard shortcut cheatsheet overlay.
@@ -318,6 +320,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `icon-theme.svelte.ts` — transient icon-pack preview and reactive resolution against saved settings and applied color-theme CSS revisions; previews never persist.
 - `window-size.svelte.ts` — reactive `window.innerWidth`/`innerHeight` tracker (`windowSizeStore`); `+page.svelte` syncs on mount/resize. Feeds preview-pane auto-dock (#467).
 - `theme.svelte.ts` — active theme state + CSS var application.
+- `layout.svelte.ts` — eager layout-theme half (#1306): `layoutStore` paints `data-layout`/`data-layout-base` and injected layout sheets from a localStorage cache before mount, exposes the island arrangement, pane divider size and Details row height; `start()` follows `settings.layoutTheme` through the lazy controller.
+- `layout-controller.svelte.ts` — lazy layout-theme half (#1306): lists `layouts/`, resolves/falls back with one notice, loads Hairline Ledger's sheet, detects rule-less user CSS, generation-guards concurrent applications; used by the settings UI and layout picker.
 - `config-watch.ts` — applies `config-file-changed` to the settings/theme stores; `handleConfigFileChanged` is the routing seam (#599).
 - `terminal.svelte.ts` — embedded terminal panel state (#139).
 - `jobs.svelte.ts` — background jobs store (Ctrl+J); `retryJob` runs a failed job's `retry` once, then drops the entry or keeps it with the new error; a retrying entry is active (`isJobActive`: not dismissable or cleared); `dropRetries(owner)` for retired plugins.
@@ -380,6 +384,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `thumbnails.ts` — image/video thumbnail, folder preview, palette-extract IPC.
 - `archive.ts` — zip compress/extract/preview IPC.
 - `config.ts` — JSON config persistence + user theme CSS file IPC.
+- `layouts.ts` — `list_user_layouts` / `ensure_layouts_dir` IPC for user layout themes (#1306).
 - `os-clipboard.ts` — native file clipboard publish/snapshot/CAS IPC plus text and image helpers.
 - `terminal.ts` — embedded terminal spawn/write/resize IPC (#139).
 - `activate.ts` — resolve what double-click/Enter activation targets.
@@ -542,6 +547,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `titlebar.ts` — title bar / tab strip visibility rules.
 - `config-reload.ts` — pure decision for whether an observed config-file change is an external edit or our own write echoing back (#599).
 - `settings-migration.ts` — versioned one-shot migrations for the persisted settings blob; `migrateSettings` + the append-only ledger (#506).
+- `layout-theme.ts` — layout-theme catalog (#1306): built-ins, leading-comment metadata, user-file validation, resolution/fallback reasons, row-height parsing.
+- `layout-theme-ids.ts` — eager built-in layout ids and the legacy Floating Islands → `layoutTheme` mapping used by settings migration.
 - `settings-numbers.ts` — Numeric preference consumer contracts shared by persisted validation and interactive setters.
 - `folder-preview.ts` — folder preview image selection (#146).
 - `src/lib/domain/preview-kind.ts` — single file-preview precedence classifier and hold-image policy, shared by dispatch and viewer presentation.
@@ -613,6 +620,11 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 ## src/lib/themes/ — CSS theme files. Edit for theming/colors.
 
 - `index.css` (aggregator), `syntax.css` (code highlight), and per-theme: `dark.css`, `light.css`, `aurora.css`, `catppuccin.css`, `desert.css`, `gruvbox.css`, `hacker.css`, `horizon.css`, `nord.css`, `ocean-blue.css`, `solarized-light.css`, `tahoe.css`.
+
+## src/lib/layouts/ — built-in layout themes (#1306; contract in docs/layout-themes.md).
+
+- `floating-islands.css` — Floating Islands, bundled in startup CSS and scoped to `[data-layout-base="floating-islands"]`.
+- `hairline-ledger.css` — Hairline Ledger, lazy `?inline` sheet injected like a user layout.
 
 ## src/lib/types/
 

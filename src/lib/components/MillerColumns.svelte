@@ -308,7 +308,7 @@
 </script>
 
 {#if columns.length > 0}
-  <div id={panelId} class="miller-columns" data-pane-id={paneId} use:paneContent class:resizing={resize.isResizing} style="width: {resize.value}px">
+  <div id={panelId} class="miller-columns" data-region="miller" data-pane-id={paneId} use:paneContent class:resizing={resize.isResizing} style="width: {resize.value}px">
     {#each columns as column (column.path)}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
@@ -488,8 +488,4 @@
     opacity: 1;
   }
 
-  /* Vibrancy: flatten inside island */
-  :global([data-vibrancy]) .miller-columns {
-    background: transparent;
-  }
 </style>

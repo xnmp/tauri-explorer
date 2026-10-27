@@ -431,13 +431,14 @@
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <!-- Drag handlers only — keyboard interaction lives on the tabs. -->
   <!-- svelte-ignore a11y_interactive_supports_focus -->
-  <div class="tab-area">
+  <div class="tab-area" data-region="tab-strip">
     <!-- A tablist owns only tabs; the new-tab button sits beside it (#785). -->
     <div class="tab-list" role="tablist" aria-label="Tabs">
     {#each tabs as tab (tab.id)}
       {@const display = windowTabsManager.getTabDisplay(tab)}
       <div
         class="tab"
+        data-region="tab"
         class:active={tab.id === activeTabId}
         class:drag-over={dropTargetTabId === tab.id}
         class:file-drop-target={fileDropTargetTabId === tab.id}
@@ -461,8 +462,8 @@
         {#if tab.id === activeTabId}
           <!-- Chrome-style fillets: concave corners where the active tab
                meets the pane below it (#157). -->
-          <span class="tab-fillet left" aria-hidden="true"></span>
-          <span class="tab-fillet right" aria-hidden="true"></span>
+          <span class="tab-fillet left" data-region="tab-fillet" data-side="left" aria-hidden="true"></span>
+          <span class="tab-fillet right" data-region="tab-fillet" data-side="right" aria-hidden="true"></span>
         {/if}
         {#if display.isGitRoot}
           <!-- Git branch icon: this tab's folder lives inside a git repo. -->
@@ -958,75 +959,4 @@
     transform: rotate(90deg) scale(0.9);
   }
 
-  /* Vibrancy: tab styling */
-  :global([data-vibrancy]) .tab {
-    border-radius: var(--vibrancy-island-radius) var(--vibrancy-island-radius) 0
-      0;
-  }
-
-  :global([data-vibrancy]) .tab-area {
-    background: transparent;
-  }
-
-  :global([data-vibrancy]) .tab-area::after {
-    display: none;
-  }
-
-  /* --vibrancy-island-bg is a multi-layer background (sheen gradient over a
-     colour), not a colour — it can't be a radial-gradient stop (that made
-     the whole declaration invalid, background:none, no fillets: #361).
-     Instead paint the island material as-is and carve the concave curve out
-     with a mask; the stroke ring rides on top as its own layer, continuing
-     the active tab's 0.5px outline. */
-  :global([data-vibrancy]) .tab-fillet.left {
-    background:
-      radial-gradient(
-        circle var(--fillet) at 0 0,
-        transparent calc(var(--fillet) - 0.25px),
-        var(--vibrancy-island-stroke) calc(var(--fillet) + 0.5px),
-        transparent calc(var(--fillet) + 1.25px)
-      ),
-      var(--vibrancy-island-bg);
-    -webkit-mask: radial-gradient(
-      circle var(--fillet) at 0 0,
-      transparent calc(var(--fillet) - 0.5px),
-      #000 var(--fillet)
-    );
-    mask: radial-gradient(
-      circle var(--fillet) at 0 0,
-      transparent calc(var(--fillet) - 0.5px),
-      #000 var(--fillet)
-    );
-  }
-
-  :global([data-vibrancy]) .tab-fillet.right {
-    background:
-      radial-gradient(
-        circle var(--fillet) at 100% 0,
-        transparent calc(var(--fillet) - 0.25px),
-        var(--vibrancy-island-stroke) calc(var(--fillet) + 0.5px),
-        transparent calc(var(--fillet) + 1.25px)
-      ),
-      var(--vibrancy-island-bg);
-    -webkit-mask: radial-gradient(
-      circle var(--fillet) at 100% 0,
-      transparent calc(var(--fillet) - 0.5px),
-      #000 var(--fillet)
-    );
-    mask: radial-gradient(
-      circle var(--fillet) at 100% 0,
-      transparent calc(var(--fillet) - 0.5px),
-      #000 var(--fillet)
-    );
-  }
-
-  :global([data-vibrancy]) .tab.active {
-    background: var(--vibrancy-island-bg);
-    border: none;
-    border-top: 2px solid var(--accent);
-    box-shadow:
-      inset 0 0.5px 0 var(--vibrancy-island-stroke),
-      0 0 0 0.5px var(--vibrancy-island-stroke);
-    transform: none;
-  }
 </style>

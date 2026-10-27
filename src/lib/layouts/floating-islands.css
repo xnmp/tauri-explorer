@@ -1,0 +1,270 @@
+/*
+ * @name Floating Islands
+ * @description Panels float as rounded islands over the window backdrop.
+ *
+ * Built-in layout theme (#277, #434, #1306), written only against the layout
+ * contract in docs/layout-themes.md: root attributes, [data-region] hooks and
+ * --layout-* variables. Unlike user layouts it ships in the startup CSS, so
+ * every rule is scoped to its base attribute; a user layout that declares
+ * `@extends floating-islands` gets the same attribute and cascades after it.
+ *
+ * Native window material is a separate capability ([data-native-backdrop]):
+ * with it the islands are translucent over the OS material; without it they
+ * are opaque over a themed depth gradient, so the layout works everywhere.
+ */
+
+:root[data-layout-base="floating-islands"] {
+  --titlebar-opacity: 0;
+  --sidebar-opacity: 0;
+  --statusbar-opacity: 0;
+  --layout-gap: 8px;
+  --layout-inset: 0 6px 6px 6px;
+  --layout-radius: 14px;
+  --layout-border: 1px solid var(--surface-stroke);
+  --layout-shadow:
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.09),
+    inset 0 -0.5px 0 rgba(0, 0, 0, 0.2),
+    0 1px 3px rgba(0, 0, 0, 0.15),
+    0 4px 12px rgba(0, 0, 0, 0.2),
+    0 12px 32px rgba(0, 0, 0, 0.15);
+  /* Island material. Colour themes tune it through --vibrancy-island-card. */
+  --islands-surface:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04) 0%, transparent 40%, rgba(0, 0, 0, 0.02) 100%),
+    color-mix(in srgb, var(--vibrancy-island-card, var(--background-card)) 98%, transparent);
+  /* Material weight encodes hierarchy: structural surfaces (sidebar) sit
+     heavier, receded toward the backdrop, so content islands read as the
+     lighter, foreground material. */
+  --islands-structural:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0%, transparent 40%, rgba(0, 0, 0, 0.03) 100%),
+    color-mix(in srgb, var(--vibrancy-island-card, var(--background-card)) 72%, transparent);
+  --islands-filter: blur(12px) brightness(1.08) saturate(1.2);
+}
+
+/* Translucent surfaces go frosty/solid when the user asks for it. */
+@media (prefers-reduced-transparency: reduce) {
+  :root[data-layout-base="floating-islands"] {
+    --islands-filter: none;
+    --islands-surface: linear-gradient(var(--background-card), var(--background-card)), var(--background-solid);
+    --islands-structural: linear-gradient(var(--background-card), var(--background-card)), var(--background-solid);
+  }
+}
+
+/* Windows Mica/Acrylic (#382): islands use the theme's dark solid colour at
+   the Backdrop Opacity slider's strength, dark enough not to wash out and
+   translucent enough that the material shows through the whole UI. */
+:root[data-layout-base="floating-islands"][data-win-backdrop] {
+  --islands-surface:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04) 0%, transparent 40%, rgba(0, 0, 0, 0.02) 100%),
+    color-mix(in srgb, var(--background-solid) calc(var(--win-backdrop-strength, 0.85) * 100%), transparent);
+  --islands-structural:
+    color-mix(in srgb, var(--background-solid) calc(var(--win-backdrop-strength, 0.85) * 88%), transparent);
+}
+
+/* Without native material: opaque islands (blur over an opaque backdrop is
+   wasted GPU) over a quiet depth gradient, a whisper of the accent falling
+   from the top, so islands still read as floating above a lit surface. */
+:root[data-layout-base="floating-islands"]:not([data-native-backdrop]) {
+  --islands-filter: none;
+  --islands-surface:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04) 0%, transparent 40%, rgba(0, 0, 0, 0.02) 100%),
+    linear-gradient(var(--background-card), var(--background-card)),
+    var(--background-solid);
+  --islands-structural:
+    linear-gradient(
+      var(--background-card-secondary, var(--background-card)),
+      var(--background-card-secondary, var(--background-card))
+    ),
+    var(--background-solid);
+}
+
+:root[data-layout-base="floating-islands"]:not([data-native-backdrop]) body {
+  background: var(--background-solid);
+  box-shadow: none;
+}
+
+:root[data-layout-base="floating-islands"]:not([data-native-backdrop]) [data-region="app"] {
+  background:
+    radial-gradient(120% 90% at 50% -10%, color-mix(in srgb, var(--accent) 7%, transparent) 0%, transparent 55%),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--background-mica, var(--background-solid)) 97%, white) 0%,
+      var(--background-mica, var(--background-solid)) 40%,
+      color-mix(in srgb, var(--background-mica, var(--background-solid)) 95%, black) 100%
+    );
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+:root[data-layout-base="floating-islands"] [data-region="backdrop"] {
+  display: none;
+}
+
+/* Title bar and tabs: the strip floats above the islands. */
+:root[data-layout-base="floating-islands"] [data-region="titlebar"] {
+  position: relative;
+  z-index: 2;
+  box-shadow: none;
+}
+
+:root[data-layout-base="floating-islands"] [data-region="titlebar"]::before {
+  display: none;
+}
+
+:root[data-layout-base="floating-islands"] [data-region="tab"] {
+  border-radius: var(--layout-radius) var(--layout-radius) 0 0;
+}
+
+:root[data-layout-base="floating-islands"] [data-region="tab-strip"]::after {
+  display: none;
+}
+
+/* The active tab is painted in island material and fused to the island
+   below. The material is a multi-layer background, not a colour, so the
+   concave fillet curve is carved out with a mask; the stroke ring rides on
+   top as its own layer, continuing the tab's 0.5px outline (#361). */
+:root[data-layout-base="floating-islands"] [data-region="tab"][aria-selected="true"] {
+  background: var(--islands-surface);
+  border: none;
+  border-top: 2px solid var(--accent);
+  box-shadow:
+    inset 0 0.5px 0 var(--surface-stroke),
+    0 0 0 0.5px var(--surface-stroke);
+  transform: none;
+}
+
+:root[data-layout-base="floating-islands"] [data-region="tab-fillet"][data-side="left"] {
+  background:
+    radial-gradient(
+      circle var(--fillet) at 0 0,
+      transparent calc(var(--fillet) - 0.25px),
+      var(--surface-stroke) calc(var(--fillet) + 0.5px),
+      transparent calc(var(--fillet) + 1.25px)
+    ),
+    var(--islands-surface);
+  -webkit-mask: radial-gradient(circle var(--fillet) at 0 0, transparent calc(var(--fillet) - 0.5px), #000 var(--fillet));
+  mask: radial-gradient(circle var(--fillet) at 0 0, transparent calc(var(--fillet) - 0.5px), #000 var(--fillet));
+}
+
+:root[data-layout-base="floating-islands"] [data-region="tab-fillet"][data-side="right"] {
+  background:
+    radial-gradient(
+      circle var(--fillet) at 100% 0,
+      transparent calc(var(--fillet) - 0.25px),
+      var(--surface-stroke) calc(var(--fillet) + 0.5px),
+      transparent calc(var(--fillet) + 1.25px)
+    ),
+    var(--islands-surface);
+  -webkit-mask: radial-gradient(circle var(--fillet) at 100% 0, transparent calc(var(--fillet) - 0.5px), #000 var(--fillet));
+  mask: radial-gradient(circle var(--fillet) at 100% 0, transparent calc(var(--fillet) - 0.5px), #000 var(--fillet));
+}
+
+/* Structural island: the sidebar. Radius, border and shadow come from the
+   --layout-* variables above; its painted body steps aside. */
+:root[data-layout-base="floating-islands"] [data-region="sidebar"] {
+  background: var(--islands-structural);
+  backdrop-filter: var(--islands-filter);
+  -webkit-backdrop-filter: var(--islands-filter);
+}
+
+:root[data-layout-base="floating-islands"] [data-region="sidebar-body"] {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+:root[data-layout-base="floating-islands"] [data-region="miller-island"] {
+  border-radius: var(--layout-radius);
+  background: var(--islands-surface);
+  box-shadow: var(--layout-shadow);
+}
+
+:root[data-layout-base="floating-islands"] [data-region="miller"] {
+  background: transparent;
+}
+
+/* Content island: the panes. Split panes each become their own island and
+   the container steps aside. */
+:root[data-layout-base="floating-islands"] [data-region="panes"] {
+  background: var(--islands-surface);
+  backdrop-filter: var(--islands-filter);
+  -webkit-backdrop-filter: var(--islands-filter);
+}
+
+:root[data-layout-base="floating-islands"] [data-region="panes"][data-split] {
+  border-radius: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+:root[data-layout-base="floating-islands"] [data-region="panes"]:not([data-split]) [data-region="pane"] {
+  background: transparent;
+  border-radius: 0;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+:root[data-layout-base="floating-islands"] [data-region="panes"][data-split] [data-region="pane"] {
+  border-radius: var(--layout-radius);
+  background: var(--islands-surface);
+  border: var(--layout-border);
+  box-shadow: var(--layout-shadow);
+  backdrop-filter: var(--islands-filter);
+  -webkit-backdrop-filter: var(--islands-filter);
+  overflow: hidden;
+}
+
+/* Keep the active-pane cue. */
+:root[data-layout-base="floating-islands"] [data-region="panes"][data-split] [data-region="pane"][data-active] {
+  border-color: var(--accent);
+  box-shadow: var(--layout-shadow), 0 0 6px -2px var(--accent);
+}
+
+/* The divider between split islands is a clear gap matching the inter-island
+   gap, not a drawn line, even while hovered or dragged. The base rules key
+   the line on the split direction, so only !important outranks them here. */
+:root[data-layout-base="floating-islands"] [data-region="split-divider"] {
+  border-color: transparent !important;
+}
+
+:root[data-layout-base="floating-islands"] [data-region="toolbar"] {
+  background: transparent;
+  border-bottom-color: var(--surface-stroke);
+}
+
+:root[data-layout-base="floating-islands"] [data-region="scm"] {
+  background: transparent;
+}
+
+:root[data-layout-base="floating-islands"] [data-region="scm"][data-island] {
+  border-radius: var(--layout-radius);
+  border: var(--layout-border);
+  background: var(--islands-surface);
+  box-shadow: var(--layout-shadow);
+  backdrop-filter: var(--islands-filter);
+  -webkit-backdrop-filter: var(--islands-filter);
+}
+
+/* Preview island. Fullscreen stays opaque (#391). */
+:root[data-layout-base="floating-islands"] [data-region="preview"] {
+  background: var(--islands-surface);
+  overflow: hidden;
+}
+
+:root[data-layout-base="floating-islands"] [data-region="preview-body"]:not([data-fullscreen]) {
+  background: transparent;
+  border-left: none;
+}
+
+/* Fullscreen preview escapes the island's clip (#379). */
+:root[data-layout-base="floating-islands"][data-preview-fullscreen] [data-region="preview"] {
+  overflow: visible;
+}
+
+:root[data-layout-base="floating-islands"] [data-region="status-bar"] {
+  background: transparent;
+  box-shadow: none;
+  height: 18px;
+}

@@ -126,6 +126,7 @@
   tabindex={!isRenaming && explorer.focusedEntry?.path === entry.path ? 0 : -1}
   aria-selected={explorer.isSelected(entry)}
   class="file-item entry-item"
+  data-region="row"
   data-path={entry.path}
   data-index={index}
   style:--peek-indent={peek ? `${depth * 22}px` : undefined}
@@ -168,7 +169,7 @@
 >
   <!-- Name column -->
   {#if peek}<PeekGuides {groups} row={rowIndex} {carets} />{/if}
-  <div class="name-cell" style:padding-left={peek ? `${depth * 22}px` : undefined}>
+  <div class="name-cell" data-cell="name" style:padding-left={peek ? `${depth * 22}px` : undefined}>
     {#if peek && carets}
     <span class="peek-caret-slot">
       {#if canPeek}
@@ -220,21 +221,21 @@
 
   <!-- Date modified column -->
   {#if settingsStore.columnVisibility.date}
-  <div class="date-cell" title={absoluteDateText || undefined}>
+  <div class="date-cell" data-cell="date" title={absoluteDateText || undefined}>
     {dateText}
   </div>
   {/if}
 
   <!-- Type column -->
   {#if settingsStore.columnVisibility.type}
-  <div class="type-cell">
+  <div class="type-cell" data-cell="type">
     {typeText}
   </div>
   {/if}
 
   <!-- Size column -->
   {#if settingsStore.columnVisibility.size}
-  <div class="size-cell">
+  <div class="size-cell" data-cell="size">
     {#if entry.kind === "file"}
       {sizeText}
     {:else}
@@ -245,12 +246,12 @@
 
   <!-- Length column -->
   {#if settingsStore.columnVisibility.length}
-  <div class="length-cell">
+  <div class="length-cell" data-cell="length">
     {lengthText}
   </div>
   {/if}
   {#if settingsStore.columnVisibility.resolution}
-    <div class="resolution-cell"><ImageResolutionCell {entry} /></div>
+    <div class="resolution-cell" data-cell="resolution"><ImageResolutionCell {entry} /></div>
   {/if}
 </div>
 
@@ -278,7 +279,8 @@
     color: var(--text-primary);
     position: relative;
     box-sizing: border-box;
-    height: 32px;
+    /* DetailsView publishes the layout theme's row height (#1306). */
+    height: var(--details-row-height, 32px);
   }
 
   .file-item:hover {

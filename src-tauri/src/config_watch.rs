@@ -45,6 +45,10 @@ const FOLDER_VIEWS_FILE: &str = "folder-views.json";
 const AI_CONNECTIONS_FILE: &str = "ai-connections.json";
 /// User theme CSS lives one level down, in `<config>/themes/`.
 const THEMES_DIR: &str = "themes";
+/// User layout theme CSS lives beside it, in `<config>/layouts/` (#1306).
+const LAYOUTS_DIR: &str = "layouts";
+/// Config subdirectories whose `.css` files are reported as `<dir>/<name>.css`.
+const CSS_DIRS: [&str; 2] = [THEMES_DIR, LAYOUTS_DIR];
 
 /// The `config-file-changed` payload. The frontend listener reads
 /// `payload.filename`; a bare-string payload made it throw on every launch
@@ -80,7 +84,9 @@ struct WatchPlan {
     config_dir: PathBuf,
     external_roots: Vec<(PathBuf, RecursiveMode)>,
     external_files: HashMap<PathBuf, String>,
-    external_themes_dir: Option<PathBuf>,
+    /// Canonical targets of CSS directories (themes, layouts) that are
+    /// symlinked outside the config dir, with their config-relative names.
+    external_css_dirs: Vec<(PathBuf, &'static str)>,
 }
 
 /// The watcher and the external roots currently registered on it. Only the
@@ -154,15 +160,15 @@ impl WatchPlan {
             if let Some(filename) = self.external_files.get(&changed) {
                 return Some(filename.clone());
             }
-            let theme = changed
-                .strip_prefix(self.external_themes_dir.as_ref()?)
-                .ok()?;
-            match theme.components().collect::<Vec<_>>().as_slice() {
-                [std::path::Component::Normal(name)] if name.to_str()?.ends_with(".css") => {
-                    Some(format!("{THEMES_DIR}/{}", name.to_str()?))
+            self.external_css_dirs.iter().find_map(|(dir, label)| {
+                let relative = changed.strip_prefix(dir).ok()?;
+                match relative.components().collect::<Vec<_>>().as_slice() {
+                    [std::path::Component::Normal(name)] if name.to_str()?.ends_with(".css") => {
+                        Some(format!("{label}/{}", name.to_str()?))
+                    }
+                    _ => None,
                 }
-                _ => None,
-            }
+            })
         })
     }
 }
@@ -190,11 +196,17 @@ fn config_watch_plan(config_dir: &Path) -> WatchPlan {
         }
     }
 
-    let external_themes_dir = std::fs::canonicalize(config_dir.join(THEMES_DIR))
-        .ok()
-        .filter(|target| !target.starts_with(config_dir));
-    if let Some(themes_dir) = &external_themes_dir {
-        external_roots.push((themes_dir.clone(), RecursiveMode::Recursive));
+    let external_css_dirs: Vec<(PathBuf, &'static str)> = CSS_DIRS
+        .into_iter()
+        .filter_map(|label| {
+            std::fs::canonicalize(config_dir.join(label))
+                .ok()
+                .filter(|target| !target.starts_with(config_dir))
+                .map(|target| (target, label))
+        })
+        .collect();
+    for (dir, _) in &external_css_dirs {
+        external_roots.push((dir.clone(), RecursiveMode::Recursive));
     }
 
     external_roots.sort_by(|(left, _), (right, _)| left.cmp(right));
@@ -203,7 +215,7 @@ fn config_watch_plan(config_dir: &Path) -> WatchPlan {
         config_dir: config_dir.to_path_buf(),
         external_roots,
         external_files,
-        external_themes_dir,
+        external_css_dirs,
     }
 }
 
@@ -501,7 +513,9 @@ pub(crate) fn watched_config_name(config_dir: &Path, changed: &Path) -> Option<S
         {
             Some((*name).to_string())
         }
-        [THEMES_DIR, theme] if theme.ends_with(".css") => Some(format!("{THEMES_DIR}/{theme}")),
+        [dir, css] if CSS_DIRS.contains(dir) && css.ends_with(".css") => {
+            Some(format!("{dir}/{css}"))
+        }
         _ => {
             let changed = std::fs::canonicalize(changed).ok()?;
             for filename in [SETTINGS_FILE, BOOKMARKS_FILE, FOLDER_VIEWS_FILE] {
@@ -893,7 +907,7 @@ mod tests {
             config_dir: config_dir.to_path_buf(),
             external_roots,
             external_files,
-            external_themes_dir: None,
+            external_css_dirs: Vec::new(),
         }
     }
 
@@ -1305,6 +1319,10 @@ mod tests {
             Some("themes/midnight.css".to_string())
         );
         assert_eq!(
+            watched_config_name(dir, &dir.join("layouts").join("compact.css")),
+            Some("layouts/compact.css".to_string())
+        );
+        assert_eq!(
             watched_config_name(dir, &dir.join("bookmarks.json")),
             Some("bookmarks.json".to_string())
         );
@@ -1321,6 +1339,9 @@ mod tests {
             dir.join("window-state.json"),
             dir.join("themes").join("notes.txt"),
             dir.join("themes").join("nested").join("deep.css"),
+            dir.join("layouts").join("notes.txt"),
+            dir.join("layouts").join("nested").join("deep.css"),
+            dir.join("other").join("stray.css"),
             Path::new("/home/u/.config/other-app/settings.json").to_path_buf(),
         ] {
             assert_eq!(
@@ -1548,5 +1569,30 @@ mod tests {
                 RecursiveMode::Recursive,
             )]
         );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn reports_layout_css_through_a_symlinked_layouts_dir() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().expect("temporary watcher tree");
+        let config = temp.path().join("config");
+        let dotfiles = temp.path().join("dotfiles-layouts");
+        std::fs::create_dir_all(&config).expect("config dir");
+        std::fs::create_dir_all(&dotfiles).expect("layouts target");
+        std::fs::write(dotfiles.join("ledger.css"), ":root {}").expect("layout file");
+        symlink(&dotfiles, config.join(super::LAYOUTS_DIR)).expect("layouts symlink");
+
+        let plan = super::config_watch_plan(&config);
+        let target = std::fs::canonicalize(&dotfiles).expect("canonical layouts target");
+        assert_eq!(
+            plan.external_roots,
+            vec![(target.clone(), RecursiveMode::Recursive)]
+        );
+        assert_eq!(
+            plan.watched_config_name(&target.join("ledger.css")),
+            Some("layouts/ledger.css".to_string())
+        );
+        assert_eq!(plan.watched_config_name(&target.join("notes.txt")), None);
     }
 }

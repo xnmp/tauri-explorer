@@ -89,6 +89,7 @@
   tabindex={!isRenaming && explorer.focusedEntry?.path === entry.path ? 0 : -1}
   aria-selected={explorer.isSelected(entry)}
   class="{className} entry-item"
+  data-region="row"
   data-path={entry.path}
   data-index={index}
   aria-colindex={role === "gridcell" ? column : undefined}

@@ -54,6 +54,7 @@
     <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -- WAI movable separator is a focusable range control with arrow/Home/End input. -->
     <div
       class="pane-divider"
+      data-region="split-divider"
       onpointerdown={(event) => { if (node.type === "split") dividers.start(event, node); }}
       onpointermove={dividers.move}
       onpointerup={dividers.finish}
@@ -163,16 +164,6 @@
     border-top: 1px solid var(--pane-divider, color-mix(in srgb, var(--text-primary) 15%, transparent));
     border-bottom: 1px solid var(--pane-divider, color-mix(in srgb, var(--text-primary) 15%, transparent));
     cursor: row-resize;
-  }
-
-  /* Island mode: panes are separate islands (see ExplorerPane), so the
-     divider is a clear gap matching the inter-island gap, not a drawn line. */
-  :global([data-vibrancy]) .pane-split.row > .pane-divider {
-    border-color: transparent;
-  }
-
-  :global([data-vibrancy]) .pane-split.column > .pane-divider {
-    border-color: transparent;
   }
 
   .pane-divider:focus-visible {

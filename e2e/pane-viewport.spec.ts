@@ -122,10 +122,10 @@ for (const viewMode of ["details", "list", "tiles"] as const) {
     await page.evaluate(async mode => {
       const load = new Function("return Promise.all([import('/src/lib/state/window-tabs.svelte.ts'), import('/src/lib/state/settings.svelte.ts')])");
       const [{ windowTabsManager: manager }, { settingsStore }] = await load();
-      settingsStore.update({ floatingIslands: true, zoomLevel: 150 });
+      settingsStore.update({ layoutTheme: "floating-islands", zoomLevel: 150 });
       for (const explorer of manager.getAllExplorers()) explorer.setViewMode(mode);
     }, viewMode);
-    await expect(page.locator("html")).toHaveAttribute("data-vibrancy", "");
+    await expect(page.locator("html")).toHaveAttribute("data-layout-base", "floating-islands");
     const entry = page.locator('.explorer-pane.active .entry-item[data-path="/home/user/Documents/project"]');
     await expect(entry).toBeInViewport();
     await entry.click();
@@ -271,9 +271,9 @@ for (const zoomLevel of [100, 130]) {
     test(`painted dense panes match the measured geometry at ${zoomLevel}%${island ? " in island mode" : ""}`, async ({ page }) => {
       await page.setViewportSize({ width: 640, height: 480 });
       await page.addInitScript(settings => localStorage.setItem("explorer-settings", JSON.stringify(settings)),
-        { zoomLevel, floatingIslands: island });
+        { zoomLevel, layoutTheme: island ? "floating-islands" : "default" });
       await restore(page);
-      if (island) await expect(page.locator("html")).toHaveAttribute("data-vibrancy", "");
+      if (island) await expect(page.locator("html")).toHaveAttribute("data-layout-base", "floating-islands");
       const mismatch = () => page.evaluate(async () => {
         const load = new Function("return import('/src/lib/state/window-tabs.svelte.ts')");
         const geometry = (await load()).windowTabsManager.paneViewport.geometry;
@@ -322,7 +322,7 @@ function splitOverflow() {
   const divider = parseFloat(getComputedStyle(tree).getPropertyValue("--pane-divider-size"));
   const minimum = Math.max(Math.abs(parseFloat(tree.style.minWidth) - (4 * 240 + 3 * divider)),
     Math.abs(parseFloat(tree.style.minHeight) - (4 * 200 + 3 * divider)));
-  return { island: document.documentElement.hasAttribute("data-vibrancy"), overflow, minimum };
+  return { island: document.documentElement.getAttribute("data-layout-base") === "floating-islands", overflow, minimum };
 }
 type OverflowSample = ReturnType<typeof splitOverflow>;
 
@@ -336,13 +336,13 @@ for (const zoomLevel of [100, 130]) {
     await page.addInitScript(({ settings, tabs }) => {
       localStorage.setItem("explorer-settings", JSON.stringify(settings));
       localStorage.setItem("explorer-tabs", JSON.stringify(tabs));
-    }, { settings: { zoomLevel, floatingIslands: true }, tabs: { version: 3, activeTabId: "viewport-tab",
+    }, { settings: { zoomLevel, layoutTheme: "floating-islands" }, tabs: { version: 3, activeTabId: "viewport-tab",
       tabs: [{ id: "viewport-tab", kind: "explorer", activePaneId: "viewport-15", layout: layout(Array.from({ length: 16 }, (_, i) => i)) }] } });
     await sampleFramesFromStartup(page, ".pane-split", splitOverflow);
     // A path parameter would replace the saved tabs.
     await page.goto("/");
     await expect(page.locator(".explorer-pane")).toHaveCount(16);
-    await expect(page.locator("html")).toHaveAttribute("data-vibrancy", "");
+    await expect(page.locator("html")).toHaveAttribute("data-layout-base", "floating-islands");
     const samples = await stopFrameSampler<OverflowSample>(page);
     expect(samples.length).toBeGreaterThan(5);
     samples.forEach((sample, frame) => {
@@ -357,13 +357,13 @@ for (const zoomLevel of [100, 130]) {
     await restore(page);
     const setIsland = (on: boolean) => page.evaluate(async value => {
       const load = new Function("return import('/src/lib/state/settings.svelte.ts')");
-      (await load()).settingsStore.update({ floatingIslands: value });
+      (await load()).settingsStore.update({ layoutTheme: value ? "floating-islands" : "default" });
     }, on);
     for (const island of [true, false]) {
       await startFrameSampler(page, splitOverflow);
       await setIsland(island);
-      if (island) await expect(page.locator("html")).toHaveAttribute("data-vibrancy", "");
-      else await expect(page.locator("html")).not.toHaveAttribute("data-vibrancy");
+      if (island) await expect(page.locator("html")).toHaveAttribute("data-layout-base", "floating-islands");
+      else await expect(page.locator("html")).not.toHaveAttribute("data-layout-base", "floating-islands");
       const samples = await stopFrameSampler<OverflowSample>(page);
       const first = samples.findIndex(sample => sample.island === island);
       expect(first, "sampled frames before the toggle").toBeGreaterThan(0);

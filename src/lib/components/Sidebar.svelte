@@ -19,8 +19,8 @@
   const activeId = $derived(sidebarViewsStore.activeId);
 </script>
 
-<div id={panelId} class="sidebar-container" class:resizing={resize.isResizing} style="width: {resize.value}px">
-  <div class="sidebar">
+<div id={panelId} class="sidebar-container" data-region="sidebar" class:resizing={resize.isResizing} style="width: {resize.value}px">
+  <div class="sidebar" data-region="sidebar-body">
     {#each views as view (view.id)}
       {@const ViewComponent = SIDEBAR_VIEW_PRESENTATION[view.id].component}
       <div
@@ -38,10 +38,14 @@
 </div>
 
 <style>
+  /* Layout-theme variables (#1306); unset, they keep the Default chrome. */
   .sidebar-container {
     display: flex;
     flex-shrink: 0;
     position: relative;
+    border-radius: var(--layout-radius, 0px);
+    border: var(--layout-border, none);
+    box-shadow: var(--layout-shadow, none);
   }
 
   .sidebar-container.resizing {
@@ -50,9 +54,10 @@
 
   .sidebar {
     flex: 1;
-    background: color-mix(in srgb, var(--background-card-secondary) calc(var(--sidebar-opacity, 1) * 100%), transparent);
+    border-radius: inherit;
+    background: var(--layout-chrome-surface, color-mix(in srgb, var(--background-card-secondary) calc(var(--sidebar-opacity, 1) * 100%), transparent));
     border-right: var(--sidebar-border-right, none);
-    box-shadow: 1px 0 0 var(--divider);
+    box-shadow: 1px 0 0 var(--layout-hairline, var(--divider));
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -70,21 +75,4 @@
     display: none !important;
   }
 
-  /* Vibrancy: sidebar as floating island. Structural material — heavier
-     than the content islands so hierarchy reads at a glance (#277). */
-  :global([data-vibrancy]) .sidebar-container {
-    border-radius: var(--vibrancy-island-radius);
-    border: 1px solid var(--vibrancy-island-stroke);
-    box-shadow: var(--vibrancy-island-glow);
-    background: var(--vibrancy-island-bg-structural, var(--vibrancy-island-bg));
-    backdrop-filter: var(--vibrancy-island-filter, blur(12px) brightness(1.08) saturate(1.2));
-    -webkit-backdrop-filter: var(--vibrancy-island-filter, blur(12px) brightness(1.08) saturate(1.2));
-  }
-
-  :global([data-vibrancy]) .sidebar {
-    background: transparent;
-    border: none;
-    border-radius: var(--vibrancy-island-radius);
-    box-shadow: none;
-  }
 </style>

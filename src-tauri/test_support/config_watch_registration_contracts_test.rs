@@ -72,7 +72,7 @@ fn plan(config: &Path, settings: &Path, themes: &Path) -> WatchPlan {
             (themes.to_path_buf(), RecursiveMode::Recursive),
         ],
         external_files: HashMap::from([(settings.to_path_buf(), "settings.json".into())]),
-        external_themes_dir: Some(themes.to_path_buf()),
+        external_css_dirs: vec![(themes.to_path_buf(), "themes")],
     }
 }
 

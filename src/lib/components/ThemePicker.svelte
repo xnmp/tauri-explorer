@@ -1,6 +1,7 @@
 <!--
   ThemePicker - VSCode-style secondary picker for switching themes.
-  Opened by the "Switch Theme..." command. Arrowing previews the theme live;
+  Opened by the "Switch Theme...", "Switch Icon Theme..." and "Switch
+  Layout..." commands (layouts: #1306). Arrowing previews the choice live;
   Enter commits and persists it; Escape reverts to the previously-active theme.
 -->
 <script lang="ts">
@@ -11,21 +12,27 @@
   import { ICON_THEMES } from './icons/icon-theme-options';
   import type { FileEntry } from '$lib/domain/file';
   import FileIcon from './FileIcon.svelte';
+  import { settingsStore } from "$lib/state/settings.svelte";
+  import { applyLayout, layoutController, refreshLayoutCatalog } from "$lib/state/layout-controller.svelte";
 
   interface Props {
     open: boolean;
     onClose: () => void;
-    kind?: 'color' | 'icon';
+    kind?: 'color' | 'icon' | 'layout';
   }
 
   let { open, onClose, kind = 'color' }: Props = $props();
   const iconMode = $derived(kind === 'icon');
-  const title = $derived(iconMode ? 'Select Icon Theme' : 'Select Color Theme');
+  const layoutMode = $derived(kind === 'layout');
+  const title = $derived(iconMode ? 'Select Icon Theme' : layoutMode ? 'Select Layout' : 'Select Color Theme');
   interface PickerTheme { id: string; name: string; description: string; colors?: {accent: string; divider: string}; }
-  const availableThemes = $derived<readonly PickerTheme[]>(iconMode ? ICON_THEMES : themeStore.availableThemes);
+  const availableThemes = $derived<readonly PickerTheme[]>(
+    iconMode ? ICON_THEMES : layoutMode ? layoutController.themes : themeStore.availableThemes);
   const examples: readonly FileEntry[] = ['main.ts','script.py','files.zip','notes.txt'].map(name=>({name,path:`/icon-preview/${name}`,kind:'file',size:0,modified:''}));
-  const savedThemeId = () => iconMode ? iconThemeStore.currentThemeId : themeStore.currentThemeId;
-  const preview = (id: string) => iconMode ? iconThemeStore.previewTheme(id as IconTheme) : themeStore.previewTheme(id);
+  const savedThemeId = () => iconMode ? iconThemeStore.currentThemeId
+    : layoutMode ? settingsStore.layoutTheme : themeStore.currentThemeId;
+  const preview = (id: string) => iconMode ? iconThemeStore.previewTheme(id as IconTheme)
+    : layoutMode ? void applyLayout(id) : themeStore.previewTheme(id);
 
   let query = $state("");
   let selectedIndex = $state(0);
@@ -45,11 +52,12 @@
 
   // Tracks an open picker session so the close branch below only fires for a
   // session that actually started. Plain let — only read/written in the effect.
-  let pickerSession: 'color' | 'icon' | null = null;
+  let pickerSession: 'color' | 'icon' | 'layout' | null = null;
 
   $effect(() => {
     if (open && inputRef) {
       pickerSession = kind;
+      if (kind === 'layout') void refreshLayoutCatalog();
       // untrack: session init must not re-run when the theme store changes
       // mid-session (committing a theme mutates currentThemeId while the
       // picker is still open).
@@ -71,6 +79,7 @@
       // observed a stale currentThemeId and reverted the committed theme,
       // making theme switches need two attempts (#251, #164).
       if (session === 'icon') iconThemeStore.previewTheme(null);
+      else if (session === 'layout') void applyLayout(untrack(() => settingsStore.layoutTheme));
       else themeStore.previewTheme(untrack(() => themeStore.currentThemeId));
     }
   });
@@ -84,11 +93,13 @@
 
   onDestroy(() => {
     if (pickerSession === 'icon') iconThemeStore.previewTheme(null);
+    else if (pickerSession === 'layout') void applyLayout(settingsStore.layoutTheme);
     else if (pickerSession === 'color') themeStore.previewTheme(themeStore.currentThemeId);
   });
 
   function commit(themeId: string): void {
     if (iconMode) iconThemeStore.setTheme(themeId as IconTheme);
+    else if (layoutMode) settingsStore.update({ layoutTheme: themeId });
     else themeStore.setTheme(themeId);
     onClose();
   }
@@ -156,7 +167,7 @@
           aria-autocomplete="list"
           aria-expanded="true"
           aria-controls="theme-picker-options"
-          aria-activedescendant={filteredThemes[selectedIndex] ? `theme-option-${filteredThemes[selectedIndex].id}` : undefined}
+          aria-activedescendant={filteredThemes[selectedIndex] ? `theme-option-${selectedIndex}` : undefined}
           bind:value={query}
           bind:this={inputRef}
           oninput={handleInput}
@@ -171,7 +182,7 @@
               {@const isCurrent = theme.id === originalThemeId}
               <li
                 class="theme-item"
-                id={`theme-option-${theme.id}`}
+                id={`theme-option-${index}`}
                 class:selected={isSelected}
                 role="option"
                 aria-selected={isSelected}

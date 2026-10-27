@@ -11,7 +11,6 @@ import type { Plugin, PluginContext } from "../api";
 import { isImageFile } from "$lib/domain/file-types";
 import { isVirtualPath } from "$lib/domain/virtual-path";
 import { basename } from "$lib/domain/path";
-import { buildTheme, themeIdFromName } from "$lib/domain/theme-from-palette";
 import { extractPalette } from "$lib/api/thumbnails";
 import { writeThemeFile } from "$lib/api/config";
 // Direct import justification (#291): this plugin is purpose-built to extend the
@@ -26,6 +25,8 @@ import { settingsStore } from "$lib/state/settings.svelte";
 /** A failure escapes to the plugin context, which reports it under this
  *  plugin's name. */
 async function createThemeFrom(ctx: PluginContext, imagePath: string): Promise<void> {
+  // Theme generation runs only on request; keep it out of the startup bundle.
+  const { buildTheme, themeIdFromName } = await import("$lib/domain/theme-from-palette");
   const name = basename(imagePath);
   const colors = await extractPalette(imagePath, 6);
   const id = themeIdFromName(name);

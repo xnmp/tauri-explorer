@@ -178,7 +178,7 @@ test("inline panels release geometry on hide and island hoist", async ({ page })
   await expect.poll(canvasWidth).toBe(440);
   await page.evaluate(async () => {
     const load = new Function("return import('/src/lib/state/settings.svelte.ts')");
-    (await load()).settingsStore.update({ showSidebar: false, floatingIslands: true });
+    (await load()).settingsStore.update({ showSidebar: false, layoutTheme: "floating-islands" });
   });
   await expect(page.locator(".miller-island .miller-columns")).toHaveCount(1);
   await expect(page.locator(".explorer-pane .miller-columns")).toHaveCount(0);

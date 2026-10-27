@@ -43,7 +43,6 @@ import {
 import { createExplorerState, type ExplorerInstance } from "./explorer.svelte";
 import { emptyRetainedTabs, retainTabs } from "$lib/domain/retained-tabs";
 import { createPaneViewport } from "./pane-viewport.svelte";
-import { paneDividerSize } from "$lib/domain/pane-viewport";
 import { createPaneSessions } from "./pane-sessions";
 import { createPaneDialogHost } from "./pane-dialogs.svelte";
 import { modalOwnership } from "./modal-ownership.svelte";
@@ -58,6 +57,7 @@ import { traceError, traceWindowFailure, traceWindowProgress } from "./window-tr
 import { isFreshSeed, isRecord, normalizeDirectorySeed, windowSeedFitsBudget, WINDOW_SEED_MAX_CHARS, type ExplorerSeed } from "$lib/domain/window-input";
 import { createTabDisplay } from "./tab-display.svelte";
 import { settingsStore } from "./settings.svelte";
+import { layoutStore } from "./layout.svelte";
 import { workspacesStore } from "./workspaces.svelte";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
@@ -253,7 +253,7 @@ function createWindowTabsManager(options: {
 
   const paneViewport = createPaneViewport(
     () => activeTab?.kind === "explorer" ? activeTab.layout : undefined,
-    () => paneDividerSize(settingsStore.islandMode),
+    () => layoutStore.paneDividerSize,
   );
 
   /** The active tab's focused pane id ("" for non-explorer tabs). */

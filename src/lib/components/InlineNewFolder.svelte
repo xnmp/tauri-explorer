@@ -173,7 +173,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    height: 32px;
+    height: var(--details-row-height, 32px); /* Details slots follow the layout */
     padding: 0 12px;
     background: color-mix(in srgb, var(--accent) 15%, transparent);
   }

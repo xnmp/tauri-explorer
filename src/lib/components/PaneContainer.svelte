@@ -7,9 +7,9 @@
 <script lang="ts">
   import { getAbortSignal, tick, untrack } from "svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { settingsStore } from "$lib/state/settings.svelte";
+  import { layoutStore } from "$lib/state/layout.svelte";
   import { resizeActivity } from "$lib/state/resize-activity.svelte";
-  import { paneDividerSize, revealPane } from "$lib/domain/pane-viewport";
+  import { revealPane } from "$lib/domain/pane-viewport";
   import { usePaneDividers } from "$lib/composables/use-pane-dividers.svelte";
   import PaneLayoutView from "./PaneLayoutView.svelte";
 
@@ -25,7 +25,7 @@
   const instance = $derived(windowTabsManager.activeTabInstance);
   const geometry = $derived(windowTabsManager.paneViewport.geometry);
   const minima = $derived(windowTabsManager.paneViewport.minima);
-  const gap = $derived(paneDividerSize(settingsStore.islandMode));
+  const gap = $derived(layoutStore.paneDividerSize);
   const dividers = usePaneDividers({ geometry: () => geometry, begin: windowTabsManager.beginSplitResize });
   $effect(() => {
     const measuredWidth = width, measuredHeight = height;
@@ -68,7 +68,7 @@
 
 <svelte:window onblur={dividers.cancel} />
 
-<div class="pane-container" class:multi-pane={multiPane}
+<div class="pane-container" data-region="panes" data-split={multiPane || undefined} class:multi-pane={multiPane}
   bind:this={viewport} bind:contentRect
   onscroll={dividers.cancel}
   style:--pane-divider-size={`${gap}px`}>
@@ -100,6 +100,10 @@
     min-width: 0;
     min-height: 0;
     gap: 0;
+    /* Layout-theme variables (#1306); unset, they keep the Default chrome. */
+    border-radius: var(--layout-radius, 0px);
+    border: var(--layout-border, none);
+    box-shadow: var(--layout-shadow, none);
   }
 
   /* Fill the scrollport (stretched across, grown along); the inline minimum
@@ -122,25 +126,4 @@
     pointer-events: none;
   }
 
-  /* Vibrancy: main content island */
-  :global([data-vibrancy]) .pane-container {
-    border-radius: var(--vibrancy-island-radius);
-    background: var(--vibrancy-island-bg);
-    border: 1px solid var(--vibrancy-island-stroke);
-    box-shadow: var(--vibrancy-island-glow);
-    backdrop-filter: var(--vibrancy-island-filter, blur(12px) brightness(1.08) saturate(1.2));
-    -webkit-backdrop-filter: var(--vibrancy-island-filter, blur(12px) brightness(1.08) saturate(1.2));
-    position: relative;
-  }
-
-  /* Vibrancy + split panes: each pane is its own island (see ExplorerPane),
-     so the container itself paints no island chrome. */
-  :global([data-vibrancy]) .pane-container.multi-pane {
-    border-radius: 0;
-    background: transparent;
-    border: none;
-    box-shadow: none;
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-  }
 </style>

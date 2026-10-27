@@ -296,6 +296,92 @@ fn list_user_themes_sync() -> Result<Vec<(String, String)>, AppError> {
     Ok(themes)
 }
 
+/// Largest user layout stylesheet read from `<config>/layouts/` (#1306).
+/// Mirrors `MAX_LAYOUT_CSS_BYTES` in `src/lib/domain/layout-theme.ts`.
+const MAX_LAYOUT_CSS_BYTES: u64 = 512 * 1024;
+const LAYOUTS_DIR: &str = "layouts";
+
+/// One `.css` file in the layouts folder. Unlike colour themes, one bad file
+/// never fails the listing: it is reported with `css: None` and an `error`,
+/// so the frontend can explain why that layout falls back to Default.
+#[derive(Debug, serde::Serialize, PartialEq, Eq)]
+pub struct UserLayoutFile {
+    filename: String,
+    css: Option<String>,
+    error: Option<&'static str>,
+}
+
+/// List user layout CSS files from `<config>/layouts/` (#1306). Returns an
+/// empty list when the folder does not exist.
+#[tauri::command]
+pub async fn list_user_layouts() -> Result<Vec<UserLayoutFile>, AppError> {
+    tokio::task::spawn_blocking(|| list_user_layouts_in(&config_dir()?.join(LAYOUTS_DIR)))
+        .await
+        .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
+}
+
+fn list_user_layouts_in(dir: &Path) -> Result<Vec<UserLayoutFile>, AppError> {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(AppError::Other(format!("Failed to read layouts dir: {e}"))),
+    };
+    let mut layouts = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("css") {
+            continue;
+        }
+        let Some(filename) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let (css, error) = match fs::metadata(&path) {
+            Ok(meta) if !meta.is_file() => continue,
+            Ok(meta) if meta.len() > MAX_LAYOUT_CSS_BYTES => (None, Some("too-large")),
+            Ok(_) => read_bounded_layout(&path),
+            Err(_) => (None, Some("unreadable")),
+        };
+        layouts.push(UserLayoutFile {
+            filename: filename.to_owned(),
+            css,
+            error,
+        });
+    }
+    layouts.sort_by(|a, b| a.filename.cmp(&b.filename));
+    Ok(layouts)
+}
+
+/// Read at most one byte past the limit, so a file that grows after its
+/// metadata was read (or reports no length) cannot be read unbounded.
+fn read_bounded_layout(path: &Path) -> (Option<String>, Option<&'static str>) {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    let read = fs::File::open(path)
+        .and_then(|file| file.take(MAX_LAYOUT_CSS_BYTES + 1).read_to_end(&mut bytes));
+    match read {
+        Err(_) => (None, Some("unreadable")),
+        Ok(_) if bytes.len() as u64 > MAX_LAYOUT_CSS_BYTES => (None, Some("too-large")),
+        Ok(_) => match String::from_utf8(bytes) {
+            Ok(css) => (Some(css), None),
+            Err(_) => (None, Some("unreadable")),
+        },
+    }
+}
+
+/// Create `<config>/layouts/` if needed and return its absolute path, for
+/// the "Open layouts folder" action (#1306).
+#[tauri::command]
+pub async fn ensure_layouts_dir() -> Result<String, AppError> {
+    tokio::task::spawn_blocking(|| {
+        let dir = config_dir()?.join(LAYOUTS_DIR);
+        fs::create_dir_all(&dir)
+            .map_err(|e| AppError::Other(format!("Failed to create layouts dir: {e}")))?;
+        Ok(dir.to_string_lossy().into_owned())
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -467,5 +553,40 @@ mod tests {
             "a planted staging symlink must not block a safe write: {result:?}"
         );
         assert_eq!(fs::read_to_string(path).unwrap(), "new");
+    }
+    #[test]
+    fn lists_layouts_without_failing_on_bad_files() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("b.css"), ":root { --layout-gap: 2px; }").unwrap();
+        fs::write(dir.path().join("notes.txt"), "ignored").unwrap();
+        fs::write(
+            dir.path().join("big.css"),
+            vec![b'a'; MAX_LAYOUT_CSS_BYTES as usize + 1],
+        )
+        .unwrap();
+        fs::write(dir.path().join("binary.css"), [0xff, 0xfe, 0x00]).unwrap();
+        fs::create_dir(dir.path().join("folder.css")).unwrap();
+
+        let layouts = list_user_layouts_in(dir.path()).unwrap();
+        let summary: Vec<_> = layouts
+            .iter()
+            .map(|l| (l.filename.as_str(), l.css.is_some(), l.error))
+            .collect();
+        assert_eq!(
+            summary,
+            vec![
+                ("b.css", true, None),
+                ("big.css", false, Some("too-large")),
+                ("binary.css", false, Some("unreadable")),
+            ]
+        );
+    }
+
+    #[test]
+    fn missing_layouts_dir_lists_nothing() {
+        let dir = tempdir().unwrap();
+        assert!(list_user_layouts_in(&dir.path().join("absent"))
+            .unwrap()
+            .is_empty());
     }
 }

@@ -100,7 +100,7 @@ describe("settingsStore.init precedence (#280)", () => {
 
     // Defaults intact for everything the file didn't set.
     expect(store.showSidebar).toBe(true);
-    expect(store.floatingIslands).toBe(false);
+    expect(store.layoutTheme).toBe("default");
   });
 
   it("preserves unknown config fields on a later settings write without exposing them live", async () => {
@@ -181,23 +181,51 @@ describe("settingsStore.init precedence (#280)", () => {
   });
 });
 
-describe("settingsStore.islandMode (#434)", () => {
-  it("is off by default and turns on for any single island trigger", async () => {
+describe("settingsStore.layoutTheme migration (#1306)", () => {
+  it.each([
+    [{ floatingIslands: true }, "floating-islands"],
+    [{ macOsVibrancy: true }, "floating-islands"],
+    [{ windowsBackdrop: "acrylic" }, "floating-islands"],
+    [{ floatingIslands: false, windowsBackdrop: "off" }, "default"],
+  ])("migrates a pre-layout settings.json %j to %s once, and writes it back", async (legacy, expected) => {
+    readConfigFileMock.mockResolvedValue({ ok: true, data: JSON.stringify({ ...legacy, settingsVersion: 1 }) });
+    const store = await freshStore();
+
+    await store.init();
+
+    expect(store.layoutTheme).toBe(expected);
+    const written = JSON.parse(writeConfigQueuedMock.mock.calls.at(-1)![1] as string);
+    expect(written.layoutTheme).toBe(expected);
+  });
+
+  it("never re-derives a layout the user chose after migrating", async () => {
+    readConfigFileMock.mockResolvedValue({
+      ok: true,
+      data: JSON.stringify({ floatingIslands: true, layoutTheme: "default", settingsVersion: 1 }),
+    });
+    const store = await freshStore();
+
+    await store.init();
+
+    expect(store.layoutTheme).toBe("default");
+  });
+
+  it("derives the layout from a legacy localStorage cache before settings.json loads", async () => {
+    localStorage.setItem("explorer-settings", JSON.stringify({ floatingIslands: true }));
+    readConfigFileMock.mockReturnValue(new Promise(() => {}));
+    const store = await freshStore();
+
+    expect(store.layoutTheme).toBe("floating-islands");
+  });
+
+  it("keeps island and native-backdrop preferences independent after migration", async () => {
     readConfigFileMock.mockResolvedValue({ ok: false, error: "not found" });
     const store = await freshStore();
-    expect(store.islandMode).toBe(false);
 
-    store.update({ floatingIslands: true });
-    expect(store.islandMode).toBe(true);
+    store.update({ layoutTheme: "hairline-ledger", macOsVibrancy: true });
 
-    store.update({ floatingIslands: false, macOsVibrancy: true });
-    expect(store.islandMode).toBe(true);
-
-    store.update({ macOsVibrancy: false, windowsBackdrop: "mica" });
-    expect(store.islandMode).toBe(true);
-
-    store.update({ windowsBackdrop: "off" });
-    expect(store.islandMode).toBe(false);
+    expect(store.layoutTheme).toBe("hairline-ledger");
+    expect(store.macOsVibrancy).toBe(true);
   });
 });
 

@@ -76,7 +76,7 @@
 
 {#if showTitleBar}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="titlebar" class:integrated={isMac && settingsStore.integratedTitleBar} onmousedown={handleDragStart}>
+  <div class="titlebar" data-region="titlebar" class:integrated={isMac && settingsStore.integratedTitleBar} onmousedown={handleDragStart}>
     {#if windowTabsManager.activeTab}
       <WindowTabBar />
     {/if}
@@ -133,12 +133,12 @@
        themselves via align-self. */
     align-items: flex-end;
     height: 38px;
-    background: color-mix(in srgb, var(--background-card) calc(var(--titlebar-opacity, 1) * 100%), transparent);
+    background: var(--layout-chrome-surface, color-mix(in srgb, var(--background-card) calc(var(--titlebar-opacity, 1) * 100%), transparent));
     user-select: none;
     flex-shrink: 0;
     position: relative;
     border-bottom: none;
-    box-shadow: 0 1px 0 var(--surface-stroke);
+    box-shadow: 0 1px 0 var(--layout-hairline, var(--surface-stroke));
   }
 
   /* Subtle gradient overlay for depth */
@@ -204,13 +204,4 @@
     outline-offset: -2px;
   }
 
-  /* Vibrancy: titlebar floats above island, no bottom divider */
-  :global([data-vibrancy]) .titlebar {
-    position: relative;
-    z-index: 2;
-    box-shadow: none;
-  }
-  :global([data-vibrancy]) .titlebar::before {
-    display: none;
-  }
 </style>

@@ -15,7 +15,7 @@ export const SETTINGS_ROWS = {
   windowControls: ["Show Window Controls", "Display minimize, maximize and close buttons"],
   integratedTitleBar: ["Integrated Title Bar", "Show tabs in the title bar alongside window controls (requires restart)"],
   vibrancy: ["Window Vibrancy", "Native macOS translucent frosted-glass effect (requires restart)"],
-  floatingIslands: ["Floating Islands", "Panels float as rounded islands over the backdrop. Works on every platform; pairs with native transparency on macOS/Windows when enabled", "vibrancy", "island", "layout"],
+  layoutTheme: ["Layout", "Panel spacing, borders, rounding and density. Add your own CSS layouts to the layouts folder", "floating islands", "hairline ledger", "island", "css", "custom"],
   premiumTheme: ["Premium Theme Effects", "Aurora-style surface treatment: accent-tinted hairlines, soft glow shadows, breadcrumb pills, translucent panels and a subtle depth backdrop. Off = flatter, higher-contrast look", "aurora", "glow", "gradient", "glass"],
   nativeBlur: ["Native Blur", "Use macOS frosted glass blur (off = theme background, requires restart)"],
   windowsBackdrop: ["Window Backdrop", "Windows translucent Mica/Acrylic frosted-glass effect (enabling from Off requires restart)"],
@@ -67,10 +67,10 @@ export interface SettingsSectionRows {
 export function settingsSectionRows(platform: { isMac: boolean; isWindows: boolean }): SettingsSectionRows {
   const r = SETTINGS_ROWS;
   const appearance = [
-    r.theme, r.iconTheme, r.thumbnailSize, r.showSidebar, r.windowControls,
+    r.theme, r.layoutTheme, r.iconTheme, r.thumbnailSize, r.showSidebar, r.windowControls,
     ...(platform.isMac ? [r.integratedTitleBar, r.vibrancy, r.nativeBlur] : []),
     ...(platform.isWindows ? [r.windowsBackdrop, r.windowsBackdropOpacity] : []),
-    r.floatingIslands, r.premiumTheme,
+    r.premiumTheme,
     r.addressBar, r.statusBar,
   ];
   const navBar = [r.navBack, r.navForward, r.navUp, r.navRefresh];

@@ -71,6 +71,14 @@ pub(crate) fn listing_encoded(entries: usize) {
     });
 }
 
+/// Called by `files::listing_reaper` once it has freed a deferred listing's
+/// entries (#1417), on its own thread, so the release costs no reply time.
+pub(crate) fn listing_freed(entries: usize) {
+    if RELEASES_MEMORY && entries >= LARGE_LISTING_ENTRIES {
+        release_freed_memory();
+    }
+}
+
 /// glibc's default mmap and trim thresholds (128 KiB), set explicitly so they
 /// stay fixed instead of rising after the first large free.
 #[cfg(all(target_os = "linux", target_env = "gnu"))]

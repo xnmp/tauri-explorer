@@ -1,6 +1,6 @@
 use std::fs;
 
-use tauri_explorer_lib::files::dir_listing::list_directory;
+use tauri_explorer_lib::files::dir_listing::read_directory;
 use tempfile::tempdir;
 
 #[test]
@@ -12,7 +12,7 @@ fn listing_rejects_a_malformed_git_marker() {
 
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let listing = runtime
-        .block_on(list_directory(root.path().to_string_lossy().to_string()))
+        .block_on(read_directory(root.path().to_string_lossy().to_string()))
         .unwrap();
     let inbox = listing
         .entries

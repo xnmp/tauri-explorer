@@ -8,9 +8,10 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
 use super::directory_cache::{DirectoryCache, Lookup, PreparedSnapshot};
+use super::directory_wire::{encode_listing, NoExtra};
 use super::{metadata_to_entry_with_git_repo_probe, DirectoryListing, FileEntry, FileKind};
 use crate::error::AppError;
-use crate::load_diagnostics::{self, Phase, TraceHandle, TracedReply};
+use crate::load_diagnostics::{self, encoded_reply, Phase, TraceHandle};
 use crate::renderer_owner::Owner;
 
 // ===================
@@ -65,8 +66,18 @@ pub async fn is_directory_empty(path: String, include_hidden: bool) -> Result<bo
 
 /// List directory contents.
 /// Directories are sorted before files, and items are sorted case-insensitively by name.
+/// The reply is the binary listing form of `directory_wire.rs`.
 #[tauri::command]
-pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> {
+pub async fn list_directory(path: String) -> Result<tauri::ipc::Response, AppError> {
+    let listing = read_directory(path).await?;
+    Ok(tauri::ipc::Response::new(encode_listing(
+        &listing,
+        NoExtra {},
+    )))
+}
+
+/// [`list_directory`]'s listing before it is encoded for the webview.
+pub async fn read_directory(path: String) -> Result<DirectoryListing, AppError> {
     let path = super::run_blocking(move || Ok(super::directory_identity::resolve(&path))).await?;
     list_directory_with(path, scan_directory_with_diagnostics).await
 }
@@ -157,14 +168,25 @@ mod listing_contracts;
 // pub: exercised directly by the `sort_entries` criterion bench
 // (src-tauri/benches/sort_entries.rs).
 pub fn sort_entries(entries: &mut [FileEntry]) {
+    use rayon::slice::ParallelSliceMut;
     // Cache the (non-directory, lowercased-name) key so each name is lowercased
     // once rather than twice per comparison. `false < true`, so directories
     // (is_not_directory = false) sort ahead of files, then name case-insensitively.
-    entries.sort_by_cached_key(|e| {
+    let key = |e: &FileEntry| {
         let is_not_directory = !matches!(e.kind, FileKind::Directory);
         (is_not_directory, e.name.to_lowercase())
-    });
+    };
+    // Both sorts are stable with the same key, so they order identically. The
+    // parallel one cut a 500k-entry sort from ~150 ms to ~84 ms (#1417); below
+    // the threshold a thread-pool hop costs more than it saves.
+    if entries.len() >= PARALLEL_SORT_ENTRIES {
+        entries.par_sort_by_cached_key(key);
+    } else {
+        entries.sort_by_cached_key(key);
+    }
 }
+
+const PARALLEL_SORT_ENTRIES: usize = 8_192;
 
 /// Scan a directory using jwalk for parallel metadata reading.
 /// Returns entries sorted (directories first, then by name).
@@ -328,7 +350,7 @@ pub async fn list_directory_fresh(
     path: String,
     trace_id: Option<String>,
     trace_watched: Option<bool>,
-) -> Result<TracedReply<DirectoryListing>, AppError> {
+) -> Result<tauri::ipc::Response, AppError> {
     let scope = load_diagnostics::begin_listing(
         Some(&app),
         trace_id,
@@ -336,7 +358,9 @@ pub async fn list_directory_fresh(
         trace_watched.unwrap_or(false),
     );
     let trace = scope.handle();
-    TracedReply::wrap(scope, fresh_listing(path, trace).await)
+    encoded_reply(scope, fresh_listing(path, trace).await, |listing| {
+        encode_listing(listing, NoExtra {})
+    })
 }
 
 async fn fresh_listing(path: String, trace: TraceHandle) -> Result<DirectoryListing, AppError> {
@@ -406,11 +430,26 @@ async fn list_directory_for_lease(
     })
 }
 
-#[derive(Serialize)]
 pub struct ObservedDirectoryListing {
-    #[serde(flatten)]
     listing: DirectoryListing,
     watch_lease: super::directory_watches::Lease,
+}
+
+#[derive(Serialize)]
+struct WatchLeaseHeader<'a> {
+    watch_lease: &'a super::directory_watches::Lease,
+}
+
+impl ObservedDirectoryListing {
+    /// The binary listing with its watch lease carried in the header.
+    fn encode(&self) -> Vec<u8> {
+        encode_listing(
+            &self.listing,
+            WatchLeaseHeader {
+                watch_lease: &self.watch_lease,
+            },
+        )
+    }
 }
 
 /// A watch lease admitted for a directory but not yet handed to the webview.
@@ -438,7 +477,7 @@ pub async fn start_observed_directory(
     session_id: String,
     trace_id: Option<String>,
     trace_watched: Option<bool>,
-) -> Result<TracedReply<ObservedDirectoryListing>, AppError> {
+) -> Result<tauri::ipc::Response, AppError> {
     use tauri::Manager;
     let scope = load_diagnostics::begin_listing(
         Some(window.app_handle()),
@@ -453,7 +492,7 @@ pub async fn start_observed_directory(
         |owner, trace| super::fs_watcher::observe_directory(owner, path, trace),
     )
     .await;
-    TracedReply::wrap(scope, result)
+    encoded_reply(scope, result, ObservedDirectoryListing::encode)
 }
 
 /// The observed-listing sequence, with ownership and watch registration
@@ -541,13 +580,15 @@ mod tests {
                 path: "/watched".into(),
             },
         };
-        let value = serde_json::to_value(observed).unwrap();
+        let body = observed.encode();
+        let header_len = u32::from_le_bytes(body[4..8].try_into().unwrap()) as usize;
+        let header: serde_json::Value = serde_json::from_slice(&body[8..8 + header_len]).unwrap();
         assert_eq!(
-            value["watch_lease"],
+            header["watch_lease"],
             serde_json::json!({ "id": "owned-lease", "path": "/watched" })
         );
-        assert_eq!(value["format"], "columns-v1");
-        assert_eq!(value["columns"]["names"], serde_json::json!([]));
+        assert_eq!(header["count"], 0);
+        assert_eq!(body.len(), 8 + header_len, "no rows, no columns");
     }
 
     #[test]
@@ -558,7 +599,7 @@ mod tests {
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let result = rt
-            .block_on(list_directory(dir.path().to_string_lossy().to_string()))
+            .block_on(read_directory(dir.path().to_string_lossy().to_string()))
             .unwrap();
 
         assert_eq!(result.entries.len(), 2);
@@ -602,7 +643,7 @@ mod tests {
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let result = rt
-            .block_on(list_directory(dir.path().to_string_lossy().to_string()))
+            .block_on(read_directory(dir.path().to_string_lossy().to_string()))
             .unwrap();
 
         assert!(result.entries.iter().all(|e| e.is_empty.is_none()));
@@ -764,7 +805,7 @@ mod tests {
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let listing = rt
-            .block_on(list_directory(dir.path().to_string_lossy().to_string()))
+            .block_on(read_directory(dir.path().to_string_lossy().to_string()))
             .unwrap();
         let names: Vec<&str> = listing.entries.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, as_strs("expected_order"));

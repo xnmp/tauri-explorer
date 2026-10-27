@@ -1,4 +1,5 @@
 use super::*;
+use crate::files::directory_wire::header_of;
 use std::sync::mpsc;
 use std::time::Duration;
 use tempfile::tempdir;
@@ -92,7 +93,7 @@ fn invalidation_rejects_an_inflight_snapshot_with_or_without_a_newer_read() {
             std::fs::write(directory.path().join("later.txt"), "later").unwrap();
             invalidate_dir_cache_sync(&path);
             if complete_newer_read {
-                let newer = list_directory(path.clone()).await.unwrap();
+                let newer = read_directory(path.clone()).await.unwrap();
                 assert!(entry_names(&newer).contains(&"later.txt".to_string()));
             }
 
@@ -100,7 +101,7 @@ fn invalidation_rejects_an_inflight_snapshot_with_or_without_a_newer_read() {
             let older = older.await.unwrap().unwrap();
             assert_eq!(entry_names(&older), vec!["old.txt"]);
 
-            let current = list_directory(path.clone()).await.unwrap();
+            let current = read_directory(path.clone()).await.unwrap();
             assert!(
                 entry_names(&current).contains(&"later.txt".to_string()),
                 "an invalidated in-flight scan must not repopulate stale cache; newer_read={complete_newer_read}"
@@ -125,14 +126,14 @@ fn an_older_same_path_miss_cannot_overwrite_a_newer_completed_miss() {
         gate.wait_for_snapshot();
 
         std::fs::write(directory.path().join("new.txt"), "new").unwrap();
-        let newer = list_directory(path.clone()).await.unwrap();
+        let newer = read_directory(path.clone()).await.unwrap();
         assert!(entry_names(&newer).contains(&"new.txt".to_string()));
 
         gate.release();
         let older = older.await.unwrap().unwrap();
         assert_eq!(entry_names(&older), vec!["old.txt"]);
 
-        let current = list_directory(path.clone()).await.unwrap();
+        let current = read_directory(path.clone()).await.unwrap();
         assert!(
             entry_names(&current).contains(&"new.txt".to_string()),
             "the older completion must not replace the newer same-path snapshot"
@@ -160,7 +161,7 @@ fn cancelling_a_gated_real_scan_retires_its_publication_authority() {
         std::fs::write(directory.path().join("later.txt"), "later").unwrap();
         gate.release();
 
-        let current = list_directory(path.clone()).await.unwrap();
+        let current = read_directory(path.clone()).await.unwrap();
         assert!(entry_names(&current).contains(&"later.txt".to_string()));
     });
     invalidate_dir_cache_sync(&path);
@@ -185,7 +186,7 @@ fn a_partial_listing_is_returned_to_its_caller_but_not_cached() {
         assert_eq!(entry_names(&partial), vec!["visible.txt"]);
 
         std::fs::write(directory.path().join("later.txt"), "later").unwrap();
-        let current = list_directory(path.clone()).await.unwrap();
+        let current = read_directory(path.clone()).await.unwrap();
         assert!(entry_names(&current).contains(&"later.txt".to_string()));
     });
     invalidate_dir_cache_sync(&path);
@@ -214,7 +215,7 @@ fn disappearing_root_is_an_error_instead_of_a_successful_empty_listing() {
     fs::create_dir(&path).unwrap();
     fs::write(path.join("restored.txt"), "restored").unwrap();
     let restored = runtime
-        .block_on(list_directory(path_string.clone()))
+        .block_on(read_directory(path_string.clone()))
         .unwrap();
     assert_eq!(entry_names(&restored), vec!["restored.txt"]);
     invalidate_dir_cache_sync(&path_string);
@@ -234,14 +235,14 @@ fn unreadable_root_returns_permission_error_and_does_not_cache_empty_success() {
         return;
     }
     let runtime = tokio::runtime::Runtime::new().unwrap();
-    let result = runtime.block_on(list_directory(path.clone()));
+    let result = runtime.block_on(read_directory(path.clone()));
     fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
     assert!(
         matches!(result, Err(AppError::PermissionDenied(_))),
         "{result:?}"
     );
     fs::write(directory.path().join("restored.txt"), "readable again").unwrap();
-    let restored = runtime.block_on(list_directory(path.clone())).unwrap();
+    let restored = runtime.block_on(read_directory(path.clone())).unwrap();
     assert_eq!(entry_names(&restored), vec!["restored.txt"]);
     invalidate_dir_cache_sync(&path);
 }
@@ -251,7 +252,7 @@ fn fresh_listing_returns_the_complete_sorted_snapshot_and_bypasses_cache() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let directory = tempdir().unwrap();
     let path = directory.path().to_string_lossy().into_owned();
-    runtime.block_on(list_directory(path.clone())).unwrap();
+    runtime.block_on(read_directory(path.clone())).unwrap();
     for index in (0..10_003).rev() {
         fs::write(directory.path().join(format!("file-{index:05}.txt")), "x").unwrap();
     }
@@ -287,17 +288,26 @@ fn traced_fresh_listing_records_each_native_phase() {
     let traced = |id: &str, path: String| {
         let scope = TraceScope::begin(Some(id.to_owned()), &path);
         let trace = scope.handle();
-        TracedReply::wrap(scope, runtime.block_on(fresh_listing(path, trace)))
+        let mut body = None;
+        let reply = encoded_reply(
+            scope,
+            runtime.block_on(fresh_listing(path, trace)),
+            |listing| {
+                assert_eq!(
+                    snapshot(id).unwrap().outcome,
+                    Outcome::Pending,
+                    "open until encoded"
+                );
+                let encoded = encode_listing(listing, NoExtra {});
+                body = Some(encoded.clone());
+                encoded
+            },
+        );
+        reply.map(|_| body.unwrap())
     };
     let id = "1700000000000-fresh1";
-    let reply = traced(id, path.clone()).unwrap();
-    assert_eq!(
-        snapshot(id).unwrap().outcome,
-        Outcome::Pending,
-        "open until encoded"
-    );
-    let wire = serde_json::to_value(&reply).unwrap();
-    assert_eq!(wire["columns"]["names"].as_array().unwrap().len(), 26);
+    let body = traced(id, path.clone()).unwrap();
+    assert_eq!(header_of(&body)["count"], 26);
     let trace = snapshot(id).expect("finished trace is retained");
     assert_eq!(trace.outcome, Outcome::Ok);
     assert_eq!(trace.pending_phase, None);
@@ -318,7 +328,6 @@ fn traced_fresh_listing_records_each_native_phase() {
             Phase::ReadDir,
             Phase::EntryMetadata,
             Phase::Sort,
-            Phase::Respond,
             Phase::Serialize,
         ]
     );
@@ -368,13 +377,18 @@ fn observed_listing_traces_ownership_watch_and_scan_in_production_order() {
                 }))
             },
         ));
-        TracedReply::wrap(scope, result)
+        let mut body = None;
+        let reply = encoded_reply(scope, result, |observed| {
+            let encoded = observed.encode();
+            body = Some(encoded.clone());
+            encoded
+        });
+        reply.map(|_| body.unwrap())
     };
 
     let id = "1700000000000-observed1";
-    let reply = run(id, Owner::default()).unwrap();
-    let wire = serde_json::to_value(&reply).unwrap();
-    assert_eq!(wire["watch_lease"]["id"], "lease");
+    let body = run(id, Owner::default()).unwrap();
+    assert_eq!(header_of(&body)["watch_lease"]["id"], "lease");
     let trace = snapshot(id).unwrap();
     assert_eq!(trace.outcome, Outcome::Ok);
     let phases: Vec<Phase> = trace.phases.iter().map(|phase| phase.phase).collect();
@@ -389,7 +403,6 @@ fn observed_listing_traces_ownership_watch_and_scan_in_production_order() {
             Phase::ReadDir,
             Phase::EntryMetadata,
             Phase::Sort,
-            Phase::Respond,
             Phase::Serialize,
         ]
     );

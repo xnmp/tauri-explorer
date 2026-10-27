@@ -1,0 +1,81 @@
+dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Activating service name='org.a11y.Bus' requested by ':1.0' (uid=1000 pid=1180722 comm="/tmp/claude-1000/-home-chong-Repos-tauri-explorer/")
+dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Activating service name='org.gtk.vfs.Daemon' requested by ':1.1' (uid=1000 pid=1180726 comm="/usr/lib/at-spi-bus-launcher")
+dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Successfully activated service 'org.gtk.vfs.Daemon'
+dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Successfully activated service 'org.a11y.Bus'
+fusermount3: failed to access mountpoint /run/user/1000/gvfs: Permission denied
+dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Activating service name='org.freedesktop.systemd1' requested by ':1.3' (uid=1000 pid=1180740 comm="/usr/bin/dbus-broker-launch --config-file=/usr/sha")
+dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Activated service 'org.freedesktop.systemd1' failed: Process org.freedesktop.systemd1 exited with status 1
+dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Activating service name='org.freedesktop.portal.Desktop' requested by ':1.4' (uid=1000 pid=1180722 comm="/tmp/claude-1000/-home-chong-Repos-tauri-explorer/")
+dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Activating service name='org.freedesktop.impl.portal.PermissionStore' requested by ':1.5' (uid=1000 pid=1180750 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.PermissionStore'
+dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Activating service name='org.freedesktop.portal.Documents' requested by ':1.5' (uid=1000 pid=1180750 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Successfully activated service 'org.freedesktop.portal.Documents'
+
+(/usr/lib/xdg-desktop-portal:1180750): xdg-desktop-portal-WARNING **: 23:17:06.604: Choosing gtk.portal for org.freedesktop.impl.portal.Lockdown via the deprecated UseIn key
+
+(/usr/lib/xdg-desktop-portal:1180750): xdg-desktop-portal-WARNING **: 23:17:06.604: The preferred method to match portal implementations to desktop environments is to use the portals.conf(5) configuration file
+dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.gtk' requested by ':1.5' (uid=1000 pid=1180750 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Activating service name='org.freedesktop.systemd1' requested by ':1.3' (uid=1000 pid=1180740 comm="/usr/bin/dbus-broker-launch --config-file=/usr/sha")
+dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Activated service 'org.freedesktop.systemd1' failed: Process org.freedesktop.systemd1 exited with status 1
+dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.gtk'
+
+** (xdg-desktop-portal-gtk:1180773): WARNING **: 23:17:06.628: AT-SPI: Could not obtain desktop path or name
+
+dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Activating service name='org.freedesktop.systemd1' requested by ':1.3' (uid=1000 pid=1180740 comm="/usr/bin/dbus-broker-launch --config-file=/usr/sha")
+
+(/usr/lib/xdg-desktop-portal:1180750): xdg-desktop-portal-WARNING **: 23:17:06.628: Choosing gtk.portal for org.freedesktop.impl.portal.Access via the deprecated UseIn key
+dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Activated service 'org.freedesktop.systemd1' failed: Process org.freedesktop.systemd1 exited with status 1
+
+** (xdg-desktop-portal-gtk:1180773): WARNING **: 23:17:06.629: atk-bridge: GetRegisteredEvents returned message with unknown signature
+
+** (xdg-desktop-portal-gtk:1180773): WARNING **: 23:17:06.629: atk-bridge: get_device_events_reply: unknown signature
+
+(/usr/lib/xdg-desktop-portal:1180750): xdg-desktop-portal-WARNING **: 23:17:06.636: Choosing gtk.portal for org.freedesktop.impl.portal.Settings via the deprecated UseIn key
+dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.tauri_explorer' requested by ':1.5' (uid=1000 pid=1180750 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Activating service name='org.freedesktop.systemd1' requested by ':1.3' (uid=1000 pid=1180740 comm="/usr/bin/dbus-broker-launch --config-file=/usr/sha")
+dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Activated service 'org.freedesktop.systemd1' failed: Process org.freedesktop.systemd1 exited with status 1
+
+(/usr/lib/xdg-desktop-portal:1180750): xdg-desktop-portal-WARNING **: 23:17:31.661: Failed to create file chooser proxy: Error calling StartServiceByName for org.freedesktop.impl.portal.desktop.tauri_explorer: Timeout was reached
+
+(/usr/lib/xdg-desktop-portal:1180750): xdg-desktop-portal-WARNING **: 23:17:31.661: Choosing gtk.portal for org.freedesktop.impl.portal.AppChooser via the deprecated UseIn key
+
+(/usr/lib/xdg-desktop-portal:1180750): xdg-desktop-portal-WARNING **: 23:17:31.662: Choosing gtk.portal for org.freedesktop.impl.portal.Print via the deprecated UseIn key
+
+(/usr/lib/xdg-desktop-portal:1180750): xdg-desktop-portal-WARNING **: 23:17:31.662: Choosing gtk.portal for org.freedesktop.impl.portal.Notification via the deprecated UseIn key
+
+(/usr/lib/xdg-desktop-portal:1180750): xdg-desktop-portal-WARNING **: 23:17:31.662: Choosing gtk.portal for org.freedesktop.impl.portal.Inhibit via the deprecated UseIn key
+
+(/usr/lib/xdg-desktop-portal:1180750): xdg-desktop-portal-WARNING **: 23:17:31.665: Choosing gtk.portal for org.freedesktop.impl.portal.Account via the deprecated UseIn key
+
+(/usr/lib/xdg-desktop-portal:1180750): xdg-desktop-portal-WARNING **: 23:17:31.665: Choosing gtk.portal for org.freedesktop.impl.portal.Email via the deprecated UseIn key
+
+(/usr/lib/xdg-desktop-portal:1180750): xdg-desktop-portal-WARNING **: 23:17:31.666: Choosing gnome-keyring.portal for org.freedesktop.impl.portal.Secret via the deprecated UseIn key
+
+(/usr/lib/xdg-desktop-portal:1180750): xdg-desktop-portal-WARNING **: 23:17:31.666: Choosing gtk.portal for org.freedesktop.impl.portal.DynamicLauncher via the deprecated UseIn key
+dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Activating service name='org.freedesktop.secrets' requested by ':1.5' (uid=1000 pid=1180750 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Successfully activated service 'org.freedesktop.portal.Desktop'
+discover_other_daemon: 1dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Activating service name='org.freedesktop.systemd1' requested by ':1.3' (uid=1000 pid=1180740 comm="/usr/bin/dbus-broker-launch --config-file=/usr/sha")
+dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Activated service 'org.freedesktop.systemd1' failed: Process org.freedesktop.systemd1 exited with status 1
+
+** (tauri-explorer:1180788): WARNING **: 23:17:31.672: AT-SPI: Could not obtain desktop path or name
+
+dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Activating service name='org.freedesktop.systemd1' requested by ':1.3' (uid=1000 pid=1180740 comm="/usr/bin/dbus-broker-launch --config-file=/usr/sha")
+dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.tauri_explorer'
+dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Activated service 'org.freedesktop.systemd1' failed: Process org.freedesktop.systemd1 exited with status 1
+
+** (tauri-explorer:1180788): WARNING **: 23:17:31.673: atk-bridge: GetRegisteredEvents returned message with unknown signature
+
+** (tauri-explorer:1180788): WARNING **: 23:17:31.673: atk-bridge: get_device_events_reply: unknown signature
+dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Activating service name='org.freedesktop.systemd1' requested by ':1.3' (uid=1000 pid=1180740 comm="/usr/bin/dbus-broker-launch --config-file=/usr/sha")
+dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Activated service 'org.freedesktop.systemd1' failed: Process org.freedesktop.systemd1 exited with status 1
+dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Activating service name='org.freedesktop.systemd1' requested by ':1.3' (uid=1000 pid=1180740 comm="/usr/bin/dbus-broker-launch --config-file=/usr/sha")
+dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Activated service 'org.freedesktop.systemd1' failed: Process org.freedesktop.systemd1 exited with status 1
+dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Activating service name='org.freedesktop.systemd1' requested by ':1.3' (uid=1000 pid=1180740 comm="/usr/bin/dbus-broker-launch --config-file=/usr/sha")
+dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Activated service 'org.freedesktop.systemd1' failed: Process org.freedesktop.systemd1 exited with status 1
+dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Activating service name='org.freedesktop.systemd1' requested by ':1.3' (uid=1000 pid=1180740 comm="/usr/bin/dbus-broker-launch --config-file=/usr/sha")
+dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Activated service 'org.freedesktop.systemd1' failed: Process org.freedesktop.systemd1 exited with status 1
+dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Activating service name='org.freedesktop.systemd1' requested by ':1.3' (uid=1000 pid=1180740 comm="/usr/bin/dbus-broker-launch --config-file=/usr/sha")
+dbus-daemon[1180712]: [session uid=1000 pid=1180712 pidfd=5] Activated service 'org.freedesktop.systemd1' failed: Process org.freedesktop.systemd1 exited with status 1
+A connection to the bus can't be made
+
+(/usr/lib/xdg-desktop-portal:1180750): xdg-desktop-portal-WARNING **: 23:17:43.098: Failed to create secret proxy: Error calling StartServiceByName for org.freedesktop.secrets: The connection is closed

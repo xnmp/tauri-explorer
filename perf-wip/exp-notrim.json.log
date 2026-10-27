@@ -1,0 +1,166 @@
+[2026-10-27][23:18:34][INFO][tauri_explorer_lib] Renderer(webkit): mode=SharedMemory set=[("WEBKIT_DMABUF_RENDERER_FORCE_SHM", "1"), ("WEBKIT_FORCE_DMABUF_RENDERER", "1")] unset=[] reason=NVIDIA proprietary driver on WebKitGTK 2.54
+[2026-10-27][23:18:34][INFO][tauri_explorer_lib] Renderer(jsc): Unaffected
+[2026-10-27][23:18:34][INFO][tauri_explorer_lib::files::fs_watcher] Filesystem watcher initialized
+[2026-10-27][23:18:34][INFO][tauri_explorer_lib::config_watch] Config autoreload watching /tmp/tauri-explorer-perf-profile-vUuRxP/config/tauri-explorer
+[2026-10-27][23:18:34][INFO][tauri_explorer_lib] Startup: pre-builder=128.213µs builder→setup=25.073766426s setup→window-built=159.175902ms total=25.233070541s
+[2026-10-27][23:18:34][INFO][tauri_explorer_lib] Startup(native-window): window=main app-run-epoch-ms=1793103489061.058 process-entry-to-run=1.0ms window-built=25233.1ms
+[2026-10-27][23:18:34][INFO][tauri_explorer_lib::system] Startup(webview-progress): window=main mark=bundle-exec webview-ms=50.0 app-run-ms=25491.9
+[2026-10-27][23:18:34][INFO][tauri_explorer_lib::system] Startup(webview-progress): window=main mark=mount webview-ms=62.0 app-run-ms=25504.2
+[2026-10-27][23:18:34][INFO][tauri_explorer_lib::system] Startup(webview-progress): window=main mark=commands-ready webview-ms=78.0 app-run-ms=25520.7
+[2026-10-27][23:18:34][INFO][tauri_explorer_lib::system] Startup(webview-progress): window=main mark=settings-ready webview-ms=111.0 app-run-ms=25557.3
+[2026-10-27][23:18:34][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh requested: path="/tmp/claude-1000/lfp-fixtures"
+[2026-10-27][23:18:34][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh completed: path="/tmp/claude-1000/lfp-fixtures", entries=5, elapsed=191.893µs
+[2026-10-27][23:18:34][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP serialized epoch_us=1793103514622904
+[2026-10-27][23:18:34][INFO][tauri_explorer_lib::load_diagnostics::trace] Listing(timing) id=1793103514568-vkrkqdu71 entries=5 us=owner-acquire:4+2,blocking-queue:6+9,resolve-path:16+1,watch-lock:18+0,watch-register:18+166,blocking-queue:185+12,root-metadata:197+4,read-dir:201+48,entry-metadata:250+85,sort:336+49,respond:385+0,serialize:386+8
+[2026-10-27][23:18:34][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP drop-start epoch_us=1793103514622920
+[2026-10-27][23:18:34][INFO][tauri_explorer_lib::system] Startup(webview-progress): window=main mark=list-ready webview-ms=148.0 app-run-ms=25590.4
+[2026-10-27][23:18:34][INFO][tauri_explorer_lib::system] Startup(webview-progress): window=main mark=app-ready webview-ms=148.0 app-run-ms=25590.5
+[2026-10-27][23:18:34][INFO][tauri_explorer_lib::system] Startup(webview-progress): window=main mark=ui-ready webview-ms=224.0 app-run-ms=25666.6
+[2026-10-27][23:18:34][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1793103514502.000 bundle-exec=50.0ms mount=62.0ms commands-ready=78.0ms settings-ready=111.0ms list-ready=148.0ms app-ready=148.0ms ui-ready=224.0ms total=224.0ms
+[2026-10-27][23:18:34][INFO][tauri_explorer_lib::system] Startup(native-ready): window=main app-run-to-ready=25666.7ms receipt-epoch-ms=1793103514727.719
+[2026-10-27][23:18:34][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh requested: path="/tmp/claude-1000/lfp-fixtures/files-100k"
+[2026-10-27][23:18:35][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh completed: path="/tmp/claude-1000/lfp-fixtures/files-100k", entries=100000, elapsed=102.240555ms
+[2026-10-27][23:18:35][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP serialized epoch_us=1793103515036507
+[2026-10-27][23:18:35][INFO][tauri_explorer_lib::load_diagnostics::trace] Listing(timing) id=1793103514905-txtzde2w2 entries=100000 us=owner-acquire:5+4,blocking-queue:9+11,resolve-path:20+4,watch-lock:24+0,watch-register:25+6692,blocking-queue:6717+10,root-metadata:6728+5,read-dir:6733+53570,entry-metadata:60303+23719,sort:84023+24934,respond:108958+2,serialize:108960+19920
+[2026-10-27][23:18:35][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP drop-start epoch_us=1793103515037919
+[2026-10-27][23:18:35][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh requested: path="/tmp/claude-1000/lfp-fixtures"
+[2026-10-27][23:18:35][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh completed: path="/tmp/claude-1000/lfp-fixtures", entries=5, elapsed=264.459µs
+[2026-10-27][23:18:35][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP serialized epoch_us=1793103515208383
+[2026-10-27][23:18:35][INFO][tauri_explorer_lib::load_diagnostics::trace] Listing(timing) id=1793103515192-c9e2fsme3 entries=5 us=owner-acquire:3+2,blocking-queue:5+20,resolve-path:26+3,watch-lock:29+0,watch-register:30+91,blocking-queue:121+10,root-metadata:132+9,read-dir:141+67,entry-metadata:209+114,sort:324+71,respond:395+2,serialize:397+14
+[2026-10-27][23:18:35][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP drop-start epoch_us=1793103515208411
+[2026-10-27][23:18:35][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh requested: path="/tmp/claude-1000/lfp-fixtures/files-100k"
+[2026-10-27][23:18:35][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh completed: path="/tmp/claude-1000/lfp-fixtures/files-100k", entries=100000, elapsed=87.610557ms
+[2026-10-27][23:18:35][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP serialized epoch_us=1793103515341944
+[2026-10-27][23:18:35][INFO][tauri_explorer_lib::load_diagnostics::trace] Listing(timing) id=1793103515229-wago0yr24 entries=100000 us=owner-acquire:2+2,blocking-queue:4+14,resolve-path:19+2,watch-lock:22+0,watch-register:22+6294,blocking-queue:6317+10,root-metadata:6327+4,read-dir:6331+45795,entry-metadata:52127+21647,sort:73775+20160,respond:93935+2,serialize:93938+17802
+[2026-10-27][23:18:35][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP drop-start epoch_us=1793103515343493
+[2026-10-27][23:18:35][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh requested: path="/tmp/claude-1000/lfp-fixtures"
+[2026-10-27][23:18:35][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh completed: path="/tmp/claude-1000/lfp-fixtures", entries=5, elapsed=193.045µs
+[2026-10-27][23:18:35][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP serialized epoch_us=1793103515480735
+[2026-10-27][23:18:35][INFO][tauri_explorer_lib::load_diagnostics::trace] Listing(timing) id=1793103515467-txpk975c5 entries=5 us=owner-acquire:2+2,blocking-queue:5+12,resolve-path:18+2,watch-lock:20+0,watch-register:20+89,blocking-queue:110+10,root-metadata:120+2,read-dir:123+47,entry-metadata:170+84,sort:255+45,respond:301+1,serialize:302+36
+[2026-10-27][23:18:35][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP drop-start epoch_us=1793103515480771
+[2026-10-27][23:18:35][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh requested: path="/tmp/claude-1000/lfp-fixtures/files-100k"
+[2026-10-27][23:18:35][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh completed: path="/tmp/claude-1000/lfp-fixtures/files-100k", entries=100000, elapsed=90.954794ms
+[2026-10-27][23:18:35][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP serialized epoch_us=1793103515625665
+[2026-10-27][23:18:35][INFO][tauri_explorer_lib::load_diagnostics::trace] Listing(timing) id=1793103515511-cqvt2ow16 entries=100000 us=owner-acquire:2+2,blocking-queue:4+11,resolve-path:16+14,watch-lock:30+0,watch-register:30+6224,blocking-queue:6255+12,root-metadata:6268+7,read-dir:6275+48614,entry-metadata:54890+22259,sort:77150+20065,respond:97215+2,serialize:97217+15151
+[2026-10-27][23:18:35][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP drop-start epoch_us=1793103515626971
+[2026-10-27][23:18:35][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh requested: path="/tmp/claude-1000/lfp-fixtures"
+[2026-10-27][23:18:35][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh completed: path="/tmp/claude-1000/lfp-fixtures", entries=5, elapsed=290.68µs
+[2026-10-27][23:18:35][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP serialized epoch_us=1793103515759671
+[2026-10-27][23:18:35][INFO][tauri_explorer_lib::load_diagnostics::trace] Listing(timing) id=1793103515746-gezywy1w7 entries=5 us=owner-acquire:2+3,blocking-queue:6+9,resolve-path:15+1,watch-lock:17+0,watch-register:17+92,blocking-queue:109+27,root-metadata:136+8,read-dir:145+54,entry-metadata:199+114,sort:313+78,respond:392+0,serialize:393+13
+[2026-10-27][23:18:35][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP drop-start epoch_us=1793103515759690
+[2026-10-27][23:18:35][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh requested: path="/tmp/claude-1000/lfp-fixtures/files-100k"
+[2026-10-27][23:18:35][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh completed: path="/tmp/claude-1000/lfp-fixtures/files-100k", entries=100000, elapsed=90.641363ms
+[2026-10-27][23:18:35][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP serialized epoch_us=1793103515899660
+[2026-10-27][23:18:35][INFO][tauri_explorer_lib::load_diagnostics::trace] Listing(timing) id=1793103515784-o2bb9k058 entries=100000 us=owner-acquire:2+1,blocking-queue:4+15,resolve-path:19+3,watch-lock:22+0,watch-register:22+6716,blocking-queue:6739+13,root-metadata:6752+4,read-dir:6756+44910,entry-metadata:51667+22303,sort:73970+23413,respond:97384+2,serialize:97386+16116
+[2026-10-27][23:18:35][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP drop-start epoch_us=1793103515901260
+[2026-10-27][23:18:36][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh requested: path="/tmp/claude-1000/lfp-fixtures"
+[2026-10-27][23:18:36][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh completed: path="/tmp/claude-1000/lfp-fixtures", entries=5, elapsed=263.498µs
+[2026-10-27][23:18:36][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP serialized epoch_us=1793103516024830
+[2026-10-27][23:18:36][INFO][tauri_explorer_lib::load_diagnostics::trace] Listing(timing) id=1793103516011-fyz6unlb9 entries=5 us=owner-acquire:2+2,blocking-queue:5+12,resolve-path:18+2,watch-lock:20+0,watch-register:21+73,blocking-queue:94+11,root-metadata:105+4,read-dir:110+49,entry-metadata:159+145,sort:305+63,respond:368+2,serialize:371+17
+[2026-10-27][23:18:36][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP drop-start epoch_us=1793103516024863
+[2026-10-27][23:18:36][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh requested: path="/tmp/claude-1000/lfp-fixtures/files-100k"
+[2026-10-27][23:18:36][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh completed: path="/tmp/claude-1000/lfp-fixtures/files-100k", entries=100000, elapsed=99.805795ms
+[2026-10-27][23:18:36][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP serialized epoch_us=1793103516183216
+[2026-10-27][23:18:36][INFO][tauri_explorer_lib::load_diagnostics::trace] Listing(timing) id=1793103516060-isevssbqa entries=100000 us=owner-acquire:3+2,blocking-queue:5+17,resolve-path:22+3,watch-lock:26+0,watch-register:26+6224,blocking-queue:6251+14,root-metadata:6266+9,read-dir:6276+51735,entry-metadata:58011+22784,sort:80796+25258,respond:106055+2,serialize:106057+15156
+[2026-10-27][23:18:36][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP drop-start epoch_us=1793103516184729
+[2026-10-27][23:18:36][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh requested: path="/tmp/claude-1000/lfp-fixtures"
+[2026-10-27][23:18:36][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh completed: path="/tmp/claude-1000/lfp-fixtures", entries=5, elapsed=224.594µs
+[2026-10-27][23:18:36][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP serialized epoch_us=1793103516371056
+[2026-10-27][23:18:36][INFO][tauri_explorer_lib::load_diagnostics::trace] Listing(timing) id=1793103516356-3m7uix04b entries=5 us=owner-acquire:3+2,blocking-queue:5+10,resolve-path:15+2,watch-lock:18+0,watch-register:18+84,blocking-queue:103+10,root-metadata:113+3,read-dir:116+55,entry-metadata:172+113,sort:285+33,respond:318+1,serialize:320+15
+[2026-10-27][23:18:36][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP drop-start epoch_us=1793103516371091
+[2026-10-27][23:18:36][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh requested: path="/tmp/claude-1000/lfp-fixtures/files-100k"
+[2026-10-27][23:18:36][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh completed: path="/tmp/claude-1000/lfp-fixtures/files-100k", entries=100000, elapsed=91.753784ms
+[2026-10-27][23:18:36][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP serialized epoch_us=1793103516504423
+[2026-10-27][23:18:36][INFO][tauri_explorer_lib::load_diagnostics::trace] Listing(timing) id=1793103516390-26theqh6c entries=100000 us=owner-acquire:2+2,blocking-queue:5+11,resolve-path:16+3,watch-lock:20+0,watch-register:20+6717,blocking-queue:6738+15,root-metadata:6753+5,read-dir:6759+48104,entry-metadata:54863+22198,sort:77061+21426,respond:98488+1,serialize:98490+14467
+[2026-10-27][23:18:36][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP drop-start epoch_us=1793103516505676
+[2026-10-27][23:18:36][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh requested: path="/tmp/claude-1000/lfp-fixtures"
+[2026-10-27][23:18:36][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh completed: path="/tmp/claude-1000/lfp-fixtures", entries=5, elapsed=237.699µs
+[2026-10-27][23:18:36][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP serialized epoch_us=1793103516625566
+[2026-10-27][23:18:36][INFO][tauri_explorer_lib::load_diagnostics::trace] Listing(timing) id=1793103516614-1zrfxsmrd entries=5 us=owner-acquire:5+2,blocking-queue:8+12,resolve-path:21+2,watch-lock:23+0,watch-register:24+88,blocking-queue:112+14,root-metadata:127+10,read-dir:137+66,entry-metadata:204+92,sort:296+49,respond:345+1,serialize:347+53
+[2026-10-27][23:18:36][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP drop-start epoch_us=1793103516625597
+[2026-10-27][23:18:36][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh requested: path="/tmp/claude-1000/lfp-fixtures/files-100k"
+[2026-10-27][23:18:36][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh completed: path="/tmp/claude-1000/lfp-fixtures/files-100k", entries=100000, elapsed=93.924645ms
+[2026-10-27][23:18:36][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP serialized epoch_us=1793103516776345
+[2026-10-27][23:18:36][INFO][tauri_explorer_lib::load_diagnostics::trace] Listing(timing) id=1793103516654-50lln0uee entries=100000 us=owner-acquire:3+2,blocking-queue:6+11,resolve-path:17+2,watch-lock:19+0,watch-register:20+6513,blocking-queue:6534+9,root-metadata:6543+1,read-dir:6545+47098,entry-metadata:53644+24769,sort:78413+22050,respond:100463+2,serialize:100466+19458
+[2026-10-27][23:18:36][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP drop-start epoch_us=1793103516777719
+[2026-10-27][23:18:36][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh requested: path="/tmp/claude-1000/lfp-fixtures/files-100k"
+[2026-10-27][23:18:36][ERROR][tauri_explorer_lib::crash_report] [frontend] [warm parked] {"label":"explorer-warm-a538fffb-20ca-4bf6-ba48-08779ecc3769","registered":true,"bootMs":453}
+[2026-10-27][23:18:37][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh completed: path="/tmp/claude-1000/lfp-fixtures/files-100k", entries=100000, elapsed=101.667783ms
+[2026-10-27][23:18:37][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh requested: path="/tmp/claude-1000/lfp-fixtures"
+[2026-10-27][23:18:37][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh completed: path="/tmp/claude-1000/lfp-fixtures", entries=5, elapsed=166.325µs
+[2026-10-27][23:18:37][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP serialized epoch_us=1793103517040171
+[2026-10-27][23:18:37][INFO][tauri_explorer_lib::load_diagnostics::trace] Listing(timing) id=1793103517023-amxq6adaf entries=5 us=owner-acquire:5+2,blocking-queue:7+16,resolve-path:24+2,watch-lock:26+0,watch-register:27+88,blocking-queue:115+8,root-metadata:124+5,read-dir:129+45,entry-metadata:175+79,sort:254+27,respond:282+0,serialize:282+27
+[2026-10-27][23:18:37][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP drop-start epoch_us=1793103517040208
+[2026-10-27][23:18:37][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP serialized epoch_us=1793103517060415
+[2026-10-27][23:18:37][INFO][tauri_explorer_lib::load_diagnostics::trace] Listing(timing) id=1793103516881-usnwnhpp1 entries=100000 us=owner-acquire:5+4,blocking-queue:10+11,resolve-path:21+6,watch-lock:27+0,watch-register:28+48,blocking-queue:76+16,root-metadata:93+7,read-dir:101+49548,entry-metadata:49649+24546,sort:74196+27556,respond:101752+2,serialize:101754+20936
+[2026-10-27][23:18:37][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP drop-start epoch_us=1793103517061804
+[2026-10-27][23:18:37][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh requested: path="/tmp/claude-1000/lfp-fixtures/files-500k"
+[2026-10-27][23:18:37][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh completed: path="/tmp/claude-1000/lfp-fixtures/files-500k", entries=500000, elapsed=523.842675ms
+[2026-10-27][23:18:37][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP serialized epoch_us=1793103517754506
+[2026-10-27][23:18:37][INFO][tauri_explorer_lib::load_diagnostics::trace] Listing(timing) id=1793103517075-cys9k9pug entries=500000 us=owner-acquire:2+2,blocking-queue:4+13,resolve-path:17+2,watch-lock:20+0,watch-register:20+39822,blocking-queue:39843+11,root-metadata:39854+9,read-dir:39864+246869,entry-metadata:286733+109425,sort:396159+167523,respond:563683+1,serialize:563685+113760
+[2026-10-27][23:18:37][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP drop-start epoch_us=1793103517760594
+[2026-10-27][23:18:38][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh requested: path="/tmp/claude-1000/lfp-fixtures"
+[2026-10-27][23:18:38][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh completed: path="/tmp/claude-1000/lfp-fixtures", entries=5, elapsed=230.496µs
+[2026-10-27][23:18:38][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP serialized epoch_us=1793103518509401
+[2026-10-27][23:18:38][INFO][tauri_explorer_lib::load_diagnostics::trace] Listing(timing) id=1793103518356-6s91yqq1h entries=5 us=owner-acquire:3+3,blocking-queue:6+9,resolve-path:16+2,watch-lock:19+0,watch-register:19+88,blocking-queue:108+11,root-metadata:119+4,read-dir:124+48,entry-metadata:172+119,sort:292+49,respond:341+2,serialize:343+13
+[2026-10-27][23:18:38][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP drop-start epoch_us=1793103518509427
+[2026-10-27][23:18:38][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh requested: path="/tmp/claude-1000/lfp-fixtures/files-500k"
+[2026-10-27][23:18:39][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh completed: path="/tmp/claude-1000/lfp-fixtures/files-500k", entries=500000, elapsed=531.162413ms
+[2026-10-27][23:18:39][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP serialized epoch_us=1793103519226424
+[2026-10-27][23:18:39][INFO][tauri_explorer_lib::load_diagnostics::trace] Listing(timing) id=1793103518541-2gzgcsrri entries=500000 us=owner-acquire:3+2,blocking-queue:5+18,resolve-path:24+4,watch-lock:29+0,watch-register:29+34252,blocking-queue:34282+17,root-metadata:34299+4,read-dir:34304+256948,entry-metadata:291252+109550,sort:400803+164641,respond:565445+2,serialize:565447+117457
+[2026-10-27][23:18:39][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP drop-start epoch_us=1793103519234821
+[2026-10-27][23:18:39][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh requested: path="/tmp/claude-1000/lfp-fixtures"
+[2026-10-27][23:18:39][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh completed: path="/tmp/claude-1000/lfp-fixtures", entries=5, elapsed=433.258µs
+[2026-10-27][23:18:39][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP serialized epoch_us=1793103519941643
+[2026-10-27][23:18:39][INFO][tauri_explorer_lib::load_diagnostics::trace] Listing(timing) id=1793103519805-katvrdl0j entries=5 us=owner-acquire:15+10,blocking-queue:26+24,resolve-path:50+8,watch-lock:59+0,watch-register:60+210,blocking-queue:270+27,root-metadata:298+10,read-dir:309+126,entry-metadata:436+171,sort:608+42,respond:650+1,serialize:652+23
+[2026-10-27][23:18:39][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP drop-start epoch_us=1793103519941702
+[2026-10-27][23:18:40][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh requested: path="/tmp/claude-1000/lfp-fixtures/files-500k"
+[2026-10-27][23:18:40][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh completed: path="/tmp/claude-1000/lfp-fixtures/files-500k", entries=500000, elapsed=509.296988ms
+[2026-10-27][23:18:40][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP serialized epoch_us=1793103520636942
+[2026-10-27][23:18:40][INFO][tauri_explorer_lib::load_diagnostics::trace] Listing(timing) id=1793103519976-yzwkdpe9k entries=500000 us=owner-acquire:2+2,blocking-queue:5+10,resolve-path:16+2,watch-lock:18+0,watch-register:19+33461,blocking-queue:33480+14,root-metadata:33495+4,read-dir:33499+223476,entry-metadata:256976+112609,sort:369585+173199,respond:542785+2,serialize:542788+116094
+[2026-10-27][23:18:40][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP drop-start epoch_us=1793103520643147
+[2026-10-27][23:18:41][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh requested: path="/tmp/claude-1000/lfp-fixtures"
+[2026-10-27][23:18:41][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh completed: path="/tmp/claude-1000/lfp-fixtures", entries=5, elapsed=234.544µs
+[2026-10-27][23:18:41][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP serialized epoch_us=1793103521405173
+[2026-10-27][23:18:41][INFO][tauri_explorer_lib::load_diagnostics::trace] Listing(timing) id=1793103521255-tqog12kcl entries=5 us=owner-acquire:2+2,blocking-queue:5+20,resolve-path:26+2,watch-lock:29+0,watch-register:29+91,blocking-queue:120+12,root-metadata:132+6,read-dir:139+55,entry-metadata:194+115,sort:310+35,respond:345+1,serialize:346+17
+[2026-10-27][23:18:41][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP drop-start epoch_us=1793103521405196
+[2026-10-27][23:18:41][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh requested: path="/tmp/claude-1000/lfp-fixtures/files-500k"
+[2026-10-27][23:18:41][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh completed: path="/tmp/claude-1000/lfp-fixtures/files-500k", entries=500000, elapsed=477.668428ms
+[2026-10-27][23:18:42][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP serialized epoch_us=1793103522058081
+[2026-10-27][23:18:42][INFO][tauri_explorer_lib::load_diagnostics::trace] Listing(timing) id=1793103521434-mulqf1q7m entries=500000 us=owner-acquire:1+0,blocking-queue:2+10,resolve-path:13+1,watch-lock:15+0,watch-register:15+32729,blocking-queue:32745+11,root-metadata:32756+4,read-dir:32761+219623,entry-metadata:252384+105249,sort:357634+152812,respond:510446+3,serialize:510450+111925
+[2026-10-27][23:18:42][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP drop-start epoch_us=1793103522065026
+[2026-10-27][23:18:42][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh requested: path="/tmp/claude-1000/lfp-fixtures"
+[2026-10-27][23:18:42][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh completed: path="/tmp/claude-1000/lfp-fixtures", entries=5, elapsed=303.043µs
+[2026-10-27][23:18:42][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP serialized epoch_us=1793103522805059
+[2026-10-27][23:18:42][INFO][tauri_explorer_lib::load_diagnostics::trace] Listing(timing) id=1793103522673-uplo55rln entries=5 us=owner-acquire:4+3,blocking-queue:8+18,resolve-path:27+3,watch-lock:30+0,watch-register:31+129,blocking-queue:160+11,root-metadata:172+5,read-dir:178+77,entry-metadata:256+128,sort:384+58,respond:443+1,serialize:444+48
+[2026-10-27][23:18:42][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP drop-start epoch_us=1793103522805103
+[2026-10-27][23:18:42][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh requested: path="/tmp/claude-1000/lfp-fixtures/files-500k"
+[2026-10-27][23:18:43][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh completed: path="/tmp/claude-1000/lfp-fixtures/files-500k", entries=500000, elapsed=535.827188ms
+[2026-10-27][23:18:43][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP serialized epoch_us=1793103523534328
+[2026-10-27][23:18:43][INFO][tauri_explorer_lib::load_diagnostics::trace] Listing(timing) id=1793103522843-8ivvi4dpo entries=500000 us=owner-acquire:2+2,blocking-queue:5+14,resolve-path:19+2,watch-lock:21+0,watch-register:22+32382,blocking-queue:32404+12,root-metadata:32417+4,read-dir:32421+242632,entry-metadata:275053+108822,sort:383876+184361,respond:568237+2,serialize:568240+121362
+[2026-10-27][23:18:43][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP drop-start epoch_us=1793103523540446
+[2026-10-27][23:18:44][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh requested: path="/tmp/claude-1000/lfp-fixtures"
+[2026-10-27][23:18:44][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh completed: path="/tmp/claude-1000/lfp-fixtures", entries=5, elapsed=286.702µs
+[2026-10-27][23:18:44][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP serialized epoch_us=1793103524269845
+[2026-10-27][23:18:44][INFO][tauri_explorer_lib::load_diagnostics::trace] Listing(timing) id=1793103524139-nvn70atxp entries=5 us=owner-acquire:9+3,blocking-queue:13+17,resolve-path:30+2,watch-lock:33+0,watch-register:33+128,blocking-queue:161+11,root-metadata:173+6,read-dir:179+98,entry-metadata:278+120,sort:398+36,respond:435+1,serialize:437+16
+[2026-10-27][23:18:44][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP drop-start epoch_us=1793103524269882
+[2026-10-27][23:18:44][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh requested: path="/tmp/claude-1000/lfp-fixtures/files-500k"
+[2026-10-27][23:18:44][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh completed: path="/tmp/claude-1000/lfp-fixtures/files-500k", entries=500000, elapsed=480.682303ms
+[2026-10-27][23:18:44][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP serialized epoch_us=1793103524931446
+[2026-10-27][23:18:44][INFO][tauri_explorer_lib::load_diagnostics::trace] Listing(timing) id=1793103524307-534ycqb9q entries=500000 us=owner-acquire:5+2,blocking-queue:8+18,resolve-path:27+3,watch-lock:30+0,watch-register:31+29903,blocking-queue:29934+16,root-metadata:29950+5,read-dir:29956+218491,entry-metadata:248448+110502,sort:358950+151672,respond:510622+2,serialize:510624+111702
+[2026-10-27][23:18:44][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP drop-start epoch_us=1793103524938961
+[2026-10-27][23:18:45][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh requested: path="/tmp/claude-1000/lfp-fixtures"
+[2026-10-27][23:18:45][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh completed: path="/tmp/claude-1000/lfp-fixtures", entries=5, elapsed=440.853µs
+[2026-10-27][23:18:45][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP serialized epoch_us=1793103525660432
+[2026-10-27][23:18:45][INFO][tauri_explorer_lib::load_diagnostics::trace] Listing(timing) id=1793103525522-stvhtqbbr entries=5 us=owner-acquire:27+5,blocking-queue:32+33,resolve-path:66+3,watch-lock:70+0,watch-register:70+194,blocking-queue:265+19,root-metadata:285+8,read-dir:293+105,entry-metadata:399+218,sort:617+53,respond:671+1,serialize:672+24
+[2026-10-27][23:18:45][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP drop-start epoch_us=1793103525660509
+[2026-10-27][23:18:45][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh requested: path="/tmp/claude-1000/lfp-fixtures/files-500k"
+[2026-10-27][23:18:46][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh completed: path="/tmp/claude-1000/lfp-fixtures/files-500k", entries=500000, elapsed=485.916573ms
+[2026-10-27][23:18:46][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP serialized epoch_us=1793103526330710
+[2026-10-27][23:18:46][INFO][tauri_explorer_lib::load_diagnostics::trace] Listing(timing) id=1793103525694-rj4tvy0ys entries=500000 us=owner-acquire:2+1,blocking-queue:4+15,resolve-path:19+2,watch-lock:22+0,watch-register:22+31667,blocking-queue:31689+15,root-metadata:31705+5,read-dir:31710+217239,entry-metadata:248950+105623,sort:354573+163050,respond:517623+2,serialize:517626+116869
+[2026-10-27][23:18:46][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP drop-start epoch_us=1793103526337757
+[2026-10-27][23:18:47][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh requested: path="/tmp/claude-1000/lfp-fixtures"
+[2026-10-27][23:18:47][INFO][tauri_explorer_lib::files::dir_listing] navigation list_directory_fresh completed: path="/tmp/claude-1000/lfp-fixtures", entries=5, elapsed=205.217µs
+[2026-10-27][23:18:47][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP serialized epoch_us=1793103527164433
+[2026-10-27][23:18:47][INFO][tauri_explorer_lib::load_diagnostics::trace] Listing(timing) id=1793103527012-r5hcmdm0t entries=5 us=owner-acquire:4+2,blocking-queue:6+13,resolve-path:20+2,watch-lock:22+0,watch-register:22+86,blocking-queue:109+11,root-metadata:120+5,read-dir:126+47,entry-metadata:174+107,sort:281+21,respond:302+0,serialize:303+15
+[2026-10-27][23:18:47][INFO][tauri_explorer_lib::load_diagnostics::reply] EXP drop-start epoch_us=1793103527164454

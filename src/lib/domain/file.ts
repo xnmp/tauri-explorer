@@ -169,9 +169,14 @@ const SYSTEM_HIDDEN_NAMES: ReadonlySet<string> = new Set([
   "thumbs.db", // Windows thumbnail cache
 ]);
 
+// Lowercasing never changes the length of a name that lowercases to one of
+// these ASCII names (A-Z and the Kelvin sign map one unit to one), so names
+// of any other length skip the allocation (#1417).
+const SYSTEM_HIDDEN_LENGTHS: ReadonlySet<number> = new Set([...SYSTEM_HIDDEN_NAMES].map((name) => name.length));
+
 /** True if `name` is an OS/system folder hidden by default (separate from dotfiles). */
 export function isSystemHidden(name: string): boolean {
-  return SYSTEM_HIDDEN_NAMES.has(name.toLowerCase());
+  return SYSTEM_HIDDEN_LENGTHS.has(name.length) && SYSTEM_HIDDEN_NAMES.has(name.toLowerCase());
 }
 
 /**

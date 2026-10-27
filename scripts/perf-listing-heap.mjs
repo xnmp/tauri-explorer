@@ -47,7 +47,47 @@ function findJsc(explicit) {
 }
 
 const lib = (file) => JSON.stringify(path.join(REPO, "src/lib", file));
+// The jsc shell has no TextEncoder/TextDecoder (they are WebCore APIs): the
+// harness installs minimal UTF-8 ones. Like WebKit's, the decoder returns an
+// 8-bit string for ASCII input and a 16-bit one otherwise.
+const TEXT_CODING = `
+globalThis.TextEncoder ??= class {
+  encode(text) {
+    const out = [];
+    for (const ch of text) {
+      const c = ch.codePointAt(0);
+      if (c < 0x80) out.push(c);
+      else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 63));
+      else if (c < 0x10000) out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+      else out.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+    }
+    return Uint8Array.from(out);
+  }
+};
+globalThis.TextDecoder ??= class {
+  decode(bytes) {
+    const units = [];
+    for (let i = 0; i < bytes.length;) {
+      const b = bytes[i];
+      let c, n;
+      if (b < 0x80) { c = b; n = 1; }
+      else if (b < 0xe0) { c = ((b & 31) << 6) | (bytes[i + 1] & 63); n = 2; }
+      else if (b < 0xf0) { c = ((b & 15) << 12) | ((bytes[i + 1] & 63) << 6) | (bytes[i + 2] & 63); n = 3; }
+      else { c = ((b & 7) << 18) | ((bytes[i + 1] & 63) << 12) | ((bytes[i + 2] & 63) << 6) | (bytes[i + 3] & 63); n = 4; }
+      if (c > 0xffff) { c -= 0x10000; units.push(0xd800 | (c >> 10), 0xdc00 | (c & 1023)); } else units.push(c);
+      i += n;
+    }
+    const parts = [];
+    for (let i = 0; i < units.length; i += 8192) parts.push(String.fromCharCode.apply(null, units.slice(i, i + 8192)));
+    const text = parts.join("");
+    text.charCodeAt(0); // resolve the rope, as a decoded string is flat
+    return text;
+  }
+};
+`;
+
 const HARNESS = `
+${TEXT_CODING}
 import { decodeDirectoryListing, encodeDirectoryListing } from ${lib("api/directory-wire.ts")};
 import { filterHidden, sortEntries } from ${lib("domain/file.ts")};
 import { flatPeekEntries, flatPeekRows } from ${lib("domain/folder-peek-flat.ts")};
@@ -64,14 +104,14 @@ const source = Array.from({ length: N }, (_, i) => {
   return { name, path: root + "/" + name, kind: "file", size: Math.floor(rnd() * 1e9), modified: new Date(1.6e12 + rnd() * 1e11).toISOString(), is_symlink: false, is_git_repo: false };
 });
 // The IPC payload as the webview receives it; the source objects are dropped.
-const wire = JSON.stringify(encodeDirectoryListing({ path: root, entries: source }));
+const wire = encodeDirectoryListing({ path: root, entries: source });
 source.length = 0;
 const used = () => { for (let i = 0; i < 4; i++) fullGC(); return gcHeapSize(); };
 const keep = [];
 const steps = [];
 const step = (label, make) => { const before = used(); const value = make(); keep.push(value); steps.push({ label, bytesPerEntry: (used() - before) / N }); return value; };
 const start = used();
-const listing = step("decoded listing (payload dropped)", () => decodeDirectoryListing(JSON.parse(wire)));
+const listing = step("decoded listing (payload dropped)", () => { const { path, entries } = decodeDirectoryListing(wire); return { path, entries }; });
 const visible = step("filterHidden", () => filterHidden(listing.entries, false));
 const sorted = step("sortEntries by name", () => sortEntries(visible, "name", true));
 const tree = step("flatPeekEntries", () => flatPeekEntries(root, sorted));

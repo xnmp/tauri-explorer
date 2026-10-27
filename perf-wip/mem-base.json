@@ -1,0 +1,2262 @@
+{
+  "date": "2026-10-27T13:22:28.159Z",
+  "binary": "/tmp/claude-1000/-home-chong-Repos-tauri-explorer/e947c9a5-2864-4719-b4ff-395c11e9451a/scratchpad/lfp/te-base",
+  "runsPerScenario": 20,
+  "webview": {
+    "devicePixelRatio": 1,
+    "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/60.5 Safari/605.1.15",
+    "innerHeight": 800,
+    "innerWidth": 1200
+  },
+  "memoryAfterOpen": {},
+  "scenarios": [],
+  "memoryPhases": [
+    {
+      "phase": "idle-root",
+      "size": null,
+      "cycle": null,
+      "loadavg1": 2.26,
+      "domNodes": 381,
+      "appRssMb": 394.73828125,
+      "children": [
+        {
+          "name": "WebKitNetworkPr",
+          "rssMb": 72.87890625
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 501.43359375
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 416.1171875
+        }
+      ],
+      "totalRssMb": 1385.16796875,
+      "totalPssMb": 527.71484375,
+      "processes": [
+        {
+          "pid": 1372493,
+          "name": "te-base",
+          "role": "app",
+          "rssMb": 394.73828125,
+          "pssMb": 165.3173828125,
+          "pssAnonMb": 55.90625,
+          "pssFileMb": 103.9111328125,
+          "pssShmemMb": 5.5,
+          "privateDirtyMb": 55.91015625,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 13.91796875,
+            "glibcArenasMb": 3.078125,
+            "webkitMallocMb": 12.61328125,
+            "javascriptCoreMb": 3.390625,
+            "otherAnonMb": 6.953125,
+            "fileBackedAnonMb": 15.953125
+          }
+        },
+        {
+          "pid": 1373370,
+          "name": "WebKitNetworkPr",
+          "role": "network",
+          "rssMb": 72.87890625,
+          "pssMb": 26.7861328125,
+          "pssAnonMb": 21.8125,
+          "pssFileMb": 4.9736328125,
+          "pssShmemMb": 0,
+          "privateDirtyMb": 21.84375,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 0.39453125,
+            "glibcArenasMb": 0.26171875,
+            "webkitMallocMb": 11.3359375,
+            "javascriptCoreMb": 2,
+            "otherAnonMb": 0.8828125,
+            "fileBackedAnonMb": 6.9375
+          }
+        },
+        {
+          "pid": 1373430,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 501.43359375,
+          "pssMb": 204.7060546875,
+          "pssAnonMb": 140.48828125,
+          "pssFileMb": 60.5439453125,
+          "pssShmemMb": 3.673828125,
+          "privateDirtyMb": 151.75,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 7.40234375,
+            "glibcArenasMb": 48.75390625,
+            "webkitMallocMb": 41.7578125,
+            "javascriptCoreMb": 7.484375,
+            "otherAnonMb": 20.140625,
+            "fileBackedAnonMb": 14.94921875
+          }
+        },
+        {
+          "pid": 1373597,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 416.1171875,
+          "pssMb": 130.9052734375,
+          "pssAnonMb": 80.7421875,
+          "pssFileMb": 50.15234375,
+          "pssShmemMb": 0.009765625,
+          "privateDirtyMb": 86.25390625,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 6.1015625,
+            "glibcArenasMb": 1.98046875,
+            "webkitMallocMb": 44.30078125,
+            "javascriptCoreMb": 7.46484375,
+            "otherAnonMb": 5.9453125,
+            "fileBackedAnonMb": 14.94921875
+          }
+        }
+      ]
+    },
+    {
+      "phase": "open",
+      "size": "100k",
+      "cycle": 1,
+      "loadavg1": 2.03,
+      "domNodes": 722,
+      "appRssMb": 422.6015625,
+      "children": [
+        {
+          "name": "WebKitNetworkPr",
+          "rssMb": 72.81640625
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 583.171875
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 414.5625
+        }
+      ],
+      "totalRssMb": 1493.15234375,
+      "totalPssMb": 625.3994140625,
+      "processes": [
+        {
+          "pid": 1372493,
+          "name": "te-base",
+          "role": "app",
+          "rssMb": 422.6015625,
+          "pssMb": 193.1279296875,
+          "pssAnonMb": 83.76953125,
+          "pssFileMb": 103.8583984375,
+          "pssShmemMb": 5.5,
+          "privateDirtyMb": 83.7734375,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 14.328125,
+            "glibcArenasMb": 28.125,
+            "webkitMallocMb": 13.23828125,
+            "javascriptCoreMb": 3.390625,
+            "otherAnonMb": 8.734375,
+            "fileBackedAnonMb": 15.953125
+          }
+        },
+        {
+          "pid": 1373370,
+          "name": "WebKitNetworkPr",
+          "role": "network",
+          "rssMb": 72.81640625,
+          "pssMb": 26.61328125,
+          "pssAnonMb": 21.75,
+          "pssFileMb": 4.86328125,
+          "pssShmemMb": 0,
+          "privateDirtyMb": 21.78125,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 0.39453125,
+            "glibcArenasMb": 0.26171875,
+            "webkitMallocMb": 11.2734375,
+            "javascriptCoreMb": 2,
+            "otherAnonMb": 0.8828125,
+            "fileBackedAnonMb": 6.9375
+          }
+        },
+        {
+          "pid": 1373430,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 583.171875,
+          "pssMb": 276.1767578125,
+          "pssAnonMb": 208.62890625,
+          "pssFileMb": 63.8740234375,
+          "pssShmemMb": 3.673828125,
+          "privateDirtyMb": 219.890625,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 8.1875,
+            "glibcArenasMb": 49.02734375,
+            "webkitMallocMb": 108.8125,
+            "javascriptCoreMb": 7.4921875,
+            "otherAnonMb": 20.16015625,
+            "fileBackedAnonMb": 14.94921875
+          }
+        },
+        {
+          "pid": 1373597,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 414.5625,
+          "pssMb": 129.4814453125,
+          "pssAnonMb": 79.1875,
+          "pssFileMb": 50.2841796875,
+          "pssShmemMb": 0.009765625,
+          "privateDirtyMb": 84.69921875,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 6.1015625,
+            "glibcArenasMb": 1.98046875,
+            "webkitMallocMb": 42.7578125,
+            "javascriptCoreMb": 7.46484375,
+            "otherAnonMb": 5.93359375,
+            "fileBackedAnonMb": 14.94921875
+          }
+        }
+      ]
+    },
+    {
+      "phase": "away",
+      "size": "100k",
+      "cycle": 1,
+      "loadavg1": 2.62,
+      "domNodes": 381,
+      "appRssMb": 392.80078125,
+      "children": [
+        {
+          "name": "WebKitNetworkPr",
+          "rssMb": 72.81640625
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 592.24609375
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 414.5859375
+        }
+      ],
+      "totalRssMb": 1472.44921875,
+      "totalPssMb": 605.0224609375,
+      "processes": [
+        {
+          "pid": 1372493,
+          "name": "te-base",
+          "role": "app",
+          "rssMb": 392.80078125,
+          "pssMb": 163.37890625,
+          "pssAnonMb": 53.96875,
+          "pssFileMb": 103.91015625,
+          "pssShmemMb": 5.5,
+          "privateDirtyMb": 53.96875,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 6.7890625,
+            "glibcArenasMb": 6.60546875,
+            "webkitMallocMb": 13.2265625,
+            "javascriptCoreMb": 3.390625,
+            "otherAnonMb": 8.00390625,
+            "fileBackedAnonMb": 15.953125
+          }
+        },
+        {
+          "pid": 1373370,
+          "name": "WebKitNetworkPr",
+          "role": "network",
+          "rssMb": 72.81640625,
+          "pssMb": 26.72265625,
+          "pssAnonMb": 21.75,
+          "pssFileMb": 4.97265625,
+          "pssShmemMb": 0,
+          "privateDirtyMb": 21.75,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 0.39453125,
+            "glibcArenasMb": 0.26171875,
+            "webkitMallocMb": 11.2734375,
+            "javascriptCoreMb": 2,
+            "otherAnonMb": 0.8828125,
+            "fileBackedAnonMb": 6.9375
+          }
+        },
+        {
+          "pid": 1373430,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 592.24609375,
+          "pssMb": 285.298828125,
+          "pssAnonMb": 217.578125,
+          "pssFileMb": 64.046875,
+          "pssShmemMb": 3.673828125,
+          "privateDirtyMb": 228.83984375,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 8.1875,
+            "glibcArenasMb": 49.10546875,
+            "webkitMallocMb": 117.6640625,
+            "javascriptCoreMb": 7.4921875,
+            "otherAnonMb": 20.1796875,
+            "fileBackedAnonMb": 14.94921875
+          }
+        },
+        {
+          "pid": 1373597,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 414.5859375,
+          "pssMb": 129.6220703125,
+          "pssAnonMb": 79.2109375,
+          "pssFileMb": 50.400390625,
+          "pssShmemMb": 0.009765625,
+          "privateDirtyMb": 84.72265625,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 6.1015625,
+            "glibcArenasMb": 1.98046875,
+            "webkitMallocMb": 42.78125,
+            "javascriptCoreMb": 7.46484375,
+            "otherAnonMb": 5.93359375,
+            "fileBackedAnonMb": 14.94921875
+          }
+        }
+      ]
+    },
+    {
+      "phase": "open",
+      "size": "100k",
+      "cycle": 2,
+      "loadavg1": 2.4,
+      "domNodes": 722,
+      "appRssMb": 421.2421875,
+      "children": [
+        {
+          "name": "WebKitNetworkPr",
+          "rssMb": 72.8203125
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 614.796875
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 414.53515625
+        }
+      ],
+      "totalRssMb": 1523.39453125,
+      "totalPssMb": 655.224609375,
+      "processes": [
+        {
+          "pid": 1372493,
+          "name": "te-base",
+          "role": "app",
+          "rssMb": 421.2421875,
+          "pssMb": 191.79296875,
+          "pssAnonMb": 82.34765625,
+          "pssFileMb": 103.9453125,
+          "pssShmemMb": 5.5,
+          "privateDirtyMb": 82.34765625,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 15.12890625,
+            "glibcArenasMb": 26.48046875,
+            "webkitMallocMb": 12.671875,
+            "javascriptCoreMb": 3.390625,
+            "otherAnonMb": 8.72265625,
+            "fileBackedAnonMb": 15.953125
+          }
+        },
+        {
+          "pid": 1373370,
+          "name": "WebKitNetworkPr",
+          "role": "network",
+          "rssMb": 72.8203125,
+          "pssMb": 26.6875,
+          "pssAnonMb": 21.75390625,
+          "pssFileMb": 4.93359375,
+          "pssShmemMb": 0,
+          "privateDirtyMb": 21.75390625,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 0.39453125,
+            "glibcArenasMb": 0.26171875,
+            "webkitMallocMb": 11.27734375,
+            "javascriptCoreMb": 2,
+            "otherAnonMb": 0.8828125,
+            "fileBackedAnonMb": 6.9375
+          }
+        },
+        {
+          "pid": 1373430,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 614.796875,
+          "pssMb": 307.4755859375,
+          "pssAnonMb": 236.0234375,
+          "pssFileMb": 67.77734375,
+          "pssShmemMb": 3.673828125,
+          "privateDirtyMb": 251.265625,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 8.1953125,
+            "glibcArenasMb": 49.1484375,
+            "webkitMallocMb": 134.07421875,
+            "javascriptCoreMb": 9.48828125,
+            "otherAnonMb": 20.16796875,
+            "fileBackedAnonMb": 14.94921875
+          }
+        },
+        {
+          "pid": 1373597,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 414.53515625,
+          "pssMb": 129.2685546875,
+          "pssAnonMb": 79.16015625,
+          "pssFileMb": 50.0986328125,
+          "pssShmemMb": 0.009765625,
+          "privateDirtyMb": 84.671875,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 6.1015625,
+            "glibcArenasMb": 1.98046875,
+            "webkitMallocMb": 42.7578125,
+            "javascriptCoreMb": 7.46484375,
+            "otherAnonMb": 5.90625,
+            "fileBackedAnonMb": 14.94921875
+          }
+        }
+      ]
+    },
+    {
+      "phase": "away",
+      "size": "100k",
+      "cycle": 2,
+      "loadavg1": 2.37,
+      "domNodes": 381,
+      "appRssMb": 392.93359375,
+      "children": [
+        {
+          "name": "WebKitNetworkPr",
+          "rssMb": 72.8203125
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 624.8125
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 414.53515625
+        }
+      ],
+      "totalRssMb": 1505.1015625,
+      "totalPssMb": 637.005859375,
+      "processes": [
+        {
+          "pid": 1372493,
+          "name": "te-base",
+          "role": "app",
+          "rssMb": 392.93359375,
+          "pssMb": 163.4921875,
+          "pssAnonMb": 54.0390625,
+          "pssFileMb": 103.953125,
+          "pssShmemMb": 5.5,
+          "privateDirtyMb": 54.0390625,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 6.8125,
+            "glibcArenasMb": 7.00390625,
+            "webkitMallocMb": 12.73046875,
+            "javascriptCoreMb": 3.390625,
+            "otherAnonMb": 8.1484375,
+            "fileBackedAnonMb": 15.953125
+          }
+        },
+        {
+          "pid": 1373370,
+          "name": "WebKitNetworkPr",
+          "role": "network",
+          "rssMb": 72.8203125,
+          "pssMb": 26.7109375,
+          "pssAnonMb": 21.75390625,
+          "pssFileMb": 4.95703125,
+          "pssShmemMb": 0,
+          "privateDirtyMb": 21.76171875,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 0.39453125,
+            "glibcArenasMb": 0.26171875,
+            "webkitMallocMb": 11.27734375,
+            "javascriptCoreMb": 2,
+            "otherAnonMb": 0.8828125,
+            "fileBackedAnonMb": 6.9375
+          }
+        },
+        {
+          "pid": 1373430,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 624.8125,
+          "pssMb": 317.5126953125,
+          "pssAnonMb": 246.0390625,
+          "pssFileMb": 67.798828125,
+          "pssShmemMb": 3.673828125,
+          "privateDirtyMb": 261.28125,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 8.1953125,
+            "glibcArenasMb": 49.171875,
+            "webkitMallocMb": 144.0625,
+            "javascriptCoreMb": 9.4921875,
+            "otherAnonMb": 20.16796875,
+            "fileBackedAnonMb": 14.94921875
+          }
+        },
+        {
+          "pid": 1373597,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 414.53515625,
+          "pssMb": 129.2900390625,
+          "pssAnonMb": 79.16015625,
+          "pssFileMb": 50.119140625,
+          "pssShmemMb": 0.009765625,
+          "privateDirtyMb": 84.671875,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 6.1015625,
+            "glibcArenasMb": 1.98046875,
+            "webkitMallocMb": 42.7578125,
+            "javascriptCoreMb": 7.46484375,
+            "otherAnonMb": 5.90625,
+            "fileBackedAnonMb": 14.94921875
+          }
+        }
+      ]
+    },
+    {
+      "phase": "open",
+      "size": "100k",
+      "cycle": 3,
+      "loadavg1": 2.39,
+      "domNodes": 722,
+      "appRssMb": 417.984375,
+      "children": [
+        {
+          "name": "WebKitNetworkPr",
+          "rssMb": 72.8203125
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 669.984375
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 414.53515625
+        }
+      ],
+      "totalRssMb": 1575.32421875,
+      "totalPssMb": 707.8173828125,
+      "processes": [
+        {
+          "pid": 1372493,
+          "name": "te-base",
+          "role": "app",
+          "rssMb": 417.984375,
+          "pssMb": 188.5595703125,
+          "pssAnonMb": 79.08984375,
+          "pssFileMb": 103.9697265625,
+          "pssShmemMb": 5.5,
+          "privateDirtyMb": 79.08984375,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 15.09375,
+            "glibcArenasMb": 23.25390625,
+            "webkitMallocMb": 12.671875,
+            "javascriptCoreMb": 3.390625,
+            "otherAnonMb": 8.7265625,
+            "fileBackedAnonMb": 15.953125
+          }
+        },
+        {
+          "pid": 1373370,
+          "name": "WebKitNetworkPr",
+          "role": "network",
+          "rssMb": 72.8203125,
+          "pssMb": 26.724609375,
+          "pssAnonMb": 21.75390625,
+          "pssFileMb": 4.970703125,
+          "pssShmemMb": 0,
+          "privateDirtyMb": 21.75390625,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 0.39453125,
+            "glibcArenasMb": 0.26171875,
+            "webkitMallocMb": 11.27734375,
+            "javascriptCoreMb": 2,
+            "otherAnonMb": 0.8828125,
+            "fileBackedAnonMb": 6.9375
+          }
+        },
+        {
+          "pid": 1373430,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 669.984375,
+          "pssMb": 362.9638671875,
+          "pssAnonMb": 292.2109375,
+          "pssFileMb": 67.078125,
+          "pssShmemMb": 3.673828125,
+          "privateDirtyMb": 306.453125,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 8.20703125,
+            "glibcArenasMb": 49.2421875,
+            "webkitMallocMb": 190.125,
+            "javascriptCoreMb": 9.4921875,
+            "otherAnonMb": 20.1953125,
+            "fileBackedAnonMb": 14.94921875
+          }
+        },
+        {
+          "pid": 1373597,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 414.53515625,
+          "pssMb": 129.5693359375,
+          "pssAnonMb": 79.16015625,
+          "pssFileMb": 50.3994140625,
+          "pssShmemMb": 0.009765625,
+          "privateDirtyMb": 84.671875,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 6.1015625,
+            "glibcArenasMb": 1.98046875,
+            "webkitMallocMb": 42.7578125,
+            "javascriptCoreMb": 7.46484375,
+            "otherAnonMb": 5.90625,
+            "fileBackedAnonMb": 14.94921875
+          }
+        }
+      ]
+    },
+    {
+      "phase": "away",
+      "size": "100k",
+      "cycle": 3,
+      "loadavg1": 2.08,
+      "domNodes": 381,
+      "appRssMb": 393.01171875,
+      "children": [
+        {
+          "name": "WebKitNetworkPr",
+          "rssMb": 72.8203125
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 679.55859375
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 414.5703125
+        }
+      ],
+      "totalRssMb": 1559.9609375,
+      "totalPssMb": 692.4453125,
+      "processes": [
+        {
+          "pid": 1372493,
+          "name": "te-base",
+          "role": "app",
+          "rssMb": 393.01171875,
+          "pssMb": 163.5849609375,
+          "pssAnonMb": 54.1171875,
+          "pssFileMb": 103.9677734375,
+          "pssShmemMb": 5.5,
+          "privateDirtyMb": 54.1171875,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 6.81640625,
+            "glibcArenasMb": 7.00390625,
+            "webkitMallocMb": 12.72265625,
+            "javascriptCoreMb": 3.390625,
+            "otherAnonMb": 8.23046875,
+            "fileBackedAnonMb": 15.953125
+          }
+        },
+        {
+          "pid": 1373370,
+          "name": "WebKitNetworkPr",
+          "role": "network",
+          "rssMb": 72.8203125,
+          "pssMb": 26.72265625,
+          "pssAnonMb": 21.75390625,
+          "pssFileMb": 4.96875,
+          "pssShmemMb": 0,
+          "privateDirtyMb": 21.76171875,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 0.39453125,
+            "glibcArenasMb": 0.26171875,
+            "webkitMallocMb": 11.27734375,
+            "javascriptCoreMb": 2,
+            "otherAnonMb": 0.8828125,
+            "fileBackedAnonMb": 6.9375
+          }
+        },
+        {
+          "pid": 1373430,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 679.55859375,
+          "pssMb": 372.53515625,
+          "pssAnonMb": 301.78515625,
+          "pssFileMb": 67.076171875,
+          "pssShmemMb": 3.673828125,
+          "privateDirtyMb": 316.02734375,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 8.20703125,
+            "glibcArenasMb": 49.29296875,
+            "webkitMallocMb": 199.67578125,
+            "javascriptCoreMb": 9.4921875,
+            "otherAnonMb": 20.16796875,
+            "fileBackedAnonMb": 14.94921875
+          }
+        },
+        {
+          "pid": 1373597,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 414.5703125,
+          "pssMb": 129.6025390625,
+          "pssAnonMb": 79.1953125,
+          "pssFileMb": 50.396484375,
+          "pssShmemMb": 0.009765625,
+          "privateDirtyMb": 84.70703125,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 6.1015625,
+            "glibcArenasMb": 1.98046875,
+            "webkitMallocMb": 42.7890625,
+            "javascriptCoreMb": 7.46484375,
+            "otherAnonMb": 5.91015625,
+            "fileBackedAnonMb": 14.94921875
+          }
+        }
+      ]
+    },
+    {
+      "phase": "open",
+      "size": "100k",
+      "cycle": 4,
+      "loadavg1": 1.84,
+      "domNodes": 722,
+      "appRssMb": 417.2578125,
+      "children": [
+        {
+          "name": "WebKitNetworkPr",
+          "rssMb": 72.8203125
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 588.39453125
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 414.578125
+        }
+      ],
+      "totalRssMb": 1493.05078125,
+      "totalPssMb": 625.0478515625,
+      "processes": [
+        {
+          "pid": 1372493,
+          "name": "te-base",
+          "role": "app",
+          "rssMb": 417.2578125,
+          "pssMb": 187.8330078125,
+          "pssAnonMb": 78.36328125,
+          "pssFileMb": 103.9697265625,
+          "pssShmemMb": 5.5,
+          "privateDirtyMb": 78.36328125,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 15.125,
+            "glibcArenasMb": 22.3046875,
+            "webkitMallocMb": 12.671875,
+            "javascriptCoreMb": 3.390625,
+            "otherAnonMb": 8.91796875,
+            "fileBackedAnonMb": 15.953125
+          }
+        },
+        {
+          "pid": 1373370,
+          "name": "WebKitNetworkPr",
+          "role": "network",
+          "rssMb": 72.8203125,
+          "pssMb": 26.724609375,
+          "pssAnonMb": 21.75390625,
+          "pssFileMb": 4.970703125,
+          "pssShmemMb": 0,
+          "privateDirtyMb": 21.76171875,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 0.39453125,
+            "glibcArenasMb": 0.26171875,
+            "webkitMallocMb": 11.27734375,
+            "javascriptCoreMb": 2,
+            "otherAnonMb": 0.8828125,
+            "fileBackedAnonMb": 6.9375
+          }
+        },
+        {
+          "pid": 1373430,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 588.39453125,
+          "pssMb": 281.1259765625,
+          "pssAnonMb": 210.62109375,
+          "pssFileMb": 66.830078125,
+          "pssShmemMb": 3.673828125,
+          "privateDirtyMb": 224.86328125,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 8.20703125,
+            "glibcArenasMb": 49.36328125,
+            "webkitMallocMb": 108.46484375,
+            "javascriptCoreMb": 9.4453125,
+            "otherAnonMb": 20.19140625,
+            "fileBackedAnonMb": 14.94921875
+          }
+        },
+        {
+          "pid": 1373597,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 414.578125,
+          "pssMb": 129.3642578125,
+          "pssAnonMb": 79.203125,
+          "pssFileMb": 50.1513671875,
+          "pssShmemMb": 0.009765625,
+          "privateDirtyMb": 84.71484375,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 6.1015625,
+            "glibcArenasMb": 1.98046875,
+            "webkitMallocMb": 42.796875,
+            "javascriptCoreMb": 7.46484375,
+            "otherAnonMb": 5.91015625,
+            "fileBackedAnonMb": 14.94921875
+          }
+        }
+      ]
+    },
+    {
+      "phase": "open-after-gc-pressure",
+      "size": "100k",
+      "cycle": 4,
+      "loadavg1": 1.73,
+      "domNodes": 722,
+      "appRssMb": 417.265625,
+      "children": [
+        {
+          "name": "WebKitNetworkPr",
+          "rssMb": 72.8203125
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 595.2109375
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 414.5703125
+        }
+      ],
+      "totalRssMb": 1499.8671875,
+      "totalPssMb": 631.865234375,
+      "processes": [
+        {
+          "pid": 1372493,
+          "name": "te-base",
+          "role": "app",
+          "rssMb": 417.265625,
+          "pssMb": 187.841796875,
+          "pssAnonMb": 78.33984375,
+          "pssFileMb": 104.001953125,
+          "pssShmemMb": 5.5,
+          "privateDirtyMb": 78.33984375,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 15.125,
+            "glibcArenasMb": 22.3046875,
+            "webkitMallocMb": 12.69140625,
+            "javascriptCoreMb": 3.390625,
+            "otherAnonMb": 8.875,
+            "fileBackedAnonMb": 15.953125
+          }
+        },
+        {
+          "pid": 1373370,
+          "name": "WebKitNetworkPr",
+          "role": "network",
+          "rssMb": 72.8203125,
+          "pssMb": 26.724609375,
+          "pssAnonMb": 21.75390625,
+          "pssFileMb": 4.970703125,
+          "pssShmemMb": 0,
+          "privateDirtyMb": 21.75390625,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 0.39453125,
+            "glibcArenasMb": 0.26171875,
+            "webkitMallocMb": 11.27734375,
+            "javascriptCoreMb": 2,
+            "otherAnonMb": 0.8828125,
+            "fileBackedAnonMb": 6.9375
+          }
+        },
+        {
+          "pid": 1373430,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 595.2109375,
+          "pssMb": 287.9423828125,
+          "pssAnonMb": 217.4375,
+          "pssFileMb": 66.830078125,
+          "pssShmemMb": 3.673828125,
+          "privateDirtyMb": 231.6796875,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 8.20703125,
+            "glibcArenasMb": 49.36328125,
+            "webkitMallocMb": 115.328125,
+            "javascriptCoreMb": 9.4375,
+            "otherAnonMb": 20.15234375,
+            "fileBackedAnonMb": 14.94921875
+          }
+        },
+        {
+          "pid": 1373597,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 414.5703125,
+          "pssMb": 129.3564453125,
+          "pssAnonMb": 79.1953125,
+          "pssFileMb": 50.1513671875,
+          "pssShmemMb": 0.009765625,
+          "privateDirtyMb": 84.70703125,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 6.1015625,
+            "glibcArenasMb": 1.98046875,
+            "webkitMallocMb": 42.7890625,
+            "javascriptCoreMb": 7.46484375,
+            "otherAnonMb": 5.91015625,
+            "fileBackedAnonMb": 14.94921875
+          }
+        }
+      ]
+    },
+    {
+      "phase": "away",
+      "size": "100k",
+      "cycle": 4,
+      "loadavg1": 1.71,
+      "domNodes": 381,
+      "appRssMb": 393.7890625,
+      "children": [
+        {
+          "name": "WebKitNetworkPr",
+          "rssMb": 72.82421875
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 542.1328125
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 414.5390625
+        }
+      ],
+      "totalRssMb": 1423.28515625,
+      "totalPssMb": 555.783203125,
+      "processes": [
+        {
+          "pid": 1372493,
+          "name": "te-base",
+          "role": "app",
+          "rssMb": 393.7890625,
+          "pssMb": 164.3662109375,
+          "pssAnonMb": 54.86328125,
+          "pssFileMb": 104.0029296875,
+          "pssShmemMb": 5.5,
+          "privateDirtyMb": 54.86328125,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 6.83203125,
+            "glibcArenasMb": 7.80859375,
+            "webkitMallocMb": 12.6484375,
+            "javascriptCoreMb": 3.390625,
+            "otherAnonMb": 8.23046875,
+            "fileBackedAnonMb": 15.953125
+          }
+        },
+        {
+          "pid": 1373370,
+          "name": "WebKitNetworkPr",
+          "role": "network",
+          "rssMb": 72.82421875,
+          "pssMb": 26.7294921875,
+          "pssAnonMb": 21.7578125,
+          "pssFileMb": 4.9716796875,
+          "pssShmemMb": 0,
+          "privateDirtyMb": 21.765625,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 0.39453125,
+            "glibcArenasMb": 0.26171875,
+            "webkitMallocMb": 11.28125,
+            "javascriptCoreMb": 2,
+            "otherAnonMb": 0.8828125,
+            "fileBackedAnonMb": 6.9375
+          }
+        },
+        {
+          "pid": 1373430,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 542.1328125,
+          "pssMb": 235.11328125,
+          "pssAnonMb": 164.359375,
+          "pssFileMb": 67.0791015625,
+          "pssShmemMb": 3.673828125,
+          "privateDirtyMb": 178.6015625,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 8.20703125,
+            "glibcArenasMb": 49.38671875,
+            "webkitMallocMb": 62.15234375,
+            "javascriptCoreMb": 9.4296875,
+            "otherAnonMb": 20.234375,
+            "fileBackedAnonMb": 14.94921875
+          }
+        },
+        {
+          "pid": 1373597,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 414.5390625,
+          "pssMb": 129.57421875,
+          "pssAnonMb": 79.1640625,
+          "pssFileMb": 50.400390625,
+          "pssShmemMb": 0.009765625,
+          "privateDirtyMb": 84.67578125,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 6.1015625,
+            "glibcArenasMb": 1.98046875,
+            "webkitMallocMb": 42.7578125,
+            "javascriptCoreMb": 7.46484375,
+            "otherAnonMb": 5.91015625,
+            "fileBackedAnonMb": 14.94921875
+          }
+        }
+      ]
+    },
+    {
+      "phase": "away-after-gc-pressure",
+      "size": "100k",
+      "cycle": 4,
+      "loadavg1": 1.56,
+      "domNodes": 381,
+      "appRssMb": 393.8203125,
+      "children": [
+        {
+          "name": "WebKitNetworkPr",
+          "rssMb": 72.82421875
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 547.73046875
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 414.5390625
+        }
+      ],
+      "totalRssMb": 1428.9140625,
+      "totalPssMb": 561.1513671875,
+      "processes": [
+        {
+          "pid": 1372493,
+          "name": "te-base",
+          "role": "app",
+          "rssMb": 393.8203125,
+          "pssMb": 164.3984375,
+          "pssAnonMb": 54.89453125,
+          "pssFileMb": 104.0029296875,
+          "pssShmemMb": 5.5,
+          "privateDirtyMb": 54.89453125,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 6.83203125,
+            "glibcArenasMb": 7.80859375,
+            "webkitMallocMb": 12.6796875,
+            "javascriptCoreMb": 3.390625,
+            "otherAnonMb": 8.23046875,
+            "fileBackedAnonMb": 15.953125
+          }
+        },
+        {
+          "pid": 1373370,
+          "name": "WebKitNetworkPr",
+          "role": "network",
+          "rssMb": 72.82421875,
+          "pssMb": 26.73046875,
+          "pssAnonMb": 21.7578125,
+          "pssFileMb": 4.97265625,
+          "pssShmemMb": 0,
+          "privateDirtyMb": 21.7578125,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 0.39453125,
+            "glibcArenasMb": 0.26171875,
+            "webkitMallocMb": 11.28125,
+            "javascriptCoreMb": 2,
+            "otherAnonMb": 0.8828125,
+            "fileBackedAnonMb": 6.9375
+          }
+        },
+        {
+          "pid": 1373430,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 547.73046875,
+          "pssMb": 240.447265625,
+          "pssAnonMb": 169.95703125,
+          "pssFileMb": 66.81640625,
+          "pssShmemMb": 3.673828125,
+          "privateDirtyMb": 184.19921875,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 8.20703125,
+            "glibcArenasMb": 49.38671875,
+            "webkitMallocMb": 67.828125,
+            "javascriptCoreMb": 9.41796875,
+            "otherAnonMb": 20.16796875,
+            "fileBackedAnonMb": 14.94921875
+          }
+        },
+        {
+          "pid": 1373597,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 414.5390625,
+          "pssMb": 129.5751953125,
+          "pssAnonMb": 79.1640625,
+          "pssFileMb": 50.4013671875,
+          "pssShmemMb": 0.009765625,
+          "privateDirtyMb": 84.67578125,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 6.1015625,
+            "glibcArenasMb": 1.98046875,
+            "webkitMallocMb": 42.7578125,
+            "javascriptCoreMb": 7.46484375,
+            "otherAnonMb": 5.91015625,
+            "fileBackedAnonMb": 14.94921875
+          }
+        }
+      ]
+    },
+    {
+      "phase": "open",
+      "size": "500k",
+      "cycle": 1,
+      "loadavg1": 1.42,
+      "domNodes": 722,
+      "appRssMb": 506.39453125,
+      "children": [
+        {
+          "name": "WebKitNetworkPr",
+          "rssMb": 72.80859375
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 789.61328125
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 414.546875
+        }
+      ],
+      "totalRssMb": 1783.36328125,
+      "totalPssMb": 915.109375,
+      "processes": [
+        {
+          "pid": 1372493,
+          "name": "te-base",
+          "role": "app",
+          "rssMb": 506.39453125,
+          "pssMb": 276.974609375,
+          "pssAnonMb": 167.46875,
+          "pssFileMb": 104.005859375,
+          "pssShmemMb": 5.5,
+          "privateDirtyMb": 167.46875,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 10.0078125,
+            "glibcArenasMb": 114.1015625,
+            "webkitMallocMb": 13.0546875,
+            "javascriptCoreMb": 3.390625,
+            "otherAnonMb": 10.9609375,
+            "fileBackedAnonMb": 15.953125
+          }
+        },
+        {
+          "pid": 1373370,
+          "name": "WebKitNetworkPr",
+          "role": "network",
+          "rssMb": 72.80859375,
+          "pssMb": 26.7158203125,
+          "pssAnonMb": 21.7421875,
+          "pssFileMb": 4.9736328125,
+          "pssShmemMb": 0,
+          "privateDirtyMb": 21.75,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 0.39453125,
+            "glibcArenasMb": 0.26171875,
+            "webkitMallocMb": 11.265625,
+            "javascriptCoreMb": 2,
+            "otherAnonMb": 0.8828125,
+            "fileBackedAnonMb": 6.9375
+          }
+        },
+        {
+          "pid": 1373430,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 789.61328125,
+          "pssMb": 482.0830078125,
+          "pssAnonMb": 411.83984375,
+          "pssFileMb": 66.5693359375,
+          "pssShmemMb": 3.673828125,
+          "privateDirtyMb": 426.08203125,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 8.20703125,
+            "glibcArenasMb": 49.3984375,
+            "webkitMallocMb": 309.5859375,
+            "javascriptCoreMb": 9.46484375,
+            "otherAnonMb": 20.234375,
+            "fileBackedAnonMb": 14.94921875
+          }
+        },
+        {
+          "pid": 1373597,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 414.546875,
+          "pssMb": 129.3359375,
+          "pssAnonMb": 79.171875,
+          "pssFileMb": 50.154296875,
+          "pssShmemMb": 0.009765625,
+          "privateDirtyMb": 84.68359375,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 6.1015625,
+            "glibcArenasMb": 1.98046875,
+            "webkitMallocMb": 42.765625,
+            "javascriptCoreMb": 7.46484375,
+            "otherAnonMb": 5.91015625,
+            "fileBackedAnonMb": 14.94921875
+          }
+        }
+      ]
+    },
+    {
+      "phase": "away",
+      "size": "500k",
+      "cycle": 1,
+      "loadavg1": 1.26,
+      "domNodes": 381,
+      "appRssMb": 393.90625,
+      "children": [
+        {
+          "name": "WebKitNetworkPr",
+          "rssMb": 72.8125
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 801.2890625
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 414.5390625
+        }
+      ],
+      "totalRssMb": 1682.546875,
+      "totalPssMb": 814.8134765625,
+      "processes": [
+        {
+          "pid": 1372493,
+          "name": "te-base",
+          "role": "app",
+          "rssMb": 393.90625,
+          "pssMb": 164.48828125,
+          "pssAnonMb": 54.98046875,
+          "pssFileMb": 104.0078125,
+          "pssShmemMb": 5.5,
+          "privateDirtyMb": 54.98046875,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 6.828125,
+            "glibcArenasMb": 7.41015625,
+            "webkitMallocMb": 13.109375,
+            "javascriptCoreMb": 3.390625,
+            "otherAnonMb": 8.2890625,
+            "fileBackedAnonMb": 15.953125
+          }
+        },
+        {
+          "pid": 1373370,
+          "name": "WebKitNetworkPr",
+          "role": "network",
+          "rssMb": 72.8125,
+          "pssMb": 26.7265625,
+          "pssAnonMb": 21.74609375,
+          "pssFileMb": 4.98046875,
+          "pssShmemMb": 0,
+          "privateDirtyMb": 21.75390625,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 0.39453125,
+            "glibcArenasMb": 0.26171875,
+            "webkitMallocMb": 11.26953125,
+            "javascriptCoreMb": 2,
+            "otherAnonMb": 0.8828125,
+            "fileBackedAnonMb": 6.9375
+          }
+        },
+        {
+          "pid": 1373430,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 801.2890625,
+          "pssMb": 494.0146484375,
+          "pssAnonMb": 423.515625,
+          "pssFileMb": 66.8251953125,
+          "pssShmemMb": 3.673828125,
+          "privateDirtyMb": 437.7578125,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 8.20703125,
+            "glibcArenasMb": 49.45703125,
+            "webkitMallocMb": 321.26953125,
+            "javascriptCoreMb": 9.46484375,
+            "otherAnonMb": 20.16796875,
+            "fileBackedAnonMb": 14.94921875
+          }
+        },
+        {
+          "pid": 1373597,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 414.5390625,
+          "pssMb": 129.583984375,
+          "pssAnonMb": 79.1640625,
+          "pssFileMb": 50.41015625,
+          "pssShmemMb": 0.009765625,
+          "privateDirtyMb": 84.67578125,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 6.1015625,
+            "glibcArenasMb": 1.98046875,
+            "webkitMallocMb": 42.7578125,
+            "javascriptCoreMb": 7.46484375,
+            "otherAnonMb": 5.91015625,
+            "fileBackedAnonMb": 14.94921875
+          }
+        }
+      ]
+    },
+    {
+      "phase": "open",
+      "size": "500k",
+      "cycle": 2,
+      "loadavg1": 1.33,
+      "domNodes": 722,
+      "appRssMb": 500.85546875,
+      "children": [
+        {
+          "name": "WebKitNetworkPr",
+          "rssMb": 72.81640625
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 1065.69140625
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 414.546875
+        }
+      ],
+      "totalRssMb": 2053.91015625,
+      "totalPssMb": 1186.1767578125,
+      "processes": [
+        {
+          "pid": 1372493,
+          "name": "te-base",
+          "role": "app",
+          "rssMb": 500.85546875,
+          "pssMb": 271.4375,
+          "pssAnonMb": 161.9296875,
+          "pssFileMb": 104.0078125,
+          "pssShmemMb": 5.5,
+          "privateDirtyMb": 161.9296875,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 9.359375,
+            "glibcArenasMb": 108.7734375,
+            "webkitMallocMb": 13.05859375,
+            "javascriptCoreMb": 3.390625,
+            "otherAnonMb": 11.39453125,
+            "fileBackedAnonMb": 15.953125
+          }
+        },
+        {
+          "pid": 1373370,
+          "name": "WebKitNetworkPr",
+          "role": "network",
+          "rssMb": 72.81640625,
+          "pssMb": 26.73046875,
+          "pssAnonMb": 21.75,
+          "pssFileMb": 4.98046875,
+          "pssShmemMb": 0,
+          "privateDirtyMb": 21.7578125,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 0.39453125,
+            "glibcArenasMb": 0.26171875,
+            "webkitMallocMb": 11.2734375,
+            "javascriptCoreMb": 2,
+            "otherAnonMb": 0.8828125,
+            "fileBackedAnonMb": 6.9375
+          }
+        },
+        {
+          "pid": 1373430,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 1065.69140625,
+          "pssMb": 758.4169921875,
+          "pssAnonMb": 683.91796875,
+          "pssFileMb": 70.8251953125,
+          "pssShmemMb": 3.673828125,
+          "privateDirtyMb": 702.16015625,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 7.546875,
+            "glibcArenasMb": 47.61328125,
+            "webkitMallocMb": 584.12109375,
+            "javascriptCoreMb": 9.46484375,
+            "otherAnonMb": 20.22265625,
+            "fileBackedAnonMb": 14.94921875
+          }
+        },
+        {
+          "pid": 1373597,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 414.546875,
+          "pssMb": 129.591796875,
+          "pssAnonMb": 79.171875,
+          "pssFileMb": 50.41015625,
+          "pssShmemMb": 0.009765625,
+          "privateDirtyMb": 84.68359375,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 6.1015625,
+            "glibcArenasMb": 1.98046875,
+            "webkitMallocMb": 42.765625,
+            "javascriptCoreMb": 7.46484375,
+            "otherAnonMb": 5.91015625,
+            "fileBackedAnonMb": 14.94921875
+          }
+        }
+      ]
+    },
+    {
+      "phase": "away",
+      "size": "500k",
+      "cycle": 2,
+      "loadavg1": 1.32,
+      "domNodes": 381,
+      "appRssMb": 393.85546875,
+      "children": [
+        {
+          "name": "WebKitNetworkPr",
+          "rssMb": 72.81640625
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 1149.7734375
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 414.5390625
+        }
+      ],
+      "totalRssMb": 2030.984375,
+      "totalPssMb": 1163.24609375,
+      "processes": [
+        {
+          "pid": 1372493,
+          "name": "te-base",
+          "role": "app",
+          "rssMb": 393.85546875,
+          "pssMb": 164.4365234375,
+          "pssAnonMb": 54.9296875,
+          "pssFileMb": 104.0068359375,
+          "pssShmemMb": 5.5,
+          "privateDirtyMb": 54.9296875,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 6.85546875,
+            "glibcArenasMb": 7.328125,
+            "webkitMallocMb": 13.109375,
+            "javascriptCoreMb": 3.390625,
+            "otherAnonMb": 8.29296875,
+            "fileBackedAnonMb": 15.953125
+          }
+        },
+        {
+          "pid": 1373370,
+          "name": "WebKitNetworkPr",
+          "role": "network",
+          "rssMb": 72.81640625,
+          "pssMb": 26.7294921875,
+          "pssAnonMb": 21.75,
+          "pssFileMb": 4.9794921875,
+          "pssShmemMb": 0,
+          "privateDirtyMb": 21.7578125,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 0.39453125,
+            "glibcArenasMb": 0.26171875,
+            "webkitMallocMb": 11.2734375,
+            "javascriptCoreMb": 2,
+            "otherAnonMb": 0.8828125,
+            "fileBackedAnonMb": 6.9375
+          }
+        },
+        {
+          "pid": 1373430,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 1149.7734375,
+          "pssMb": 842.4970703125,
+          "pssAnonMb": 768,
+          "pssFileMb": 70.8232421875,
+          "pssShmemMb": 3.673828125,
+          "privateDirtyMb": 786.2421875,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 7.62890625,
+            "glibcArenasMb": 48.16796875,
+            "webkitMallocMb": 667.61328125,
+            "javascriptCoreMb": 9.47265625,
+            "otherAnonMb": 20.16796875,
+            "fileBackedAnonMb": 14.94921875
+          }
+        },
+        {
+          "pid": 1373597,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 414.5390625,
+          "pssMb": 129.5830078125,
+          "pssAnonMb": 79.1640625,
+          "pssFileMb": 50.4091796875,
+          "pssShmemMb": 0.009765625,
+          "privateDirtyMb": 84.67578125,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 6.1015625,
+            "glibcArenasMb": 1.98046875,
+            "webkitMallocMb": 42.7578125,
+            "javascriptCoreMb": 7.46484375,
+            "otherAnonMb": 5.91015625,
+            "fileBackedAnonMb": 14.94921875
+          }
+        }
+      ]
+    },
+    {
+      "phase": "open",
+      "size": "500k",
+      "cycle": 3,
+      "loadavg1": 1.32,
+      "domNodes": 722,
+      "appRssMb": 501.75,
+      "children": [
+        {
+          "name": "WebKitNetworkPr",
+          "rssMb": 72.81640625
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 1433.08203125
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 414.5390625
+        }
+      ],
+      "totalRssMb": 2422.1875,
+      "totalPssMb": 1553.9521484375,
+      "processes": [
+        {
+          "pid": 1372493,
+          "name": "te-base",
+          "role": "app",
+          "rssMb": 501.75,
+          "pssMb": 272.330078125,
+          "pssAnonMb": 162.82421875,
+          "pssFileMb": 104.0048828125,
+          "pssShmemMb": 5.5,
+          "privateDirtyMb": 162.82421875,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 9.890625,
+            "glibcArenasMb": 110.08203125,
+            "webkitMallocMb": 13.0390625,
+            "javascriptCoreMb": 3.390625,
+            "otherAnonMb": 10.46875,
+            "fileBackedAnonMb": 15.953125
+          }
+        },
+        {
+          "pid": 1373370,
+          "name": "WebKitNetworkPr",
+          "role": "network",
+          "rssMb": 72.81640625,
+          "pssMb": 26.7294921875,
+          "pssAnonMb": 21.75,
+          "pssFileMb": 4.9794921875,
+          "pssShmemMb": 0,
+          "privateDirtyMb": 21.75,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 0.39453125,
+            "glibcArenasMb": 0.26171875,
+            "webkitMallocMb": 11.2734375,
+            "javascriptCoreMb": 2,
+            "otherAnonMb": 0.8828125,
+            "fileBackedAnonMb": 6.9375
+          }
+        },
+        {
+          "pid": 1373430,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 1433.08203125,
+          "pssMb": 1125.5576171875,
+          "pssAnonMb": 1051.43359375,
+          "pssFileMb": 70.4501953125,
+          "pssShmemMb": 3.673828125,
+          "privateDirtyMb": 1069.55078125,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 7.54296875,
+            "glibcArenasMb": 47.625,
+            "webkitMallocMb": 951.64453125,
+            "javascriptCoreMb": 9.4765625,
+            "otherAnonMb": 20.1953125,
+            "fileBackedAnonMb": 14.94921875
+          }
+        },
+        {
+          "pid": 1373597,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 414.5390625,
+          "pssMb": 129.3349609375,
+          "pssAnonMb": 79.1640625,
+          "pssFileMb": 50.16015625,
+          "pssShmemMb": 0.009765625,
+          "privateDirtyMb": 84.67578125,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 6.1015625,
+            "glibcArenasMb": 1.98046875,
+            "webkitMallocMb": 42.7578125,
+            "javascriptCoreMb": 7.46484375,
+            "otherAnonMb": 5.91015625,
+            "fileBackedAnonMb": 14.94921875
+          }
+        }
+      ]
+    },
+    {
+      "phase": "away",
+      "size": "500k",
+      "cycle": 3,
+      "loadavg1": 1.25,
+      "domNodes": 381,
+      "appRssMb": 393.65234375,
+      "children": [
+        {
+          "name": "WebKitNetworkPr",
+          "rssMb": 72.81640625
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 1519.3671875
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 414.5390625
+        }
+      ],
+      "totalRssMb": 2400.375,
+      "totalPssMb": 1532.6337890625,
+      "processes": [
+        {
+          "pid": 1372493,
+          "name": "te-base",
+          "role": "app",
+          "rssMb": 393.65234375,
+          "pssMb": 164.23046875,
+          "pssAnonMb": 54.7265625,
+          "pssFileMb": 104.00390625,
+          "pssShmemMb": 5.5,
+          "privateDirtyMb": 54.7265625,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 6.94921875,
+            "glibcArenasMb": 7.046875,
+            "webkitMallocMb": 13.05859375,
+            "javascriptCoreMb": 3.390625,
+            "otherAnonMb": 8.328125,
+            "fileBackedAnonMb": 15.953125
+          }
+        },
+        {
+          "pid": 1373370,
+          "name": "WebKitNetworkPr",
+          "role": "network",
+          "rssMb": 72.81640625,
+          "pssMb": 26.7294921875,
+          "pssAnonMb": 21.75,
+          "pssFileMb": 4.9794921875,
+          "pssShmemMb": 0,
+          "privateDirtyMb": 21.75,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 0.39453125,
+            "glibcArenasMb": 0.26171875,
+            "webkitMallocMb": 11.2734375,
+            "javascriptCoreMb": 2,
+            "otherAnonMb": 0.8828125,
+            "fileBackedAnonMb": 6.9375
+          }
+        },
+        {
+          "pid": 1373430,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 1519.3671875,
+          "pssMb": 1212.0908203125,
+          "pssAnonMb": 1137.71875,
+          "pssFileMb": 70.6982421875,
+          "pssShmemMb": 3.673828125,
+          "privateDirtyMb": 1155.8359375,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 7.625,
+            "glibcArenasMb": 48.15625,
+            "webkitMallocMb": 1037.34375,
+            "javascriptCoreMb": 9.4765625,
+            "otherAnonMb": 20.16796875,
+            "fileBackedAnonMb": 14.94921875
+          }
+        },
+        {
+          "pid": 1373597,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 414.5390625,
+          "pssMb": 129.5830078125,
+          "pssAnonMb": 79.1640625,
+          "pssFileMb": 50.408203125,
+          "pssShmemMb": 0.009765625,
+          "privateDirtyMb": 84.67578125,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 6.1015625,
+            "glibcArenasMb": 1.98046875,
+            "webkitMallocMb": 42.7578125,
+            "javascriptCoreMb": 7.46484375,
+            "otherAnonMb": 5.91015625,
+            "fileBackedAnonMb": 14.94921875
+          }
+        }
+      ]
+    },
+    {
+      "phase": "open",
+      "size": "500k",
+      "cycle": 4,
+      "loadavg1": 1.48,
+      "domNodes": 722,
+      "appRssMb": 512.3515625,
+      "children": [
+        {
+          "name": "WebKitNetworkPr",
+          "rssMb": 72.81640625
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 840.32421875
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 414.5390625
+        }
+      ],
+      "totalRssMb": 1840.03125,
+      "totalPssMb": 972.2919921875,
+      "processes": [
+        {
+          "pid": 1372493,
+          "name": "te-base",
+          "role": "app",
+          "rssMb": 512.3515625,
+          "pssMb": 282.931640625,
+          "pssAnonMb": 173.42578125,
+          "pssFileMb": 104.0048828125,
+          "pssShmemMb": 5.5,
+          "privateDirtyMb": 173.42578125,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 57.83984375,
+            "glibcArenasMb": 71.39453125,
+            "webkitMallocMb": 13.03515625,
+            "javascriptCoreMb": 3.390625,
+            "otherAnonMb": 11.8125,
+            "fileBackedAnonMb": 15.953125
+          }
+        },
+        {
+          "pid": 1373370,
+          "name": "WebKitNetworkPr",
+          "role": "network",
+          "rssMb": 72.81640625,
+          "pssMb": 26.7294921875,
+          "pssAnonMb": 21.75,
+          "pssFileMb": 4.9794921875,
+          "pssShmemMb": 0,
+          "privateDirtyMb": 21.7578125,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 0.39453125,
+            "glibcArenasMb": 0.26171875,
+            "webkitMallocMb": 11.2734375,
+            "javascriptCoreMb": 2,
+            "otherAnonMb": 0.8828125,
+            "fileBackedAnonMb": 6.9375
+          }
+        },
+        {
+          "pid": 1373430,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 840.32421875,
+          "pssMb": 533.0478515625,
+          "pssAnonMb": 458.67578125,
+          "pssFileMb": 70.6982421875,
+          "pssShmemMb": 3.673828125,
+          "privateDirtyMb": 476.79296875,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 7.85546875,
+            "glibcArenasMb": 48.421875,
+            "webkitMallocMb": 357.83203125,
+            "javascriptCoreMb": 9.46484375,
+            "otherAnonMb": 20.15234375,
+            "fileBackedAnonMb": 14.94921875
+          }
+        },
+        {
+          "pid": 1373597,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 414.5390625,
+          "pssMb": 129.5830078125,
+          "pssAnonMb": 79.1640625,
+          "pssFileMb": 50.4091796875,
+          "pssShmemMb": 0.009765625,
+          "privateDirtyMb": 84.67578125,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 6.1015625,
+            "glibcArenasMb": 1.98046875,
+            "webkitMallocMb": 42.7578125,
+            "javascriptCoreMb": 7.46484375,
+            "otherAnonMb": 5.91015625,
+            "fileBackedAnonMb": 14.94921875
+          }
+        }
+      ]
+    },
+    {
+      "phase": "open-after-gc-pressure",
+      "size": "500k",
+      "cycle": 4,
+      "loadavg1": 1.78,
+      "domNodes": 722,
+      "appRssMb": 512.37109375,
+      "children": [
+        {
+          "name": "WebKitNetworkPr",
+          "rssMb": 72.81640625
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 784.56640625
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 414.5390625
+        }
+      ],
+      "totalRssMb": 1784.29296875,
+      "totalPssMb": 916.5517578125,
+      "processes": [
+        {
+          "pid": 1372493,
+          "name": "te-base",
+          "role": "app",
+          "rssMb": 512.37109375,
+          "pssMb": 282.94921875,
+          "pssAnonMb": 173.4453125,
+          "pssFileMb": 104.00390625,
+          "pssShmemMb": 5.5,
+          "privateDirtyMb": 173.4453125,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 57.83984375,
+            "glibcArenasMb": 71.39453125,
+            "webkitMallocMb": 13.0546875,
+            "javascriptCoreMb": 3.390625,
+            "otherAnonMb": 11.8125,
+            "fileBackedAnonMb": 15.953125
+          }
+        },
+        {
+          "pid": 1373370,
+          "name": "WebKitNetworkPr",
+          "role": "network",
+          "rssMb": 72.81640625,
+          "pssMb": 26.7294921875,
+          "pssAnonMb": 21.75,
+          "pssFileMb": 4.9794921875,
+          "pssShmemMb": 0,
+          "privateDirtyMb": 21.75,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 0.39453125,
+            "glibcArenasMb": 0.26171875,
+            "webkitMallocMb": 11.2734375,
+            "javascriptCoreMb": 2,
+            "otherAnonMb": 0.8828125,
+            "fileBackedAnonMb": 6.9375
+          }
+        },
+        {
+          "pid": 1373430,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 784.56640625,
+          "pssMb": 477.2900390625,
+          "pssAnonMb": 402.91796875,
+          "pssFileMb": 70.6982421875,
+          "pssShmemMb": 3.673828125,
+          "privateDirtyMb": 421.03515625,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 7.85546875,
+            "glibcArenasMb": 48.421875,
+            "webkitMallocMb": 302.0546875,
+            "javascriptCoreMb": 9.45703125,
+            "otherAnonMb": 20.1796875,
+            "fileBackedAnonMb": 14.94921875
+          }
+        },
+        {
+          "pid": 1373597,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 414.5390625,
+          "pssMb": 129.5830078125,
+          "pssAnonMb": 79.1640625,
+          "pssFileMb": 50.408203125,
+          "pssShmemMb": 0.009765625,
+          "privateDirtyMb": 84.67578125,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 6.1015625,
+            "glibcArenasMb": 1.98046875,
+            "webkitMallocMb": 42.7578125,
+            "javascriptCoreMb": 7.46484375,
+            "otherAnonMb": 5.91015625,
+            "fileBackedAnonMb": 14.94921875
+          }
+        }
+      ]
+    },
+    {
+      "phase": "away",
+      "size": "500k",
+      "cycle": 4,
+      "loadavg1": 1.84,
+      "domNodes": 381,
+      "appRssMb": 394.84765625,
+      "children": [
+        {
+          "name": "WebKitNetworkPr",
+          "rssMb": 72.80859375
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 553.69921875
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 414.5390625
+        }
+      ],
+      "totalRssMb": 1435.89453125,
+      "totalPssMb": 567.65625,
+      "processes": [
+        {
+          "pid": 1372493,
+          "name": "te-base",
+          "role": "app",
+          "rssMb": 394.84765625,
+          "pssMb": 165.42578125,
+          "pssAnonMb": 55.921875,
+          "pssFileMb": 104.00390625,
+          "pssShmemMb": 5.5,
+          "privateDirtyMb": 55.921875,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 7.01953125,
+            "glibcArenasMb": 8.06640625,
+            "webkitMallocMb": 13.046875,
+            "javascriptCoreMb": 3.390625,
+            "otherAnonMb": 8.4453125,
+            "fileBackedAnonMb": 15.953125
+          }
+        },
+        {
+          "pid": 1373370,
+          "name": "WebKitNetworkPr",
+          "role": "network",
+          "rssMb": 72.80859375,
+          "pssMb": 26.7216796875,
+          "pssAnonMb": 21.7421875,
+          "pssFileMb": 4.9794921875,
+          "pssShmemMb": 0,
+          "privateDirtyMb": 21.7421875,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 0.39453125,
+            "glibcArenasMb": 0.26171875,
+            "webkitMallocMb": 11.265625,
+            "javascriptCoreMb": 2,
+            "otherAnonMb": 0.8828125,
+            "fileBackedAnonMb": 6.9375
+          }
+        },
+        {
+          "pid": 1373430,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 553.69921875,
+          "pssMb": 246.1748046875,
+          "pssAnonMb": 172.05078125,
+          "pssFileMb": 70.44921875,
+          "pssShmemMb": 3.673828125,
+          "privateDirtyMb": 190.16796875,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 7.86328125,
+            "glibcArenasMb": 48.51171875,
+            "webkitMallocMb": 71.12109375,
+            "javascriptCoreMb": 9.42578125,
+            "otherAnonMb": 20.1796875,
+            "fileBackedAnonMb": 14.94921875
+          }
+        },
+        {
+          "pid": 1373597,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 414.5390625,
+          "pssMb": 129.333984375,
+          "pssAnonMb": 79.1640625,
+          "pssFileMb": 50.16015625,
+          "pssShmemMb": 0.009765625,
+          "privateDirtyMb": 84.67578125,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 6.1015625,
+            "glibcArenasMb": 1.98046875,
+            "webkitMallocMb": 42.7578125,
+            "javascriptCoreMb": 7.46484375,
+            "otherAnonMb": 5.91015625,
+            "fileBackedAnonMb": 14.94921875
+          }
+        }
+      ]
+    },
+    {
+      "phase": "away-after-gc-pressure",
+      "size": "500k",
+      "cycle": 4,
+      "loadavg1": 1.73,
+      "domNodes": 381,
+      "appRssMb": 394.87890625,
+      "children": [
+        {
+          "name": "WebKitNetworkPr",
+          "rssMb": 72.80859375
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 889.8359375
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 414.5390625
+        }
+      ],
+      "totalRssMb": 1772.0625,
+      "totalPssMb": 904.3154296875,
+      "processes": [
+        {
+          "pid": 1372493,
+          "name": "te-base",
+          "role": "app",
+          "rssMb": 394.87890625,
+          "pssMb": 165.4541015625,
+          "pssAnonMb": 55.953125,
+          "pssFileMb": 104.0009765625,
+          "pssShmemMb": 5.5,
+          "privateDirtyMb": 55.953125,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 7.01953125,
+            "glibcArenasMb": 8.06640625,
+            "webkitMallocMb": 13.078125,
+            "javascriptCoreMb": 3.390625,
+            "otherAnonMb": 8.4453125,
+            "fileBackedAnonMb": 15.953125
+          }
+        },
+        {
+          "pid": 1373370,
+          "name": "WebKitNetworkPr",
+          "role": "network",
+          "rssMb": 72.80859375,
+          "pssMb": 26.7216796875,
+          "pssAnonMb": 21.7421875,
+          "pssFileMb": 4.9794921875,
+          "pssShmemMb": 0,
+          "privateDirtyMb": 21.7421875,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 0.39453125,
+            "glibcArenasMb": 0.26171875,
+            "webkitMallocMb": 11.265625,
+            "javascriptCoreMb": 2,
+            "otherAnonMb": 0.8828125,
+            "fileBackedAnonMb": 6.9375
+          }
+        },
+        {
+          "pid": 1373430,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 889.8359375,
+          "pssMb": 582.55859375,
+          "pssAnonMb": 508.1875,
+          "pssFileMb": 70.6962890625,
+          "pssShmemMb": 3.673828125,
+          "privateDirtyMb": 526.3046875,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 7.86328125,
+            "glibcArenasMb": 48.51171875,
+            "webkitMallocMb": 407.31640625,
+            "javascriptCoreMb": 9.39453125,
+            "otherAnonMb": 20.15234375,
+            "fileBackedAnonMb": 14.94921875
+          }
+        },
+        {
+          "pid": 1373597,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 414.5390625,
+          "pssMb": 129.5810546875,
+          "pssAnonMb": 79.1640625,
+          "pssFileMb": 50.4072265625,
+          "pssShmemMb": 0.009765625,
+          "privateDirtyMb": 84.67578125,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 6.1015625,
+            "glibcArenasMb": 1.98046875,
+            "webkitMallocMb": 42.7578125,
+            "javascriptCoreMb": 7.46484375,
+            "otherAnonMb": 5.91015625,
+            "fileBackedAnonMb": 14.94921875
+          }
+        }
+      ]
+    }
+  ],
+  "memoryBudget": {
+    "results": [
+      {
+        "size": "100k",
+        "retainedMb": 33.4365234375,
+        "retainedFrom": "away-after-gc-pressure",
+        "liveBytesPerEntry": 1092.096,
+        "liveFrom": "open-after-gc-pressure"
+      },
+      {
+        "size": "500k",
+        "retainedMb": 376.6005859375,
+        "retainedFrom": "away-after-gc-pressure",
+        "liveBytesPerEntry": 815.450112,
+        "liveFrom": "open-after-gc-pressure"
+      }
+    ],
+    "failures": [
+      "500k: 377 MB retained after navigating away (budget 80 MB)"
+    ]
+  }
+}

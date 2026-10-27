@@ -7,6 +7,7 @@ import { describe, it, expect } from "vitest";
 import {
   sortEntries,
   filterHidden,
+  isSystemHidden,
   formatSize,
   type FileEntry,
 } from "$lib/domain/file";
@@ -152,6 +153,12 @@ describe("filterHidden", () => {
     ] as unknown as typeof mockEntries;
     const filtered = filterHidden(sysEntries, false);
     expect(filtered.map((e) => e.name)).toEqual(["Documents"]);
+  });
+
+  it("matches system names case-insensitively whatever their case mapping", () => {
+    // U+212A KELVIN SIGN lowercases to "k"; U+0130 lowercases to two units.
+    for (const name of ["DES\u212ATOP.INI", "Thumbs.DB", "found.000", "CONFIG.MSI"]) expect(isSystemHidden(name)).toBe(true);
+    for (const name of ["desktop.ini.bak", "thumbs", "\u0130recovery", "Recovery2", ""]) expect(isSystemHidden(name)).toBe(false);
   });
 
   it("shows system folders when showHidden is true", () => {

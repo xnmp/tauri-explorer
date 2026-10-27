@@ -227,7 +227,7 @@ fn copy_through_an_alias_invalidates_the_physical_directory_listing() {
     let mut f = Fixture::new();
     let physical = f.target.parent().unwrap().to_owned();
     let physical_string = physical.to_string_lossy().into_owned();
-    let before = tauri::async_runtime::block_on(crate::files::dir_listing::list_directory(
+    let before = tauri::async_runtime::block_on(crate::files::dir_listing::read_directory(
         physical_string.clone(),
     ))
     .unwrap();
@@ -245,7 +245,7 @@ fn copy_through_an_alias_invalidates_the_physical_directory_listing() {
     f.target = alias.join("item.txt");
     f.copy(true).unwrap();
     let after =
-        tauri::async_runtime::block_on(crate::files::dir_listing::list_directory(physical_string))
+        tauri::async_runtime::block_on(crate::files::dir_listing::read_directory(physical_string))
             .unwrap();
     assert_eq!(
         after

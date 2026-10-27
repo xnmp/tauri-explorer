@@ -1,3 +1,4 @@
+import { encodeDirectoryListing } from "$lib/api/directory-wire";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
@@ -26,10 +27,7 @@ describe("directory listing native E2E probe", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     invokeMock.mockReset();
-    invokeMock.mockResolvedValue({
-      format: "columns-v1", path: "/probe", path_prefix: null,
-      columns: { names: [], paths: [], kinds: [], sizes: [], modified: [] },
-    });
+    invokeMock.mockResolvedValue(encodeDirectoryListing({ path: "/probe", entries: [] }).buffer);
     for (const key of Object.keys(document.documentElement.dataset)) {
       delete document.documentElement.dataset[key];
     }

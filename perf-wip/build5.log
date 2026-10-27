@@ -1,0 +1,63 @@
+warning: unexpected `cfg` condition value: `v2_42`
+   --> vendor/wry/src/webkitgtk/mod.rs:592:17
+    |
+592 |           #[cfg(feature = "v2_42")]
+    |                 ^^^^^^^^^^^^^^^^^
+    |
+    = note: expected values for `feature` are: `default`, `devtools`, `gdkx11`, `javascriptcore-rs`, `linux-body`, `mac-proxy`, `os-webview`, `serde`, `soup3`, `tracing`, `webkit2gtk`, `webkit2gtk-sys`, `x11`, and `x11-dl`
+    = help: consider adding `v2_42` as a feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+    = note: requested on the command line with `-W unexpected-cfgs`
+
+warning: unexpected `cfg` condition value: `v2_42`
+   --> vendor/wry/src/webkitgtk/mod.rs:594:21
+    |
+594 |           #[cfg(not(feature = "v2_42"))]
+    |                     ^^^^^^^^^^^^^^^^^
+    |
+    = note: expected values for `feature` are: `default`, `devtools`, `gdkx11`, `javascriptcore-rs`, `linux-body`, `mac-proxy`, `os-webview`, `serde`, `soup3`, `tracing`, `webkit2gtk`, `webkit2gtk-sys`, `x11`, and `x11-dl`
+    = help: consider adding `v2_42` as a feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: use of deprecated method `webkit2gtk::WebViewExt::run_javascript`: Since 2.40
+  --> vendor/wry/src/webkitgtk/synthetic_mouse_events.rs:22:17
+   |
+22 |         webview.run_javascript(
+   |                 ^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated method `webkit2gtk::WebViewExt::run_javascript`: Since 2.40
+  --> vendor/wry/src/webkitgtk/synthetic_mouse_events.rs:32:17
+   |
+32 |         webview.run_javascript(
+   |                 ^^^^^^^^^^^^^^
+
+warning: use of deprecated method `webkit2gtk::WebViewExt::run_javascript`: Since 2.40
+  --> vendor/wry/src/webkitgtk/synthetic_mouse_events.rs:56:17
+   |
+56 |         webview.run_javascript(
+   |                 ^^^^^^^^^^^^^^
+
+warning: use of deprecated method `webkit2gtk::WebViewExt::run_javascript`: Since 2.40
+  --> vendor/wry/src/webkitgtk/synthetic_mouse_events.rs:66:17
+   |
+66 |         webview.run_javascript(
+   |                 ^^^^^^^^^^^^^^
+
+warning: use of deprecated method `webkit2gtk::WebViewExt::run_javascript`: Since 2.40
+   --> vendor/wry/src/webkitgtk/mod.rs:365:21
+    |
+365 |             webview.run_javascript(&script, cancellable, |_| ());
+    |                     ^^^^^^^^^^^^^^
+
+warning: use of deprecated method `webkit2gtk::WebViewExt::run_javascript`: Since 2.40
+   --> vendor/wry/src/webkitgtk/mod.rs:798:20
+    |
+798 |       self.webview.run_javascript(js, cancellable, |result| {
+    |                    ^^^^^^^^^^^^^^
+
+warning: `wry` (lib) generated 8 warnings
+   Compiling tauri-explorer v1.14.0 (/home/chong/Repos/tauri-explorer/.worktrees/large-folder-pipeline/src-tauri)
+    Finished `release` profile [optimized] target(s) in 4m 57s
+exit 0

@@ -1,0 +1,524 @@
+{
+  "date": "2026-10-27T12:16:18.431Z",
+  "binary": "/tmp/claude-1000/-home-chong-Repos-tauri-explorer/e947c9a5-2864-4719-b4ff-395c11e9451a/scratchpad/lfp/te-exp",
+  "runsPerScenario": 6,
+  "webview": {
+    "devicePixelRatio": 1,
+    "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/60.5 Safari/605.1.15",
+    "innerHeight": 800,
+    "innerWidth": 1200
+  },
+  "memoryAfterOpen": {
+    "100k": {
+      "appRssMb": 471.55859375,
+      "children": [
+        {
+          "name": "WebKitNetworkPr",
+          "rssMb": 68.94140625
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 1046.7734375
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 425.0546875
+        }
+      ],
+      "totalRssMb": 2012.328125,
+      "totalPssMb": 1154.5380859375,
+      "processes": [
+        {
+          "pid": 1176795,
+          "name": "te-exp",
+          "role": "app",
+          "rssMb": 471.55859375,
+          "pssMb": 245.390625,
+          "pssAnonMb": 132.34375,
+          "pssFileMb": 107.546875,
+          "pssShmemMb": 5.5,
+          "privateDirtyMb": 132.34765625,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 14.3984375,
+            "glibcArenasMb": 51.9921875,
+            "webkitMallocMb": 19.9765625,
+            "javascriptCoreMb": 4,
+            "otherAnonMb": 26.10546875,
+            "fileBackedAnonMb": 15.87109375
+          }
+        },
+        {
+          "pid": 1177614,
+          "name": "WebKitNetworkPr",
+          "role": "network",
+          "rssMb": 68.94140625,
+          "pssMb": 26.400390625,
+          "pssAnonMb": 21.80859375,
+          "pssFileMb": 4.591796875,
+          "pssShmemMb": 0,
+          "privateDirtyMb": 21.83984375,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 0.39453125,
+            "glibcArenasMb": 0.26171875,
+            "webkitMallocMb": 11.3359375,
+            "javascriptCoreMb": 2,
+            "otherAnonMb": 0.87890625,
+            "fileBackedAnonMb": 6.9375
+          }
+        },
+        {
+          "pid": 1177685,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 1046.7734375,
+          "pssMb": 740.6650390625,
+          "pssAnonMb": 665.83984375,
+          "pssFileMb": 71.1513671875,
+          "pssShmemMb": 3.673828125,
+          "privateDirtyMb": 683.140625,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 8.23828125,
+            "glibcArenasMb": 49.6640625,
+            "webkitMallocMb": 562.54296875,
+            "javascriptCoreMb": 9.9921875,
+            "otherAnonMb": 20.453125,
+            "fileBackedAnonMb": 14.94921875
+          }
+        },
+        {
+          "pid": 1177832,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 425.0546875,
+          "pssMb": 142.08203125,
+          "pssAnonMb": 92.08203125,
+          "pssFileMb": 49.990234375,
+          "pssShmemMb": 0.009765625,
+          "privateDirtyMb": 97.234375,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 5.7578125,
+            "glibcArenasMb": 1.984375,
+            "webkitMallocMb": 55.296875,
+            "javascriptCoreMb": 7.984375,
+            "otherAnonMb": 6.109375,
+            "fileBackedAnonMb": 14.94921875
+          }
+        }
+      ]
+    },
+    "500k": {
+      "appRssMb": 498.63671875,
+      "children": [
+        {
+          "name": "WebKitNetworkPr",
+          "rssMb": 68.81640625
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 926.88671875
+        },
+        {
+          "name": "WebKitWebProces",
+          "rssMb": 466.95703125
+        }
+      ],
+      "totalRssMb": 1961.296875,
+      "totalPssMb": 1097.416015625,
+      "processes": [
+        {
+          "pid": 1176795,
+          "name": "te-exp",
+          "role": "app",
+          "rssMb": 498.63671875,
+          "pssMb": 271.482421875,
+          "pssAnonMb": 157.05078125,
+          "pssFileMb": 108.9306640625,
+          "pssShmemMb": 5.5,
+          "privateDirtyMb": 157.05078125,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 10.046875,
+            "glibcArenasMb": 102.79296875,
+            "webkitMallocMb": 13.3125,
+            "javascriptCoreMb": 3.390625,
+            "otherAnonMb": 11.5625,
+            "fileBackedAnonMb": 15.9453125
+          }
+        },
+        {
+          "pid": 1177614,
+          "name": "WebKitNetworkPr",
+          "role": "network",
+          "rssMb": 68.81640625,
+          "pssMb": 26.2734375,
+          "pssAnonMb": 21.68359375,
+          "pssFileMb": 4.58984375,
+          "pssShmemMb": 0,
+          "privateDirtyMb": 21.69140625,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 0.39453125,
+            "glibcArenasMb": 0.26171875,
+            "webkitMallocMb": 11.2109375,
+            "javascriptCoreMb": 2,
+            "otherAnonMb": 0.87890625,
+            "fileBackedAnonMb": 6.9375
+          }
+        },
+        {
+          "pid": 1177685,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 926.88671875,
+          "pssMb": 620.1396484375,
+          "pssAnonMb": 541.828125,
+          "pssFileMb": 74.6376953125,
+          "pssShmemMb": 3.673828125,
+          "privateDirtyMb": 562.89453125,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 8.2421875,
+            "glibcArenasMb": 49.953125,
+            "webkitMallocMb": 438.74609375,
+            "javascriptCoreMb": 9.4609375,
+            "otherAnonMb": 20.4765625,
+            "fileBackedAnonMb": 14.94921875
+          }
+        },
+        {
+          "pid": 1177832,
+          "name": "WebKitWebProces",
+          "role": "web-content",
+          "rssMb": 466.95703125,
+          "pssMb": 179.5205078125,
+          "pssAnonMb": 128.03125,
+          "pssFileMb": 51.4794921875,
+          "pssShmemMb": 0.009765625,
+          "privateDirtyMb": 133.18359375,
+          "swapMb": 0,
+          "anonByAllocator": {
+            "glibcMainMb": 6.12890625,
+            "glibcArenasMb": 1.9921875,
+            "webkitMallocMb": 91.51171875,
+            "javascriptCoreMb": 7.453125,
+            "otherAnonMb": 5.99609375,
+            "fileBackedAnonMb": 14.94921875
+          }
+        }
+      ]
+    }
+  },
+  "scenarios": [
+    {
+      "scenario": "open-folder",
+      "size": "100k",
+      "entries": 100000,
+      "visibleEntries": 79895,
+      "firstRowsMs": {
+        "n": 6,
+        "median": 225,
+        "p95": 300,
+        "min": 222,
+        "max": 300
+      },
+      "completeMs": {
+        "n": 6,
+        "median": 225,
+        "p95": 300,
+        "min": 222,
+        "max": 300
+      },
+      "domCompleteMs": {
+        "n": 6,
+        "median": 211,
+        "p95": 273,
+        "min": 208,
+        "max": 273
+      },
+      "phasesMs": {
+        "inputToTrace": {
+          "n": 6,
+          "median": 0,
+          "p95": 0
+        },
+        "watchReady": {
+          "n": 6,
+          "median": 0,
+          "p95": 0
+        },
+        "queued": {
+          "n": 6,
+          "median": 1,
+          "p95": 1
+        },
+        "nativeRoundTrip": {
+          "n": 6,
+          "median": 166,
+          "p95": 208
+        },
+        "decode": {
+          "n": 6,
+          "median": 3,
+          "p95": 8
+        },
+        "publish": {
+          "n": 6,
+          "median": 1,
+          "p95": 2
+        },
+        "project": {
+          "n": 6,
+          "median": 15,
+          "p95": 27
+        },
+        "select": {
+          "n": 6,
+          "median": 0,
+          "p95": 1
+        },
+        "settledToRows": {
+          "n": 6,
+          "median": 26,
+          "p95": 28
+        },
+        "rowsToFrames": {
+          "n": 6,
+          "median": 14,
+          "p95": 27
+        },
+        "rust:owner-acquire": {
+          "n": 6,
+          "median": 0,
+          "p95": 0
+        },
+        "rust:blocking-queue": {
+          "n": 6,
+          "median": 0,
+          "p95": 0
+        },
+        "rust:resolve-path": {
+          "n": 6,
+          "median": 0,
+          "p95": 0
+        },
+        "rust:watch-lock": {
+          "n": 6,
+          "median": 0,
+          "p95": 0
+        },
+        "rust:watch-register": {
+          "n": 6,
+          "median": 6.4,
+          "p95": 7.3
+        },
+        "rust:root-metadata": {
+          "n": 6,
+          "median": 0,
+          "p95": 0
+        },
+        "rust:read-dir": {
+          "n": 6,
+          "median": 49.7,
+          "p95": 55
+        },
+        "rust:entry-metadata": {
+          "n": 6,
+          "median": 22.7,
+          "p95": 25.8
+        },
+        "rust:sort": {
+          "n": 6,
+          "median": 22,
+          "p95": 27.2
+        },
+        "rust:respond": {
+          "n": 6,
+          "median": 0,
+          "p95": 0
+        },
+        "rust:serialize": {
+          "n": 6,
+          "median": 16.5,
+          "p95": 26.1
+        },
+        "rust:total": {
+          "n": 6,
+          "median": 116.9,
+          "p95": 137.6
+        },
+        "ipcAndParse": {
+          "n": 6,
+          "median": 52.3,
+          "p95": 70.4
+        }
+      },
+      "loadavg1": {
+        "n": 6,
+        "median": 3.15,
+        "p95": 3.15,
+        "min": 3.15,
+        "max": 3.15
+      }
+    },
+    {
+      "scenario": "open-folder",
+      "size": "500k",
+      "entries": 500000,
+      "visibleEntries": 400328,
+      "firstRowsMs": {
+        "n": 6,
+        "median": 1300,
+        "p95": 1359,
+        "min": 1259,
+        "max": 1359
+      },
+      "completeMs": {
+        "n": 6,
+        "median": 1300,
+        "p95": 1360,
+        "min": 1259,
+        "max": 1360
+      },
+      "domCompleteMs": {
+        "n": 6,
+        "median": 1282,
+        "p95": 1334,
+        "min": 1235,
+        "max": 1334
+      },
+      "phasesMs": {
+        "inputToTrace": {
+          "n": 6,
+          "median": 0,
+          "p95": 1
+        },
+        "watchReady": {
+          "n": 6,
+          "median": 0,
+          "p95": 1
+        },
+        "queued": {
+          "n": 6,
+          "median": 1,
+          "p95": 2
+        },
+        "nativeRoundTrip": {
+          "n": 6,
+          "median": 1040,
+          "p95": 1096
+        },
+        "decode": {
+          "n": 6,
+          "median": 12,
+          "p95": 39
+        },
+        "publish": {
+          "n": 6,
+          "median": 4,
+          "p95": 6
+        },
+        "project": {
+          "n": 6,
+          "median": 87,
+          "p95": 96
+        },
+        "select": {
+          "n": 6,
+          "median": 0,
+          "p95": 0
+        },
+        "settledToRows": {
+          "n": 6,
+          "median": 100,
+          "p95": 110
+        },
+        "rowsToFrames": {
+          "n": 6,
+          "median": 25,
+          "p95": 28
+        },
+        "rust:owner-acquire": {
+          "n": 6,
+          "median": 0,
+          "p95": 0
+        },
+        "rust:blocking-queue": {
+          "n": 6,
+          "median": 0,
+          "p95": 0
+        },
+        "rust:resolve-path": {
+          "n": 6,
+          "median": 0,
+          "p95": 0
+        },
+        "rust:watch-lock": {
+          "n": 6,
+          "median": 0,
+          "p95": 0
+        },
+        "rust:watch-register": {
+          "n": 6,
+          "median": 34,
+          "p95": 35.8
+        },
+        "rust:root-metadata": {
+          "n": 6,
+          "median": 0,
+          "p95": 0
+        },
+        "rust:read-dir": {
+          "n": 6,
+          "median": 241.8,
+          "p95": 258.8
+        },
+        "rust:entry-metadata": {
+          "n": 6,
+          "median": 115.1,
+          "p95": 116.7
+        },
+        "rust:sort": {
+          "n": 6,
+          "median": 157.5,
+          "p95": 181.2
+        },
+        "rust:respond": {
+          "n": 6,
+          "median": 0,
+          "p95": 0
+        },
+        "rust:serialize": {
+          "n": 6,
+          "median": 117.7,
+          "p95": 121.6
+        },
+        "rust:total": {
+          "n": 6,
+          "median": 656,
+          "p95": 710
+        },
+        "ipcAndParse": {
+          "n": 6,
+          "median": 383,
+          "p95": 407.6
+        }
+      },
+      "loadavg1": {
+        "n": 6,
+        "median": 3.46,
+        "p95": 3.74,
+        "min": 3.15,
+        "max": 3.74
+      }
+    }
+  ],
+  "memoryPhases": [],
+  "memoryBudget": {
+    "results": [],
+    "failures": []
+  }
+}

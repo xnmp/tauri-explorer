@@ -10,7 +10,7 @@ import type { FileBatchOutcome } from "$lib/domain/file-batch-outcome";
 import type { HistoryDirection, HistorySummary, UndoAction } from "$lib/domain/file-history";
 import { basename, parentDir, sameDirectory } from "$lib/domain/path";
 import { broadcastFileChange } from "$lib/state/file-events";
-import { type CompactDirectoryListing, encodeDirectoryListing } from "./directory-wire";
+import { encodeDirectoryListing } from "./directory-wire";
 import { getMockControl } from "./mock-control";
 import { createMockFileHistory } from "./mock-file-history";
 import { dir, file, mockDirEmpty, mockFileContent, mockFiles, TIMESTAMP_BASE } from "./mock-fixtures";
@@ -282,17 +282,18 @@ const mockFileHistory = createMockFileHistory(
   relocateMockEntry,
 );
 
-/** Both listing commands reply in the native compact wire format (#868). */
-async function mockDirectoryListing(raw: string): Promise<CompactDirectoryListing> {
+/** Both listing commands reply with the native binary listing bytes, as an
+ *  ArrayBuffer like Tauri's raw replies (#868, #1417). */
+async function mockDirectoryListing(raw: string): Promise<ArrayBuffer> {
   const path = raw !== "/" && raw.endsWith("/") ? raw.slice(0, -1) : raw;
   const override = getMockControl().directoryEntries;
-  if (override) return encodeDirectoryListing({ path, entries: await override(path) });
+  if (override) return encodeDirectoryListing({ path, entries: await override(path) }).buffer as ArrayBuffer;
   if (path === "/folder-peek/Error") throw new Error("Permission denied");
   const isSynthetic = isPerfHugePath(path) || isPerfImagesPath(path);
   if (!isSynthetic && !(path in mockFiles)) {
     throw new Error(`Path not found: ${path}`);
   }
-  return encodeDirectoryListing({ path, entries: sortListing(getDirectoryEntries(path)) });
+  return encodeDirectoryListing({ path, entries: sortListing(getDirectoryEntries(path)) }).buffer as ArrayBuffer;
 }
 
 /** The ordered copy/move session `mockInvoke` runs for `copy_entries` and

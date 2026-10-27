@@ -355,7 +355,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/api/copy-session.ts` — the ordered-session transport: one acknowledged request with request-local events, single-use conflict replies, cancellation handshake and native history settlement; copy and move share its registry.
 - `src/lib/api/move-session.ts` — the ordered move request over that transport.
 - `file-mutations.ts` — acknowledged forward mutation IPC; applies the settled native history summary before returning a receipt or warning.
-- `directory-wire.ts` — validates compact native listing columns and reconstructs exact immutable domain entries.
+- `directory-wire.ts` — decodes (and, for the mock backend, encodes) the binary native listing format, validating every column, and reconstructs exact immutable domain entries.
 - `files.ts` — all file-op IPC (list, create, rename, copy, move, delete, estimate), including typed per-path trash/restore outcomes. Hot.
 - `media.ts` — `get_media_durations` IPC wrapper (Details Length column, #995).
 - `frontend-log.ts` — forwards diagnosable webview failures to the native rotating log.
@@ -673,7 +673,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `crash_report.rs` — local crash capture (#184).
 - `load_diagnostics/mod.rs` — slow directory-load records (#1022): merges the frontend record with the native trace and blocker and hands it to `persist.rs`; culprit naming (including an IPC-reply gap after a settled native command); `begin_listing` arms the fallback for watched listings.
 - `load_diagnostics/fallback.rs` — native-only record for a watched listing still in flight after 7 s, settled with its outcome when the listing finishes; background refreshes are never armed.
-- `load_diagnostics/reply.rs` — `TracedReply`: keeps a listing's trace open until Tauri serializes the reply, timing the encoding as the `serialize` phase.
+- `load_diagnostics/reply.rs` — `encoded_reply`: encodes a listing reply inside the command under its trace, timing the encoding as the `serialize` phase, and settles the trace.
 - `load_diagnostics/trace.rs` — in-flight native listing traces: phase timeline, per-entry progress and stalled-entry slots, finished ring; untraced listings are no-ops.
 - `load_diagnostics/filesystem.rs` — filesystem type/category for a path from the mount table (Linux mountinfo, macOS `getfsstat(MNT_NOWAIT)`, Windows UNC/`GetDriveTypeW`), after resolving symlinks that live on local mounts only; never stats the possibly hung directory.
 - `load_diagnostics/store.rs` — bounded rotating JSON records under `<app log dir>/slow-loads/` (newest 20, replace by trace ID).
@@ -759,7 +759,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `mod.rs` — files module root + re-exports; `FileEntry` incl. `is_git_repo` and `metadata_to_entry`'s one-stat-per-directory git-repo-root detection (#463).
 - `dir_listing.rs` — cached directory reads and fresh complete snapshots with owned observation. Hot.
-- `directory_wire.rs` — versioned column serialization with exact path-prefix factoring; native caches retain ordinary entries. Reports each encoded listing to `memory_release.rs`.
+- `directory_wire.rs` — binary listing encoding (TEL1 header + columns) with exact path-prefix factoring; native caches retain ordinary entries. Reports each encoded listing to `memory_release.rs`.
+- `listing_reaper.rs` — frees large unshared listings on a background thread so the IPC reply is not held behind their drop (#1417).
 - `directory_cache.rs` — bounded shared directory snapshots; request-owned publication permits reject invalidated, evicted and superseded reads.
 - `src-tauri/src/files/copy_session.rs` — the ordered-session engine: async orchestration with a supervisor-owned per-item receipt ledger, generic over the `Work` effect; a crate-private observer exposes stable phase boundaries to deterministic cancellation contracts.
 - `src-tauri/src/files/move_session.rs` — the move effect for that engine: physical inspection, same-directory no-op, subtree rejection, un-prompted-overwrite refusal, and an incomplete source removal reported as uncertain rather than success.

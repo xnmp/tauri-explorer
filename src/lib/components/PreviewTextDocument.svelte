@@ -2,11 +2,14 @@
   PreviewTextDocument — the preview's reflowing text subjects: rendered
   markdown, highlighted code and plain text (#1039 fullscreen zooms these).
   Markdown/code HTML comes from domain/markdown + syntax-highlight, which
-  emit escaped hljs/Marked output — safe {@html} sinks (#227).
+  emit escaped hljs/Marked output — safe {@html} sinks (#227). Markdown
+  arrives as top-level blocks that grow a slice per frame (#1418); blocks
+  already shown keep their nodes as later ones are appended.
 -->
 <script lang="ts">
   type TextDocument =
-    | { readonly kind: "markdown" | "code"; readonly html: string }
+    | { readonly kind: "markdown"; readonly blocks: readonly string[] }
+    | { readonly kind: "code"; readonly html: string }
     | { readonly kind: "text"; readonly text: string };
 
   interface Props {
@@ -19,7 +22,7 @@
 </script>
 
 {#if content.kind === "markdown"}
-  <div class="preview-markdown" class:hljs-light={light} class:hljs-dark={!light}>{@html content.html}</div>
+  <div class="preview-markdown" class:hljs-light={light} class:hljs-dark={!light}>{#each content.blocks as block}{@html block}{/each}</div>
 {:else if content.kind === "code"}
   <pre class="preview-text preview-code" class:hljs-light={light} class:hljs-dark={!light}><code class="hljs">{@html content.html}</code></pre>
 {:else if content.kind === "text"}

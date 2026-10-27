@@ -292,6 +292,33 @@ test("preview walks", async ({ page }) => {
   await walkPreviews(page, HUGE, "folder-00000", 6, "preview: 5000-entry folder (folders)");
 });
 
+// #1418: key-repeat speed through math-heavy Markdown with the preview open.
+// Selection must keep up; only the file the walk stops on is typeset in full.
+// The /home/math-nav fixture alternates math-heavy and plain documents.
+test("preview: math Markdown fast walk", async ({ page }) => {
+  await prepare(page);
+  await page.goto("/?path=/home/math-nav");
+  await waitForRows(page, "nav-01.md");
+  await page.locator(".entry-item").filter({ hasText: "nav-01.md" }).first().click();
+  if (!(await page.locator(".preview-pane").isVisible())) await page.keyboard.press(" ");
+  const finished = (title: string) => page.waitForFunction(
+    (t) => document.querySelector(".preview-markdown h1")?.textContent === t &&
+      document.querySelectorAll(".preview-markdown .katex").length >= 140,
+    title, { timeout: 30_000 },
+  );
+  await finished("Navigation 1");
+  for (let i = 0; i < RUNS; i++) {
+    const [key, target] = i % 2 === 0 ? ["ArrowDown", "Navigation 11"] : ["ArrowUp", "Navigation 1"];
+    await measure(page, "preview: math Markdown fast walk", async () => {
+      for (let j = 0; j < 10; j++) {
+        await page.keyboard.press(key);
+        await page.waitForTimeout(33);
+      }
+      await finished(target);
+    });
+  }
+});
+
 test("quick open", async ({ page }) => {
   await prepare(page);
   await page.goto("/?path=/home/user");

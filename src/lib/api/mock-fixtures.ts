@@ -49,6 +49,43 @@ export function dir(name: string, path: string, is_empty?: boolean, is_git_repo?
   };
 }
 
+/** Markdown navigation fixture (#1418): odd-numbered files are math-heavy
+ *  (inline and display TeX on every section), even-numbered files plain. */
+export const MATH_NAV_ROOT = "/home/math-nav";
+const MATH_NAV_COUNT = 12;
+const mathNavName = (index: number) => `nav-${String(index + 1).padStart(2, "0")}.md`;
+function mathNavContent(index: number): string {
+  const n = index + 1;
+  const lines = [`# Navigation ${n}`, ""];
+  for (let s = 0; s < 28; s++) {
+    const k = n * 100 + s;
+    if (index % 2 === 0) {
+      lines.push(
+        `## Section ${s} of file ${n}`,
+        `Let $x_{${k}} = \\frac{a_${s} + b^{${n}}}{\\sqrt{c_{${k}}^2 + d}}$, so $\\sum_{i=1}^{${k}} i^2 = \\frac{${k}(${k}+1)(2\\cdot${k}+1)}{6}$ and \\(\\alpha_{${s}} \\le \\beta^{${n}}\\) with $e^{i\\theta_{${k}}}$.`,
+        "$$",
+        `\\begin{pmatrix} ${k} & \\int_0^{${s}} t^{${n}}\\,dt \\\\ \\lim_{h \\to 0} \\frac{f(x+h)-f(x)}{h} & \\prod_{j=1}^{${k}} \\left(1 + \\frac{1}{j^2}\\right) \\end{pmatrix}`,
+        "$$",
+        "",
+      );
+    } else {
+      lines.push(
+        `## Section ${s} of file ${n}`,
+        `Plain prose for section ${s} with **bold**, _emphasis_ and \`inline code\` ${k}.`,
+        `- item ${k}`,
+        `- another item ${k + 1}`,
+        "> a quote",
+        "",
+      );
+    }
+  }
+  return lines.join("\n");
+}
+const mathNavFixtures = Array.from({ length: MATH_NAV_COUNT }, (_, index) => {
+  const content = mathNavContent(index);
+  return { path: `${MATH_NAV_ROOT}/${mathNavName(index)}`, name: mathNavName(index), content };
+});
+
 // Mock file system structure
 export const mockFiles: Record<string, FileEntry[]> = {
   // Matches get_log_dir so "Open Logs Folder" (#197) is navigable in e2e.
@@ -77,6 +114,7 @@ export const mockFiles: Record<string, FileEntry[]> = {
   "/home/math-preview": [
     file("math.md", "/home/math-preview/math.md", 1024),
   ],
+  [MATH_NAV_ROOT]: mathNavFixtures.map(({ name, path, content }) => file(name, path, content.length)),
   "/home/csv-preview": [
     file("people.csv", "/home/csv-preview/people.csv", 256),
     file("broken.csv", "/home/csv-preview/broken.csv", 128),
@@ -503,6 +541,7 @@ export const mockFileContent: Record<string, string> = {
     "```",
     "",
   ].join("\n"),
+  ...Object.fromEntries(mathNavFixtures.map(({ path, content }) => [path, content])),
   "/home/csv-preview/people.csv": 'name,note\nAda,"first, second"\nGrace,"said ""hello""\nand left"\n',
   "/home/csv-preview/broken.csv": 'name,note\nAda,"unterminated',
   "/home/csv-preview/many-people.csv": ["name,note", ...Array.from({ length: 250 }, (_, index) => `Person ${index + 1},record ${index + 1}`)].join("\n"),

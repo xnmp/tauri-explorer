@@ -10,6 +10,7 @@
  *   env -u WAYLAND_DISPLAY GDK_BACKEND=x11 \
  *     xvfb-run -a --server-args="-screen 0 1920x1080x24" dbus-run-session -- \
  *     node scripts/perf-real-app.mjs --fixtures DIR --binary PATH [--runs 20] [--out FILE]
+ *       [--scenarios open,nav,memory]   (default open,nav)
  *
  * The binary is unmodified: the runner only sets TAURI_WEBVIEW_AUTOMATION
  * (so WebKitGTK accepts the automation session) and WEBKIT_INSPECTOR_SERVER
@@ -28,6 +29,19 @@
  * Scroll: the Details viewport is scrolled by a fixed step every animation
  * frame and the frame-to-frame intervals are recorded.
  *
+ * Memory (#1416, `--scenarios memory`): per-process RSS and PSS (from
+ * /proc/<pid>/smaps_rollup) of the app and every WebKit process it spawned,
+ * sampled after `--settle-ms` while idle in the fixture root, with each
+ * `--memory-sizes` folder open and after navigating back, for
+ * `--memory-cycles` open/away cycles. `--gc-pressure-mb` adds samples after
+ * in-page allocation pressure that makes JavaScriptCore collect (the release
+ * WebView exposes no GC to WebDriver). `--max-retained-mb` and
+ * `--max-live-bytes-per-entry` turn the result into a budget check that
+ * exits non-zero; see docs/performance.md for the values in use.
+ *
+ *   ... node scripts/perf-real-app.mjs --fixtures DIR --binary PATH --scenarios memory \
+ *     --memory-cycles 4 --gc-pressure-mb 4096 --max-retained-mb N --max-live-bytes-per-entry N
+ *
  * Each run uses fresh private XDG config/data/cache/state directories, so
  * settings, history and caches from the desktop profile cannot leak in.
  * PERF_VERBOSE=1 prints every measurement to stderr as it happens.
@@ -40,7 +54,9 @@ import path from "node:path";
 import { remote } from "webdriverio";
 
 function parseArgs(argv) {
-  const options = { runs: 20, port: 4458, out: null, fixtures: null, binary: null, scrollFrames: 300, scrollStep: 120, probeTimeoutMs: 120_000 };
+  const options = { runs: 20, port: 4458, out: null, fixtures: null, binary: null, scrollFrames: 300, scrollStep: 120, probeTimeoutMs: 120_000,
+    scenarios: ["open", "nav"], settleMs: 20_000, memorySizes: ["100k", "500k"], memoryCycles: 1, gcPressureMb: 0,
+    maxRetainedMb: null, maxLiveBytesPerEntry: null };
   for (let i = 0; i < argv.length; i++) {
     const value = argv[i + 1];
     switch (argv[i]) {
@@ -52,6 +68,13 @@ function parseArgs(argv) {
       case "--scroll-frames": options.scrollFrames = Number(value); i++; break;
       case "--scroll-step": options.scrollStep = Number(value); i++; break;
       case "--probe-timeout-ms": options.probeTimeoutMs = Number(value); i++; break;
+      case "--scenarios": options.scenarios = value.split(","); i++; break;
+      case "--settle-ms": options.settleMs = Number(value); i++; break;
+      case "--memory-sizes": options.memorySizes = value.split(","); i++; break;
+      case "--memory-cycles": options.memoryCycles = Number(value); i++; break;
+      case "--gc-pressure-mb": options.gcPressureMb = Number(value); i++; break;
+      case "--max-retained-mb": options.maxRetainedMb = Number(value); i++; break;
+      case "--max-live-bytes-per-entry": options.maxLiveBytesPerEntry = Number(value); i++; break;
       default: throw new Error(`unknown argument ${argv[i]}`);
     }
   }
@@ -166,6 +189,25 @@ function measureInPage(spec, done) {
   }
 }
 
+/**
+ * Runs in the page: allocate about `mb` MB of small objects, each round
+ * surviving long enough (a 128 MB sliding window) to be promoted out of the
+ * young generation, so the dead objects accumulate in the old generation and
+ * JavaScriptCore runs full collections. Garbage that dies young would only
+ * trigger eden collections and leave earlier old-generation garbage alone.
+ */
+function gcPressureInPage(mb) {
+  const window = [];
+  for (let round = 0; round < mb; round++) {
+    // ~1 MB per round: 32k small objects plus the array holding them.
+    const chunk = new Array(32_768);
+    for (let i = 0; i < chunk.length; i++) chunk[i] = { i };
+    window.push(chunk);
+    if (window.length > 128) window.shift();
+  }
+  return window.length;
+}
+
 /** Runs in the page: scroll the Details viewport one step per frame. */
 function scrollInPage(frames, step, done) {
   const viewport = (document.querySelector(".pane-tree:not(.retained)") ?? document).querySelector(".virtual-viewport");
@@ -205,26 +247,98 @@ function findProcess(binary, profile) {
   return null;
 }
 
+const MEMORY_FIELDS = { Rss: "rssKb", Pss: "pssKb", Pss_Anon: "pssAnonKb", Pss_File: "pssFileKb", Pss_Shmem: "pssShmemKb", Private_Dirty: "privateDirtyKb", Swap: "swapKb" };
+
+/** One process's resident memory from /proc (smaps_rollup gives PSS; RSS alone double-counts shared pages). */
+function processMemory(pid) {
+  const result = {};
+  try {
+    for (const line of fs.readFileSync(`/proc/${pid}/smaps_rollup`, "utf8").split("\n")) {
+      const match = /^(\w+):\s+(\d+) kB/.exec(line);
+      if (match && MEMORY_FIELDS[match[1]]) result[MEMORY_FIELDS[match[1]]] = Number(match[2]);
+    }
+  } catch {
+    // smaps_rollup can be unreadable (ptrace policy); fall back to VmRSS below.
+  }
+  return result;
+}
+
+/**
+ * Anonymous resident memory by allocator, from the mapping each page sits in:
+ * glibc's main arena is `[heap]`; its other arenas are unnamed mappings
+ * aligned to HEAP_MAX_SIZE (64 MiB on 64-bit); WebKit names its own
+ * (`[anon:WKFastMalloc]` holds most of the JavaScript heap, `[anon:JS...]` the
+ * rest of JavaScriptCore). Unnamed unaligned mappings (thread stacks, large
+ * mmap allocations) are "otherAnon".
+ */
+function anonymousByAllocator(pid) {
+  const totals = { glibcMainMb: 0, glibcArenasMb: 0, webkitMallocMb: 0, javascriptCoreMb: 0, otherAnonMb: 0, fileBackedAnonMb: 0 };
+  let bucket = null;
+  try {
+    for (const line of fs.readFileSync(`/proc/${pid}/smaps`, "utf8").split("\n")) {
+      const mapping = /^([0-9a-f]+)-[0-9a-f]+ \S+ \S+ \S+ \d+\s*(.*)$/.exec(line);
+      if (mapping) {
+        const name = mapping[2].trim();
+        const aligned = BigInt(`0x${mapping[1]}`) % (64n << 20n) === 0n;
+        bucket = name === "[heap]" ? "glibcMainMb"
+          : name === "" ? (aligned ? "glibcArenasMb" : "otherAnonMb")
+          : name === "[anon:WKFastMalloc]" ? "webkitMallocMb"
+          : name.startsWith("[anon:JS") ? "javascriptCoreMb"
+          : name.startsWith("[anon:") || name.startsWith("[stack") ? "otherAnonMb"
+          : "fileBackedAnonMb";
+        continue;
+      }
+      const anonymous = /^Anonymous:\s+(\d+) kB/.exec(line);
+      if (anonymous && bucket) totals[bucket] += Number(anonymous[1]) / 1024;
+    }
+  } catch {
+    return null;
+  }
+  return totals;
+}
+
+function roleOf(name, isApp) {
+  if (isApp) return "app";
+  if (name.startsWith("WebKitWebProces")) return "web-content";
+  if (name.startsWith("WebKitNetworkPr")) return "network";
+  return "other";
+}
+
+/** The app process plus every descendant (WebKit web/network processes and helpers). */
 function memorySnapshot(binary, appPid) {
-  // The app process plus its WebKit children (web/network processes).
   const procs = fs.readdirSync("/proc").filter((d) => /^\d+$/.test(d)).map((pid) => {
     try {
       const status = fs.readFileSync(`/proc/${pid}/status`, "utf8");
       const field = (k) => (new RegExp(`^${k}:\\s+(.*)$`, "m").exec(status)?.[1] ?? "").trim();
       let exe = "";
       try { exe = fs.readlinkSync(`/proc/${pid}/exe`); } catch { /* not ours */ }
-      return { pid: Number(pid), ppid: Number(field("PPid")), name: field("Name"), exe, rssKb: parseInt(field("VmRSS"), 10) || 0 };
+      return { pid: Number(pid), ppid: Number(field("PPid")), name: field("Name"), exe, vmRssKb: parseInt(field("VmRSS"), 10) || 0 };
     } catch {
       return null;
     }
   }).filter(Boolean);
   const app = procs.find((p) => p.pid === appPid && p.exe === binary);
   if (!app) return null;
-  const children = procs.filter((p) => p.ppid === app.pid);
+  const tree = [app];
+  for (let i = 0; i < tree.length; i++) tree.push(...procs.filter((p) => p.ppid === tree[i].pid));
+  const mb = (kb) => (kb ?? 0) / 1024;
+  const processes = tree.map((p) => {
+    const m = processMemory(p.pid);
+    return {
+      pid: p.pid, name: p.name, role: roleOf(p.name, p === app),
+      rssMb: mb(m.rssKb ?? p.vmRssKb), pssMb: m.pssKb === undefined ? null : mb(m.pssKb),
+      pssAnonMb: mb(m.pssAnonKb), pssFileMb: mb(m.pssFileKb), pssShmemMb: mb(m.pssShmemKb),
+      privateDirtyMb: mb(m.privateDirtyKb), swapMb: mb(m.swapKb),
+      anonByAllocator: anonymousByAllocator(p.pid),
+    };
+  }).filter((p) => p.rssMb > 0);
+  const sum = (key) => processes.reduce((total, p) => total + (p[key] ?? 0), 0);
   return {
-    appRssMb: app.rssKb / 1024,
-    children: children.map((c) => ({ name: c.name, rssMb: c.rssKb / 1024 })),
-    totalRssMb: (app.rssKb + children.reduce((s, c) => s + c.rssKb, 0)) / 1024,
+    appRssMb: processes[0].rssMb,
+    children: processes.slice(1).map((c) => ({ name: c.name, rssMb: c.rssMb })),
+    totalRssMb: sum("rssMb"),
+    totalPssMb: sum("pssMb"),
+    processes,
   };
 }
 
@@ -250,7 +364,9 @@ async function main() {
   // lets the web context accept the automation session.
   const inspector = options.port + 1;
   const launcher = spawn(options.binary, [options.fixtures], {
-    env: { ...env, TAURI_WEBVIEW_AUTOMATION: "true", WEBKIT_INSPECTOR_SERVER: `127.0.0.1:${inspector}` },
+    env: {
+      ...env, TAURI_WEBVIEW_AUTOMATION: "true", WEBKIT_INSPECTOR_SERVER: `127.0.0.1:${inspector}`,
+    },
     stdio: "ignore",
   });
   launcher.on("error", (error) => console.error(error));
@@ -320,8 +436,46 @@ async function main() {
     }));
 
     const memory = {};
+    const memoryPhases = [];
+    if (options.scenarios.includes("memory")) {
+      // Memory attribution (#1416): per-process RSS/PSS while idle in the small
+      // fixture root, with each large folder open, and after navigating back
+      // to the root. Every sample follows a fixed settle period, since the
+      // release WebView exposes no forced GC to the runner.
+      const settle = () => new Promise((resolve) => setTimeout(resolve, options.settleMs));
+      const domNodes = () => browser.execute(() => document.getElementsByTagName("*").length);
+      const sample = async (phase, size, cycle = null) => {
+        await settle();
+        const snapshot = memorySnapshot(options.binary, appPid);
+        if (!snapshot) throw new Error(`memory ${phase}: app process ${appPid} (${options.binary}) not found`);
+        memoryPhases.push({ phase, size, cycle, loadavg1: os.loadavg()[0], domNodes: await domNodes(), ...snapshot });
+        const last = memoryPhases.at(-1);
+        console.error(`memory ${phase} ${size ?? ""} ${cycle ?? ""}: total PSS ${last.totalPssMb.toFixed(0)} MB, RSS ${last.totalRssMb.toFixed(0)} MB`);
+      };
+      await sample("idle-root", null);
+      for (const label of options.memorySizes.filter((size) => manifest.folders[size])) {
+        const folder = manifest.folders[label];
+        // No GC entry point is reachable from WebDriver; short-lived
+        // allocation pressure makes JavaScriptCore run full collections, so
+        // the following sample separates live data from uncollected garbage.
+        const collect = async (phase, cycle) => {
+          if (options.gcPressureMb <= 0) return;
+          await browser.execute(gcPressureInPage, options.gcPressureMb);
+          await sample(`${phase}-after-gc-pressure`, label, cycle);
+        };
+        for (let cycle = 1; cycle <= options.memoryCycles; cycle++) {
+          const last = cycle === options.memoryCycles;
+          await measure("open-folder", label, { kind: "dir", path: folder.path, count: folder.visibleEntries, trigger: { type: "dblclick", path: folder.path } }, false);
+          await sample("open", label, cycle);
+          if (last) await collect("open", cycle);
+          await measure("go-up-to-root", label, { ...rootSpec, trigger: up }, false);
+          await sample("away", label, cycle);
+          if (last) await collect("away", cycle);
+        }
+      }
+    }
     // 1. Large-folder reference: enter each fixture folder from the root.
-    for (const [label, folder] of Object.entries(manifest.folders)) {
+    for (const [label, folder] of options.scenarios.includes("open") ? Object.entries(manifest.folders) : []) {
       const dirSpec = { kind: "dir", path: folder.path, count: folder.visibleEntries, trigger: { type: "dblclick", path: folder.path } };
       for (let run = 0; run <= options.runs; run++) {
         // Run 0 is a discarded warm-up (populates the page cache and JIT).
@@ -338,7 +492,7 @@ async function main() {
     const sub = path.join(nav.path, manifest.subdir);
     const navSpec = { kind: "dir", path: nav.path, count: nav.visibleEntries };
     const subSpec = { kind: "dir", path: sub, count: 2 };
-    for (let run = 0; run <= options.runs; run++) {
+    for (let run = 0; options.scenarios.includes("nav") && run <= options.runs; run++) {
       const record = run > 0;
       await measure("enter-folder", navLabel, { ...navSpec, trigger: { type: "dblclick", path: nav.path } }, record);
       await measure("enter-subfolder", navLabel, { ...subSpec, trigger: { type: "dblclick", path: sub } }, false);
@@ -357,12 +511,15 @@ async function main() {
       }
       await measure("go-up-to-root", navLabel, { ...rootSpec, trigger: up }, false);
     }
-    console.error("navigation: done");
+    if (options.scenarios.includes("nav")) console.error("navigation: done");
 
-    const report = buildReport(samples, { options, meta, memory, manifest });
+    const memoryBudget = checkMemoryBudget(memoryPhases, manifest, options);
+    const report = { ...buildReport(samples, { options, meta, memory, manifest }), memoryPhases, memoryBudget };
     const json = JSON.stringify(report, null, 2);
     if (options.out) fs.writeFileSync(options.out, `${json}\n`);
     console.log(json);
+    for (const failure of memoryBudget.failures) console.error(`memory budget exceeded: ${failure}`);
+    if (memoryBudget.failures.length) process.exitCode = 1;
   } catch (error) {
     console.error(driverLog);
     throw error;
@@ -374,6 +531,45 @@ async function main() {
     }
     fs.rmSync(profile, { recursive: true, force: true });
   }
+}
+
+/**
+ * Memory regression budget (#1416), on total PSS of the app and its WebKit
+ * processes relative to the idle sample:
+ * - retained: after the last cycle navigated away from a folder (and, with
+ *   --gc-pressure-mb, after JavaScriptCore collected), what is still held.
+ *   Without a leak or a ratcheting allocator this is independent of size.
+ * - live per entry: while the folder is open, after collection, divided by
+ *   its listed entries; the cost of keeping a listing on screen.
+ */
+function checkMemoryBudget(phases, manifest, options) {
+  const idle = phases.find((p) => p.phase === "idle-root");
+  const last = (size, names) => phases.filter((p) => p.size === size && names.includes(p.phase)).at(-1);
+  const results = [];
+  const failures = [];
+  const budgeted = options.maxRetainedMb !== null || options.maxLiveBytesPerEntry !== null;
+  // A budget that measured nothing must not pass silently.
+  const unreadable = phases.filter((p) => p.processes.some((proc) => proc.pssMb === null));
+  if (budgeted && unreadable.length) failures.push(`PSS unreadable in ${unreadable.length} sample(s); budget needs /proc/<pid>/smaps_rollup`);
+  if (!idle) {
+    if (budgeted) failures.push("memory budget set but no memory samples (run with --scenarios including memory)");
+    return { results, failures };
+  }
+  for (const size of [...new Set(phases.map((p) => p.size).filter(Boolean))]) {
+    const away = last(size, ["away-after-gc-pressure", "away"]);
+    const open = last(size, ["open-after-gc-pressure", "open"]);
+    const retainedMb = away.totalPssMb - idle.totalPssMb;
+    const liveBytesPerEntry = ((open.totalPssMb - idle.totalPssMb) * 1024 * 1024) / manifest.folders[size].entries;
+    results.push({ size, retainedMb, retainedFrom: away.phase, liveBytesPerEntry, liveFrom: open.phase });
+    if (options.maxRetainedMb !== null && retainedMb > options.maxRetainedMb) {
+      failures.push(`${size}: ${retainedMb.toFixed(0)} MB retained after navigating away (budget ${options.maxRetainedMb} MB)`);
+    }
+    if (options.maxLiveBytesPerEntry !== null && liveBytesPerEntry > options.maxLiveBytesPerEntry) {
+      failures.push(`${size}: ${liveBytesPerEntry.toFixed(0)} B per entry while open (budget ${options.maxLiveBytesPerEntry} B)`);
+    }
+  }
+  if (budgeted && !results.length) failures.push(`memory budget set but no folder measured (--memory-sizes ${options.memorySizes.join(",")})`);
+  return { results, failures };
 }
 
 function buildReport(samples, { options, meta, memory, manifest }) {

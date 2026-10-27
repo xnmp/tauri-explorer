@@ -55,20 +55,63 @@ export function caretlessDoubleClickNotice(openShortcut: string | undefined): st
   return `Double-click is disabled while peek carets are off. ${how} to navigate into folders.`;
 }
 
-export function flatPeekEntries(root: string, entries: readonly FileEntry[]): PeekTree {
-  return {
-    entries, expanded: [],
-    meta: new Map(entries.map(entry => [entry.path, { depth: 0, parentPath: root }])),
-    indices: new Map(entries.map((entry, index) => [entry.path, index])),
-  };
+/**
+ * The placement of every entry in a flat listing is the same, so the flat
+ * projection keeps no per-entry records (#1416): `meta` answers from a path
+ * index built on its first lookup, and rows share their constant fields. A
+ * 100k-entry folder otherwise held a meta object and two map slots per entry,
+ * built on every listing although plain browsing never reads them.
+ */
+class FlatPeekMeta implements ReadonlyMap<string, PeekMeta> {
+  #paths: ReadonlySet<string> | undefined;
+  readonly #listing: readonly FileEntry[];
+  readonly #placement: PeekMeta;
+  constructor(root: string, listing: readonly FileEntry[]) {
+    this.#listing = listing;
+    this.#placement = { depth: 0, parentPath: root };
+  }
+  private get paths(): ReadonlySet<string> {
+    return this.#paths ??= new Set(this.#listing.map(entry => entry.path));
+  }
+  get size() { return this.paths.size; }
+  has(path: string) { return this.paths.has(path); }
+  get(path: string) { return this.paths.has(path) ? this.#placement : undefined; }
+  forEach(callback: (value: PeekMeta, key: string, map: ReadonlyMap<string, PeekMeta>) => void, thisArg?: unknown) {
+    for (const path of this.paths) callback.call(thisArg, this.#placement, path, this);
+  }
+  *entries(): MapIterator<[string, PeekMeta]> { for (const path of this.paths) yield [path, this.#placement]; }
+  *keys(): MapIterator<string> { yield* this.paths; }
+  *values(): MapIterator<PeekMeta> { for (const _ of this.paths) yield this.#placement; }
+  [Symbol.iterator]() { return this.entries(); }
 }
+
+export function flatPeekEntries(root: string, entries: readonly FileEntry[]): PeekTree {
+  return { root, entries, expanded: [], meta: new FlatPeekMeta(root, entries) };
+}
+
+/**
+ * One flat entry row: per-row fields only, the constant ones on the prototype
+ * and `key` a getter (#1416). Rows are therefore not plain objects: spreading
+ * or `Object.keys` omits kind/depth/expanded/key, and each `key` read builds
+ * a new string. Read fields by name.
+ */
+class FlatEntryRow {
+  declare readonly kind: "entry";
+  declare readonly depth: 0;
+  declare readonly expanded: false;
+  constructor(readonly entry: FileEntry, readonly entryIndex: number, readonly parentPath: string) {}
+  get key() { return `entry:${this.entry.path}`; }
+}
+Object.defineProperties(FlatEntryRow.prototype, {
+  kind: { value: "entry", enumerable: true },
+  depth: { value: 0, enumerable: true },
+  expanded: { value: false, enumerable: true },
+});
+
 export function flatPeekRows(tree: PeekTree, creating: boolean): PeekRows {
   const offset = Number(creating);
   const rows: PeekRow[] = creating ? [{ kind: "create", key: "create" }] : [];
-  tree.entries.forEach((entry, entryIndex) => {
-    const meta = tree.meta.get(entry.path)!;
-    rows.push({ kind: "entry", key: `entry:${entry.path}`, entry, entryIndex, depth: meta.depth, parentPath: meta.parentPath, expanded: false });
-  });
+  tree.entries.forEach((entry, entryIndex) => rows.push(new FlatEntryRow(entry, entryIndex, tree.root)));
   return { rows, groups: [], entryToRow: tree.entries.map((_, index) => index + offset), rowToEntry: rows.map(row => row.kind === "entry" ? row.entryIndex : null) };
 }
 

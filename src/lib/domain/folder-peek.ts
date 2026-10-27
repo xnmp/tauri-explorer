@@ -1,6 +1,6 @@
 /** Session-only folder expansion policies and fixed-height tree row geometry. */
 import type { FileEntry } from "./file";
-import { flatPeekEntries } from "./folder-peek-flat";
+import { flatPeekEntries, flatPeekRows } from "./folder-peek-flat";
 import type { PeekCapability } from "./folder-peek-flat";
 export { canPeekAt, peekCapability, resolvePeekCommandTarget, resolvePeekEscape, entryIndicesForRows, shouldToggleOnRowClick, rowClickOwnsPeek, caretlessDoubleClickNotice } from "./folder-peek-flat";
 export type { PeekCapability, PeekSurface, RowClickInput, RowPeekTarget } from "./folder-peek-flat";
@@ -50,9 +50,10 @@ export function choosePeekWatches(reachable: readonly string[], expanded: Expand
 }
 
 export interface PeekTree {
+  /** The listed directory: the parent of every depth-0 entry. */
+  root: string;
   entries: readonly FileEntry[];
   meta: ReadonlyMap<string, PeekMeta>;
-  indices: ReadonlyMap<string, number>;
   expanded: readonly string[];
 }
 
@@ -108,7 +109,6 @@ export function flattenPeekEntries(options: {
   const projectionKey = options.projectionKey ?? (() => "");
   const entries: FileEntry[] = [];
   const meta = new Map<string, PeekMeta>();
-  const indices = new Map<string, number>();
   const expanded: string[] = [];
   const seen = new Set<string>();
   // The root arrives already projected (filtered and sorted) by its owner.
@@ -121,7 +121,6 @@ export function flattenPeekEntries(options: {
     const key = frame.level.keys[index];
     if (seen.has(key)) continue;
     seen.add(key);
-    indices.set(entry.path, entries.length);
     entries.push(entry);
     meta.set(entry.path, { depth: frame.depth, parentPath: frame.parent });
     if (entry.kind !== "directory" || (options.capability === "top-level" && frame.depth > 0) || !options.expanded.has(entry.path)) continue;
@@ -131,7 +130,7 @@ export function flattenPeekEntries(options: {
     const level = levels(children, entry.path, projectionKey(entry.path), items => options.project(items, entry.path));
     stack.push({ level, offset: 0, parent: entry.path, depth: frame.depth + 1 });
   }
-  return { entries, meta, indices, expanded };
+  return { root: options.root, entries, meta, expanded };
 }
 
 export type PeekRow = ({ kind: "entry"; key: string; entry: FileEntry; entryIndex: number; expanded: boolean } & PeekMeta)
@@ -141,6 +140,8 @@ export interface PeekGroup { path: string; depth: number; startRow: number; endR
 export interface PeekRows { rows: PeekRow[]; entryToRow: number[]; rowToEntry: (number | null)[]; groups: PeekGroup[] }
 
 export function buildPeekRows(tree: PeekTree, listing: (path: string) => PeekListing | undefined, creating = false): PeekRows {
+  // Nothing expanded is a flat listing: same rows, without per-entry lookups.
+  if (!tree.expanded.length) return flatPeekRows(tree, creating);
   const rows: PeekRow[] = creating ? [{ kind: "create", key: "create" }] : [];
   const groups: PeekGroup[] = [];
   const active: PeekGroup[] = [];

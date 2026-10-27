@@ -31,6 +31,7 @@
     "build:native:qualification": "bun run scripts/build-native-qualification.ts",
     "test:load": "scripts/fsync-safe.sh playwright test -c playwright.load.config.ts",
     "perf:sweep": "playwright test -c playwright.sweep.config.ts",
+    "perf:listing-heap": "node scripts/perf-listing-heap.mjs --max-bytes-per-entry 380",
     "lint:arch": "node scripts/arch-lint.mjs --strict && node scripts/check-file-size.mjs",
     "perf:check": "bun run scripts/perf-check.ts",
     "perf:baseline": "bun run scripts/perf-check.ts --update",

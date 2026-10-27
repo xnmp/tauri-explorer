@@ -95,6 +95,21 @@ describe("sortEntries", () => {
     expect(fileNames).toEqual(["zebra.txt", "beta.txt", "~$report.docx", ".hidden"]);
   });
 
+  it("sorts by extension then case-insensitive name, keeping equal keys in input order", () => {
+    const f = (name: string) => ({ name, path: `/${name}`, kind: "file" as const, size: 0, modified: "" });
+    const input = [f("b.TXT"), f("Zed.md"), f("A.txt"), f("a.txt"), f("noext"), f("c.Md")];
+    expect(sortEntries(input, "type").map((e) => e.name)).toEqual(["noext", "c.Md", "Zed.md", "A.txt", "a.txt", "b.TXT"]);
+    expect(sortEntries(input, "name").map((e) => e.name)).toEqual(["A.txt", "a.txt", "b.TXT", "c.Md", "noext", "Zed.md"]);
+    expect(sortEntries(input, "name", false).map((e) => e.name)).toEqual(["Zed.md", "noext", "c.Md", "b.TXT", "A.txt", "a.txt"]);
+  });
+
+  it("falls back to a name sort for an unknown sort key (e.g. a corrupt saved preference)", () => {
+    const f = (name: string) => ({ name, path: `/${name}`, kind: "file" as const, size: 0, modified: "" });
+    const input = [f("b"), f("C"), f("a")];
+    const unknown = "bogus" as unknown as Parameters<typeof sortEntries>[1];
+    expect(sortEntries(input, unknown).map((e) => e.name)).toEqual(["a", "b", "C"]);
+  });
+
   it("does not mutate the original array", () => {
     const original = [...mockEntries];
     sortEntries(mockEntries);

@@ -68,6 +68,13 @@ describe("resolveFileCursor", () => {
     expect(resolveFileCursor(displayed, "/files/removed.txt", new Set())).toBe(gamma);
   });
 
+  it("resolves a missing cursor from the selection, and from neither to the first entry", () => {
+    const alpha = entry("alpha.txt");
+    const beta = entry("beta.txt");
+    expect(resolveFileCursor([alpha, beta], null, new Set([beta.path]))).toBe(beta);
+    expect(resolveFileCursor([alpha, beta], null, new Set())).toBe(alpha);
+  });
+
   it("has no cursor for an empty listing", () => {
     expect(resolveFileCursor([], "/files/removed.txt", new Set())).toBeUndefined();
   });

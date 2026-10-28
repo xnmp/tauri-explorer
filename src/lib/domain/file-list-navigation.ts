@@ -96,3 +96,27 @@ export function resolveFileListMove(
   } else return null;
   return { kind: "focus", index, selection: event.shiftKey ? "extend" : modified && arrow ? "preserve" : "replace" };
 }
+
+/**
+ * The visible index a clicked row stands for, from its `data-path` and
+ * `data-index`. A merge output is listed under every parent, so the path
+ * alone cannot say which occurrence was clicked. Undefined when the row is
+ * missing, names another path, or carries no usable index.
+ */
+export function rowOccurrenceIndex(row: { path?: string; index?: string } | undefined, path: string): number | undefined {
+  const index = row?.path === path ? Number(row.index) : NaN;
+  return Number.isSafeInteger(index) && index >= 0 ? index : undefined;
+}
+
+/**
+ * The visible index of the previous/next non-directory entry, wrapping at the
+ * ends, stepping from the cursor's own occurrence when it holds `path` (a
+ * path may be listed twice) and else from the path's first occurrence. Null
+ * when `path` is not listed or there is no file to step to.
+ */
+export function siblingFileIndex(entries: readonly FileEntry[], cursorIndex: number, path: string, delta: number): number | null {
+  const files = entries.flatMap((e, index) => e.kind !== "directory" ? [index] : []);
+  const from = entries[cursorIndex]?.path === path ? cursorIndex : entries.findIndex((e) => e.path === path);
+  const at = files.indexOf(from);
+  return at < 0 ? null : files[(at + delta + files.length) % files.length];
+}

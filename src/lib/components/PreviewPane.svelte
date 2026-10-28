@@ -50,6 +50,7 @@
   import PreviewFolderList from "./PreviewFolderList.svelte";
   import PluginPreviewTarget from "./PluginPreviewTarget.svelte";
   import { previewInfoRegistry, type PreviewSubject } from "$lib/plugins/preview-registry.svelte";
+  import { siblingFileIndex } from "$lib/domain/file-list-navigation";
   /** Light/dark hljs palette for markdown and code previews. */
   const lightTheme = useLightTheme();
 
@@ -96,16 +97,10 @@
   function navigateSibling(delta: number): void {
     const explorer = windowTabsManager.getActiveExplorer();
     if (!explorer || !selectedFile) return;
-    // Indices into the visible entries, so a path listed twice (lineage
-    // peek) steps from the cursor's own occurrence.
     const entries = explorer.displayEntries;
-    const files = entries.flatMap((e, index) => e.kind !== "directory" ? [index] : []);
-    if (files.length === 0) return;
-    const cursor = entries[explorer.cursorIndex]?.path === selectedFile.path ? explorer.cursorIndex : entries.findIndex((e) => e.path === selectedFile!.path);
-    const idx = files.indexOf(cursor);
-    if (idx < 0) return;
-    const nextIndex = files[(idx + delta + files.length) % files.length];
-    explorer.selectEntry(entries[nextIndex], {}, nextIndex);
+    const next = siblingFileIndex(entries, explorer.cursorIndex, selectedFile.path, delta);
+    if (next === null) return;
+    explorer.selectEntry(entries[next], {}, next);
     fullscreen.resetZoom();
   }
 

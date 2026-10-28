@@ -213,6 +213,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-commit-files-cache.ts` — importable 50-entry LRU for immutable commit file lists; shared across graph remounts and behavior-tested through an injected loader.
 
 - `explorer.svelte.ts` — CENTRAL per-pane store: listing, selection, navigation, view mode; delegates to pane-* modules. First stop for most features.
+- `explorer-clipboard.svelte.ts` — per-pane copy/cut/paste (internal, OS file and image clipboard), split from `explorer.svelte.ts`; owns the paste result.
+- `explorer-history.ts` — per-pane undo/redo wrapper over the global undo stack, split from `explorer.svelte.ts`.
+- `explorer-lineage.svelte.ts` — per-pane lineage peek state (#1431): hidden contributions, lazy `pane-lineage` loader, grouping/holding, and the lineage group Preview target; split from `explorer.svelte.ts`.
 - `types.ts` — shared explorer state types (ViewMode, pane shapes).
 - `pane-context.ts` — Svelte context for resolving the current pane inside components.
 - `pane-mutations.ts` — accepted file mutations: durable filesystem effects, per-path delete receipts/undo parents, navigation-owned pane publication and exact dialog-session completion.
@@ -291,6 +294,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `keybindings.svelte.ts` — customizable keybinding store (chords, conflicts, persistence).
 - `shortcut-recorder.ts` — owned shortcut recording timer, cancellation and completion callbacks.
 - `window-tabs.svelte.ts` — tab management (open/close/reorder/active). Central for tabs.
+- `window-tabs-pane-prefs.ts` — per-pane commit graph (#272) and SCM panel override (#434) accessors for the tab strip, split from `window-tabs.svelte.ts`.
 - `window-tabs-persistence.ts` — persist/migrate window tab tree (PersistedNode).
 - `tab-transfer.ts` — window-local pointer marker identity and acknowledged native tab transfer.
 - `closed-tabs.ts` — closed-tab LIFO stack for Ctrl+Shift+T.

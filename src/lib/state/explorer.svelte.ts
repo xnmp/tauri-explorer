@@ -32,26 +32,22 @@ import { canPeekAt, flatPeekEntries, flatPeekRows, occurrencePath, peekCapabilit
 import { prunePeekSelection, springPeekDropFolder } from "$lib/domain/folder-peek-pane";
 import { entriesLabel, withExternalEntry } from "$lib/domain/explorer-entries";
 import type { PeekLevelCache } from "$lib/domain/folder-peek";
-import { entryLineageRegistry } from "$lib/plugins/entry-lineage-registry.svelte";
-import type { PaneLineage } from "./pane-lineage.svelte";
+import { createExplorerLineage, lineageGroupPreviewTarget, LINEAGE_PREVIEW_OWNER } from "./explorer-lineage.svelte";
 import type { LineageGroup } from "$lib/domain/entry-lineage";
-
-/** Owner of host-made Preview targets for lineage group rows. */
-const LINEAGE_PREVIEW_OWNER = "host.lineage";
 import type { RowClickInput, RowPeekTarget } from "$lib/domain/folder-peek-flat";
 import type { BandSide } from "$lib/domain/tile-panels";
 import { isVirtualPath } from "$lib/domain/virtual-path";
 import { providerFor } from "$lib/plugins/fs-providers";
 import { basename, toNativeSeparators, pathComparison, coverageOf } from "$lib/domain/path";
 import { isWindows } from "$lib/domain/platform";
-import { clipboardImageStatus, clipboardPasteImage } from "$lib/api/clipboard-image";
-import { withClipboardImageProgress } from "$lib/state/clipboard-image-progress.svelte";
 import { fetchDirectory } from "$lib/api/files";
 import { sortEntries, filterHidden, type FileEntry, type SortField } from "$lib/domain/file";
 import type { ExplorerCoreState, SelectOptions, ViewMode } from "./types";
 import * as selection from "./selection";
 import * as navigation from "./navigation";
-import { clipboardStore, CUT_ALREADY_PASTED } from "./clipboard.svelte";
+import { clipboardStore } from "./clipboard.svelte";
+import { createExplorerClipboard } from "./explorer-clipboard.svelte";
+import { createExplorerHistory } from "./explorer-history";
 import { dialogStore } from "./dialogs.svelte";
 import { TRASH_PATH } from "$lib/domain/virtual-path";
 import { frecencyStore } from "./frecency.svelte";
@@ -61,14 +57,11 @@ import { undoStore } from "./undo.svelte";
 import { settingsStore } from "./settings.svelte";
 import { manualHiddenStore } from "./manual-hidden.svelte";
 import { getSortPref, saveSortPref } from "./sort-prefs";
-import { pasteEntries, type PasteResult } from "./paste-operations";
-import { selectPasteSource } from "$lib/domain/paste-source";
 import { createDirectoryListing } from "./directory-listing";
 import { createPaneWatch } from "./pane-watch";
 import { createPaneRefresh } from "./pane-refresh";
 import { createPaneMutations } from "./pane-mutations";
 import { undoActionLabel } from "./undo-helpers";
-import { broadcastFileChange } from "./file-events";
 import { loadWatchdog, type LoadTraceHandle } from "./load-watchdog";
 import type { LoadReason } from "$lib/domain/load-diagnostics";
 
@@ -215,45 +208,14 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     plainLocation: !isVirtualPath(coreState.currentPath) && !providerFor(coreState.currentPath),
     mode: coreState.viewMode,
   }));
+  const peekSort = (): [SortField, boolean] => coreState.viewMode === "details" ? [coreState.sortBy, coreState.sortAscending] : ["name", true];
   // ---- Lineage peek (#1431) ---------------------------------------------------
-  // "Show <title>" is per pane and on by default: the pane records the
-  // contributions its user turned off. The controller loads lazily with the
-  // first registered contribution.
-  let lineageHidden = $state.raw<ReadonlySet<string>>(new Set());
-  let paneLineage = $state.raw<PaneLineage | null>(null);
-  let lineageLoading = $state(false);
-  let lineageDisposed = false;
-  /** The pane's visible depth-0 listing without the name filter. */
-  const lineageListing = $derived(filterQuery
-    ? (coreState.viewMode === "details" ? sortEntries(visibleEntriesFor(coreState.entries, coreState.currentPath), coreState.sortBy, coreState.sortAscending)
-      : sortEntries(visibleEntriesFor(coreState.entries, coreState.currentPath), "name", true))
-    : ownDisplayEntries);
-  const disposeLineageLoader = $effect.root(() => {
-    $effect(() => {
-      if (paneLineage || lineageLoading || lineageDisposed || !entryLineageRegistry.items.length) return;
-      lineageLoading = true;
-      void import("./pane-lineage.svelte").then(({ createPaneLineage }) => {
-        if (lineageDisposed) return;
-        paneLineage = createPaneLineage({
-          directory: () => coreState.currentPath,
-          hidden: () => lineageHidden,
-          enabled: () => capability !== "none",
-          listing: () => lineageListing,
-          windows: isWindows,
-        });
-      }).finally(() => { lineageLoading = false; });
-    });
-    // Grouping needs the tree policies; load them as soon as it applies.
-    $effect(() => { if (lineageGrouping && !peek.policies) void peek.activate(); });
+  const lineageListing = $derived(filterQuery ? sortEntries(visibleEntriesFor(coreState.entries, coreState.currentPath), ...peekSort()) : ownDisplayEntries);
+  const lineage = createExplorerLineage({
+    directory: () => coreState.currentPath, enabled: () => capability !== "none", filtered: () => !!filterQuery,
+    listing: () => lineageListing, windows: isWindows, peek,
   });
-  /** The grouping the tree shows: a name filter suspends it, so matches show flat. */
-  const lineageGrouping = $derived.by(() => {
-    const projection = capability !== "none" && !filterQuery ? paneLineage?.projection : null;
-    return projection?.kind === "grouped" ? projection : null;
-  });
-  // Also while the controller module itself loads, so a provider registered
-  // before navigation never shows a flat first frame.
-  const lineageHolding = $derived(capability !== "none" && (paneLineage ? paneLineage.holding || (!!lineageGrouping && !peek.policies) : lineageLoading));
+  const lineageGrouping = $derived(lineage.grouping);
   /** A directory, or a file with lineage children here. */
   const canPeekEntry = (entry: FileEntry): boolean => entry.kind === "directory" || !!lineageGrouping?.children(entry.path);
 
@@ -262,7 +224,6 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   let peekLevels: PeekLevelCache | undefined;
   // Each level uses its view's sort, like the root: only Details has a sort UI;
   // List (and Tiles) sort by name ascending (§3).
-  const peekSort = (): [SortField, boolean] => coreState.viewMode === "details" ? [coreState.sortBy, coreState.sortAscending] : ["name", true];
   const peekProjectionKey = (parent: string) => [
     ...peekSort(), settingsStore.showHidden, settingsStore.showManuallyHidden,
     ...(settingsStore.showManuallyHidden ? [] : manualHiddenStore.namesIn(parent)),
@@ -1067,14 +1028,6 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   // Clipboard Actions (uses global clipboardStore for cross-pane support)
   // ===================
 
-  async function copyToClipboard(entries: FileEntry[]) {
-    const result = operationRoots(entries, isWindows, displayEntries);
-    if (!result.ok) { toastStore.error(result.error); return; }
-    entries = result.entries;
-    if (!await clipboardStore.copy(entries)) return;
-    toastStore.clipboard(`Copied: ${entriesLabel(entries)}`, false);
-  }
-
   /** A selection may hold a peeked folder and its children; the archive
    * takes each root once and refuses members that would share a name. */
   async function compressToZip(entries: readonly FileEntry[]) {
@@ -1083,150 +1036,24 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     if (result.entries.length) await mutations.compressToZip(result.entries.map(entry => entry.path));
   }
 
-  async function cutToClipboard(entries: FileEntry[]) {
-    const result = operationRoots(entries, isWindows, displayEntries);
-    if (!result.ok) { toastStore.error(result.error); return; }
-    entries = result.entries;
-    if (!await clipboardStore.cut(entries)) return;
-    toastStore.clipboard(`Cut: ${entriesLabel(entries)}`, true);
-  }
-
-  // Paste result for UI feedback
-  let pasteResult = $state<PasteResult | null>(null);
-
-  function makePasteContext(origin: ReturnType<typeof captureMutation>) {
-    let selectionCurrent = captureSelection();
-    const pastedPaths = new Set<string>();
-    return {
-      destPath: origin.path,
-      existingEntries: coreState.entries,
-      onEntriesAdded: (entries: FileEntry[]) => {
-        if (!origin.current()) return;
-        const newPaths = new Set(entries.map((entry) => entry.path));
-        coreState.entries = [...coreState.entries.filter((entry) => !newPaths.has(entry.path)), ...entries];
-        for (const path of newPaths) pastedPaths.add(path);
-        if (entries.length > 0 && selectionCurrent()) {
-          setSelection(pastedPaths);
-          const first = pastedPaths.values().next().value!;
-          coreState.cursorPath = first;
-          coreState.selectionAnchorPath = first;
-          selectionCurrent = captureSelection();
-        }
-      },
-      onRefresh: async () => {
-        if (origin.current()) await refresh({ silent: true });
-      },
-    };
-  }
-
-  async function pasteImageAt(origin: ReturnType<typeof captureMutation>, probe: boolean): Promise<string | null | undefined> {
-    return withClipboardImageProgress(origin.path, async () => {
-      if (probe) {
-        const status = await clipboardImageStatus();
-        if (!status.ok) {
-          toastStore.error(`Could not read clipboard image: ${status.error}`);
-          return status.error;
-        }
-        if (!status.data) return undefined;
-      }
-      const result = await clipboardPasteImage(origin.path);
-      if (!result.ok) {
-        toastStore.error(`Could not paste clipboard image into ${basename(origin.path) || origin.path}: ${result.error}`);
-        return result.error;
-      }
-      broadcastFileChange([origin.path]);
-      if (origin.current()) await refresh({ silent: true });
-      toastStore.success(`Clipboard image saved to ${basename(origin.path) || origin.path}`);
-      return null;
-    });
-  }
-
-  async function pasteImage(): Promise<string | null> {
-    const origin = captureMutation();
-    if (!origin.current()) return "Pane is closed";
-    if (!origin.path) return "No current directory";
-    return (await pasteImageAt(origin, false)) ?? null;
-  }
-
-  async function paste(): Promise<string | null> {
-    const origin = captureMutation();
-    if (!origin.current()) return "Pane is closed";
-    if (!origin.path) return "No current directory";
-    const context = makePasteContext(origin);
-
-    // The native snapshot waits behind every accepted file clipboard job,
-    // including jobs from other windows. Paste never bypasses this order.
-    const { error: osReadError, snapshot } = await clipboardStore.readOsFiles();
-    const source = selectPasteSource(snapshot, osReadError);
-
-    if (source.kind === "internal") {
-      const sources = source.entries.map((e) => ({ path: e.path, name: e.name, size: e.size, modified: e.modified }));
-      let error: string | null;
-      if (source.operation === "cut") {
-        const outcome = await clipboardStore.withCutClaim(source.revision, async () => {
-          let complete = false;
-          const result = await pasteEntries(sources, true, context, () => { complete = true; });
-          return { result, complete };
-        });
-        if (!outcome.claimed) {
-          toastStore.show(CUT_ALREADY_PASTED, "info");
-          return null;
-        }
-        error = outcome.result;
-      } else {
-        error = await pasteEntries(sources, false, context);
-      }
-      if (origin.current()) pasteResult = { error, timestamp: Date.now() };
-      return error;
-    }
-
-    // OS clipboard (files copied from external apps like Explorer/Finder)
-    if (source.kind === "external") {
-      const error = await pasteEntries(
-        source.paths.map((p) => ({ path: p, name: basename(p) })),
-        false,
-        context,
-      );
-      if (origin.current()) pasteResult = { error, timestamp: Date.now() };
-      return error;
-    }
-
-    // Fall back to clipboard image
-    const imageError = await pasteImageAt(origin, true);
-    if (imageError !== undefined) return imageError;
-
-    // Nothing pasted: only now is a clipboard read failure worth surfacing
-    // (#401) — when another source (internal clipboard, image) satisfied the
-    // paste, the failed file-list probe was inconsequential noise.
-    const error = osReadError ? `Reading the system clipboard failed: ${osReadError}` : "Nothing in clipboard";
-    toastStore.error(error);
-    return error;
-  }
+  const clipboard = createExplorerClipboard({
+    captureMutation, captureSelection, refresh,
+    displayEntries: () => displayEntries,
+    entries: () => coreState.entries,
+    publishEntries: (next) => { coreState.entries = next; },
+    select: (paths) => {
+      setSelection(paths);
+      const first = paths.values().next().value!;
+      coreState.cursorPath = first;
+      coreState.selectionAnchorPath = first;
+    },
+  });
 
   // ===================
   // Undo Actions
   // ===================
 
-  async function applyHistory(direction: "undo" | "redo"): Promise<string | null> {
-    const origin = captureMutation();
-    if (!origin.current()) return "Pane is closed";
-    const result = await undoStore[direction]();
-    const warnings = result.warnings?.join("\n");
-    if (result.action) {
-      // Native history publishes confirmed effects even if this pane closes.
-      if (!result.error) {
-        const completion = `${direction === "undo" ? "Undo" : "Redo"}: ${undoActionLabel(result.action)}`;
-        toastStore.show(warnings ? `${completion}\n${warnings}` : completion, "info");
-      }
-      if (origin.current()) await refresh({ silent: true });
-    }
-    if (warnings && result.error) toastStore.show(warnings, "info");
-    if (result.error) toastStore.error(result.error);
-    return result.error ?? null;
-  }
-
-  const undo = () => applyHistory("undo");
-  const redo = () => applyHistory("redo");
+  const { undo, redo } = createExplorerHistory({ captureMutation, refresh });
 
   // ===================
   // Public API
@@ -1308,21 +1135,16 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     canPeekEntry,
     // ---- Lineage peek ----
     /** Contributions offered here, for the View menu's "Show <title>". */
-    get lineageOptions() { return paneLineage?.offered ?? []; },
-    isEntryLineageShown(id: string) { return !lineageHidden.has(id); },
+    get lineageOptions() { return lineage.options; },
+    isEntryLineageShown: lineage.isShown,
     /** Turns "Show <title>" on or off for this pane. */
-    setEntryLineageShown(id: string, shown: boolean) {
-      if (shown === !lineageHidden.has(id)) return;
-      const next = new Set(lineageHidden);
-      if (shown) next.delete(id); else next.add(id);
-      lineageHidden = next;
-    },
+    setEntryLineageShown: lineage.setShown,
     /** Contribution ids this pane turned off (persisted with the pane). */
-    get lineageHidden(): readonly string[] { return [...lineageHidden]; },
+    get lineageHidden() { return lineage.hidden; },
     /** Grouping is shown (a provider's lineage applies and no filter suspends it). */
     get lineageGrouped() { return lineageGrouping !== null; },
     /** First paint waits (bounded) for this folder's lineage. */
-    get lineageHolding() { return lineageHolding; },
+    get lineageHolding() { return lineage.holding; },
     /** Lineage descendants of the selection exist ("Select with edits"). */
     get canSelectWithEdits() { return !!lineageGrouping && coreState.selectedPaths.size > 0 && lineageGrouping.descendants(coreState.selectedPaths).length > 0; },
     selectWithEdits,
@@ -1421,16 +1243,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     /** Preview of a lineage group row: the parents it combines and its size.
      * A host-owned target, so it yields to any later file selection. */
     showLineageGroupPreview(group: LineageGroup) {
-      const names = group.coParents.map(parent => parent.kind === "entry" ? parent.name : `${parent.label} (outside this folder)`);
-      const owner = basename(group.parent);
-      this.setPreviewTarget(LINEAGE_PREVIEW_OWNER, {
-        id: group.id, title: `${owner} ${group.label}`, typeLabel: "Lineage group",
-        ...(group.thumbnailPath ? { imagePath: group.thumbnailPath } : {}),
-        details: [
-          { label: "Parents", value: [owner, ...names].join(", ") },
-          { label: "Files", value: String(group.members.length) },
-        ],
-      });
+      this.setPreviewTarget(LINEAGE_PREVIEW_OWNER, lineageGroupPreviewTarget(group));
     },
     clearPreviewTargetsOwnedBy(owner: string) {
       if (previewTarget?.owner === owner) previewTarget = null;
@@ -1490,7 +1303,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
       showFilter = false;
       // Lineage peek: a held arrival is released, and a grouped file opens
       // the peeks down to one occurrence of it before it is selected.
-      paneLineage?.release(path);
+      lineage.release(path);
       const grouping = lineageGrouping;
       const chain = grouping?.revealChain(path) ?? [];
       const open = () => {
@@ -1556,12 +1369,12 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     compressToZip,
     createSymlink: mutations.createSymlinkForEntry,
     // Clipboard
-    copyToClipboard,
-    cutToClipboard,
-    paste,
-    pasteImage,
+    copyToClipboard: clipboard.copy,
+    cutToClipboard: clipboard.cut,
+    paste: clipboard.paste,
+    pasteImage: clipboard.pasteImage,
     get pasteResult() {
-      return pasteResult;
+      return clipboard.result;
     },
     // Undo/Redo
     undo,
@@ -1590,9 +1403,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
       pendingNavigationFocus?.request?.cancel();
       pendingNavigationFocus = null;
       disposePeekEffects();
-      lineageDisposed = true;
-      disposeLineageLoader();
-      paneLineage?.dispose();
+      lineage.dispose();
       fileViewPresentation.dispose();
       creationSession = null;
       navGeneration += 1;

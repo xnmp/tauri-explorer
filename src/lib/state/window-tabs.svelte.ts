@@ -15,6 +15,7 @@ import { SvelteMap } from "svelte/reactivity";
 import { createWindowClose, type NativeCloseSource } from "./window-close";
 import { createPaneActivationQueue, type PaneActivationScheduler } from "./pane-activation";
 import type { PaneId, WindowTab, ExplorerTab, TabPane } from "./types";
+import { createPanePrefs } from "./window-tabs-pane-prefs";
 import {
   type PaneNode,
   type SplitPlacement,
@@ -505,73 +506,10 @@ function createWindowTabsManager(options: {
     return tab;
   }
 
-  /** A pane's presentation state, from the first tab that holds it. */
-  function findPane(paneId: PaneId): TabPane | undefined {
-    for (const tab of tabs) {
-      const pane = tab.panes[paneId];
-      if (pane) return pane;
-    }
-    return undefined;
-  }
-
-  /** The repo whose commit graph a pane is showing, if any (#272). */
-  function getPaneGitGraph(paneId: PaneId): string | undefined {
-    return findPane(paneId)?.gitGraph;
-  }
-
-  /** Point a pane's open commit graph at a different repo, or close it
-   *  (null). Used when the pane's directory changes while the graph is
-   *  showing — the graph follows the navigation instead of pinning the old
-   *  repo (#362). No-op when the pane isn't showing a graph. */
-  function setPaneGitGraph(paneId: PaneId, repoPath: string | null): void {
-    const pane = findPane(paneId);
-    if (!pane?.gitGraph) return;
-    if (repoPath) pane.gitGraph = repoPath;
-    else delete pane.gitGraph;
-    saveState();
-  }
-
-  /** Show the graph for one specific pane. Unlike the active-pane toggle,
-   *  this is idempotent so SCM row actions can safely target their owner. */
-  function showGitGraphInPane(paneId: PaneId, repoPath: string): void {
-    const pane = findPane(paneId);
-    if (!pane) return;
-    pane.gitGraph = repoPath;
-    saveState();
-  }
-
-  /** Toggle the commit graph in the active pane (#272): showing → back to
-   *  the file listing; hidden → the graph for `repoPath`. */
-  function toggleGitGraphInActivePane(repoPath: string | null): void {
-    const tab = activeTab;
-    const pane = tab?.panes[tab.activePaneId];
-    if (!tab || !pane) return;
-    if (pane.gitGraph) {
-      delete pane.gitGraph;
-    } else if (repoPath) {
-      pane.gitGraph = repoPath;
-    }
-    saveState();
-  }
-
-  /** Whether a pane's SCM panel is visible (#434). Per-pane override wins;
-   *  when the pane made no explicit choice, fall back to the global
-   *  `showScmPanel` setting so new panes and existing tests track the default. */
-  function getPaneScmVisible(paneId: PaneId): boolean {
-    return findPane(paneId)?.scmPanel ?? settingsStore.showScmPanel;
-  }
-
-  /** Toggle the SCM panel in the active pane only (#434). Sets an explicit
-   *  per-pane override so sibling panes are unaffected. */
-  function toggleScmInActivePane(): boolean {
-    const tab = activeTab;
-    const pane = tab?.panes[tab.activePaneId];
-    if (!tab || !pane) return false;
-    const next = !(pane.scmPanel ?? settingsStore.showScmPanel);
-    pane.scmPanel = next;
-    saveState();
-    return next;
-  }
+  const panePrefs = createPanePrefs({
+    tabs: () => tabs, activeTab: () => activeTab, saveState, scmDefault: () => settingsStore.showScmPanel,
+  });
+  const { getPaneGitGraph, setPaneGitGraph, showGitGraphInPane, toggleGitGraphInActivePane, getPaneScmVisible, toggleScmInActivePane } = panePrefs;
 
   /** Rebuild tab descriptors, reserving explorers until the tab is activated.
    *  `regenerateIds` gives the tab and its panes fresh ids (adopting

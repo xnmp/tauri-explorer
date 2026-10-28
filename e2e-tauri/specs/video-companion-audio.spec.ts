@@ -11,7 +11,7 @@ import path from "node:path";
 import { execFileSync, spawn } from "node:child_process";
 import { createNativeFixtureDirectory } from "../native-qualification";
 import { entryPathSelector, navigateTo } from "./helpers";
-import { videoCommand, videoState, rangeKeys } from "../video-observations";
+import { videoCommand, videoState, rangeKeys, revealVolume } from "../video-observations";
 
 const enabled = process.platform === "linux" && process.env.TAURI_NATIVE_VIDEO_AUDIO === "1";
 const monitor = process.env.TAURI_NATIVE_AUDIO_MONITOR;
@@ -101,6 +101,7 @@ async function pause() {
     const mutedLevel = await heard();
     await $('[aria-label="Unmute video"]').click();
     expect((await companion()).muted).toBe(false);
+    await revealVolume();
     await rangeKeys('[aria-label="Video volume"]', 5); // Home, then a few steps up
     const lowered = (await videoState())!.volume;
     expect(lowered).toBeGreaterThan(0);

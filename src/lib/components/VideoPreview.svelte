@@ -6,10 +6,14 @@
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
-  import { classifyVideoFailure, unsupportedVideoMessage, mediaTime, seekTime, videoClickAction, videoKeyAction } from "$lib/domain/video-preview";
+  import {
+    audibleVolume, classifyVideoFailure, rememberAudible, setVolumeTo, stepVolume, toggleMuted, unsupportedVideoMessage,
+    mediaTime, seekTime, videoClickAction, videoKeyAction, VOLUME_STEP, volumeLevel, volumeText, wheelVolumeDelta, type VolumeState,
+  } from "$lib/domain/video-preview";
   import type { VideoLoadJob, VideoSource } from "$lib/state/video-preview-lifetime";
   import { followVideo, needsCompanionAudio } from "$lib/state/video-companion-audio";
   import { isMac, isWindows } from "$lib/domain/platform";
+  import { measuredFixedOffset, popupAbove } from "$lib/domain/anchored-popup";
   let { path, name, fullscreen, ontogglefullscreen }: {path:string;name:string;fullscreen:boolean;ontogglefullscreen:()=>void} = $props();
   let video = $state<HTMLVideoElement | null>(null);
   let source = $state<VideoSource | null>(null);
@@ -20,6 +24,18 @@
   let duration = $state(0);
   let volume = $state(1);
   let muted = $state(false);
+  // Restored when the speaker button unmutes a player left at zero volume (#1425).
+  let lastAudible = $state(1);
+  const sound = $derived<VolumeState>({ volume, muted });
+  const level = $derived(volumeLevel(sound));
+  // The slider stays collapsed behind the speaker until hover or keyboard focus reveals it.
+  let volumeHovered = $state(false);
+  let volumeFocused = $state(false);
+  let volumeDismissed = $state(false);
+  let muteButton = $state<HTMLButtonElement | null>(null);
+  let volumeControl = $state<HTMLDivElement | null>(null);
+  let volumePopup = $state<HTMLDivElement | null>(null);
+  const volumeOpen = $derived(ready && !error && (volumeHovered || volumeFocused) && !volumeDismissed);
   // Companion audio when WebKitGTK dropped an undecodable audio track (#1171).
   let audio = $state<HTMLAudioElement | null>(null);
   let companion = $state<VideoSource | null>(null);
@@ -98,6 +114,7 @@
     duration = Number.isFinite(video.duration) ? video.duration : 0;
     volume = video.volume;
     muted = video.muted;
+    lastAudible = rememberAudible(lastAudible, { volume, muted });
     ready = video.readyState >= HTMLMediaElement.HAVE_METADATA;
   }
   async function togglePlay() {
@@ -110,8 +127,78 @@
     }
   }
   function seek(time: number) { if (video && ready) video.currentTime = seekTime(time,duration); }
-  function setVolume(value: number) { if (video) {video.volume = Math.max(0,Math.min(1,value));if (value > 0) video.muted = false;} }
-  function toggleMute() { if (video) video.muted = !video.muted; }
+  /**
+   * Changes derive from the element itself and render at once: `volumechange`
+   * is queued and can trail several inputs, so the slider would otherwise show
+   * (and step from) a stale level. External changes still arrive through it.
+   */
+  function changeSound(change: (current: VolumeState) => VolumeState) {
+    if (!video) return;
+    const current = { volume: video.volume, muted: video.muted };
+    lastAudible = rememberAudible(lastAudible, current);
+    const next = change(current);
+    video.volume = next.volume;
+    video.muted = next.muted;
+    sync();
+  }
+  function setVolume(value: number) { changeSound(current => setVolumeTo(current, value)); }
+  function toggleMute() { changeSound(current => toggleMuted(current, lastAudible)); }
+  function volumeKey(event: KeyboardEvent) {
+    if (event.key !== "Escape" || !volumeOpen) return;
+    // Collapse the revealed slider and keep keyboard focus on its speaker button.
+    event.preventDefault();
+    if (event.target !== muteButton) muteButton?.focus();
+    volumeDismissed = true;
+  }
+  function volumeFocusIn(event: FocusEvent) {
+    // Keyboard focus reveals the slider; a pointer click leaves it to hover, so it collapses on leave.
+    volumeFocused = (event.target as HTMLElement).matches(":focus-visible");
+    volumeDismissed = false;
+  }
+  function volumeFocusOut(event: FocusEvent) {
+    if (!volumeControl?.contains(event.relatedTarget as Node | null)) volumeFocused = false;
+  }
+  /**
+   * The popup is `position: fixed` so the scrollable player cannot clip it. Its
+   * offsets scale with root and fullscreen zoom differently per engine, so they
+   * are solved from the popup's measured response to a known offset.
+   */
+  function placeVolumePopup() {
+    const popup = volumePopup;
+    if (!popup || !muteButton) return;
+    popup.style.left = popup.style.top = "0px";
+    const origin = popup.getBoundingClientRect();
+    popup.style.left = popup.style.top = "100px";
+    const probe = popup.getBoundingClientRect();
+    const target = popupAbove(muteButton.getBoundingClientRect(), origin,
+      { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight });
+    popup.style.left = `${measuredFixedOffset(target.x, origin.left, probe.left)}px`;
+    popup.style.top = `${measuredFixedOffset(target.y, origin.top, probe.top)}px`;
+  }
+  $effect(() => {
+    if (!volumeOpen) return;
+    placeVolumePopup();
+    // Scrolling the constrained player or resizing moves the speaker under a fixed popup.
+    window.addEventListener("scroll", placeVolumePopup, true);
+    window.addEventListener("resize", placeVolumePopup);
+    return () => {
+      window.removeEventListener("scroll", placeVolumePopup, true);
+      window.removeEventListener("resize", placeVolumePopup);
+    };
+  });
+  $effect(() => {
+    // Non-passive, so wheeling over the speaker adjusts volume instead of scrolling the pane.
+    const element = volumeControl;
+    if (!element) return;
+    const onWheel = (event: WheelEvent) => {
+      const delta = wheelVolumeDelta(event.deltaY);
+      if (!delta || !ready || error) return;
+      event.preventDefault();
+      changeSound(current => stepVolume(current, delta));
+    };
+    element.addEventListener("wheel", onWheel, { passive: false });
+    return () => element.removeEventListener("wheel", onWheel);
+  });
   function onKey(event: KeyboardEvent) {
     if (dialogStore.isInputBlocked(event, windowTabsManager.activePaneId)) return;
     const target = event.target as HTMLElement;
@@ -126,8 +213,8 @@
       case "seek-forward": seek(current+5); break;
       case "start": seek(0); break;
       case "end": seek(duration); break;
-      case "volume-up": setVolume(volume+0.05); break;
-      case "volume-down": setVolume(volume-0.05); break;
+      case "volume-up": changeSound(current => stepVolume(current, VOLUME_STEP)); break;
+      case "volume-down": changeSound(current => stepVolume(current, -VOLUME_STEP)); break;
       case "mute": toggleMute(); break;
       case "fullscreen": ontogglefullscreen(); break;
     }
@@ -181,6 +268,31 @@
     <div class="transport">
       <button type="button" aria-label={playing ? "Pause video" : "Play video"} title={playing ? "Pause (Space)" : "Play (Space)"}
         disabled={!ready || !!error} onclick={togglePlay}>{playing ? "Ⅱ" : "▶"}</button>
+      <!-- svelte-ignore a11y_no_static_element_interactions -- hover/focus reveal and Escape collapse for the speaker's slider; the button and range keep native semantics. -->
+      <div class="volume" class:open={volumeOpen} data-level={level} bind:this={volumeControl}
+        onpointerenter={() => { volumeHovered = true; volumeDismissed = false; }} onpointerleave={() => volumeHovered = false}
+        onfocusin={volumeFocusIn} onfocusout={volumeFocusOut} onkeydown={volumeKey}>
+        <button type="button" class="volume-button" bind:this={muteButton} aria-label={level === "muted" ? "Unmute video" : "Mute video"}
+          aria-pressed={level === "muted"} title={level === "muted" ? "Unmute (M)" : "Mute (M)"} disabled={!ready || !!error} onclick={toggleMute}>
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M2.5 6h2.2L8 3.2v9.6L4.7 10H2.5Z" fill="currentColor" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+            {#if level === "muted"}
+              <path d="M10.6 6.1l3.8 3.8M14.4 6.1l-3.8 3.8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            {:else}
+              <path d="M10.4 6.1a2.7 2.7 0 0 1 0 3.8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+              {#if level === "high"}<path d="M12.3 4.2a5.4 5.4 0 0 1 0 7.6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>{/if}
+            {/if}
+          </svg>
+        </button>
+        <!-- Above the speaker, outside the controls' layout; its transparent bottom padding bridges the hover gap. -->
+        <div class="volume-popup" bind:this={volumePopup}>
+          <div class="volume-panel">
+            <input class="volume-slider" type="range" aria-label="Video volume" aria-valuetext={volumeText(sound)} min="0" max="1" step={VOLUME_STEP}
+              value={audibleVolume(sound)} disabled={!ready || !!error}
+              oninput={event => setVolume(event.currentTarget.valueAsNumber)} />
+          </div>
+        </div>
+      </div>
       <span class="video-time" aria-label="Video time">{mediaTime(current)} / {mediaTime(duration)}</span>
       <button type="button" class="fullscreen-button" aria-label={fullscreen ? "Exit video fullscreen" : "View video fullscreen"}
         title="Fullscreen (F)" onclick={ontogglefullscreen}>⛶</button>
@@ -193,9 +305,6 @@
         <span class="audio-note" role="status" title={audioNote === "preparing" ? "Decoding this video's audio track" : audioNote.error}>
           {audioNote === "preparing" ? "Preparing audio…" : "Audio unavailable"}</span>
       {/if}
-      <button type="button" aria-label={muted ? "Unmute video" : "Mute video"} title="Mute (M)" disabled={!ready || !!error} onclick={toggleMute}>{muted ? "Muted" : "Sound"}</button>
-      <input type="range" aria-label="Video volume" min="0" max="1" step="0.05" value={volume} disabled={!ready || !!error}
-        oninput={event => setVolume(event.currentTarget.valueAsNumber)} />
     </div>
   </div>
 </div>
@@ -212,7 +321,17 @@
   .fullscreen-button {margin-left:auto;}
   .seek {min-width:0;width:100%;}
   .sound {display:flex;align-items:center;gap:4px;}
-  .sound input {width:64px;}
+  .volume {display:flex;align-items:center;}
+  .volume-button {display:inline-flex;align-items:center;justify-content:center;}
+  /* Hidden (and out of the tab order) until revealed; it never takes layout space in the controls row. */
+  .volume-popup {position:fixed;left:0;top:0;z-index:var(--z-menu);box-sizing:border-box;width:36px;height:120px;padding-bottom:6px;
+    visibility:hidden;opacity:0;transition:opacity 120ms ease-out,visibility 0s 120ms;}
+  .volume.open .volume-popup {visibility:visible;opacity:1;transition:opacity 120ms ease-out,visibility 0s;}
+  @media (prefers-reduced-motion: reduce) { .volume-popup,.volume.open .volume-popup {transition:none;} }
+  .volume-panel {position:relative;box-sizing:border-box;height:100%;border:1px solid var(--surface-stroke-flyout,var(--divider));border-radius:var(--radius-lg,6px);
+    background:var(--background-solid);box-shadow:var(--shadow-flyout);}
+  /* A horizontal range turned upright: rotation draws and hit-tests the same on every engine, unlike vertical writing modes on older WebKit. */
+  .volume-slider {position:absolute;left:50%;top:50%;width:88px;margin:0;transform:translate(-50%,-50%) rotate(-90deg);}
   .audio-note {font-size:var(--font-size-caption);color:var(--text-secondary);white-space:nowrap;}
   button {min-width:28px;min-height:28px;border:0;border-radius:4px;padding:0 6px;background:transparent;color:var(--text-secondary);font:inherit;font-size:var(--font-size-caption);cursor:pointer;}
   button:hover:enabled {background:var(--subtle-fill-tertiary);color:var(--text-primary);}

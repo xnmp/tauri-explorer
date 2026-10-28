@@ -48,6 +48,15 @@ export function videoState() {
   });
 }
 /** Native range keyboard semantics; never assigns media or input properties. */
+/** The upright volume slider pops up above its speaker button only while hovered; wait for it to show (#1425). */
+export async function revealVolume(): Promise<void> {
+  await $(".video-preview .volume").moveTo();
+  await browser.waitUntil(() => browser.execute(() => {
+    const popup = document.querySelector(".video-preview .volume-popup");
+    const slider = document.querySelector(".video-preview .volume-slider")?.getBoundingClientRect();
+    return !!popup && getComputedStyle(popup).visibility === "visible" && (slider?.height ?? 0) >= 60;
+  }), { timeout: 5_000, timeoutMsg: "volume slider was not revealed by hovering its speaker" });
+}
 export async function rangeKeys(selector: string, increments: number): Promise<void> {
   await $(selector).click();
   await browser.performActions([{ type: "key", id: "native-video-range", actions: [

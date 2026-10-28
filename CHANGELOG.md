@@ -2,6 +2,33 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.15.0 — 2026-10-28
+
+### Added
+
+- PgUp/PgDn move the highlighted row by 10 in Quick Open and the command
+  palette, stopping at the first and last rows (#1419).
+- The video preview has a speaker button beside Play: click to mute or unmute
+  (the previous level is kept), and hover or focus opens an upright volume
+  slider above it. The mouse wheel steps the volume by 5% (#1425).
+
+### Changed
+
+- Large folders open 30–37% faster: listings are sent to the window in a compact
+  binary format, freed off the reply path and sorted in parallel. A 500,000-entry
+  folder opens in about 0.9 s instead of 1.4 s (#1417).
+- Large folders use much less memory: the app releases a 500,000-entry listing's
+  memory after you leave it (about 35 MB retained instead of 750 MB), and keeps
+  it to about 150 MB while it is open (#1416, #1417).
+- Markdown previews render progressively and only for the latest selection, so
+  moving through a folder of long documents no longer lags (#1418).
+
+### Fixed
+
+- The FileChooser portal backend now exits after a minute idle, or as soon as it
+  is idle after an update replaces its binary, and a second backend no longer
+  lingers beside the first (#1427).
+
 ## v1.14.0 — 2026-10-27
 
 ### Added

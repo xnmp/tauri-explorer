@@ -1,6 +1,13 @@
 //! Set desktop wallpaper across macOS, Linux desktop environments, and Windows.
 //! Issue: tauri-explorer-mj32
 
+// macOS: every display + every Space (#1441). Built on other hosts only for
+// tests, so its pure planning logic is checked everywhere.
+#[cfg(any(target_os = "macos", test))]
+mod macos;
+#[cfg(any(target_os = "macos", test))]
+mod macos_store;
+
 use crate::error::AppError;
 use std::path::PathBuf;
 use std::process::Command;
@@ -87,28 +94,21 @@ enum WallpaperBackend {
     Unknown,
 }
 
-/// Set wallpaper on macOS using osascript (AppleScript).
-/// The path is passed as an argv item (never interpolated into the script)
-/// so quotes/backslashes in filenames can't break or inject the script.
+/// Set wallpaper on macOS: every display via NSWorkspace, and every Space
+/// where the running macOS allows (`macos.rs`, #1441).
 #[cfg(not(windows))]
-fn set_macos(path: &str) -> Result<(), AppError> {
-    let output = Command::new("osascript")
-        .args([
-            "-e", "on run argv",
-            "-e", "tell application \"System Events\" to tell every desktop to set picture to (item 1 of argv)",
-            "-e", "end run",
-            path,
-        ])
-        .output()
-        .map_err(|e| AppError::Other(format!("osascript failed: {}", e)))?;
-
-    if !output.status.success() {
-        return Err(AppError::Other(format!(
-            "Failed to set wallpaper: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )));
+fn set_macos(path: &str) -> Result<WallpaperOutcome, AppError> {
+    #[cfg(target_os = "macos")]
+    {
+        macos::set_wallpaper(&mut macos::SystemMacOs, path)
     }
-    Ok(())
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = path;
+        Err(AppError::Other(
+            "The macOS wallpaper backend is unavailable on this platform".to_string(),
+        ))
+    }
 }
 
 /// Set wallpaper using hyprpaper.
@@ -396,16 +396,25 @@ if (-not $ok) {{ exit 1 }}
     Ok(())
 }
 
+/// What a successful wallpaper change could not do, for the UI to report.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WallpaperOutcome {
+    /// Set when only part of the request was applied (e.g. macOS changed the
+    /// current Space but not the others); None when everything was changed.
+    pub notice: Option<String>,
+}
+
 /// Set the given image as desktop wallpaper.
 /// Auto-detects the desktop environment and uses the appropriate tool.
 #[tauri::command]
-pub async fn set_as_wallpaper(path: String) -> Result<(), AppError> {
+pub async fn set_as_wallpaper(path: String) -> Result<WallpaperOutcome, AppError> {
     tokio::task::spawn_blocking(move || set_as_wallpaper_sync(path))
         .await
         .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
 }
 
-fn set_as_wallpaper_sync(path: String) -> Result<(), AppError> {
+fn set_as_wallpaper_sync(path: String) -> Result<WallpaperOutcome, AppError> {
     let file_path = PathBuf::from(&path);
 
     if !file_path.exists() {
@@ -425,23 +434,24 @@ fn set_as_wallpaper_sync(path: String) -> Result<(), AppError> {
 
     let backend = detect_wallpaper_backend();
     log::info!("Setting wallpaper via {:?} backend", backend_name(&backend));
+    let complete = |r: Result<(), AppError>| r.map(|()| WallpaperOutcome::default());
     match backend {
         #[cfg(not(windows))]
         WallpaperBackend::MacOs => set_macos(&abs_path),
         #[cfg(not(windows))]
-        WallpaperBackend::Hyprpaper => set_hyprpaper(&abs_path),
+        WallpaperBackend::Hyprpaper => complete(set_hyprpaper(&abs_path)),
         #[cfg(not(windows))]
-        WallpaperBackend::Swaybg => set_swaybg(&abs_path),
+        WallpaperBackend::Swaybg => complete(set_swaybg(&abs_path)),
         #[cfg(not(windows))]
-        WallpaperBackend::Gnome => set_gnome(&abs_path),
+        WallpaperBackend::Gnome => complete(set_gnome(&abs_path)),
         #[cfg(not(windows))]
-        WallpaperBackend::Kde => set_kde(&abs_path),
+        WallpaperBackend::Kde => complete(set_kde(&abs_path)),
         #[cfg(not(windows))]
-        WallpaperBackend::Xfce => set_xfce(&abs_path),
+        WallpaperBackend::Xfce => complete(set_xfce(&abs_path)),
         #[cfg(not(windows))]
-        WallpaperBackend::Feh => set_feh(&abs_path),
+        WallpaperBackend::Feh => complete(set_feh(&abs_path)),
         #[cfg(windows)]
-        WallpaperBackend::Windows => set_windows(&abs_path),
+        WallpaperBackend::Windows => complete(set_windows(&abs_path)),
         #[cfg(not(windows))]
         WallpaperBackend::Unknown => Err(AppError::Other(
             "Could not detect desktop environment. Supported: macOS, Hyprland (hyprpaper), Sway, GNOME, KDE, XFCE, feh".to_string(),

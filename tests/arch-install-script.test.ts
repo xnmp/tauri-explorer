@@ -100,6 +100,53 @@ exit 2
     expect(events[2]).toMatch(/^sudo -n pacman -U tauri-explorer-1\.0\.0-1-.*\.pkg\.tar\.zst --noconfirm$/);
   }));
 
+  it('builds ahead without credentials, then installs that package without rebuilding', async () => withInstaller(async ({ invoke, calls }) => {
+    const built = await invoke(['--build-only']) as { stdout: string };
+    expect(await calls()).toEqual(['makepkg reuse=1 rebuild=0']);
+    expect(built.stdout).toContain('--install-only');
+
+    const installed = await invoke(['--install-only']) as { stdout: string; stderr: string };
+    const events = await calls();
+    expect(events.slice(1, 2)).toEqual(['sudo -v']);
+    expect(events[2]).toMatch(/^sudo -n pacman -U tauri-explorer-1\.0\.0-1-.*\.pkg\.tar\.zst --noconfirm$/);
+    expect(events).toHaveLength(3);
+    expect(installed.stdout).toContain('Done.');
+  }));
+
+  it('refuses to install before any package was built, without asking for credentials', async () => withInstaller(async ({ invoke, calls }) => {
+    await expect(invoke(['--install-only'])).rejects.toThrow('No built package recorded');
+    expect(await calls()).toEqual([]);
+  }));
+
+  it('refuses when the recorded package has since been removed', async () => withInstaller(async ({ root, invoke, calls }) => {
+    await invoke(['--build-only']);
+    await rm(join(root, `tauri-explorer-1.0.0-1-${await machine()}.pkg.tar.zst`));
+    await expect(invoke(['--install-only'])).rejects.toThrow('is missing');
+    expect(await calls()).toEqual(['makepkg reuse=1 rebuild=0']);
+  }));
+
+  it('rejects combining build-only and install-only before authentication', async () => withInstaller(async ({ invoke, calls }) => {
+    await expect(invoke(['--build-only', '--install-only'])).rejects.toThrow('mutually exclusive');
+    expect(await calls()).toEqual([]);
+  }));
+
+  it('warns when the checkout moved after the build, but not for the same uncommitted edits', async () => withInstaller(async ({ root, invoke }) => {
+    const git = (...args: string[]) => execFileAsync('git', ['-C', root, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.com', ...args], { env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } });
+    await git('init', '--quiet', '--template=');
+    await writeFile(join(root, '.gitignore'), 'calls\nepochs\n.arch-build/\n*.pkg.tar.zst\n');
+    await git('add', '-A');
+    await git('commit', '--quiet', '-m', 'built');
+    await writeFile(join(root, 'package.json'), '{"version":"1.0.0","edited":true}');
+
+    await invoke(['--build-only']);
+    const same = await invoke(['--install-only']) as { stderr: string };
+    expect(same.stderr).not.toMatch(/was built from|cannot confirm/);
+
+    await git('commit', '--quiet', '-am', 'moved on');
+    const moved = await invoke(['--install-only']) as { stderr: string };
+    expect(moved.stderr).toMatch(/Warning: .* was built from [0-9a-f]{40}\+[0-9a-f]{12}, but this checkout is now at [0-9a-f]{40};/);
+  }));
+
   it('stops before building when authentication fails', async () => withInstaller(async ({ invoke, calls }) => {
     await expect(invoke([], { AUTH_FAIL: '1' })).rejects.toThrow();
     expect(await calls()).toEqual(['sudo -v']);
@@ -259,4 +306,9 @@ printf '%s\\n' $RUNNING_PIDS
     const epochs = () => readFile(join(root, 'epochs'), 'utf8').then((contents) => contents.trim().split('\n'));
     await test({ invoke, calls, epochs, root, sandbox });
   } finally { await rm(sandbox, { recursive: true, force: true }); }
+}
+
+async function machine() {
+  const { stdout } = await execFileAsync('uname', ['-m']);
+  return stdout.trim();
 }

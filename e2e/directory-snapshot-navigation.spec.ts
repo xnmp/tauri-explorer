@@ -11,7 +11,7 @@
  * duplicates, or misorders entries fails here.
  *
  * Note: the browser mock (mock-invoke.ts) replies in the same compact
- * `columns-v1` snapshot format used natively (#868), so this spec covers the navigation outcome end-to-end
+ * binary snapshot format used natively (#868, #1417), so this spec covers the navigation outcome end-to-end
  * against the current (non-streaming) contract. Snapshot-scan cost is covered
  * by the Rust criterion benches in `src-tauri/benches/` (e.g.
  * `scan_directory_parallel.rs`), not this spec.

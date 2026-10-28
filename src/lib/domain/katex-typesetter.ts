@@ -1,6 +1,6 @@
 /**
  * KaTeX typesetter for Markdown math (#1393). Imported only through a dynamic
- * `import()` from `renderMarkdownWithMath`, so KaTeX, its stylesheet and its
+ * `import()` from `renderMarkdownBlocks`, so KaTeX, its stylesheet and its
  * fonts (bundled, never a CDN) stay out of the startup chunk.
  */
 

@@ -8,16 +8,37 @@ vi.mock("$lib/api/thumbnails", () => ({ getVideoThumbnailData: mocks.getVideoThu
 vi.mock("$lib/state/preview-image", () => ({ loadPreviewImage: mocks.loadPreviewImage, decodeImage: mocks.decodeImage }));
 vi.mock("$lib/api/frontend-log", () => ({ logFrontendDiagnostic: vi.fn() }));
 import { createPreviewContentLoader, type PreviewContent } from "$lib/state/preview-content";
+import { renderMarkdown } from "$lib/domain/markdown";
+import type { FrameScheduler } from "$lib/domain/progressive-reveal";
 const file = (name: string, kind: FileEntry["kind"] = "file"): FileEntry => ({ name, path: `/${name}`, kind, size: 12, modified: "today" });
 const ready = (url: string, resolution: "original" | "rendition" = "original") => ({ status: "ready", url, viaBackend: true, resolution, decoded: { naturalWidth: 100, naturalHeight: 100 } });
 const Pdf = function Pdf() {};
 const Video = function Video() {};
-function surface(viewers = { pdf: vi.fn(async () => Pdf), video: vi.fn(async () => Video) }) {
+/** Frames end immediately unless a test drives them (`manualFrames`). */
+const immediateFrames: FrameScheduler = { now: () => 0, nextFrame: async () => {} };
+function surface(viewers = { pdf: vi.fn(async () => Pdf), video: vi.fn(async () => Video) }, frames: FrameScheduler = immediateFrames) {
   let content: PreviewContent<typeof Pdf, typeof Video> = { kind: "empty" };
+  const published: PreviewContent<typeof Pdf, typeof Video>[] = [];
   const revoked = vi.fn();
-  const loader = createPreviewContentLoader(revoked, viewers);
-  return { loader, revoked, viewers, get content() { return content; }, load: (entry: FileEntry, revision = 0, imageOptions: PreviewImageOptions = {}) => loader.load(entry, content, { localRevision: revision, imageOptions }, next => { content = next; }) };
+  const loader = createPreviewContentLoader(revoked, viewers, frames);
+  return { loader, revoked, viewers, published, get content() { return content; }, load: (entry: FileEntry, revision = 0, imageOptions: PreviewImageOptions = {}) => loader.load(entry, content, { localRevision: revision, imageOptions }, next => { content = next; published.push(next); }) };
 }
+/** A frame boundary the test advances explicitly. */
+function manualFrames() {
+  let waiting: (() => void)[] = [];
+  const scheduler: FrameScheduler = { now: () => 0, nextFrame: () => new Promise<void>(resolve => { waiting.push(resolve); }) };
+  return {
+    scheduler,
+    get pending() { return waiting.length; },
+    /** Ends the current frame and lets the work it released run. */
+    async frame() {
+      const released = waiting; waiting = [];
+      released.forEach(resolve => resolve());
+      await new Promise(resolve => setTimeout(resolve, 0));
+    },
+  };
+}
+const markdownHtml = (content: PreviewContent) => content.kind === "markdown" ? content.blocks.join("") : null;
 beforeEach(() => { vi.resetAllMocks(); });
 
 describe("preview content dispatch and replacement", () => {
@@ -68,7 +89,7 @@ describe("preview content dispatch and replacement", () => {
     expect(s.content).toMatchObject({ kind: "image", url: "blob:photo", note: null, held: true, rendition: null });
     mocks.readTextFile.mockResolvedValue({ ok: true, data: "# Title" });
     await s.load(file("a.md"));
-    expect(s.content).toMatchObject({ kind: "markdown", html: expect.stringContaining("<h1>Title</h1>"), truncatedLines: 0 });
+    expect(s.content).toMatchObject({ kind: "markdown", blocks: [expect.stringContaining("<h1>Title</h1>")], truncatedLines: 0 });
     resolve(ready("blob:late"));
     await pending;
     expect(s.content.kind).toBe("markdown");
@@ -304,5 +325,107 @@ describe("preview content dispatch and replacement", () => {
     s.loader.dispose(); resolve({ ok: true, data: "blob:late" }); await pending;
     expect(s.content.kind).toBe("loading"); // no publication after reset/disposal
     expect(s.revoked).toHaveBeenCalledWith("blob:late");
+  });
+});
+
+describe("Markdown preview navigation (#1418)", () => {
+  const md = (name: string, modified = "today", size = 12): FileEntry => ({ name, path: `/${name}`, kind: "file", size, modified });
+  /** ~100 KB of paragraphs: more than two reveal slices. */
+  const longDocument = (label: string) => Array.from({ length: 90 }, (_, i) => `${label} paragraph ${i} ${"word ".repeat(220)}`).join("\n\n");
+  const readsOf = (path: string) => mocks.readTextFile.mock.calls.filter(([p]) => p === path).length;
+  async function settle(frames: ReturnType<typeof manualFrames>, pending: Promise<unknown>) {
+    let done = false;
+    void pending.then(() => { done = true; });
+    for (let i = 0; i < 100 && !done; i++) await frames.frame();
+    await pending;
+  }
+
+  it("renders nothing in the selection's own task: the document appears from the next frame", async () => {
+    const frames = manualFrames();
+    const s = surface(undefined, frames.scheduler);
+    mocks.readTextFile.mockResolvedValue({ ok: true, data: "# Title\n\nBody" });
+    const pending = s.load(md("a.md"));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(s.content).toEqual({ kind: "loading" });
+    await settle(frames, pending);
+    expect(markdownHtml(s.content)).toBe(renderMarkdown("# Title\n\nBody"));
+  });
+
+  it("shows a long document a slice per frame, each slice a prefix of the whole", async () => {
+    const frames = manualFrames();
+    const s = surface(undefined, frames.scheduler);
+    const doc = longDocument("Long");
+    mocks.readTextFile.mockResolvedValue({ ok: true, data: doc });
+    await settle(frames, s.load(md("long.md")));
+    const whole = renderMarkdown(doc);
+    const shown = s.published.map(markdownHtml).filter((html): html is string => html !== null);
+    expect(shown.length).toBeGreaterThanOrEqual(3);
+    for (const html of shown) expect(whole.startsWith(html)).toBe(true);
+    expect(shown.at(-1)).toBe(whole);
+    const partial = s.published.flatMap(content => content.kind === "markdown" ? [content.partial] : []);
+    expect(partial).toEqual([...partial.slice(0, -1).map(() => true), false]);
+  });
+
+  it("fast navigation publishes only the final selection's document", async () => {
+    const frames = manualFrames();
+    const s = surface(undefined, frames.scheduler);
+    mocks.readTextFile.mockImplementation(async (path: string) => ({ ok: true, data: `# ${path.slice(1)}\n\n$x^2$ and text` }));
+    const loads = [s.load(md("a.md"))];
+    await Promise.resolve();
+    loads.push(s.load(md("b.md")));
+    await Promise.resolve();
+    loads.push(s.load(md("c.md")));
+    await settle(frames, Promise.all(loads));
+    const shown = s.published.map(markdownHtml).filter((html): html is string => html !== null);
+    expect(shown.length).toBeGreaterThan(0);
+    for (const html of shown) expect(html).toContain("c.md");
+    expect(markdownHtml(s.content)).toContain("c.md");
+  });
+
+  it("abandons a document mid-reveal when the selection moves on", async () => {
+    const frames = manualFrames();
+    const s = surface(undefined, frames.scheduler);
+    mocks.readTextFile.mockImplementation(async (path: string) => ({ ok: true, data: longDocument(path === "/old.md" ? "Old" : "New") }));
+    const old = s.load(md("old.md"));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    await frames.frame(); // first slice of the old document is shown
+    expect(markdownHtml(s.content)).toContain("Old paragraph 0");
+    const before = s.published.length;
+    const next = s.load(md("new.md"));
+    await settle(frames, Promise.all([old, next]));
+    const later = s.published.slice(before).map(markdownHtml).filter((html): html is string => html !== null);
+    for (const html of later) expect(html).not.toContain("Old paragraph");
+    expect(markdownHtml(s.content)).toBe(renderMarkdown(longDocument("New")));
+  });
+
+  it("going back to an unchanged document skips the read; a changed version renders again", async () => {
+    const s = surface();
+    mocks.readTextFile.mockImplementation(async (path: string) => ({ ok: true, data: `# ${path} v${readsOf(path)}` }));
+    await s.load(md("a.md"));
+    await s.load(md("b.md"));
+    await s.load(md("a.md"));
+    expect(readsOf("/a.md")).toBe(1);
+    expect(markdownHtml(s.content)).toContain("/a.md v1");
+
+    await s.load(md("a.md", "later"));
+    expect(readsOf("/a.md")).toBe(2);
+    expect(markdownHtml(s.content)).toContain("/a.md v2");
+    await s.load(md("a.md", "later", 99));
+    expect(readsOf("/a.md")).toBe(3);
+    await s.load(md("a.md", "later", 99), 1);
+    expect(readsOf("/a.md")).toBe(4);
+    expect(markdownHtml(s.content)).toContain("/a.md v4");
+  });
+
+  it("an abandoned render is not remembered", async () => {
+    const frames = manualFrames();
+    const s = surface(undefined, frames.scheduler);
+    mocks.readTextFile.mockImplementation(async (path: string) => ({ ok: true, data: longDocument(path) }));
+    const old = s.load(md("old.md"));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    await settle(frames, Promise.all([old, s.load(md("new.md"))]));
+    await settle(frames, s.load(md("old.md")));
+    expect(readsOf("/old.md")).toBe(2);
+    expect(markdownHtml(s.content)).toBe(renderMarkdown(longDocument("/old.md")));
   });
 });

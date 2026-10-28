@@ -3,7 +3,7 @@
  *
  * Pure and KaTeX-free: the typesetter is injected (`MathTypesetter`) so this
  * module stays in the startup bundle while KaTeX itself is lazy-loaded only
- * when a document actually contains math (see `renderMarkdownWithMath`).
+ * when a document actually contains math (see `renderMarkdownBlocks`).
  *
  * Delimiters follow GitHub/Obsidian/Typora: inline `$…$` and `\(…\)`, display
  * `$$…$$` and `\[…\]`. Because these are Marked tokenizers, code spans and

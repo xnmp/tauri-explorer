@@ -107,8 +107,7 @@ were not recorded, so the two are not directly comparable.
 The scan is roughly 36–39% of the end-to-end time at 100k and 500k (it lists
 dot-files too; the frontend hides them). The rest
 (Rust sort and wire encoding, IPC, decoding, frontend filtering/sorting and
-rendering) was not broken down further: there is no per-phase timing for
-ordinary loads (the slow-load watchdog only records loads over 5 s).
+rendering) is broken down per phase in "Folder-open pipeline (#1417)" below.
 
 ### Frontend only (`bun run test:perf`)
 
@@ -128,11 +127,12 @@ iterations; the table gives the median and p95 of those means across 5 runs
 | Select all, 10k | 50 | 0.66 ms | 0.72 ms |
 | Virtual-list math (`visibleRange-100`, `sliceVisibleItems-10000`, `rapidScroll-10000`) | 50–1,000 | ≤ 0.01 ms | ≤ 0.01 ms |
 
-### Memory (end-to-end run)
+### Memory (end-to-end run, #983)
 
 Resident set size after the 20th open of each folder, same session (so later
 rows include whatever earlier folders left behind). The app runs a main process
-plus a WebKit network process and two WebKit web-content processes.
+plus a WebKit network process and two WebKit web-content processes. This is the
+original #983 run, before the #1416 changes below.
 
 | After opening | App process | WebKit processes | Total |
 |---|---|---|---|
@@ -142,6 +142,255 @@ plus a WebKit network process and two WebKit web-content processes.
 | 500k | 1,858 MB | 69 + 1,152 + 418 MB | 3,496 MB |
 
 RSS counts shared pages in each process, so the total overstates unique memory.
+
+## Memory attribution and fixes (#1416)
+
+### What the 2.37 GB measured
+
+The table above sums RSS over four processes after 20 open/go-up cycles of
+every fixture in turn. RSS counts each shared library page once per process:
+the idle app is about 1.38 GB of RSS but 0.53 GB of PSS (proportional set
+size, `/proc/<pid>/smaps_rollup`). All figures below are PSS unless stated.
+
+### Where it went (before: v1.14.0, `6bbc0ba8`)
+
+`perf-real-app.mjs --scenarios memory` samples every process after a 15 s
+settle: idle in the small fixture root, with a folder open, and after going
+back up to the root, for four open/away cycles per folder (100k, then 500k).
+Medians of n = 3 sessions, MB:
+
+| Sample | App (Rust + WebKit UI) | Web content (shown) | Web content (parked warm window) | Network | Total |
+|---|---|---|---|---|---|
+| Idle in the fixture root | 170 | 203 | 129 | 26 | 528 |
+| 100k open (1st) | 261 | 294 | 128 | 26 | 706 |
+| Back in the root (1st) | 261 | 295 | 128 | 26 | 709 |
+| Back in the root (4th), after JS collection | 378 | 231 | 128 | 26 | 763 |
+| 500k open (4th), after JS collection | 877 | 554 | 128 | 26 | 1,586 |
+| Back in the root (4th), after JS collection | 877 | 239 | 128 | 26 | 1,272 |
+
+"After JS collection" follows in-page allocation pressure that makes
+JavaScriptCore run full collections (the release WebView exposes no GC to the
+runner); without it the web process keeps garbage until something allocates.
+
+Three things held the memory:
+
+1. **App process, glibc allocator retention (the leak-like part).** Its
+   anonymous memory grew 30-90 MB with every 100k open and 55-234 MB with
+   every 500k open, and none came back after navigating away (62 MB idle,
+   770 MB after the 500k cycles). The per-mapping breakdown put it in glibc's
+   non-main arenas (unnamed mappings aligned to 64 MiB): 678-817 MB of them
+   after 20 opens of 500k. A listing allocates hundreds of MB briefly on
+   rayon/blocking-pool threads; glibc keeps freed memory in each thread's
+   arena, and its dynamic mmap threshold moves multi-MB buffers (scan
+   vectors, the encoded reply) into those arenas after the first large free.
+   Diagnosis: `MALLOC_ARENA_MAX=1` stopped the growth; capping arenas at 2 or
+   4 also did, but slowed opening 100k by about 40% and 24% (lock contention), so it
+   is not the fix.
+2. **Web process, per-entry projections nobody read (working set).** Live
+   JavaScriptCore heap of the flat listing pipeline, measured with
+   `scripts/perf-listing-heap.mjs` (full collections in WebKitGTK's own `jsc`
+   shell): 499 B/entry at 100k, 541 B/entry at 500k. 232 B/entry is the entry
+   model itself; 141-183 B/entry was a placement map with an object per entry
+   plus a second path→index map that no production code read, and 109 B/entry
+   was row objects each carrying their own key string.
+3. **Web process, uncollected garbage (not a leak).** After navigating away,
+   web-content memory stayed up until allocation pressure; then it returned
+   to within 20-40 MB of idle in every run, before and after the changes.
+
+Not attributable to listings, and unchanged: the idle web-content process
+(~200 MB), the parked warm window used for fast new windows (~130 MB) and the
+network process (~26 MB).
+
+### Changes
+
+- `src-tauri/src/memory_release.rs`: at startup, fix glibc's mmap and trim
+  thresholds at its own 128 KiB defaults (disabling the dynamic raise), and
+  after a listing of 10k+ entries is encoded (and once more at the next
+  listing, after the reply has been delivered) call `malloc_trim(0)`.
+  Linux/glibc only; a no-op elsewhere (macOS and Windows were not measured).
+  Each alone left about 2-3× as much in the app process as both together
+  (app anonymous memory after 20 opens of 100k: 220-264 MB with trimming
+  alone, 135 MB with fixed thresholds alone, 84-91 MB with both; 314-346 MB
+  before).
+- `domain/folder-peek-flat.ts`: a flat listing answers placement lookups from
+  a path set built on first use, the unused path→index map is gone, and flat
+  rows keep their constant fields on the prototype. `resolveFileCursor` no
+  longer hashes every path against an empty selection.
+- `domain/file.ts`: `sortEntries` lowercases each name once instead of on
+  every comparison (100k name sort in `jsc`: ~200 → ~110 ms).
+
+### After (same method, same machine)
+
+Medians of n = 3 sessions, MB:
+
+| Sample | App | Web content (shown) | Parked window | Network | Total | Before |
+|---|---|---|---|---|---|---|
+| Idle in the fixture root | 171 | 203 | 131 | 26 | 533 | 528 |
+| 100k open (1st) | 194 | 276 | 130 | 26 | 626 | 706 |
+| Back in the root (1st) | 168 | 283 | 130 | 26 | 608 | 709 |
+| Back in the root (4th), after JS collection | 170 | 235 | 130 | 26 | 562 | 763 |
+| 500k open (4th), after JS collection | 286 | 469 | 130 | 26 | 916 | 1,586 |
+| Back in the root (4th), after JS collection | 170 | 242 | 130 | 26 | 568 | 1,272 |
+
+Retained after navigating away (total PSS minus idle): 100k 23-32 MB (before
+184-247 MB), 500k 33-38 MB (before 724-776 MB). The app process is back at
+its idle size after every cycle. Live JavaScriptCore heap per listed entry:
+317 B (before 499-541 B), 30 MB for 100k entries.
+
+The #983 metric (RSS after the 20th open, 1k → 100k → 500k in one session,
+n = 2 sessions each):
+
+| After opening | Before: total RSS / PSS | After: total RSS / PSS |
+|---|---|---|
+| 100k | 2,150-2,182 / 1,289-1,322 MB | 1,859-1,862 / 996-1,000 MB |
+| 500k | 2,675-2,874 / 1,815-2,013 MB | 1,976-2,004 / 1,112-1,141 MB |
+
+Most of what remains in that metric is the web-content process (634-711 MB
+PSS), sampled right after the 20th open: uncollected garbage from 20
+listings, which the memory scenario's collection step shows is not retained.
+
+Folder-open time, same runner (`--scenarios open`, n = 20 per run, complete
+median / p95):
+
+| Folder | Before | After |
+|---|---|---|
+| 100k, full fixture set, 2 runs each | 251 / 266, 249 / 285 ms | 261 / 281, 262 / 284 ms |
+| 100k only, 3 interleaved run pairs | 227 / 263, 236 / 260, 232 / 259 ms | 242 / 257, 243 / 278, 232 / 272 ms |
+| 500k, 2 runs each | 1,578 / 1,627, 1,499 / 1,587 ms | 1,312 / 1,352, 1,303 / 1,344 ms |
+
+At 100k the after-medians are 0-15 ms higher; one binary run six times in
+the same session spread over 232-242 ms, so a difference below about
+10 ms is not resolved by this method. 500k opens are 13-17% faster (smaller
+projections and the cheaper sort).
+
+Conditions: 2026-10-27, same machine as above; base `6bbc0ba8` (v1.14.0) vs
+this change, both release builds with `custom-protocol`. 1-minute load
+average 2.0-33.2 during the "before" memory sessions (other work on the
+desktop; memory is far less load-sensitive than time) and 0.8-5.0 during the
+"after" ones, 1.5-5.5 for the timing runs.
+
+### Budgets
+
+- `bun run perf:listing-heap`: fails above 380 B/entry of live JS heap for a
+  100k flat listing (now 305 with the #1417 binary reply, 317 after #1416;
+  before 499). Needs the WebKitGTK `jsc` shell.
+- `perf-real-app.mjs --scenarios memory --memory-cycles 4 --gc-pressure-mb 4096
+  --max-retained-mb 80 --max-live-bytes-per-entry 1600`: fails when total PSS
+  after navigating away exceeds idle by more than 80 MB, or the open folder
+  costs more than 1,600 B/entry (now 23-38 MB and 742-1,151 B/entry; before
+  184-776 MB and 2,178-3,244 B/entry). The live-per-entry figure is noisier
+  than the `jsc` one: collection by allocation pressure is not exact.
+
+## Folder-open pipeline (#1417)
+
+### Where an open spends its time
+
+`perf-real-app.mjs` now reports `phasesMs` per scenario: the native spans of
+each load (logged by the app when `TAURI_EXPLORER_LISTING_TIMING=1`, which the
+runner sets) joined with the frontend load trace. `ipcAndParse` is the native
+round trip minus the native total: carrying the reply to the webview and
+parsing it. `project` is filtering, sorting and peek projection of the new
+listing; `settledToRows` the time from the load settling to the rows being in
+the DOM; `rowsToFrames` the two animation frames after that.
+
+Medians, ms, release build, n = 10. "Before" is the base of this change (the
+#1416 branch, `a2d387d6`) with only the timing instrumentation added, measured
+on 2026-10-28 00:10 (1-minute load average 1.9-4.5); "after" is the final
+build, measured on 2026-10-28 09:40 (load 4.5-6.7, desktop in use). A second
+round of each agreed within 6 ms at 100k and 20 ms at 500k on every phase.
+
+| Phase | 100k before | 100k after | 500k before | 500k after |
+|---|---|---|---|---|
+| Rust: watch registration | 9 | 10 | 45 | 44 |
+| Rust: read directory | 52 | 61 | 244 | 248 |
+| Rust: entry metadata | 24 | 26 | 110 | 119 |
+| Rust: sort | 25 | 14 | 161 | 89 |
+| Rust: encode reply | 21 | 16 | 115 | 72 |
+| Rust total | 131 | 125 | 674 | 579 |
+| Reply to webview + parse (`ipcAndParse`) | 58 | 22 | 376 | 101 |
+| Decode | 3 | 7 | 11 | 34 |
+| Project (filter, sort, peek) | 14 | 16 | 83 | 102 |
+| Settled → rows in DOM | 25 | 19 | 98 | 56 |
+| Rows → two frames | 17 | 15 | 27 | 24 |
+| **Open, complete** | **260** | **208** | **1,285** | **907** |
+
+The scan phases (read directory, entry metadata) did not change; their
+higher "after" values follow the higher load. An earlier run of the final
+code at the "before" session's load measured Rust total 105 / 550 ms and open
+194 / 873 ms. `ipcAndParse` before included Tauri dropping the returned
+listing after encoding it and before sending it: 1.5 M heap strings at 500k,
+134-146 ms (11-21 ms at 100k), measured by timing that drop in an
+instrumented build. Phases are medians of their own, so they do not sum
+exactly to the open time.
+
+Two phases got slower. Decoding builds every entry in JavaScript instead of
+taking objects from `JSON.parse` (+4 ms at 100k, +23 ms at 500k), and
+`project` rose by 2 / 19 ms: names are now substrings of one decoded column
+and paths are prefix + name concatenations, which the frontend's filter and
+sort pay to resolve the first time they read them.
+
+### Changes
+
+- `src-tauri/src/files/listing_reaper.rs`: the last owner of a listing of 10k+
+  entries is freed on a background thread (bounded queue of 4; a full queue
+  frees inline), which then returns the pages to the OS through
+  `memory_release`. Shared listings (still cached) free nothing and stay inline.
+- Binary reply (`directory_wire.rs`, `api/directory-wire.ts`): listings are
+  returned as raw bytes (`tauri::ipc::Response`): a JSON header, fixed-width
+  little-endian columns and UTF-8 string columns, each decoded with one
+  `TextDecoder` call and sliced per row. ASCII and non-ASCII names are
+  separate columns. The format is documented in `directory_wire.rs`; the Rust
+  encoder and the mock/test encoder (`api/directory-wire-encode.ts`, kept out
+  of the startup bundle) are byte-identical against
+  `tests/fixtures/directory-wire.json`.
+- `dir_listing.rs`: `par_sort_by_cached_key` from 8,192 entries (same order as
+  the stable sequential sort).
+- Frontend: `getSelectedEntries` copies the reactive selection once and
+  compares path lengths before hashing (a decoded path is a prefix + name
+  rope that hashing flattens); `pruneExpanded` skips its scan when no peek is
+  remembered; `isSystemHidden` checks name length before lowercasing.
+
+### Before and after
+
+End-to-end, complete median / p95 in ms, two interleaved rounds of n = 10
+per binary (round 1, round 2), on 2026-10-28 09:36-09:48. Before: `origin/dev`
+at `5942f66d` (which includes #1416); after: this change on top of it. Both
+release builds, same machine, fixtures and runner; 1-minute load average
+5.3-6.7 throughout (desktop in use).
+
+| Operation | Before | After |
+|---|---|---|
+| Open 1k | 35 / 37, 35 / 39 | 35 / 41, 34 / 40 |
+| Open 10k | 61 / 75, 61 / 70 | 55 / 70, 53 / 57 |
+| Open 100k | 295 / 329, 294 / 311 | 208 / 245, 205 / 239 |
+| Open 500k | 1,429 / 1,512, 1,395 / 1,480 | 907 / 975, 907 / 958 |
+| 100k: enter folder | 306 / 378, 295 / 344 | 203 / 231, 212 / 230 |
+| 100k: go up | 281 / 296, 277 / 296 | 187 / 193, 191 / 209 |
+| 100k: back | 278 / 311, 277 / 344 | 188 / 204, 194 / 248 |
+| 100k: forward | 279 / 312, 263 / 294 | 197 / 216, 193 / 203 |
+| 100k: sort Name → Size | 117 / 134, 114 / 143 | 118 / 139, 117 / 126 |
+| 100k: sort Size → Name | 75 / 86, 72 / 82 | 80 / 105, 93 / 101 |
+| 100k: scroll frame interval | 17 | 17 |
+
+Opening a 100k folder is 29-30% faster and a 500k folder 35-37% faster;
+navigating within a 100k folder 27-34% faster. Sorting by size is unchanged.
+Sorting back to name is slower by 5-21 ms (7-29%) in both rounds, consistent
+with the earlier session (66 → 75 ms): it is the same substring/rope cost as
+the `project` phase above, paid by the name comparison. It was accepted for
+the open and navigation gains; flattening names during decode would likely
+move that cost into every open instead (not measured).
+
+Memory (`--scenarios memory`, the #1416 budget flags, one session per binary,
+PSS, same conditions): both builds passed the budget. After navigating away,
+26 MB (100k) and 32 MB (500k) stay retained against 29 and 32 MB before. With
+the folder open, after the allocation-pressure step, the live cost per entry
+fell from 1,319 to 697 B (100k) and from 1,042 to 483 B (500k), and the app
+process measured 149 MB with the 500k folder open against 351-390 MB before
+(idle 148-151 MB): the reply no longer keeps a second copy of the entries alive
+while it is sent. `bun run perf:listing-heap`: 305 B/entry (317 before; budget
+380). A decoded entry's strings are substrings of the decoded columns, so one
+entry that outlives its listing (history, clipboard, another pane) keeps those
+column strings alive: up to roughly 10-20 MB for a 500k listing.
 
 ## Reproducing
 
@@ -163,6 +412,19 @@ env -u WAYLAND_DISPLAY GDK_BACKEND=x11 \
   xvfb-run -a --server-args="-screen 0 1920x1080x24" dbus-run-session -- \
   node scripts/perf-real-app.mjs --fixtures /tmp/te-perf-fixtures \
     --binary src-tauri/target/release/tauri-explorer --runs 20 --out e2e.json
+#    Per-phase breakdown (#1417): every open/nav scenario carries `phasesMs`; the
+#    runner sets TAURI_EXPLORER_LISTING_TIMING=1 so the app logs its native spans.
+#    `--scenarios open --open-sizes 100k,500k` limits a run to those opens.
+
+#    Memory attribution and budget (#1416): --scenarios memory, see "Budgets"
+env -u WAYLAND_DISPLAY GDK_BACKEND=x11 \
+  xvfb-run -a --server-args="-screen 0 1920x1080x24" dbus-run-session -- \
+  node scripts/perf-real-app.mjs --fixtures /tmp/te-perf-fixtures \
+    --binary src-tauri/target/release/tauri-explorer --scenarios memory \
+    --memory-sizes 100k,500k --memory-cycles 4 --settle-ms 15000 --gc-pressure-mb 4096 \
+    --max-retained-mb 80 --max-live-bytes-per-entry 1600 --out memory.json
+#    JS heap of the listing pipeline (no app build needed; WebKitGTK's jsc shell)
+bun run perf:listing-heap
 
 # 4. Rust layer (compile niced, then run; the env var adds the fixture folders)
 (cd src-tauri && nice -n 19 cargo bench --no-run && \

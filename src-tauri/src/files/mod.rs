@@ -44,6 +44,7 @@ pub mod linux_mount_watch;
 pub mod linux_volume_monitor;
 #[cfg(target_os = "linux")]
 pub mod linux_volumes;
+mod listing_reaper;
 pub mod media_preview;
 #[cfg(all(test, target_os = "linux"))]
 #[path = "../../test_support/mount_namespace.rs"]
@@ -182,6 +183,14 @@ pub enum FileKind {
 pub struct DirectoryListing {
     pub path: String,
     pub entries: std::sync::Arc<Vec<FileEntry>>,
+}
+
+impl Drop for DirectoryListing {
+    /// A large reply's entries are freed by `listing_reaper`, not on the
+    /// thread that dropped it: Tauri drops a reply before delivering it.
+    fn drop(&mut self) {
+        listing_reaper::release(std::mem::take(&mut self.entries));
+    }
 }
 
 /// Convert metadata to FileEntry, detecting symlinks.

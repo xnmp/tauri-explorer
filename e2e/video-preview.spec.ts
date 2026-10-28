@@ -44,10 +44,14 @@ for (const mode of ALL_VIEW_MODES) {
     await expect(player.locator(".video-time")).toHaveText("0:04 / 0:06");
     await player.getByRole("button", { name: "Mute video", exact: true }).click();
     expect(await video.evaluate(v => (v as HTMLVideoElement).muted)).toBe(true);
+    await player.locator(".volume").hover();
     await player.getByRole("slider", { name: "Video volume", exact: true }).fill("0.25");
     expect(await video.evaluate(v => [(v as HTMLVideoElement).volume, (v as HTMLVideoElement).muted])).toEqual([0.25,false]);
     await player.getByRole("button", { name: "View video fullscreen", exact: true }).click();
     await expect(page.locator(".preview-pane")).toHaveClass(/fullscreen/);
+    await page.mouse.move(0, 0);
+    await expect(player.locator(".volume-slider")).toBeHidden();
+    await player.locator(".volume").hover();
     for (const control of await player.locator(".video-controls button,.video-controls input").all()) {
       await expect(control).toBeInViewport();
       expect(await control.evaluate(element => {
@@ -87,12 +91,14 @@ for (const dock of ["right", "top", "bottom"]) {
     await expect(seek).toBeInViewport();
     await seek.fill("4");
     await expect.poll(async () => (await decodedColor(page))[2]).toBeGreaterThan(220);
+    await player.locator(".volume").hover();
     for (const control of await player.locator(".video-controls button,.video-controls input").all()) {
       await control.scrollIntoViewIfNeeded();
       await expect(control).toBeInViewport();
       expect(await control.evaluate(element => {
         const rect = element.getBoundingClientRect();
-        return element.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+        const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+        return element.contains(hit) || `${element.getAttribute("aria-label")} hit ${hit?.className} rect ${JSON.stringify(rect)}`;
       })).toBe(true);
     }
     await player.evaluate(element => { element.scrollTop = 0; });
@@ -106,6 +112,7 @@ for (const dock of ["right", "top", "bottom"]) {
   test(`video controls remain operable at 150% in narrow ${dock} dock`, async ({ page }) => {
     await page.setViewportSize({ width: 800, height: 600 });
     const player = await openVideo(page, "details", dock, 150);
+    await player.locator(".volume").hover();
     for (const control of [player.getByRole("button", { name: "Play video", exact:true }),
       player.getByRole("slider", { name:"Seek video", exact:true }), player.getByRole("button", { name:"Mute video", exact:true }),
       player.getByRole("slider", { name:"Video volume", exact:true }), player.getByRole("button", {name:"View video fullscreen",exact:true})]) {
@@ -289,4 +296,95 @@ test("unavailable source shows no Download action", async ({ page }) => {
   await expect(page.locator(".video-message")).toContainText("Video file is unavailable");
   await expect(page.getByRole("button", { name: "Download", exact: true })).toHaveCount(0);
   await page.screenshot({ path: "evidence/1011/unavailable-no-download.png" });
+});
+
+const sound = (page: Page) => page.locator(".video-preview video").evaluate(element => {
+  const video = element as HTMLVideoElement;
+  return { volume: Math.round(video.volume * 100) / 100, muted: video.muted };
+});
+test("the speaker icon mutes and restores the previous volume; its slider reveals on hover (#1425)", async ({ page }) => {
+  const player = await openVideo(page);
+  const speaker = player.locator(".volume-button");
+  const slider = player.getByRole("slider", { name: "Video volume", exact: true });
+  const seek = player.getByRole("slider", { name: "Seek video", exact: true });
+  const seekBefore = await seek.boundingBox();
+  const speakerBefore = await speaker.boundingBox();
+  await expect(slider).toBeHidden();
+  await player.locator(".volume").hover();
+  await expect(slider).toBeVisible();
+  // The pop-up overlays the player: nothing in the controls row moves or resizes.
+  expect(await seek.boundingBox()).toEqual(seekBefore);
+  expect(await speaker.boundingBox()).toEqual(speakerBefore);
+  const [speakerBox, sliderBox] = [(await speaker.boundingBox())!, (await slider.boundingBox())!];
+  expect(sliderBox.height).toBeGreaterThan(sliderBox.width * 2);
+  expect(sliderBox.y + sliderBox.height).toBeLessThanOrEqual(speakerBox.y);
+  expect(Math.abs(sliderBox.x + sliderBox.width / 2 - (speakerBox.x + speakerBox.width / 2))).toBeLessThan(2);
+  // Pressing near the top of the upright slider is loud, near the bottom quiet; the pointer
+  // crosses the hover bridge on the way, so the pop-up stays open.
+  await page.mouse.move(sliderBox.x + sliderBox.width / 2, sliderBox.y + 4, { steps: 4 });
+  await page.mouse.down(); await page.mouse.up();
+  await expect.poll(async () => (await sound(page)).volume).toBeGreaterThan(0.85);
+  await page.mouse.click(sliderBox.x + sliderBox.width / 2, sliderBox.y + sliderBox.height - 4);
+  await expect.poll(async () => (await sound(page)).volume).toBeLessThan(0.15);
+  await slider.fill("0.4");
+  expect(await sound(page)).toEqual({ volume: 0.4, muted: false });
+  await expect(slider).toHaveAttribute("aria-valuetext", "40%");
+  await expect(player.locator(".volume")).toHaveAttribute("data-level", "low");
+
+  await speaker.click();
+  expect((await sound(page)).muted).toBe(true);
+  await expect(speaker).toHaveAccessibleName("Unmute video");
+  await expect(speaker).toHaveAttribute("aria-pressed", "true");
+  await expect(player.locator(".volume")).toHaveAttribute("data-level", "muted");
+  await expect(slider).toHaveAttribute("aria-valuetext", "Muted");
+  await speaker.click();
+  expect(await sound(page)).toEqual({ volume: 0.4, muted: false });
+  await expect(speaker).toHaveAccessibleName("Mute video");
+
+  // Dragged to silence, the speaker brings back the last audible volume.
+  await slider.fill("0");
+  await expect(player.locator(".volume")).toHaveAttribute("data-level", "muted");
+  await speaker.click();
+  expect(await sound(page)).toEqual({ volume: 0.4, muted: false });
+
+  await page.mouse.wheel(0, -100);
+  await expect.poll(() => sound(page)).toEqual({ volume: 0.45, muted: false });
+  await page.mouse.wheel(0, 100);
+  await page.mouse.wheel(0, 100);
+  await expect.poll(() => sound(page)).toEqual({ volume: 0.35, muted: false });
+
+  await page.mouse.move(0, 0);
+  await expect(slider).toBeHidden();
+});
+test("the volume control is keyboard operable and Escape collapses its slider (#1425)", async ({ page }) => {
+  const player = await openVideo(page);
+  const speaker = player.locator(".volume-button");
+  const slider = player.getByRole("slider", { name: "Video volume", exact: true });
+  await player.getByRole("button", { name: "Play video", exact: true }).focus();
+  await page.keyboard.press("Tab");
+  await expect(speaker).toBeFocused();
+  await expect(slider).toBeVisible();
+  await page.keyboard.press("Enter");
+  expect((await sound(page)).muted).toBe(true);
+  await page.keyboard.press("Enter");
+  expect(await sound(page)).toEqual({ volume: 1, muted: false });
+  await page.keyboard.press("Tab");
+  await expect(slider).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await expect.poll(() => sound(page)).toEqual({ volume: 0.9, muted: false });
+  await expect(slider).toHaveAttribute("aria-valuetext", "90%");
+  await page.keyboard.press("Escape");
+  await expect(slider).toBeHidden();
+  await expect(speaker).toBeFocused();
+  // The speaker still owns volume keys while the slider is collapsed.
+  await page.keyboard.press("ArrowUp");
+  await expect.poll(() => sound(page)).toEqual({ volume: 0.95, muted: false });
+  await page.keyboard.press("Shift+Tab");
+  await expect(slider).toBeHidden();
+  await page.keyboard.press("Tab");
+  await expect(slider).toBeVisible();
+  if (process.env.CAPTURE_EVIDENCE) {
+    await player.locator(".video-controls").screenshot({ path: "screenshots/feat/video-volume-control/volume-control-expanded-keyboard.png" });
+  }
 });

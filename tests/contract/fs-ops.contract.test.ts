@@ -11,7 +11,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { DirectoryListing, FileMutationReceipt } from "../../src/lib/domain/file";
-import { decodeDirectoryListing, type CompactDirectoryListing } from "$lib/api/directory-wire";
+import { decodeDirectoryListing, type DirectoryListingBytes } from "$lib/api/directory-wire";
 
 vi.stubGlobal("window", {} as unknown as Window & typeof globalThis);
 const { mockInvoke } = await import("../../src/lib/api/mock-invoke");
@@ -33,7 +33,7 @@ async function freshDir(): Promise<string> {
 }
 
 const list = async (path: string) =>
-  decodeDirectoryListing(await mockInvoke<CompactDirectoryListing>("list_directory", { path }));
+  decodeDirectoryListing(await mockInvoke<DirectoryListingBytes>("list_directory", { path }));
 
 describe("fs-ops contract — mock agrees with real backend (fixtures)", () => {
   it("list_directory: directories first, then case-insensitive by name (dotfiles kept)", async () => {

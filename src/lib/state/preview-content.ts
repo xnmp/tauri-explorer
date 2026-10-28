@@ -3,7 +3,9 @@ import type { FileEntry } from "$lib/domain/file";
 import { classifyPreview, shouldHoldPreviewImage, type PreviewKind } from "$lib/domain/preview-kind";
 import { parseCsvPreview, type CsvPreview } from "$lib/domain/csv-preview";
 import { highlightCode, hasLanguageSupport } from "$lib/domain/syntax-highlight";
-import { renderMarkdownWithMath } from "$lib/domain/markdown";
+import { renderMarkdownBlocks } from "$lib/domain/markdown";
+import { revealProgressively, type FrameScheduler } from "$lib/domain/progressive-reveal";
+import { createVersionedLru } from "$lib/domain/versioned-lru";
 import { readTextFile, fetchDirectory } from "$lib/api/files";
 import { listArchiveContents } from "$lib/api/archive";
 import { getVideoThumbnailData } from "$lib/api/thumbnails";
@@ -28,7 +30,9 @@ export type ImageContent = {
 };
 type TextContent =
   | ({ readonly kind: "csv"; readonly csv: CsvPreview } & Truncation)
-  | ({ readonly kind: "markdown" | "code"; readonly html: string } & Truncation)
+  /** `partial` while later blocks are still being revealed (#1418). */
+  | ({ readonly kind: "markdown"; readonly blocks: readonly string[]; readonly partial: boolean } & Truncation)
+  | ({ readonly kind: "code"; readonly html: string } & Truncation)
   | ({ readonly kind: "text"; readonly text: string } & Truncation);
 
 /** Viewers are supplied by the UI layer; state does not import components. */
@@ -52,18 +56,43 @@ export interface PreviewContentOptions {
   readonly imageOptions: PreviewImageOptions;
 }
 
-async function textContent(file: FileEntry, kind: PreviewKind, text: string): Promise<TextContent> {
+type MarkdownContent = Extract<TextContent, { kind: "markdown" }>;
+
+/** Rendered Markdown a pane has shown, by path and file version (#1418). */
+const MARKDOWN_CACHE_LIMITS = { maxEntries: 32, maxWeight: 8_000_000 };
+const markdownWeight = (content: MarkdownContent) => content.blocks.reduce((sum, block) => sum + block.length, 0);
+
+/** Frame boundary for progressive Markdown reveal: the task after the next
+ *  rendered frame. A hidden document renders no frames, so it only yields; a
+ *  long safety timer bounds a visible webview that stops producing frames. */
+const browserFrames: FrameScheduler = {
+  now: () => performance.now(),
+  nextFrame: () => new Promise(resolve => {
+    let pending = true;
+    const done = () => { if (pending) { pending = false; resolve(); } };
+    if (typeof requestAnimationFrame !== "function" || typeof document === "undefined" || document.visibilityState === "hidden") {
+      setTimeout(done, 0);
+      return;
+    }
+    const fallback = setTimeout(done, 1000);
+    requestAnimationFrame(() => setTimeout(() => { clearTimeout(fallback); done(); }, 0));
+  }),
+};
+
+function previewLines(text: string): { displayText: string } & Truncation {
+  const lines = text.split("\n");
+  return {
+    displayText: lines.length > 200 ? lines.slice(0, 200).join("\n") : text,
+    truncatedLines: lines.length > 200 ? lines.length : 0, truncatedLabel: "lines",
+  };
+}
+
+function textContent(file: FileEntry, kind: PreviewKind, text: string): TextContent {
   if (kind === "csv") {
     const csv = parseCsvPreview(text);
     if (csv) return { kind: "csv", csv, truncatedLines: csv.totalRows > csv.rows.length ? csv.totalRows : 0, truncatedLabel: "rows" };
   }
-  const lines = text.split("\n");
-  const displayText = lines.length > 200 ? lines.slice(0, 200).join("\n") : text;
-  const truncation = { truncatedLines: lines.length > 200 ? lines.length : 0, truncatedLabel: "lines" as const };
-  if (kind === "markdown" && displayText.length < 200_000) {
-    try { return { kind: "markdown", html: await renderMarkdownWithMath(displayText), ...truncation }; }
-    catch { /* Keep the existing highlighted/plain-text fallback. */ }
-  }
+  const { displayText, ...truncation } = previewLines(text);
   if (displayText.length < 50_000 && hasLanguageSupport(file.name)) {
     try { return { kind: "code", html: highlightCode(displayText, file.name), ...truncation }; }
     catch { /* Plain text remains previewable if highlighting fails. */ }
@@ -74,10 +103,40 @@ async function textContent(file: FileEntry, kind: PreviewKind, text: string): Pr
 export function createPreviewContentLoader<PdfViewer, VideoViewer>(
   revokeObjectUrl: (url: string) => void,
   viewers: PreviewViewers<PdfViewer, VideoViewer>,
+  frames: FrameScheduler = browserFrames,
 ) {
   type Content = PreviewContent<PdfViewer, VideoViewer>;
   const lifetime = createPreviewLifetime(revokeObjectUrl);
   const cache = createPreviewImageCache(revokeObjectUrl);
+  const markdownCache = createVersionedLru<MarkdownContent>(MARKDOWN_CACHE_LIMITS, markdownWeight);
+  const textVersion = (file: FileEntry, options: PreviewContentOptions) => `${file.modified}|${file.size}|${options.localRevision}`;
+
+  /**
+   * Markdown is typeset and shown a slice per frame, starting the frame after
+   * the selection, and abandoned as soon as another selection replaces it
+   * (#1418). Falls back to highlighted/plain text when rendering fails.
+   */
+  async function markdownContent(file: FileEntry, text: string, request: PreviewRequest, options: PreviewContentOptions, publish: (content: Content) => void): Promise<Content | null> {
+    const { displayText, ...truncation } = previewLines(text);
+    if (displayText.length >= 200_000) return textContent(file, "markdown", text);
+    try {
+      const rendered = await renderMarkdownBlocks(displayText);
+      const blocks = await revealProgressively(
+        rendered.blocks,
+        () => lifetime.isCurrent(request),
+        shown => publish({ kind: "markdown", blocks: shown, partial: true, ...truncation }),
+        frames,
+      );
+      if (!blocks) return null;
+      const content: MarkdownContent = { kind: "markdown", blocks, partial: false, ...truncation };
+      // A render without KaTeX (chunk load failed) is retried on the next visit.
+      if (!rendered.degraded) markdownCache.set(file.path, textVersion(file, options), content);
+      return content;
+    } catch {
+      if (!lifetime.isCurrent(request)) return null;
+      return textContent(file, "markdown", text);
+    }
+  }
   const fullResolution = createFullResolutionUpgrade(async (path, bust, owner) => {
     const image = cache.lookup(path, bust, {}) ?? await loadPreviewImage(path, bust, owner);
     if (image.status === "ready" && !owner.isCurrent()) {
@@ -113,7 +172,13 @@ export function createPreviewContentLoader<PdfViewer, VideoViewer>(
     return imageContent(request, file, bust, image);
   }
 
-  async function loadKind(file: FileEntry, kind: PreviewKind, request: PreviewRequest, options: PreviewContentOptions): Promise<Content | null> {
+  async function showRemembered(content: MarkdownContent, request: PreviewRequest, publish: (content: Content) => void): Promise<Content | null> {
+    const shown = await revealProgressively(content.blocks, () => lifetime.isCurrent(request),
+      blocks => publish({ ...content, blocks, partial: true }), frames);
+    return shown && content;
+  }
+
+  async function loadKind(file: FileEntry, kind: PreviewKind, request: PreviewRequest, options: PreviewContentOptions, publish: (content: Content) => void): Promise<Content | null> {
     switch (kind) {
       case "directory": {
         let path = file.path;
@@ -180,7 +245,8 @@ export function createPreviewContentLoader<PdfViewer, VideoViewer>(
         if (!result.ok) return { kind: "error", message: result.error };
         // HTML is already bounded by the reader. Do not truncate its structure
         // at the source-preview line limit or syntax-highlight it on the UI thread.
-        return kind === "html" ? { kind, document: result.data } : await textContent(file, kind, result.data);
+        if (kind === "html") return { kind, document: result.data };
+        return kind === "markdown" ? markdownContent(file, result.data, request, options, publish) : textContent(file, kind, result.data);
       }
       case "unsupported": return { kind };
     }
@@ -205,7 +271,12 @@ export function createPreviewContentLoader<PdfViewer, VideoViewer>(
         }
       }
       publish(hold ? { ...image, held: true, note: null, rendition: null } : { kind: "loading" });
-      const content = await loadKind(file, kind, request, options);
+      // A remembered document skips the read and typesetting, but is still
+      // shown progressively: its layout is the larger cost (#1418).
+      const remembered = kind === "markdown" ? markdownCache.get(file.path, textVersion(file, options)) : undefined;
+      const content = remembered
+        ? await showRemembered(remembered, request, publish)
+        : await loadKind(file, kind, request, options, publish);
       if (!content || !lifetime.isCurrent(request)) return;
       if (content.kind === "error") lifetime.clearBlob();
       publish(content);
@@ -221,6 +292,6 @@ export function createPreviewContentLoader<PdfViewer, VideoViewer>(
       lifetime.invalidate(); lifetime.clearBlob(); fullResolution.showing(null);
       return { kind: "empty" };
     },
-    dispose(): void { lifetime.dispose(); cache.clear(); fullResolution.showing(null); },
+    dispose(): void { lifetime.dispose(); cache.clear(); markdownCache.clear(); fullResolution.showing(null); },
   };
 }

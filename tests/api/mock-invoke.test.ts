@@ -1,12 +1,12 @@
 import { describe, it, expect, vi } from "vitest";
 import { mockInvoke } from "../../src/lib/api/mock-invoke";
-import { decodeDirectoryListing, type CompactDirectoryListing } from "$lib/api/directory-wire";
+import { decodeDirectoryListing, type DirectoryListingBytes } from "$lib/api/directory-wire";
 import { MOCK_LOCAL_KEYS } from "../../src/lib/api/mock-control";
 
 describe("mockInvoke — native file drag", () => {
   it("rejects an unavailable native start without reporting completion or transferring files", async () => {
     const directory = "/home/user/Documents";
-    const paths = async () => decodeDirectoryListing(await mockInvoke<CompactDirectoryListing>(
+    const paths = async () => decodeDirectoryListing(await mockInvoke<DirectoryListingBytes>(
       "list_directory", { path: directory },
     )).entries.map(entry => entry.path);
     const before = await paths();
@@ -44,7 +44,7 @@ describe("mockInvoke — clipboard image paste", () => {
 
     expect(path).toBe(`${directory}/clipboard-image.png`);
 
-    const listing = decodeDirectoryListing(await mockInvoke<CompactDirectoryListing>("list_directory", {
+    const listing = decodeDirectoryListing(await mockInvoke<DirectoryListingBytes>("list_directory", {
       path: directory,
     }));
     expect(listing.entries.some((e) => e.path === path)).toBe(true);

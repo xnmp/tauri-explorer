@@ -183,7 +183,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-repo-watch.ts` — shared graph/SCM adapter over ordered watch ownership; retains unique native leases until acknowledged release, including retries.
 - `git-graph-coverage.ts` — repository observation leases shared by pending graph reads and retained snapshots; listener/watch acknowledgement precedes reads, final release drains acquisition, and UNC polling roots stay uncached.
 - `directory-watch.ts` — generic ordered path-lease ownership plus the directory adapter; retains exact release authority across failed teardown and drains late acquisition; reused by Git, thumbnails, Miller columns and drives.
-- `src/lib/state/preview-content.ts` — file-kind loaders produce one PreviewContent union; owns per-pane image cache/lifetime, held-image replacement, lazy PDF/video viewers, text fallbacks and rendition upgrades.
+- `src/lib/state/preview-content.ts` — file-kind loaders produce one PreviewContent union; owns per-pane image cache/lifetime, held-image replacement, progressive Markdown reveal + rendered-Markdown LRU (#1418), lazy PDF/video viewers, text fallbacks and rendition upgrades.
 - `preview-lifetime.ts` — full-revision preview request and object-URL ownership; stale results cannot publish or revoke a replacement.
 - `preview-image.ts` — Preview image load for files and plugin targets: optional display-sized rendition first (`get_preview_image`, any failure falls back to the original, #1054), then asset protocol + off-screen decode, then the backend `read_image_data_url` fallback (paths outside the asset scope, cloud placeholders; the only path in browser mode); blob ownership through the caller's lifetime (#1033).
 - `preview-image-cache.ts` — pane-scoped memory of shown Preview images per file version (path + mtime/size/local revision; original or rendition-at-edge): a revisit is a synchronous hit with no request; bounded by count and decoded pixels, never evicts the on-screen entry, owns and revokes its blobs, cleared on unmount (#1014).
@@ -355,7 +355,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/api/copy-session.ts` — the ordered-session transport: one acknowledged request with request-local events, single-use conflict replies, cancellation handshake and native history settlement; copy and move share its registry.
 - `src/lib/api/move-session.ts` — the ordered move request over that transport.
 - `file-mutations.ts` — acknowledged forward mutation IPC; applies the settled native history summary before returning a receipt or warning.
-- `directory-wire.ts` — validates compact native listing columns and reconstructs exact immutable domain entries.
+- `directory-wire.ts` — decodes the binary native listing format, validating every column, and reconstructs exact immutable domain entries.
+- `directory-wire-encode.ts` — byte-identical TypeScript encoder of that format for the mock backend and tests, kept out of the startup bundle.
 - `files.ts` — all file-op IPC (list, create, rename, copy, move, delete, estimate), including typed per-path trash/restore outcomes. Hot.
 - `media.ts` — `get_media_durations` IPC wrapper (Details Length column, #995).
 - `frontend-log.ts` — forwards diagnosable webview failures to the native rotating log.
@@ -491,7 +492,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `fuzzy-score.ts` — fuzzy match scorer for QuickOpen.
 - `command-keywords.ts` — hidden palette search synonyms per command ID (#1247).
 - `command-score.ts` — pure command-palette scorer (`scoreCommand`, frecency points); split from `fuzzy-score.ts` so it stays out of the startup graph (#1247).
-- `palette-selection.ts` — command-palette highlight by command id over a live result list (#1236).
+- `palette-selection.ts` — command-palette highlight by command id over a live result list (#1236).  Also the clamped PgUp/PgDn step shared with Quick Open (#1419).
 - `quick-open-search.ts` — trailing scheduler for the expensive recursive Quick Open search; local results remain immediate while a rapid query produces one backend request (#600).
 - `lazy-dialog.ts` — failure-safe loading for code-split dialogs: rejected import (#584) or mount crash via svelte:boundary (#585) rolls back the dialog open-flag + notifies, preventing the hasModalOpen hotkey soft-lock.
 - `theme-list.ts` — dedupe discovered themes by id, last wins (user CSS overrides built-ins; duplicate ids crashed ThemePicker's keyed each, #585).
@@ -563,11 +564,14 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `csv-preview.ts` — quoted CSV parser for PreviewPane table data, bounded to the preview's data-row limit (#666); `csvRowHeight` / `csvColumnTemplate` table layout.
 - `html-preview-zoom.ts` — pure HTML preview page-zoom model: unmeasurable sandboxed frame scales a fixed ≥1280px desktop layout like an image (#1361), Fit, zoom stops and labels (#1352).
 - `pdf-preview.ts` — pure PDF fit, zoom-anchor, measured pointer coordinates, pan bounds and safe-link policy (#728–#730).
-- `markdown.ts` — safe markdown render for preview.
+- `markdown.ts` — safe markdown render for preview; `renderMarkdownBlocks` yields lazily typeset top-level blocks (#1418).
+- `progressive-reveal.ts` — reveals a lazily rendered document one bounded slice per frame, starting the frame after the request and stopping once it is stale (#1418).
+- `versioned-lru.ts` — bounded LRU holding one version per key; storing a version drops the older one (Markdown preview cache, #1418).
 - `markdown-math.ts` — Marked extension for TeX math (`$…$`, `\(…\)`, `$$…$$`, `\[…\]`); typesetter injected (#1393).
 - `katex-typesetter.ts` — lazy KaTeX typesetter + bundled woff2 fonts, loaded only for math documents (#1393).
 - `marquee-rect.ts` — marquee band geometry as compositor-only `transform`s for five container-sized layers (fill + four 1px edges sized to the client box, scaled down so fractional zoom rasterises exactly); a resized band element repainted its layer over every image tile per frame on WebKitGTK (#1051).
 - `zoom.ts` — CSS zoom level utils.
+- `anchored-popup.ts` — rect-space placement of a fixed pop-up above an anchor, with the CSS offset solved from a measured offset response (zoom/engine independent); used by the video volume pop-up (#1425).
 - `raf-coalesce.ts` — coalesce high-freq value streams via rAF.
 - `scroll-jank-monitor.ts` — pure rAF-gap sampler (rAF/cancel injected) reporting long-frame counts for scroll-jank diagnostics; wired into `TilesView.svelte` (#593).
 - `theme-from-palette.ts` — build theme from extracted image palette (#203); text tokens solved in OKLCH for WCAG AA on every composited surface (#791).
@@ -651,6 +655,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `thumbnails.rs` — image/video thumbnail generation + cache; `with_decode_gate` clamps concurrent decodes to `cores/4` (2-8, override `TAURI_EXPLORER_DECODE_PERMITS`, 0=off) and lowers decode-thread priority to avoid starving the webview compositor; `diag` module logs slow (`>100ms`) requests + rolling aggregates (#593); disk-cache pruning by write count or bytes written. Hot.
 - `thumbnails/preview_rendition.rs` — `get_preview_image`: bounded header-only check, then a cached display-sized JPEG (4:4:4) / PNG (premultiplied downscale) rendition of large still rasters, ICC profile kept, in the thumbnail cache's `previews/` subdirectory with its own 300 MB budget (namespaced key, inflight lock, decode gate); small/animated/CMYK/GIF/AVIF/SVG/rotated non-JPEG stay originals. `allow_rendition_assets` (called first in `lib.rs` setup) adds that directory to the asset scope, which `$HOME/**/*` misses on Unix (leading-dot rule) (#1054).
 - `media_duration.rs` — `get_media_durations`: native MP4 `mvhd` / Matroska `Info/Duration` header parsing with bounded sibling scans, ffmpeg `Duration:` fallback via `thumbnails::ffmpeg_path` with a kill deadline and capped stderr; bounds per ADR 0028 (#995).
+- `memory_release.rs` — after a large listing reply is encoded (and once more at the next listing), returns glibc arenas' freed pages with `malloc_trim` on Linux/glibc; a no-op elsewhere (#1416).
 - `palette.rs` — dominant-color extraction for themes (#203).
 - `src-tauri/src/platform.rs` — host capabilities that shape recorded history: `TRASH_RESTORE_SUPPORTED` and the `TrashRestore` value passed to history admission (macOS has no trash restore).
 - `wallpaper.rs` — set desktop wallpaper (mac/Linux/Windows).
@@ -666,11 +671,12 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `portal/parent_identifier.rs` — pure, bounded validation of X11 XIDs and Wayland exported handles.
 - `portal/parent.rs` — validates portal window identifiers and attaches GTK picker surfaces to native Wayland/X11 parents before mapping.
 - `shared_history/mod.rs`, `shared_history/model.rs`, `shared_history/store.rs` — async IPC, pure bounded history policy and cross-process SQLite transactions.
-- `portal.rs` — xdg-desktop-portal FileChooser backend (Linux).
+- `portal.rs` — xdg-desktop-portal FileChooser backend (Linux); holds the process per request and executes the idle policy's timers, bus-name release and exit (#1427).
+- `portal/idle.rs` — pure idle-exit policy for the D-Bus-activated portal: request holds, generation-checked idle timers, open-window postponement, release-name-then-exit, replaced-executable fast exit (#1427).
 - `crash_report.rs` — local crash capture (#184).
 - `load_diagnostics/mod.rs` — slow directory-load records (#1022): merges the frontend record with the native trace and blocker and hands it to `persist.rs`; culprit naming (including an IPC-reply gap after a settled native command); `begin_listing` arms the fallback for watched listings.
 - `load_diagnostics/fallback.rs` — native-only record for a watched listing still in flight after 7 s, settled with its outcome when the listing finishes; background refreshes are never armed.
-- `load_diagnostics/reply.rs` — `TracedReply`: keeps a listing's trace open until Tauri serializes the reply, timing the encoding as the `serialize` phase.
+- `load_diagnostics/reply.rs` — `encoded_reply`: encodes a listing reply inside the command under its trace, timing the encoding as the `serialize` phase, and settles the trace.
 - `load_diagnostics/trace.rs` — in-flight native listing traces: phase timeline, per-entry progress and stalled-entry slots, finished ring; untraced listings are no-ops.
 - `load_diagnostics/filesystem.rs` — filesystem type/category for a path from the mount table (Linux mountinfo, macOS `getfsstat(MNT_NOWAIT)`, Windows UNC/`GetDriveTypeW`), after resolving symlinks that live on local mounts only; never stats the possibly hung directory.
 - `load_diagnostics/store.rs` — bounded rotating JSON records under `<app log dir>/slow-loads/` (newest 20, replace by trace ID).
@@ -756,7 +762,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `mod.rs` — files module root + re-exports; `FileEntry` incl. `is_git_repo` and `metadata_to_entry`'s one-stat-per-directory git-repo-root detection (#463).
 - `dir_listing.rs` — cached directory reads and fresh complete snapshots with owned observation. Hot.
-- `directory_wire.rs` — versioned column serialization with exact path-prefix factoring; native caches retain ordinary entries.
+- `directory_wire.rs` — binary listing encoding (TEL1 header + columns) with exact path-prefix factoring; native caches retain ordinary entries. Reports each encoded listing to `memory_release.rs`.
+- `listing_reaper.rs` — frees large unshared listings on a background thread so the IPC reply is not held behind their drop (#1417).
 - `directory_cache.rs` — bounded shared directory snapshots; request-owned publication permits reject invalidated, evicted and superseded reads.
 - `src-tauri/src/files/copy_session.rs` — the ordered-session engine: async orchestration with a supervisor-owned per-item receipt ledger, generic over the `Work` effect; a crate-private observer exposes stable phase boundaries to deterministic cancellation contracts.
 - `src-tauri/src/files/move_session.rs` — the move effect for that engine: physical inspection, same-directory no-op, subtree rejection, un-prompted-overwrite refusal, and an incomplete source removal reported as uncertain rather than success.
@@ -976,7 +983,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `scripts/ci-jobs.mjs` — `report`: ci.yml gate jobs print each upstream shard's result and the step a failed/cancelled one stopped at (Actions API, diagnostics only); `auto-rerun`: decides whether `.github/workflows/ci-auto-rerun.yml` re-runs a failed first attempt (only install/setup-step failures, once). Contracts in `tests/ci-jobs.test.ts` (#1367).
 - `scripts/release-ci-gate.mjs` — run by `.github/workflows/release.yml` before tagging/building: requires a dev commit with the released tree to have a successful dev-push CI run and `smoke (ubuntu-latest)`, waiting for in-progress runs; contracts in `tests/release-ci-gate.test.ts` (#1367).
 - `scripts/perf-fixtures.mjs` — deterministic flat large-folder fixtures (1k/10k/100k/500k sparse files, mixed names/sizes/mtimes, `manifest.json`) in a temp root outside the repo; `create`/`remove` (#983, `docs/performance.md`).
-- `scripts/perf-real-app.mjs` — end-to-end folder-open and navigation timings (n/median/p95) against a real binary through tauri-driver under Xvfb with private XDG dirs; in-page MutationObserver + animation-frame marks, no app instrumentation (#983, `docs/performance.md`).
+- `scripts/perf-real-app.mjs` — end-to-end folder-open and navigation timings (n/median/p95) against a real binary through tauri-driver under Xvfb with private XDG dirs; in-page MutationObserver + animation-frame marks, no app instrumentation (#983, `docs/performance.md`); `--scenarios memory` samples per-process RSS/PSS and anonymous memory by allocator, with retained/live-per-entry budget flags (#1416).
+- `scripts/perf-listing-heap.mjs` — live JavaScriptCore heap per entry of the flat listing pipeline (decode, filter, sort, flat peek projection/rows), bundled from `src/lib` and run in WebKitGTK's `jsc` shell; `bun run perf:listing-heap` enforces the budget (#1416).
 - `.github/actions/tauri-linux-deps/action.yml` + `apt.sh` — the one place CI installs Tauri's Linux apt packages: per-attempt timeout with retries and a `.deb` cache keyed by package list and simulated install plan (#1371). Contracts in `tests/ci-apt-install.test.ts`.
 - `.github/workflows/ci-auto-rerun.yml` — `workflow_run` re-run of install/setup-bound CI and native-smoke failures, first attempt only (#1367).
 - `.github/workflows/e2e-shard-timings.yml` — weekly re-record of `scripts/e2e-shard-timings.json` from successful dev push logs, opened as a PR (#1367).

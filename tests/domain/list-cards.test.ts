@@ -571,7 +571,7 @@ describe("full-flow List peeks (#1324)", () => {
       expect(item.entryIndex).toBe(index);
       expect(model.entryOffset[index]).toBe(-1);
     });
-    const deep = tree.indices.get("/r/Career/Applications/tracker.xlsx")!;
+    const deep = tree.entries.findIndex(entry => entry.path === "/r/Career/Applications/tracker.xlsx");
     expect(model.items[model.entryItem[deep]].entryIndex).toBe(deep);
     expect(model.layout.byIndex[model.entryItem[tree.entries.length - 2]].column).toBeGreaterThan(0);
     expect(resolveListMove({ key: "End", ctrlKey: false, metaKey: false, shiftKey: false, altKey: false }, model, 0, 500)).toMatchObject({ kind: "focus", index: tree.entries.length - 1 });
@@ -774,7 +774,7 @@ describe("spill stage: +N more never moves the folder's header (#1365)", () => {
     const R = 10;
     const { rows, tree } = rowsFor([F("a"), D("Big")], ["Big"], bigListing(80));
     const model = stageModel(rows, "spill", R);
-    const at = (path: string) => tree.indices.get(`${ROOT}/${path}`)!;
+    const at = (path: string) => tree.entries.findIndex(entry => entry.path === `${ROOT}/${path}`);
     const key = (name: string) => ({ key: name, ctrlKey: false, metaKey: false, shiftKey: false, altKey: false });
     // Header on row 1: 8 rows below it, then 9 more rows plus +N more in column 1.
     const shown = listSpillCap(R, 1) - 1;

@@ -6,7 +6,7 @@
  * dedicated sibling modules and are imported directly by feature consumers.
  */
 
-import { decodeDirectoryListing, type CompactDirectoryListing } from "./directory-wire";
+import { decodeDirectoryListing, decodeDirectoryListingExtra, type DirectoryListingBytes } from "./directory-wire";
 import { fileBatchError, type FileBatchOutcome } from "$lib/domain/file-batch-outcome";
 import type { DirectoryListing, FileEntry, FileMutationReceipt } from "$lib/domain/file";
 import { E2E_HOOKS_ENABLED } from "$lib/api/e2e-hooks";
@@ -108,8 +108,8 @@ export async function fetchDirectory(
     }
   }
   try {
-    const data = await invoke<CompactDirectoryListing>("list_directory", { path });
-    return { ok: true, data: decodeDirectoryListing(data) };
+    const { path: listed, entries } = decodeDirectoryListing(await invoke<DirectoryListingBytes>("list_directory", { path }));
+    return { ok: true, data: { path: listed, entries } };
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }
@@ -437,7 +437,7 @@ export async function loadDirectory(
 
   const settleListing = E2E_HOOKS_ENABLED ? listingInterceptor?.begin(path) ?? null : null;
 
-  let acquired: (CompactDirectoryListing & { watch_lease?: DirectoryWatchLease }) | undefined;
+  let acquired: DirectoryListingBytes | undefined;
   try {
     const native = isTauri();
     const observed = Boolean(observation && native);
@@ -445,16 +445,16 @@ export async function loadDirectory(
     const sessionId = observed ? await getNativeResourceSession() : undefined;
     const traced = trace ? { traceId: trace.id, traceWatched: trace.watched } : {};
     const payload = observed
-      ? await invoke<CompactDirectoryListing & { watch_lease?: DirectoryWatchLease }>("start_observed_directory", {
-          path, sessionId, ...traced,
-        })
-      : await invoke<CompactDirectoryListing & { watch_lease?: DirectoryWatchLease }>("list_directory_fresh", { path, ...traced });
+      ? await invoke<DirectoryListingBytes>("start_observed_directory", { path, sessionId, ...traced })
+      : await invoke<DirectoryListingBytes>("list_directory_fresh", { path, ...traced });
     acquired = payload;
-    if (observed && !isValidWatchLease(payload.watch_lease)) {
+    trace?.phase("decode");
+    const { path: listed, entries, extra } = decodeDirectoryListing(payload);
+    const watchLease = extra.watch_lease as DirectoryWatchLease | undefined;
+    if (observed && !isValidWatchLease(watchLease)) {
       throw new Error("Invalid native directory watch lease");
     }
-    trace?.phase("decode");
-    const data: ObservedDirectoryListing = { ...decodeDirectoryListing(payload), watch_lease: payload.watch_lease };
+    const data: ObservedDirectoryListing = { path: listed, entries, watch_lease: watchLease };
     if (data.watch_lease) publishReadyDirectoryWatch(data.watch_lease.path);
     if (settleListing) {
       trace?.phase("test-hold");
@@ -471,9 +471,8 @@ export async function loadDirectory(
     // owner responsible for releasing late leases, including release retries. A
     // malformed lease (the failure this catch is also reached for) has nothing
     // safely releasable — only a well-formed lease is discarded.
-    if (acquired?.watch_lease && isValidWatchLease(acquired.watch_lease)) {
-      observation?.discard(acquired.watch_lease);
-    }
+    const lease = acquired ? decodeDirectoryListingExtra(acquired)?.watch_lease : undefined;
+    if (isValidWatchLease(lease)) observation?.discard(lease);
     const error = extractError(err);
     console.warn("[navigation] list_directory_fresh failed", {
       path,

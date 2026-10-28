@@ -168,7 +168,7 @@
     return settingsStore.showHidden ? content.entries
       : content.entries.filter((e) => !e.name.startsWith(".") && !isSystemHidden(e.name));
   });
-  const previewLoading = $derived(content.kind === "loading" ||
+  const previewLoading = $derived(content.kind === "loading" || (content.kind === "markdown" && content.partial) ||
     ((content.kind === "image" || content.kind === "audio-cover") && content.held));
   // Image metadata keeps its geometry while loading and when source pixels
   // are unavailable, without attributing held dimensions to the new selection.

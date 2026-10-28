@@ -8,8 +8,9 @@ export function resolveFileCursor(
   cursorPath: string | null,
   selectedPaths: ReadonlySet<string>,
 ): FileEntry | undefined {
-  return entries.find((entry) => entry.path === cursorPath)
-    ?? entries.find((entry) => selectedPaths.has(entry.path))
+  // Each skipped scan would hash every entry's path (#1416).
+  return (cursorPath === null ? undefined : entries.find((entry) => entry.path === cursorPath))
+    ?? (selectedPaths.size ? entries.find((entry) => selectedPaths.has(entry.path)) : undefined)
     ?? entries[0];
 }
 

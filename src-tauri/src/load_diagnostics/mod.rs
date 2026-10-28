@@ -31,7 +31,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use trace::{NativeSnapshot, Outcome, TraceScope};
 
-pub(crate) use reply::TracedReply;
+pub(crate) use reply::encoded_reply;
 pub(crate) use trace::{Phase, TraceHandle};
 
 /// Later than the frontend's 5 s threshold so the richer frontend record wins.

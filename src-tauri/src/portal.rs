@@ -9,13 +9,19 @@
 //! Activation: `tauri-explorer --file-chooser-portal` (see packaging/ for
 //! the .portal and D-Bus .service files and README for portals.conf).
 //! The module is gated to Linux at the `mod` declaration in lib.rs.
+//!
+//! Lifetime: the bus activates the service on demand, and it exits once idle
+//! (`idle`), so neither a headless process nor an upgraded-away binary
+//! outlives its requests (#1427).
 
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::time::Duration;
 use tauri::AppHandle;
 
+mod idle;
 mod parent;
 mod parent_identifier;
 use zbus::zvariant::{ObjectPath, OwnedValue, Value};
@@ -114,7 +120,11 @@ struct PickerRequest {
 }
 
 /// Open a picker window and wait for the user's verdict.
-async fn run_picker(app: &AppHandle, req: PickerRequest) -> PickerOutcome {
+async fn run_picker(
+    app: &AppHandle,
+    lifetime: &Arc<Lifetime>,
+    req: PickerRequest,
+) -> PickerOutcome {
     let token = format!(
         "picker-{}-{}",
         std::process::id(),
@@ -141,6 +151,9 @@ async fn run_picker(app: &AppHandle, req: PickerRequest) -> PickerOutcome {
     }
 
     let app_for_window = app.clone();
+    // The window holds the process until it is destroyed, which completes
+    // after the request has been answered.
+    let window_hold = lifetime.hold();
     let window_token = token.clone();
     let title = if req.title.is_empty() {
         "Select".to_string()
@@ -169,22 +182,12 @@ async fn run_picker(app: &AppHandle, req: PickerRequest) -> PickerOutcome {
                         log::warn!("portal: could not attach picker to source window: {error}");
                     }
                 }
-                if let Err(error) = window.show() {
-                    log::error!("portal: could not show picker: {error}");
-                    resolve(
-                        &window_token,
-                        PickerOutcome {
-                            cancelled: true,
-                            paths: vec![],
-                        },
-                    );
-                    let _ = window.close();
-                    return;
-                }
                 // Closing the window without choosing = cancel.
                 let close_token = window_token.clone();
+                let window_hold = Mutex::new(Some(window_hold));
                 window.on_window_event(move |event| {
                     if matches!(event, tauri::WindowEvent::Destroyed) {
+                        window_hold.lock().unwrap_or_else(|p| p.into_inner()).take();
                         resolve(
                             &close_token,
                             PickerOutcome {
@@ -194,6 +197,17 @@ async fn run_picker(app: &AppHandle, req: PickerRequest) -> PickerOutcome {
                         );
                     }
                 });
+                if let Err(error) = window.show() {
+                    log::error!("portal: could not show picker: {error}");
+                    resolve(
+                        &window_token,
+                        PickerOutcome {
+                            cancelled: true,
+                            paths: vec![],
+                        },
+                    );
+                    let _ = window.destroy();
+                }
             }
             Err(e) => {
                 log::error!("portal: failed to create picker window: {e}");
@@ -222,9 +236,10 @@ async fn run_picker(app: &AppHandle, req: PickerRequest) -> PickerOutcome {
         paths: vec![],
     });
 
-    // Close the picker window if it's still around.
+    // Destroy rather than close: the verdict is in, and a close request
+    // could be vetoed and leave a window holding the process.
     if let Some(window) = tauri::Manager::get_webview_window(app, &token) {
-        let _ = window.close();
+        let _ = window.destroy();
     }
     outcome
 }
@@ -257,10 +272,126 @@ fn outcome_to_reply(outcome: PickerOutcome) -> (u32, HashMap<String, OwnedValue>
     (RESPONSE_SUCCESS, results)
 }
 
+// ─── Service lifetime ───────────────────────────────────────────────────────
+
+/// Executes the idle policy's effects: timers, bus-name release and exit.
+struct Lifetime {
+    app: AppHandle,
+    state: Mutex<idle::IdleState>,
+    connection: Mutex<Option<zbus::Connection>>,
+    timeout: Duration,
+}
+
+/// Held for the whole of one portal request, or for one picker window's life.
+struct RequestHold(Arc<Lifetime>);
+
+impl Drop for RequestHold {
+    fn drop(&mut self) {
+        let delay = idle::idle_delay(self.0.timeout, executable_replaced());
+        let effect = self.0.state().release(delay);
+        self.0.apply(effect);
+    }
+}
+
+impl Lifetime {
+    fn state(&self) -> MutexGuard<'_, idle::IdleState> {
+        self.state.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    fn hold(self: &Arc<Self>) -> RequestHold {
+        self.state().hold();
+        RequestHold(self.clone())
+    }
+
+    fn apply(self: &Arc<Self>, effect: idle::Effect) {
+        match effect {
+            idle::Effect::Nothing => {}
+            idle::Effect::ArmTimer { generation, delay } => {
+                let lifetime = self.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(delay).await;
+                    let effect = lifetime.state().timer_elapsed(generation);
+                    lifetime.apply(effect);
+                });
+            }
+            idle::Effect::ReleaseName => {
+                let lifetime = self.clone();
+                tauri::async_runtime::spawn(async move {
+                    // Released first, so the bus activates a fresh process for
+                    // the next request instead of routing it to this exiting one.
+                    if let Some(connection) = lifetime.connection() {
+                        if let Err(error) = connection.release_name(PORTAL_BUS_NAME).await {
+                            log::warn!("portal: could not release {PORTAL_BUS_NAME}: {error}");
+                        }
+                    }
+                    let effect = lifetime.state().name_released();
+                    lifetime.apply(effect);
+                });
+            }
+            idle::Effect::Exit => {
+                let lifetime = self.clone();
+                tauri::async_runtime::spawn(async move {
+                    // A request's hold ends when its handler returns, before
+                    // zbus writes the reply. In-flight dispatch keeps its own
+                    // connection reference, so waiting for the last one lets
+                    // every reply reach the bus (bounded against a peer that
+                    // keeps calling into a retired service).
+                    let connection = lifetime
+                        .connection
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .take();
+                    if let Some(connection) = connection {
+                        if tokio::time::timeout(REPLY_DRAIN, connection.graceful_shutdown())
+                            .await
+                            .is_err()
+                        {
+                            log::warn!("portal: exiting with D-Bus calls still in flight");
+                        }
+                    }
+                    log::info!("portal: idle, exiting");
+                    lifetime.app.exit(0);
+                });
+            }
+        }
+    }
+
+    fn connection(&self) -> Option<zbus::Connection> {
+        self.connection
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
+}
+
+/// Upper bound on flushing in-flight replies before an idle exit.
+const REPLY_DRAIN: Duration = Duration::from_secs(5);
+
+/// Package managers replace the binary by unlinking it; the kernel then
+/// reports the running image as deleted.
+fn executable_replaced() -> bool {
+    std::fs::read_link("/proc/self/exe")
+        .is_ok_and(|target| idle::is_replaced_executable_link(&target))
+}
+
+/// Debug builds accept a shorter delay so the lifecycle can be tested end to
+/// end (`tests/portal_lifecycle.rs`); release builds always use the default.
+fn idle_timeout() -> Duration {
+    #[cfg(debug_assertions)]
+    if let Some(ms) = std::env::var("TAURI_EXPLORER_PORTAL_IDLE_MS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+    {
+        return Duration::from_millis(ms);
+    }
+    idle::IDLE_TIMEOUT
+}
+
 // ─── D-Bus interface ────────────────────────────────────────────────────────
 
 struct FileChooserBackend {
     app: AppHandle,
+    lifetime: Arc<Lifetime>,
 }
 
 #[zbus::interface(name = "org.freedesktop.impl.portal.FileChooser")]
@@ -273,6 +404,7 @@ impl FileChooserBackend {
         title: String,
         options: HashMap<String, OwnedValue>,
     ) -> (u32, HashMap<String, OwnedValue>) {
+        let _hold = self.lifetime.hold();
         let req = PickerRequest {
             parent_window,
             mode: "open",
@@ -282,7 +414,7 @@ impl FileChooserBackend {
             current_folder: opt_path_bytes(&options, "current_folder"),
             current_name: None,
         };
-        outcome_to_reply(run_picker(&self.app, req).await)
+        outcome_to_reply(run_picker(&self.app, &self.lifetime, req).await)
     }
 
     async fn save_file(
@@ -293,6 +425,7 @@ impl FileChooserBackend {
         title: String,
         options: HashMap<String, OwnedValue>,
     ) -> (u32, HashMap<String, OwnedValue>) {
+        let _hold = self.lifetime.hold();
         let req = PickerRequest {
             parent_window,
             mode: "save",
@@ -302,7 +435,7 @@ impl FileChooserBackend {
             current_folder: opt_path_bytes(&options, "current_folder"),
             current_name: opt_string(&options, "current_name"),
         };
-        outcome_to_reply(run_picker(&self.app, req).await)
+        outcome_to_reply(run_picker(&self.app, &self.lifetime, req).await)
     }
 
     /// Batch save (used by very few apps) — not supported; apps fall back.
@@ -314,29 +447,61 @@ impl FileChooserBackend {
         _title: String,
         _options: HashMap<String, OwnedValue>,
     ) -> (u32, HashMap<String, OwnedValue>) {
+        let _hold = self.lifetime.hold();
         (RESPONSE_CANCELLED, HashMap::new())
     }
 }
 
-/// Acquire the portal bus name and serve the FileChooser interface.
-/// Called from setup() when running with --file-chooser-portal.
+/// Serve the interface, then own the name without queueing: a queued backend
+/// would sit unused until the current owner leaves. zbus 5.19's builder
+/// requests names without `DoNotQueue` despite its documentation (a second
+/// backend was observed queueing behind the first), so request it explicitly.
+async fn serve(backend: FileChooserBackend) -> zbus::Result<zbus::Connection> {
+    let connection = zbus::connection::Builder::session()?
+        .serve_at(PORTAL_OBJECT_PATH, backend)?
+        .build()
+        .await?;
+    connection
+        .request_name_with_flags(
+            PORTAL_BUS_NAME,
+            zbus::fdo::RequestNameFlags::DoNotQueue.into(),
+        )
+        .await?;
+    Ok(connection)
+}
+
+/// Acquire the portal bus name and serve the FileChooser interface until the
+/// service has been idle for its timeout. Called from setup() when running
+/// with --file-chooser-portal.
 pub fn start_portal_service(app: &AppHandle) {
-    let app = app.clone();
+    let lifetime = Arc::new(Lifetime {
+        app: app.clone(),
+        state: Mutex::new(idle::IdleState::new()),
+        connection: Mutex::new(None),
+        timeout: idle_timeout(),
+    });
+    let backend = FileChooserBackend {
+        app: app.clone(),
+        lifetime: lifetime.clone(),
+    };
     tauri::async_runtime::spawn(async move {
-        let backend = FileChooserBackend { app };
-        match zbus::connection::Builder::session()
-            .and_then(|b| b.name(PORTAL_BUS_NAME))
-            .and_then(|b| b.serve_at(PORTAL_OBJECT_PATH, backend))
-        {
-            Ok(builder) => match builder.build().await {
-                Ok(connection) => {
-                    log::info!("portal: serving FileChooser as {PORTAL_BUS_NAME}");
-                    // Keep the connection alive for the process lifetime.
-                    std::mem::forget(connection);
-                }
-                Err(e) => log::error!("portal: failed to connect to session bus: {e}"),
-            },
-            Err(e) => log::error!("portal: failed to configure bus connection: {e}"),
+        let connection = serve(backend).await;
+        match connection {
+            Ok(connection) => {
+                log::info!("portal: serving FileChooser as {PORTAL_BUS_NAME}");
+                *lifetime
+                    .connection
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner()) = Some(connection);
+                let effect = lifetime.state().serving(lifetime.timeout);
+                lifetime.apply(effect);
+            }
+            Err(error) => {
+                // Without the name (another backend owns it, or no session
+                // bus) this process can never serve a request.
+                log::error!("portal: could not serve {PORTAL_BUS_NAME}: {error}");
+                lifetime.app.exit(1);
+            }
         }
     });
 }

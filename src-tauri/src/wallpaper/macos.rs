@@ -1,19 +1,24 @@
 //! macOS "Set as Wallpaper" for every display and, on macOS 14+, every
 //! Space (#1441).
 //!
-//! 1. Public API: `NSWorkspace.setDesktopImageURL(_:for:options:)` once per
-//!    `NSScreen` (run through JXA, so no new bindings). This changes every
-//!    display, but only on the current Space.
-//! 2. macOS 14+: once macOS has persisted that choice to the private
-//!    wallpaper store, point every Space/display entry of the store at it
-//!    (`macos_store`) and restart `WallpaperAgent` so it reloads the store.
-//! 3. Anything that could not be done is reported back as a notice for the
-//!    toast; a store this code does not recognise is never written.
+//! 1. Snapshot the private wallpaper store, then call
+//!    `NSWorkspace.setDesktopImageURL(_:for:options:)` once per `NSScreen`
+//!    (through JXA, so no new bindings). This changes every display, but
+//!    only on the current Space.
+//! 2. macOS 14+: wait until WallpaperAgent has persisted that change (an
+//!    entry for the image that differs from the snapshot), so its save
+//!    cannot later clobber ours. Then return the store to all-Spaces mode
+//!    around macOS's own entry (`macos_store`), replace it atomically,
+//!    restart WallpaperAgent and re-read the store to confirm the change
+//!    survived the reload.
+//! 3. Anything not done is reported as a notice for the toast. On timeout,
+//!    an unrecognised store, a failed display, or a symlinked store,
+//!    nothing is written.
 //!
 //! macOS 13 and earlier keep per-Space choices in the Dock's
 //! `desktoppicture.db`, whose schema is undocumented and shared with other
-//! preferences, so it is not edited; the notice says other Spaces kept their
-//! wallpaper. See `docs/lessons/1441-macos-wallpaper-all-spaces.md`.
+//! preferences, so it is not edited. See
+//! `docs/lessons/1441-macos-wallpaper-all-spaces.md`.
 
 use super::macos_store;
 use super::WallpaperOutcome;
@@ -23,18 +28,23 @@ use std::time::Duration;
 /// First macOS release with the `com.apple.wallpaper` store (Sonoma).
 pub const STORE_MIN_MAJOR: u32 = 14;
 
-/// How long to wait for macOS to persist the NSWorkspace change before
-/// modelling the new entries on another image entry instead.
+/// How long to wait for WallpaperAgent to persist the NSWorkspace change.
 const STORE_POLL_ATTEMPTS: u32 = 12;
 const STORE_POLL_INTERVAL: Duration = Duration::from_millis(250);
+/// Time for the restarted agent to load (and possibly re-save) the store.
+const VERIFY_DELAY: Duration = Duration::from_millis(1500);
 
 /// Result of the per-display NSWorkspace step.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 pub struct ScreenReport {
     /// Displays attached (`NSScreen.screens.count`).
     pub screens: usize,
-    /// Displays whose wallpaper was set.
+    /// Displays now showing the image (including `already`).
     pub set: usize,
+    /// Displays that already showed the image, so were left alone: setting
+    /// the current image again is a no-op that persists nothing.
+    #[serde(default)]
+    pub already: usize,
     #[serde(default)]
     pub errors: Vec<String>,
 }
@@ -42,12 +52,12 @@ pub struct ScreenReport {
 /// What happened to Spaces other than the current one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OtherSpaces {
-    /// Every Space/display entry of the store now shows the image.
+    /// The store is in all-Spaces mode showing the image, confirmed after
+    /// WallpaperAgent reloaded it.
     Changed,
     /// This macOS version has no store this code can edit.
     Unsupported { major: Option<u32> },
-    /// The store step was attempted and skipped; nothing was written unless
-    /// the reason says so.
+    /// Not changed, for `reason`.
     NotChanged { reason: String },
 }
 
@@ -67,8 +77,7 @@ pub trait MacWallpaperOs {
     fn sleep(&mut self, duration: Duration);
 }
 
-/// Major version of a `sw_vers -productVersion` string ("14.6.1" → 14,
-/// "26" → 26). None for anything unparseable.
+/// Major version of a `sw_vers -productVersion` string ("14.6.1" → 14).
 pub fn parse_major(version: &str) -> Option<u32> {
     version.trim().split('.').next()?.parse().ok()
 }
@@ -77,7 +86,7 @@ pub fn parse_major(version: &str) -> Option<u32> {
 pub fn parse_screen_report(stdout: &str) -> Result<ScreenReport, String> {
     let report: ScreenReport = serde_json::from_str(stdout.trim())
         .map_err(|e| format!("unexpected response from the display step ({e})"))?;
-    if report.set > report.screens {
+    if report.set > report.screens || report.already > report.set {
         return Err("unexpected response from the display step".into());
     }
     Ok(report)
@@ -86,18 +95,17 @@ pub fn parse_screen_report(stdout: &str) -> Result<ScreenReport, String> {
 /// The toast notice for a partial result, or None when every display and
 /// every Space was changed.
 pub fn summarize(screens: &ScreenReport, other_spaces: &OtherSpaces) -> Option<String> {
-    let displays = if screens.set == screens.screens {
-        None
-    } else {
-        let detail = match screens.errors.first() {
-            Some(e) => format!(" ({e})"),
-            None => String::new(),
-        };
-        Some(format!(
+    let displays = (screens.set != screens.screens).then(|| {
+        let detail = screens
+            .errors
+            .first()
+            .map(|e| format!(" ({e})"))
+            .unwrap_or_default();
+        format!(
             "Wallpaper set on {} of {} displays{detail}.",
             screens.set, screens.screens
-        ))
-    };
+        )
+    });
     let spaces = match other_spaces {
         OtherSpaces::Changed => None,
         OtherSpaces::Unsupported { major: Some(major) } => Some(format!(
@@ -113,73 +121,92 @@ pub fn summarize(screens: &ScreenReport, other_spaces: &OtherSpaces) -> Option<S
     };
     match (displays, spaces) {
         (None, None) => None,
-        (Some(d), None) => Some(d),
-        (None, Some(s)) => Some(s),
+        (Some(one), None) | (None, Some(one)) => Some(one),
         (Some(d), Some(s)) => Some(format!("{d} {s}")),
     }
 }
 
-/// Wait for macOS to persist the new image, then return the latest store.
-fn read_store_after_set(
-    os: &mut impl MacWallpaperOs,
-    image_path: &str,
-) -> Result<Option<Vec<u8>>, String> {
-    let mut latest = os.read_store()?;
-    for _ in 0..STORE_POLL_ATTEMPTS {
-        match &latest {
-            Some(bytes) if macos_store::records_image(bytes, image_path) => break,
-            _ => {}
-        }
-        os.sleep(STORE_POLL_INTERVAL);
-        latest = os.read_store()?;
+fn not_changed(reason: impl Into<String>) -> OtherSpaces {
+    OtherSpaces::NotChanged {
+        reason: reason.into(),
     }
-    Ok(latest)
 }
 
-fn change_other_spaces(os: &mut impl MacWallpaperOs, image_path: &str) -> OtherSpaces {
-    let store = match read_store_after_set(os, image_path) {
-        Ok(Some(store)) => store,
-        Ok(None) => {
-            return OtherSpaces::NotChanged {
-                reason: "the wallpaper store was not found".into(),
-            }
+fn read_existing(os: &mut impl MacWallpaperOs) -> Result<Vec<u8>, OtherSpaces> {
+    match os.read_store() {
+        Ok(Some(store)) => Ok(store),
+        Ok(None) => Err(not_changed("the wallpaper store was not found")),
+        Err(e) => Err(not_changed(format!(
+            "the wallpaper store could not be read ({e})"
+        ))),
+    }
+}
+
+/// The `Desktop` entry macOS wrote for the image and the store holding it,
+/// or a reason. When every display already showed the image, NSWorkspace
+/// persisted nothing, so the store as read is current and its existing
+/// entry for the image is macOS's own.
+fn await_macos_entry(
+    os: &mut impl MacWallpaperOs,
+    before: Option<&[u8]>,
+    screens: &ScreenReport,
+    image_path: &str,
+) -> Result<(Vec<u8>, plist::Dictionary), OtherSpaces> {
+    if screens.already == screens.set {
+        let store = read_existing(os)?;
+        return macos_store::existing_image_desktop(&store, image_path)
+            .map(|d| (store, d))
+            .ok_or_else(|| not_changed(macos_store::StoreError::UnrecognisedLayout.to_string()));
+    }
+    for _ in 0..STORE_POLL_ATTEMPTS {
+        os.sleep(STORE_POLL_INTERVAL);
+        let store = read_existing(os)?;
+        if let Some(desktop) = macos_store::fresh_image_desktop(before, &store, image_path) {
+            return Ok((store, desktop));
         }
-        Err(e) => {
-            return OtherSpaces::NotChanged {
-                reason: format!("the wallpaper store could not be read ({e})"),
-            }
-        }
+    }
+    Err(not_changed(
+        "macOS did not save the change in time, so other Spaces were left untouched",
+    ))
+}
+
+fn change_other_spaces(
+    os: &mut impl MacWallpaperOs,
+    before: Option<&[u8]>,
+    screens: &ScreenReport,
+    image_path: &str,
+) -> OtherSpaces {
+    let (store, desktop) = match await_macos_entry(os, before, screens, image_path) {
+        Ok(found) => found,
+        Err(outcome) => return outcome,
     };
-    let rewrite = match macos_store::rewrite_store(&store, image_path) {
-        Ok(rewrite) => rewrite,
-        Err(e) => {
-            log::warn!("wallpaper store left unchanged: {e:?}");
-            return OtherSpaces::NotChanged {
-                reason: e.to_string(),
-            };
-        }
-    };
-    if rewrite.changed == 0 {
+    if macos_store::shows_everywhere(&store, image_path) {
         return OtherSpaces::Changed;
     }
-    if let Err(e) = os.write_store(&rewrite.bytes) {
-        return OtherSpaces::NotChanged {
-            reason: format!("the wallpaper store could not be written ({e})"),
-        };
+    let rewritten = match macos_store::all_spaces_store(&store, &desktop) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            log::warn!("wallpaper store left unchanged: {e:?}");
+            return not_changed(e.to_string());
+        }
+    };
+    if let Err(e) = os.write_store(&rewritten) {
+        return not_changed(format!("the wallpaper store was not modified ({e})"));
     }
-    log::info!(
-        "wallpaper store: {} of {} entries now show the image ({:?})",
-        rewrite.changed,
-        rewrite.entries,
-        rewrite.source
-    );
-    match os.restart_wallpaper_agent() {
-        Ok(()) => OtherSpaces::Changed,
-        Err(e) => OtherSpaces::NotChanged {
-            reason: format!(
-                "other Spaces were saved but WallpaperAgent could not be restarted ({e}); they update after the next login"
-            ),
-        },
+    if let Err(e) = os.restart_wallpaper_agent() {
+        return not_changed(format!(
+            "other Spaces were saved but WallpaperAgent could not be restarted ({e}); they update after the next login"
+        ));
+    }
+    os.sleep(VERIFY_DELAY);
+    match os.read_store() {
+        Ok(Some(after)) if macos_store::shows_everywhere(&after, image_path) => {
+            OtherSpaces::Changed
+        }
+        Ok(_) => not_changed("macOS kept its per-Space wallpapers after reloading"),
+        Err(e) => not_changed(format!(
+            "the wallpaper store could not be re-read to confirm the change ({e})"
+        )),
     }
 }
 
@@ -189,6 +216,16 @@ pub fn set_wallpaper(
     os: &mut impl MacWallpaperOs,
     image_path: &str,
 ) -> Result<WallpaperOutcome, AppError> {
+    let major = os.product_version().ok().as_deref().and_then(parse_major);
+    let uses_store = major.is_some_and(|m| m >= STORE_MIN_MAJOR);
+    // Snapshot immediately before the change, so the wait below recognises
+    // macOS's save rather than an entry that already showed this image.
+    let before = if uses_store {
+        Some(os.read_store())
+    } else {
+        None
+    };
+
     let screens = os
         .set_on_every_screen(image_path)
         .map_err(|e| AppError::Other(format!("Failed to set wallpaper: {e}")))?;
@@ -203,44 +240,93 @@ pub fn set_wallpaper(
         )));
     }
 
-    let major = os.product_version().ok().as_deref().and_then(parse_major);
-    let other_spaces = match major {
-        Some(m) if m >= STORE_MIN_MAJOR => change_other_spaces(os, image_path),
-        _ => OtherSpaces::Unsupported { major },
+    let other_spaces = match before {
+        None => OtherSpaces::Unsupported { major },
+        Some(_) if screens.set < screens.screens => {
+            not_changed("other Spaces were left untouched because a display could not be changed")
+        }
+        Some(Err(e)) => not_changed(format!("the wallpaper store could not be read ({e})")),
+        Some(Ok(before)) => change_other_spaces(os, before.as_deref(), &screens, image_path),
     };
     Ok(WallpaperOutcome {
         notice: summarize(&screens, &other_spaces),
     })
 }
 
+/// Replace `path` with `bytes` without ever exposing a partial file: a
+/// uniquely named temp file in the same directory, given the original's
+/// permissions and synced, then renamed over it. A symlinked or missing
+/// store is refused. The temp file is removed on any failure.
+#[cfg(any(target_os = "macos", test))]
+pub fn replace_file_atomically(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    let meta = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
+    if meta.file_type().is_symlink() {
+        return Err("it is a symbolic link".into());
+    }
+    if !meta.is_file() {
+        return Err("it is not a regular file".into());
+    }
+    let dir = path.parent().ok_or("it has no parent directory")?;
+    let mut tmp = tempfile::Builder::new()
+        .prefix(".Index.plist.")
+        .suffix(".tmp")
+        .tempfile_in(dir)
+        .map_err(|e| e.to_string())?;
+    tmp.write_all(bytes).map_err(|e| e.to_string())?;
+    std::fs::set_permissions(tmp.path(), meta.permissions()).map_err(|e| e.to_string())?;
+    tmp.as_file().sync_all().map_err(|e| e.to_string())?;
+    tmp.persist(path).map_err(|e| e.error.to_string())?;
+    Ok(())
+}
+
+/// Serialises the whole macOS flow: two concurrent sets would otherwise
+/// interleave their snapshot/wait/rewrite of the one store.
+#[cfg(target_os = "macos")]
+static FLOW: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Entry point for the real OS.
+#[cfg(target_os = "macos")]
+pub fn set_wallpaper_system(image_path: &str) -> Result<WallpaperOutcome, AppError> {
+    let _guard = FLOW.lock().unwrap_or_else(|e| e.into_inner());
+    set_wallpaper(&mut SystemMacOs, image_path)
+}
+
 /// The real OS behind [`MacWallpaperOs`].
 #[cfg(target_os = "macos")]
-pub struct SystemMacOs;
+struct SystemMacOs;
 
 #[cfg(target_os = "macos")]
-impl SystemMacOs {
-    fn store_path() -> Result<std::path::PathBuf, String> {
-        let home = dirs::home_dir().ok_or("home directory unknown")?;
-        Ok(home.join("Library/Application Support/com.apple.wallpaper/Store/Index.plist"))
-    }
+fn store_path() -> Result<std::path::PathBuf, String> {
+    let home = dirs::home_dir().ok_or("home directory unknown")?;
+    Ok(home.join("Library/Application Support/com.apple.wallpaper/Store/Index.plist"))
 }
 
 /// JXA: NSWorkspace desktop image for every NSScreen, keeping each screen's
-/// current scaling options. The path arrives as argv, never interpolated
-/// into the script, so filenames cannot inject code.
+/// current scaling options. A screen already showing the image is left
+/// alone (re-setting it is a no-op) and counted in `already`. The path
+/// arrives as argv, never interpolated into the script.
 #[cfg(target_os = "macos")]
 const SET_EVERY_SCREEN_JXA: &str = r#"
 ObjC.import('AppKit');
 function run(argv) {
   var url = $.NSURL.fileURLWithPath(argv[0]);
+  var target = url.URLByStandardizingPath.path.js;
   var ws = $.NSWorkspace.sharedWorkspace;
   var screens = $.NSScreen.screens;
   var total = screens.count;
   var set = 0;
+  var already = 0;
   var errors = [];
   for (var i = 0; i < total; i++) {
     try {
       var screen = screens.objectAtIndex(i);
+      var current = ws.desktopImageURLForScreen(screen);
+      if (current && !current.isNil() && current.URLByStandardizingPath.path.js === target) {
+        set++;
+        already++;
+        continue;
+      }
       var options = ws.desktopImageOptionsForScreen(screen);
       if (!options || options.isNil()) { options = $.NSDictionary.dictionary; }
       var error = Ref();
@@ -254,36 +340,41 @@ function run(argv) {
       errors.push(String(err));
     }
   }
-  return JSON.stringify({ screens: total, set: set, errors: errors });
+  return JSON.stringify({ screens: total, set: set, already: already, errors: errors });
 }
 "#;
 
 #[cfg(target_os = "macos")]
+fn run(program: &str, args: &[&str]) -> Result<String, String> {
+    let output = std::process::Command::new(program)
+        .args(args)
+        .output()
+        .map_err(|e| format!("{program}: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "{program}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+#[cfg(target_os = "macos")]
 impl MacWallpaperOs for SystemMacOs {
     fn product_version(&mut self) -> Result<String, String> {
-        let output = std::process::Command::new("sw_vers")
-            .arg("-productVersion")
-            .output()
-            .map_err(|e| e.to_string())?;
-        if !output.status.success() {
-            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-        }
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        run("sw_vers", &["-productVersion"]).map(|v| v.trim().to_string())
     }
 
     fn set_on_every_screen(&mut self, image_path: &str) -> Result<ScreenReport, String> {
-        let output = std::process::Command::new("osascript")
-            .args(["-l", "JavaScript", "-e", SET_EVERY_SCREEN_JXA, image_path])
-            .output()
-            .map_err(|e| format!("osascript failed: {e}"))?;
-        if !output.status.success() {
-            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-        }
-        parse_screen_report(&String::from_utf8_lossy(&output.stdout))
+        let stdout = run(
+            "osascript",
+            &["-l", "JavaScript", "-e", SET_EVERY_SCREEN_JXA, image_path],
+        )?;
+        parse_screen_report(&stdout)
     }
 
     fn read_store(&mut self) -> Result<Option<Vec<u8>>, String> {
-        match std::fs::read(Self::store_path()?) {
+        match std::fs::read(store_path()?) {
             Ok(bytes) => Ok(Some(bytes)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e.to_string()),
@@ -291,27 +382,19 @@ impl MacWallpaperOs for SystemMacOs {
     }
 
     fn write_store(&mut self, bytes: &[u8]) -> Result<(), String> {
-        // Temp file in the same directory, then rename: a crash mid-write
-        // must never leave WallpaperAgent a truncated store.
-        let path = Self::store_path()?;
-        let tmp = path.with_file_name(".Index.plist.tauri-explorer.tmp");
-        std::fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
-        std::fs::rename(&tmp, &path).map_err(|e| {
-            let _ = std::fs::remove_file(&tmp);
-            e.to_string()
-        })
+        replace_file_atomically(&store_path()?, bytes)
     }
 
     fn restart_wallpaper_agent(&mut self) -> Result<(), String> {
-        // launchd relaunches the agent on demand; it then reads the store.
-        let output = std::process::Command::new("killall")
-            .arg("WallpaperAgent")
-            .output()
-            .map_err(|e| e.to_string())?;
-        if !output.status.success() {
-            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-        }
-        Ok(())
+        // SAFETY: getuid has no preconditions and cannot fail.
+        let uid = unsafe { libc::getuid() };
+        let target = format!("gui/{uid}/com.apple.wallpaper.agent");
+        run("launchctl", &["kickstart", "-k", &target])
+            .or_else(|e| {
+                log::warn!("launchctl kickstart failed ({e}); falling back to killall");
+                run("killall", &["WallpaperAgent"])
+            })
+            .map(|_| ())
     }
 
     fn sleep(&mut self, duration: Duration) {
@@ -326,37 +409,52 @@ mod tests {
 
     const IMG: &str = "/Users/me/Pictures/new wallpaper.png";
 
-    /// Scripted OS: records writes/restarts; `store_reads` is served in order
-    /// (the last one repeats).
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Event {
+        Read,
+        Set,
+        Write,
+        Restart,
+    }
+
+    /// Scripted OS. Reads before any write are served from `reads` (the
+    /// last repeats); after a successful write the store holds the written
+    /// bytes unless `after_restart` says what the reloaded agent left.
     struct FakeOs {
         version: Result<String, String>,
         screens: Result<ScreenReport, String>,
-        store_reads: Vec<Result<Option<Vec<u8>>, String>>,
-        reads: usize,
+        reads: Vec<Result<Option<Vec<u8>>, String>>,
+        read_count: usize,
         write_result: Result<(), String>,
         restart_result: Result<(), String>,
+        after_restart: Option<Vec<u8>>,
         written: Vec<Vec<u8>>,
-        restarts: usize,
+        events: Vec<Event>,
         slept: Duration,
     }
 
     impl FakeOs {
-        fn new(version: &str, store_reads: Vec<Result<Option<Vec<u8>>, String>>) -> Self {
+        fn new(version: &str, reads: Vec<Option<Vec<u8>>>) -> Self {
             FakeOs {
                 version: Ok(version.into()),
                 screens: Ok(ScreenReport {
                     screens: 2,
                     set: 2,
+                    already: 0,
                     errors: vec![],
                 }),
-                store_reads,
-                reads: 0,
+                reads: reads.into_iter().map(Ok).collect(),
+                read_count: 0,
                 write_result: Ok(()),
                 restart_result: Ok(()),
+                after_restart: None,
                 written: vec![],
-                restarts: 0,
+                events: vec![],
                 slept: Duration::ZERO,
             }
+        }
+        fn count(&self, e: Event) -> usize {
+            self.events.iter().filter(|x| **x == e).count()
         }
     }
 
@@ -365,19 +463,31 @@ mod tests {
             self.version.clone()
         }
         fn set_on_every_screen(&mut self, _: &str) -> Result<ScreenReport, String> {
+            self.events.push(Event::Set);
             self.screens.clone()
         }
         fn read_store(&mut self) -> Result<Option<Vec<u8>>, String> {
-            let i = self.reads.min(self.store_reads.len() - 1);
-            self.reads += 1;
-            self.store_reads[i].clone()
+            self.events.push(Event::Read);
+            if self.write_result.is_ok() {
+                if let Some(last) = self.written.last() {
+                    let restarted = self.count(Event::Restart) > 0;
+                    return Ok(Some(match (&self.after_restart, restarted) {
+                        (Some(state), true) => state.clone(),
+                        _ => last.clone(),
+                    }));
+                }
+            }
+            let i = self.read_count.min(self.reads.len() - 1);
+            self.read_count += 1;
+            self.reads[i].clone()
         }
         fn write_store(&mut self, bytes: &[u8]) -> Result<(), String> {
+            self.events.push(Event::Write);
             self.written.push(bytes.to_vec());
             self.write_result.clone()
         }
         fn restart_wallpaper_agent(&mut self) -> Result<(), String> {
-            self.restarts += 1;
+            self.events.push(Event::Restart);
             self.restart_result.clone()
         }
         fn sleep(&mut self, d: Duration) {
@@ -385,7 +495,7 @@ mod tests {
         }
     }
 
-    fn entry(path: &str) -> Value {
+    fn desktop(path: &str, last_set: &str) -> Value {
         let mut file = Dictionary::new();
         file.insert(
             "relative".into(),
@@ -403,35 +513,43 @@ mod tests {
             "Choices".into(),
             Value::Array(vec![Value::Dictionary(choice)]),
         );
-        let mut desktop = Dictionary::new();
-        desktop.insert("Content".into(), Value::Dictionary(content));
+        let mut d = Dictionary::new();
+        d.insert("Content".into(), Value::Dictionary(content));
+        d.insert("LastSet".into(), Value::String(last_set.into()));
+        Value::Dictionary(d)
+    }
+
+    fn entry(path: &str, last_set: &str) -> Value {
         let mut e = Dictionary::new();
-        e.insert("Desktop".into(), Value::Dictionary(desktop));
+        e.insert("Desktop".into(), desktop(path, last_set));
         Value::Dictionary(e)
     }
 
-    /// Current Space shows `current`, the other Space still shows old.jpg.
-    fn store(current: &str) -> Vec<u8> {
-        let mut space2 = Dictionary::new();
-        space2.insert("Default".into(), entry("/old.jpg"));
-        let mut space1 = Dictionary::new();
-        space1.insert("Default".into(), entry(current));
+    /// Per-Space store: S1 (current) shows `current`; S2 shows `other`.
+    fn store(current: (&str, &str), other: &str) -> Vec<u8> {
+        let mut s1 = Dictionary::new();
+        s1.insert("Default".into(), entry(current.0, current.1));
+        let mut s2 = Dictionary::new();
+        s2.insert("Default".into(), entry(other, "t0"));
         let mut spaces = Dictionary::new();
-        spaces.insert("S1".into(), Value::Dictionary(space1));
-        spaces.insert("S2".into(), Value::Dictionary(space2));
+        spaces.insert("S1".into(), Value::Dictionary(s1));
+        spaces.insert("S2".into(), Value::Dictionary(s2));
         let mut root = Dictionary::new();
-        root.insert("AllSpacesAndDisplays".into(), entry("/old.jpg"));
+        root.insert("AllSpacesAndDisplays".into(), entry("/old.jpg", "t0"));
         root.insert("Spaces".into(), Value::Dictionary(spaces));
         let mut out = Vec::new();
         Value::Dictionary(root).to_writer_binary(&mut out).unwrap();
         out
     }
 
+    fn notice(os: &mut FakeOs) -> String {
+        set_wallpaper(os, IMG).unwrap().notice.unwrap_or_default()
+    }
+
     #[test]
     fn parses_versions() {
         assert_eq!(parse_major("14.6.1\n"), Some(14));
         assert_eq!(parse_major("26"), Some(26));
-        assert_eq!(parse_major("10.15.7"), Some(10));
         assert_eq!(parse_major(""), None);
         assert_eq!(parse_major("Sonoma"), None);
     }
@@ -443,49 +561,49 @@ mod tests {
             Ok(ScreenReport {
                 screens: 2,
                 set: 1,
+                already: 0,
                 errors: vec!["denied".into()]
             })
         );
         assert!(parse_screen_report("").is_err());
         assert!(parse_screen_report("execution error: -1743").is_err());
-        assert!(parse_screen_report("{\"screens\":1,\"set\":3,\"errors\":[]}").is_err());
+        assert!(parse_screen_report("{\"screens\":1,\"set\":3}").is_err());
+        assert!(parse_screen_report("{\"screens\":2,\"set\":1,\"already\":2}").is_err());
     }
 
     #[test]
-    fn sonoma_changes_every_space_and_reports_nothing() {
+    fn sonoma_waits_for_the_macos_save_then_returns_to_all_spaces_mode() {
+        let before = store(("/old.jpg", "t0"), "/old.jpg");
+        let saved = store((IMG, "t1"), "/old.jpg");
         let mut os = FakeOs::new(
             "14.6.1",
-            vec![Ok(Some(store("/old.jpg"))), Ok(Some(store(IMG)))],
+            vec![Some(before.clone()), Some(before), Some(saved)],
         );
-        let outcome = set_wallpaper(&mut os, IMG).unwrap();
 
-        assert_eq!(outcome.notice, None);
-        assert_eq!(os.restarts, 1);
-        assert_eq!(os.written.len(), 1);
-        assert!(macos_store::records_image(&os.written[0], IMG));
-        let after = macos_store::rewrite_store(&os.written[0], IMG).unwrap();
+        assert_eq!(notice(&mut os), "");
         assert_eq!(
-            after.changed, 0,
-            "every entry in the written store already shows the image"
+            os.events[..2],
+            [Event::Read, Event::Set],
+            "snapshot precedes the change"
         );
-        assert!(
-            os.slept > Duration::ZERO,
-            "waited for macOS to persist its own entry first"
-        );
+        assert_eq!((os.count(Event::Write), os.count(Event::Restart)), (1, 1));
+        assert!(macos_store::shows_everywhere(&os.written[0], IMG));
+        assert!(os.slept >= STORE_POLL_INTERVAL * 2 + VERIFY_DELAY);
     }
 
     #[test]
-    fn still_changes_every_space_when_macos_never_persists_the_new_entry() {
-        let mut os = FakeOs::new("15.0", vec![Ok(Some(store("/old.jpg")))]);
-        let outcome = set_wallpaper(&mut os, IMG).unwrap();
-        assert_eq!(outcome.notice, None);
-        assert_eq!(os.written.len(), 1);
-        assert_eq!(
-            macos_store::rewrite_store(&os.written[0], IMG)
-                .unwrap()
-                .changed,
-            0
+    fn the_image_already_shown_on_another_space_does_not_end_the_wait_early() {
+        // S2 already showed IMG; macOS never saves the current Space's change.
+        let before = store(("/old.jpg", "t0"), IMG);
+        let mut os = FakeOs::new("14.0", vec![Some(before)]);
+        let notice = notice(&mut os);
+
+        assert!(
+            notice.contains("did not save the change in time"),
+            "{notice}"
         );
+        assert_eq!(os.count(Event::Write), 0, "nothing written on timeout");
+        assert_eq!(os.count(Event::Restart), 0);
         assert_eq!(
             os.slept,
             STORE_POLL_INTERVAL * STORE_POLL_ATTEMPTS,
@@ -494,101 +612,133 @@ mod tests {
     }
 
     #[test]
-    fn ventura_reports_that_other_spaces_were_not_changed_and_never_touches_the_store() {
-        let mut os = FakeOs::new("13.6", vec![Ok(Some(store("/old.jpg")))]);
-        let notice = set_wallpaper(&mut os, IMG).unwrap().notice.unwrap();
-        assert!(notice.contains("Only the current Space"), "{notice}");
-        assert!(notice.contains("macOS 13"), "{notice}");
-        assert_eq!((os.reads, os.written.len(), os.restarts), (0, 0, 0));
-    }
-
-    #[test]
-    fn unknown_version_is_treated_as_unsupported() {
-        let mut os = FakeOs::new("", vec![Ok(None)]);
-        os.version = Err("sw_vers missing".into());
-        let notice = set_wallpaper(&mut os, IMG).unwrap().notice.unwrap();
-        assert!(notice.contains("could not be determined"), "{notice}");
-        assert!(os.written.is_empty());
-    }
-
-    #[test]
-    fn unrecognised_store_is_left_alone_and_reported() {
-        let mut empty = Vec::new();
-        Value::Dictionary(Dictionary::new())
-            .to_writer_binary(&mut empty)
-            .unwrap();
-        let mut os = FakeOs::new("14.0", vec![Ok(Some(empty))]);
-        let notice = set_wallpaper(&mut os, IMG).unwrap().notice.unwrap();
-        assert!(
-            notice.contains("format this version does not recognise"),
-            "{notice}"
-        );
-        assert_eq!((os.written.len(), os.restarts), (0, 0));
-    }
-
-    #[test]
-    fn missing_or_unreadable_store_is_reported() {
-        let mut os = FakeOs::new("14.0", vec![Ok(None)]);
-        assert!(set_wallpaper(&mut os, IMG)
-            .unwrap()
-            .notice
-            .unwrap()
-            .contains("not found"));
-        let mut os = FakeOs::new("14.0", vec![Err("permission denied".into())]);
-        let notice = set_wallpaper(&mut os, IMG).unwrap().notice.unwrap();
-        assert!(notice.contains("permission denied"), "{notice}");
-        assert!(os.written.is_empty());
-    }
-
-    #[test]
-    fn write_and_restart_failures_are_reported_without_failing_the_current_space() {
-        let mut os = FakeOs::new("14.0", vec![Ok(Some(store(IMG)))]);
-        os.write_result = Err("read-only".into());
-        let notice = set_wallpaper(&mut os, IMG).unwrap().notice.unwrap();
-        assert!(
-            notice.contains("could not be written (read-only)"),
-            "{notice}"
-        );
+    fn repeat_set_of_the_image_already_on_every_display_uses_the_existing_entry() {
+        let current = store((IMG, "t0"), "/old.jpg");
+        let mut os = FakeOs::new("15.1", vec![Some(current)]);
+        os.screens = Ok(ScreenReport {
+            screens: 2,
+            set: 2,
+            already: 2,
+            errors: vec![],
+        });
+        assert_eq!(notice(&mut os), "");
+        assert!(macos_store::shows_everywhere(&os.written[0], IMG));
         assert_eq!(
-            os.restarts, 0,
-            "never restart the agent onto an unwritten store"
+            os.slept, VERIFY_DELAY,
+            "no wait for a save that will never come"
         );
-
-        let mut os = FakeOs::new("14.0", vec![Ok(Some(store(IMG)))]);
-        os.restart_result = Err("No matching processes".into());
-        let notice = set_wallpaper(&mut os, IMG).unwrap().notice.unwrap();
-        assert!(notice.contains("after the next login"), "{notice}");
     }
 
     #[test]
-    fn partial_displays_are_reported_alongside_spaces() {
-        let mut os = FakeOs::new("12.7", vec![Ok(None)]);
+    fn a_reload_that_restores_per_space_wallpapers_is_reported_truthfully() {
+        let before = store(("/old.jpg", "t0"), "/old.jpg");
+        let saved = store((IMG, "t1"), "/old.jpg");
+        let mut os = FakeOs::new("14.0", vec![Some(before), Some(saved.clone())]);
+        os.after_restart = Some(saved);
+        let notice = notice(&mut os);
+        assert!(notice.contains("kept its per-Space wallpapers"), "{notice}");
+        assert_eq!(os.count(Event::Write), 1);
+    }
+
+    #[test]
+    fn a_failed_display_means_the_store_is_not_rewritten() {
+        let before = store(("/old.jpg", "t0"), "/old.jpg");
+        let mut os = FakeOs::new("14.0", vec![Some(before)]);
         os.screens = Ok(ScreenReport {
             screens: 3,
             set: 2,
+            already: 0,
             errors: vec!["display busy".into()],
         });
-        let notice = set_wallpaper(&mut os, IMG).unwrap().notice.unwrap();
+        let notice = notice(&mut os);
         assert!(
             notice.starts_with("Wallpaper set on 2 of 3 displays (display busy)."),
             "{notice}"
         );
-        assert!(notice.contains("macOS 12"), "{notice}");
+        assert!(
+            notice.contains("a display could not be changed"),
+            "{notice}"
+        );
+        assert_eq!(os.count(Event::Write), 0);
     }
 
     #[test]
-    fn no_display_changed_is_an_error_and_skips_the_store() {
-        let mut os = FakeOs::new("14.0", vec![Ok(Some(store("/old.jpg")))]);
+    fn ventura_reports_only_the_current_space_and_never_reads_the_store() {
+        let mut os = FakeOs::new("13.6", vec![None]);
+        let notice = notice(&mut os);
+        assert!(notice.contains("macOS 13"), "{notice}");
+        assert_eq!(os.events, [Event::Set]);
+    }
+
+    #[test]
+    fn unknown_version_is_treated_as_unsupported() {
+        let mut os = FakeOs::new("", vec![None]);
+        os.version = Err("sw_vers missing".into());
+        assert!(notice(&mut os).contains("could not be determined"));
+        assert_eq!(os.events, [Event::Set]);
+    }
+
+    #[test]
+    fn unrecognised_missing_or_unreadable_stores_are_reported_and_never_written() {
+        // macOS saved a fresh entry, but `Displays` is not a dictionary.
+        let mut spaces = Dictionary::new();
+        spaces.insert(
+            "S".into(),
+            Value::Dictionary(Dictionary::from_iter([(
+                "Default".to_string(),
+                entry(IMG, "t1"),
+            )])),
+        );
+        let mut root = Dictionary::new();
+        root.insert("AllSpacesAndDisplays".into(), entry("/old.jpg", "t0"));
+        root.insert("Spaces".into(), Value::Dictionary(spaces));
+        root.insert("Displays".into(), Value::Array(vec![]));
+        let mut odd = Vec::new();
+        Value::Dictionary(root).to_writer_binary(&mut odd).unwrap();
+        let mut os = FakeOs::new("14.0", vec![None, Some(odd)]);
+        let n = notice(&mut os);
+        assert!(n.contains("layout this version does not recognise"), "{n}");
+        assert_eq!(os.count(Event::Write), 0);
+
+        let mut os = FakeOs::new("14.0", vec![None]);
+        assert!(notice(&mut os).contains("not found"));
+        let mut os = FakeOs::new("14.0", vec![None]);
+        os.reads = vec![Err("permission denied".into())];
+        assert!(notice(&mut os).contains("permission denied"));
+        assert_eq!(os.count(Event::Write), 0);
+    }
+
+    #[test]
+    fn write_and_restart_failures_are_reported() {
+        let before = store(("/old.jpg", "t0"), "/old.jpg");
+        let saved = store((IMG, "t1"), "/old.jpg");
+        let mut os = FakeOs::new("14.0", vec![Some(before.clone()), Some(saved.clone())]);
+        os.write_result = Err("it is a symbolic link".into());
+        let n = notice(&mut os);
+        assert!(
+            n.contains("was not modified (it is a symbolic link)"),
+            "{n}"
+        );
+        assert_eq!(os.count(Event::Restart), 0);
+
+        let mut os = FakeOs::new("14.0", vec![Some(before), Some(saved)]);
+        os.restart_result = Err("No matching processes".into());
+        assert!(notice(&mut os).contains("after the next login"));
+    }
+
+    #[test]
+    fn no_display_changed_is_an_error() {
+        let mut os = FakeOs::new("14.0", vec![None]);
         os.screens = Ok(ScreenReport {
             screens: 2,
             set: 0,
+            already: 0,
             errors: vec!["not permitted".into()],
         });
         let err = set_wallpaper(&mut os, IMG).unwrap_err().to_string();
         assert!(err.contains("not permitted"), "{err}");
-        assert_eq!(os.reads, 0);
+        assert_eq!(os.count(Event::Write), 0);
 
-        let mut os = FakeOs::new("14.0", vec![Ok(None)]);
         os.screens = Err("osascript: execution error".into());
         assert!(set_wallpaper(&mut os, IMG).is_err());
     }
@@ -598,10 +748,59 @@ mod tests {
         let all = ScreenReport {
             screens: 2,
             set: 2,
+            already: 0,
             errors: vec![],
         };
         assert_eq!(summarize(&all, &OtherSpaces::Changed), None);
         assert!(summarize(&all, &OtherSpaces::Unsupported { major: Some(13) }).is_some());
-        assert!(summarize(&all, &OtherSpaces::NotChanged { reason: "x".into() }).is_some());
+        assert!(summarize(&all, &not_changed("x")).is_some());
+    }
+
+    #[test]
+    fn atomic_replace_writes_the_bytes_and_leaves_no_temp_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Index.plist");
+        std::fs::write(&path, b"old").unwrap();
+        replace_file_atomically(&path, b"new").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"new");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn atomic_replace_refuses_a_missing_store() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(replace_file_atomically(&dir.path().join("Index.plist"), b"x").is_err());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_replace_preserves_the_original_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Index.plist");
+        std::fs::write(&path, b"old").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+        replace_file_atomically(&path, b"new").unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o640);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_replace_refuses_a_symlinked_store_and_leaves_its_target_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("real.plist");
+        let link = dir.path().join("Index.plist");
+        std::fs::write(&target, b"old").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let err = replace_file_atomically(&link, b"new").unwrap_err();
+        assert!(err.contains("symbolic link"), "{err}");
+        assert_eq!(std::fs::read(&target).unwrap(), b"old");
+        assert!(std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
     }
 }

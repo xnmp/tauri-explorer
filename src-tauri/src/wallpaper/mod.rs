@@ -100,7 +100,7 @@ enum WallpaperBackend {
 fn set_macos(path: &str) -> Result<WallpaperOutcome, AppError> {
     #[cfg(target_os = "macos")]
     {
-        macos::set_wallpaper(&mut macos::SystemMacOs, path)
+        macos::set_wallpaper_system(path)
     }
     #[cfg(not(target_os = "macos"))]
     {

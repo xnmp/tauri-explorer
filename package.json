@@ -12,6 +12,7 @@
     "test": "vitest run && vitest run -c vitest.perf.config.ts",
     "test:watch": "vitest",
     "test:config-watch": "cargo test --manifest-path src-tauri/Cargo.toml --lib config_watch -- --nocapture && cargo test --manifest-path src-tauri/Cargo.toml --test config_watch_nested_root_test --test config_watch_symlinks -- --nocapture",
+    "test:portal-lifecycle": "xvfb-run -a cargo test --manifest-path src-tauri/Cargo.toml --test portal_lifecycle -- --ignored",
     "test:perf": "vitest run -c vitest.perf.config.ts",
     "bench:render": "vitest run -c vitest.perf.config.ts --silent=false tests/perf/render.bench.ts",
     "bench:rust": "cd src-tauri && cargo bench",

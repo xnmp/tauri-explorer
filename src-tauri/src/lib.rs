@@ -763,10 +763,11 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         .expect("error while running tauri application")
         .run(|app, event| {
             if matches!(&event,tauri::RunEvent::Exit){ai::cancel_all();installed_plugins::shutdown();}
-            // Portal mode has no persistent window: closing a picker window
-            // must not exit the service, or the D-Bus name would drop.
+            // Portal mode has no persistent window: closing the last picker
+            // must not exit the service. Only its idle policy exits it, through
+            // an explicit `exit(code)` (#1427).
             if portal::is_portal_mode() {
-                if let tauri::RunEvent::ExitRequested { api, .. } = &event {
+                if let tauri::RunEvent::ExitRequested { code: None, api, .. } = &event {
                     api.prevent_exit();
                 }
             }

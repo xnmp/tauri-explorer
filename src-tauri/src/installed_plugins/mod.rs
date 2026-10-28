@@ -41,6 +41,9 @@ static PROFILE_OWNER: Mutex<Option<ownership::ProfileOwner>> = Mutex::new(None);
 #[cfg(target_os = "linux")]
 static QUEUE_WORKER: queue::WorkerSlot = Mutex::new(None);
 const NOT_OWNER: &str = "Another Tauri Explorer process owns this plugin profile; AI operations and plugin changes are available there until it exits";
+/// The file-picker portal backend never owns the profile (#1427): it is
+/// activated by other applications and may outlive the explorer window.
+const PICKER_PROCESS: &str = "Plugin services are not available in the file picker";
 const STORAGE_DEFERRED: &str =
     "AI operation storage requires recovery; queued package changes were deferred";
 pub(super) fn initialize(app: tauri::AppHandle) -> Result<(), AppError> {
@@ -113,6 +116,14 @@ pub(super) fn initialize(app: tauri::AppHandle) -> Result<(), AppError> {
 /// ready until all succeed, and a process that cannot own the profile never
 /// opens its ledger, recovers its claims or starts service participants.
 fn bootstrap_services() -> Result<(), AppError> {
+    bootstrap_services_in(crate::portal::is_portal_mode())
+}
+fn bootstrap_services_in(file_picker_portal: bool) -> Result<(), AppError> {
+    // Every service entry point (startup, explicit actions, opportunistic
+    // retries from IPC reads) reaches ownership only through here.
+    if file_picker_portal {
+        return Err(AppError::Other(PICKER_PROCESS.into()));
+    }
     if backend::ownership_ready() {
         return Ok(());
     }
@@ -494,4 +505,17 @@ pub(crate) fn image_source_mode_at(profile: &Path) -> Result<u8, AppError> {
         })
         .map(|p| if p.manifest.sdk_version < 3 { 1 } else { 2 })
         .unwrap_or(0))
+}
+
+#[cfg(test)]
+mod launch_mode_tests {
+    use super::*;
+
+    #[test]
+    fn the_file_picker_portal_never_takes_plugin_profile_ownership() {
+        // Refused before the profile directory is even resolved, so no
+        // lease is opened, whatever this process's global service state.
+        let refused = bootstrap_services_in(true).unwrap_err().to_string();
+        assert!(refused.contains(PICKER_PROCESS), "{refused}");
+    }
 }

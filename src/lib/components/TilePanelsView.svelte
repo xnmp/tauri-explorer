@@ -204,7 +204,7 @@
                 <TileVisual entry={cell.entry} {layout} videoUnavailable={thumbs.has(cell.entry.path)} onvideounavailable={() => thumbs.mark(cell.entry!.path)}>
                   {#snippet name()}<EntryName entry={cell.entry!} {explorer} variant="tiles" bold={model.panels.has(cell.entry!.path)} />{/snippet}
                 </TileVisual>
-                {#if cell.entry.kind === "directory" && explorer.peekCaretsShown}{@render caret(cell.entry)}{/if}
+                {#if explorer.canPeekEntry(cell.entry) && explorer.peekCaretsShown}{@render caret(cell.entry)}{/if}
                 <GitStatusBadge entryName={cell.entry.name} />
               </EntryCell>
             {/if}

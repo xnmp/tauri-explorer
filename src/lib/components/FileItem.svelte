@@ -123,7 +123,7 @@
 <div
   role="gridcell"
   aria-label={isVideoMediaFile(entry) ? `${entry.name}, video` : undefined}
-  tabindex={!isRenaming && explorer.focusedEntry?.path === entry.path ? 0 : -1}
+  tabindex={!isRenaming && explorer.focusedEntry?.path === entry.path && (!explorer.displayKeys || explorer.cursorIndex === index) ? 0 : -1}
   aria-selected={explorer.isSelected(entry)}
   class="file-item entry-item"
   data-region="row"

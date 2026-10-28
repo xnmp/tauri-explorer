@@ -20,7 +20,7 @@ import { reconcileDirectorySelection } from "$lib/domain/directory-reconciliatio
 import { isFileViewId } from "$lib/domain/file-view-id";
 import { createFileViewPresentation } from "./file-view-presentation.svelte";
 import { fileViewRegistry } from "$lib/plugins/file-view-registry.svelte";
-import { resolveFileCursor } from "$lib/domain/file-list-navigation";
+import { resolveCursorIndex } from "$lib/domain/file-list-navigation";
 import { clampNumericSetting } from "$lib/domain/settings-numbers";
 import { SvelteSet } from "svelte/reactivity";
 import { untrack } from "svelte";
@@ -28,24 +28,26 @@ import { toastStore } from "./toast.svelte";
 import { gitStatusStore } from "./git-status.svelte";
 import { archiveRoots, operationRoots } from "$lib/domain/file-operation-selection";
 import { createFolderPeekState } from "./folder-peek.svelte";
-import { canPeekAt, flatPeekEntries, flatPeekRows, peekCapability, rowClickOwnsPeek, shouldToggleOnRowClick, resolvePeekCommandTarget, resolvePeekEscape } from "$lib/domain/folder-peek-flat";
+import { canPeekAt, flatPeekEntries, flatPeekRows, occurrencePath, peekCapability, peekKeyAt, rowClickOwnsPeek, shouldToggleOnRowClick, resolvePeekCommandTarget, resolvePeekEscape } from "$lib/domain/folder-peek-flat";
 import { prunePeekSelection, springPeekDropFolder } from "$lib/domain/folder-peek-pane";
 import { entriesLabel, withExternalEntry } from "$lib/domain/explorer-entries";
 import type { PeekLevelCache } from "$lib/domain/folder-peek";
+import { createExplorerLineage, lineageGroupPreviewTarget, LINEAGE_PREVIEW_OWNER } from "./explorer-lineage.svelte";
+import type { LineageGroup } from "$lib/domain/entry-lineage";
 import type { RowClickInput, RowPeekTarget } from "$lib/domain/folder-peek-flat";
 import type { BandSide } from "$lib/domain/tile-panels";
 import { isVirtualPath } from "$lib/domain/virtual-path";
 import { providerFor } from "$lib/plugins/fs-providers";
 import { basename, toNativeSeparators, pathComparison, coverageOf } from "$lib/domain/path";
 import { isWindows } from "$lib/domain/platform";
-import { clipboardImageStatus, clipboardPasteImage } from "$lib/api/clipboard-image";
-import { withClipboardImageProgress } from "$lib/state/clipboard-image-progress.svelte";
 import { fetchDirectory } from "$lib/api/files";
 import { sortEntries, filterHidden, type FileEntry, type SortField } from "$lib/domain/file";
 import type { ExplorerCoreState, SelectOptions, ViewMode } from "./types";
 import * as selection from "./selection";
 import * as navigation from "./navigation";
-import { clipboardStore, CUT_ALREADY_PASTED } from "./clipboard.svelte";
+import { clipboardStore } from "./clipboard.svelte";
+import { createExplorerClipboard } from "./explorer-clipboard.svelte";
+import { createExplorerHistory } from "./explorer-history";
 import { dialogStore } from "./dialogs.svelte";
 import { TRASH_PATH } from "$lib/domain/virtual-path";
 import { frecencyStore } from "./frecency.svelte";
@@ -55,14 +57,11 @@ import { undoStore } from "./undo.svelte";
 import { settingsStore } from "./settings.svelte";
 import { manualHiddenStore } from "./manual-hidden.svelte";
 import { getSortPref, saveSortPref } from "./sort-prefs";
-import { pasteEntries, type PasteResult } from "./paste-operations";
-import { selectPasteSource } from "$lib/domain/paste-source";
 import { createDirectoryListing } from "./directory-listing";
 import { createPaneWatch } from "./pane-watch";
 import { createPaneRefresh } from "./pane-refresh";
 import { createPaneMutations } from "./pane-mutations";
 import { undoActionLabel } from "./undo-helpers";
-import { broadcastFileChange } from "./file-events";
 import { loadWatchdog, type LoadTraceHandle } from "./load-watchdog";
 import type { LoadReason } from "$lib/domain/load-diagnostics";
 
@@ -209,12 +208,22 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     plainLocation: !isVirtualPath(coreState.currentPath) && !providerFor(coreState.currentPath),
     mode: coreState.viewMode,
   }));
+  const peekSort = (): [SortField, boolean] => coreState.viewMode === "details" ? [coreState.sortBy, coreState.sortAscending] : ["name", true];
+  // ---- Lineage peek (#1431) ---------------------------------------------------
+  const lineageListing = $derived(filterQuery ? sortEntries(visibleEntriesFor(coreState.entries, coreState.currentPath), ...peekSort()) : ownDisplayEntries);
+  const lineage = createExplorerLineage({
+    directory: () => coreState.currentPath, enabled: () => capability !== "none", filtered: () => !!filterQuery,
+    listing: () => lineageListing, windows: isWindows, peek,
+  });
+  const lineageGrouping = $derived(lineage.grouping);
+  /** A directory, or a file with lineage children here. */
+  const canPeekEntry = (entry: FileEntry): boolean => entry.kind === "directory" || !!lineageGrouping?.children(entry.path);
+
   // Each peek level is projected once per listing snapshot and projection
   // inputs, so a root keystroke or one peek's publish leaves other levels be.
   let peekLevels: PeekLevelCache | undefined;
   // Each level uses its view's sort, like the root: only Details has a sort UI;
   // List (and Tiles) sort by name ascending (§3).
-  const peekSort = (): [SortField, boolean] => coreState.viewMode === "details" ? [coreState.sortBy, coreState.sortAscending] : ["name", true];
   const peekProjectionKey = (parent: string) => [
     ...peekSort(), settingsStore.showHidden, settingsStore.showManuallyHidden,
     ...(settingsStore.showManuallyHidden ? [] : manualHiddenStore.namesIn(parent)),
@@ -223,23 +232,47 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     const policies = peek.policies;
     if (!policies) return flatPeekEntries(coreState.currentPath, ownDisplayEntries);
     peekLevels ??= policies.createPeekLevelCache(isWindows);
+    // Lineage grouping: depth 0 is the roots; edits open beneath their parents.
+    const grouping = lineageGrouping;
     return policies.flattenPeekEntries({
       // Spring-loaded peeks (#1242) project exactly like expanded folders.
-      root: coreState.currentPath, entries: ownDisplayEntries, expanded: peek.projected,
+      root: coreState.currentPath, entries: grouping ? grouping.roots : ownDisplayEntries, expanded: peek.projected,
       listing: path => peek.listing(path)?.entries,
       project: (entries, parent) => sortEntries(visibleEntriesFor(entries, parent), ...peekSort()),
       capability: peek.projected.size ? capability : "none", windows: isWindows,
       levels: peekLevels, projectionKey: peekProjectionKey,
+      ...(grouping ? { lineage: grouping } : {}),
     });
   });
   const displayEntries = $derived(peekTree.entries as FileEntry[]);
+  /** The occurrence key of a visible entry index (its path unless repeated). */
+  const keyAt = (index: number): string | null => index >= 0 && index < displayEntries.length ? peekKeyAt(peekTree, index) : null;
+  // The cursor and range anchor are paths (what file operations, refresh
+  // reconciliation and plugins read). A path listed more than once (a lineage
+  // merge output) also records which occurrence: a key that names another
+  // path is stale and ignored, so a path-only update needs no key update.
+  let cursorKey = $state<string | null>(null);
+  let anchorKey = $state<string | null>(null);
+  /** The occurrence key at `index` when it holds `path`, else null (first occurrence). */
+  const occurrenceAt = (index: number | undefined, path: string): string | null =>
+    index !== undefined && displayEntries[index]?.path === path ? keyAt(index) : null;
+  const indexOfKey = (key: string | null, path: string | null): number | undefined => {
+    if (key === null || path === null || occurrencePath(key) !== path || !peekTree.keys) return undefined;
+    const index = peekTree.keys.indexOf(key);
+    return index >= 0 ? index : undefined;
+  };
   const detailRows = $derived(peek.policies?.buildPeekRows(peekTree, peek.listing, creationSession !== null) ?? flatPeekRows(peekTree, creationSession !== null));
 
   function pruneHiddenChildren(before: typeof peekTree, after: readonly FileEntry[]) {
-    const pruned = prunePeekSelection(before, after, coreState.selectedPaths, coreState.cursorPath, coreState.selectionAnchorPath);
+    const grouping = lineageGrouping;
+    const pruned = prunePeekSelection(before, after, coreState.selectedPaths, coreState.cursorPath, coreState.selectionAnchorPath, cursorKey, anchorKey,
+      grouping ? path => grouping.revealChain(path).length > 0 : undefined);
     if (!pruned) return;
     setSelection(pruned.selected);
-    if (pruned.refocus !== undefined) { coreState.cursorPath = pruned.refocus; coreState.selectionAnchorPath = null; }
+    if (pruned.refocus !== undefined) {
+      coreState.cursorPath = pruned.refocus; coreState.selectionAnchorPath = null;
+      cursorKey = pruned.refocusKey ?? pruned.refocus;
+    }
   }
   let peekIntent = 0;
   /** The last user peek toggle (or collapse-all). Pruning, refreshes,
@@ -263,17 +296,29 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
       await peek.activate();
       if (destroyed || generation !== navGeneration || intent !== peekIntent) return;
     }
-    const entry = displayEntries.find(e => e.path === path);
-    if (!peeksAllowed() || entry?.kind !== "directory" || isVirtualPath(path) || providerFor(path)) return;
+    // A lineage group row toggles by its id; a file by its path when it has
+    // lineage children here (it opens with its group rows open).
+    const group = lineageGroupAt(path);
+    const entry = group ? undefined : displayEntries.find(e => e.path === path);
+    if (!peeksAllowed() || (!group && !(entry && canPeekEntry(entry))) || isVirtualPath(path) || providerFor(path)) return;
     // Never change membership this view does not show: a Tiles panel's
     // subfolder is a leaf, so toggling it would record a hidden expansion.
-    if (!canPeekAt(capability, peekTree.meta.get(path)?.depth ?? 0)) return;
+    if (entry?.kind === "directory" && !canPeekAt(capability, peekTree.meta.get(path)?.depth ?? 0)) return;
     if (peek.watchFactory) watch.enablePeeks(peek.watchFactory);
     const before = peekTree;
+    const opening = !peek.expanded.has(path);
     peek.toggle(path);
+    if (opening && entry && entry.kind !== "directory") {
+      for (const { id } of lineageGrouping?.children(entry.path)?.groups ?? []) if (!peek.expanded.has(id)) peek.toggle(id);
+    }
     notePeekChange(path);
     pruneHiddenChildren(before, displayEntries);
     reconcilePeekResources();
+  }
+  /** The lineage group a toggle id names, while it is shown. */
+  function lineageGroupAt(id: string) {
+    if (!id.startsWith("group:")) return null;
+    return peekTree.headers?.find(header => header.group.id === id)?.group ?? null;
   }
   /** Carets are drawn only while peeking is available and the option is on;
    * Tiles always draws them (the option applies to Details and List, #1241). */
@@ -793,20 +838,28 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   // Selection Actions
   // ===================
 
-  function selectEntry(entry: FileEntry, options: SelectOptions = {}) {
+  /** `index`, when given, is the clicked occurrence's visible index. */
+  function selectEntry(entry: FileEntry, options: SelectOptions = {}, index?: number) {
+    const key = occurrenceAt(index, entry.path) ?? (coreState.cursorPath === entry.path ? cursorKey : null);
     const result = selection.calculateSelection(
       displayEntries,
       entry,
       coreState.selectedPaths,
       coreState.selectionAnchorPath,
-      options
+      options,
+      { clicked: indexOfKey(key, entry.path) ?? index, anchor: indexOfKey(anchorKey, coreState.selectionAnchorPath) },
     );
     setSelection(result.selectedPaths);
+    // A Shift range keeps its anchor occurrence; any other click anchors here.
+    if (!(options.shiftKey && result.anchorPath === coreState.selectionAnchorPath)) anchorKey = key;
     coreState.selectionAnchorPath = result.anchorPath;
     coreState.cursorPath = entry.path;
+    cursorKey = key;
   }
 
-  const focusedEntry = $derived(resolveFileCursor(displayEntries, coreState.cursorPath, coreState.selectedPaths));
+  const cursorIndex = $derived(resolveCursorIndex(displayEntries, peekTree.keys, coreState.cursorPath, cursorKey, coreState.selectedPaths));
+  const focusedEntry = $derived(cursorIndex >= 0 ? displayEntries[cursorIndex] : undefined);
+  const focusedKey = $derived(keyAt(cursorIndex) ?? undefined);
 
   function clearSelection() {
     setSelection([]);
@@ -858,9 +911,29 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     coreState.cursorPath = result.cursorPath;
   }
 
+  /** Depth 0 only (folder-peek §3): with lineage grouping, its roots. */
   function selectAll() {
-    setSelection(ownDisplayEntries.map((e) => e.path));
-    coreState.selectionAnchorPath = ownDisplayEntries[0]?.path ?? null;
+    const own = lineageGrouping ? lineageGrouping.roots : ownDisplayEntries;
+    setSelection(own.map((e) => e.path));
+    coreState.selectionAnchorPath = own[0]?.path ?? null;
+  }
+
+  /** "Select with edits": add every lineage descendant of the selected files,
+   * opening their lineages so nothing selected is hidden (folder-peek §14). */
+  async function selectWithEdits() {
+    const grouping = lineageGrouping;
+    if (!grouping || !coreState.selectedPaths.size) return;
+    const descendants = grouping.descendants(coreState.selectedPaths);
+    if (!descendants.length) return;
+    if (!peek.policies) await peek.activate();
+    if (grouping !== lineageGrouping) return;
+    for (const path of [...coreState.selectedPaths, ...descendants]) {
+      const children = grouping.children(path);
+      if (!children) continue;
+      for (const id of [path, ...children.groups.map(group => group.id)]) if (!peek.expanded.has(id)) peek.toggle(id);
+    }
+    notePeekChange(coreState.currentPath);
+    setSelection(new Set([...coreState.selectedPaths, ...descendants]));
   }
 
   // ===================
@@ -955,14 +1028,6 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   // Clipboard Actions (uses global clipboardStore for cross-pane support)
   // ===================
 
-  async function copyToClipboard(entries: FileEntry[]) {
-    const result = operationRoots(entries, isWindows, displayEntries);
-    if (!result.ok) { toastStore.error(result.error); return; }
-    entries = result.entries;
-    if (!await clipboardStore.copy(entries)) return;
-    toastStore.clipboard(`Copied: ${entriesLabel(entries)}`, false);
-  }
-
   /** A selection may hold a peeked folder and its children; the archive
    * takes each root once and refuses members that would share a name. */
   async function compressToZip(entries: readonly FileEntry[]) {
@@ -971,150 +1036,24 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     if (result.entries.length) await mutations.compressToZip(result.entries.map(entry => entry.path));
   }
 
-  async function cutToClipboard(entries: FileEntry[]) {
-    const result = operationRoots(entries, isWindows, displayEntries);
-    if (!result.ok) { toastStore.error(result.error); return; }
-    entries = result.entries;
-    if (!await clipboardStore.cut(entries)) return;
-    toastStore.clipboard(`Cut: ${entriesLabel(entries)}`, true);
-  }
-
-  // Paste result for UI feedback
-  let pasteResult = $state<PasteResult | null>(null);
-
-  function makePasteContext(origin: ReturnType<typeof captureMutation>) {
-    let selectionCurrent = captureSelection();
-    const pastedPaths = new Set<string>();
-    return {
-      destPath: origin.path,
-      existingEntries: coreState.entries,
-      onEntriesAdded: (entries: FileEntry[]) => {
-        if (!origin.current()) return;
-        const newPaths = new Set(entries.map((entry) => entry.path));
-        coreState.entries = [...coreState.entries.filter((entry) => !newPaths.has(entry.path)), ...entries];
-        for (const path of newPaths) pastedPaths.add(path);
-        if (entries.length > 0 && selectionCurrent()) {
-          setSelection(pastedPaths);
-          const first = pastedPaths.values().next().value!;
-          coreState.cursorPath = first;
-          coreState.selectionAnchorPath = first;
-          selectionCurrent = captureSelection();
-        }
-      },
-      onRefresh: async () => {
-        if (origin.current()) await refresh({ silent: true });
-      },
-    };
-  }
-
-  async function pasteImageAt(origin: ReturnType<typeof captureMutation>, probe: boolean): Promise<string | null | undefined> {
-    return withClipboardImageProgress(origin.path, async () => {
-      if (probe) {
-        const status = await clipboardImageStatus();
-        if (!status.ok) {
-          toastStore.error(`Could not read clipboard image: ${status.error}`);
-          return status.error;
-        }
-        if (!status.data) return undefined;
-      }
-      const result = await clipboardPasteImage(origin.path);
-      if (!result.ok) {
-        toastStore.error(`Could not paste clipboard image into ${basename(origin.path) || origin.path}: ${result.error}`);
-        return result.error;
-      }
-      broadcastFileChange([origin.path]);
-      if (origin.current()) await refresh({ silent: true });
-      toastStore.success(`Clipboard image saved to ${basename(origin.path) || origin.path}`);
-      return null;
-    });
-  }
-
-  async function pasteImage(): Promise<string | null> {
-    const origin = captureMutation();
-    if (!origin.current()) return "Pane is closed";
-    if (!origin.path) return "No current directory";
-    return (await pasteImageAt(origin, false)) ?? null;
-  }
-
-  async function paste(): Promise<string | null> {
-    const origin = captureMutation();
-    if (!origin.current()) return "Pane is closed";
-    if (!origin.path) return "No current directory";
-    const context = makePasteContext(origin);
-
-    // The native snapshot waits behind every accepted file clipboard job,
-    // including jobs from other windows. Paste never bypasses this order.
-    const { error: osReadError, snapshot } = await clipboardStore.readOsFiles();
-    const source = selectPasteSource(snapshot, osReadError);
-
-    if (source.kind === "internal") {
-      const sources = source.entries.map((e) => ({ path: e.path, name: e.name, size: e.size, modified: e.modified }));
-      let error: string | null;
-      if (source.operation === "cut") {
-        const outcome = await clipboardStore.withCutClaim(source.revision, async () => {
-          let complete = false;
-          const result = await pasteEntries(sources, true, context, () => { complete = true; });
-          return { result, complete };
-        });
-        if (!outcome.claimed) {
-          toastStore.show(CUT_ALREADY_PASTED, "info");
-          return null;
-        }
-        error = outcome.result;
-      } else {
-        error = await pasteEntries(sources, false, context);
-      }
-      if (origin.current()) pasteResult = { error, timestamp: Date.now() };
-      return error;
-    }
-
-    // OS clipboard (files copied from external apps like Explorer/Finder)
-    if (source.kind === "external") {
-      const error = await pasteEntries(
-        source.paths.map((p) => ({ path: p, name: basename(p) })),
-        false,
-        context,
-      );
-      if (origin.current()) pasteResult = { error, timestamp: Date.now() };
-      return error;
-    }
-
-    // Fall back to clipboard image
-    const imageError = await pasteImageAt(origin, true);
-    if (imageError !== undefined) return imageError;
-
-    // Nothing pasted: only now is a clipboard read failure worth surfacing
-    // (#401) — when another source (internal clipboard, image) satisfied the
-    // paste, the failed file-list probe was inconsequential noise.
-    const error = osReadError ? `Reading the system clipboard failed: ${osReadError}` : "Nothing in clipboard";
-    toastStore.error(error);
-    return error;
-  }
+  const clipboard = createExplorerClipboard({
+    captureMutation, captureSelection, refresh,
+    displayEntries: () => displayEntries,
+    entries: () => coreState.entries,
+    publishEntries: (next) => { coreState.entries = next; },
+    select: (paths) => {
+      setSelection(paths);
+      const first = paths.values().next().value!;
+      coreState.cursorPath = first;
+      coreState.selectionAnchorPath = first;
+    },
+  });
 
   // ===================
   // Undo Actions
   // ===================
 
-  async function applyHistory(direction: "undo" | "redo"): Promise<string | null> {
-    const origin = captureMutation();
-    if (!origin.current()) return "Pane is closed";
-    const result = await undoStore[direction]();
-    const warnings = result.warnings?.join("\n");
-    if (result.action) {
-      // Native history publishes confirmed effects even if this pane closes.
-      if (!result.error) {
-        const completion = `${direction === "undo" ? "Undo" : "Redo"}: ${undoActionLabel(result.action)}`;
-        toastStore.show(warnings ? `${completion}\n${warnings}` : completion, "info");
-      }
-      if (origin.current()) await refresh({ silent: true });
-    }
-    if (warnings && result.error) toastStore.show(warnings, "info");
-    if (result.error) toastStore.error(result.error);
-    return result.error ?? null;
-  }
-
-  const undo = () => applyHistory("undo");
-  const redo = () => applyHistory("redo");
+  const { undo, redo } = createExplorerHistory({ captureMutation, refresh });
 
   // ===================
   // Public API
@@ -1130,6 +1069,8 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     fileViewPresentation,
     get ownEntries() { return coreState.entries; },
     get ownDisplayEntries() { return ownDisplayEntries; },
+    /** Depth 0 for typeahead: with lineage grouping, its roots (§4.2). */
+    get topLevelEntries(): readonly FileEntry[] { return lineageGrouping ? lineageGrouping.roots : ownDisplayEntries; },
     get entryMeta() { return peekTree.meta; },
     get detailRows() { return detailRows; },
     get peekEnabled() { return capability !== "none"; },
@@ -1189,17 +1130,40 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     },
     get peekCaretsShown() { return caretsShown(); },
     collapseAllPeeks,
-    get peekCommandTarget() { return resolvePeekCommandTarget(focusedEntry, peekTree.meta, capability); },
-    get canEscapePeek() { return capability !== "none" && resolvePeekEscape(focusedEntry, peekTree.meta) !== null; },
+    get peekCommandTarget() { return resolvePeekCommandTarget(focusedEntry, peekTree.meta, capability, focusedKey, canPeekEntry); },
+    /** A directory, or a file with lineage children in this folder. */
+    canPeekEntry,
+    // ---- Lineage peek ----
+    /** Contributions offered here, for the View menu's "Show <title>". */
+    get lineageOptions() { return lineage.options; },
+    isEntryLineageShown: lineage.isShown,
+    /** Turns "Show <title>" on or off for this pane. */
+    setEntryLineageShown: lineage.setShown,
+    /** Contribution ids this pane turned off (persisted with the pane). */
+    get lineageHidden() { return lineage.hidden; },
+    /** Grouping is shown (a provider's lineage applies and no filter suspends it). */
+    get lineageGrouped() { return lineageGrouping !== null; },
+    /** First paint waits (bounded) for this folder's lineage. */
+    get lineageHolding() { return lineage.holding; },
+    /** Lineage descendants of the selection exist ("Select with edits"). */
+    get canSelectWithEdits() { return !!lineageGrouping && coreState.selectedPaths.size > 0 && lineageGrouping.descendants(coreState.selectedPaths).length > 0; },
+    selectWithEdits,
+    get canEscapePeek() { return capability !== "none" && resolvePeekEscape(focusedEntry, peekTree.meta, focusedKey) !== null; },
     escapeSelectionOrPeek() {
       // A pending lazy renderer has no mounted editor to own its Escape.
       if (creationSession) { cancelInlineNewFolder(); return; }
       // Without peeks Escape is exactly the classic Clear Selection.
       if (coreState.selectedPaths.size || capability === "none") { clearSelection(); return; }
-      const parent = resolvePeekEscape(focusedEntry, peekTree.meta);
+      const placement = focusedKey === undefined ? undefined : peekTree.meta.get(focusedKey);
+      const parent = resolvePeekEscape(focusedEntry, peekTree.meta, focusedKey);
       if (!parent) return;
+      // A lineage group row is not a cursor target: the cursor lands on the
+      // file the group belongs to.
+      let landing = placement?.parentKey ?? parent;
+      if (lineageGroupAt(parent)) landing = peekTree.headers?.find(header => header.key === landing)?.parentKey ?? landing;
       togglePeek(parent);
-      coreState.cursorPath = parent; coreState.selectionAnchorPath = null;
+      coreState.cursorPath = occurrencePath(landing); coreState.selectionAnchorPath = null;
+      cursorKey = landing;
       onRevealCallback?.();
     },
     get currentPath() {
@@ -1276,6 +1240,11 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
       coreState.selectionAnchorPath = null;
       previewTarget = { owner, target, directory: coreState.currentPath };
     },
+    /** Preview of a lineage group row: the parents it combines and its size.
+     * A host-owned target, so it yields to any later file selection. */
+    showLineageGroupPreview(group: LineageGroup) {
+      this.setPreviewTarget(LINEAGE_PREVIEW_OWNER, lineageGroupPreviewTarget(group));
+    },
     clearPreviewTargetsOwnedBy(owner: string) {
       if (previewTarget?.owner === owner) previewTarget = null;
     },
@@ -1316,7 +1285,15 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     clearFilter() { filterQuery = ""; },
     // Selection and independent keyboard cursor
     get focusedEntry() { return focusedEntry; },
-    focusEntry(entry: FileEntry) { coreState.cursorPath = entry.path; },
+    /** The cursor's visible index (its occurrence when the path repeats); -1 when empty. */
+    get cursorIndex() { return cursorIndex; },
+    /** Occurrence keys parallel to `displayEntries`; absent when every key is the path. */
+    get displayKeys() { return peekTree.keys; },
+    /** `index`, when given, is the focused occurrence's visible index. */
+    focusEntry(entry: FileEntry, index?: number) {
+      cursorKey = occurrenceAt(index, entry.path) ?? (coreState.cursorPath === entry.path ? cursorKey : null);
+      coreState.cursorPath = entry.path;
+    },
     selectEntry,
     revealEntry(path: string): boolean {
       const entry = coreState.entries.find((entry) => entry.path === path);
@@ -1324,7 +1301,24 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
       revealedPath = path;
       filterQuery = "";
       showFilter = false;
-      selectEntry(entry);
+      // Lineage peek: a held arrival is released, and a grouped file opens
+      // the peeks down to one occurrence of it before it is selected.
+      lineage.release(path);
+      const grouping = lineageGrouping;
+      const chain = grouping?.revealChain(path) ?? [];
+      const open = () => {
+        for (const id of chain) if (!peek.expanded.has(id)) peek.toggle(id);
+        notePeekChange(chain[0]);
+        selectEntry(entry);
+      };
+      if (!chain.length) selectEntry(entry);
+      else if (peek.policies) open();
+      else {
+        const generation = navGeneration;
+        void peek.activate().then(() => {
+          if (!destroyed && generation === navGeneration && grouping === lineageGrouping) open();
+        });
+      }
       onRevealCallback?.();
       return true;
     },
@@ -1375,12 +1369,12 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     compressToZip,
     createSymlink: mutations.createSymlinkForEntry,
     // Clipboard
-    copyToClipboard,
-    cutToClipboard,
-    paste,
-    pasteImage,
+    copyToClipboard: clipboard.copy,
+    cutToClipboard: clipboard.cut,
+    paste: clipboard.paste,
+    pasteImage: clipboard.pasteImage,
     get pasteResult() {
-      return pasteResult;
+      return clipboard.result;
     },
     // Undo/Redo
     undo,
@@ -1409,6 +1403,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
       pendingNavigationFocus?.request?.cancel();
       pendingNavigationFocus = null;
       disposePeekEffects();
+      lineage.dispose();
       fileViewPresentation.dispose();
       creationSession = null;
       navGeneration += 1;

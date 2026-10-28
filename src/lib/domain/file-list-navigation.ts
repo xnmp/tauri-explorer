@@ -1,6 +1,32 @@
 import type { FileEntry, ViewMode } from "./file";
 import { resolveListMove, type ListNavigationSnapshot } from "./list-column-flow";
 import type { TileNavigationSnapshot } from "./tile-panel-navigation";
+import { occurrencePath } from "./folder-peek-flat";
+
+/**
+ * The cursor's index in the visible entries. `cursorKey` names the cursor's
+ * occurrence when a path is listed more than once (lineage peek); it counts
+ * only while it still names `cursorPath`, else the path's first occurrence
+ * is the cursor. -1 for an empty listing.
+ */
+export function resolveCursorIndex(
+  entries: readonly FileEntry[],
+  keys: readonly string[] | undefined,
+  cursorPath: string | null,
+  cursorKey: string | null,
+  selectedPaths: ReadonlySet<string>,
+): number {
+  if (cursorPath !== null) {
+    if (keys && cursorKey !== null && occurrencePath(cursorKey) === cursorPath) {
+      const index = keys.indexOf(cursorKey);
+      if (index >= 0) return index;
+    }
+    const index = entries.findIndex((entry) => entry.path === cursorPath);
+    if (index >= 0) return index;
+  }
+  const selected = selectedPaths.size ? entries.findIndex((entry) => selectedPaths.has(entry.path)) : -1;
+  return selected >= 0 ? selected : entries.length ? 0 : -1;
+}
 
 /** A keyboard cursor is independent of the selected set and survives sorting. */
 export function resolveFileCursor(
@@ -69,4 +95,28 @@ export function resolveFileListMove(
     index = layout.cursorIndex < 0 ? 0 : Math.max(0, Math.min(layout.count - 1, layout.cursorIndex + page));
   } else return null;
   return { kind: "focus", index, selection: event.shiftKey ? "extend" : modified && arrow ? "preserve" : "replace" };
+}
+
+/**
+ * The visible index a clicked row stands for, from its `data-path` and
+ * `data-index`. A merge output is listed under every parent, so the path
+ * alone cannot say which occurrence was clicked. Undefined when the row is
+ * missing, names another path, or carries no usable index.
+ */
+export function rowOccurrenceIndex(row: { path?: string; index?: string } | undefined, path: string): number | undefined {
+  const index = row?.path === path ? Number(row.index) : NaN;
+  return Number.isSafeInteger(index) && index >= 0 ? index : undefined;
+}
+
+/**
+ * The visible index of the previous/next non-directory entry, wrapping at the
+ * ends, stepping from the cursor's own occurrence when it holds `path` (a
+ * path may be listed twice) and else from the path's first occurrence. Null
+ * when `path` is not listed or there is no file to step to.
+ */
+export function siblingFileIndex(entries: readonly FileEntry[], cursorIndex: number, path: string, delta: number): number | null {
+  const files = entries.flatMap((e, index) => e.kind !== "directory" ? [index] : []);
+  const from = entries[cursorIndex]?.path === path ? cursorIndex : entries.findIndex((e) => e.path === path);
+  const at = files.indexOf(from);
+  return at < 0 ? null : files[(at + delta + files.length) % files.length];
 }

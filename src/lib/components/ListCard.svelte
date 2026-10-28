@@ -17,6 +17,8 @@
   import { createSurfaceDropFeedback, surfaceDropPath } from "$lib/composables/surface-drop-feedback";
 
   import ListPeekState from "./ListPeekState.svelte";
+  import ListLineageGroup from "./ListLineageGroup.svelte";
+  import type { ExplorerInstance } from "$lib/state/explorer.svelte";
 
   type EntryRow = Extract<PeekRow, { kind: "entry" }>;
 
@@ -38,8 +40,10 @@
     interactions: ReturnType<typeof useItemInteractions>;
     onscrolltop: (top: number) => void;
     row: Snippet<[EntryRow]>;
+    /** Lineage group rows inside the card (lineage peek) toggle through it. */
+    explorer: ExplorerInstance;
   }
-  let { entry, id, card, rows, groups, carets, offsets, scrollTop, previewRows, interactions, onscrolltop, row }: Props = $props();
+  let { entry, id, card, rows, groups, carets, offsets, scrollTop, previewRows, interactions, onscrolltop, row, explorer }: Props = $props();
 
   const content = $derived(card.end - card.start);
   const visible = $derived(previewRows ?? card.visibleRows);
@@ -110,6 +114,8 @@
             {@render row(slot.row)}
           {:else if slot.row.kind === "peek-state"}
             <ListPeekState row={slot.row} {carets} />
+          {:else if slot.row.kind === "lineage-group"}
+            <ListLineageGroup row={slot.row} {carets} {explorer} />
           {/if}
         </div>
       {/each}

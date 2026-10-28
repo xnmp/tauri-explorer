@@ -62,7 +62,9 @@ export function persistedStateAllocation(state: unknown, remaining = MAX_TOTAL_L
  *  `gitGraph` marks a pane showing the commit graph for that repo (#272). */
 export type PersistedNode =
   /** `fileView`: a plugin view id, `null` for an explicit built-in view, absent when never chosen. */
-  | { type: "leaf"; id: string; path: string; gitGraph?: string; fileView?: string | null }
+  | { type: "leaf"; id: string; path: string; gitGraph?: string; fileView?: string | null;
+      /** Lineage contributions this pane turned off ("Show <title>" unchecked); absent when none. */
+      lineageHidden?: string[] }
   | {
       type: "split";
       id: string;
@@ -127,6 +129,13 @@ function persistedFileView(value: unknown): { fileView?: string | null } {
   return typeof value === "string" && isFileViewId(value) ? { fileView: value } : {};
 }
 
+/** Valid lineage contribution ids, at most 32; anything else is dropped. */
+function persistedLineageHidden(value: unknown): { lineageHidden?: string[] } {
+  if (!Array.isArray(value)) return {};
+  const ids = [...new Set(value.filter((id): id is string => typeof id === "string" && isFileViewId(id)))].slice(0, 32);
+  return ids.length ? { lineageHidden: ids } : {};
+}
+
 function isPersistedNode(node: unknown): node is PersistedNode {
   // Saved workspaces are untrusted input. Bound depth before any recursive
   // layout operation and reject duplicate IDs (including cyclic objects).
@@ -166,7 +175,7 @@ function normalizePersistedTab(tab: unknown): PersistedWindowTab | null {
   // Copy only validated fields; live state must not retain unknown payload
   // objects, and restored geometry follows the same policy as resizing.
   const copyNode = (node: PersistedNode): PersistedNode => node.type === "leaf"
-    ? { type: "leaf", id: node.id, path: node.path, ...(node.gitGraph ? { gitGraph: node.gitGraph } : {}), ...persistedFileView(node.fileView) }
+    ? { type: "leaf", id: node.id, path: node.path, ...(node.gitGraph ? { gitGraph: node.gitGraph } : {}), ...persistedFileView(node.fileView), ...persistedLineageHidden(node.lineageHidden) }
     : { type: "split", id: node.id, direction: node.direction, ratio: clampSplitRatio(node.ratio), first: copyNode(node.first), second: copyNode(node.second) };
   const normalized: PersistedWindowTab = {
     id: source.id, kind: "explorer", layout: copyNode(source.layout), activePaneId: source.activePaneId,

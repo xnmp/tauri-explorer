@@ -26,6 +26,8 @@ import { fileViewRegistry, type FileViewContribution } from "./file-view-registr
 /** Capability "selectionAnchor": FileViewPane.setSelection accepts
  * `{ keepAnchor: true }` to replace selection without moving the range anchor or cursor. */
 export type { FileViewPane, FileViewContribution, FileViewEligibility } from "./file-view-registry.svelte";
+import { entryLineageRegistry, type EntryLineageContribution } from "./entry-lineage-registry.svelte";
+export type { EntryLineageContribution, EntryLineage, LineageParent } from "./entry-lineage-registry.svelte";
 import { previewInfoRegistry, type PreviewInfoContribution } from "./preview-registry.svelte";
 import { toastStore, type ToastType } from "$lib/state/toast.svelte";
 import { readConfigFile } from "$lib/api/config";
@@ -261,6 +263,11 @@ export interface PluginWorkspace {
   /** SDK 2: show one of this plugin's file views in the active pane, or
    *  return it to its built-in view mode when the view is already chosen. */
   toggleFileView?(viewId: string): void;
+  /** Capability "entryLineage": toggle "Show <title>" for one of this
+   *  plugin's lineage contributions on the active pane. */
+  toggleEntryLineage?(contributionId: string): void;
+  /** Capability "entryLineage": whether the active pane shows that lineage. */
+  isEntryLineageShown?(contributionId: string): boolean;
   /** Capability "paneDialogs": capture a pane of this window's active explorer
    *  tab (the active pane when paneId is omitted) for a pane-scoped dialog.
    *  The handle stays valid for the pane's lifetime, across selection and
@@ -321,6 +328,11 @@ export interface PluginContext {
    *  the plugin's Preview targets. Capability "fileViewEligibilityPending":
    *  available may return "pending". */
   registerFileView?(view: FileViewContribution): void;
+  /** Capability "entryLineage": supply "file X was made from P, Q" for a
+   *  folder. The built-in Details, List and Tiles views group each file's
+   *  lineage children under it with Folder Peek ("Show <title>", per pane,
+   *  on by default where `available`). Removed on deactivation. */
+  registerEntryLineage?(contribution: EntryLineageContribution): void;
   /** SDK 2: contribute a Preview-info section for files or this plugin's targets. */
   registerPreviewInfo?(section: PreviewInfoContribution): void;
   /** Open a registered dialog, passing props to its component. `open` and an
@@ -550,6 +562,12 @@ export function createPluginContext(
       if (view.id !== pluginId && (!name || name.includes("."))) throw new Error(`File view ${view.id} must be named ${pluginId}.<name>`);
       track(fileViewRegistry.register(pluginId, { ...view, component: ownedComponent(view.component) }, order));
     },
+    registerEntryLineage(contribution: EntryLineageContribution): void {
+      const id = String(contribution?.id);
+      const name = id.startsWith(`${pluginId}.`) ? id.slice(pluginId.length + 1) : null;
+      if (id !== pluginId && (!name || name.includes("."))) throw new Error(`Entry lineage ${id} must be named ${pluginId}.<name>`);
+      track(entryLineageRegistry.register(pluginId, contribution, order));
+    },
     registerPreviewInfo(section: PreviewInfoContribution): void {
       track(previewInfoRegistry.register(pluginId, { ...section, component: ownedComponent(section.component) }, order));
     },
@@ -638,7 +656,12 @@ export function createPluginContext(
       },
       getSelection: () => windowTabsManager.getActiveExplorer()?.getSelectedEntries() ?? [],
       getCombinedSelection: () => windowTabsManager.getCombinedSelection(),
-      getVisibleEntries: () => windowTabsManager.getActiveExplorer()?.displayEntries ?? [],
+      // Each path once: a lineage merge output is listed under every parent.
+      getVisibleEntries: () => {
+        const entries = windowTabsManager.getActiveExplorer()?.displayEntries ?? [];
+        const seen = new Set<string>();
+        return entries.filter(entry => !seen.has(entry.path) && !!seen.add(entry.path));
+      },
       navigate: async (path) => {
         await windowTabsManager.getActiveExplorer()?.navigateTo(path);
       },
@@ -685,6 +708,11 @@ export function createPluginContext(
         return complete ? { ok: true } : { ok: false, error: "skipped" };
       },
       getFileView: () => windowTabsManager.getActiveExplorer()?.fileView ?? null,
+      toggleEntryLineage: (contributionId) => {
+        if (entryLineageRegistry.get(contributionId)?.pluginId !== pluginId) throw new Error(`Entry lineage ${contributionId} is not registered by ${pluginId}`);
+        windowTabsManager.toggleEntryLineage(windowTabsManager.activePaneId, contributionId);
+      },
+      isEntryLineageShown: (contributionId) => windowTabsManager.getActiveExplorer()?.isEntryLineageShown(contributionId) ?? false,
       toggleFileView: (viewId) => {
         if (fileViewRegistry.get(viewId)?.pluginId !== pluginId) throw new Error(`File view ${viewId} is not registered by ${pluginId}`);
         const explorer = windowTabsManager.getActiveExplorer();

@@ -24,7 +24,9 @@ export function exposePluginSDK():void {
     // may register; host chrome and other plugins' DOM throw before registration.
     // "selectionAnchor": FileViewPane.setSelection(paths, focus, { keepAnchor: true }).
     // "fileViewEligibilityPending": reactive available(directory): boolean | "pending".
-    sdkVersion:1,apiVersion:3,capabilities:Object.freeze(["fileViews","previewInfo","previewTargets","blobWorkers","fileTiles","fileTile","tileSize","jobRetry","jobReveal","jobCost","fileViewReveal","textGeneration","pluginServices","serviceArtifacts","settingsActions","modalNavigation","combinedSelection","paneDialogs","fileDropTargets","selectionAnchor","fileViewEligibilityPending"]),svelteVersion:SVELTE_ABI,
+    // "entryLineage": registerEntryLineage (lineage peek: Details/List/Tiles group
+    // a file's edits under it) and workspace.toggleEntryLineage/isEntryLineageShown.
+    sdkVersion:1,apiVersion:3,capabilities:Object.freeze(["fileViews","previewInfo","previewTargets","blobWorkers","fileTiles","fileTile","tileSize","jobRetry","jobReveal","jobCost","fileViewReveal","textGeneration","pluginServices","serviceArtifacts","settingsActions","modalNavigation","combinedSelection","paneDialogs","fileDropTargets","selectionAnchor","fileViewEligibilityPending","entryLineage"]),svelteVersion:SVELTE_ABI,
     modules:Object.freeze({"svelte":svelte,"svelte/internal/client":client,"ui/modal":{default:Modal},"ui/image-editor":{default:ImageEditor},
       // Built-in Tiles view tiles (FileTilesProps in api.ts); capability "fileTiles".
       // Capability "tileSize": FileViewPane.tileSize and file-tiles' `size` prop.

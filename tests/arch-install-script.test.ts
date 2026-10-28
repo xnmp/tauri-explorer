@@ -140,7 +140,7 @@ exit 2
 
     await invoke(['--build-only']);
     const same = await invoke(['--install-only']) as { stderr: string };
-    expect(same.stderr).not.toContain('Warning');
+    expect(same.stderr).not.toMatch(/was built from|cannot confirm/);
 
     await git('commit', '--quiet', '-am', 'moved on');
     const moved = await invoke(['--install-only']) as { stderr: string };

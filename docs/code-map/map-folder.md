@@ -8,7 +8,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## Root installers — platform-specific source install entry points.
 
-- `arch_install.sh`, `PKGBUILD` — Arch source installation: early sudo authentication, checkout installation lock, isolated makepkg staging, locked dependency preparation, verified local frontend reuse and unchanged native release compilation; after installing, per-user copies that shadow `/usr` are moved aside so the package is the only install. `--rebuild` forces frontend regeneration; ordinary makepkg builds remain fresh.
+- `arch_install.sh`, `PKGBUILD` — Arch source installation: early sudo authentication, checkout installation lock, isolated makepkg staging, locked dependency preparation, verified local frontend reuse and unchanged native release compilation; after installing, per-user copies that shadow `/usr` are moved aside so the package is the only install. `--rebuild` forces frontend regeneration; ordinary makepkg builds remain fresh. `--build-only` / `--install-only` split the build (recorded with its source identity in `.arch-build/package-source`) from the sudo install.
 - `scripts/check-file-size.mjs`, `scripts/file-size-allowlist.json` — frontend file-size ratchet run by `bun run lint:arch` (#1372): `src/` `.ts`/`.js`/`.mjs`/`.svelte` files stay at or below 800 lines; pre-existing larger files are allowlisted at their line count, may shrink but never grow, and an entry fails once its file is at or below the limit or gone.
 - `scripts/build-arch-frontend.mjs` — content- and environment-verified local frontend build receipt; hashes source/config/dependencies/tool versions and output, locks builders through completion, and never publishes interrupted/changed-input builds.
 - `tests/arch-frontend-build.test.ts`, `tests/arch-install-script.test.ts` — frontend reuse/invalidation/failure/concurrency outcomes and the actual PKGBUILD preparation/native-build contract without package installation.
@@ -39,6 +39,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `ImageResolutionCell.svelte` — lazy intrinsic image metadata for mounted Details rows.
 - `DetailsView.svelte` — virtual-scrolled table view (columns, resize, sort headers).
 - `ListColumnsView.svelte` — Folder Peek List: column-major tree (`role=tree`, per-level `aria-posinset`/`setsize` from `peekTreePositionLookup`, arithmetic while nothing is expanded; a listbox without peek) with horizontal windowing and shared reveal/navigation snapshot; an open top-level folder keeps its header row and renders a `ListCard`, and its inert `.list-motion-layer` holds `use-list-motion` ghosts (#1240).
+- `LineageGroupRow.svelte` — Details lineage group row ("with B"): caret, co-parent icon, label and count; toggles and previews the parents it combines; never a file (lineage peek #1431).
+- `ListLineageGroup.svelte` — the List counterpart of `LineageGroupRow`, inside cards and in full flow.
 - `ListPeekState.svelte` — shared loading/empty/error treeitem for compact List cards and full-flow columns; preserves parent identity for drops.
 - `ListCard.svelte` — one List card's descendant scroll area (`role=group`, virtualized rows, nested guides, treeitem pseudo-rows) ; the header owns the clickable “+N more” action; its surface is a `.peek-drop-target` for the folder.
 - `ListCardGrip.svelte` — a List card's bottom-edge grip control (separator with arrow/Home/End keys), rendered inside the folder's header treeitem because a tree owns only groups and treeitems; its drag session lives in `use-list-columns`.
@@ -211,6 +213,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-commit-files-cache.ts` — importable 50-entry LRU for immutable commit file lists; shared across graph remounts and behavior-tested through an injected loader.
 
 - `explorer.svelte.ts` — CENTRAL per-pane store: listing, selection, navigation, view mode; delegates to pane-* modules. First stop for most features.
+- `explorer-clipboard.svelte.ts` — per-pane copy/cut/paste (internal, OS file and image clipboard), split from `explorer.svelte.ts`; owns the paste result.
+- `explorer-history.ts` — per-pane undo/redo wrapper over the global undo stack, split from `explorer.svelte.ts`.
+- `explorer-lineage.svelte.ts` — per-pane lineage peek state (#1431): hidden contributions, lazy `pane-lineage` loader, grouping/holding, and the lineage group Preview target; split from `explorer.svelte.ts`.
 - `types.ts` — shared explorer state types (ViewMode, pane shapes).
 - `pane-context.ts` — Svelte context for resolving the current pane inside components.
 - `pane-mutations.ts` — accepted file mutations: durable filesystem effects, per-path delete receipts/undo parents, navigation-owned pane publication and exact dialog-session completion.
@@ -224,6 +229,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `pane-resize.ts` — owns captured divider geometry, one coalesced pointer frame, and cancellation on release, blur or component retirement.
 - `pane-watch.ts` — per-pane observed navigation tickets, lease commit/rollback, pending-change replay and refresh admission.
 - `directory-events.ts` — shared native directory event subscription with explicit readiness, retry and late-listener retirement.
+- `pane-lineage.svelte.ts` — lazy per-pane entry lineage (#1431): the applicable contribution, debounced `changed` reloads, the 400ms first-paint hold, 300ms held arrivals and the `projectLineage` grouping; counts cycle fallbacks.
 - `folder-peek.svelte.ts` — per-pane facade that loads peek policies and resources on first use.
 - `folder-peek-session.svelte.ts` — lazy expansion membership, bounded List spill/full-flow/column stage choices (forgotten when a folder closes, #1365), and independently retired child-listing resources.
 - `pane-peek-watch.ts` — lazy pane-watch extension for capped child-directory and repository observation.
@@ -288,6 +294,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `keybindings.svelte.ts` — customizable keybinding store (chords, conflicts, persistence).
 - `shortcut-recorder.ts` — owned shortcut recording timer, cancellation and completion callbacks.
 - `window-tabs.svelte.ts` — tab management (open/close/reorder/active). Central for tabs.
+- `window-tabs-pane-prefs.ts` — per-pane commit graph (#272) and SCM panel override (#434) accessors for the tab strip, split from `window-tabs.svelte.ts`.
 - `window-tabs-persistence.ts` — persist/migrate window tab tree (PersistedNode).
 - `tab-transfer.ts` — window-local pointer marker identity and acknowledged native tab transfer.
 - `closed-tabs.ts` — closed-tab LIFO stack for Ctrl+Shift+T.
@@ -452,6 +459,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/domain/folder-peek.ts` — pure preorder expansion, pruning/caps and Details tree row/index geometry.
 - `src/lib/domain/folder-peek-memory.ts` — bounded expansion membership and List stage choices, subtree collapse and deleted-branch pruning shared with the pending restore facade.
 - `src/lib/domain/folder-peek-flat.ts` — flat Details rows and command admission before first peek activation; caret-less click ownership (`rowClickOwnsPeek`: click toggles, double-click refused with a notice, #1298).
+- `src/lib/domain/entry-lineage.ts` — lineage peek grouping (#1431): validates a provider's parent relation against the listing (foreign/self edges dropped, cycles fall back to flat) and groups children under each parent (`projectLineage`: direct children, "with B" groups, roots, descendants).
+- `src/lib/domain/lineage-co-parent.ts` — file-shaped stand-in for a lineage co-parent's icon, kept off the grouping module.
 - `src/lib/domain/folder-peek-pane.ts` — explorer-applied peek decisions: selection/cursor pruning after a projection hides peeked children, and spring-peek drop folders (#1242).
 - `src/lib/domain/explorer-entries.ts` — explorer entry-list helpers: multi-entry clipboard labels and merging a selected context-menu entry the listing lacks.
 - `src/lib/domain/file-operation-selection.ts` — Explorer recursive batch reduction, symlink-overlap admission, drag-primary remapping, and archive roots (same-basename refusal).
@@ -599,6 +608,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `dialog-registry.svelte.ts` — registry for plugin modal dialogs; PluginContext wiring injects the window-owned pane host.
 - `settings-registry.svelte.ts` — registry for plugin settings sections.
 - `inspector-registry.svelte.ts` — ordered, owner-disposed registry for selection-aware inspector contributions.
+- `entry-lineage-registry.svelte.ts` — `registerEntryLineage` contributions (capability `entryLineage`, #1431): owner-disposed, ordered, `available()` errors normalized to false; `showLineageLabel`.
 - `file-view-registry.svelte.ts` — SDK 2 file view contributions (ordered, owner-disposed) and the pane handle type a view receives.
 - `preview-registry.svelte.ts` — SDK 2 Preview extension points: plugin preview targets (non-file subjects) and Preview-info sections.
 - `src/lib/plugins/image-editor-registry.svelte.ts` — ordered, owner-disposed image editing tool contributions with immutable captured source revisions and opaque service ports.
@@ -658,7 +668,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `memory_release.rs` — after a large listing reply is encoded (and once more at the next listing), returns glibc arenas' freed pages with `malloc_trim` on Linux/glibc; a no-op elsewhere (#1416).
 - `palette.rs` — dominant-color extraction for themes (#203).
 - `src-tauri/src/platform.rs` — host capabilities that shape recorded history: `TRASH_RESTORE_SUPPORTED` and the `TrashRestore` value passed to history admission (macOS has no trash restore).
-- `wallpaper.rs` — set desktop wallpaper (mac/Linux/Windows).
+- `src-tauri/src/wallpaper/mod.rs` — set desktop wallpaper (mac/Linux/Windows); returns `WallpaperOutcome { notice }` describing a partial result.
+- `src-tauri/src/wallpaper/macos.rs` — macOS: store snapshot, NSWorkspace per screen (JXA), then on macOS 14+ wait for macOS's own save, return the wallpaper store to all-Spaces mode, atomic replace, WallpaperAgent restart and post-reload verify; OS behind the injected `MacWallpaperOs` seam, flow serialised by a mutex (#1441).
+- `src-tauri/src/wallpaper/macos_store.rs` — pure, fail-safe logic for the private `com.apple.wallpaper/Store/Index.plist`: detect macOS's fresh entry for the image, rewrite to all-Spaces mode (`AllSpacesAndDisplays` ← that entry, `Spaces`/`Displays` emptied), verify (#1441).
 - `archive.rs` — zip compress/extract; both commands are admitted mutations (renderer owner, Linux recovery claim on the output, forward history position) whose blocking job is cancelled when its renderer retires.
 - `clipboard/` — OS clipboard commands, the ordered file-clipboard worker and per-platform backends; see the `src-tauri/src/clipboard/` section below.
 - `progress.rs` — byte-level progress + cooperative cancellation for streaming file ops.
@@ -1064,6 +1076,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/process_ext/pipe_capture.rs` — shared Unix/Windows bounded stdout pipe capture with optional streaming and independently truncated prefix/suffix diagnostics; process-exit retirement drains queued bytes without a scheduling deadline.
 - `src-tauri/src/process_ext/windows_job.rs` — attach suspended launchers to kill-on-close JobObjects before descendants can start.
 - `src/lib/plugins/installed.ts` — load/remove installed contributions and synchronize package changes between windows.
+- `src/test-support/lineage-provider.ts` — browser-test `entryLineage` provider over the mock filesystem: install, update (fires `changed`), optional load delay (`e2e/lineage-peek.spec.ts`).
 - `src/test-support/file-view-eligibility.svelte.ts` — reactive pending/answer and activation gate for browser file-view first-paint tests; imported only by the intercepted demo fixture.
 - `src/lib/plugins/runtime-sdk.ts`, `src/lib/plugins/svelte-runtime.d.ts` — frozen SDK and exact shared Svelte compiler/runtime bindings; host modules `ui/modal`, `ui/image-editor`, `ui/file-tiles` (capability `fileTiles`), `ui/file-tile` (capability `fileTile`, including `tileGridMetrics`); capability `tileSize` (`FileViewPane.tileSize`, file-tiles `size`); capability `jobRetry` (`PluginJobs.accept` registration `retry`).
 - `src/lib/components/InstalledPluginSettings.svelte` — install, enable, remove and activation errors in Settings.

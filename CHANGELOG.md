@@ -2,6 +2,20 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.15.1 — 2026-10-28
+
+### Fixed
+
+- On macOS, Set as Wallpaper now changes every display, and every Space where
+  macOS allows it, returning the desktop to "Show on all Spaces". If a Space or
+  display could not be changed, the notification says so (#1441).
+
+### Housekeeping
+
+- `arch_install.sh --build-only` builds the Arch package ahead of time without
+  sudo, and `--install-only` installs that build in seconds, warning when the
+  checkout has changed since the build (#1439).
+
 ## v1.15.0 — 2026-10-28
 
 ### Added

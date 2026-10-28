@@ -15,14 +15,19 @@ export function calculateSelection(
   clickedEntry: FileEntry,
   currentSelection: Set<string>,
   anchorPath: string | null,
-  options: SelectOptions
+  options: SelectOptions,
+  /** The clicked and anchor occurrences when a path repeats (lineage peek);
+   * an index that does not hold the expected path falls back to the first. */
+  occurrences: { clicked?: number; anchor?: number } = {},
 ): { selectedPaths: Set<string>; anchorPath: string | null } {
-  const clickedIndex = displayEntries.findIndex((e) => e.path === clickedEntry.path);
+  const at = (index: number | undefined, path: string | null) =>
+    index !== undefined && displayEntries[index]?.path === path ? index : displayEntries.findIndex((e) => e.path === path);
+  const clickedIndex = at(occurrences.clicked, clickedEntry.path);
   if (clickedIndex === -1) {
     return { selectedPaths: currentSelection, anchorPath };
   }
 
-  const anchorIndex = displayEntries.findIndex((entry) => entry.path === anchorPath);
+  const anchorIndex = at(occurrences.anchor, anchorPath);
   if (options.shiftKey && anchorIndex >= 0) {
     // Shift+click: select range from anchor to clicked item
     const start = Math.min(anchorIndex, clickedIndex);
@@ -118,5 +123,10 @@ export function getSelectedEntries(
   const selected = new Set(selectedPaths);
   const lengths = new Set<number>();
   for (const path of selected) lengths.add(path.length);
-  return displayEntries.filter((e) => lengths.has(e.path.length) && selected.has(e.path));
+  // Each path once: a lineage merge output is listed under every parent, and
+  // file operations must never receive it twice.
+  const seen = new Set<string>();
+  return displayEntries.filter(
+    (e) => lengths.has(e.path.length) && selected.has(e.path) && !seen.has(e.path) && !!seen.add(e.path),
+  );
 }

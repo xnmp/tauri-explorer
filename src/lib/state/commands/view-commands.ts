@@ -40,6 +40,19 @@ export const viewCommands: Command[] = [
     handler: () => getActiveExplorer()?.collapseAllPeeks(),
   },
   {
+    // Lineage peek: "Show <title>" for every lineage offered in this folder.
+    id: "view.toggleLineage", scope: "pane", label: "Toggle Show Lineage (Group Edits Under Their Parents)", category: "view",
+    when: () => !!getActiveExplorer()?.lineageOptions?.length,
+    handler: () => {
+      const explorer = getActiveExplorer();
+      if (!explorer) return;
+      const options = explorer.lineageOptions;
+      // All on unless every one is on already; then all off.
+      const show = !options.every(option => explorer.isEntryLineageShown(option.id));
+      for (const option of options) if (explorer.isEntryLineageShown(option.id) !== show) windowTabsManager.toggleEntryLineage(windowTabsManager.activePaneId, option.id);
+    },
+  },
+  {
     id: "view.details",
     scope: "pane",
     label: "Details View",

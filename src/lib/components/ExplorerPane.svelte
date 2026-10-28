@@ -290,8 +290,9 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   function selectAndReveal(
     entry: import("$lib/domain/file").FileEntry,
     options: { ctrlKey: boolean; shiftKey: boolean },
+    index?: number,
   ): void {
-    paneExplorer.selectEntry(entry, options);
+    paneExplorer.selectEntry(entry, options, index);
     fileListScrollToEntry?.(entry);
   }
 
@@ -314,7 +315,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     const cursor = paneExplorer.focusedEntry;
     const move = resolveFileListMove(event, {
       viewMode: paneExplorer.viewMode, columns: gridColumns(paneExplorer.viewMode),
-      count: entries.length, cursorIndex: cursor ? entries.indexOf(cursor) : -1,
+      count: entries.length, cursorIndex: cursor ? paneExplorer.cursorIndex : -1,
       listLayout: settingsStore.folderPeek ? "columns" : "rows", list: getListNavigation?.(), tiles: getTilesNavigation?.(),
       directory: cursor?.kind === "directory", yazi: settingsStore.yaziNavigation,
     });
@@ -331,10 +332,10 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     }
     const entry = entries[move.index];
     if (move.selection === "preserve") {
-      paneExplorer.focusEntry(entry);
+      paneExplorer.focusEntry(entry, move.index);
       fileListScrollToEntry?.(entry);
     } else {
-      selectAndReveal(entry, { ctrlKey: false, shiftKey: move.selection === "extend" });
+      selectAndReveal(entry, { ctrlKey: false, shiftKey: move.selection === "extend" }, move.index);
     }
   }
 

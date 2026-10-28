@@ -41,6 +41,7 @@
 
   import type { ListNavigationSnapshot } from "$lib/domain/list-column-flow";
   import type { TileNavigationSnapshot } from "$lib/domain/tile-panel-navigation";
+  import { rowOccurrenceIndex } from "$lib/domain/file-list-navigation";
 
   interface Props {
     explorer: ExplorerInstance;
@@ -63,9 +64,8 @@
   // A plugin view replaces the listing only where it applies; elsewhere the
   // pane shows its built-in view while retaining the preference.
   const resolution = $derived(presentation.resolution);
-  const holdingView = $derived(resolution.kind === "hold");
+  const holdingView = $derived(resolution.kind === "hold" || (resolution.kind === "builtin" && explorer.lineageHolding));
   const pluginView = $derived(paneId && resolution.kind === "plugin" ? fileViewRegistry.get(resolution.id) : null);
-
 
   // Drop target state for dropping files into current directory
   const listDropFeedback = useBackgroundDropFeedback();
@@ -90,7 +90,7 @@
   // Scroll-to-entry-index method, bound from whichever view is active
   // (Details/List/Tiles all virtualize and own their scroll container).
   let viewContainsIndex = $state<((index: number) => boolean) | undefined>();
-  const cursorIndex = $derived(explorer.focusedEntry ? explorer.displayEntries.indexOf(explorer.focusedEntry) : -1);
+  const cursorIndex = $derived(explorer.cursorIndex);
   let viewMembershipRevision = $state(0);
   const fallbackTabStop = $derived.by(() => {
     void viewMembershipRevision;
@@ -205,7 +205,7 @@
 
   // Type-ahead selection composable
   const typeAhead = useTypeAhead(
-    () => explorer.ownDisplayEntries,
+    () => explorer.topLevelEntries,
     (entry) => {
       explorer.selectEntry(entry, {});
       scrollToSelected(entry);
@@ -249,8 +249,8 @@
   });
 
   function scrollToSelected(entry: FileEntry): void {
-    const entries = explorer.displayEntries;
-    const index = entries.indexOf(entry);
+    // A repeated path (lineage peek) reveals the cursor's own occurrence.
+    const index = entry === explorer.focusedEntry ? explorer.cursorIndex : explorer.displayEntries.indexOf(entry);
     if (index < 0) return;
 
     retainCursorReveal(entry);
@@ -279,7 +279,7 @@
     if (target.matches(".entry-item")) {
       const index = Number(target.dataset.index);
       const entry = explorer.displayEntries[index];
-      if (entry?.path === target.dataset.path) explorer.focusEntry(entry);
+      if (entry?.path === target.dataset.path) explorer.focusEntry(entry, index);
     } else if (target.matches('.virtual-viewport:is([role="grid"], [role="treegrid"], [role="tree"], [role="listbox"])') && explorer.focusedEntry) {
       scrollToSelected(explorer.focusedEntry);
     } else {
@@ -301,7 +301,7 @@
   function handleClick(entry: FileEntry, event: MouseEvent): void {
     const effect = clickSelectionEffect(event, paneId ?? "", windowTabsManager.activePaneId);
     retainCursorReveal(entry);
-    explorer.selectEntry(entry, effect.selectionModifiers);
+    explorer.selectEntry(entry, effect.selectionModifiers, rowOccurrenceIndex((event.currentTarget as Element).closest<HTMLElement>(".entry-item")?.dataset, entry.path));
     // Caret-less Folder Peek: the click also toggles (decided in the domain).
     void explorer.toggleOnRowClick(entry, event, endedDrag(event));
     // Windows/macOS pointer-drag acquisition prevents mousedown's default

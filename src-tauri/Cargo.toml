@@ -1,6 +1,6 @@
 [package]
 name = "tauri-explorer"
-version = "1.15.0"
+version = "1.15.1"
 description = "A keyboard-first file manager: fuzzy quick-open, ripgrep content search, a command palette for every action"
 authors = ["xnmp"]
 license = "MIT"
@@ -22,6 +22,9 @@ tauri-build = { version = "2", features = [] }
 criterion = "0.8"
 proptest = "1.11"
 tauri = { version = "2", features = ["test"] }
+# The macOS wallpaper store transform (wallpaper/macos_store.rs, #1441) is
+# unit-tested on every host; production only links it on macOS.
+plist = "1.8"
 
 [[bench]]
 name = "scan_directory_parallel"
@@ -170,6 +173,9 @@ security-framework = "2.11"
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSData", "NSString", "NSURL"] }
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSEvent", "NSPasteboard", "NSPasteboardItem"] }
+# The private Sonoma+ wallpaper store (wallpaper/macos_store.rs, #1441).
+# Already in the tree through tauri; listed so we can read/write it directly.
+plist = "1.8"
 
 # Thin LTO + single codegen unit: measurable wins for the CPU-bound stacks
 # (image decode, ripgrep, fuzzy matching, zip) at an acceptable release build

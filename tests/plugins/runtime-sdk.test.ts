@@ -22,6 +22,7 @@ it("announces the file-tiles module and pane tile sizes alongside the existing S
   expect(sdk.capabilities).toContain("fileTile");
   expect(sdk.capabilities).toContain("selectionAnchor");
   expect(sdk.capabilities).toContain("fileViewEligibilityPending");
+  expect(sdk.capabilities).toContain("entryLineage");
   for (const name of ["ui/modal", "ui/image-editor", "ui/file-tiles", "ui/file-tile"]) {
     expect(typeof sdk.modules[name]?.default, name).toBe("function");
   }

@@ -4,7 +4,7 @@
   Issue: tauri-explorer-83z, tauri-explorer-1k9k
 -->
 <script lang="ts">
-  import { tick } from "svelte";
+  import { tick, type Snippet } from "svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { contextMenuStore } from "$lib/state/context-menu.svelte";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
@@ -22,6 +22,7 @@
   import { getZoomFactor, fixedFromClient, fixedMenuPosition, isChromiumEngine, probeSingleScaleFixedOffset } from "$lib/domain/zoom";
   import type { ViewMode } from "$lib/state/types";
   import { fileViewRegistry } from "$lib/plugins/file-view-registry.svelte";
+  import { showLineageLabel } from "$lib/plugins/entry-lineage-registry.svelte";
   import { getPaneIdContext } from "$lib/state/pane-context";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { contextMenuItems } from "$lib/state/context-menu-items.svelte";
@@ -390,6 +391,40 @@
 
 <svelte:window on:keydown={handleKeydown} />
 
+{#snippet check()}
+  <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
+    <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>
+{/snippet}
+{#snippet listIcon()}
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+    <path d="M2 4H14M2 8H14M2 12H14" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+  </svg>
+{/snippet}
+{#snippet graphIcon()}
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+    <circle cx="4" cy="4" r="2" stroke="currentColor" stroke-width="1.25"/>
+    <circle cx="12" cy="4" r="2" stroke="currentColor" stroke-width="1.25"/>
+    <circle cx="8" cy="12" r="2" stroke="currentColor" stroke-width="1.25"/>
+    <path d="M4 6L8 10M12 6L8 10" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+  </svg>
+{/snippet}
+{#snippet lineageIcon()}
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+    <path d="M4 2.5V9.5C4 10.6 4.9 11.5 6 11.5H9M4 6.5H9" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+    <circle cx="11" cy="6.5" r="1.75" stroke="currentColor" stroke-width="1.25"/>
+    <circle cx="11" cy="11.5" r="1.75" stroke="currentColor" stroke-width="1.25"/>
+  </svg>
+{/snippet}
+<!-- One View-menu choice: a radio (modes, plugin views) or checkbox (lineage). -->
+{#snippet viewOption(checked: boolean, role: "menuitemradio" | "menuitemcheckbox", pick: () => void, label: string, icon: Snippet, optionId?: string)}
+  <button class="menu-item" class:selected={checked} data-lineage-option={optionId} onclick={pick} {role} aria-checked={checked}>
+    {@render icon()}
+    <span>{label}</span>
+    {#if checked}{@render check()}{/if}
+  </button>
+{/snippet}
+
 {#if contextMenuStore.isOpen && contextMenuStore.position && contextMenuStore.owner === explorer.contextMenuOwner}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -642,9 +677,7 @@
               </svg>
               <span>{mode.label}</span>
               {#if builtInShown(mode.id)}
-                <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
-                  <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
+                {@render check()}
               {/if}
 
             </button>
@@ -664,9 +697,7 @@
               </svg>
               <span>{mode.label}</span>
               {#if builtInShown(mode.id)}
-                <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
-                  <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
+                {@render check()}
               {/if}
               <svg class="submenu-arrow" width="8" height="8" viewBox="0 0 8 8" fill="none">
                 <path d="M3 1.5L6 4L3 6.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
@@ -684,9 +715,7 @@
                 >
                   <span>Auto</span>
                   {#if settingsStore.listViewColumns === 0}
-                    <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
-                      <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
+                    {@render check()}
                   {/if}
                 </button>
                 {#each [1, 2, 3] as n}
@@ -699,9 +728,7 @@
                   >
                     <span>{n}</span>
                     {#if settingsStore.listViewColumns === n}
-                      <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
-                        <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                      </svg>
+                      {@render check()}
                     {/if}
                   </button>
                 {/each}
@@ -726,9 +753,7 @@
               </svg>
               <span>{mode.label}</span>
               {#if builtInShown(mode.id)}
-                <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
-                  <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
+                {@render check()}
               {/if}
               <svg class="submenu-arrow" width="8" height="8" viewBox="0 0 8 8" fill="none">
                 <path d="M3 1.5L6 4L3 6.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
@@ -747,9 +772,7 @@
                   >
                     <span>{tileSizeLabels[size]}</span>
                     {#if effectiveThumbnailSize === size}
-                      <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
-                        <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                      </svg>
+                      {@render check()}
                     {/if}
                   </button>
                 {/each}
@@ -757,47 +780,19 @@
             {/if}
           </div>
         {:else}
-          <button
-            class="menu-item"
-            class:selected={builtInShown(mode.id)}
-            onclick={() => handleSetViewMode(mode.id)}
-            role="menuitemradio"
-            aria-checked={builtInShown(mode.id)}
-          >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-              <path d="M2 4H14M2 8H14M2 12H14" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
-            </svg>
-            <span>{mode.label}</span>
-            {#if builtInShown(mode.id)}
-              <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
-                <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-            {/if}
-          </button>
+          {@render viewOption(builtInShown(mode.id), "menuitemradio", () => handleSetViewMode(mode.id), mode.label, listIcon)}
         {/if}
       {/each}
       {#each offeredFileViews as view (view.id)}
-        <button
-          class="menu-item"
-          class:selected={shownFileView?.id === view.id}
-          onclick={() => handleSetFileView(view.id)}
-          role="menuitemradio"
-          aria-checked={shownFileView?.id === view.id}
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <circle cx="4" cy="4" r="2" stroke="currentColor" stroke-width="1.25"/>
-            <circle cx="12" cy="4" r="2" stroke="currentColor" stroke-width="1.25"/>
-            <circle cx="8" cy="12" r="2" stroke="currentColor" stroke-width="1.25"/>
-            <path d="M4 6L8 10M12 6L8 10" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
-          </svg>
-          <span>{view.title}</span>
-          {#if shownFileView?.id === view.id}
-            <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          {/if}
-        </button>
+        {@render viewOption(shownFileView?.id === view.id, "menuitemradio", () => handleSetFileView(view.id), view.title, graphIcon)}
       {/each}
+      {#if !shownFileView}
+        <!-- Lineage peek: per-pane "Show <title>" for each lineage offered here. -->
+        {#each explorer.lineageOptions as lineage (lineage.id)}
+          {@const shown = explorer.isEntryLineageShown(lineage.id)}
+          {@render viewOption(shown, "menuitemcheckbox", () => { if (paneId) windowTabsManager.toggleEntryLineage(paneId, lineage.id); else explorer.setEntryLineageShown(lineage.id, !shown); contextMenuStore.close(); }, showLineageLabel(lineage.title), lineageIcon, lineage.id)}
+        {/each}
+      {/if}
       <button
         class="menu-item"
         class:selected={settingsStore.showHidden}
@@ -811,9 +806,7 @@
         </svg>
         <span>Show hidden files</span>
         {#if settingsStore.showHidden}
-          <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
-            <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
+          {@render check()}
         {/if}
       </button>
     {/if}

@@ -5,6 +5,8 @@ import type { FileEntry, ViewMode } from "$lib/domain/file";
 import {
   resolveFileCursor,
   resolveFileListMove,
+  rowOccurrenceIndex,
+  siblingFileIndex,
   type FileListKey,
 } from "$lib/domain/file-list-navigation";
 
@@ -330,5 +332,45 @@ describe("resolveFileListMove", () => {
       expect(resolveFileListMove(key("ArrowLeft"), details({ yazi: true }))).toEqual({ kind: "parent" });
       expect(resolveFileListMove(key("ArrowDown"), details({ list: null, cursorIndex: 11 }))).toBeNull();
     });
+  });
+});
+
+describe("rowOccurrenceIndex", () => {
+  it("reads the row's visible index when it names the clicked path", () => {
+    expect(rowOccurrenceIndex({ path: "/a", index: "7" }, "/a")).toBe(7);
+  });
+
+  it("is undefined for a missing row, another path, or an unusable index", () => {
+    expect(rowOccurrenceIndex(undefined, "/a")).toBeUndefined();
+    expect(rowOccurrenceIndex({ path: "/b", index: "1" }, "/a")).toBeUndefined();
+    expect(rowOccurrenceIndex({ path: "/a" }, "/a")).toBeUndefined();
+    expect(rowOccurrenceIndex({ path: "/a", index: "-1" }, "/a")).toBeUndefined();
+    expect(rowOccurrenceIndex({ path: "/a", index: "1.5" }, "/a")).toBeUndefined();
+  });
+});
+
+describe("siblingFileIndex", () => {
+  const dir = (name: string): FileEntry => ({ ...entry(name), kind: "directory" });
+  // "m" is listed twice, as a lineage merge output is under each parent.
+  const listing = [entry("a"), dir("d"), entry("m"), entry("b"), entry("m")];
+
+  it("skips directories and wraps at both ends", () => {
+    expect(siblingFileIndex(listing, 0, "/files/a", 1)).toBe(2);
+    expect(siblingFileIndex(listing, 0, "/files/a", -1)).toBe(4);
+    expect(siblingFileIndex(listing, 4, "/files/m", 1)).toBe(0);
+  });
+
+  it("steps from the cursor's own occurrence of a repeated path", () => {
+    expect(siblingFileIndex(listing, 4, "/files/m", -1)).toBe(3);
+    expect(siblingFileIndex(listing, 2, "/files/m", 1)).toBe(3);
+  });
+
+  it("falls back to the first occurrence when the cursor names another path", () => {
+    expect(siblingFileIndex(listing, 0, "/files/m", 1)).toBe(3);
+  });
+
+  it("is null when the path is not listed or the listing is empty", () => {
+    expect(siblingFileIndex(listing, 0, "/files/zzz", 1)).toBeNull();
+    expect(siblingFileIndex([], -1, "/files/a", 1)).toBeNull();
   });
 });

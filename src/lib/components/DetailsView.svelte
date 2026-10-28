@@ -17,6 +17,7 @@
   import { layoutStore } from "$lib/state/layout.svelte";
   import PeekGuides from "./PeekGuides.svelte";
   import InlineNewFolder from "./InlineNewFolder.svelte";
+  import LineageGroupRow from "./LineageGroupRow.svelte";
 
   import type { FileEntry } from "$lib/domain/file";
   import { isTrashPath } from "$lib/domain/virtual-path";
@@ -233,7 +234,7 @@
       <div role="row" aria-rowindex={index + 1} data-row-path={row.kind === "entry" ? row.entry.path : row.kind === "peek-state" ? row.parentPath : undefined}
         data-row-kind={row.kind === "entry" ? (row.entry.kind === "directory" ? "directory" : "file") : row.kind === "peek-state" ? "state" : undefined}
         aria-level={row.kind === "entry" && explorer.peekEnabled ? row.depth + 1 : undefined}
-        aria-expanded={row.kind === "entry" && explorer.peekEnabled && row.entry.kind === "directory" ? row.expanded : undefined}
+        aria-expanded={row.kind === "lineage-group" ? row.expanded : row.kind === "entry" && explorer.peekEnabled && explorer.canPeekEntry(row.entry) ? row.expanded : undefined}
         aria-selected={row.kind === "entry" && explorer.peekEnabled ? explorer.isSelected(row.entry) : undefined}>
       {#if row.kind === "create"}
         <div role="gridcell"><InlineNewFolder {explorer} variant="details" /></div>
@@ -244,10 +245,13 @@
           <PeekGuides groups={explorer.detailRows.groups} row={index} carets={explorer.peekCaretsShown} />
           <span role="status">{row.message}</span>
         </div>
+      {:else if row.kind === "lineage-group"}
+        <LineageGroupRow {explorer} group={row.group} depth={row.depth} expanded={row.expanded} carets={explorer.peekCaretsShown}
+          groups={explorer.detailRows.groups} rowIndex={index} />
       {:else}
         <FileItem index={row.entryIndex} entry={row.entry} {explorer}
           depth={row.depth} parentPath={row.parentPath} expanded={row.expanded}
-          peek={explorer.peekEnabled} carets={explorer.peekCaretsShown} canPeek={explorer.peekEnabled && row.entry.kind === "directory"}
+          peek={explorer.peekEnabled} carets={explorer.peekCaretsShown} canPeek={explorer.peekEnabled && explorer.canPeekEntry(row.entry)}
           groups={explorer.detailRows.groups} rowIndex={index}
           onclick={(event) => onitemclick(row.entry, event)}
           ondblclick={() => onitemdblclick(row.entry)} selected={explorer.isSelected(row.entry)} />

@@ -15,6 +15,7 @@ import { SvelteMap } from "svelte/reactivity";
 import { createWindowClose, type NativeCloseSource } from "./window-close";
 import { createPaneActivationQueue, type PaneActivationScheduler } from "./pane-activation";
 import type { PaneId, WindowTab, ExplorerTab, TabPane } from "./types";
+import { createPanePrefs } from "./window-tabs-pane-prefs";
 import {
   type PaneNode,
   type SplitPlacement,
@@ -309,6 +310,20 @@ function createWindowTabsManager(options: {
     return live ? live.fileViewChoice : tab.panes[paneId]?.fileView;
   }
 
+  /** A pane's lineage contributions turned off, live or restored. */
+  function paneLineageHidden(tab: WindowTab, paneId: PaneId): readonly string[] {
+    const live = sessions.get(paneId);
+    return (live ? live.lineageHidden : tab.panes[paneId]?.lineageHidden) ?? [];
+  }
+
+  /** Toggle "Show <title>" for a lineage contribution on one pane. */
+  function toggleEntryLineage(paneId: PaneId, id: string): void {
+    const explorer = sessions.get(paneId);
+    if (!explorer) return;
+    explorer.setEntryLineageShown(id, !explorer.isEntryLineageShown(id));
+    saveState();
+  }
+
   /** Choose a pane's plugin file view (null returns to its built-in view). */
   function setPaneFileView(paneId: PaneId, id: string | null): void {
     const explorer = sessions.get(paneId);
@@ -327,6 +342,7 @@ function createWindowTabsManager(options: {
             path: panePath(tab, node.id),
             ...(tab.panes[node.id]?.gitGraph ? { gitGraph: tab.panes[node.id].gitGraph } : {}),
             ...(paneFileView(tab, node.id) !== undefined ? { fileView: paneFileView(tab, node.id) } : {}),
+            ...(paneLineageHidden(tab, node.id).length ? { lineageHidden: [...paneLineageHidden(tab, node.id)] } : {}),
           }
         : {
             type: "split",
@@ -441,6 +457,7 @@ function createWindowTabsManager(options: {
     sessions.create(paneId, () => {
       const explorer = createExplorerState(seed, () => !getPaneGitGraph(paneId), initialPeeks);
       if (sourceExplorer?.fileViewChoice !== undefined) explorer.setFileView(sourceExplorer.fileViewChoice);
+      for (const id of sourceExplorer?.lineageHidden ?? []) explorer.setEntryLineageShown(id, false);
       return explorer;
     }, async (explorer) => {
       await (seed || !track ? explorer.initialLoad(path) : explorer.navigateTo(path));
@@ -489,73 +506,10 @@ function createWindowTabsManager(options: {
     return tab;
   }
 
-  /** A pane's presentation state, from the first tab that holds it. */
-  function findPane(paneId: PaneId): TabPane | undefined {
-    for (const tab of tabs) {
-      const pane = tab.panes[paneId];
-      if (pane) return pane;
-    }
-    return undefined;
-  }
-
-  /** The repo whose commit graph a pane is showing, if any (#272). */
-  function getPaneGitGraph(paneId: PaneId): string | undefined {
-    return findPane(paneId)?.gitGraph;
-  }
-
-  /** Point a pane's open commit graph at a different repo, or close it
-   *  (null). Used when the pane's directory changes while the graph is
-   *  showing — the graph follows the navigation instead of pinning the old
-   *  repo (#362). No-op when the pane isn't showing a graph. */
-  function setPaneGitGraph(paneId: PaneId, repoPath: string | null): void {
-    const pane = findPane(paneId);
-    if (!pane?.gitGraph) return;
-    if (repoPath) pane.gitGraph = repoPath;
-    else delete pane.gitGraph;
-    saveState();
-  }
-
-  /** Show the graph for one specific pane. Unlike the active-pane toggle,
-   *  this is idempotent so SCM row actions can safely target their owner. */
-  function showGitGraphInPane(paneId: PaneId, repoPath: string): void {
-    const pane = findPane(paneId);
-    if (!pane) return;
-    pane.gitGraph = repoPath;
-    saveState();
-  }
-
-  /** Toggle the commit graph in the active pane (#272): showing → back to
-   *  the file listing; hidden → the graph for `repoPath`. */
-  function toggleGitGraphInActivePane(repoPath: string | null): void {
-    const tab = activeTab;
-    const pane = tab?.panes[tab.activePaneId];
-    if (!tab || !pane) return;
-    if (pane.gitGraph) {
-      delete pane.gitGraph;
-    } else if (repoPath) {
-      pane.gitGraph = repoPath;
-    }
-    saveState();
-  }
-
-  /** Whether a pane's SCM panel is visible (#434). Per-pane override wins;
-   *  when the pane made no explicit choice, fall back to the global
-   *  `showScmPanel` setting so new panes and existing tests track the default. */
-  function getPaneScmVisible(paneId: PaneId): boolean {
-    return findPane(paneId)?.scmPanel ?? settingsStore.showScmPanel;
-  }
-
-  /** Toggle the SCM panel in the active pane only (#434). Sets an explicit
-   *  per-pane override so sibling panes are unaffected. */
-  function toggleScmInActivePane(): boolean {
-    const tab = activeTab;
-    const pane = tab?.panes[tab.activePaneId];
-    if (!tab || !pane) return false;
-    const next = !(pane.scmPanel ?? settingsStore.showScmPanel);
-    pane.scmPanel = next;
-    saveState();
-    return next;
-  }
+  const panePrefs = createPanePrefs({
+    tabs: () => tabs, activeTab: () => activeTab, saveState, scmDefault: () => settingsStore.showScmPanel,
+  });
+  const { getPaneGitGraph, setPaneGitGraph, showGitGraphInPane, toggleGitGraphInActivePane, getPaneScmVisible, toggleScmInActivePane } = panePrefs;
 
   /** Rebuild tab descriptors, reserving explorers until the tab is activated.
    *  `regenerateIds` gives the tab and its panes fresh ids (adopting
@@ -579,6 +533,7 @@ function createWindowTabsManager(options: {
         const isActiveTarget = node.id === persisted.activePaneId && !!opts.overridePath;
         const path = isActiveTarget ? opts.overridePath! : node.path;
         const fileView = node.fileView;
+        const lineageHidden = node.lineageHidden ?? [];
         const peeks = opts.peeks?.get(node.id);
         if (peeks?.length) pendingPeeks.set(paneId, peeks);
         sessions.reserve(paneId, () => {
@@ -588,9 +543,10 @@ function createWindowTabsManager(options: {
           // (it shows the built-in view until the view registers). An explicit
           // built-in choice (null) overrides the default view for new panes.
           if (fileView !== undefined) explorer.setFileView(fileView);
+          for (const id of lineageHidden) explorer.setEntryLineageShown(id, false);
           return explorer;
         }, (explorer) => explorer.initialLoad(path));
-        panes[paneId] = { path, ...(node.gitGraph ? { gitGraph: node.gitGraph } : {}), ...(fileView !== undefined ? { fileView } : {}) };
+        panes[paneId] = { path, ...(node.gitGraph ? { gitGraph: node.gitGraph } : {}), ...(fileView !== undefined ? { fileView } : {}), ...(lineageHidden.length ? { lineageHidden } : {}) };
         return leaf(paneId);
       }
       return {
@@ -1310,6 +1266,7 @@ function createWindowTabsManager(options: {
     getPaneGitGraph,
     setPaneGitGraph,
     setPaneFileView,
+    toggleEntryLineage,
     showGitGraphInPane,
     toggleGitGraphInActivePane,
     getPaneScmVisible,

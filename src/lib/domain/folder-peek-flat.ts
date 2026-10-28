@@ -2,6 +2,28 @@
 import type { FileEntry, ViewMode } from "./file";
 import type { PeekMeta, PeekTree, PeekRows, PeekRow } from "./folder-peek";
 export type PeekCapability = "none" | "tree" | "top-level";
+
+/**
+ * Row identity (lineage peek H1). One file can appear more than once in a
+ * peek tree (a lineage merge output sits under each parent), so the tree keys
+ * each occurrence: a path at depth 0 and inside folder peeks (a path already
+ * names its chain), and `<parent occurrence key>\0<path or group id>` beneath
+ * a lineage occurrence. NUL never occurs in a path or a group id, so the
+ * final segment is always the occurrence's own path (or group id).
+ */
+export const OCCURRENCE_SEPARATOR = "\0";
+export const occurrenceKey = (parentKey: string, id: string): string => `${parentKey}${OCCURRENCE_SEPARATOR}${id}`;
+/** The path (or lineage group id) an occurrence key names. */
+export function occurrencePath(key: string): string {
+  const at = key.lastIndexOf(OCCURRENCE_SEPARATOR);
+  return at < 0 ? key : key.slice(at + 1);
+}
+/** The occurrence key of `tree.entries[index]`: its path unless the tree keys occurrences. */
+export const peekKeyAt = (tree: Pick<PeekTree, "entries" | "keys">, index: number): string =>
+  tree.keys?.[index] ?? tree.entries[index].path;
+/** An occurrence's parent occurrence key: `parentKey` beneath a lineage
+ * occurrence, else its folder path. */
+export const parentKeyOf = (meta: PeekMeta): string => meta.parentKey ?? meta.parentPath;
 /** Everything that decides whether a pane may peek. Each "no" — the Folder Peek
  * setting off, a git-graph/plugin surface, a virtual or provider location, or a
  * view without peek support — is the same capability "none": no carets, no peek
@@ -122,15 +144,18 @@ export const canPeekAt = (capability: PeekCapability, depth: number): boolean =>
 
 /** The folder "Peek into Folder" toggles: the cursor's folder when it can peek,
  * else the peek that holds the cursor entry (closing it). */
-export function resolvePeekCommandTarget(entry: FileEntry | null | undefined, meta: ReadonlyMap<string, PeekMeta>, capability: PeekCapability = "tree"): string | null {
+export function resolvePeekCommandTarget(entry: FileEntry | null | undefined, meta: ReadonlyMap<string, PeekMeta>, capability: PeekCapability = "tree",
+  key: string = entry?.path ?? "", peekable: (entry: FileEntry) => boolean = entry => entry.kind === "directory"): string | null {
   if (!entry || capability === "none") return null;
-  const placement = meta.get(entry.path);
-  if (entry.kind === "directory" && canPeekAt(capability, placement?.depth ?? 0)) return entry.path;
-  return placement && placement.depth > 0 ? placement.parentPath : null;
+  const placement = meta.get(key) ?? meta.get(entry.path);
+  if (peekable(entry) && canPeekAt(capability, placement?.depth ?? 0)) return entry.path;
+  return placement && placement.depth > 0 ? occurrencePath(parentKeyOf(placement)) : null;
 }
-export function resolvePeekEscape(entry: FileEntry | null | undefined, meta: ReadonlyMap<string, PeekMeta>): string | null {
-  const placement = entry && meta.get(entry.path);
-  return placement && placement.depth > 0 ? placement.parentPath : null;
+/** The peek Escape closes: the one holding the cursor occurrence, named by
+ * its toggle id (a folder or file path, or a lineage group id). */
+export function resolvePeekEscape(entry: FileEntry | null | undefined, meta: ReadonlyMap<string, PeekMeta>, key: string = entry?.path ?? ""): string | null {
+  const placement = entry && (meta.get(key) ?? meta.get(entry.path));
+  return placement && placement.depth > 0 ? occurrencePath(parentKeyOf(placement)) : null;
 }
 
 /** Drop redirects use the live projection, never a guessed path parent. Root

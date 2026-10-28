@@ -22,6 +22,7 @@
   import EntryCell from "./EntryCell.svelte";
   import ListCard from "./ListCard.svelte";
   import ListPeekState from "./ListPeekState.svelte";
+  import ListLineageGroup from "./ListLineageGroup.svelte";
   import ListCardGrip from "./ListCardGrip.svelte";
   import PeekOpenButton from "./PeekOpenButton.svelte";
   import type { FileEntry } from "$lib/domain/file";
@@ -131,8 +132,8 @@
   <EntryCell role={tree ? "treeitem" : "option"} setSize={tree ? tree.setsize(row.entryIndex) : explorer.displayEntries.length} posInSet={tree?.posinset(row.entryIndex)}
     column={1} class="list-item list-entry" index={row.entryIndex} entry={row.entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}
     level={tree ? row.depth + 1 : undefined} owns={card && tree ? cardGroupId(row.entryIndex) : undefined}
-    expanded={tree && row.entry.kind === "directory" ? row.expanded : undefined}>
-    {#if carets && row.entry.kind === "directory"}
+    expanded={tree && explorer.canPeekEntry(row.entry) ? row.expanded : undefined}>
+    {#if carets && explorer.canPeekEntry(row.entry)}
       <!-- A pointer affordance only (as in Details): never a tab stop, and its
            mousedown keeps focus where it was. Positioned in the row's caret
            gutter, so file rows need no blank slot element. -->
@@ -199,6 +200,8 @@
           style:--depth={slot.header?.depth ?? (slot.item.more ? 1 : 0)}>
           {#if slot.state}
             <ListPeekState row={slot.state} {carets} />
+          {:else if slot.group}
+            <ListLineageGroup row={slot.group} {carets} {explorer} />
           {:else if slot.item.more}
             <!-- A spill's last slot (#1365): a drop on it goes into its folder,
                  like the folder's status rows. -->
@@ -215,7 +218,7 @@
             {#if slot.item.card}
               <ListCard entry={slot.header.entry} id={cardGroupId(slot.header.entryIndex)} card={slot.item.card} rows={explorer.detailRows.rows} groups={explorer.detailRows.groups} {carets}
                 offsets={columns.cardOffsets(slot.item.card)} scrollTop={columns.cardScrollTop(slot.item.card.path)} previewRows={columns.previewRows(slot.item.card.path)}
-                {interactions} row={entryRow}
+                {interactions} row={entryRow} {explorer}
                 onscrolltop={(top) => columns.setCardScrollTop(slot.item.card!.path, top)} />
             {/if}
           {/if}

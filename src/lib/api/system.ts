@@ -42,10 +42,18 @@ export async function setFfmpegPath(path: string): Promise<void> {
   }
 }
 
-export async function setAsWallpaper(path: string): Promise<ApiResult<void>> {
+/** Backend `WallpaperOutcome`: `notice` says what a successful change could
+ *  not do (e.g. macOS changed only the current Space, #1441). */
+interface WallpaperOutcome {
+  notice?: string | null;
+}
+
+/** Set the desktop wallpaper. Resolves to a notice describing a partial
+ *  result, or null when every display/Space was changed. */
+export async function setAsWallpaper(path: string): Promise<ApiResult<string | null>> {
   try {
-    await invoke("set_as_wallpaper", { path });
-    return { ok: true, data: undefined };
+    const outcome = await invoke<WallpaperOutcome | undefined>("set_as_wallpaper", { path });
+    return { ok: true, data: outcome?.notice ?? null };
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }

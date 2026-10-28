@@ -668,7 +668,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `memory_release.rs` — after a large listing reply is encoded (and once more at the next listing), returns glibc arenas' freed pages with `malloc_trim` on Linux/glibc; a no-op elsewhere (#1416).
 - `palette.rs` — dominant-color extraction for themes (#203).
 - `src-tauri/src/platform.rs` — host capabilities that shape recorded history: `TRASH_RESTORE_SUPPORTED` and the `TrashRestore` value passed to history admission (macOS has no trash restore).
-- `wallpaper.rs` — set desktop wallpaper (mac/Linux/Windows).
+- `src-tauri/src/wallpaper/mod.rs` — set desktop wallpaper (mac/Linux/Windows); returns `WallpaperOutcome { notice }` describing a partial result.
+- `src-tauri/src/wallpaper/macos.rs` — macOS: store snapshot, NSWorkspace per screen (JXA), then on macOS 14+ wait for macOS's own save, return the wallpaper store to all-Spaces mode, atomic replace, WallpaperAgent restart and post-reload verify; OS behind the injected `MacWallpaperOs` seam, flow serialised by a mutex (#1441).
+- `src-tauri/src/wallpaper/macos_store.rs` — pure, fail-safe logic for the private `com.apple.wallpaper/Store/Index.plist`: detect macOS's fresh entry for the image, rewrite to all-Spaces mode (`AllSpacesAndDisplays` ← that entry, `Spaces`/`Displays` emptied), verify (#1441).
 - `archive.rs` — zip compress/extract; both commands are admitted mutations (renderer owner, Linux recovery claim on the output, forward history position) whose blocking job is cancelled when its renderer retires.
 - `clipboard/` — OS clipboard commands, the ordered file-clipboard worker and per-platform backends; see the `src-tauri/src/clipboard/` section below.
 - `progress.rs` — byte-level progress + cooperative cancellation for streaming file ops.

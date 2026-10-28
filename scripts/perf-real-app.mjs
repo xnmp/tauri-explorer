@@ -10,7 +10,12 @@
  *   env -u WAYLAND_DISPLAY GDK_BACKEND=x11 \
  *     xvfb-run -a --server-args="-screen 0 1920x1080x24" dbus-run-session -- \
  *     node scripts/perf-real-app.mjs --fixtures DIR --binary PATH [--runs 20] [--out FILE]
- *       [--scenarios open,nav,memory]   (default open,nav)
+ *       [--scenarios open,nav,memory]   (default open,nav)  [--open-sizes 10k,100k]
+ *
+ * Phase attribution (#1417): every recorded folder load also reports
+ * `phasesMs`, joining the page's load trace (published on the root element
+ * when the runner sets `data-listing-perf`) with the native phases the app
+ * logs under TAURI_EXPLORER_LISTING_TIMING=1.
  *
  * The binary is unmodified: the runner only sets TAURI_WEBVIEW_AUTOMATION
  * (so WebKitGTK accepts the automation session) and WEBKIT_INSPECTOR_SERVER
@@ -70,6 +75,7 @@ function parseArgs(argv) {
       case "--probe-timeout-ms": options.probeTimeoutMs = Number(value); i++; break;
       case "--scenarios": options.scenarios = value.split(","); i++; break;
       case "--settle-ms": options.settleMs = Number(value); i++; break;
+      case "--open-sizes": options.openSizes = value.split(","); i++; break;
       case "--memory-sizes": options.memorySizes = value.split(","); i++; break;
       case "--memory-cycles": options.memoryCycles = Number(value); i++; break;
       case "--gc-pressure-mb": options.gcPressureMb = Number(value); i++; break;
@@ -366,6 +372,8 @@ async function main() {
   const launcher = spawn(options.binary, [options.fixtures], {
     env: {
       ...env, TAURI_WEBVIEW_AUTOMATION: "true", WEBKIT_INSPECTOR_SERVER: `127.0.0.1:${inspector}`,
+      // Per-phase native timing lines in the app log (#1417); off by default.
+      TAURI_EXPLORER_LISTING_TIMING: "1",
     },
     stdio: "ignore",
   });
@@ -407,11 +415,19 @@ async function main() {
     }
     if (!attached) throw new Error("no visible window showing the fixture root");
     await browser.setTimeout({ script: 180_000 });
+    // Opt the page into publishing each settled load trace (#1417).
+    await browser.execute(() => document.documentElement.setAttribute("data-listing-perf", ""));
 
     const measure = async (scenario, size, spec, record = true) => {
       const loadavg = os.loadavg();
       const result = await browser.executeAsync(measureInPage, { timeoutMs: options.probeTimeoutMs, ...spec });
       if (result.failure) throw new Error(`${scenario} (${size}): ${result.failure} ${JSON.stringify(result.state ?? {})}`);
+      if (spec.kind === "dir") {
+        const raw = await browser.execute(() => document.documentElement.dataset.listingTrace ?? null);
+        const trace = raw ? JSON.parse(raw) : null;
+        // Only this navigation's trace: same folder, started after the input.
+        result.trace = trace && trace.path === spec.path && trace.startedMono >= result.t0 ? trace : null;
+      }
       if (record) samples.push({ scenario, size, loadavg1: loadavg[0], ...result });
       if (process.env.PERF_VERBOSE) console.error(scenario, size, JSON.stringify(result.frame));
       return result;
@@ -475,7 +491,8 @@ async function main() {
       }
     }
     // 1. Large-folder reference: enter each fixture folder from the root.
-    for (const [label, folder] of options.scenarios.includes("open") ? Object.entries(manifest.folders) : []) {
+    const openFolders = Object.entries(manifest.folders).filter(([label]) => !options.openSizes || options.openSizes.includes(label));
+    for (const [label, folder] of options.scenarios.includes("open") ? openFolders : []) {
       const dirSpec = { kind: "dir", path: folder.path, count: folder.visibleEntries, trigger: { type: "dblclick", path: folder.path } };
       for (let run = 0; run <= options.runs; run++) {
         // Run 0 is a discarded warm-up (populates the page cache and JIT).
@@ -513,6 +530,7 @@ async function main() {
     }
     if (options.scenarios.includes("nav")) console.error("navigation: done");
 
+    attachNativeTimings(samples, profile);
     const memoryBudget = checkMemoryBudget(memoryPhases, manifest, options);
     const report = { ...buildReport(samples, { options, meta, memory, manifest }), memoryPhases, memoryBudget };
     const json = JSON.stringify(report, null, 2);
@@ -572,6 +590,75 @@ function checkMemoryBudget(phases, manifest, options) {
   return { results, failures };
 }
 
+/**
+ * Native per-phase timings (#1417) from the app's log in the private profile:
+ * one `Listing(timing) id=… entries=… us=phase:start+duration,…` line per
+ * settled traced listing, joined to samples by trace ID.
+ */
+function attachNativeTimings(samples, profile) {
+  const lines = new Map();
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const file = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(file);
+      else if (entry.name.endsWith(".log")) {
+        for (const match of fs.readFileSync(file, "utf8").matchAll(/Listing\(timing\) id=(\S+) entries=(\d+) us=(\S*)/g)) {
+          const phases = {};
+          for (const part of match[3].split(",").filter(Boolean)) {
+            const [, name, start, duration] = /^([\w-]+):(\d+)\+(\d+)$/.exec(part);
+            phases[name] = (phases[name] ?? 0) + Number(duration) / 1000;
+            phases.endMs = Math.max(phases.endMs ?? 0, (Number(start) + Number(duration)) / 1000);
+          }
+          lines.set(match[1], { entries: Number(match[2]), phases });
+        }
+      }
+    }
+  };
+  try { walk(path.join(profile, "data")); } catch { /* no log yet */ }
+  for (const sample of samples) {
+    if (sample.trace) sample.native = lines.get(sample.trace.id) ?? null;
+  }
+}
+
+/** Per-sample phase breakdown in ms (#1417); null when a trace is missing. */
+function phaseBreakdown(sample) {
+  const trace = sample.trace;
+  if (!trace || trace.outcome !== "ok") return null;
+  const span = (name) => trace.spans.filter((s) => s.phase === name && s.endMs !== null).reduce((sum, s) => sum + (s.endMs - s.startMs), 0);
+  const settledAt = trace.finishedMono - sample.t0;
+  const native = sample.native?.phases ?? null;
+  const breakdown = {
+    inputToTrace: trace.startedMono - sample.t0,
+    watchReady: span("watch-ready"),
+    queued: span("queued"),
+    nativeRoundTrip: span("native"),
+    decode: span("decode"),
+    publish: span("publish"),
+    project: span("project"),
+    select: span("select"),
+    settledToRows: sample.dom.firstRows - settledAt,
+    rowsToFrames: sample.frame.firstRows - sample.dom.firstRows,
+  };
+  if (native) {
+    for (const [name, ms] of Object.entries(native)) if (name !== "endMs") breakdown[`rust:${name}`] = ms;
+    breakdown["rust:total"] = native.endMs;
+    // Request dispatch, transfer to the webview and JSON.parse of the reply.
+    breakdown.ipcAndParse = breakdown.nativeRoundTrip - native.endMs;
+  }
+  return breakdown;
+}
+
+function summarizePhases(group) {
+  const rows = group.map(phaseBreakdown).filter(Boolean);
+  if (!rows.length) return null;
+  const keys = [...new Set(rows.flatMap((row) => Object.keys(row)))];
+  return Object.fromEntries(keys.map((key) => {
+    const values = rows.map((row) => row[key]).filter((v) => typeof v === "number");
+    const { n, median, p95 } = summarize(values);
+    return [key, { n, median: Math.round(median * 10) / 10, p95: Math.round(p95 * 10) / 10 }];
+  }));
+}
+
 function buildReport(samples, { options, meta, memory, manifest }) {
   const groups = new Map();
   for (const sample of samples) {
@@ -601,6 +688,7 @@ function buildReport(samples, { options, meta, memory, manifest }) {
       firstRowsMs: summarize(group.map((s) => s.frame.firstRows)),
       completeMs: summarize(group.map((s) => s.frame.complete)),
       domCompleteMs: summarize(group.map((s) => s.dom.complete)),
+      phasesMs: summarizePhases(group),
       loadavg1: loadavg,
     };
   });

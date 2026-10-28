@@ -11,6 +11,7 @@
 
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { formatSize } from "$lib/domain/file";
+  import { getSelectedEntries } from "$lib/state/selection";
 
   const explorer = $derived(windowTabsManager.getActiveExplorer());
   const entries = $derived(explorer?.ownDisplayEntries ?? []);
@@ -26,8 +27,7 @@
 
   const selectedEntries = $derived.by(() => {
     if (!explorer || selectedCount === 0) return [];
-    const selectedPaths = explorer.selectedPaths;
-    return explorer.displayEntries.filter((e) => selectedPaths.has(e.path));
+    return getSelectedEntries(explorer.displayEntries, explorer.selectedPaths);
   });
 
   const selectedFiles = $derived(selectedEntries.filter((e) => e.kind === "file").length);

@@ -470,8 +470,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
       }
 
       if (result.ok) {
-        load.phase("publish");
-        load.entries(result.entries.length);
+        load.phase("publish"); load.entries(result.entries.length);
         presentationDirectory = result.path;
         coreState.currentPath = result.path;
         coreState.entries = result.entries;
@@ -483,6 +482,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
           coreState.sortBy = savedSort.sortBy;
           coreState.sortAscending = savedSort.sortAscending;
         }
+        load.phase("project"); void displayEntries; load.phase("select"); // Rows derive lazily: time them apart (#1417).
 
         // Seeded rows accept interaction before the load settles. Preserve that
         // newer selection; ordinary navigation still selects the first item.

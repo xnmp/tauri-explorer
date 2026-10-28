@@ -1,3 +1,4 @@
+import { encodeDirectoryListing } from "$lib/api/directory-wire-encode";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const { invokeMock, mutationMock } = vi.hoisted(() => ({ invokeMock: vi.fn(), mutationMock: vi.fn() }));
@@ -16,10 +17,7 @@ vi.mock("$lib/api/frontend-log", () => ({ logFrontendDiagnostic: vi.fn() }));
 async function filesApi(hooks: boolean) {
   vi.resetModules();
   vi.stubEnv("VITE_E2E_HOOKS", hooks ? "1" : "0");
-  invokeMock.mockReset().mockResolvedValue({
-    format: "columns-v1", path: "/dir", path_prefix: null,
-    columns: { names: [], paths: [], kinds: [], sizes: [], modified: [] },
-  });
+  invokeMock.mockReset().mockResolvedValue(encodeDirectoryListing({ path: "/dir", entries: [] }).buffer);
   mutationMock.mockReset().mockResolvedValue({ ok: true, data: { path: "/dir/new" } });
   return import("$lib/api/files");
 }
@@ -51,8 +49,7 @@ describe("files API test seams", () => {
     });
     invokeMock.mockImplementation(async () => {
       order.push("invoke");
-      return { format: "columns-v1", path: "/dir", path_prefix: null,
-        columns: { names: [], paths: [], kinds: [], sizes: [], modified: [] } };
+      return encodeDirectoryListing({ path: "/dir", entries: [] }).buffer;
     });
     await files.loadDirectory("/dir");
     order.push("returned");

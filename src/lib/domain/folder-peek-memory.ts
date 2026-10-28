@@ -24,6 +24,8 @@ export function collapseSubtree(expanded: ExpandedPaths, roots: readonly string[
 /** Only a complete raw snapshot can establish that a branch disappeared. */
 export function pruneExpanded(expanded: ExpandedPaths, parent: string, entries: readonly FileEntry[], windows: boolean): Map<string, number> {
   const paths = pathComparison(windows);
+  // Nothing remembered below this folder: no need to index its listing (#1417).
+  if (![...expanded.keys()].some(path => !paths.same(path, parent) && paths.contains(path, parent))) return new Map(expanded);
   const directories = new Set(entries.filter(e => e.kind === "directory" && paths.sameParent(e.path, parent)).map(e => paths.key(e.path)));
   return new Map([...expanded].filter(([path]) => {
     if (paths.same(path, parent) || !paths.contains(path, parent)) return true;

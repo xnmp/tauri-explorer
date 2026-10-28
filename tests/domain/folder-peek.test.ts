@@ -67,6 +67,13 @@ describe("folder peek preorder and policies", () => {
       expect([...pruneExpanded(expanded, root, [], windows).keys()]).toEqual([outside]);
     }
   });
+  it("keeps memberships outside the listed folder without indexing its listing", () => {
+    const expanded = new Map([["/else/a", 1], ["/r", 2]]);
+    const pruned = pruneExpanded(expanded, "/r", [entry(a.path, "file")], false);
+    expect([...pruned.entries()]).toEqual([["/else/a", 1], ["/r", 2]]);
+    expect(pruned).not.toBe(expanded);
+    expect(pruneExpanded(new Map(), "/r", [b], false).size).toBe(0);
+  });
   it("prunes deleted/replaced folders including dormant descendants", () => {
     const expanded = new Map([[nested.path, 1], [b.path, 2], ["/else/a", 3]]);
     expect([...pruneExpanded(expanded, "/r", [entry(a.path, "file"), b], false).keys()]).toEqual([b.path, "/else/a"]);

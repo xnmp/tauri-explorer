@@ -18,12 +18,11 @@ vi.mock("$lib/api/native-resource-session", () => ({ getNativeResourceSession: a
 vi.mock("$lib/plugins/fs-providers", () => ({ providerFor: () => undefined }));
 
 import { readImageAsBlobUrl, readTextFile, loadDirectory } from "$lib/api/files";
+import { encodeDirectoryListing } from "$lib/api/directory-wire-encode";
 
 
-const emptyListing = (path: string) => ({
-  format: "columns-v1", path, path_prefix: null,
-  columns: { names: [], paths: [], kinds: [], sizes: [], modified: [] },
-});
+const emptyListing = (path: string, extra: Record<string, unknown> = {}) =>
+  encodeDirectoryListing({ path, entries: [] }, extra).buffer;
 
 describe("preview and directory IPC instrumentation (#497)", () => {
   beforeEach(() => {
@@ -103,11 +102,9 @@ describe("preview and directory IPC instrumentation (#497)", () => {
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     isTauriMock.mockReturnValue(true);
     const lease = { id: "owned-lease", path: "/watched" };
-    invokeMock.mockResolvedValueOnce({
-      format: "columns-v1", path: "/watched", path_prefix: "/watched/",
-      columns: { names: ["file"], kinds: [], sizes: [0], modified: [""] },
-      watch_lease: lease,
-    });
+    const entry = { name: "file", path: "/watched/file", kind: "file" as const, size: 0, modified: "", is_symlink: false, is_git_repo: false };
+    // A reply whose header (and lease) is intact but whose rows are cut short.
+    invokeMock.mockResolvedValueOnce(encodeDirectoryListing({ path: "/watched", entries: [entry] }, { watch_lease: lease }).slice(0, -1));
     const discard = vi.fn();
     try {
       await expect(loadDirectory("/watched", { discard })).resolves.toEqual({
@@ -140,9 +137,7 @@ describe("preview and directory IPC instrumentation (#497)", () => {
   it("rejects a native observed reply with a malformed lease id without releasing the previous watch", async () => {
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     isTauriMock.mockReturnValue(true);
-    invokeMock.mockResolvedValueOnce({
-      ...emptyListing("/watched"), watch_lease: { id: 42, path: "/watched" },
-    });
+    invokeMock.mockResolvedValueOnce(emptyListing("/watched", { watch_lease: { id: 42, path: "/watched" } }));
     const discard = vi.fn();
     try {
       await expect(loadDirectory("/watched", { discard })).resolves.toEqual({
@@ -157,9 +152,7 @@ describe("preview and directory IPC instrumentation (#497)", () => {
   it("rejects a native observed reply with a malformed lease path without releasing the previous watch", async () => {
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     isTauriMock.mockReturnValue(true);
-    invokeMock.mockResolvedValueOnce({
-      ...emptyListing("/watched"), watch_lease: { id: "owned-lease", path: null },
-    });
+    invokeMock.mockResolvedValueOnce(emptyListing("/watched", { watch_lease: { id: "owned-lease", path: null } }));
     const discard = vi.fn();
     try {
       await expect(loadDirectory("/watched", { discard })).resolves.toEqual({
@@ -199,7 +192,7 @@ describe("preview and directory IPC instrumentation (#497)", () => {
     const phases: string[] = [];
     const trace = (watched: boolean) => ({ id: "1791000000000-t", watched, phase: (phase: string) => { phases.push(phase); } });
     const lease = { id: "lease", path: "/watched" };
-    invokeMock.mockResolvedValueOnce({ ...emptyListing("/watched"), watch_lease: lease });
+    invokeMock.mockResolvedValueOnce(emptyListing("/watched", { watch_lease: lease }));
     await expect(loadDirectory("/watched", { discard: vi.fn() }, trace(true))).resolves.toMatchObject({ ok: true });
     expect(invokeMock).toHaveBeenCalledWith("start_observed_directory", {
       path: "/watched", sessionId: "session", traceId: "1791000000000-t", traceWatched: true,

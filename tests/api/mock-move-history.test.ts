@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { FileMutationReceipt } from "$lib/domain/file";
 import type { HistoryReply, HistorySummary, UndoAction } from "$lib/domain/file-history";
 import type { CopySessionOutcome } from "$lib/domain/copy-session";
-import { decodeDirectoryListing, type CompactDirectoryListing } from "$lib/api/directory-wire";
+import { decodeDirectoryListing, type DirectoryListingBytes } from "$lib/api/directory-wire";
 
 vi.stubGlobal("window", {} as Window & typeof globalThis);
 const { mockInvoke } = await import("$lib/api/mock-invoke");
@@ -32,7 +32,7 @@ describe("mock move history execution", () => {
     expect(result.error).toBeUndefined();
     expect(result.summary.undoId).toBeNull();
     expect(result.summary.redoId).not.toBeNull();
-    const sourceListing = decodeDirectoryListing(await mockInvoke<CompactDirectoryListing>("list_directory", { path: sourceDir }));
+    const sourceListing = decodeDirectoryListing(await mockInvoke<DirectoryListingBytes>("list_directory", { path: sourceDir }));
     expect(sourceListing.entries.map(({ path }) => path)).toContain(`${sourceDir}/a.txt`);
 
     // Forward moves have no standalone `move_entry` command (#881); the

@@ -54,6 +54,8 @@ export interface LoadWatchdogDeps {
   randomSuffix(): string;
   thresholdMs?: number;
   sinceBootMs?(): number | null;
+  /** Every settled trace, for opt-in measurement (#1417). Best-effort. */
+  settled?(trace: LoadTrace): void;
 }
 
 interface Entry {
@@ -139,6 +141,7 @@ export function createLoadWatchdog(deps: LoadWatchdogDeps) {
         entry.trace = finishLoadTrace(entry.trace, outcome, deps.nowMono());
         if (recordOnFinish(entry.trace, entry.recorded, threshold)) persist(entry);
         inFlight.delete(trace.id);
+        try { deps.settled?.(entry.trace); } catch { /* measurement only */ }
       },
     };
   }
@@ -162,6 +165,22 @@ function sinceBoot(): number | null {
   return typeof boot === "number" ? performance.now() - boot : null;
 }
 
+/**
+ * Opt-in phase timing for the end-to-end perf runner (#1417): when the root
+ * element carries `data-listing-perf`, the latest settled trace is published
+ * on it as `data-listing-trace` (spans on the `performance.now()` clock).
+ * Without the attribute this is one attribute read per navigation.
+ */
+function publishPerfTrace(trace: LoadTrace): void {
+  if (typeof document === "undefined") return;
+  const root = document.documentElement;
+  if (!root.hasAttribute("data-listing-perf")) return;
+  root.dataset.listingTrace = JSON.stringify({
+    id: trace.id, path: trace.path, outcome: trace.outcome, entries: trace.entries,
+    startedMono: trace.startedMono, finishedMono: trace.finishedMono, spans: trace.spans,
+  });
+}
+
 export const loadWatchdog = createLoadWatchdog({
   nowMono: () => performance.now(),
   nowEpoch: () => Date.now(),
@@ -170,4 +189,5 @@ export const loadWatchdog = createLoadWatchdog({
   persist: recordSlowLoad,
   randomSuffix: () => Math.random().toString(36).slice(2, 10),
   sinceBootMs: sinceBoot,
+  settled: publishPerfTrace,
 });

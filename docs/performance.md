@@ -107,8 +107,7 @@ were not recorded, so the two are not directly comparable.
 The scan is roughly 36–39% of the end-to-end time at 100k and 500k (it lists
 dot-files too; the frontend hides them). The rest
 (Rust sort and wire encoding, IPC, decoding, frontend filtering/sorting and
-rendering) was not broken down further: there is no per-phase timing for
-ordinary loads (the slow-load watchdog only records loads over 5 s).
+rendering) is broken down per phase in "Folder-open pipeline (#1417)" below.
 
 ### Frontend only (`bun run test:perf`)
 
@@ -273,13 +272,125 @@ desktop; memory is far less load-sensitive than time) and 0.8-5.0 during the
 ### Budgets
 
 - `bun run perf:listing-heap`: fails above 380 B/entry of live JS heap for a
-  100k flat listing (now 317; before 499). Needs the WebKitGTK `jsc` shell.
+  100k flat listing (now 305 with the #1417 binary reply, 317 after #1416;
+  before 499). Needs the WebKitGTK `jsc` shell.
 - `perf-real-app.mjs --scenarios memory --memory-cycles 4 --gc-pressure-mb 4096
   --max-retained-mb 80 --max-live-bytes-per-entry 1600`: fails when total PSS
   after navigating away exceeds idle by more than 80 MB, or the open folder
   costs more than 1,600 B/entry (now 23-38 MB and 742-1,151 B/entry; before
   184-776 MB and 2,178-3,244 B/entry). The live-per-entry figure is noisier
   than the `jsc` one: collection by allocation pressure is not exact.
+
+## Folder-open pipeline (#1417)
+
+### Where an open spends its time
+
+`perf-real-app.mjs` now reports `phasesMs` per scenario: the native spans of
+each load (logged by the app when `TAURI_EXPLORER_LISTING_TIMING=1`, which the
+runner sets) joined with the frontend load trace. `ipcAndParse` is the native
+round trip minus the native total: carrying the reply to the webview and
+parsing it. `project` is filtering, sorting and peek projection of the new
+listing; `settledToRows` the time from the load settling to the rows being in
+the DOM; `rowsToFrames` the two animation frames after that.
+
+Medians, ms, release build, n = 10. "Before" is the base of this change (the
+#1416 branch, `a2d387d6`) with only the timing instrumentation added, measured
+on 2026-10-28 00:10 (1-minute load average 1.9-4.5); "after" is the final
+build, measured on 2026-10-28 09:40 (load 4.5-6.7, desktop in use). A second
+round of each agreed within 6 ms at 100k and 20 ms at 500k on every phase.
+
+| Phase | 100k before | 100k after | 500k before | 500k after |
+|---|---|---|---|---|
+| Rust: watch registration | 9 | 10 | 45 | 44 |
+| Rust: read directory | 52 | 61 | 244 | 248 |
+| Rust: entry metadata | 24 | 26 | 110 | 119 |
+| Rust: sort | 25 | 14 | 161 | 89 |
+| Rust: encode reply | 21 | 16 | 115 | 72 |
+| Rust total | 131 | 125 | 674 | 579 |
+| Reply to webview + parse (`ipcAndParse`) | 58 | 22 | 376 | 101 |
+| Decode | 3 | 7 | 11 | 34 |
+| Project (filter, sort, peek) | 14 | 16 | 83 | 102 |
+| Settled → rows in DOM | 25 | 19 | 98 | 56 |
+| Rows → two frames | 17 | 15 | 27 | 24 |
+| **Open, complete** | **260** | **208** | **1,285** | **907** |
+
+The scan phases (read directory, entry metadata) did not change; their
+higher "after" values follow the higher load. An earlier run of the final
+code at the "before" session's load measured Rust total 105 / 550 ms and open
+194 / 873 ms. `ipcAndParse` before included Tauri dropping the returned
+listing after encoding it and before sending it: 1.5 M heap strings at 500k,
+134-146 ms (11-21 ms at 100k), measured by timing that drop in an
+instrumented build. Phases are medians of their own, so they do not sum
+exactly to the open time.
+
+Two phases got slower. Decoding builds every entry in JavaScript instead of
+taking objects from `JSON.parse` (+4 ms at 100k, +23 ms at 500k), and
+`project` rose by 2 / 19 ms: names are now substrings of one decoded column
+and paths are prefix + name concatenations, which the frontend's filter and
+sort pay to resolve the first time they read them.
+
+### Changes
+
+- `src-tauri/src/files/listing_reaper.rs`: the last owner of a listing of 10k+
+  entries is freed on a background thread (bounded queue of 4; a full queue
+  frees inline), which then returns the pages to the OS through
+  `memory_release`. Shared listings (still cached) free nothing and stay inline.
+- Binary reply (`directory_wire.rs`, `api/directory-wire.ts`): listings are
+  returned as raw bytes (`tauri::ipc::Response`): a JSON header, fixed-width
+  little-endian columns and UTF-8 string columns, each decoded with one
+  `TextDecoder` call and sliced per row. ASCII and non-ASCII names are
+  separate columns. The format is documented in `directory_wire.rs`; the Rust
+  encoder and the mock/test encoder (`api/directory-wire-encode.ts`, kept out
+  of the startup bundle) are byte-identical against
+  `tests/fixtures/directory-wire.json`.
+- `dir_listing.rs`: `par_sort_by_cached_key` from 8,192 entries (same order as
+  the stable sequential sort).
+- Frontend: `getSelectedEntries` copies the reactive selection once and
+  compares path lengths before hashing (a decoded path is a prefix + name
+  rope that hashing flattens); `pruneExpanded` skips its scan when no peek is
+  remembered; `isSystemHidden` checks name length before lowercasing.
+
+### Before and after
+
+End-to-end, complete median / p95 in ms, two interleaved rounds of n = 10
+per binary (round 1, round 2), on 2026-10-28 09:36-09:48. Before: `origin/dev`
+at `5942f66d` (which includes #1416); after: this change on top of it. Both
+release builds, same machine, fixtures and runner; 1-minute load average
+5.3-6.7 throughout (desktop in use).
+
+| Operation | Before | After |
+|---|---|---|
+| Open 1k | 35 / 37, 35 / 39 | 35 / 41, 34 / 40 |
+| Open 10k | 61 / 75, 61 / 70 | 55 / 70, 53 / 57 |
+| Open 100k | 295 / 329, 294 / 311 | 208 / 245, 205 / 239 |
+| Open 500k | 1,429 / 1,512, 1,395 / 1,480 | 907 / 975, 907 / 958 |
+| 100k: enter folder | 306 / 378, 295 / 344 | 203 / 231, 212 / 230 |
+| 100k: go up | 281 / 296, 277 / 296 | 187 / 193, 191 / 209 |
+| 100k: back | 278 / 311, 277 / 344 | 188 / 204, 194 / 248 |
+| 100k: forward | 279 / 312, 263 / 294 | 197 / 216, 193 / 203 |
+| 100k: sort Name → Size | 117 / 134, 114 / 143 | 118 / 139, 117 / 126 |
+| 100k: sort Size → Name | 75 / 86, 72 / 82 | 80 / 105, 93 / 101 |
+| 100k: scroll frame interval | 17 | 17 |
+
+Opening a 100k folder is 29-30% faster and a 500k folder 35-37% faster;
+navigating within a 100k folder 27-34% faster. Sorting by size is unchanged.
+Sorting back to name is slower by 5-21 ms (7-29%) in both rounds, consistent
+with the earlier session (66 → 75 ms): it is the same substring/rope cost as
+the `project` phase above, paid by the name comparison. It was accepted for
+the open and navigation gains; flattening names during decode would likely
+move that cost into every open instead (not measured).
+
+Memory (`--scenarios memory`, the #1416 budget flags, one session per binary,
+PSS, same conditions): both builds passed the budget. After navigating away,
+26 MB (100k) and 32 MB (500k) stay retained against 29 and 32 MB before. With
+the folder open, after the allocation-pressure step, the live cost per entry
+fell from 1,319 to 697 B (100k) and from 1,042 to 483 B (500k), and the app
+process measured 149 MB with the 500k folder open against 351-390 MB before
+(idle 148-151 MB): the reply no longer keeps a second copy of the entries alive
+while it is sent. `bun run perf:listing-heap`: 305 B/entry (317 before; budget
+380). A decoded entry's strings are substrings of the decoded columns, so one
+entry that outlives its listing (history, clipboard, another pane) keeps those
+column strings alive: up to roughly 10-20 MB for a 500k listing.
 
 ## Reproducing
 
@@ -301,6 +412,9 @@ env -u WAYLAND_DISPLAY GDK_BACKEND=x11 \
   xvfb-run -a --server-args="-screen 0 1920x1080x24" dbus-run-session -- \
   node scripts/perf-real-app.mjs --fixtures /tmp/te-perf-fixtures \
     --binary src-tauri/target/release/tauri-explorer --runs 20 --out e2e.json
+#    Per-phase breakdown (#1417): every open/nav scenario carries `phasesMs`; the
+#    runner sets TAURI_EXPLORER_LISTING_TIMING=1 so the app logs its native spans.
+#    `--scenarios open --open-sizes 100k,500k` limits a run to those opens.
 
 #    Memory attribution and budget (#1416): --scenarios memory, see "Budgets"
 env -u WAYLAND_DISPLAY GDK_BACKEND=x11 \

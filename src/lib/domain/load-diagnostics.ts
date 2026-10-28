@@ -28,7 +28,9 @@ export type FrontendLoadPhase =
   | "native" // the native listing command round trip
   | "decode" // decoding the compact listing transport
   | "test-hold" // an E2E listing probe holding the result (hook builds only)
-  | "publish"; // applying entries, sorting and selecting
+  | "publish" // applying the listing to the pane's store
+  | "project" // filtering, sorting and peek projection of the visible rows
+  | "select"; // initial selection and focus
 
 export type LoadReason = "navigate" | "history" | "initial" | "parent-fallback";
 export type LoadOutcome = "ok" | "error" | "superseded" | "destroyed";
@@ -309,7 +311,9 @@ const PHASE_LABELS: Record<string, string> = {
   native: "native listing command",
   decode: "decoding the listing",
   "test-hold": "test probe hold",
-  publish: "applying and sorting entries",
+  publish: "applying the listing",
+  project: "filtering and sorting entries",
+  select: "selecting the first entry",
   "owner-acquire": "renderer ownership check",
   "resolve-path": "resolving the path spelling",
   "blocking-queue": "waiting for a native worker thread",

@@ -107,8 +107,16 @@ export function selectPaths(
  * Get selected entries from displayEntries.
  */
 export function getSelectedEntries(
-  displayEntries: FileEntry[],
-  selectedPaths: Set<string>
+  displayEntries: readonly FileEntry[],
+  selectedPaths: ReadonlySet<string>
 ): FileEntry[] {
-  return displayEntries.filter((e) => selectedPaths.has(e.path));
+  if (selectedPaths.size === 0) return [];
+  // A reactive set tracks every lookup, so one plain copy serves the scan.
+  // Comparing lengths first skips hashing most paths: a decoded path is a
+  // prefix + name concatenation that hashing would flatten, which over a
+  // 100k+ listing costs more than the rest of the scan (#1417).
+  const selected = new Set(selectedPaths);
+  const lengths = new Set<number>();
+  for (const path of selected) lengths.add(path.length);
+  return displayEntries.filter((e) => lengths.has(e.path.length) && selected.has(e.path));
 }

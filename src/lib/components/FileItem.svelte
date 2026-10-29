@@ -26,6 +26,8 @@
   import { getPaneIdContext } from "$lib/state/pane-context";
   import PeekGuides from "./PeekGuides.svelte";
   import PeekOpenButton from "./PeekOpenButton.svelte";
+  import PeekToggleButton from "./PeekToggleButton.svelte";
+  import { rowShowsPeekToggle } from "$lib/domain/folder-peek";
   import type { PeekGroup } from "$lib/domain/folder-peek";
 
   interface Props {
@@ -97,7 +99,7 @@
   });
   const lengthText = $derived(formatMediaDuration(mediaDurationResolver.duration(entry)));
 
-  const isPeekControl = (event: Event) => event.target instanceof Element && !!event.target.closest(".peek-caret, .peek-open");
+  const isPeekControl = (event: Event) => event.target instanceof Element && !!event.target.closest(".peek-caret, .peek-open, .peek-toggle");
   function handleClick(event: MouseEvent) {
     if (isPeekControl(event)) return;
     if (isRenaming) {
@@ -196,6 +198,7 @@
     </div>
     <span class="name-text" data-drag-name><EntryName {entry} {explorer} variant="details" bold={expanded} /></span>
     {#if explorer.rowClickOwnsPeek(entry) && !isRenaming}<PeekOpenButton {entry} {explorer} />{/if}
+    {#if peek && rowShowsPeekToggle({ caretsShown: carets, isDirectory: entry.kind === "directory", canPeek }) && !isRenaming}<PeekToggleButton {entry} {expanded} {explorer} />{/if}
     <GitStatusBadge directory={parentPath} entryName={entry.name} hideOnRename={isRenaming} />
     {#if entry.is_symlink && !isRenaming && entry.kind !== "directory"}
       <div class="symlink-badge" title={entry.symlink_target ? `Link to ${entry.symlink_target}` : "Symbolic link"}>
@@ -367,14 +370,14 @@
     flex: 1;
   }
 
-  .name-cell:has(:global(.peek-open)) .name-text {
+  .name-cell:has(:global(:is(.peek-open, .peek-toggle))) .name-text {
     flex: 0 1 auto;
   }
 
   /* Caretless rows keep Open at the right end of the Name column, like List's
      row edge (#1328, #1359): it follows column resizing, the name truncates
      before it, and being in the first column it never leaves the viewport. */
-  .file-item.caretless .name-cell > :global(.peek-open) {
+  .file-item.caretless .name-cell > :global(:is(.peek-open, .peek-toggle)) {
     order: 99;
     margin-left: auto;
     margin-right: 4px;

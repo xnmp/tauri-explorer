@@ -3,8 +3,8 @@ import type { FileEntry } from "./file";
 import { flatPeekEntries, flatPeekRows, occurrenceKey } from "./folder-peek-flat";
 import type { LineageChildren, LineageGroup } from "./entry-lineage";
 import type { PeekCapability } from "./folder-peek-flat";
-export { canPeekAt, peekCapability, resolvePeekCommandTarget, resolvePeekEscape, entryIndicesForRows, shouldToggleOnRowClick, rowClickOwnsPeek, caretlessDoubleClickNotice } from "./folder-peek-flat";
-export type { PeekCapability, PeekSurface, RowClickInput, RowPeekTarget } from "./folder-peek-flat";
+export { canPeekAt, peekCapability, resolvePeekCommandTarget, resolvePeekEscape, entryIndicesForRows, shouldToggleOnRowClick, rowClickOwnsPeek, rowShowsPeekToggle, caretlessDoubleClickNotice } from "./folder-peek-flat";
+export type { PeekCapability, PeekSurface, PeekToggleTarget, RowClickInput, RowPeekTarget } from "./folder-peek-flat";
 import { pathComparison } from "./path";
 
 import type { ExpandedPaths } from "./folder-peek-memory";

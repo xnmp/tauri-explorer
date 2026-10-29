@@ -71,9 +71,9 @@
   const isRenaming = $derived(dialogStore.renamingEntry?.path === entry.path);
 
   const appearance = useEntryAppearance(() => entry, () => explorer.currentPath);
-  // A peek caret, Open action or List card grip is its own control: never a
+  // A peek caret, Open action, lineage toggle or List card grip is its own control: never a
   // row click, double click or drag (mirrors FileItem).
-  const isPeekControl = (event: Event) => event.target instanceof Element && !!event.target.closest(".peek-caret, .peek-open, .list-card-grip, .list-card-more");
+  const isPeekControl = (event: Event) => event.target instanceof Element && !!event.target.closest(".peek-caret, .peek-open, .peek-toggle, .list-card-grip, .list-card-more");
   // dragstart targets the draggable row itself, not where the press began, so
   // a press on a control is noted when it starts.
   let pressedControl = false;

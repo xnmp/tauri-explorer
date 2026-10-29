@@ -257,6 +257,23 @@ test("revealing a grouped edit opens its lineage to one occurrence and selects i
   expect(await level(rows(page, "m.png").first())).toBe("3");
 });
 
+// #1443: a reveal issued while the lineage is still loading selects the file
+// at depth 0; when grouping lands it must open the file's lineage rather than
+// hide the selection under a closed parent. 250 ms is inside the first-paint
+// hold, 700 ms lands after it expired and the listing painted flat.
+for (const delay of [250, 700]) {
+  test(`revealing a grouped edit before a ${delay} ms lineage load lands keeps it visible and selected`, async ({ page }) => {
+    await start(page, "details", { delay });
+    const revealed = await page.evaluate(async path => (await import("/src/lib/state/window-tabs.svelte.ts")).windowTabsManager.getActiveExplorer()!.revealEntry(path), P("m.png"));
+    expect(revealed).toBe(true);
+    // Grouping has landed: m left depth 0 for its parents' groups.
+    await expect(page.locator(`${pane} [data-lineage-group]`).first()).toBeVisible();
+    await expect(rows(page, "m.png").first()).toBeVisible();
+    await expect(rows(page, "m.png").first()).toHaveClass(/selected/);
+    expect(await level(rows(page, "m.png").first())).toBe("3");
+  });
+}
+
 test("typeahead stays at depth 0 while grouped edits are hidden", async ({ page }) => {
   await start(page);
   await rows(page, "notes.txt").click();

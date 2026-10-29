@@ -461,7 +461,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/domain/folder-peek-flat.ts` — flat Details rows and command admission before first peek activation; caret-less click ownership (`rowClickOwnsPeek`: click toggles, double-click refused with a notice, #1298).
 - `src/lib/domain/entry-lineage.ts` — lineage peek grouping (#1431): validates a provider's parent relation against the listing (foreign/self edges dropped, cycles fall back to flat) and groups children under each parent (`projectLineage`: direct children, "with B" groups, roots, descendants).
 - `src/lib/domain/lineage-co-parent.ts` — file-shaped stand-in for a lineage co-parent's icon, kept off the grouping module.
-- `src/lib/domain/folder-peek-pane.ts` — explorer-applied peek decisions: selection/cursor pruning after a projection hides peeked children, and spring-peek drop folders (#1242).
+- `src/lib/domain/folder-peek-pane.ts` — explorer-applied peek decisions: selection/cursor pruning after a projection hides peeked children, reopening a lineage reveal that grouping regrouped late (`lateRevealChain`, #1443), and spring-peek drop folders (#1242).
 - `src/lib/domain/explorer-entries.ts` — explorer entry-list helpers: multi-entry clipboard labels and merging a selected context-menu entry the listing lacks.
 - `src/lib/domain/file-operation-selection.ts` — Explorer recursive batch reduction, symlink-overlap admission, drag-primary remapping, and archive roots (same-basename refusal).
 - `src/lib/domain/bulk-rename.ts` — bulk rename plan: name-part find/replace previews, per-folder collision keys, and descendant-first rename order.

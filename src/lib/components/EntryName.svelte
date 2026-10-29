@@ -19,9 +19,12 @@
     explorer: ExplorerInstance;
     variant: "details" | "list" | "tiles";
     bold?: boolean;
+    /** Display text in place of the filename (#1449); rename still edits the filename. */
+    label?: string | null;
+    tooltip?: string;
   }
 
-  let { entry, explorer, variant, bold = false }: Props = $props();
+  let { entry, explorer, variant, bold = false, label, tooltip }: Props = $props();
 
   const rename = useInlineRename(() => explorer);
 
@@ -252,7 +255,7 @@
     </span>
   {/if}
 {:else}
-  <EntryNameLabel name={entry.name} {variant} {bold} />
+  <EntryNameLabel name={entry.name} {variant} {bold} text={label} {tooltip} />
 {/if}
 
 <style>

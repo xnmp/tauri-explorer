@@ -18,6 +18,10 @@ export interface EntryLineage {
   revision: string;
   /** Path of a file in the directory → its lineage parents in input order. */
   parents: ReadonlyMap<string, readonly LineageParent[]>;
+  /** Optional per-file text, keyed by path (#1449): `title` is the short
+   * summary preferred for a lineage child's row label, `prompt` the full text
+   * for the Details Prompt column and tooltips. Absent: no column, no labels. */
+  labels?: ReadonlyMap<string, { prompt?: string; title?: string }>;
 }
 
 /** A parent a group shares with the peeked file, after validation. */

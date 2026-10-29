@@ -18,6 +18,7 @@ import { untrack } from "svelte";
 import type { FileEntry } from "$lib/domain/file";
 import { projectLineage, type EntryLineage, type LineageProjection } from "$lib/domain/entry-lineage";
 import { pathComparison } from "$lib/domain/path";
+import { normalizeLineageLabels } from "$lib/domain/lineage-labels";
 import { entryLineageRegistry, type RegisteredEntryLineage } from "$lib/plugins/entry-lineage-registry.svelte";
 
 export const LINEAGE_FIRST_PAINT_MS = 400;
@@ -71,6 +72,9 @@ export function createPaneLineage(inputs: PaneLineageInputs) {
     const visible = held.size ? listing.filter(entry => !held.has(entry.path)) : listing;
     return projectLineage(visible, current.lineage, inputs.windows);
   });
+
+  /** Per-file prompt text (#1449), independent of grouping (a name filter keeps it). */
+  const labels = $derived(current ? normalizeLineageLabels(current.lineage.labels, inputs.windows) : null);
 
   const dispose = $effect.root(() => {
     // The first-paint deadline: one per folder and contribution.
@@ -174,6 +178,8 @@ export function createPaneLineage(inputs: PaneLineageInputs) {
     get held(): ReadonlySet<string> { return held; },
     /** Show a held arrival now (it is being revealed or selected). */
     release(path: string) { if (held.has(path)) held = new Set([...held].filter(item => item !== path)); },
+    /** The provider's prompt labels for this folder, or null (none supplied, or Show off). */
+    get labels() { return labels; },
     /** The grouping for the current listing, or null (no lineage here, or not loaded). */
     get projection() { return projection; },
   };

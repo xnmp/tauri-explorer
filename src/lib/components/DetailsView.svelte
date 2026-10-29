@@ -49,8 +49,13 @@
   const viewId = $props.id();
   const inTrash = $derived(isTrashPath(explorer.currentPath));
 
+  // A lineage provider's prompt labels (#1449): the Prompt column is offered
+  // only while they exist, and labels lineage children.
+  const labels = $derived(explorer.lineageLabels);
+  const visibility = $derived(labels ? settingsStore.columnVisibility : { ...settingsStore.columnVisibility, prompt: false });
+
   // Column resize composable
-  const columnResize = useColumnResize(undefined, () => settingsStore.columnVisibility);
+  const columnResize = useColumnResize(undefined, () => visibility);
 
   // The new-folder editor rides INSIDE the virtual list as a sentinel first
   // item (#257) — not as a band above the scroller.
@@ -85,6 +90,12 @@
   }
 </script>
 
+{#snippet sortIndicator()}
+  <svg width="10" height="10" viewBox="0 0 10 10" fill="none" class="sort-indicator">
+    <path d={explorer.sortAscending ? "M5 2V8M5 2L2 5M5 2L8 5" : "M5 8V2M5 8L2 5M5 8L8 5"} stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>
+{/snippet}
+
 {#snippet resizeHandle(column: ColumnKey)}
   <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -- WAI movable separator is an interactive range. -->
   <div class="column-resize-handle" class:active={columnResize.activeColumn === column}
@@ -108,18 +119,19 @@
         class:active={explorer.sortBy === "name"}
       >
         <span>Name</span>
-        {#if explorer.sortBy === "name"}
-          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" class="sort-indicator">
-            {#if explorer.sortAscending}
-              <path d="M5 2V8M5 2L2 5M5 2L8 5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-            {:else}
-              <path d="M5 8V2M5 8L2 5M5 8L8 5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-            {/if}
-          </svg>
-        {/if}
+        {#if explorer.sortBy === "name"}{@render sortIndicator()}{/if}
       </button>
       {@render resizeHandle("name")}
     </div>
+    {#if visibility.prompt}
+    <div class="column-header-wrapper">
+      <button class="column-header prompt-column" onclick={() => explorer.setSorting("prompt")} class:active={explorer.sortBy === "prompt"}>
+        <span>Prompt</span>
+        {#if explorer.sortBy === "prompt"}{@render sortIndicator()}{/if}
+      </button>
+      {@render resizeHandle("prompt")}
+    </div>
+    {/if}
     {#if settingsStore.columnVisibility.date}
     <div class="column-header-wrapper">
       <button
@@ -128,15 +140,7 @@
         class:active={explorer.sortBy === "modified"}
       >
         <span>{inTrash ? "Date deleted" : "Date modified"}</span>
-        {#if explorer.sortBy === "modified"}
-          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" class="sort-indicator">
-            {#if explorer.sortAscending}
-              <path d="M5 2V8M5 2L2 5M5 2L8 5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-            {:else}
-              <path d="M5 8V2M5 8L2 5M5 8L8 5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-            {/if}
-          </svg>
-        {/if}
+        {#if explorer.sortBy === "modified"}{@render sortIndicator()}{/if}
       </button>
       {@render resizeHandle("date")}
     </div>
@@ -157,15 +161,7 @@
         class:active={explorer.sortBy === "size"}
       >
         <span>Size</span>
-        {#if explorer.sortBy === "size"}
-          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" class="sort-indicator">
-            {#if explorer.sortAscending}
-              <path d="M5 2V8M5 2L2 5M5 2L8 5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-            {:else}
-              <path d="M5 8V2M5 8L2 5M5 8L8 5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-            {/if}
-          </svg>
-        {/if}
+        {#if explorer.sortBy === "size"}{@render sortIndicator()}{/if}
       </button>
       {@render resizeHandle("size")}
     </div>
@@ -192,6 +188,12 @@
     <!-- svelte-ignore a11y_click_events_have_key_events -- click-outside backdrop pattern (matches CaretPicker/NavigationHistoryMenu); Escape/Tab away is not the primary dismiss path but the menu items themselves remain keyboard-focusable -->
     <div class="column-menu-backdrop" onclick={closeColumnMenu} oncontextmenu={(e) => { e.preventDefault(); e.stopPropagation(); closeColumnMenu(); }}></div>
     <div class="column-menu" use:positionColumnMenu>
+      {#if labels}
+      <button class="column-menu-item" onclick={() => { settingsStore.toggleColumn("prompt"); closeColumnMenu(); }}>
+        <span class="column-menu-check">{visibility.prompt ? "✓" : ""}</span>
+        Prompt
+      </button>
+      {/if}
       <button class="column-menu-item" onclick={() => { settingsStore.toggleColumn("date"); closeColumnMenu(); }}>
         <span class="column-menu-check">{settingsStore.columnVisibility.date ? "✓" : ""}</span>
         Date modified
@@ -253,6 +255,7 @@
           depth={row.depth} parentPath={row.parentPath} expanded={row.expanded}
           peek={explorer.peekEnabled} carets={explorer.peekCaretsShown} canPeek={explorer.peekEnabled && explorer.canPeekEntry(row.entry)}
           groups={explorer.detailRows.groups} rowIndex={index}
+          label={labels?.rowLabel(row, explorer.currentPath)} prompt={labels?.prompt(row.entry.path)} promptColumn={visibility.prompt}
           onclick={(event) => onitemclick(row.entry, event)}
           ondblclick={() => onitemdblclick(row.entry)} selected={explorer.isSelected(row.entry)} />
       {/if}

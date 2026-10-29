@@ -9,7 +9,7 @@
   "src/lib/components/SettingsDialog.svelte": 803,
   "src/lib/components/WindowTabBar.svelte": 962,
   "src/lib/domain/git-graph.ts": 1114,
-  "src/lib/state/explorer.svelte.ts": 1422,
-  "src/lib/state/settings.svelte.ts": 882,
+  "src/lib/state/explorer.svelte.ts": 1421,
+  "src/lib/state/settings.svelte.ts": 877,
   "src/lib/state/window-tabs.svelte.ts": 1368
 }

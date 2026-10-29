@@ -8,7 +8,7 @@ test("old column preferences gain Resolution, and hiding persists across store i
   vi.resetModules();
   let { settingsStore } = await import("$lib/state/settings.svelte");
   await settingsStore.init();
-  expect(settingsStore.columnVisibility).toEqual({ date: false, type: true, size: false, length: true, resolution: true });
+  expect(settingsStore.columnVisibility).toEqual({ prompt: true, date: false, type: true, size: false, length: true, resolution: true });
   settingsStore.toggleColumn("resolution");
   expect(JSON.parse(localStorage.getItem("explorer-settings")!).columnVisibility.resolution).toBe(false);
   vi.resetModules();

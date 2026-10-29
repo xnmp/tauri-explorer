@@ -45,9 +45,15 @@
     carets?: boolean;
     groups?: readonly PeekGroup[];
     rowIndex?: number;
+    /** A lineage child's label in place of its filename (#1449). */
+    label?: string | null;
+    /** This file's lineage prompt (#1449), for the Prompt cell and the label's tooltip. */
+    prompt?: string | null;
+    /** The Details Prompt column is shown (a lineage provider supplies labels). */
+    promptColumn?: boolean;
   }
 
-  let { entry, index, onclick, ondblclick, selected = false, explorer, depth = 0, parentPath = explorer.currentPath, expanded = false, peek = false, canPeek = false, carets = true, groups = [], rowIndex = 0 }: Props = $props();
+  let { entry, index, onclick, ondblclick, selected = false, explorer, depth = 0, parentPath = explorer.currentPath, expanded = false, peek = false, canPeek = false, carets = true, groups = [], rowIndex = 0, label, prompt, promptColumn = false }: Props = $props();
 
   const paneId = getPaneIdContext();
 
@@ -194,7 +200,7 @@
     <div class="icon" data-drag-icon style:--file-icon-color={entry.kind !== "directory" ? getFileIconColor(entry) : undefined} aria-hidden="true">
       <FileIcon {entry} size="small" />
     </div>
-    <span class="name-text" data-drag-name><EntryName {entry} {explorer} variant="details" bold={expanded} /></span>
+    <span class="name-text" data-drag-name><EntryName {entry} {explorer} variant="details" bold={expanded} {label} tooltip={label ? `${entry.name}\n${prompt ?? label}` : undefined} /></span>
     {#if explorer.rowClickOwnsPeek(entry) && !isRenaming}<PeekOpenButton {entry} {explorer} />{/if}
     <GitStatusBadge directory={parentPath} entryName={entry.name} hideOnRename={isRenaming} />
     {#if entry.is_symlink && !isRenaming && entry.kind !== "directory"}
@@ -218,6 +224,10 @@
       </div>
     {/if}
   </div>
+
+  {#if promptColumn}
+  <div class="prompt-cell" data-cell="prompt" title={prompt ?? undefined}>{#if prompt}{prompt}{:else}<span class="empty-cell">—</span>{/if}</div>
+  {/if}
 
   <!-- Date modified column -->
   {#if settingsStore.columnVisibility.date}
@@ -398,6 +408,7 @@
   /* Name styles are handled by EntryName component */
 
   /* Date, Type, Size cells */
+  .prompt-cell,
   .date-cell,
   .type-cell,
   .size-cell,

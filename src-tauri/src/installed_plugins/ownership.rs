@@ -2,6 +2,7 @@
 //! Every OS takes the same advisory lock: a second process (Windows launched
 //! twice, macOS `open -n`, Linux without single-instance routing) must not
 //! treat the first one's live claims as dead.
+use super::owner_record::{self, OwnerRecord};
 use crate::error::AppError;
 use std::{
     fs::{File, OpenOptions},
@@ -18,6 +19,7 @@ impl Drop for ProfileOwner {
         // Close alone leaves flock held by descriptors inherited before exec.
         // A forked child's copy must not release the still-live parent's lease.
         if std::process::id() == self.owner_pid {
+            owner_record::clear(&self.file);
             let _ = self.file.unlock();
         }
     }
@@ -68,14 +70,64 @@ fn regular(file: &File) -> Result<(), AppError> {
     Ok(())
 }
 
-pub(super) fn acquire(profile: &Path) -> Result<ProfileOwner, AppError> {
-    let file = open(&profile.join(".plugin-runtime.lock"))?;
-    regular(&file)?;
-    file.try_lock().map_err(|cause| {
-        AppError::Other(format!(
-            "Another Tauri Explorer process owns this plugin profile: {cause}"
-        ))
-    })?;
+const NOT_OWNER_LEAD: &str = "Another Tauri Explorer process owns this plugin profile";
+const NOT_OWNER_TAIL: &str =
+    "; AI operations and plugin changes are available there until it exits";
+
+/// The generic refusal, used whenever the holder cannot be named.
+pub(super) fn not_owner() -> String {
+    format!("{NOT_OWNER_LEAD}{NOT_OWNER_TAIL}")
+}
+
+/// Whether `message` is a profile-ownership refusal, named or not.
+pub(super) fn is_not_owner(message: &str) -> bool {
+    message.starts_with(NOT_OWNER_LEAD)
+}
+
+#[derive(Debug)]
+pub(super) enum Refusal {
+    /// Another process holds the lease; `holder` is its live owner record.
+    Held { holder: Option<OwnerRecord> },
+    /// The lease could not be opened or is not a regular file.
+    Unavailable(AppError),
+}
+
+impl Refusal {
+    /// The user-facing reason. Lease IO failures keep the generic refusal.
+    pub(super) fn message(&self) -> String {
+        match self {
+            Refusal::Held {
+                holder: Some(holder),
+            } => format!(
+                "{NOT_OWNER_LEAD} (held by {}){NOT_OWNER_TAIL}",
+                holder.describe()
+            ),
+            _ => not_owner(),
+        }
+    }
+}
+
+impl std::fmt::Display for Refusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Refusal::Held { .. } => f.write_str(&self.message()),
+            Refusal::Unavailable(cause) => write!(f, "{cause}"),
+        }
+    }
+}
+
+pub(super) fn acquire(profile: &Path) -> Result<ProfileOwner, Refusal> {
+    let file = open(&profile.join(".plugin-runtime.lock"))
+        .map_err(|cause| Refusal::Unavailable(cause.into()))?;
+    regular(&file).map_err(Refusal::Unavailable)?;
+    if let Err(cause) = file.try_lock() {
+        log::debug!("Plugin profile lease is held: {cause}");
+        return Err(Refusal::Held {
+            holder: owner_record::read_live(&file),
+        });
+    }
+    // Only after the lock: a refused process must never overwrite the record.
+    owner_record::write(&file, &OwnerRecord::current());
     Ok(ProfileOwner {
         file,
         owner_pid: std::process::id(),
@@ -378,6 +430,7 @@ mod tests {
                 ])
                 .env("TE_LEASE_TEST_PROFILE", profile.path())
                 .env("TE_LEASE_EXPECT", expected)
+                .env("TE_LEASE_OWNER_PID", std::process::id().to_string())
                 .output()
                 .unwrap()
         };
@@ -404,6 +457,44 @@ mod tests {
     fn child_checks_profile_lease() {
         let profile = std::env::var_os("TE_LEASE_TEST_PROFILE").expect("Owned test child only");
         let expected = std::env::var("TE_LEASE_EXPECT").unwrap();
-        assert_eq!(acquire(Path::new(&profile)).is_ok(), expected == "free");
+        let owner: u32 = std::env::var("TE_LEASE_OWNER_PID")
+            .unwrap()
+            .parse()
+            .unwrap();
+        match acquire(Path::new(&profile)) {
+            Ok(_) => assert_eq!(expected, "free"),
+            // The refused process names the live owner from its record (#1433).
+            Err(refusal) => {
+                assert_eq!(expected, "busy");
+                let Refusal::Held {
+                    holder: Some(holder),
+                } = &refusal
+                else {
+                    panic!("Owner was not named: {refusal:?}");
+                };
+                assert_eq!(holder.pid, owner);
+                assert!(refusal
+                    .message()
+                    .contains(&format!("(held by {}", holder.describe())));
+                assert!(is_not_owner(&refusal.message()));
+            }
+        }
+    }
+    #[test]
+    fn an_unreadable_owner_record_keeps_the_generic_refusal() {
+        let profile = tempfile::tempdir().unwrap();
+        let _owner = acquire(profile.path()).unwrap();
+        std::fs::write(profile.path().join(".plugin-runtime.lock"), b"garbled").unwrap();
+        let refusal = acquire(profile.path()).err().unwrap();
+        assert!(matches!(refusal, Refusal::Held { holder: None }));
+        assert_eq!(refusal.message(), not_owner());
+    }
+    #[test]
+    fn lease_io_failures_keep_the_generic_refusal() {
+        let profile = tempfile::tempdir().unwrap();
+        std::fs::create_dir(profile.path().join(".plugin-runtime.lock")).unwrap();
+        let refusal = acquire(profile.path()).err().unwrap();
+        assert!(matches!(refusal, Refusal::Unavailable(_)));
+        assert_eq!(refusal.message(), not_owner());
     }
 }

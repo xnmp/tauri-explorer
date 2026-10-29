@@ -89,7 +89,11 @@ fn native_a_process_without_the_profile_never_recovers_its_live_claims() {
     let ledger = Store::open(config.join("service-state"), Limits::default()).unwrap();
     let live = accepting_job(&ledger);
     super::initialize(app.handle().clone()).unwrap();
-    assert!(pending_errors().iter().any(|e| e == NOT_OWNER));
+    // The refusal names this process, which holds `first` (#1433).
+    let named = format!("(held by {}", std::env::current_exe().unwrap().display());
+    assert!(pending_errors()
+        .iter()
+        .any(|e| ownership::is_not_owner(e) && e.contains(&named)));
     // Its claims were neither recovered nor reopened by this process.
     assert_eq!(ledger.job(&live.job_key).unwrap().unwrap(), live);
     assert!(service_host::store().is_err());

@@ -1062,7 +1062,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `src/lib/domain/image-generation-settings.ts` — provider-compatible image dimensions from resolution and source/explicit aspect ratio.
 - `src-tauri/src/installed_plugins/queue.rs` — bounded startup requests staged by the Arch installer; uses the transactional package installer and quarantines failed requests to prevent stale downgrades.
-- `src-tauri/src/installed_plugins/ownership.rs` — Linux profile lifetime lease acquired before recovery and released after brokers, the queue worker and lifecycle mutations settle.
+- `src-tauri/src/installed_plugins/ownership.rs` — Linux profile lifetime lease acquired before recovery and released after brokers, the queue worker and lifecycle mutations settle. Refusals name the live holder from its owner record.
+- `src-tauri/src/installed_plugins/owner_record.rs` — best-effort owner record (PID, executable, acquisition time, Linux start ticks) written into the profile lease after locking and liveness-checked by a refused process (#1433).
 - `src-tauri/src/window_launch.rs`, `src/lib/state/native-launch.ts` — profile-scoped Linux secondary-process routing; preserves early requests and uses the existing frontend window launcher.
 
 ## Installed plugin packages

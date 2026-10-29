@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { caretlessDoubleClickNotice, rowClickOwnsPeek, shouldToggleOnRowClick, type RowClickInput } from "$lib/domain/folder-peek";
+import { caretlessDoubleClickNotice, rowClickOwnsPeek, rowShowsPeekToggle, shouldToggleOnRowClick, type RowClickInput } from "$lib/domain/folder-peek";
 
 const plain: RowClickInput = {
   caretsShown: false, isDirectory: true, eligible: true,
@@ -84,5 +84,34 @@ describe("permanent peek drop destinations (#1323)", () => {
     expect(folder("/Open/missing", "file", meta, expanded)).toBeNull();
     expect(folder("/Open/file", "file", meta, new Set())).toBeNull();
     expect(folder("/Closed", "state", meta, expanded)).toBeNull();
+  });
+});
+
+describe("rowShowsPeekToggle (#1448)", () => {
+  // A lineage parent: a file Show traces groups edits under.
+  const lineageParent = { caretsShown: false, isDirectory: false, eligible: true, canPeek: true };
+
+  it("gives a caret-less lineage parent its own toggle", () => {
+    expect(rowShowsPeekToggle(lineageParent)).toBe(true);
+  });
+  it("leaves the parent's row click to selection and preview", () => {
+    expect(rowClickOwnsPeek(lineageParent)).toBe(false);
+    expect(shouldToggleOnRowClick({ ...lineageParent, modifiers: plain.modifiers, wasDrag: false })).toBe(false);
+  });
+  it("adds nothing where the caret already shows", () => {
+    expect(rowShowsPeekToggle({ ...lineageParent, caretsShown: true })).toBe(false);
+  });
+  it("adds nothing to a folder, whose row click already owns its peek", () => {
+    expect(rowShowsPeekToggle({ ...lineageParent, isDirectory: true })).toBe(false);
+    expect(rowClickOwnsPeek({ ...lineageParent, isDirectory: true })).toBe(true);
+  });
+  it("adds nothing to a file without edits, or where peek is off (both are canPeek)", () => {
+    expect(rowShowsPeekToggle({ ...lineageParent, canPeek: false })).toBe(false);
+  });
+  it("every peekable row has exactly one pointer affordance in caret-less mode", () => {
+    for (const isDirectory of [true, false]) {
+      const target = { ...lineageParent, isDirectory };
+      expect(Number(rowShowsPeekToggle(target)) + Number(rowClickOwnsPeek(target))).toBe(1);
+    }
   });
 });

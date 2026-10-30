@@ -11,9 +11,12 @@
     bold?: boolean;
     /** Invisible copy that holds a tile's height open under the rename box. */
     placeholder?: boolean;
+    /** Shown in place of the name (a lineage child's prompt, #1449); the name stays in `tooltip`. */
+    text?: string | null;
+    tooltip?: string;
   }
 
-  let { name, variant, placeholder = false, bold = false }: Props = $props();
+  let { name, variant, placeholder = false, bold = false, text, tooltip }: Props = $props();
 </script>
 
 {#if placeholder}
@@ -25,8 +28,8 @@
     class:name-details={variant === "details"}
     class:name-list={variant === "list"}
     class:name-tiles={variant === "tiles"}
-    title={variant === "tiles" ? name : undefined}
-  >{name}</span>
+    title={tooltip ?? (variant === "tiles" ? name : undefined)}
+  >{text || name}</span>
 {/if}
 
 <style>

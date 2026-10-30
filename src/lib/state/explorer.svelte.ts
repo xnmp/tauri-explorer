@@ -180,23 +180,22 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   // Derived State
   // ===================
 
+  // Only Details has sortable headers; List and Tiles sort by name ascending
+  // whatever the folder's Details sort. Lineage prompts (#1449) are the "prompt" sort's text.
+  const promptOf = (entry: FileEntry) => lineage.labels?.prompt(entry.path);
+  const peekSort = (): [SortField, boolean, typeof promptOf] => coreState.viewMode === "details" ? [coreState.sortBy, coreState.sortAscending, promptOf] : ["name", true, promptOf];
   const ownDisplayEntries = $derived.by(() => {
     let filtered = visibleEntriesFor(coreState.entries, coreState.currentPath);
     if (filterQuery) {
-      const q = filterQuery.toLowerCase();
-      filtered = filtered.filter((e) => e.name.toLowerCase().includes(q));
+      // Filenames, plus a lineage prompt where there is one (#1449).
+      const q = filterQuery.toLowerCase(), labels = lineage.labels;
+      filtered = filtered.filter((e) => e.name.toLowerCase().includes(q) || !!labels?.matches(e.path, q));
     }
     if (revealedPath && !filtered.some((entry) => entry.path === revealedPath)) {
       const revealed = coreState.entries.find((entry) => entry.path === revealedPath);
       if (revealed) filtered = [...filtered, revealed];
     }
-    // Only Details view exposes sortable column headers. List and Tiles have no
-    // sort UI, so they always sort by name ascending for a predictable order
-    // regardless of the per-folder sort preference set in Details view.
-    if (coreState.viewMode === "details") {
-      return sortEntries(filtered, coreState.sortBy, coreState.sortAscending);
-    }
-    return sortEntries(filtered, "name", true);
+    return sortEntries(filtered, ...peekSort());
   });
 
   // Off (setting, surface, location or view) is one state: flat entries and no
@@ -208,7 +207,6 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     plainLocation: !isVirtualPath(coreState.currentPath) && !providerFor(coreState.currentPath),
     mode: coreState.viewMode,
   }));
-  const peekSort = (): [SortField, boolean] => coreState.viewMode === "details" ? [coreState.sortBy, coreState.sortAscending] : ["name", true];
   // ---- Lineage peek (#1431) ---------------------------------------------------
   const lineageListing = $derived(filterQuery ? sortEntries(visibleEntriesFor(coreState.entries, coreState.currentPath), ...peekSort()) : ownDisplayEntries);
   const lineage = createExplorerLineage({
@@ -225,7 +223,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   // Each level uses its view's sort, like the root: only Details has a sort UI;
   // List (and Tiles) sort by name ascending (§3).
   const peekProjectionKey = (parent: string) => [
-    ...peekSort(), settingsStore.showHidden, settingsStore.showManuallyHidden,
+    ...peekSort().slice(0, 2), settingsStore.showHidden, settingsStore.showManuallyHidden,
     ...(settingsStore.showManuallyHidden ? [] : manualHiddenStore.namesIn(parent)),
   ].join("\0");
   const peekTree = $derived.by(() => {
@@ -1144,6 +1142,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     setEntryLineageShown: lineage.setShown,
     /** Contribution ids this pane turned off (persisted with the pane). */
     get lineageHidden() { return lineage.hidden; },
+    get lineageLabels() { return lineage.labels; }, // Prompt column and lineage-child labels (#1449), or null
     /** Grouping is shown (a provider's lineage applies and no filter suspends it). */
     get lineageGrouped() { return lineageGrouping !== null; },
     /** First paint waits (bounded) for this folder's lineage. */

@@ -32,6 +32,8 @@ export interface EntryLineage {
   revision: string;
   /** Path of a file in `directory` → its lineage parents in input order. */
   parents: ReadonlyMap<string, readonly LineageParent[]>;
+  /** Optional per-file text, keyed by path (#1449). */
+  labels?: ReadonlyMap<string, { prompt?: string; title?: string }>;
 }
 
 export type LineageParent =
@@ -73,6 +75,16 @@ isEntryLineageShown?(contributionId: string): boolean;
   highlights at both, and file operations receive it once. Ctrl+A selects the
   top level; "Select with Edits" adds every lineage descendant of the
   selection (opening those lineages). A name filter suspends grouping.
+- **Labels (optional, #1449).** Detect by feature: when `labels` is present
+  the host adds a Details "Prompt" column (hideable, resizable, sortable by
+  text) showing each file's `prompt` (else `title`; "—" for files without
+  text), and labels lineage children (depth > 0 beneath a file or a group
+  row, never beneath a folder peek) by `title`, else `prompt`. Depth 0 keeps
+  filenames, and the tooltip, Preview pane and status bar keep the filename.
+  Rename, typeahead and file operations use filenames; the name filter also
+  matches prompt text. Text is collapsed to one line and bounded; empty or
+  non-string values fall back to the filename. Without `labels` nothing
+  changes. List and Tiles do not show labels yet.
 - **Group rows** are not files: never selected or dragged; a drop on one
   targets the current folder. A click toggles the group and previews the
   parents it combines.

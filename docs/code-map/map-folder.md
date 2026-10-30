@@ -116,6 +116,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `settings/SettingRow.svelte` — one Settings row (label, description, optional `info` snippet, control slot); `hidden` while the search filter excludes it.
 - `settings/SettingToggle.svelte` — the Settings switch (restyled checkbox; extra input attributes forwarded).
 - `settings/TerminalShortcutSettings.svelte` — terminal line-editing shortcut list and key recorder (#375/#404); recording ends on dialog close or window blur.
+- `settings/GitHubReportTokenSetting.svelte` — Settings → Issue Reports: write-only GitHub token entry (save/replace/remove) showing only whether one is saved (#1455).
+- `settings/ExperimentalSettings.svelte` — Settings → Experimental feature-flag rows (integrated terminal, git graph).
 - `settings/LayoutThemeSetting.svelte` — Settings → Appearance → Layout: selector, Open folder (layouts), Reset to Default, fallback reason (#1306).
 - `settings/ThumbnailSettings.svelte` — Settings → Appearance thumbnail rows: Tiles Thumbnail Size and the Details/List row-thumbnails toggle (#1465).
 - `settings/settings-select.css` — shared Settings dropdown styling (`.settings-select`).
@@ -281,6 +283,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `tests/state/undo-helpers.test.ts` — completion labels for native replacement history and recursive batch presentation; executable renderer input remains the separate UndoAction contract.
 - `operations.svelte.ts` — progress tracking for copy/move/delete/compress/extract.
 - `dialogs.svelte.ts` — global dialog open/close state (rename/delete/etc).
+- `report-token.svelte.ts` — saved-GitHub-report-token state (configured/absent/unavailable) with save/clear through the write-only native commands (#1455).
 - `user-report-draft.svelte.ts` — debounced localStorage text drafts, window-lifetime image selections, and exclusive Report Issue submission ownership; accepted reports clear only the unchanged draft they submitted.
 - `context-menu.svelte.ts` — context menu open state + position.
 - `context-menu-items.svelte.ts` — registry for plugin-provided context-menu items.
@@ -402,7 +405,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `ai-organize.ts` — AI "where does this file belong" IPC (#158).
 - `ai-rename.ts` — AI rename suggestion IPC (#145).
 - `crash.ts` — crash-report capture bridge (#184).
-- `user-report.ts` — typed `submit_user_report` IPC wrapper.
+- `user-report.ts` — typed `submit_user_report` IPC wrapper (`useGitHubToken` route flag) and the write-only report-token commands (#1455).
 - `update.ts` — GitHub-release update check (once/day throttle, #185).
 - `warm-pool.ts` — warm-window pool IPC wrappers.
 - `open.ts` — open files in the default/chosen app, image viewer (with siblings), or a terminal.
@@ -603,6 +606,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `content-search.ts` — `ContentMatch`/`ContentSearchResult` types for ripgrep results; re-exported by `api/search.ts`.
 - `crash-report.ts` — pure crash-dedupe + log-tail→markdown helpers behind `api/crash.ts`.
 - `user-report.ts` — report contracts and pure prefilled-GitHub fallback URL builder.
+- `user-report-route.ts` — pure report route (saved GitHub token for text-only reports, relay otherwise), route notice and token validation (#1455).
 - `git-warm.ts` — pure scheduler: when (and whether) to warm git-graph/SCM caches after a pane settles.
 - `available-filename.ts` — collision-free output filename (`photo_upscaled_2.png`) for plugin dialogs writing beside the original.
 
@@ -684,6 +688,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `terminal/input.rs` — per-terminal input sequencer: admits `terminal_write` in sequence-number order (early arrivals held, repeats ignored), holds 64 KiB of pre-start typeahead (an overflow discards all of it), and feeds one writer thread per PTY through a channel (#882).
 - `system.rs` — native launch context, Recycle Bin launcher, window theme and log-path commands.
 - `user_report.rs` — typed async report relay command, full-description/environment body assembly without log tails, and ureq transport with uncertain-response handling.
+- `user_report_github.rs` — optional GitHub token for reports (#1455): keyring-backed write-only token commands and direct GitHub REST issue creation as the token's user, with definite/uncertain failure classification.
 - `process_ext.rs` — suppress console-window flash and own cancellable process trees; drain both pipes with optional output limits and continue cancellation after launcher exit.
 - `portal/parent_identifier.rs` — pure, bounded validation of X11 XIDs and Wayland exported handles.
 - `portal/parent.rs` — validates portal window identifiers and attaches GTK picker surfaces to native Wayland/X11 parents before mapping.

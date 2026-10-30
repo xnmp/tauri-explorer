@@ -463,7 +463,17 @@ mod tests {
             .unwrap();
         match acquire(Path::new(&profile)) {
             Ok(_) => assert_eq!(expected, "free"),
+            // Windows' whole-file LockFileEx range also refuses the reader, so
+            // the record is unreadable there and the refusal stays generic.
+            #[cfg(windows)]
+            Err(refusal) => {
+                assert_eq!(expected, "busy");
+                let _ = owner;
+                assert!(matches!(refusal, Refusal::Held { holder: None }));
+                assert_eq!(refusal.message(), not_owner());
+            }
             // The refused process names the live owner from its record (#1433).
+            #[cfg(unix)]
             Err(refusal) => {
                 assert_eq!(expected, "busy");
                 let Refusal::Held {
@@ -480,6 +490,8 @@ mod tests {
             }
         }
     }
+    // Windows refuses this second handle's write inside the held lock range.
+    #[cfg(unix)]
     #[test]
     fn an_unreadable_owner_record_keeps_the_generic_refusal() {
         let profile = tempfile::tempdir().unwrap();

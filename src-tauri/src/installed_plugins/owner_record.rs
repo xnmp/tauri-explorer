@@ -151,8 +151,8 @@ fn alive(record: &OwnerRecord) -> bool {
         return false;
     };
     // Signal 0 probes existence only. EPERM still means the PID exists.
-    unsafe { libc::kill(pid, 0) == 0 }
-    || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    let exists = unsafe { libc::kill(pid, 0) == 0 };
+    exists || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
 /// No identity check: Windows refuses reads of a byte range another handle
@@ -220,6 +220,8 @@ mod tests {
         }
     }
 
+    // Windows has no liveness check (`alive` is always true); see its note.
+    #[cfg(unix)]
     #[test]
     fn a_record_naming_a_dead_process_is_stale() {
         let (_dir, file) = lease();

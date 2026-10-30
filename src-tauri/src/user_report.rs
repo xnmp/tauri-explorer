@@ -47,8 +47,8 @@ pub struct SubmittedUserReport {
 
 #[derive(Debug)]
 pub struct SubmitReportError {
-    kind: &'static str,
-    message: String,
+    pub(crate) kind: &'static str,
+    pub(crate) message: String,
 }
 
 impl SubmitReportError {
@@ -390,7 +390,7 @@ fn relay_unreachable() -> SubmitReportError {
 /// unattributed I/O error, indistinguishable from a later socket error, so the
 /// usual offline case (no DNS) is only provably pre-send when checked here.
 /// Skipped when a proxy resolves the host instead.
-fn resolve_relay_host(endpoint: &str) -> Result<(), SubmitReportError> {
+pub(crate) fn resolve_relay_host(endpoint: &str) -> Result<(), SubmitReportError> {
     use std::net::ToSocketAddrs;
     // A malformed endpoint is left for ureq to report.
     let Ok(uri) = endpoint.parse::<ureq::http::Uri>() else {
@@ -422,7 +422,7 @@ fn resolve_relay_host(endpoint: &str) -> Result<(), SubmitReportError> {
     }
 }
 
-fn map_transport_error(error: ureq::Error) -> SubmitReportError {
+pub(crate) fn map_transport_error(error: ureq::Error) -> SubmitReportError {
     if failed_before_sending(&error) {
         log::warn!("User report relay unreachable: {error}");
         return relay_unreachable();
@@ -582,11 +582,21 @@ pub async fn submit_user_report(
     contact: Option<String>,
     attachments: Option<Vec<ReportAttachment>>,
     diagnostics: Option<String>,
+    use_github_token: Option<bool>,
 ) -> Result<SubmittedUserReport, SubmitReportError> {
     validate_draft(&title, &body, &kind, contact.as_deref())?;
     validate_diagnostics(diagnostics.as_deref())?;
     let attachments = attachments.unwrap_or_default();
     validate_attachments(&attachments)?;
+    let use_github_token = use_github_token.unwrap_or(false);
+    // Attachments need the relay's public hosting (#1455): a direct GitHub
+    // issue has nowhere to put them, so the renderer routes them to the relay.
+    if use_github_token && !attachments.is_empty() {
+        return Err(SubmitReportError::new(
+            "malformed_input",
+            "Reports with attachments are sent through the report service, not your GitHub token",
+        ));
+    }
     let info = crate::system::get_app_info().await;
     let assembled = append_diagnostics(
         assemble_issue_body(
@@ -600,9 +610,16 @@ pub async fn submit_user_report(
         ),
         diagnostics.as_deref(),
     );
+    let title = title.trim().replace(['\n', '\r'], " ");
+    if use_github_token {
+        return crate::user_report_github::submit_as_user(
+            crate::user_report_github::GitHubIssueRequest::new(title, assembled, &kind),
+        )
+        .await;
+    }
     let endpoint = report_endpoint(std::env::var(REPORT_URL_OVERRIDE).ok().as_deref())?;
     let payload = RelayRequest {
-        title: title.trim().replace(['\n', '\r'], " "),
+        title,
         body: assembled,
         kind,
         website: String::new(),

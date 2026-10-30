@@ -31,6 +31,8 @@ All notable changes to Tauri Explorer.
   cap is 75 minutes and each Windows compile step has its own bound (#1447).
 - The startup bundle cap is raised by 512 bytes for this release's eager
   additions, with the measurement noted (#1456).
+- Linux native smoke CI no longer fails after a fully passing suite when the
+  document portal's mount outlives the test session (#1463).
 
 ## v1.15.1 — 2026-10-28
 

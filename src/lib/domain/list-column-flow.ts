@@ -1,7 +1,14 @@
 import type { FileEntry } from "./file";
 import type { FileListKey, FileListMove } from "./file-list-navigation";
 
-export const LIST_SLOT_HEIGHT = 30;
+/** Slot height in CSS px: 30, or 62 with row thumbnails (#1465). A live
+ *  binding read at call time, so the flow geometry stays one parameter-free
+ *  family: ListColumnsView sets it as it mounts, and FileList remounts that
+ *  view when the height changes, so one mount never mixes two heights. */
+export let LIST_SLOT_HEIGHT = 30;
+export function setListSlotHeight(height: number): void {
+  LIST_SLOT_HEIGHT = height;
+}
 export const LIST_COLUMN_WIDTH = 260;
 export const LIST_COLUMN_GAP = 16;
 export const LIST_COLUMN_STRIDE = LIST_COLUMN_WIDTH + LIST_COLUMN_GAP;

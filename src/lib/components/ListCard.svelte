@@ -127,7 +127,7 @@
   .list-card-body { position: relative; }
   .list-card-scroll {
     position: relative;
-    height: calc(var(--card-visible-rows) * 30px);
+    height: calc(var(--card-visible-rows) * var(--list-slot-height, 30px));
     overflow-x: hidden;
     overflow-y: auto;
     overflow-anchor: none;
@@ -137,6 +137,6 @@
     -webkit-mask-image: linear-gradient(to bottom, transparent, #000 var(--fade-top), #000 calc(100% - var(--fade-bottom)), transparent);
   }
   .list-card-content { position: relative; }
-  .list-row { position: absolute; left: 0; right: 0; height: 30px; }
+  .list-row { position: absolute; left: 0; right: 0; height: var(--list-slot-height, 30px); }
   .list-guide { position: absolute; width: 1.5px; pointer-events: none; }
 </style>

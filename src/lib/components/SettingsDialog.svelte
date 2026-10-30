@@ -3,7 +3,7 @@
   Issue: tauri-explorer-npjh.1, tauri-explorer-oytv
 -->
 <script lang="ts">
-  import { settingsStore, type IconTheme, type ThumbnailSize, type WindowsBackdrop, type PaneLayoutMode } from "$lib/state/settings.svelte";
+  import { settingsStore, type IconTheme, type WindowsBackdrop, type PaneLayoutMode } from "$lib/state/settings.svelte";
   import { ICON_THEMES } from './icons/icon-theme-options';
   import { themeStore } from "$lib/state/theme.svelte";
   import { isMac, isWindows } from "$lib/domain/platform";
@@ -16,6 +16,7 @@
   import SettingToggle from "./settings/SettingToggle.svelte";
   import TerminalShortcutSettings from "./settings/TerminalShortcutSettings.svelte";
   import LayoutThemeSetting from "./settings/LayoutThemeSetting.svelte";
+  import ThumbnailSettings from "./settings/ThumbnailSettings.svelte";
   import "./settings/settings-select.css";
   import { matchesSettingsQuery } from "$lib/domain/settings-search";
   import { SETTINGS_ROWS, settingsSectionRows } from "$lib/domain/settings-rows";
@@ -177,20 +178,7 @@
             </select>
           </SettingRow>
 
-          <SettingRow label="Thumbnail Size"
-            description="Size of image thumbnails in tiles view"
-            hidden={!matchesSearch(...rows.thumbnailSize)}>
-            <select
-              class="settings-select"
-              value={settingsStore.thumbnailSize}
-              onchange={(e) => settingsStore.update({ thumbnailSize: e.currentTarget.value as ThumbnailSize })}
-            >
-              <option value="small">Small</option>
-              <option value="medium">Medium</option>
-              <option value="large">Large</option>
-              <option value="xlarge">Extra Large</option>
-            </select>
-          </SettingRow>
+          <ThumbnailSettings matches={matchesSearch} />
 
           <SettingRow label="Show Sidebar"
             description="Display bookmarks and quick access panel"
@@ -261,7 +249,7 @@
           <SettingRow label="Premium Theme Effects"
             description="Aurora-style surface treatment: accent-tinted hairlines, soft glow shadows, breadcrumb pills, translucent panels and a subtle depth backdrop. Off = flatter, higher-contrast look"
             hidden={!matchesSearch(...rows.premiumTheme)}>
-            <SettingToggle checked={settingsStore.premiumTheme} onchange={() => settingsStore.togglePremiumTheme()} />
+            <SettingToggle checked={settingsStore.premiumTheme} onchange={() => settingsStore.update({ premiumTheme: !settingsStore.premiumTheme })} />
           </SettingRow>
 
           <SettingRow label="Show Address Bar"

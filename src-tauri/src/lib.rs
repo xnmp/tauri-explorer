@@ -81,6 +81,7 @@ mod service_state;
 mod update_check;
 mod upscale;
 mod user_report;
+mod user_report_github;
 #[cfg(target_os = "linux")]
 mod webkit_renderer;
 mod window_launch;
@@ -336,6 +337,9 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             get_log_dir,
             system::get_app_info,
             user_report::submit_user_report,
+            user_report_github::user_report_token_state,
+            user_report_github::save_user_report_token,
+            user_report_github::clear_user_report_token,
             load_diagnostics::record_slow_load,
             load_diagnostics::recent_slow_loads,
             crash_report::take_crash_report,

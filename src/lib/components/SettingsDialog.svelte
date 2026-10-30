@@ -16,6 +16,8 @@
   import SettingToggle from "./settings/SettingToggle.svelte";
   import TerminalShortcutSettings from "./settings/TerminalShortcutSettings.svelte";
   import LayoutThemeSetting from "./settings/LayoutThemeSetting.svelte";
+  import GitHubReportTokenSetting from "./settings/GitHubReportTokenSetting.svelte";
+  import ExperimentalSettings from "./settings/ExperimentalSettings.svelte";
   import "./settings/settings-select.css";
   import { matchesSettingsQuery } from "$lib/domain/settings-search";
   import { SETTINGS_ROWS, settingsSectionRows } from "$lib/domain/settings-rows";
@@ -566,18 +568,13 @@
         <!-- Experimental Section (#175): feature flags for recently shipped surfaces -->
         <section class="settings-section" class:hidden={!sectionVisible(["Experimental", "feature flags"], rows.enableTerminal, rows.enableGitGraph)}>
           <h3 class="section-title">Experimental</h3>
+          <ExperimentalSettings matches={matchesSearch} />
+        </section>
 
-          <SettingRow label="Integrated Terminal"
-            description="Enable the embedded terminal panel (Alt+M T)"
-            hidden={!matchesSearch(...rows.enableTerminal)}>
-            <SettingToggle checked={settingsStore.enableTerminal} onchange={() => settingsStore.toggleEnableTerminal()} />
-          </SettingRow>
-
-          <SettingRow label="Git Commit Graph"
-            description="Show the repo's commit graph in the active pane (command palette: Git: Toggle Commit Graph, Ctrl+Alt+G)"
-            hidden={!matchesSearch(...rows.enableGitGraph)}>
-            <SettingToggle checked={settingsStore.enableGitGraph} onchange={() => settingsStore.toggleEnableGitGraph()} />
-          </SettingRow>
+        <!-- Optional GitHub token for Report Issue (#1455) -->
+        <section class="settings-section" class:hidden={!sectionVisible(["Issue Reports"], rows.githubReportToken)}>
+          <h3 class="section-title">Issue Reports</h3>
+          {#if open}<GitHubReportTokenSetting hidden={!matchesSearch("Issue Reports", ...rows.githubReportToken)} />{/if}
         </section>
 
         <section class="settings-section" class:hidden={!sectionVisible(["Plugins", "install enable disable extensions packages"], ...pluginRegistry.plugins.map((p) => [p.name, p.description]), ...pluginSettingsSections.sections.map((section) => [section.title, ...section.rows.flatMap((row) => [row.label, row.description ?? ""]),...section.actions.flatMap(action=>[action.label,action.description??""])]))}>

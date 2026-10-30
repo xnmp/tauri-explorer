@@ -53,6 +53,7 @@ export const SETTINGS_ROWS = {
   previewFontSize: ["Preview Font Size", "Font size for text, code and markdown previews"],
   showPreviewInfo: ["Preview Info", "Show the file name, type badge, size and modified date in the preview pane (off = content only)", "preview", "metadata", "auxiliary", "minimal"],
   ffmpegPath: ["FFmpeg Path", "Path to the ffmpeg binary for video/audio thumbnails (leave empty to auto-detect)", "video", "thumbnail"],
+  githubReportToken: ["GitHub Token for Reports", "Optional GitHub personal access token to file Report Issue submissions as yourself", "issue reports", "report issue", "bug report", "github", "token", "pat"],
   keyboardShortcuts: ["Keyboard Shortcuts", "keybindings", "hotkeys", "Click on a shortcut to change it"],
 } satisfies Record<string, SettingsSearchTerms>;
 

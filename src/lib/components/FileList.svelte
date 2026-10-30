@@ -587,7 +587,7 @@
     {:else if explorer.viewMode === "list" && settingsStore.folderPeek}
       {@const ListColumnsView = loadedView("list-columns")}
       {#if ListColumnsView}
-        <ListColumnsView
+        <!-- Row thumbnails change the slot height: remount (#1465). -->{#key settingsStore.state.rowThumbnails}<ListColumnsView
           {explorer}
           bind:getNavigation={viewNavigation}
           onitemclick={handleClick}
@@ -597,7 +597,7 @@
           {fallbackTabStop}
           bind:containsIndex={viewContainsIndex}
           bind:scrollToIndex={viewScrollToIndex}
-        />
+        />{/key}
       {:else if viewLoadFailed("list-columns")}
         <div class="status error-state">Unable to load List view</div>
       {/if}

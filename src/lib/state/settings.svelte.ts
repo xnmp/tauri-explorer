@@ -88,6 +88,7 @@ export interface Settings {
   theme: string; // active theme id, e.g. "dark", "golden-hour"
   premiumTheme: boolean; // opt-in "premium/aurora" surface treatment (accent-tinted hairlines, glow shadows, breadcrumb pills, translucent surfaces, static depth backdrop). Off = flatter/high-contrast look (#437)
   thumbnailSize: ThumbnailSize; // tile thumbnail size tier
+  rowThumbnails: boolean; // Details/List rows show 48px image/video thumbnails in taller rows (#1465)
   showGitStatus: boolean; // show git indicators on files
   recentItemsCount: number; // number of recent locations in sidebar (0 = hidden)
   showRecycleBin: boolean; // show the native recycle-bin launcher in the sidebar
@@ -168,6 +169,7 @@ const DEFAULT_SETTINGS: Settings = {
   theme: "light",
   premiumTheme: false,
   thumbnailSize: "small",
+  rowThumbnails: false,
   showGitStatus: false,
   recentItemsCount: 6,
   showRecycleBin: true,
@@ -566,9 +568,6 @@ function createSettingsStore() {
     get premiumTheme() {
       return settings.premiumTheme;
     },
-    togglePremiumTheme(): void {
-      update({ premiumTheme: !settings.premiumTheme });
-    },
     get thumbnailSize() {
       return settings.thumbnailSize;
     },
@@ -836,6 +835,7 @@ export const TOGGLE_SETTINGS: ToggleSettingMeta[] = [
   { key: "showPreviewInfo", id: "view.togglePreviewInfo", label: "Toggle Preview Info" },
   { key: "showStatusBar", id: "view.toggleStatusBar", label: "Toggle Status Bar", shortcut: "Alt+M U" },
   { key: "showGitStatus", id: "view.toggleGitStatus", label: "Toggle Git Status Indicators" },
+  { key: "rowThumbnails", label: "Toggle Thumbnails in Details and List" },
   { key: "millerHideEmpty", id: "view.toggleMillerHideEmpty", label: "Miller Columns: Toggle Hide Empty Folders" },
   { key: "showManuallyHidden", id: "view.toggleManuallyHidden", label: "Toggle Manually Hidden Files" },
   // SCM panel visibility is per-pane (#434); its toggle command lives in

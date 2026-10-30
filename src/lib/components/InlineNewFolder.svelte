@@ -216,7 +216,7 @@
   .list-inline-new-folder.list-columns-slot {
     box-sizing: border-box;
     padding: 3px 8px;
-    height: 30px;
+    height: var(--list-slot-height, 30px);
     position: relative;
   }
 

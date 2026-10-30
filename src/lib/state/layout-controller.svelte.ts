@@ -110,7 +110,7 @@ export async function applyLayout(requested: string): Promise<void> {
         id: resolution.theme.id,
         base: resolution.theme.base,
         sheets,
-        rowHeight: layoutStore.detailsRowHeight,
+        rowHeight: layoutStore.applied.rowHeight,
       });
       // CSS is forgiving: a binary file or prose saved as .css still parses,
       // to nothing. The user sheet is always last; an empty one is a failure.

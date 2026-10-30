@@ -1,6 +1,6 @@
 <!-- List fills fixed-width columns from top to bottom and virtualizes sideways. -->
 <script lang="ts">
-  import { onDestroy, tick } from "svelte";
+  import { onDestroy, onMount, tick } from "svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { useListColumns } from "$lib/composables/use-list-columns.svelte";
   import { useListMotion } from "$lib/composables/use-list-motion.svelte";
@@ -9,7 +9,9 @@
   import { usesPointerDrag } from "$lib/domain/platform";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import type { ListCardSpec, ListNavigationSnapshot, ListSpillMore } from "$lib/domain/list-column-flow";
-  import { LIST_COLUMN_STRIDE, LIST_PADDING_X, LIST_SLOT_HEIGHT } from "$lib/domain/list-column-flow";
+  import { LIST_COLUMN_STRIDE, LIST_PADDING_X, LIST_SLOT_HEIGHT, setListSlotHeight } from "$lib/domain/list-column-flow";
+  import { settingsStore } from "$lib/state/settings.svelte";
+  import { layoutStore } from "$lib/state/layout.svelte";
   import { cardMoreCount, listMoreExpansion } from "$lib/domain/list-cards";
   import { peekTreePositionLookup, type PeekRow } from "$lib/domain/folder-peek";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
@@ -17,6 +19,7 @@
   import { getFileIconColor } from "$lib/domain/file-types";
   import EntryName from "./EntryName.svelte";
   import FileIcon from "./FileIcon.svelte";
+  import RowThumbnail from "./RowThumbnail.svelte";
   import GitStatusBadge from "./GitStatusBadge.svelte";
   import InlineNewFolder from "./InlineNewFolder.svelte";
   import EntryCell from "./EntryCell.svelte";
@@ -44,6 +47,11 @@
   }
   let { explorer, onitemclick, onitemdblclick, scrollToIndex = $bindable(), containsIndex = $bindable(), getNavigation = $bindable(), fallbackTabStop, onviewportscroll, onlayoutchange }: Props = $props();
   const paneId = getPaneIdContext();
+  // Slot height is fixed for this mount: FileList remounts the view when row
+  // thumbnails toggle (#1465), so set it before any flow geometry is derived.
+  const thumbnails = settingsStore.state.rowThumbnails;
+  setListSlotHeight(layoutStore.listRowHeight);
+  const slotHeight = LIST_SLOT_HEIGHT;
   const interactions = useItemInteractions({ getExplorer: () => explorer, refreshPanes: () => windowTabsManager.refreshAllPanes(), selectOnContextMenu: true });
   const pointerDrag = usesPointerDrag ? usePointerDrag({ getExplorer: () => explorer, refreshPanes: () => windowTabsManager.refreshAllPanes() }) : null;
   // A card's group is a sibling of its header treeitem, which owns it.
@@ -121,6 +129,15 @@
   scrollToIndex = revealIndex;
   containsIndex = contains;
   getNavigation = navigation;
+  // A same-component remount (FileList's row-thumbnail {#key}, #1465) mounts
+  // this instance before the outgoing one is destroyed, and a destroyed
+  // instance reads its last prop values: its guard below then sees its own
+  // bindings and clears ours. Install them again once mounted.
+  onMount(() => {
+    scrollToIndex = revealIndex;
+    containsIndex = contains;
+    getNavigation = navigation;
+  });
   onDestroy(() => {
     // The incoming view can install its bindings before the outgoing view dies.
     if (getNavigation === navigation) getNavigation = undefined;
@@ -148,7 +165,7 @@
           void explorer.togglePeek(row.entry.path);
         }}></button>
     {/if}
-    <span class="list-icon" data-drag-icon style:color={row.entry.kind !== "directory" ? getFileIconColor(row.entry) : undefined}><FileIcon entry={row.entry} size="small" /></span>
+    <span class="list-icon" class:thumbnail={thumbnails} data-drag-icon style:color={row.entry.kind !== "directory" ? getFileIconColor(row.entry) : undefined}>{#if thumbnails}<RowThumbnail entry={row.entry} />{:else}<FileIcon entry={row.entry} size="small" />{/if}</span>
     <span data-drag-name><EntryName entry={row.entry} {explorer} variant="list" bold={row.expanded} /></span>
     <GitStatusBadge directory={row.parentPath} entryName={row.entry.name} />
     {#if explorer.rowClickOwnsPeek(row.entry) && dialogStore.renamingEntry?.path !== row.entry.path}
@@ -182,7 +199,7 @@
   </EntryCell>
 {/snippet}
 
-<div class="list-view" class:carets data-rows={columns.rows}>
+<div class="list-view" class:carets data-rows={columns.rows} style:--list-slot-height="{slotHeight}px">
   <!-- svelte-ignore a11y_no_noninteractive_tabindex -- tree and listbox are both interactive composites; the check cannot resolve a dynamic role. -->
   <div class="virtual-viewport list-scroller file-rows" class:short={columns.short}
     role={tree ? "tree" : "listbox"} aria-label="Files" aria-multiselectable="true" tabindex={fallbackTabStop ? 0 : -1}
@@ -265,7 +282,7 @@
   /* Look classes only (list-place, list-card-box, list-entry): motion ghosts
      keep these but lose every identity class, so they look the same while no
      live query can reach them. */
-  .list-place { position: absolute; width: 260px; height: 30px; }
+  .list-place { position: absolute; width: 260px; height: var(--list-slot-height, 30px); }
   .list-place.covered { visibility: hidden; }
   .list-flow-guide { position: absolute; width: 1.5px; pointer-events: none; }
   .list-spring-bridge { position: absolute; z-index: 3; }
@@ -288,8 +305,8 @@
     padding: 4px 8px 4px calc(8px + var(--depth, 0) * 16px);
     width: 100%;
     box-sizing: border-box;
-    height: 26px;
-    /* Centred in its 30px slot (a slot is a BFC, so nothing collapses). */
+    height: calc(var(--list-slot-height, 30px) - 4px);
+    /* Centred in its slot (a slot is a BFC, so nothing collapses). */
     margin: 2px 0;
     background: transparent;
     border: 1px solid transparent;
@@ -368,8 +385,8 @@
 
   .list-view :global(.list-entry .peek-caret) {
     position: absolute;
-    /* Against the slot: past the row's 2px margin, 1px border and indicator edge. */
-    top: 5px;
+    /* Against the slot: vertically centred; past the row's 1px border and indicator edge. */
+    top: calc((var(--list-slot-height, 30px) - 20px) / 2);
     left: calc(var(--selection-indicator-width, 3px) + 8px + var(--depth, 0) * 16px);
     display: flex;
     align-items: center;
@@ -413,6 +430,11 @@
     flex-shrink: 0;
   }
 
+  .list-view :global(.list-icon.thumbnail) {
+    width: auto;
+    height: auto;
+  }
+
   /* Name and rename styles are handled by EntryName component */
 
   /* Let the name fill (and truncate within) its share of the row; min-width:0
@@ -452,7 +474,7 @@
   .list-card-more:focus-visible { outline: 2px solid var(--focus-stroke-outer); outline-offset: 1px; }
   .list-card-less { position: static; flex-shrink: 0; margin-left: auto; }
   .list-spill-more {
-    height: 26px;
+    height: calc(var(--list-slot-height, 30px) - 4px);
     margin: 2px 0;
     display: flex;
     align-items: center;

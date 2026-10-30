@@ -34,7 +34,7 @@
 
 <style>
   .list-lineage-group {
-    height: 26px; margin: 2px 0; display: flex; align-items: center; gap: 5px;
+    height: calc(var(--list-slot-height, 30px) - 4px); margin: 2px 0; display: flex; align-items: center; gap: 5px;
     padding-left: calc(1px + var(--depth) * 16px); color: var(--text-secondary); font-size: 13px;
     white-space: nowrap; overflow: hidden; cursor: pointer; border-radius: var(--radius-sm);
   }

@@ -4,6 +4,7 @@ mod backend;
 mod diagnostics;
 mod job_bridge;
 mod lifecycle;
+mod owner_record;
 mod ownership;
 mod package;
 mod process_run;
@@ -40,7 +41,6 @@ static PENDING_INSTALL_ERRORS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static PROFILE_OWNER: Mutex<Option<ownership::ProfileOwner>> = Mutex::new(None);
 #[cfg(target_os = "linux")]
 static QUEUE_WORKER: queue::WorkerSlot = Mutex::new(None);
-const NOT_OWNER: &str = "Another Tauri Explorer process owns this plugin profile; AI operations and plugin changes are available there until it exits";
 /// The file-picker portal backend never owns the profile (#1427): it is
 /// activated by other applications and may outlive the explorer window.
 const PICKER_PROCESS: &str = "Plugin services are not available in the file picker";
@@ -64,7 +64,12 @@ pub(super) fn initialize(app: tauri::AppHandle) -> Result<(), AppError> {
         PENDING_INSTALL_ERRORS
             .lock()
             .unwrap_or_else(|cause| cause.into_inner())
-            .push(if owned { STORAGE_DEFERRED } else { NOT_OWNER }.into());
+            .push(match cause {
+                _ if owned => STORAGE_DEFERRED.into(),
+                // A refusal may name the process holding the lease (#1433).
+                AppError::Other(message) if ownership::is_not_owner(message) => message.clone(),
+                _ => ownership::not_owner(),
+            });
     }
     #[cfg(target_os = "linux")]
     {
@@ -134,9 +139,9 @@ fn bootstrap_services_in(file_picker_portal: bool) -> Result<(), AppError> {
             .unwrap_or_else(|cause| cause.into_inner());
         if owner.is_none() {
             *owner = Some(
-                ownership::acquire(&profile.canonicalize()?).map_err(|cause| {
-                    log::warn!("Plugin profile ownership refused: {cause}");
-                    AppError::Other(NOT_OWNER.into())
+                ownership::acquire(&profile.canonicalize()?).map_err(|refusal| {
+                    log::warn!("Plugin profile ownership refused: {refusal}");
+                    AppError::Other(refusal.message())
                 })?,
             );
         }

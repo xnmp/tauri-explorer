@@ -5,6 +5,7 @@
  */
 import { expect, test, type Page } from "./fixtures";
 import { waitForEntries, HOME_URL } from "./helpers";
+import { captureEvidence } from "./evidence-shots";
 
 const root = "/lineage-peek";
 const P = (name: string) => `${root}/${name}`;
@@ -12,10 +13,14 @@ const pane = ".pane-tree:not(.retained)";
 const rows = (page: Page, name: string) => page.locator(`${pane} .entry-item[data-path="${P(name)}"]`);
 const LINEAGE = { "c.png": ["A.png"], "d.png": ["A.png"], "m.png": ["A.png", "B.png"] };
 
-async function start(page: Page, mode: "details" | "list" | "tiles" = "details", options: { delay?: number } = {}) {
+async function start(page: Page, mode: "details" | "list" | "tiles" = "details", options: { delay?: number; carets?: boolean } = {}) {
   await page.goto(HOME_URL);
   await waitForEntries(page);
-  await page.evaluate(async ({ root, lineage, mode, delay }) => {
+  await page.evaluate(async ({ root, lineage, mode, delay, carets }) => {
+    if (carets !== null) {
+      const { settingsStore } = await import("/src/lib/state/settings.svelte.ts");
+      settingsStore.update({ folderPeekCarets: carets });
+    }
     const { mockFiles } = await import("/src/lib/api/mock-fixtures.ts");
     const at = Date.UTC(2026, 0, 1);
     const file = (name: string, size = 4096) => ({ name, path: `${root}/${name}`, kind: "file" as const, size, modified: new Date(at).toISOString() });
@@ -26,7 +31,7 @@ async function start(page: Page, mode: "details" | "list" | "tiles" = "details",
     const explorer = windowTabsManager.getActiveExplorer()!;
     explorer.setViewMode(mode);
     await explorer.navigateTo(root, { autoEnterSingleSubdir: false });
-  }, { root, lineage: LINEAGE, mode, delay: options.delay ?? 0 });
+  }, { root, lineage: LINEAGE, mode, delay: options.delay ?? 0, carets: options.carets ?? null });
 }
 
 async function explorerCall(page: Page, method: "selectWithEdits" | "collapseAllPeeks") {
@@ -257,6 +262,23 @@ test("revealing a grouped edit opens its lineage to one occurrence and selects i
   expect(await level(rows(page, "m.png").first())).toBe("3");
 });
 
+// #1443: a reveal issued while the lineage is still loading selects the file
+// at depth 0; when grouping lands it must open the file's lineage rather than
+// hide the selection under a closed parent. 250 ms is inside the first-paint
+// hold, 700 ms lands after it expired and the listing painted flat.
+for (const delay of [250, 700]) {
+  test(`revealing a grouped edit before a ${delay} ms lineage load lands keeps it visible and selected`, async ({ page }) => {
+    await start(page, "details", { delay });
+    const revealed = await page.evaluate(async path => (await import("/src/lib/state/window-tabs.svelte.ts")).windowTabsManager.getActiveExplorer()!.revealEntry(path), P("m.png"));
+    expect(revealed).toBe(true);
+    // Grouping has landed: m left depth 0 for its parents' groups.
+    await expect(page.locator(`${pane} [data-lineage-group]`).first()).toBeVisible();
+    await expect(rows(page, "m.png").first()).toBeVisible();
+    await expect(rows(page, "m.png").first()).toHaveClass(/selected/);
+    expect(await level(rows(page, "m.png").first())).toBe("3");
+  });
+}
+
 test("typeahead stays at depth 0 while grouped edits are hidden", async ({ page }) => {
   await start(page);
   await rows(page, "notes.txt").click();
@@ -268,3 +290,35 @@ test("typeahead stays at depth 0 while grouped edits are hidden", async ({ page 
   await page.keyboard.type("b");
   await expect(rows(page, "B.png")).toHaveClass(/selected/);
 });
+
+for (const mode of ["details", "list"] as const) {
+  test(`caret-less ${mode}: a lineage parent keeps a toggle, and its row click still only selects (#1448)`, async ({ page }) => {
+    await start(page, mode, { carets: false });
+    const parent = rows(page, "A.png");
+    await expect(parent).toBeVisible();
+    // Folders keep their caret-less behaviour; only lineage parents gain a toggle.
+    await expect(page.locator(`${pane} .peek-caret`)).toHaveCount(0);
+    await expect(rows(page, "notes.txt").locator(".peek-toggle")).toHaveCount(0);
+    const toggle = parent.getByRole("button", { name: "Expand A.png", exact: true });
+    await expect(toggle).toBeVisible();
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+    // A plain click on the image selects it and does not open its edits.
+    await parent.click();
+    await expect(parent).toHaveClass(/selected/);
+    await expect(rows(page, "c.png")).toHaveCount(0);
+
+    await toggle.click();
+    await expect(rows(page, "c.png")).toBeVisible();
+    await expect(rows(page, "d.png")).toBeVisible();
+    await expect(parent.getByRole("button", { name: "Collapse A.png", exact: true })).toHaveAttribute("aria-expanded", "true");
+    // The toggle is its own control: the selection stays on A.
+    await expect(parent).toHaveClass(/selected/);
+    if (captureEvidence && mode === "details") {
+      await page.screenshot({ path: "screenshots/fix/lineage-peek-caretless-affordance/details-caretless-lineage.png" });
+    }
+
+    await parent.getByRole("button", { name: "Collapse A.png", exact: true }).click();
+    await expect(rows(page, "c.png")).toHaveCount(0);
+  });
+}

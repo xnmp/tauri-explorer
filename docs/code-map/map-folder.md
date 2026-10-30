@@ -61,6 +61,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `MillerColumns.svelte` — column/Miller-columns browsing mode; owner identity and pane-content modality follow both inline and hoisted rendering.
 - `PeekGuides.svelte` — virtual-row segments of continuous unboxed folder-peek guide lines.
 - `PeekOpenButton.svelte` — hover/focus Open action for caretless folder rows in Details and List; enters the folder without toggling its peek (#1316).
+- `PeekToggleButton.svelte` — always-visible trailing expand/collapse toggle for caretless lineage parents (files with grouped edits) in Details and List; row click stays selection (#1448).
 - `FileItem.svelte` — single entry row/tile (icon, name, badges, selection state).
 - `EntryCell.svelte` — shared List option / Tiles gridcell with roving focus, selection semantics and drag-drop interactions.
 - `EntryName.svelte` — shared inline rename input/display across all views.
@@ -460,8 +461,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/domain/folder-peek-memory.ts` — bounded expansion membership and List stage choices, subtree collapse and deleted-branch pruning shared with the pending restore facade.
 - `src/lib/domain/folder-peek-flat.ts` — flat Details rows and command admission before first peek activation; caret-less click ownership (`rowClickOwnsPeek`: click toggles, double-click refused with a notice, #1298).
 - `src/lib/domain/entry-lineage.ts` — lineage peek grouping (#1431): validates a provider's parent relation against the listing (foreign/self edges dropped, cycles fall back to flat) and groups children under each parent (`projectLineage`: direct children, "with B" groups, roots, descendants).
+- `src/lib/domain/lineage-labels.ts` — lineage prompt labels (#1449): validates `EntryLineage.labels` (one-line, bounded, malformed ignored; null when absent), Prompt column text (prompt → title), row labels (title → prompt) gated to lineage children (`isLineageChildRow`), and the prompt name-filter match. Loaded with `pane-lineage`.
 - `src/lib/domain/lineage-co-parent.ts` — file-shaped stand-in for a lineage co-parent's icon, kept off the grouping module.
-- `src/lib/domain/folder-peek-pane.ts` — explorer-applied peek decisions: selection/cursor pruning after a projection hides peeked children, and spring-peek drop folders (#1242).
+- `src/lib/domain/folder-peek-pane.ts` — explorer-applied peek decisions: selection/cursor pruning after a projection hides peeked children, reopening a lineage reveal that grouping regrouped late (`lateRevealChain`, #1443), and spring-peek drop folders (#1242).
 - `src/lib/domain/explorer-entries.ts` — explorer entry-list helpers: multi-entry clipboard labels and merging a selected context-menu entry the listing lacks.
 - `src/lib/domain/file-operation-selection.ts` — Explorer recursive batch reduction, symlink-overlap admission, drag-primary remapping, and archive roots (same-basename refusal).
 - `src/lib/domain/bulk-rename.ts` — bulk rename plan: name-part find/replace previews, per-folder collision keys, and descendant-first rename order.
@@ -1062,7 +1064,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `src/lib/domain/image-generation-settings.ts` — provider-compatible image dimensions from resolution and source/explicit aspect ratio.
 - `src-tauri/src/installed_plugins/queue.rs` — bounded startup requests staged by the Arch installer; uses the transactional package installer and quarantines failed requests to prevent stale downgrades.
-- `src-tauri/src/installed_plugins/ownership.rs` — Linux profile lifetime lease acquired before recovery and released after brokers, the queue worker and lifecycle mutations settle.
+- `src-tauri/src/installed_plugins/ownership.rs` — Linux profile lifetime lease acquired before recovery and released after brokers, the queue worker and lifecycle mutations settle. Refusals name the live holder from its owner record.
+- `src-tauri/src/installed_plugins/owner_record.rs` — best-effort owner record (PID, executable, acquisition time, Linux start ticks) written into the profile lease after locking and liveness-checked by a refused process (#1433).
 - `src-tauri/src/window_launch.rs`, `src/lib/state/native-launch.ts` — profile-scoped Linux secondary-process routing; preserves early requests and uses the existing frontend window launcher.
 
 ## Installed plugin packages
@@ -1076,7 +1079,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/process_ext/pipe_capture.rs` — shared Unix/Windows bounded stdout pipe capture with optional streaming and independently truncated prefix/suffix diagnostics; process-exit retirement drains queued bytes without a scheduling deadline.
 - `src-tauri/src/process_ext/windows_job.rs` — attach suspended launchers to kill-on-close JobObjects before descendants can start.
 - `src/lib/plugins/installed.ts` — load/remove installed contributions and synchronize package changes between windows.
-- `src/test-support/lineage-provider.ts` — browser-test `entryLineage` provider over the mock filesystem: install, update (fires `changed`), optional load delay (`e2e/lineage-peek.spec.ts`).
+- `src/test-support/lineage-provider.ts` — browser-test `entryLineage` provider over the mock filesystem: install, update (fires `changed`), optional load delay and `labels` (`e2e/lineage-peek.spec.ts`, `e2e/lineage-prompt-labels.spec.ts`).
 - `src/test-support/file-view-eligibility.svelte.ts` — reactive pending/answer and activation gate for browser file-view first-paint tests; imported only by the intercepted demo fixture.
 - `src/lib/plugins/runtime-sdk.ts`, `src/lib/plugins/svelte-runtime.d.ts` — frozen SDK and exact shared Svelte compiler/runtime bindings; host modules `ui/modal`, `ui/image-editor`, `ui/file-tiles` (capability `fileTiles`), `ui/file-tile` (capability `fileTile`, including `tileGridMetrics`); capability `tileSize` (`FileViewPane.tileSize`, file-tiles `size`); capability `jobRetry` (`PluginJobs.accept` registration `retry`).
 - `src/lib/components/InstalledPluginSettings.svelte` — install, enable, remove and activation errors in Settings.

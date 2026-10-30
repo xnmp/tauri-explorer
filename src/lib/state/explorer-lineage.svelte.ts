@@ -81,6 +81,8 @@ export function createExplorerLineage(deps: ExplorerLineageDeps) {
 
   return {
     get grouping() { return grouping; },
+    /** Prompt labels (#1449) while a shown lineage supplies them, else null. */
+    get labels() { return deps.enabled() ? paneLineage?.labels ?? null : null; },
     /** First paint waits (bounded) for this folder's lineage. */
     get holding() { return holding; },
     /** Contributions offered here, for the View menu's "Show <title>". */

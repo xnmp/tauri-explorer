@@ -3,13 +3,13 @@ import { normalizeColumnWidths, columnGridTemplate } from "$lib/domain/detail-co
 
 describe("Details column layout", () => {
   it("normalizes missing and malformed sizes without hiding columns", () => {
-    expect(normalizeColumnWidths(null)).toEqual({ name: 300, date: 180, type: 140, size: 100, length: 90, resolution: 160 });
+    expect(normalizeColumnWidths(null)).toEqual({ name: 300, prompt: 260, date: 180, type: 140, size: 100, length: 90, resolution: 160 });
     expect(normalizeColumnWidths({ name: NaN, date: "200", type: Infinity, size: null, length: undefined }))
-      .toEqual({ name: 300, date: 180, type: 140, size: 100, length: 90, resolution: 160 });
+      .toEqual({ name: 300, prompt: 260, date: 180, type: 140, size: 100, length: 90, resolution: 160 });
   });
   it("bounds extreme sizes while retaining valid fractional pointer sizes", () => {
     expect(normalizeColumnWidths({ name: -1, date: 0, type: Number.MAX_VALUE, size: 100.5, length: 1 }))
-      .toEqual({ name: 150, date: 80, type: 4096, size: 100.5, length: 60, resolution: 160 });
+      .toEqual({ name: 150, prompt: 260, date: 80, type: 4096, size: 100.5, length: 60, resolution: 160 });
   });
   it("projects visible columns in order and retains widths when they return", () => {
     const widths = normalizeColumnWidths({ date: 240 });

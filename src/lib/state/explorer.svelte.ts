@@ -29,7 +29,7 @@ import { gitStatusStore } from "./git-status.svelte";
 import { archiveRoots, operationRoots } from "$lib/domain/file-operation-selection";
 import { createFolderPeekState } from "./folder-peek.svelte";
 import { canPeekAt, flatPeekEntries, flatPeekRows, occurrencePath, peekCapability, peekKeyAt, rowClickOwnsPeek, shouldToggleOnRowClick, resolvePeekCommandTarget, resolvePeekEscape } from "$lib/domain/folder-peek-flat";
-import { prunePeekSelection, springPeekDropFolder } from "$lib/domain/folder-peek-pane";
+import { lateRevealChain, prunePeekSelection, springPeekDropFolder } from "$lib/domain/folder-peek-pane";
 import { entriesLabel, withExternalEntry } from "$lib/domain/explorer-entries";
 import type { PeekLevelCache } from "$lib/domain/folder-peek";
 import { createExplorerLineage, lineageGroupPreviewTarget, LINEAGE_PREVIEW_OWNER } from "./explorer-lineage.svelte";
@@ -180,23 +180,22 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   // Derived State
   // ===================
 
+  // Only Details has sortable headers; List and Tiles sort by name ascending
+  // whatever the folder's Details sort. Lineage prompts (#1449) are the "prompt" sort's text.
+  const promptOf = (entry: FileEntry) => lineage.labels?.prompt(entry.path);
+  const peekSort = (): [SortField, boolean, typeof promptOf] => coreState.viewMode === "details" ? [coreState.sortBy, coreState.sortAscending, promptOf] : ["name", true, promptOf];
   const ownDisplayEntries = $derived.by(() => {
     let filtered = visibleEntriesFor(coreState.entries, coreState.currentPath);
     if (filterQuery) {
-      const q = filterQuery.toLowerCase();
-      filtered = filtered.filter((e) => e.name.toLowerCase().includes(q));
+      // Filenames, plus a lineage prompt where there is one (#1449).
+      const q = filterQuery.toLowerCase(), labels = lineage.labels;
+      filtered = filtered.filter((e) => e.name.toLowerCase().includes(q) || !!labels?.matches(e.path, q));
     }
     if (revealedPath && !filtered.some((entry) => entry.path === revealedPath)) {
       const revealed = coreState.entries.find((entry) => entry.path === revealedPath);
       if (revealed) filtered = [...filtered, revealed];
     }
-    // Only Details view exposes sortable column headers. List and Tiles have no
-    // sort UI, so they always sort by name ascending for a predictable order
-    // regardless of the per-folder sort preference set in Details view.
-    if (coreState.viewMode === "details") {
-      return sortEntries(filtered, coreState.sortBy, coreState.sortAscending);
-    }
-    return sortEntries(filtered, "name", true);
+    return sortEntries(filtered, ...peekSort());
   });
 
   // Off (setting, surface, location or view) is one state: flat entries and no
@@ -208,7 +207,6 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     plainLocation: !isVirtualPath(coreState.currentPath) && !providerFor(coreState.currentPath),
     mode: coreState.viewMode,
   }));
-  const peekSort = (): [SortField, boolean] => coreState.viewMode === "details" ? [coreState.sortBy, coreState.sortAscending] : ["name", true];
   // ---- Lineage peek (#1431) ---------------------------------------------------
   const lineageListing = $derived(filterQuery ? sortEntries(visibleEntriesFor(coreState.entries, coreState.currentPath), ...peekSort()) : ownDisplayEntries);
   const lineage = createExplorerLineage({
@@ -225,7 +223,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   // Each level uses its view's sort, like the root: only Details has a sort UI;
   // List (and Tiles) sort by name ascending (§3).
   const peekProjectionKey = (parent: string) => [
-    ...peekSort(), settingsStore.showHidden, settingsStore.showManuallyHidden,
+    ...peekSort().slice(0, 2), settingsStore.showHidden, settingsStore.showManuallyHidden,
     ...(settingsStore.showManuallyHidden ? [] : manualHiddenStore.namesIn(parent)),
   ].join("\0");
   const peekTree = $derived.by(() => {
@@ -263,10 +261,13 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   };
   const detailRows = $derived(peek.policies?.buildPeekRows(peekTree, peek.listing, creationSession !== null) ?? flatPeekRows(peekTree, creationSession !== null));
 
+  /** Opens a lineage reveal chain (toggle ids, outermost first). */
+  const openChain = (ids: readonly string[]) => { for (const id of ids) if (!peek.expanded.has(id)) peek.toggle(id); if (ids.length) notePeekChange(ids[0]); };
   function pruneHiddenChildren(before: typeof peekTree, after: readonly FileEntry[]) {
     const grouping = lineageGrouping;
+    openChain(lateRevealChain(before, after, revealedPath, grouping)); // #1443: the revealed file stays selected
     const pruned = prunePeekSelection(before, after, coreState.selectedPaths, coreState.cursorPath, coreState.selectionAnchorPath, cursorKey, anchorKey,
-      grouping ? path => grouping.revealChain(path).length > 0 : undefined);
+      grouping ? path => path !== revealedPath && grouping.revealChain(path).length > 0 : undefined);
     if (!pruned) return;
     setSelection(pruned.selected);
     if (pruned.refocus !== undefined) {
@@ -1141,6 +1142,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     setEntryLineageShown: lineage.setShown,
     /** Contribution ids this pane turned off (persisted with the pane). */
     get lineageHidden() { return lineage.hidden; },
+    get lineageLabels() { return lineage.labels; }, // Prompt column and lineage-child labels (#1449), or null
     /** Grouping is shown (a provider's lineage applies and no filter suspends it). */
     get lineageGrouped() { return lineageGrouping !== null; },
     /** First paint waits (bounded) for this folder's lineage. */
@@ -1302,23 +1304,12 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
       filterQuery = "";
       showFilter = false;
       // Lineage peek: a held arrival is released, and a grouped file opens
-      // the peeks down to one occurrence of it before it is selected.
+      // the peeks down to one occurrence of it before it is selected. Until
+      // the grouping or the tree policies arrive it is selected at depth 0,
+      // and the regroup opens its chain then (`lateRevealChain`, #1443).
       lineage.release(path);
-      const grouping = lineageGrouping;
-      const chain = grouping?.revealChain(path) ?? [];
-      const open = () => {
-        for (const id of chain) if (!peek.expanded.has(id)) peek.toggle(id);
-        notePeekChange(chain[0]);
-        selectEntry(entry);
-      };
-      if (!chain.length) selectEntry(entry);
-      else if (peek.policies) open();
-      else {
-        const generation = navGeneration;
-        void peek.activate().then(() => {
-          if (!destroyed && generation === navGeneration && grouping === lineageGrouping) open();
-        });
-      }
+      if (peek.policies) openChain(lineageGrouping?.revealChain(path) ?? []);
+      selectEntry(entry);
       onRevealCallback?.();
       return true;
     },

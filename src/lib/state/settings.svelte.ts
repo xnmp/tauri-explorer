@@ -54,14 +54,9 @@ export { THUMBNAIL_SIZE_CONFIG, type ThumbnailSize, type ThumbnailSizeConfig };
 /** Windows translucent system backdrop (Mica/Acrylic). "off" = opaque window. */
 export type WindowsBackdrop = "off" | "mica" | "acrylic";
 
-/** Which columns are visible in details view (name is always shown) */
-export interface ColumnVisibility {
-  date: boolean;
-  type: boolean;
-  size: boolean;
-  length: boolean;
-  resolution: boolean;
-}
+/** Which columns are visible in details view (name is always shown). Prompt
+ * applies only while a lineage provider supplies labels (#1449). */
+export interface ColumnVisibility { prompt: boolean; date: boolean; type: boolean; size: boolean; length: boolean; resolution: boolean }
 
 export interface Settings {
   showSidebar: boolean;
@@ -160,7 +155,7 @@ const DEFAULT_SETTINGS: Settings = {
   iconTheme: "default",
   backgroundImage: "",
   backgroundBlur: 0,
-  columnVisibility: { date: true, type: true, size: true, length: true, resolution: true },
+  columnVisibility: { prompt: true, date: true, type: true, size: true, length: true, resolution: true },
   listViewColumns: 0,
   listColumnMaxWidth: 250,
   viewMode: "details",

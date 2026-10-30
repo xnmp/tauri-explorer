@@ -17,6 +17,6 @@ describe("Details Length column (#995)", () => {
 
   it("is visible by default, including for settings saved before the column existed", () => {
     const legacy = normalizeSettingsInput({ columnVisibility: { date: true, type: false, size: true } });
-    expect(legacy.columnVisibility).toEqual({ date: true, type: false, size: true, length: true, resolution: true });
+    expect(legacy.columnVisibility).toEqual({ prompt: true, date: true, type: false, size: true, length: true, resolution: true });
   });
 });

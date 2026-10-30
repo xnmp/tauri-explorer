@@ -11,13 +11,17 @@ let parents = new Map<string, LineageParent[]>();
 let revision = 0;
 let directory = "";
 let loadDelay = 0;
+/** File name → provider text (`EntryLineage.labels`, #1449); null sends no labels. */
+type Labels = Record<string, { prompt?: string; title?: string }>;
+let labels: Labels | null = null;
 const listeners = new Set<() => void>();
 let dispose: (() => void) | null = null;
 
 /** Child file → parent file names (entries) or `{ external }` labels, all in `dir`. */
-export function install(dir: string, lineage: Record<string, (string | { external: string; key: string })[]>, options: { delay?: number } = {}): void {
+export function install(dir: string, lineage: Record<string, (string | { external: string; key: string })[]>, options: { delay?: number; labels?: Labels } = {}): void {
   directory = dir;
   loadDelay = options.delay ?? 0;
+  labels = options.labels ?? null;
   parents = toMap(lineage);
   revision++;
   dispose?.();
@@ -28,7 +32,11 @@ export function install(dir: string, lineage: Record<string, (string | { externa
     async load(path, signal) {
       if (loadDelay) await new Promise(resolve => setTimeout(resolve, loadDelay));
       if (signal.aborted) throw new DOMException("Aborted", "AbortError");
-      return { revision: String(revision), parents: path === directory ? new Map(parents) : new Map() };
+      const own = path === directory;
+      return {
+        revision: String(revision), parents: own ? new Map(parents) : new Map(),
+        ...(own && labels ? { labels: new Map(Object.entries(labels).map(([name, text]) => [`${directory}/${name}`, text])) } : {}),
+      };
     },
     subscribe(_path, changed) { listeners.add(changed); return () => listeners.delete(changed); },
   });

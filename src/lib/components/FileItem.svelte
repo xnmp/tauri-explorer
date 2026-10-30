@@ -26,6 +26,8 @@
   import { getPaneIdContext } from "$lib/state/pane-context";
   import PeekGuides from "./PeekGuides.svelte";
   import PeekOpenButton from "./PeekOpenButton.svelte";
+  import PeekToggleButton from "./PeekToggleButton.svelte";
+  import { rowShowsPeekToggle } from "$lib/domain/folder-peek";
   import type { PeekGroup } from "$lib/domain/folder-peek";
 
   interface Props {
@@ -45,9 +47,15 @@
     carets?: boolean;
     groups?: readonly PeekGroup[];
     rowIndex?: number;
+    /** A lineage child's label in place of its filename (#1449). */
+    label?: string | null;
+    /** This file's lineage prompt (#1449), for the Prompt cell and the label's tooltip. */
+    prompt?: string | null;
+    /** The Details Prompt column is shown (a lineage provider supplies labels). */
+    promptColumn?: boolean;
   }
 
-  let { entry, index, onclick, ondblclick, selected = false, explorer, depth = 0, parentPath = explorer.currentPath, expanded = false, peek = false, canPeek = false, carets = true, groups = [], rowIndex = 0 }: Props = $props();
+  let { entry, index, onclick, ondblclick, selected = false, explorer, depth = 0, parentPath = explorer.currentPath, expanded = false, peek = false, canPeek = false, carets = true, groups = [], rowIndex = 0, label, prompt, promptColumn = false }: Props = $props();
 
   const paneId = getPaneIdContext();
 
@@ -97,7 +105,7 @@
   });
   const lengthText = $derived(formatMediaDuration(mediaDurationResolver.duration(entry)));
 
-  const isPeekControl = (event: Event) => event.target instanceof Element && !!event.target.closest(".peek-caret, .peek-open");
+  const isPeekControl = (event: Event) => event.target instanceof Element && !!event.target.closest(".peek-caret, .peek-open, .peek-toggle");
   function handleClick(event: MouseEvent) {
     if (isPeekControl(event)) return;
     if (isRenaming) {
@@ -194,8 +202,9 @@
     <div class="icon" data-drag-icon style:--file-icon-color={entry.kind !== "directory" ? getFileIconColor(entry) : undefined} aria-hidden="true">
       <FileIcon {entry} size="small" />
     </div>
-    <span class="name-text" data-drag-name><EntryName {entry} {explorer} variant="details" bold={expanded} /></span>
+    <span class="name-text" data-drag-name><EntryName {entry} {explorer} variant="details" bold={expanded} {label} tooltip={label ? `${entry.name}\n${prompt ?? label}` : undefined} /></span>
     {#if explorer.rowClickOwnsPeek(entry) && !isRenaming}<PeekOpenButton {entry} {explorer} />{/if}
+    {#if peek && rowShowsPeekToggle({ caretsShown: carets, isDirectory: entry.kind === "directory", canPeek }) && !isRenaming}<PeekToggleButton {entry} {expanded} {explorer} />{/if}
     <GitStatusBadge directory={parentPath} entryName={entry.name} hideOnRename={isRenaming} />
     {#if entry.is_symlink && !isRenaming && entry.kind !== "directory"}
       <div class="symlink-badge" title={entry.symlink_target ? `Link to ${entry.symlink_target}` : "Symbolic link"}>
@@ -218,6 +227,10 @@
       </div>
     {/if}
   </div>
+
+  {#if promptColumn}
+  <div class="prompt-cell" data-cell="prompt" title={prompt ?? undefined}>{#if prompt}{prompt}{:else}<span class="empty-cell">—</span>{/if}</div>
+  {/if}
 
   <!-- Date modified column -->
   {#if settingsStore.columnVisibility.date}
@@ -367,14 +380,14 @@
     flex: 1;
   }
 
-  .name-cell:has(:global(.peek-open)) .name-text {
+  .name-cell:has(:global(:is(.peek-open, .peek-toggle))) .name-text {
     flex: 0 1 auto;
   }
 
   /* Caretless rows keep Open at the right end of the Name column, like List's
      row edge (#1328, #1359): it follows column resizing, the name truncates
      before it, and being in the first column it never leaves the viewport. */
-  .file-item.caretless .name-cell > :global(.peek-open) {
+  .file-item.caretless .name-cell > :global(:is(.peek-open, .peek-toggle)) {
     order: 99;
     margin-left: auto;
     margin-right: 4px;
@@ -398,6 +411,7 @@
   /* Name styles are handled by EntryName component */
 
   /* Date, Type, Size cells */
+  .prompt-cell,
   .date-cell,
   .type-cell,
   .size-cell,

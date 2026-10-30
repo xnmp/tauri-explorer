@@ -67,7 +67,8 @@ export interface FileMutationRecovery {
   readonly displacedPath?: string;
 }
 
-export type SortField = "name" | "size" | "modified" | "type";
+/** "prompt": a lineage provider's prompt text (#1449, `sortEntries`). */
+export type SortField = "name" | "size" | "modified" | "type" | "prompt";
 
 function fileExtension(name: string): string {
   const dot = name.lastIndexOf(".");
@@ -93,13 +94,17 @@ const nameCollator = new Intl.Collator();
 export function sortEntries(
   entries: readonly FileEntry[],
   by: SortField = "name",
-  ascending = true
+  ascending = true,
+  /** "prompt" only (#1449): an entry's prompt text. Entries without one sort
+   * after those with one (ascending); ties sort by name. */
+  promptOf?: (entry: FileEntry) => string | null | undefined,
 ): FileEntry[] {
   // Collation keys are derived once per entry, not per comparison (#1416):
   // a 100k-entry name sort makes ~1.7M comparisons and lowercased both names
   // in each; precomputing halved its time in JavaScriptCore (~200 → ~110 ms).
   const names = by === "size" || by === "modified" ? null : entries.map((e) => e.name.toLowerCase());
   const extensions = by === "type" ? entries.map((e) => fileExtension(e.name)) : null;
+  const prompts = by === "prompt" ? entries.map((e) => promptOf?.(e)?.toLowerCase() ?? "") : null;
   const compare = (i: number, j: number): number => {
     const a = entries[i];
     const b = entries[j];
@@ -123,6 +128,13 @@ export function sortEntries(
         const extB = extensions![j];
         const extCmp = extA < extB ? -1 : extA > extB ? 1 : 0; // already lowercased
         comparison = extCmp !== 0 ? extCmp : nameCollator.compare(names![i], names![j]);
+        break;
+      }
+      case "prompt": {
+        const pa = prompts![i];
+        const pb = prompts![j];
+        // Missing text ("") sorts after any prompt; equal text by name.
+        comparison = (!pa !== !pb ? (pa ? -1 : 1) : nameCollator.compare(pa, pb)) || nameCollator.compare(names![i], names![j]);
         break;
       }
       default:

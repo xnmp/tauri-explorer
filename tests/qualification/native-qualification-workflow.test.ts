@@ -18,6 +18,7 @@ type WorkflowStep = {
   run?: string;
   uses?: string;
   "continue-on-error"?: boolean;
+  "timeout-minutes"?: number;
 };
 
 async function qualificationSteps(): Promise<WorkflowStep[]> {
@@ -180,5 +181,101 @@ describe("bounded Windows native soak (#809)", () => {
     expect(upload?.with?.path?.split("\n")).toEqual(expect.arrayContaining([
       "qualification-results/", "e2e-tauri/logs/", "logs/",
     ]));
+  });
+});
+
+describe("Windows smoke cold-cache budget (#1447)", () => {
+  async function smokeJob() {
+    const workflow = parse(await readFile(workflowPath, "utf8")) as {
+      jobs: { smoke: { "timeout-minutes": number; steps: WorkflowStep[] } };
+    };
+    return workflow.jobs.smoke;
+  }
+
+  // Measured on dev push bc54a2cf (run 40655148130), whose Cargo.lock change
+  // invalidated the target cache: everything before and after the bounded
+  // steps (checkout, toolchains, installs, cache save, uploads) took ~6 min.
+  const COLD_WINDOWS_MINUTES = {
+    "Build Tauri binary (debug, embedded frontend, no bundle)": 19,
+    "Windows native restore and watcher contracts": 10,
+    "Windows Rust lint": 9,
+    "Run smoke suite (Windows)": 11,
+  };
+  const UNBOUNDED_OVERHEAD_MINUTES = 6;
+
+  it("bounds every Windows compile step above its cold duration", async () => {
+    const { steps } = await smokeJob();
+    for (const [name, cold] of Object.entries(COLD_WINDOWS_MINUTES)) {
+      const bound = stepNamed(steps, name)["timeout-minutes"];
+      expect(bound, `${name} has its own timeout`).toBeGreaterThan(cold);
+    }
+  });
+
+  it("leaves the job cap room for the measured cold path", async () => {
+    const job = await smokeJob();
+    const cold = Object.values(COLD_WINDOWS_MINUTES).reduce((sum, minutes) => sum + minutes, 0)
+      + UNBOUNDED_OVERHEAD_MINUTES;
+    // At least 25% headroom: the 50-minute cap cancelled a ~52-minute green run.
+    expect(job["timeout-minutes"]).toBeGreaterThanOrEqual(Math.ceil(cold * 1.25));
+  });
+
+  it("still lets the suite's own bound fail a stuck run before the job cap", async () => {
+    const job = await smokeJob();
+    const suite = stepNamed(job.steps, "Run smoke suite (Windows)")["timeout-minutes"]!;
+    expect(suite).toBeLessThanOrEqual(15);
+    expect(suite).toBeLessThan(job["timeout-minutes"]);
+  });
+});
+
+describe("Linux smoke profile cleanup (#1463)", () => {
+  async function cleanupScript(): Promise<string> {
+    const steps = await qualificationSteps();
+    const run = stepNamed(steps, "Run smoke suite (Linux, isolated display and window manager)").run!;
+    const start = run.indexOf("cleanup_native_profile() {");
+    const end = run.indexOf("trap cleanup_native_profile EXIT");
+    expect(start, "cleanup function").toBeGreaterThanOrEqual(0);
+    expect(end, "trap installed").toBeGreaterThan(start);
+    return run.slice(start, end + "trap cleanup_native_profile EXIT".length);
+  }
+
+  async function runWithCleanup(body: string, env: Record<string, string> = {}) {
+    const { spawnSync } = await import("node:child_process");
+    const { mkdtempSync, mkdirSync, writeFileSync, chmodSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const root = mkdtempSync(join(tmpdir(), "smoke-cleanup-"));
+    const profile = join(root, "profile");
+    mkdirSync(join(profile, "runtime"), { recursive: true });
+    const bin = join(root, "bin");
+    mkdirSync(bin);
+    if (env.FAIL_RM) {
+      writeFileSync(join(bin, "rm"), "#!/bin/sh\necho \"rm: cannot remove: Is a directory\" >&2\nexit 1\n");
+      chmodSync(join(bin, "rm"), 0o755);
+    }
+    const script = `set -e\nnative_profile=${JSON.stringify(profile)}\n${await cleanupScript()}\n${body}\n`;
+    const result = spawnSync("bash", ["-c", script], { encoding: "utf8", env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
+    const { existsSync } = await import("node:fs");
+    return { status: result.status, stdout: result.stdout, profileLeft: existsSync(profile) };
+  }
+
+  it("removes the profile and keeps a passing suite green", async () => {
+    expect(await runWithCleanup("true")).toMatchObject({ status: 0, profileLeft: false });
+  });
+  it("keeps a failing suite's own exit status", async () => {
+    expect((await runWithCleanup("exit 3")).status).toBe(3);
+  });
+  it("does not fail a passing suite when the profile cannot be removed", async () => {
+    const result = await runWithCleanup("true", { FAIL_RM: "1" });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("::warning::Could not remove");
+  });
+  it("still fails a failing suite when the profile cannot be removed", async () => {
+    expect((await runWithCleanup("exit 5", { FAIL_RM: "1" })).status).toBe(5);
+  });
+  it("detaches leftover FUSE mounts under the profile before removing it", async () => {
+    const script = await cleanupScript();
+    expect(script).toMatch(/\/proc\/self\/mounts/);
+    expect(script).toMatch(/fusermount3 -uz "\$mount"/);
+    expect(script.indexOf("fusermount3")).toBeLessThan(script.indexOf("rm -rf"));
   });
 });

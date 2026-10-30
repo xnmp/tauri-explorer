@@ -106,7 +106,7 @@ export function normalizeDirectorySeed(raw: unknown, path: string, now: number):
   if (!isRecord(raw) || raw.currentPath !== path || !isWindowPath(path)
     || !isFreshSeed(raw.ts, now, 5_000) || !Array.isArray(raw.entries)
     || raw.entries.length > DIRECTORY_SEED_MAX_ENTRIES || !isViewMode(raw.viewMode)
-    || (raw.sortBy !== "name" && raw.sortBy !== "size" && raw.sortBy !== "modified" && raw.sortBy !== "type")
+    || (raw.sortBy !== "name" && raw.sortBy !== "size" && raw.sortBy !== "modified" && raw.sortBy !== "type" && raw.sortBy !== "prompt")
     || typeof raw.sortAscending !== "boolean") return null;
   const entries: FileEntry[] = [];
   const paths = new Set<string>();

@@ -29,3 +29,12 @@ it("does not duplicate registry listeners if reading startup failures fails", as
     expect(log).toHaveBeenCalled();
   } finally { log.mockRestore(); }
 });
+
+it("surfaces a profile-ownership refusal that names the holding process verbatim (#1433)", async () => {
+  const refusal = "Another Tauri Explorer process owns this plugin profile (held by /usr/bin/tauri-explorer (PID 4242, owner since 2026-10-29 09:15:00)); AI operations and plugin changes are available there until it exits";
+  h.invoke.mockResolvedValue([refusal]);
+  const { watchInstalledPackages } = await import("$lib/plugins/installed");
+  await watchInstalledPackages(registry);
+  expect(h.error).toHaveBeenCalledExactlyOnceWith(refusal);
+  expect(h.error.mock.calls[0][0]).toMatch(/held by \/usr\/bin\/tauri-explorer \(PID 4242, owner since /);
+});

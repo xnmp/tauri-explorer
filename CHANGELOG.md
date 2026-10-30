@@ -2,6 +2,36 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.16.0 — 2026-10-30
+
+### Added
+
+- With Show traces on, a lineage provider can label each edit with its prompt.
+  Details gains an optional Prompt column (hideable, resizable and sortable),
+  edits under a parent show their prompt (or short title) instead of the
+  filename, and the name filter also matches prompt text. Rename still edits
+  the filename (#1449).
+- When another process holds the plugin profile, the refusal now names it: its
+  executable, PID and since when it has owned the profile (Linux and macOS;
+  Windows keeps the generic message) (#1433).
+
+### Fixed
+
+- With Folder Peek carets turned off, images whose edits Show traces groups
+  under them get an expand/collapse button at the end of the row, so their
+  edits can be opened with the mouse again; clicking the row still selects and
+  previews the image (#1448).
+- Revealing a file right after entering a folder, while its lineage was still
+  loading, no longer hides the file under a closed parent: its lineage opens
+  and it stays selected (#1443).
+
+### Housekeeping
+
+- Windows native smoke CI no longer times out on a cold Rust cache: the job
+  cap is 75 minutes and each Windows compile step has its own bound (#1447).
+- The startup bundle cap is raised by 512 bytes for this release's eager
+  additions, with the measurement noted (#1456).
+
 ## v1.15.1 — 2026-10-28
 
 ### Fixed

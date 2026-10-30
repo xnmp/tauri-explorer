@@ -86,7 +86,13 @@ const STARTUP_RAW_BUDGET = 866_617;
 // 279,213 (+685 over the cap, all dev drift), and splitting the oversized
 // explorer, window-tabs and menu files into modules for the file-size ratchet
 // adds 552 bytes of module wrappers (279,765).
-const STARTUP_GZIP_BUDGET = 280_000;
+// Raised 280,000 -> 280,512 (+512) for the v1.16 batch (#1456): five PRs
+// each passed alone, and together measured 280,033 (+227 over dev's 279,806):
+// #1449's Details Prompt column (keyed header/row cell, prompt sort and filter,
+// label props; its label logic loads lazily with pane-lineage) +149, #1443's
+// late-reveal prune +37 and #1448's caret-less lineage toggle +22. Folding
+// that toggle into PeekOpenButton was measured and grew startup to 280,181.
+const STARTUP_GZIP_BUDGET = 280_512;
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const clientDir = resolve(repoRoot, ".svelte-kit/output/client");

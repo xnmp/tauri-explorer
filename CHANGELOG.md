@@ -33,6 +33,9 @@ All notable changes to Tauri Explorer.
   additions, with the measurement noted (#1456).
 - Linux native smoke CI no longer fails after a fully passing suite when the
   document portal's mount outlives the test session (#1463).
+- The plugin-owner record from #1433 compiles on macOS again, restoring the
+  macOS builds, and its lease tests follow Windows' locking rules (#1460,
+  #1461, #1462).
 
 ## v1.15.1 — 2026-10-28
 

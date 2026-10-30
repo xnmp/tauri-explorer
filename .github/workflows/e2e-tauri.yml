@@ -353,7 +353,19 @@ jobs:
         # hosted-runner desktop services or rely on D-Bus autolaunch.
         run: |
           native_profile=$(mktemp -d "${RUNNER_TEMP}/tauri-native-profile-XXXXXX")
-          trap 'rm -rf "$native_profile"' EXIT
+          # An activated xdg-document-portal can outlive dbus-run-session with
+          # its FUSE mount still at runtime/doc, which rm cannot remove. Detach
+          # leftover mounts first, keep cleanup best-effort, and exit with the
+          # suite's own status (#1463).
+          cleanup_native_profile() {
+            local status=$?
+            while read -r _ mount _; do
+              case "$mount" in "$native_profile"/*) fusermount3 -uz "$mount" 2>/dev/null || fusermount -uz "$mount" 2>/dev/null || true ;; esac
+            done < /proc/self/mounts
+            rm -rf "$native_profile" || echo "::warning::Could not remove $native_profile"
+            exit "$status"
+          }
+          trap cleanup_native_profile EXIT
           export XDG_CONFIG_HOME="$native_profile/config"
           export XDG_DATA_HOME="$native_profile/data"
           export XDG_CACHE_HOME="$native_profile/cache"

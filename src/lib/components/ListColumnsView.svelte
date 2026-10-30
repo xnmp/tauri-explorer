@@ -25,6 +25,8 @@
   import ListLineageGroup from "./ListLineageGroup.svelte";
   import ListCardGrip from "./ListCardGrip.svelte";
   import PeekOpenButton from "./PeekOpenButton.svelte";
+  import PeekToggleButton from "./PeekToggleButton.svelte";
+  import { rowShowsPeekToggle } from "$lib/domain/folder-peek";
   import type { FileEntry } from "$lib/domain/file";
 
   type EntryRow = Extract<PeekRow, { kind: "entry" }>;
@@ -151,6 +153,10 @@
     <GitStatusBadge directory={row.parentPath} entryName={row.entry.name} />
     {#if explorer.rowClickOwnsPeek(row.entry) && dialogStore.renamingEntry?.path !== row.entry.path}
       <PeekOpenButton entry={row.entry} {explorer} />
+    {/if}
+    {#if tree && rowShowsPeekToggle({ caretsShown: carets, isDirectory: row.entry.kind === "directory", canPeek: explorer.canPeekEntry(row.entry) })
+      && dialogStore.renamingEntry?.path !== row.entry.path}
+      <PeekToggleButton entry={row.entry} expanded={row.expanded} {explorer} />
     {/if}
     {#if lessStage(row) === "card"}
       <!-- Expanded stages have no grip: Less is their way back to the card (#1360, #1365). -->
@@ -416,11 +422,11 @@
     min-width: 0;
   }
 
-  .list-view:not(.carets) :global(.list-entry > .peek-open) {
+  .list-view:not(.carets) :global(.list-entry > :is(.peek-open, .peek-toggle)) {
     margin-left: auto;
   }
 
-  .list-view :global(.list-entry:has(.peek-open) > [data-drag-name]) {
+  .list-view :global(.list-entry:has(:is(.peek-open, .peek-toggle)) > [data-drag-name]) {
     flex: 0 1 auto;
   }
 

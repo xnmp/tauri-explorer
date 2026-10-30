@@ -63,6 +63,22 @@ export function rowClickOwnsPeek(target: RowPeekTarget): boolean {
   return !target.caretsShown && target.isDirectory && target.eligible;
 }
 
+/** Caret-less peek leaves a lineage parent (a file whose edits Show traces
+ * groups under it, #1431) with no way to open by pointer: its row click stays
+ * selection and preview, and the Open action is folder-only. Such a row gets a
+ * toggle at its trailing edge, where caret-less rows keep Open, so the leading
+ * indentation and guides stay as they are (#1448). */
+export function rowShowsPeekToggle(target: PeekToggleTarget): boolean {
+  return !target.caretsShown && !target.isDirectory && target.canPeek;
+}
+export interface PeekToggleTarget {
+  /** The surface draws expand carets (which then carry the toggle). */
+  caretsShown: boolean;
+  isDirectory: boolean;
+  /** Peek is on here and the entry has something to peek: the caret's own condition. */
+  canPeek: boolean;
+}
+
 /** A plain primary click toggles the folder in addition to the ordinary
  * selection; modifier clicks and drag ends stay pure selection gestures. */
 export function shouldToggleOnRowClick(input: RowClickInput): boolean {

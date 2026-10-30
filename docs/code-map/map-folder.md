@@ -61,6 +61,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `MillerColumns.svelte` — column/Miller-columns browsing mode; owner identity and pane-content modality follow both inline and hoisted rendering.
 - `PeekGuides.svelte` — virtual-row segments of continuous unboxed folder-peek guide lines.
 - `PeekOpenButton.svelte` — hover/focus Open action for caretless folder rows in Details and List; enters the folder without toggling its peek (#1316).
+- `PeekToggleButton.svelte` — always-visible trailing expand/collapse toggle for caretless lineage parents (files with grouped edits) in Details and List; row click stays selection (#1448).
 - `FileItem.svelte` — single entry row/tile (icon, name, badges, selection state).
 - `EntryCell.svelte` — shared List option / Tiles gridcell with roving focus, selection semantics and drag-drop interactions.
 - `EntryName.svelte` — shared inline rename input/display across all views.

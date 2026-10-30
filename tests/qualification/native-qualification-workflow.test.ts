@@ -18,6 +18,7 @@ type WorkflowStep = {
   run?: string;
   uses?: string;
   "continue-on-error"?: boolean;
+  "timeout-minutes"?: number;
 };
 
 async function qualificationSteps(): Promise<WorkflowStep[]> {
@@ -180,5 +181,48 @@ describe("bounded Windows native soak (#809)", () => {
     expect(upload?.with?.path?.split("\n")).toEqual(expect.arrayContaining([
       "qualification-results/", "e2e-tauri/logs/", "logs/",
     ]));
+  });
+});
+
+describe("Windows smoke cold-cache budget (#1447)", () => {
+  async function smokeJob() {
+    const workflow = parse(await readFile(workflowPath, "utf8")) as {
+      jobs: { smoke: { "timeout-minutes": number; steps: WorkflowStep[] } };
+    };
+    return workflow.jobs.smoke;
+  }
+
+  // Measured on dev push bc54a2cf (run 40655148130), whose Cargo.lock change
+  // invalidated the target cache: everything before and after the bounded
+  // steps (checkout, toolchains, installs, cache save, uploads) took ~6 min.
+  const COLD_WINDOWS_MINUTES = {
+    "Build Tauri binary (debug, embedded frontend, no bundle)": 19,
+    "Windows native restore and watcher contracts": 10,
+    "Windows Rust lint": 9,
+    "Run smoke suite (Windows)": 11,
+  };
+  const UNBOUNDED_OVERHEAD_MINUTES = 6;
+
+  it("bounds every Windows compile step above its cold duration", async () => {
+    const { steps } = await smokeJob();
+    for (const [name, cold] of Object.entries(COLD_WINDOWS_MINUTES)) {
+      const bound = stepNamed(steps, name)["timeout-minutes"];
+      expect(bound, `${name} has its own timeout`).toBeGreaterThan(cold);
+    }
+  });
+
+  it("leaves the job cap room for the measured cold path", async () => {
+    const job = await smokeJob();
+    const cold = Object.values(COLD_WINDOWS_MINUTES).reduce((sum, minutes) => sum + minutes, 0)
+      + UNBOUNDED_OVERHEAD_MINUTES;
+    // At least 25% headroom: the 50-minute cap cancelled a ~52-minute green run.
+    expect(job["timeout-minutes"]).toBeGreaterThanOrEqual(Math.ceil(cold * 1.25));
+  });
+
+  it("still lets the suite's own bound fail a stuck run before the job cap", async () => {
+    const job = await smokeJob();
+    const suite = stepNamed(job.steps, "Run smoke suite (Windows)")["timeout-minutes"]!;
+    expect(suite).toBeLessThanOrEqual(15);
+    expect(suite).toBeLessThan(job["timeout-minutes"]);
   });
 });

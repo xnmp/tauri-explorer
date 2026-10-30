@@ -82,7 +82,13 @@ jobs:
     # specs finish pushed the job past the cap and it was killed as `cancelled`
     # with no artifacts. Cap the job well above build + suite and let the
     # per-step bound below be the thing that actually fails a stuck run.
-    timeout-minutes: 50
+    # A cold Rust target cache (any Cargo.lock/Cargo.toml/tauri.conf.json
+    # change, including every release bump) pays three Windows compiles: the
+    # debug app (~19 min), the contract tests (~9 min) and clippy (~8 min),
+    # before a ~10 min suite. That came to ~52 min and was cancelled at 50
+    # with every spec green (#1447). The compile steps carry their own bounds
+    # below, so the job cap only has to hold their sum.
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v7
         if: ${{ needs.changes.outputs.code == 'true' }}
@@ -225,6 +231,8 @@ jobs:
       - name: Build Tauri binary (debug, embedded frontend, no bundle)
         if: ${{ needs.changes.outputs.code == 'true' }}
         id: build-tauri-binary
+        # Cold Windows: ~19 min (#1447).
+        timeout-minutes: 35
         shell: bash
         env:
           VITE_E2E_HOOKS: "1"
@@ -308,6 +316,8 @@ jobs:
       # a collision introduced after MoveItem queues the restore.
       - name: Windows native restore and watcher contracts
         if: ${{ needs.changes.outputs.code == 'true' && (runner.os == 'Windows') }}
+        # Cold: ~9.5 min, mostly compiling the test harness (#1447).
+        timeout-minutes: 20
         shell: bash
         run: |
           cargo test --manifest-path src-tauri/Cargo.toml --lib -- --list > "$RUNNER_TEMP/windows-rust-contracts.list"
@@ -328,6 +338,8 @@ jobs:
       # Test failures remain fatal, but do not hide independent lint/UI results.
       - name: Windows Rust lint
         if: ${{ needs.changes.outputs.code == 'true' && (!cancelled() && runner.os == 'Windows' && steps.build-tauri-binary.outcome == 'success') }}
+        # Cold: ~8 min (#1447).
+        timeout-minutes: 20
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features e2e-hooks,e2e-webview2-attach -- -D warnings
 
       - name: Run smoke suite (Linux, isolated display and window manager)

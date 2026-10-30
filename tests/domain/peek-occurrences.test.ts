@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import type { FileEntry } from "$lib/domain/file";
 import type { PeekMeta } from "$lib/domain/folder-peek";
 import { occurrenceKey, occurrencePath, parentKeyOf, peekKeyAt, resolvePeekCommandTarget, resolvePeekEscape } from "$lib/domain/folder-peek-flat";
-import { prunePeekSelection } from "$lib/domain/folder-peek-pane";
+import { lateRevealChain, prunePeekSelection } from "$lib/domain/folder-peek-pane";
 import { resolveCursorIndex } from "$lib/domain/file-list-navigation";
 import { calculateSelection, getSelectedEntries } from "$lib/state/selection";
 
@@ -95,5 +95,35 @@ describe("peek commands from an occurrence", () => {
   it("toggle a peekable file itself", () => {
     expect(resolvePeekCommandTarget(A, meta, "tree", "/r/A", entry => entry.path === "/r/A")).toBe("/r/A");
     expect(resolvePeekCommandTarget(c, meta, "tree", "/r/c")).toBeNull();
+  });
+});
+
+describe("lateRevealChain (#1443)", () => {
+  // m was revealed before the lineage landed, so it was selected at depth 0.
+  const flat = { entries: [A, B, c, m], meta: new Map<string, PeekMeta>() };
+  const chainOfM = ["/r/A", "group:/r/A|/r/B"];
+  const grouping = { revealChain: (path: string) => path === "/r/m" ? chainOfM : [] };
+
+  it("opens the revealed file's chain when grouping moves it under a closed parent", () => {
+    expect(lateRevealChain(flat, [A, B, c], "/r/m", grouping)).toEqual(chainOfM);
+  });
+  it("also from a peek tree where the file sat at depth 0", () => {
+    const before = { entries: [A, c, m], keys: ["/r/A", "/r/c", "/r/m"], meta: new Map<string, PeekMeta>([
+      ["/r/A", { depth: 0, parentPath: "/r" }], ["/r/c", { depth: 0, parentPath: "/r" }], ["/r/m", { depth: 0, parentPath: "/r" }],
+    ]) };
+    expect(lateRevealChain(before, [A, c], "/r/m", grouping)).toEqual(chainOfM);
+  });
+  it("leaves a user collapse alone: the file hid from inside a peek", () => {
+    // B collapses and A collapses, hiding both occurrences of the revealed m.
+    expect(lateRevealChain(tree, [A, B, c], "/r/m", grouping)).toEqual([]);
+  });
+  it("does nothing while the file stays visible, without a reveal, or without grouping", () => {
+    expect(lateRevealChain(flat, [A, m, B, c], "/r/m", grouping)).toEqual([]);
+    expect(lateRevealChain(flat, [A, B, c], null, grouping)).toEqual([]);
+    expect(lateRevealChain(flat, [A, B, c], "/r/m", null)).toEqual([]);
+  });
+  it("does nothing for a revealed file that was not shown before, or that no parent groups", () => {
+    expect(lateRevealChain({ entries: [A, B, c], meta: new Map() }, [A, B], "/r/m", grouping)).toEqual([]);
+    expect(lateRevealChain(flat, [A, B, m], "/r/c", grouping)).toEqual([]);
   });
 });

@@ -29,7 +29,7 @@ import { gitStatusStore } from "./git-status.svelte";
 import { archiveRoots, operationRoots } from "$lib/domain/file-operation-selection";
 import { createFolderPeekState } from "./folder-peek.svelte";
 import { canPeekAt, flatPeekEntries, flatPeekRows, occurrencePath, peekCapability, peekKeyAt, rowClickOwnsPeek, shouldToggleOnRowClick, resolvePeekCommandTarget, resolvePeekEscape } from "$lib/domain/folder-peek-flat";
-import { prunePeekSelection, springPeekDropFolder } from "$lib/domain/folder-peek-pane";
+import { lateRevealChain, prunePeekSelection, springPeekDropFolder } from "$lib/domain/folder-peek-pane";
 import { entriesLabel, withExternalEntry } from "$lib/domain/explorer-entries";
 import type { PeekLevelCache } from "$lib/domain/folder-peek";
 import { createExplorerLineage, lineageGroupPreviewTarget, LINEAGE_PREVIEW_OWNER } from "./explorer-lineage.svelte";
@@ -263,10 +263,13 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   };
   const detailRows = $derived(peek.policies?.buildPeekRows(peekTree, peek.listing, creationSession !== null) ?? flatPeekRows(peekTree, creationSession !== null));
 
+  /** Opens a lineage reveal chain (toggle ids, outermost first). */
+  const openChain = (ids: readonly string[]) => { for (const id of ids) if (!peek.expanded.has(id)) peek.toggle(id); if (ids.length) notePeekChange(ids[0]); };
   function pruneHiddenChildren(before: typeof peekTree, after: readonly FileEntry[]) {
     const grouping = lineageGrouping;
+    openChain(lateRevealChain(before, after, revealedPath, grouping)); // #1443: the revealed file stays selected
     const pruned = prunePeekSelection(before, after, coreState.selectedPaths, coreState.cursorPath, coreState.selectionAnchorPath, cursorKey, anchorKey,
-      grouping ? path => grouping.revealChain(path).length > 0 : undefined);
+      grouping ? path => path !== revealedPath && grouping.revealChain(path).length > 0 : undefined);
     if (!pruned) return;
     setSelection(pruned.selected);
     if (pruned.refocus !== undefined) {
@@ -1302,23 +1305,12 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
       filterQuery = "";
       showFilter = false;
       // Lineage peek: a held arrival is released, and a grouped file opens
-      // the peeks down to one occurrence of it before it is selected.
+      // the peeks down to one occurrence of it before it is selected. Until
+      // the grouping or the tree policies arrive it is selected at depth 0,
+      // and the regroup opens its chain then (`lateRevealChain`, #1443).
       lineage.release(path);
-      const grouping = lineageGrouping;
-      const chain = grouping?.revealChain(path) ?? [];
-      const open = () => {
-        for (const id of chain) if (!peek.expanded.has(id)) peek.toggle(id);
-        notePeekChange(chain[0]);
-        selectEntry(entry);
-      };
-      if (!chain.length) selectEntry(entry);
-      else if (peek.policies) open();
-      else {
-        const generation = navGeneration;
-        void peek.activate().then(() => {
-          if (!destroyed && generation === navGeneration && grouping === lineageGrouping) open();
-        });
-      }
+      if (peek.policies) openChain(lineageGrouping?.revealChain(path) ?? []);
+      selectEntry(entry);
       onRevealCallback?.();
       return true;
     },

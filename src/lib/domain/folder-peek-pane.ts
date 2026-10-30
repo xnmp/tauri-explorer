@@ -44,6 +44,17 @@ export function prunePeekSelection(before: Pick<PeekTree, "entries" | "meta" | "
   return key === refocus || key === null ? { selected: kept, refocus } : { selected: kept, refocus, refocusKey: key };
 }
 
+/** A reveal that beat the lineage (#1443): the revealed file was selected at
+ * depth 0, and grouping has just moved it under a closed parent. Returns the
+ * toggle ids that open it again (its `revealChain`), else none. A file that
+ * hid from inside a peek (a user collapse) is not reopened. */
+export function lateRevealChain(before: Pick<PeekTree, "entries" | "meta" | "keys">, after: readonly FileEntry[],
+  revealed: string | null, grouping: { revealChain(path: string): string[] } | null): string[] {
+  if (!revealed || !grouping || after.some(entry => entry.path === revealed)) return [];
+  const index = before.entries.findIndex(entry => entry.path === revealed);
+  return index >= 0 && peekKeyAt(before, index) === revealed && !before.meta.get(revealed)?.depth ? grouping.revealChain(revealed) : [];
+}
+
 /** The folder a drop on a row targets while it lies inside a temporary peek:
  * a file row's folder, or the directory itself (also a peek-state row). Null
  * outside temporary peeks; the walk stops at the pane root. */

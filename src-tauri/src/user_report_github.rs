@@ -13,7 +13,8 @@ use crate::user_report::{SubmitReportError, SubmittedUserReport};
 use serde::{Deserialize, Serialize};
 
 /// The repository's issues endpoint; the relay (`website/api/report.js`)
-/// creates issues in the same repository.
+/// creates issues in the same repository
+/// (`tests/website/report-repository-parity.test.ts`).
 pub(crate) const GITHUB_ISSUES_URL: &str =
     "https://api.github.com/repos/xnmp/tauri-explorer/issues";
 /// Owner/record in the shared credential namespace. AI profile owners are
@@ -482,12 +483,6 @@ mod tests {
                 "labels": ["user-report", "bug"],
             })
         );
-    }
-
-    #[test]
-    fn production_endpoint_targets_the_relay_repository() {
-        let relay = include_str!("../../website/api/report.js");
-        assert!(relay.contains(GITHUB_ISSUES_URL));
     }
 
     #[test]

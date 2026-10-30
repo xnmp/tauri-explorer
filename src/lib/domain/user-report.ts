@@ -105,7 +105,9 @@ export type UserReportErrorKind =
   | "submission_uncertain"
   | "attachment_uploader_unavailable"
   | "attachment_upload_failed"
-  | "clipboard_unavailable";
+  | "clipboard_unavailable"
+  | "authentication_failed"
+  | "credential_unavailable";
 
 export interface UserReportError {
   kind: UserReportErrorKind;
@@ -119,6 +121,12 @@ const NOTHING_SENT = "Couldn't reach the report server — nothing was sent";
 export function userReportFallbackNotice(kind: UserReportErrorKind | undefined): string {
   if (kind === "network_unreachable") return `${NOTHING_SENT}. Opening GitHub instead`;
   if (kind === "daily_cap") return "Reports are temporarily unavailable — opening GitHub instead";
+  if (kind === "authentication_failed") {
+    return "GitHub didn't accept your saved token, so nothing was sent — opening GitHub instead. Update the token in Settings → Issue Reports";
+  }
+  if (kind === "credential_unavailable") {
+    return "Couldn't read your saved GitHub token (credential storage is locked) — opening GitHub instead";
+  }
   return "Could not submit in-app — opening GitHub instead";
 }
 

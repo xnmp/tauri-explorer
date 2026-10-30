@@ -6,7 +6,6 @@
   "src/lib/components/NavigationBar.svelte": 807,
   "src/lib/components/PreviewPane.svelte": 894,
   "src/lib/components/QuickOpen.svelte": 978,
-  "src/lib/components/SettingsDialog.svelte": 803,
   "src/lib/components/WindowTabBar.svelte": 962,
   "src/lib/domain/git-graph.ts": 1114,
   "src/lib/state/explorer.svelte.ts": 1421,

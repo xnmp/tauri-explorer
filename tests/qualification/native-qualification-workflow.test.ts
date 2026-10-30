@@ -226,3 +226,56 @@ describe("Windows smoke cold-cache budget (#1447)", () => {
     expect(suite).toBeLessThan(job["timeout-minutes"]);
   });
 });
+
+describe("Linux smoke profile cleanup (#1463)", () => {
+  async function cleanupScript(): Promise<string> {
+    const steps = await qualificationSteps();
+    const run = stepNamed(steps, "Run smoke suite (Linux, isolated display and window manager)").run!;
+    const start = run.indexOf("cleanup_native_profile() {");
+    const end = run.indexOf("trap cleanup_native_profile EXIT");
+    expect(start, "cleanup function").toBeGreaterThanOrEqual(0);
+    expect(end, "trap installed").toBeGreaterThan(start);
+    return run.slice(start, end + "trap cleanup_native_profile EXIT".length);
+  }
+
+  async function runWithCleanup(body: string, env: Record<string, string> = {}) {
+    const { spawnSync } = await import("node:child_process");
+    const { mkdtempSync, mkdirSync, writeFileSync, chmodSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const root = mkdtempSync(join(tmpdir(), "smoke-cleanup-"));
+    const profile = join(root, "profile");
+    mkdirSync(join(profile, "runtime"), { recursive: true });
+    const bin = join(root, "bin");
+    mkdirSync(bin);
+    if (env.FAIL_RM) {
+      writeFileSync(join(bin, "rm"), "#!/bin/sh\necho \"rm: cannot remove: Is a directory\" >&2\nexit 1\n");
+      chmodSync(join(bin, "rm"), 0o755);
+    }
+    const script = `set -e\nnative_profile=${JSON.stringify(profile)}\n${await cleanupScript()}\n${body}\n`;
+    const result = spawnSync("bash", ["-c", script], { encoding: "utf8", env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
+    const { existsSync } = await import("node:fs");
+    return { status: result.status, stdout: result.stdout, profileLeft: existsSync(profile) };
+  }
+
+  it("removes the profile and keeps a passing suite green", async () => {
+    expect(await runWithCleanup("true")).toMatchObject({ status: 0, profileLeft: false });
+  });
+  it("keeps a failing suite's own exit status", async () => {
+    expect((await runWithCleanup("exit 3")).status).toBe(3);
+  });
+  it("does not fail a passing suite when the profile cannot be removed", async () => {
+    const result = await runWithCleanup("true", { FAIL_RM: "1" });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("::warning::Could not remove");
+  });
+  it("still fails a failing suite when the profile cannot be removed", async () => {
+    expect((await runWithCleanup("exit 5", { FAIL_RM: "1" })).status).toBe(5);
+  });
+  it("detaches leftover FUSE mounts under the profile before removing it", async () => {
+    const script = await cleanupScript();
+    expect(script).toMatch(/\/proc\/self\/mounts/);
+    expect(script).toMatch(/fusermount3 -uz "\$mount"/);
+    expect(script.indexOf("fusermount3")).toBeLessThan(script.indexOf("rm -rf"));
+  });
+});

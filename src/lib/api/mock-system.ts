@@ -173,6 +173,17 @@ export const systemCommands: Record<string, CommandHandler> = {
     return undefined;
   },
   recent_slow_loads: (args) => mockSlowLoads.slice(0, Math.min(20, (args.limit as number | null) ?? 20)),
+  // The mock never stores the token value, only that one is saved (#1455).
+  user_report_token_state: () =>
+    localStorage.getItem(MOCK_LOCAL_KEYS.reportToken) === "1" ? "configured" : "absent",
+  save_user_report_token: () => {
+    localStorage.setItem(MOCK_LOCAL_KEYS.reportToken, "1");
+    return undefined;
+  },
+  clear_user_report_token: () => {
+    localStorage.removeItem(MOCK_LOCAL_KEYS.reportToken);
+    return undefined;
+  },
   submit_user_report: (args) => {
     localStorage.setItem(MOCK_LOCAL_KEYS.submittedReport, JSON.stringify(args));
     const error = localStorage.getItem(MOCK_LOCAL_KEYS.reportError);

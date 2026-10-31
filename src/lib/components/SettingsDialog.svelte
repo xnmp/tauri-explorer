@@ -3,7 +3,7 @@
   Issue: tauri-explorer-npjh.1, tauri-explorer-oytv
 -->
 <script lang="ts">
-  import { settingsStore, type IconTheme, type ThumbnailSize, type WindowsBackdrop, type PaneLayoutMode } from "$lib/state/settings.svelte";
+  import { settingsStore, type IconTheme, type WindowsBackdrop, type PaneLayoutMode } from "$lib/state/settings.svelte";
   import { ICON_THEMES } from './icons/icon-theme-options';
   import { themeStore } from "$lib/state/theme.svelte";
   import { isMac, isWindows } from "$lib/domain/platform";
@@ -16,6 +16,9 @@
   import SettingToggle from "./settings/SettingToggle.svelte";
   import TerminalShortcutSettings from "./settings/TerminalShortcutSettings.svelte";
   import LayoutThemeSetting from "./settings/LayoutThemeSetting.svelte";
+  import ThumbnailSettings from "./settings/ThumbnailSettings.svelte";
+  import GitHubReportTokenSetting from "./settings/GitHubReportTokenSetting.svelte";
+  import ExperimentalSettings from "./settings/ExperimentalSettings.svelte";
   import "./settings/settings-select.css";
   import { matchesSettingsQuery } from "$lib/domain/settings-search";
   import { SETTINGS_ROWS, settingsSectionRows } from "$lib/domain/settings-rows";
@@ -177,20 +180,7 @@
             </select>
           </SettingRow>
 
-          <SettingRow label="Thumbnail Size"
-            description="Size of image thumbnails in tiles view"
-            hidden={!matchesSearch(...rows.thumbnailSize)}>
-            <select
-              class="settings-select"
-              value={settingsStore.thumbnailSize}
-              onchange={(e) => settingsStore.update({ thumbnailSize: e.currentTarget.value as ThumbnailSize })}
-            >
-              <option value="small">Small</option>
-              <option value="medium">Medium</option>
-              <option value="large">Large</option>
-              <option value="xlarge">Extra Large</option>
-            </select>
-          </SettingRow>
+          <ThumbnailSettings matches={matchesSearch} />
 
           <SettingRow label="Show Sidebar"
             description="Display bookmarks and quick access panel"
@@ -261,7 +251,7 @@
           <SettingRow label="Premium Theme Effects"
             description="Aurora-style surface treatment: accent-tinted hairlines, soft glow shadows, breadcrumb pills, translucent panels and a subtle depth backdrop. Off = flatter, higher-contrast look"
             hidden={!matchesSearch(...rows.premiumTheme)}>
-            <SettingToggle checked={settingsStore.premiumTheme} onchange={() => settingsStore.togglePremiumTheme()} />
+            <SettingToggle checked={settingsStore.premiumTheme} onchange={() => settingsStore.update({ premiumTheme: !settingsStore.premiumTheme })} />
           </SettingRow>
 
           <SettingRow label="Show Address Bar"
@@ -566,18 +556,13 @@
         <!-- Experimental Section (#175): feature flags for recently shipped surfaces -->
         <section class="settings-section" class:hidden={!sectionVisible(["Experimental", "feature flags"], rows.enableTerminal, rows.enableGitGraph)}>
           <h3 class="section-title">Experimental</h3>
+          <ExperimentalSettings matches={matchesSearch} />
+        </section>
 
-          <SettingRow label="Integrated Terminal"
-            description="Enable the embedded terminal panel (Alt+M T)"
-            hidden={!matchesSearch(...rows.enableTerminal)}>
-            <SettingToggle checked={settingsStore.enableTerminal} onchange={() => settingsStore.toggleEnableTerminal()} />
-          </SettingRow>
-
-          <SettingRow label="Git Commit Graph"
-            description="Show the repo's commit graph in the active pane (command palette: Git: Toggle Commit Graph, Ctrl+Alt+G)"
-            hidden={!matchesSearch(...rows.enableGitGraph)}>
-            <SettingToggle checked={settingsStore.enableGitGraph} onchange={() => settingsStore.toggleEnableGitGraph()} />
-          </SettingRow>
+        <!-- Optional GitHub token for Report Issue (#1455) -->
+        <section class="settings-section" class:hidden={!sectionVisible(["Issue Reports"], rows.githubReportToken)}>
+          <h3 class="section-title">Issue Reports</h3>
+          {#if open}<GitHubReportTokenSetting hidden={!matchesSearch("Issue Reports", ...rows.githubReportToken)} />{/if}
         </section>
 
         <section class="settings-section" class:hidden={!sectionVisible(["Plugins", "install enable disable extensions packages"], ...pluginRegistry.plugins.map((p) => [p.name, p.description]), ...pluginSettingsSections.sections.map((section) => [section.title, ...section.rows.flatMap((row) => [row.label, row.description ?? ""]),...section.actions.flatMap(action=>[action.label,action.description??""])]))}>

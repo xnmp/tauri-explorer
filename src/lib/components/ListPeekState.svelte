@@ -13,7 +13,7 @@
 
 <style>
   .list-peek-state {
-    height: 26px;
+    height: calc(var(--list-slot-height, 30px) - 4px);
     margin: 2px 0;
     display: flex;
     align-items: center;

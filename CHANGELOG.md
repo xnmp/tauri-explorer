@@ -2,6 +2,21 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.17.0 — 2026-10-31
+
+### Added
+
+- Settings → Issue Reports accepts an optional GitHub personal access token.
+  With one saved, text-only Report Issue submissions are filed directly as the
+  token's user; the token is kept in the OS credential store and never shown
+  again. Reports with attachments, and reports without a token, still go
+  through the anonymous relay, and the dialog says which identity will file
+  the issue (#1455).
+- An optional "Thumbnails in Details and List" setting (Settings → Appearance,
+  or the command palette) shows a 48px image/video thumbnail in place of each
+  row's icon in Details and List views; folders and other files show a larger
+  icon. Off by default (#1465).
+
 ## v1.16.0 — 2026-10-30
 
 ### Added

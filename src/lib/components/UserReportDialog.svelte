@@ -23,6 +23,8 @@
     type UserReportDraft,
     type UserReportError,
   } from "$lib/domain/user-report";
+  import { userReportRoute, userReportRouteNotice } from "$lib/domain/user-report-route";
+  import { reportTokenStore } from "$lib/state/report-token.svelte";
   import { userReportDraftStore } from "$lib/state/user-report-draft.svelte";
   import { toastStore } from "$lib/state/toast.svelte";
   import Modal from "./Modal.svelte";
@@ -41,6 +43,8 @@
   const readingClipboard = $derived(userReportDraftStore.readingClipboard);
   const readingAttachments = $derived(userReportDraftStore.readingAttachments);
   const submitting = $derived(userReportDraftStore.submitting);
+  // A saved GitHub token files text-only reports as the user (#1455).
+  const routeNotice = $derived(userReportRouteNotice(reportTokenStore.state, attachments.length));
   const canSubmit = $derived(
     textDraft.title.trim().length > 0 && !submitting && !readingAttachments,
   );
@@ -69,6 +73,7 @@
     clipboardAttachmentAvailable = false;
     void probeClipboardAttachment();
     void loadSlowLoads();
+    void reportTokenStore.refresh();
   });
 
   async function loadSlowLoads(): Promise<void> {
@@ -121,6 +126,7 @@
       attachments: [...attachments],
       ...(offerSlowLoads && includeSlowLoads ? { diagnostics: slowLoadText } : {}),
     };
+    const useGitHubToken = userReportRoute(reportTokenStore.state, attachments.length) === "github-token";
     const submission = userReportDraftStore.beginSubmission();
     if (!submission) return;
     onClose();
@@ -136,7 +142,7 @@
     // returns without reaching one of these.
     const retirePendingToast = () => toastStore.dismiss(pendingToastId);
     try {
-      const issue = await submitUserReport(draft);
+      const issue = await submitUserReport(draft, useGitHubToken);
       userReportDraftStore.finishSubmission(submission, true);
       retirePendingToast();
       toastStore.show("Report submitted", "success", {
@@ -349,7 +355,7 @@
     {/if}
 
     <p class="report-disclosure">
-      Submitting creates a public GitHub issue. Your description, optional contact details,
+      Submitting creates a public GitHub issue. {routeNotice} Your description, optional contact details,
       app and OS version, and any images and videos will be public. Attachments are uploaded to public hosting.
       Local logs are not attached automatically{offerSlowLoads && includeSlowLoads ? "; the slow folder-load diagnostics above are" : ""}.
     </p>

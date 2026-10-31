@@ -11,6 +11,7 @@ export const SETTINGS_ROWS = {
   theme: ["Theme", "Choose the color theme for the app"],
   iconTheme: ["Icon Theme", "Choose file icon style"],
   thumbnailSize: ["Thumbnail Size", "Size of image thumbnails in tiles view"],
+  rowThumbnails: ["Thumbnails in Details and List", "Show image and video thumbnails in taller Details and List rows", "preview", "image", "video", "row height"],
   showSidebar: ["Show Sidebar", "Display bookmarks and quick access panel"],
   windowControls: ["Show Window Controls", "Display minimize, maximize and close buttons"],
   integratedTitleBar: ["Integrated Title Bar", "Show tabs in the title bar alongside window controls (requires restart)"],
@@ -53,6 +54,7 @@ export const SETTINGS_ROWS = {
   previewFontSize: ["Preview Font Size", "Font size for text, code and markdown previews"],
   showPreviewInfo: ["Preview Info", "Show the file name, type badge, size and modified date in the preview pane (off = content only)", "preview", "metadata", "auxiliary", "minimal"],
   ffmpegPath: ["FFmpeg Path", "Path to the ffmpeg binary for video/audio thumbnails (leave empty to auto-detect)", "video", "thumbnail"],
+  githubReportToken: ["GitHub Token for Reports", "Optional GitHub personal access token to file Report Issue submissions as yourself", "issue reports", "report issue", "bug report", "github", "token", "pat"],
   keyboardShortcuts: ["Keyboard Shortcuts", "keybindings", "hotkeys", "Click on a shortcut to change it"],
 } satisfies Record<string, SettingsSearchTerms>;
 
@@ -67,7 +69,7 @@ export interface SettingsSectionRows {
 export function settingsSectionRows(platform: { isMac: boolean; isWindows: boolean }): SettingsSectionRows {
   const r = SETTINGS_ROWS;
   const appearance = [
-    r.theme, r.layoutTheme, r.iconTheme, r.thumbnailSize, r.showSidebar, r.windowControls,
+    r.theme, r.layoutTheme, r.iconTheme, r.thumbnailSize, r.rowThumbnails, r.showSidebar, r.windowControls,
     ...(platform.isMac ? [r.integratedTitleBar, r.vibrancy, r.nativeBlur] : []),
     ...(platform.isWindows ? [r.windowsBackdrop, r.windowsBackdropOpacity] : []),
     r.premiumTheme,

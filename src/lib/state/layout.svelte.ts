@@ -27,6 +27,7 @@ import {
   type BuiltinLayoutId,
 } from "$lib/domain/layout-theme-ids";
 import { paneDividerSize } from "$lib/domain/pane-viewport";
+import { detailsRowHeight, listRowHeight } from "$lib/domain/row-thumbnails";
 import { loadPersisted, savePersisted } from "./persisted";
 import { settingsStore } from "./settings.svelte";
 
@@ -110,8 +111,13 @@ function createLayoutStore() {
     get paneDividerSize() {
       return paneDividerSize(applied.base === FLOATING_ISLANDS_LAYOUT_ID);
     },
+    /** Details row height: the layout's, raised for row thumbnails (#1465). */
     get detailsRowHeight() {
-      return applied.rowHeight;
+      return detailsRowHeight(applied.rowHeight, settingsStore.state.rowThumbnails);
+    },
+    /** List row (slot) height, for classic and column-flow List (#1465). */
+    get listRowHeight() {
+      return listRowHeight(settingsStore.state.rowThumbnails);
     },
     /** Apply a resolved layout. Returns the injected style elements. */
     commit(layout: AppliedLayout): HTMLStyleElement[] {

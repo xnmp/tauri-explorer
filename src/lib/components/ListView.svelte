@@ -12,12 +12,14 @@
   import { onDestroy } from "svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import { layoutStore } from "$lib/state/layout.svelte";
   import { useRowGridView } from "$lib/composables/use-row-grid-view.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { getFileIconColor } from "$lib/domain/file-types";
 
   import EntryName from "./EntryName.svelte";
   import FileIcon from "./FileIcon.svelte";
+  import RowThumbnail from "./RowThumbnail.svelte";
   import GitStatusBadge from "./GitStatusBadge.svelte";
   import InlineNewFolder, { isNewFolderSentinel } from "./InlineNewFolder.svelte";
   import EntryCell from "./EntryCell.svelte";
@@ -40,10 +42,11 @@
 
   let { explorer, contentWidth, onitemclick, onitemdblclick, scrollToIndex = $bindable(), containsIndex = $bindable(), fallbackTabStop, onviewportscroll, onlayoutchange }: Props = $props();
 
-  // Fixed row height: a single-line list item (16px icon / one text line +
-  // 4px vertical padding + border) plus the 4px inter-row gap. List names are
+  // Fixed row height (layoutStore.listRowHeight): a single-line list item
+  // (16px icon, or a 48px row thumbnail, / one text line + 4px vertical
+  // padding + border) plus the 4px inter-row gap. List names are
   // `white-space: nowrap`, so every row is exactly this tall.
-  const LIST_ROW_HEIGHT = 30;
+  const thumbnails = $derived(settingsStore.state.rowThumbnails);
 
   // Compute effective list column count (auto or fixed)
   const effectiveListColumns = $derived.by(() => {
@@ -78,7 +81,7 @@
     tabindex={fallbackTabStop ? 0 : -1}
     bind:containsIndex={grid.rowContainsIndex}
     items={grid.rows}
-    itemHeight={LIST_ROW_HEIGHT}
+    itemHeight={layoutStore.listRowHeight}
     itemOverflow="visible"
     viewportPadding="6px 8px"
     getKey={(row) => row.startIndex}
@@ -93,8 +96,8 @@
             <div role="gridcell"><InlineNewFolder {explorer} variant="list" /></div>
           {:else}
           <EntryCell column={col + 1} class="list-item" index={row.startIndex + col - grid.sentinelOffset} {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
-            <span class="list-icon" data-drag-icon style:color={entry.kind !== "directory" ? getFileIconColor(entry) : undefined}>
-              <FileIcon {entry} size="small" />
+            <span class="list-icon" class:thumbnail={thumbnails} data-drag-icon style:color={entry.kind !== "directory" ? getFileIconColor(entry) : undefined}>
+              {#if thumbnails}<RowThumbnail {entry} />{:else}<FileIcon {entry} size="small" />{/if}
             </span>
             <span data-drag-name><EntryName {entry} {explorer} variant="list" /></span>
             <GitStatusBadge entryName={entry.name} />
@@ -201,6 +204,11 @@
     width: 16px;
     height: 16px;
     flex-shrink: 0;
+  }
+
+  .list-view :global(.list-icon.thumbnail) {
+    width: auto;
+    height: auto;
   }
 
   /* Name and rename styles are handled by EntryName component */

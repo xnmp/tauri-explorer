@@ -10,6 +10,7 @@
   import { getFileType, getFileIconColor, formatDate, formatAbsoluteDate, isVideoMediaFile } from "$lib/domain/file-types";
   import EntryName from "./EntryName.svelte";
   import FileIcon from "./FileIcon.svelte";
+  import RowThumbnail from "./RowThumbnail.svelte";
   import GitStatusBadge from "./GitStatusBadge.svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
@@ -199,8 +200,8 @@
       {/if}
     </span>
     {/if}
-    <div class="icon" data-drag-icon style:--file-icon-color={entry.kind !== "directory" ? getFileIconColor(entry) : undefined} aria-hidden="true">
-      <FileIcon {entry} size="small" />
+    <div class="icon" class:thumbnail={settingsStore.state.rowThumbnails} data-drag-icon style:--file-icon-color={entry.kind !== "directory" ? getFileIconColor(entry) : undefined} aria-hidden="true">
+      {#if settingsStore.state.rowThumbnails}<RowThumbnail {entry} />{:else}<FileIcon {entry} size="small" />{/if}
     </div>
     <span class="name-text" data-drag-name><EntryName {entry} {explorer} variant="details" bold={expanded} {label} tooltip={label ? `${entry.name}\n${prompt ?? label}` : undefined} /></span>
     {#if explorer.rowClickOwnsPeek(entry) && !isRenaming}<PeekOpenButton {entry} {explorer} />{/if}
@@ -401,6 +402,12 @@
     width: 22px;
     height: 22px;
     flex-shrink: 0;
+  }
+
+  /* Row thumbnails (#1465): DetailsView raises --details-row-height to fit. */
+  .icon.thumbnail {
+    width: auto;
+    height: auto;
   }
 
   /* File icon colors - theme can override via --icon-file-tint */

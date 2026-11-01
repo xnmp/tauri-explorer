@@ -663,6 +663,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `files/image_resolution.rs` — bounded header-only intrinsic raster dimensions, no directory-listing overhead.
 
 - `main.rs` — binary entry (console-window guard).
+- `launch_args.rs` — `tauri-explorer [--new-tab] [PATH]` parsing shared by `main.rs` and the Linux single-instance handoff; flags in any position, unknown `--flags` ignored, `--` terminator (#1478).
 - `lib.rs` — app entry: builder, command registration, plugin setup. Grep here to find where a command is wired.
 - `error.rs` — unified command error type.
 - `config.rs` — JSON config file persistence.
@@ -1074,7 +1075,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/installed_plugins/queue.rs` — bounded startup requests staged by the Arch installer; uses the transactional package installer and quarantines failed requests to prevent stale downgrades.
 - `src-tauri/src/installed_plugins/ownership.rs` — Linux profile lifetime lease acquired before recovery and released after brokers, the queue worker and lifecycle mutations settle. Refusals name the live holder from its owner record.
 - `src-tauri/src/installed_plugins/owner_record.rs` — best-effort owner record (PID, executable, acquisition time, Linux start ticks) written into the profile lease after locking and liveness-checked by a refused process (#1433).
-- `src-tauri/src/window_launch.rs`, `src/lib/state/native-launch.ts` — profile-scoped Linux secondary-process routing; preserves early requests and uses the existing frontend window launcher.
+- `src-tauri/src/window_launch.rs`, `src/lib/state/native-launch.ts` — profile-scoped Linux secondary-process routing; preserves early requests and uses the existing frontend window launcher, or `windowTabsManager.createTab` for `--new-tab` launches. Targets the focused, else most recently focused (`FocusHistory`), visible Explorer window (#1478).
 
 ## Installed plugin packages
 

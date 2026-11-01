@@ -40,6 +40,14 @@ The default Arch package build timestamp follows the latest Git commit, or `pack
 
 File Cut verifies native clipboard ownership before moving the source, on X11, Wayland (with `wl-clipboard`, on compositors that support the clipboard data-control protocol, such as Sway, Hyprland and KDE Plasma), Windows, and macOS. On Wayland compositors without data-control, Cut is refused and Copy remains available. If another program changes the clipboard between Cut and Paste, Paste copies instead of moving. Where ownership cannot be proven (for example, a remote-desktop session that re-renders every clipboard change), Cut reports it and Copy remains available.
 
+## Command line
+
+```bash
+tauri-explorer [--new-tab] [PATH]
+```
+
+`PATH` (absolute or relative to the current directory) is the folder to open; without it, Explorer opens the directory it was launched from. On Linux, launching again while Explorer is running hands the location to that instance, which opens it in a new window. Add `--new-tab` (before or after the path) to open it as a new tab in the most recently focused Explorer window instead, and bring that window to the front. When no instance is running, `--new-tab` opens a window as usual. Use `--` before a path that begins with `--`. On macOS and Windows each launch currently starts its own window, so `--new-tab` has no effect there.
+
 ## Use as system file picker
 
 On Linux, Tauri Explorer provides an `xdg-desktop-portal` FileChooser backend.

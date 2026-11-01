@@ -26,3 +26,5 @@ deleted `package()`; makepkg then packaged nothing, successfully. Fresh checksum
 are now appended instead, and the installer rejects a package without
 `usr/bin/tauri-explorer`. Stubs cannot prove a package has contents: run the real
 script as far as `sudo -v` after changing this route.
+
+The release route authenticates before its first network call (#1475): the password prompt comes first and the keepalive covers packaging and the build prompt. `--build-only` stays sudo-free.

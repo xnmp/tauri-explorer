@@ -277,22 +277,22 @@ describe.skipIf(process.platform !== 'linux')('Arch installer release route', ()
   it('installs the latest release through pacman without compiling or asking', async () => withInstaller(async ({ invokeDefault, calls }) => {
     const { stdout } = await invokeDefault([], { RELEASE_JSON: releaseJson(), INSTALLED: 'tauri-explorer 1.15.1-1' });
     const events = await calls();
-    expect(events[0]).toBe('makepkg release pkgver=1.17.0 sums=1 recipe=1');
-    expect(events[1]).toBe('sudo -v');
+    expect(events[0]).toBe('sudo -v');
+    expect(events[1]).toBe('makepkg release pkgver=1.17.0 sums=1 recipe=1');
     expect(events[2]).toMatch(expectedPackage);
     expect(events).toHaveLength(3);
     expect(stdout).toContain('Done.');
   }));
 
-  it.each(['1.17.0-1', '1.18.0-1'])('leaves an installed %s alone, needing no credentials', async (version) => withInstaller(async ({ invokeDefault, calls }) => {
+  it.each(['1.17.0-1', '1.18.0-1'])('leaves an installed %s alone', async (version) => withInstaller(async ({ invokeDefault, calls }) => {
     const { stdout } = await invokeDefault([], { RELEASE_JSON: releaseJson(), INSTALLED: `tauri-explorer-bin ${version}` });
-    expect(await calls()).toEqual([]);
+    expect(await calls()).toEqual(['sudo -v']);
     expect(stdout).toContain('already up to date');
   }));
 
   it('refuses a release whose bytes differ from the published digest, and never offers a build', async () => withInstaller(async ({ invokeDefault, calls }) => {
     await expect(invokeDefault(['--yes'], { RELEASE_JSON: releaseJson(`sha256:${'0'.repeat(64)}`) })).rejects.toThrow('nothing was installed');
-    expect(await calls()).toEqual([]);
+    expect(await calls()).toEqual(['sudo -v']);
   }));
 
   it.each([
@@ -310,21 +310,26 @@ describe.skipIf(process.platform !== 'linux')('Arch installer release route', ()
     const notifications = events.filter((event) => event.startsWith('notify'));
     expect(notifications).toHaveLength(1);
     expect(notifications[0]).toContain(reason);
-    expect(events.some((event) => event.startsWith('sudo') || event.startsWith('makepkg reuse'))).toBe(false);
+    expect(events.some((event) => event.startsWith('sudo -n') || event.startsWith('makepkg reuse'))).toBe(false);
+  }));
+
+  it('asks for credentials before any release work, and stops there when they fail', async () => withInstaller(async ({ invokeDefault, calls }) => {
+    await expect(invokeDefault([], { RELEASE_JSON: releaseJson(), AUTH_FAIL: '1' })).rejects.toThrow();
+    expect(await calls()).toEqual(['sudo -v']);
   }));
 
   it('builds only after --yes accepts the notified fallback', async () => withInstaller(async ({ invokeDefault, calls }) => {
     await invokeDefault(['--yes']);
     const events = await calls();
-    expect(events[0]).toContain('notify');
-    expect(events[1]).toBe('sudo -v');
+    expect(events[0]).toBe('sudo -v');
+    expect(events[1]).toContain('notify');
     expect(events[2]).toBe('makepkg reuse=1 rebuild=0');
     expect(events[3]).toMatch(/^sudo -n pacman -U tauri-explorer-1\.0\.0-1-/);
   }));
 
   it('builds on a yes at the prompt and stops on anything else', async () => withInstaller(async ({ invokeAnswering, calls }) => {
     await invokeAnswering('n').catch(() => undefined);
-    expect((await calls()).filter((event) => !event.startsWith('notify'))).toEqual([]);
+    expect((await calls()).filter((event) => !event.startsWith('notify'))).toEqual(['sudo -v']);
     await invokeAnswering('y');
     expect(await calls()).toContain('makepkg reuse=1 rebuild=0');
   }));

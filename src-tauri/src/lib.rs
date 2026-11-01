@@ -39,6 +39,7 @@ mod image_operation;
 mod installed_plugins;
 #[cfg(target_os = "linux")]
 mod jsc_workaround;
+pub mod launch_args;
 mod native_deadline;
 mod native_file_drag;
 #[cfg(unix)]
@@ -274,6 +275,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
     builder
         .manage(LaunchCwd(launch_cwd_for_state))
         .manage(window_launch::Requests::default())
+        .manage(window_launch::FocusHistory::default())
         .manage(native_file_drag::Sessions::default())
         .manage(system::StartupClock {
             started: t_start,
@@ -306,6 +308,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         .plugin(tauri_plugin_drag::init())
         .on_window_event(|window, event| {
             native_file_drag::on_window_event(window, event);
+            window_launch::on_window_event(window, event);
             if matches!(event, tauri::WindowEvent::Focused(true)) {
                 installed_plugins::notify_pending_errors(window);
             }

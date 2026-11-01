@@ -2,6 +2,30 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.18.0 — 2026-11-01
+
+### Added
+
+- `tauri-explorer --new-tab PATH` opens PATH as a new tab in the running
+  instance's most recently focused window and focuses it, instead of opening
+  a new window (Linux; without a running instance it opens a window as
+  before). Launch flags may now appear before or after the path (#1478).
+- `arch_install.sh` installs the latest release through pacman by default,
+  repackaging the release .deb after verifying GitHub's digest; `--source`
+  keeps the source build (#1473).
+
+### Changed
+
+- Repository folders show a theme-coloured Git emblem centred on the folder
+  instead of a corner badge, so it no longer collides with the Tiles peek
+  caret (#1477).
+
+### Fixed
+
+- `arch_install.sh` asks for sudo before any release work, so it no longer
+  stalls on a password prompt partway through (#1475).
+- Dependabot npm (now bun) and cargo dependency updates run again (#1479).
+
 ## v1.17.0 — 2026-10-31
 
 ### Added

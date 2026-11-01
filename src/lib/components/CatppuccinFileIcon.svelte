@@ -20,7 +20,7 @@
   <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><use href={`${spriteUrl}#${icon}`} width="16" height="16" /></svg>
   {#if decoration !== 'none'}
     <svg class="folder-decoration" viewBox="0 0 48 48" fill="none" aria-hidden="true">
-      <FolderDecoration {entry} size="large" arrowColor="var(--icon-link-arrow, var(--icon-folder, currentColor))" />
+      <FolderDecoration {entry} size="large" surface="catppuccin" rendered={size} arrowColor="var(--icon-link-arrow, var(--icon-folder, currentColor))" />
     </svg>
   {/if}
 </span>

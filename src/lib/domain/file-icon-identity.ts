@@ -32,6 +32,27 @@ export function getFolderDecoration(entry: FileEntry): 'linked' | 'repository' |
   return entry.is_git_repo === true ? 'repository' : 'none';
 }
 
+/**
+ * A repository folder's Git emblem (a diamond plate carrying a branch glyph) in
+ * its SVG's square viewBox units. It sits on the folder body, never in the
+ * bottom-right corner where Tiles' peek caret is drawn (#1477). Surfaces:
+ * `folder` = FolderIcon (18-unit small / 48-unit large); `catppuccin` = the
+ * 48-unit overlay on the sprite's outline folder, `size` being its rendered
+ * size; `thumbnail` = a photo folder's front flap, below its photos.
+ * `stroke` is the glyph stroke in glyph units (r = 10), thicker when dense.
+ */
+export type RepositoryEmblemSurface = 'folder' | 'catppuccin' | 'thumbnail';
+export interface RepositoryEmblem { readonly viewBox: number; readonly cx: number; readonly cy: number; readonly r: number; readonly stroke: number }
+export function repositoryEmblem(surface: RepositoryEmblemSurface, size: 'small' | 'large'): RepositoryEmblem {
+  const dense = size === 'small';
+  if (surface === 'catppuccin') return { viewBox: 48, cx: 21, cy: 27, r: 7.5, stroke: dense ? 3.4 : 1.8 };
+  if (surface === 'thumbnail') return { viewBox: 48, cx: 24, cy: 40.5, r: 4.5, stroke: 2.4 };
+  return dense ? { viewBox: 18, cx: 9, cy: 10.6, r: 3.9, stroke: 2.6 } : { viewBox: 48, cx: 24, cy: 30.5, r: 8.5, stroke: 1.7 };
+}
+
+/** Tiles' 20px peek caret starts this many px inside the icon's bottom-right (TilePanelsView `.tile-caret`). */
+export const TILE_CARET_INSET = Object.freeze({ right: 14, bottom: 17 });
+
 const EXTENSIONS: Readonly<Record<string, FileIconIdentity>> = {
   ts:'typescript', mts:'typescript', cts:'typescript', tsx:'react-ts',
   js:'javascript', mjs:'javascript', cjs:'javascript', jsx:'react-js',

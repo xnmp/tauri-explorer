@@ -15,9 +15,11 @@ fn main() {
         .ok()
         .map(|p| p.to_string_lossy().to_string());
 
-    // Support `tauri-explorer /some/path` CLI argument (flags like
-    // --file-chooser-portal are not paths).
-    let cli_path = std::env::args().nth(1).filter(|a| !a.starts_with("--"));
+    // Support `tauri-explorer [--new-tab] /some/path` (flags like
+    // --file-chooser-portal are not paths). `--new-tab` only changes how a
+    // running instance receives the launch (window_launch.rs); a first
+    // process opens its window at the path either way (#1478).
+    let cli_path = tauri_explorer_lib::launch_args::parse(std::env::args().skip(1)).path;
     let portal_mode = std::env::args().any(|a| a == "--file-chooser-portal");
 
     // Launcher-artifact cwds are not useful launch locations: Finder/DMG on

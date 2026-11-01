@@ -7,6 +7,8 @@ export _arch_reuse_frontend=1
 export _arch_rebuild_frontend=0
 PLUGIN_LOCATION=${TRACE_EXPLORER_PLUGIN_PATH:-"$HOME/Repos/TraceExplorer/package"}
 MODE=full
+FROM_SOURCE=0
+ACCEPT_BUILD=0
 set_mode() {
   if [[ $MODE != full && $MODE != "$1" ]]; then echo "--build-only and --install-only are mutually exclusive" >&2; exit 2; fi
   MODE=$1
@@ -14,7 +16,9 @@ set_mode() {
 while (($#)); do
   arg=$1
   case "$arg" in
-    --rebuild) export _arch_rebuild_frontend=1 ;;
+    --source) FROM_SOURCE=1 ;;
+    --yes) ACCEPT_BUILD=1 ;;
+    --rebuild) FROM_SOURCE=1; export _arch_rebuild_frontend=1 ;;
     --build-only) set_mode build ;;
     --install-only) set_mode install ;;
     --plugin-path)
@@ -22,8 +26,11 @@ while (($#)); do
       PLUGIN_LOCATION=$2
       shift ;;
     -h|--help)
-      echo "Usage: $0 [--rebuild] [--build-only | --install-only] [--plugin-path FILE_OR_DIRECTORY]"
-      echo "Reuse unchanged frontend assets by default; --rebuild forces their rebuild."
+      echo "Usage: $0 [--source | --yes] [--rebuild] [--build-only | --install-only] [--plugin-path FILE_OR_DIRECTORY]"
+      echo "By default, install the latest GitHub release through pacman, without compiling."
+      echo "If no prebuilt package can be used, notify and ask before building from source; --yes accepts that build."
+      echo "--source builds this checkout instead. --rebuild, --build-only and --install-only also use the source build."
+      echo "Source builds reuse unchanged frontend assets; --rebuild forces their rebuild."
       echo "--build-only builds the package without sudo; a later --install-only installs it without rebuilding."
       echo "Queue TraceExplorer for installation on the next app launch when its package exists."
       echo "Plugin location: TRACE_EXPLORER_PLUGIN_PATH (default: \$HOME/Repos/TraceExplorer/package)."
@@ -33,6 +40,7 @@ while (($#)); do
   esac
   shift
 done
+if [[ $MODE == full && $FROM_SOURCE == 0 ]]; then MODE=release; fi
 PLUGIN_LOCATION=$(realpath -m -- "$PLUGIN_LOCATION")
 
 # makepkg otherwise exports a new SOURCE_DATE_EPOCH on every invocation, which
@@ -103,13 +111,15 @@ if [[ $MODE == install ]]; then
   fi
 fi
 
+# Ask for the password before any work, so the rest can run unattended.
 if [[ $MODE != build ]]; then
   echo "Authenticating sudo..."
   sudo -v
 fi
 
-if [[ $MODE == full ]]; then
-  # Keep the timestamp valid while makepkg runs as the current user.
+if [[ $MODE == full || $MODE == release ]]; then
+  # Keep the timestamp valid through packaging, a build, and any wait at the
+  # confirmation prompt; makepkg itself runs as the current user.
   (
     # Credential refresh is not installation work and must not retain its lock
     # if the installer is killed while a real build child is still finishing.
@@ -129,7 +139,108 @@ if [[ $MODE == full ]]; then
   SUDO_KEEPALIVE_PID=$!
 fi
 
-if [[ $MODE != install ]]; then
+# The release's .deb is repackaged by the repo's binary recipe: the release
+# publishes no Arch package, and its only Linux pacman route is this wrapper.
+# Depends on curl and jq; without them the release path reports why it cannot
+# run and the source-build confirmation takes over.
+RELEASE_API=https://api.github.com/repos/xnmp/tauri-explorer/releases/latest
+RELEASE_STAGE="$SCRIPT_DIR/.arch-build/release"
+RELEASE_RECIPE="$SCRIPT_DIR/packaging/aur"
+BUILD_REASON=
+UP_TO_DATE=0
+build_needed() { BUILD_REASON=$1; return 1; }
+
+# Sets PKG (or UP_TO_DATE=1), or returns 1 with BUILD_REASON. A digest mismatch
+# exits instead: tampered or corrupt bytes are never a reason to fall back.
+package_latest_release() {
+  [[ $ARCH == x86_64 ]] || build_needed "releases have no prebuilt $ARCH Linux package" || return
+  local tool
+  for tool in curl jq; do
+    command -v "$tool" >/dev/null || build_needed "$tool is not installed" || return
+  done
+
+  local release version deb digest installed actual
+  release=$(curl -fsSL --retry 2 --max-time 30 "$RELEASE_API") \
+    || build_needed "could not reach the GitHub release" || return
+  version=$(jq -r '.tag_name // empty' <<<"$release" | sed 's/^v//') \
+    || build_needed "the GitHub release response was unreadable" || return
+  # The version reaches sed and file names, and pacman forbids a hyphen in it.
+  [[ $version =~ ^[0-9]+(\.[0-9]+)+$ ]] \
+    || build_needed "the latest release has an unusable version '$version'" || return
+  deb="tauri-explorer_${version}_amd64.deb"
+  digest=$(jq -r --arg name "$deb" '.assets[]? | select(.name == $name) | .digest // empty' <<<"$release") \
+    || build_needed "the GitHub release response was unreadable" || return
+  [[ $digest == sha256:* ]] \
+    || build_needed "release $version has no verifiable $deb" || return
+
+  # Resolves through provides, so this covers source and binary packages alike.
+  installed=$(pacman -Q tauri-explorer 2>/dev/null || true)
+  installed=${installed##* }
+  if [[ -n $installed && $(vercmp "${installed%-*}" "$version") -ge 0 ]]; then
+    echo "Tauri Explorer $installed is already up to date (latest release: $version)."
+    UP_TO_DATE=1
+    return 0
+  fi
+
+  [[ -f $RELEASE_RECIPE/PKGBUILD ]] || build_needed "$RELEASE_RECIPE/PKGBUILD is missing" || return
+  echo "Packaging release ${version}..."
+  rm -rf -- "$RELEASE_STAGE"
+  mkdir -p "$RELEASE_STAGE"
+  cp -- "$RELEASE_RECIPE/PKGBUILD" "$RELEASE_RECIPE/tauri-explorer-bin.install" "$RELEASE_STAGE/"
+  # The checked-in recipe pins an older release. Fresh checksums are appended
+  # rather than edited in: the later assignment wins, and nothing else in the
+  # recipe is at risk. The .deb is then held to GitHub's digest, below.
+  sed -i "s/^pkgver=.*/pkgver=$version/" "$RELEASE_STAGE/PKGBUILD"
+  (cd "$RELEASE_STAGE" && SRCDEST="$RELEASE_STAGE" makepkg -g >sums) \
+    || build_needed "could not download release $version" || return
+  cat "$RELEASE_STAGE/sums" >> "$RELEASE_STAGE/PKGBUILD"
+
+  actual=$(sha256sum "$RELEASE_STAGE/$deb")
+  if [[ sha256:${actual%% *} != "$digest" ]]; then
+    echo "$deb does not match GitHub's published $digest; nothing was installed." >&2
+    exit 1
+  fi
+
+  # Dependencies are for pacman -U to resolve, not for repackaging.
+  (cd "$RELEASE_STAGE" && SRCDEST="$RELEASE_STAGE" PKGDEST="$RELEASE_STAGE" \
+    BUILDDIR="$RELEASE_STAGE/build" PKGEXT=.pkg.tar.zst makepkg -f --nodeps --noconfirm) \
+    || build_needed "could not repackage release $version" || return
+  PKG="$RELEASE_STAGE/tauri-explorer-bin-${version}-1-x86_64.pkg.tar.zst"
+  # makepkg succeeds on an empty package(), and pacman would install it.
+  bsdtar -tf "$PKG" usr/bin/tauri-explorer >/dev/null 2>&1 \
+    || build_needed "repackaging release $version produced no application" || return
+}
+
+# Compiling takes minutes and may interrupt whatever else the machine is doing,
+# so it is never started silently. Unanswerable means no.
+confirm_source_build() {
+  local summary="A prebuilt package is unavailable: $1."
+  echo "$summary" >&2
+  # notify-send is optional: terminals without a desktop session still get the prompt.
+  if command -v notify-send >/dev/null; then
+    notify-send --app-name="Tauri Explorer installer" "Tauri Explorer needs a source build" "$1" 2>/dev/null || true
+  fi
+  if [[ $ACCEPT_BUILD == 1 ]]; then return; fi
+  local reply=
+  if ! ( : </dev/tty ) 2>/dev/null; then
+    echo "Cannot ask for confirmation here; rerun with --yes or --source to build from source." >&2
+    exit 1
+  fi
+  read -r -p "Build from source instead? This takes several minutes. [y/N] " reply </dev/tty || true
+  if [[ $reply != [yY]* ]]; then
+    echo "Nothing was installed." >&2
+    exit 1
+  fi
+}
+
+if [[ $MODE == release ]]; then
+  if ! package_latest_release; then
+    confirm_source_build "$BUILD_REASON"
+    MODE=full
+  fi
+fi
+
+if [[ $MODE == full || $MODE == build ]]; then
   echo "Building package..."
   BUILT_FROM=$(source_identity)
   export _srcdir="$SCRIPT_DIR"
@@ -152,8 +263,13 @@ if [[ $MODE != install ]]; then
   fi
 fi
 
-echo "Installing ${PKG}..."
-sudo -n pacman -U "$PKG" --noconfirm
+if [[ $UP_TO_DATE == 0 ]]; then
+  echo "Installing ${PKG}..."
+  # The source and binary packages conflict, and --noconfirm alone takes
+  # pacman's default "no" on replacing one with the other. --ask=4 inverts that
+  # one question (ALPM_QUESTION_CONFLICT_PKG), so either can follow the other.
+  sudo -n pacman -U "$PKG" --noconfirm --ask=4
+fi
 
 # The package is the only install. Per-user copies of the files it ships
 # (left by manual or development setups) take precedence over /usr and would

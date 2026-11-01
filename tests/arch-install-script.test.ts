@@ -97,7 +97,7 @@ exit 2
     const events = await calls();
     expect(events[0]).toBe('sudo -v');
     expect(events[1]).toBe(`makepkg reuse=1 rebuild=${args.length ? '1' : '0'}`);
-    expect(events[2]).toMatch(/^sudo -n pacman -U tauri-explorer-1\.0\.0-1-.*\.pkg\.tar\.zst --noconfirm$/);
+    expect(events[2]).toMatch(/^sudo -n pacman -U tauri-explorer-1\.0\.0-1-.*\.pkg\.tar\.zst --noconfirm --ask=4$/);
   }));
 
   it('builds ahead without credentials, then installs that package without rebuilding', async () => withInstaller(async ({ invoke, calls }) => {
@@ -108,7 +108,7 @@ exit 2
     const installed = await invoke(['--install-only']) as { stdout: string; stderr: string };
     const events = await calls();
     expect(events.slice(1, 2)).toEqual(['sudo -v']);
-    expect(events[2]).toMatch(/^sudo -n pacman -U tauri-explorer-1\.0\.0-1-.*\.pkg\.tar\.zst --noconfirm$/);
+    expect(events[2]).toMatch(/^sudo -n pacman -U tauri-explorer-1\.0\.0-1-.*\.pkg\.tar\.zst --noconfirm --ask=4$/);
     expect(events).toHaveLength(3);
     expect(installed.stdout).toContain('Done.');
   }));
@@ -263,8 +263,98 @@ exit 2
   }));
 });
 
+describe.skipIf(process.platform !== 'linux')('Arch installer release route', () => {
+  const releasedBytes = createHash('sha256').update('release bytes').digest('hex');
+  const releaseJson = (digest = `sha256:${releasedBytes}`, version = '1.17.0') => JSON.stringify({
+    tag_name: `v${version}`,
+    assets: [
+      { name: `tauri-explorer_${version}_amd64.AppImage`, digest: 'sha256:other' },
+      { name: `tauri-explorer_${version}_amd64.deb`, digest },
+    ],
+  });
+  const expectedPackage = /^sudo -n pacman -U .*\/\.arch-build\/release\/tauri-explorer-bin-1\.17\.0-1-x86_64\.pkg\.tar\.zst --noconfirm --ask=4$/;
+
+  it('installs the latest release through pacman without compiling or asking', async () => withInstaller(async ({ invokeDefault, calls }) => {
+    const { stdout } = await invokeDefault([], { RELEASE_JSON: releaseJson(), INSTALLED: 'tauri-explorer 1.15.1-1' });
+    const events = await calls();
+    expect(events[0]).toBe('sudo -v');
+    expect(events[1]).toBe('makepkg release pkgver=1.17.0 sums=1 recipe=1');
+    expect(events[2]).toMatch(expectedPackage);
+    expect(events).toHaveLength(3);
+    expect(stdout).toContain('Done.');
+  }));
+
+  it.each(['1.17.0-1', '1.18.0-1'])('leaves an installed %s alone', async (version) => withInstaller(async ({ invokeDefault, calls }) => {
+    const { stdout } = await invokeDefault([], { RELEASE_JSON: releaseJson(), INSTALLED: `tauri-explorer-bin ${version}` });
+    expect(await calls()).toEqual(['sudo -v']);
+    expect(stdout).toContain('already up to date');
+  }));
+
+  it('refuses a release whose bytes differ from the published digest, and never offers a build', async () => withInstaller(async ({ invokeDefault, calls }) => {
+    await expect(invokeDefault(['--yes'], { RELEASE_JSON: releaseJson(`sha256:${'0'.repeat(64)}`) })).rejects.toThrow('nothing was installed');
+    expect(await calls()).toEqual(['sudo -v']);
+  }));
+
+  it.each([
+    ['no network', {}, 'could not reach'],
+    ['no matching asset', { RELEASE_JSON: JSON.stringify({ tag_name: 'v1.17.0', assets: [] }) }, 'no verifiable'],
+    ['no asset digest', { RELEASE_JSON: JSON.stringify({ tag_name: 'v1.17.0', assets: [{ name: 'tauri-explorer_1.17.0_amd64.deb' }] }) }, 'no verifiable'],
+    ['a malformed response', { RELEASE_JSON: 'not json' }, 'unreadable'],
+    ['an unusable tag', { RELEASE_JSON: JSON.stringify({ tag_name: 'v1.17.0;rm', assets: [] }) }, 'unusable version'],
+    ['a failed download', { RELEASE_JSON: releaseJson(), DOWNLOAD_FAIL: '1' }, 'could not download'],
+    ['a package with no application', { RELEASE_JSON: releaseJson(), EMPTY_PACKAGE: '1' }, 'produced no application'],
+    ['an unsupported architecture', { RELEASE_JSON: releaseJson(), FAKE_ARCH: 'aarch64' }, 'no prebuilt aarch64'],
+  ])('with %s, notifies and refuses to build when it cannot ask', async (_case, environment, reason) => withInstaller(async ({ invokeDefault, calls }) => {
+    await expect(invokeDefault([], environment)).rejects.toThrow(reason);
+    const events = await calls();
+    const notifications = events.filter((event) => event.startsWith('notify'));
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]).toContain(reason);
+    expect(events.some((event) => event.startsWith('sudo -n') || event.startsWith('makepkg reuse'))).toBe(false);
+  }));
+
+  it('asks for credentials before any release work, and stops there when they fail', async () => withInstaller(async ({ invokeDefault, calls }) => {
+    await expect(invokeDefault([], { RELEASE_JSON: releaseJson(), AUTH_FAIL: '1' })).rejects.toThrow();
+    expect(await calls()).toEqual(['sudo -v']);
+  }));
+
+  it('builds only after --yes accepts the notified fallback', async () => withInstaller(async ({ invokeDefault, calls }) => {
+    await invokeDefault(['--yes']);
+    const events = await calls();
+    expect(events[0]).toBe('sudo -v');
+    expect(events[1]).toContain('notify');
+    expect(events[2]).toBe('makepkg reuse=1 rebuild=0');
+    expect(events[3]).toMatch(/^sudo -n pacman -U tauri-explorer-1\.0\.0-1-/);
+  }));
+
+  it('builds on a yes at the prompt and stops on anything else', async () => withInstaller(async ({ invokeAnswering, calls }) => {
+    await invokeAnswering('n').catch(() => undefined);
+    expect((await calls()).filter((event) => !event.startsWith('notify'))).toEqual(['sudo -v']);
+    await invokeAnswering('y');
+    expect(await calls()).toContain('makepkg reuse=1 rebuild=0');
+  }));
+
+  it.each([['--source'], ['--rebuild'], ['--build-only']])('%s compiles this checkout without consulting the release', async (flag) => withInstaller(async ({ invokeDefault, calls }) => {
+    await invokeDefault([flag], { RELEASE_JSON: releaseJson() });
+    const events = await calls();
+    expect(events.some((event) => event.startsWith('makepkg reuse=1'))).toBe(true);
+    expect(events.some((event) => event.includes('release'))).toBe(false);
+    expect(events.some((event) => event.startsWith('notify'))).toBe(false);
+  }));
+
+  it('still retires per-user copies and queues plugins after a release install', async () => withInstaller(async ({ sandbox, invokeDefault }) => {
+    await mkdir(join(sandbox, 'home/.local/bin'), { recursive: true });
+    await writeFile(join(sandbox, 'home/.local/bin/tauri-explorer'), 'old launcher');
+    const { stdout } = await invokeDefault([], { RELEASE_JSON: releaseJson() });
+    expect(stdout).toContain('Moved per-user override');
+    expect(stdout).toContain('skipping plugin installation');
+  }));
+});
+
 async function withInstaller(test: (fixture: {
   invoke: (args?: string[], environment?: NodeJS.ProcessEnv) => Promise<unknown>;
+  invokeDefault: (args?: string[], environment?: NodeJS.ProcessEnv) => Promise<{ stdout: string; stderr: string }>;
+  invokeAnswering: (answer: string, environment?: NodeJS.ProcessEnv) => Promise<{ stdout: string; stderr: string }>;
   calls: () => Promise<string[]>;
   epochs: () => Promise<string[]>;
   root: string;
@@ -285,8 +375,46 @@ if [[ "$*" == '-v' && "$AUTH_FAIL" == 1 ]]; then exit 1; fi
 if [[ "$*" == '-n pacman -U '* ]]; then [[ -f "$4" ]]; fi
 if [[ "$*" == '-n pacman -U '* && "\${INSTALL_FAIL:-0}" == 1 ]]; then exit 1; fi
 `, { mode: 0o755 });
+    await mkdir(join(root, 'packaging/aur'), { recursive: true });
+    for (const name of ['PKGBUILD', 'tauri-explorer-bin.install']) {
+      await copyFile(new URL(`../packaging/aur/${name}`, import.meta.url), join(root, 'packaging/aur', name));
+    }
+    await writeFile(join(root, 'bin/curl'), `#!/usr/bin/env bash
+[[ -n "\${RELEASE_JSON:-}" ]] || exit 22
+printf '%s' "$RELEASE_JSON"
+`, { mode: 0o755 });
+    await writeFile(join(root, 'bin/pacman'), `#!/usr/bin/env bash
+[[ -n "\${INSTALLED:-}" ]] || exit 1
+echo "$INSTALLED"
+`, { mode: 0o755 });
+    // CI's Ubuntu has no vercmp; these fixtures only compare dotted versions.
+    await writeFile(join(root, 'bin/vercmp'), `#!/usr/bin/env bash
+[[ "$1" == "$2" ]] && { echo 0; exit; }
+[[ "$(printf '%s\\n' "$1" "$2" | sort -V | tail -1)" == "$1" ]] && echo 1 || echo -1
+`, { mode: 0o755 });
+    await writeFile(join(root, 'bin/bsdtar'), `#!/usr/bin/env bash
+[[ "\${EMPTY_PACKAGE:-0}" == 0 ]]
+`, { mode: 0o755 });
+    await writeFile(join(root, 'bin/uname'), `#!/usr/bin/env bash
+echo "\${FAKE_ARCH:-$(/usr/bin/env -i PATH=/usr/bin:/bin uname -m)}"
+`, { mode: 0o755 });
+    await writeFile(join(root, 'bin/notify-send'), `#!/usr/bin/env bash
+echo "notify $*" >> "$INSTALL_CALLS"
+`, { mode: 0o755 });
     await writeFile(join(root, 'bin/makepkg'), `#!/usr/bin/env bash
 set -eu
+if [[ "$*" == '-g' ]]; then
+  [[ "\${DOWNLOAD_FAIL:-0}" == 0 ]] || exit 1
+  printf 'release bytes' > "$(sed -n 's/^pkgver=//p' PKGBUILD | sed 's/.*/tauri-explorer_&_amd64.deb/')"
+  echo "sha256sums=('stub')"
+  exit
+fi
+if [[ "$*" == '-f --nodeps --noconfirm' ]]; then
+  version=$(sed -n 's/^pkgver=//p' PKGBUILD)
+  echo "makepkg release pkgver=$version sums=$(grep -c "^sha256sums=('stub')$" PKGBUILD) recipe=$(grep -c '^package()' PKGBUILD)" >> "$INSTALL_CALLS"
+  touch "$PKGDEST/tauri-explorer-bin-$version-1-x86_64.pkg.tar.zst"
+  exit
+fi
 printf 'makepkg reuse=%s rebuild=%s\\n' "$_arch_reuse_frontend" "$_arch_rebuild_frontend" >> "$INSTALL_CALLS"
 echo "$SOURCE_DATE_EPOCH" >> "$INSTALL_EPOCHS"
 touch "tauri-explorer-1.0.0-1-$(uname -m).pkg.tar.zst"
@@ -295,16 +423,22 @@ touch "tauri-explorer-1.0.0-1-$(uname -m).pkg.tar.zst"
 [[ -n "\${RUNNING_PIDS:-}" ]] || exit 1
 printf '%s\\n' $RUNNING_PIDS
 `, { mode: 0o755 });
-    const invoke = (args: string[] = [], environment: NodeJS.ProcessEnv = {}) => execFileAsync('bash', [join(root, 'arch_install.sh'), ...args], {
-      cwd: tmpdir(),
-      env: { ...process.env, HOME: join(sandbox, 'home'), XDG_CONFIG_HOME: join(sandbox, 'config'), XDG_DATA_HOME: join(sandbox, 'data'), XDG_STATE_HOME: join(sandbox, 'state'), RUNNING_PIDS: undefined, TRACE_EXPLORER_PLUGIN_PATH: undefined, SOURCE_DATE_EPOCH: undefined, PATH: `${join(root, 'bin')}:${process.env.PATH}`, AUTH_FAIL: '0', INSTALL_CALLS: join(root, 'calls'), INSTALL_EPOCHS: join(root, 'epochs'), ...environment },
-    });
+    const environmentFor = (environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv => ({ ...process.env, HOME: join(sandbox, 'home'), XDG_CONFIG_HOME: join(sandbox, 'config'), XDG_DATA_HOME: join(sandbox, 'data'), XDG_STATE_HOME: join(sandbox, 'state'), RUNNING_PIDS: undefined, TRACE_EXPLORER_PLUGIN_PATH: undefined, SOURCE_DATE_EPOCH: undefined, PATH: `${join(root, 'bin')}:${process.env.PATH}`, AUTH_FAIL: '0', INSTALL_CALLS: join(root, 'calls'), INSTALL_EPOCHS: join(root, 'epochs'), ...environment });
+    const run = (args: string[], environment: NodeJS.ProcessEnv) => execFileAsync('bash', [join(root, 'arch_install.sh'), ...args], { cwd: tmpdir(), env: environmentFor(environment) });
+    // Most contracts here concern the source route; release tests use invokeDefault.
+    const invoke = (args: string[] = [], environment: NodeJS.ProcessEnv = {}) => run(['--source', ...args], environment);
+    const invokeDefault = (args: string[] = [], environment: NodeJS.ProcessEnv = {}) => run(args, { FAKE_ARCH: 'x86_64', ...environment });
+    // Runs the installer on a real pseudo-terminal, answering its prompt.
+    const invokeAnswering = (answer: string, environment: NodeJS.ProcessEnv = {}) => {
+      const command = `printf '${answer}\\n' | script -qec ${JSON.stringify(`bash '${join(root, 'arch_install.sh')}'`)} /dev/null`;
+      return execFileAsync('bash', ['-c', command], { cwd: tmpdir(), env: environmentFor({ FAKE_ARCH: 'x86_64', ...environment }) });
+    };
     const calls = () => readFile(join(root, 'calls'), 'utf8').then(
       (contents) => contents.trim().split('\n'),
       (error) => { if (error.code === 'ENOENT') return []; throw error; },
     );
     const epochs = () => readFile(join(root, 'epochs'), 'utf8').then((contents) => contents.trim().split('\n'));
-    await test({ invoke, calls, epochs, root, sandbox });
+    await test({ invoke, invokeDefault, invokeAnswering, calls, epochs, root, sandbox });
   } finally { await rm(sandbox, { recursive: true, force: true }); }
 }
 

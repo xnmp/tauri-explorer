@@ -111,6 +111,34 @@ if [[ $MODE == install ]]; then
   fi
 fi
 
+# Ask for the password before any work, so the rest can run unattended.
+if [[ $MODE != build ]]; then
+  echo "Authenticating sudo..."
+  sudo -v
+fi
+
+if [[ $MODE == full || $MODE == release ]]; then
+  # Keep the timestamp valid through packaging, a build, and any wait at the
+  # confirmation prompt; makepkg itself runs as the current user.
+  (
+    # Credential refresh is not installation work and must not retain its lock
+    # if the installer is killed while a real build child is still finishing.
+    exec {INSTALL_LOCK_FD}>&-
+    KEEPALIVE_CHILD_PID=
+    trap 'kill "$KEEPALIVE_CHILD_PID" 2>/dev/null || true; wait "$KEEPALIVE_CHILD_PID" 2>/dev/null || true' EXIT
+    trap 'exit 0' INT TERM
+    while true; do
+      sleep 60 &
+      KEEPALIVE_CHILD_PID=$!
+      wait "$KEEPALIVE_CHILD_PID"
+      sudo -n -v &
+      KEEPALIVE_CHILD_PID=$!
+      wait "$KEEPALIVE_CHILD_PID" || exit
+    done
+  ) &
+  SUDO_KEEPALIVE_PID=$!
+fi
+
 # The release's .deb is repackaged by the repo's binary recipe: the release
 # publishes no Arch package, and its only Linux pacman route is this wrapper.
 # Depends on curl and jq; without them the release path reports why it cannot
@@ -210,32 +238,6 @@ if [[ $MODE == release ]]; then
     confirm_source_build "$BUILD_REASON"
     MODE=full
   fi
-fi
-
-if [[ $MODE != build && $UP_TO_DATE == 0 ]]; then
-  echo "Authenticating sudo..."
-  sudo -v
-fi
-
-if [[ $MODE == full ]]; then
-  # Keep the timestamp valid while makepkg runs as the current user.
-  (
-    # Credential refresh is not installation work and must not retain its lock
-    # if the installer is killed while a real build child is still finishing.
-    exec {INSTALL_LOCK_FD}>&-
-    KEEPALIVE_CHILD_PID=
-    trap 'kill "$KEEPALIVE_CHILD_PID" 2>/dev/null || true; wait "$KEEPALIVE_CHILD_PID" 2>/dev/null || true' EXIT
-    trap 'exit 0' INT TERM
-    while true; do
-      sleep 60 &
-      KEEPALIVE_CHILD_PID=$!
-      wait "$KEEPALIVE_CHILD_PID"
-      sudo -n -v &
-      KEEPALIVE_CHILD_PID=$!
-      wait "$KEEPALIVE_CHILD_PID" || exit
-    done
-  ) &
-  SUDO_KEEPALIVE_PID=$!
 fi
 
 if [[ $MODE == full || $MODE == build ]]; then

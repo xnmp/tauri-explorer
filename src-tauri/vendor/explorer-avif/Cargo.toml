@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 license = "BSD-2-Clause"
 links = "explorer_avif"
+# Explicit so manifest-only tooling (Dependabot, #1479) sees the build script.
+build = "build.rs"
 
 [build-dependencies]
 cmake = "0.1"

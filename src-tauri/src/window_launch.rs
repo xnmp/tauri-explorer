@@ -133,7 +133,9 @@ fn choose_target(candidates: &[Candidate<'_>], recent: &[String]) -> Option<Stri
 
 /// Resolve a forwarded command line (program name first) to the launch it
 /// requests, relative to the secondary process's working directory.
-#[cfg(any(target_os = "linux", test))]
+/// Linux-only, like the single-instance hand-off that calls it: its tests
+/// assume POSIX paths (#1488).
+#[cfg(target_os = "linux")]
 fn resolve_request(
     args: &[String],
     cwd: &str,
@@ -225,6 +227,7 @@ mod tests {
             new_tab: true,
         }
     }
+    #[cfg(target_os = "linux")]
     fn argv(list: &[&str]) -> Vec<String> {
         std::iter::once("tauri-explorer")
             .chain(list.iter().copied())
@@ -268,6 +271,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn resolves_new_tab_before_or_after_relative_and_absolute_paths() {
         let home = Some(std::path::PathBuf::from("/home/alice"));

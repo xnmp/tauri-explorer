@@ -258,7 +258,7 @@ test('photo folders retain pack styling and link/repository decorations at large
         await expect(folder.locator('.folder-thumb')).toHaveAttribute('data-icon-theme',pack);
         if(pack==='minimal'||pack==='catppuccin')await expect(folder.locator('.folder-back-fill')).toHaveCSS('fill','none');
       }
-      await expect(row(page,'Repository').locator('.git-repo-badge')).toBeVisible();
+      await expect(row(page,'Repository').locator('.git-repo-emblem')).toBeVisible();
       await expect(row(page,'Linked').locator('.linked-folder')).toBeVisible();
       if(preset==='large')await capture(page,`photo-folders-${pack}`);
     }
@@ -280,7 +280,7 @@ test('all packs preserve icon size and linked/repository folder distinctions at 
         expect(box!.width,`${pack} ${preset} ${name}`).toBeCloseTo(pixels,0);
       }
       await expect(row(page,'Linked').locator('.linked-folder')).toBeVisible();
-      await expect(row(page,'Repository').locator('.git-repo-badge')).toBeVisible();
+      await expect(row(page,'Repository').locator('.git-repo-emblem')).toBeVisible();
     }
   }
 });

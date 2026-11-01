@@ -1,9 +1,13 @@
 <svelte:options namespace="svg" />
 <script lang="ts">
   import type { FileEntry } from '$lib/domain/file';
-  import { getFolderDecoration } from '$lib/domain/file-icon-identity';
-  let {entry,size,arrowColor='var(--icon-link-arrow, #fff)'}: {entry:FileEntry;size:'small'|'large';arrowColor?:string}=$props();
+  import { getFolderDecoration, repositoryEmblem, type RepositoryEmblemSurface } from '$lib/domain/file-icon-identity';
+  // `size` picks the viewBox geometry (18 or 48 units); `rendered` is the
+  // drawn size for surfaces whose 48-unit overlay is shown at 16px.
+  let {entry,size,surface='folder',rendered=size,arrowColor='var(--icon-link-arrow, #fff)'}: {entry:FileEntry;size:'small'|'large';surface?:RepositoryEmblemSurface;rendered?:'small'|'large';arrowColor?:string}=$props();
   const decoration=$derived(getFolderDecoration(entry));
+  const emblem=$derived(repositoryEmblem(surface, surface==='folder' ? size : rendered));
+  const side=$derived(emblem.r*Math.SQRT2);
 </script>
 
 {#if decoration === 'linked'}
@@ -13,23 +17,16 @@
 <path d="M18 34L30 22M30 22H21M30 22V31" stroke={arrowColor} stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
   {/if}
 {:else if decoration === 'repository'}
-  {#if size === 'small'}
-<circle class="git-repo-badge" cx="13.1" cy="13.1" r="3.55" fill="var(--icon-git-badge, #f05033)"/>
-        <path class="git-repo-badge-ring" d="M16.15 13.1a3.05 3.05 0 1 1-6.1 0 3.05 3.05 0 0 1 6.1 0Z" fill="none" stroke="var(--icon-git-badge-glyph, #fff)" stroke-width="0.55" opacity="0.32"/>
-        <g class="git-repo-badge-glyph" transform="translate(10.35 9.95) scale(0.37)">
-          <circle cx="4" cy="3.5" r="1.6" stroke="var(--icon-git-badge-glyph, #fff)" stroke-width="1.5" />
-          <circle cx="4" cy="12.5" r="1.6" stroke="var(--icon-git-badge-glyph, #fff)" stroke-width="1.5" />
-          <circle cx="11.5" cy="3.5" r="1.6" stroke="var(--icon-git-badge-glyph, #fff)" stroke-width="1.5" />
-          <path d="M4 5.1V10.9M11.5 5.1V6.5C11.5 8.2 10 9 8 9H6" stroke="var(--icon-git-badge-glyph, #fff)" stroke-width="1.5" stroke-linecap="round" />
-        </g>
-  {:else}
-<circle class="git-repo-badge" cx="37.5" cy="37.5" r="9.25" fill="var(--icon-git-badge, #f05033)"/>
-        <path class="git-repo-badge-ring" d="M45.7 37.5a8.2 8.2 0 1 1-16.4 0 8.2 8.2 0 0 1 16.4 0Z" fill="none" stroke="var(--icon-git-badge-glyph, #fff)" stroke-width="1.35" opacity="0.32"/>
-        <g class="git-repo-badge-glyph" transform="translate(30.95 29.45) scale(0.9)">
-          <circle cx="4" cy="3.5" r="1.6" stroke="var(--icon-git-badge-glyph, #fff)" stroke-width="1.5" />
-          <circle cx="4" cy="12.5" r="1.6" stroke="var(--icon-git-badge-glyph, #fff)" stroke-width="1.5" />
-          <circle cx="11.5" cy="3.5" r="1.6" stroke="var(--icon-git-badge-glyph, #fff)" stroke-width="1.5" />
-          <path d="M4 5.1V10.9M11.5 5.1V6.5C11.5 8.2 10 9 8 9H6" stroke="var(--icon-git-badge-glyph, #fff)" stroke-width="1.5" stroke-linecap="round" />
-        </g>
-  {/if}
+<!-- Git emblem on the folder body (#1477): a themed diamond plate with an
+     original branch glyph, clear of the corner where peek carets sit. -->
+<g class="git-repo-emblem">
+  <rect class="git-repo-emblem-plate" x={emblem.cx-side/2} y={emblem.cy-side/2} width={side} height={side} rx={side*0.2}
+    transform="rotate(45 {emblem.cx} {emblem.cy})" fill="var(--icon-git-badge, #f05033)"/>
+  <g class="git-repo-emblem-glyph" transform="translate({emblem.cx} {emblem.cy}) scale({emblem.r/10})" stroke="var(--icon-git-badge-glyph, #fff)" stroke-width={emblem.stroke} stroke-linecap="round" fill="none">
+    <path d="M-2.4-3.4V3.4M2.8-1.4C2.8 1.4-2.4.6-2.4 2.8"/>
+    <circle cx="-2.4" cy="-3.6" r="1.3" fill="var(--icon-git-badge-glyph, #fff)"/>
+    <circle cx="-2.4" cy="3.6" r="1.3" fill="var(--icon-git-badge-glyph, #fff)"/>
+    <circle cx="2.8" cy="-1.6" r="1.3" fill="var(--icon-git-badge-glyph, #fff)"/>
+  </g>
+</g>
 {/if}

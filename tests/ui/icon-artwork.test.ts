@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { describe, it, expect } from 'vitest';
 import { FILE_ICON_IDENTITIES } from '$lib/domain/file-icon-identity';
 import { FILE_ICON_EXAMPLES } from '../fixtures/file-icon-examples';
-import { buildIconSprite, renderIconSprite } from '../../scripts/build-icon-sprites.mjs';
+import { buildIconSprite, renderIconSprite, catppuccinFolderGlyph } from '../../scripts/build-icon-sprites.mjs';
 
 describe('icon artwork contract',()=>{
   it('visually exercises every registered file identity',()=>{
@@ -12,6 +12,17 @@ describe('icon artwork contract',()=>{
     const sprite=await readFile(`src/lib/components/icons/${pack}-sprite.svg`,'utf8');
     expect(sprite).toBe(await buildIconSprite(pack));
     for(const id of FILE_ICON_IDENTITIES.filter(id=>pack!=='material'||id!=='folder')) expect(sprite,`missing ${id}`).toContain(`<symbol id="${id}"`);
+  });
+  it('ships a fresh special-folder glyph sprite (#1491)',async()=>{
+    expect(await readFile('src/lib/components/icons/folder-glyphs-sprite.svg','utf8')).toBe(await buildIconSprite('folder-glyphs'));
+  });
+  it('derives Catppuccin glyph-only folder symbols by removing just the shared outline',async()=>{
+    const svg=await readFile('src/lib/components/icons/catppuccin/folder-src.svg','utf8');
+    const glyph=catppuccinFolderGlyph(svg);
+    expect(glyph).not.toContain('var(--vscode-ctp-text)');
+    expect(glyph).toContain('stroke="var(--vscode-ctp-green)"');
+    expect(svg.length-glyph.length).toBeLessThan(260);
+    expect(()=>catppuccinFolderGlyph('<svg viewBox="0 0 16 16"><path d="M1 1h2"/></svg>')).toThrow();
   });
   it('ships the complete upstream permission notice inside the distributed Catppuccin sprite',async()=>{
     const license=await readFile('src/lib/components/icons/catppuccin/LICENSE.txt','utf8');

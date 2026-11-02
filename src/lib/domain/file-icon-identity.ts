@@ -33,21 +33,74 @@ export function getFolderDecoration(entry: FileEntry): 'linked' | 'repository' |
 }
 
 /**
- * A repository folder's Git emblem (a diamond plate carrying a branch glyph) in
- * its SVG's square viewBox units. It sits on the folder body, never in the
- * bottom-right corner where Tiles' peek caret is drawn (#1477). Surfaces:
- * `folder` = FolderIcon (18-unit small / 48-unit large); `catppuccin` = the
- * 48-unit overlay on the sprite's outline folder, `size` being its rendered
- * size; `thumbnail` = a photo folder's front flap, below its photos.
- * `stroke` is the glyph stroke in glyph units (r = 10), thicker when dense.
+ * How a repository folder is drawn in each icon pack (#1490). Like the pack
+ * conventions it imitates (Material's coloured special folders, Catppuccin's
+ * tinted outlines), the whole folder takes `--icon-git-badge` and carries a
+ * branch glyph on its body, rather than wearing a foreign plate:
+ * - `filled` (Material, Classic): solid folder, glyph knocked out in the
+ *   window background (`--icon-git-badge-glyph` overrides), so it contrasts
+ *   with light accents on dark themes and dark accents on light themes;
+ * - `outline` (Minimal, Catppuccin): tinted outline, glyph stroked in the same
+ *   colour and the pack's own stroke weight.
+ */
+export type RepositoryFolderStyle = 'filled' | 'outline';
+export function repositoryFolderStyle(pack: 'material' | 'classic' | 'minimal' | 'catppuccin'): RepositoryFolderStyle {
+  return pack === 'minimal' || pack === 'catppuccin' ? 'outline' : 'filled';
+}
+
+/**
+ * The branch glyph's nodes, in glyph units: a trunk with nodes at (-4, ±6) and
+ * a branch node at (4, -3) whose line curves into the trunk above its lower
+ * node. An original, generic branch mark (not a vendor logo); FolderDecoration
+ * draws these three circles.
+ */
+export const REPOSITORY_GLYPH_NODES = [[-4, -6], [-4, 6], [4, -3]] as const;
+
+/** Glyph lines (glyph units); they stop at ring edges so ringed nodes stay open. */
+export function repositoryGlyphPath(e: RepositoryEmblem): string {
+  const gap = e.ring ? e.r : 0;
+  return `M-4 ${gap - 6}V${6 - gap}M4 ${gap - 3}C4 1.5-4 0-4 2.5`;
+}
+
+/**
+ * A repository folder's Git glyph in its SVG's square viewBox units. It sits
+ * centred on the folder's front panel, never in the bottom-right corner where
+ * Tiles' peek caret is drawn (#1477). Surfaces: `folder` = FolderIcon (18-unit
+ * small / 48-unit large); `catppuccin` = the 48-unit overlay on the sprite's
+ * outline folder, `size` being its rendered size; `thumbnail` = a photo
+ * folder's front flap, below its photos. `unit` maps glyph units to viewBox
+ * units; `stroke` and `dot` (node circle radius, also stroked) are viewBox
+ * units. `ring` nodes are left open (outline packs at legible sizes), others
+ * filled. `rotate` lays the glyph on its side on the slim photo-folder flap.
  */
 export type RepositoryEmblemSurface = 'folder' | 'catppuccin' | 'thumbnail';
-export interface RepositoryEmblem { readonly viewBox: number; readonly cx: number; readonly cy: number; readonly r: number; readonly stroke: number }
-export function repositoryEmblem(surface: RepositoryEmblemSurface, size: 'small' | 'large'): RepositoryEmblem {
-  const dense = size === 'small';
-  if (surface === 'catppuccin') return { viewBox: 48, cx: 21, cy: 27, r: 7.5, stroke: dense ? 3.4 : 1.8 };
-  if (surface === 'thumbnail') return { viewBox: 48, cx: 24, cy: 40.5, r: 4.5, stroke: 2.4 };
-  return dense ? { viewBox: 18, cx: 9, cy: 10.6, r: 3.9, stroke: 2.6 } : { viewBox: 48, cx: 24, cy: 30.5, r: 8.5, stroke: 1.7 };
+export interface RepositoryEmblem {
+  readonly viewBox: number; readonly cx: number; readonly cy: number;
+  readonly unit: number; readonly stroke: number; readonly dot: number; readonly ring: boolean; readonly rotate: 0 | -90;
+  /** Node radius in glyph units (`dot / unit`). */
+  readonly r: number;
+}
+const emblem = (viewBox: number, cx: number, cy: number, unit: number, stroke: number, dot: number, ring = false, rotate: 0 | -90 = 0): RepositoryEmblem =>
+  ({ viewBox, cx, cy, unit, stroke, dot, ring, rotate, r: dot / unit });
+export function repositoryEmblem(surface: RepositoryEmblemSurface, size: 'small' | 'large', style: RepositoryFolderStyle = 'filled'): RepositoryEmblem {
+  const small = size === 'small', outline = style === 'outline';
+  // Catppuccin's sprite strokes 1 of 16 units: 3 overlay units at any size.
+  if (surface === 'catppuccin') return small ? emblem(48, 21, 27, 1, 3, 1.9) : emblem(48, 21, 27.25, 1.1, 3, 2.6, true);
+  if (surface === 'thumbnail') return emblem(48, 24, 41.6, 0.33, 1.15, 0.72, false, -90);
+  if (small) return outline ? emblem(18, 9, 10.5, 0.36, 1, 0.6) : emblem(18, 9, 10.5, 0.37, 1.05, 0.72);
+  // Minimal's large outline is 1.5 units; Material/Classic take the 3-unit
+  // weight of the Material sprite's own Git mark.
+  return outline ? emblem(48, 24, 29.4, 1, 1.5, 2.3, true) : emblem(48, 24, 30.6, 1.05, 3, 1.8);
+}
+
+/** The glyph's painted extent in viewBox units, including node radii and strokes. */
+export function repositoryEmblemBounds(e: RepositoryEmblem): { left: number; right: number; top: number; bottom: number } {
+  const reach = e.dot + e.stroke / 2;
+  // rotate(-90) maps glyph (x, y) to (y, -x).
+  const turned = REPOSITORY_GLYPH_NODES.map(([x, y]) => e.rotate === -90 ? [y, -x] : [x, y]);
+  const xs = turned.map(([x]) => e.cx + x * e.unit);
+  const ys = turned.map(([, y]) => e.cy + y * e.unit);
+  return { left: Math.min(...xs) - reach, right: Math.max(...xs) + reach, top: Math.min(...ys) - reach, bottom: Math.max(...ys) + reach };
 }
 
 /** Tiles' 20px peek caret starts this many px inside the icon's bottom-right (TilePanelsView `.tile-caret`). */

@@ -1,8 +1,8 @@
 /**
- * Git repository badges are a rendered theme surface, not a fixed Git-brand
+ * Git repository folders are a rendered theme surface, not a fixed Git-brand
  * colour. The mock listing deliberately includes `my-project` as a repository
- * root beside ordinary folders, so this test observes the actual SVG badge a
- * user sees after changing themes.
+ * root beside ordinary folders, so this test observes the actual SVG folder a
+ * user sees after changing themes (tinted with `--icon-git-badge`, #1490).
  */
 import { test, expect } from "./fixtures";
 import { VIEW_MODES, waitForEntries, HOME_URL, switchViewMode } from "./helpers";
@@ -33,9 +33,10 @@ test(`Git repository folder badge follows the active theme in ${viewMode} view`,
   if (viewMode !== "details") await switchViewMode(page, viewMode);
 
   const repository = page.locator('.entry-item[data-path="/home/user/my-project"]');
-  const badge = repository.locator(".git-repo-folder rect.git-repo-emblem-plate");
+  // Since #1490 the repository folder itself is painted in the Git colour.
+  const badge = repository.locator(".git-repo-folder svg path").first();
   const folder = page.locator('.entry-item[data-path="/home/user/Documents"] [data-drag-icon] svg path').first();
-  await expect(badge).toBeVisible();
+  await expect(repository.locator(".git-repo-folder .git-repo-emblem")).toBeVisible();
 
   await setTheme(page, "light");
   const lightBadge = await badge.evaluate((element) => getComputedStyle(element).fill);

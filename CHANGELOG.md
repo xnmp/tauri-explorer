@@ -2,6 +2,27 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.19.0 — 2026-11-02
+
+### Added
+
+- Common folder names (src, lib, tests, docs, node_modules, .git, .github,
+  .vscode, config, scripts, assets, images, public, dist/build, packages,
+  styles, Music, Videos, Downloads and more) show special folder icons drawn
+  in the active icon pack's own style, in every view mode (#1491).
+
+### Changed
+
+- Repository folders are tinted in the Git colour and carry a branch glyph
+  drawn in each icon pack's idiom (a flat knock-out on Material and Classic,
+  a stroked outline on Minimal and Catppuccin) instead of the diamond plate
+  (#1490).
+
+### Fixed
+
+- The Linux-only launch-path resolver and its test are compiled only on Linux,
+  fixing the Windows Rust test failure (#1488).
+
 ## v1.18.0 — 2026-11-01
 
 ### Added

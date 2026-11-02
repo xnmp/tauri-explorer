@@ -18,11 +18,11 @@
 
 <span class="icon-cat catppuccin-file-icon" class:light={iconThemeStore.isLight} class:git-repo-folder={decoration==='repository'} class:linked-folder={decoration==='linked'} class:icon-html={icon === 'html'} class:icon-video={icon === 'video'} role={icon === 'video' ? 'img' : undefined} aria-label={icon === 'video' ? 'Video' : undefined}
   data-icon-theme="catppuccin" data-icon-id={icon} style:width={`${size === 'small' ? 16 : 64}px`} style:height={`${size === 'small' ? 16 : 64}px`}
-  style:--icon-pack-tint={tint} style:--folder-tint={entry.kind === 'directory' ? 'var(--icon-folder, var(--ctp-text))' : undefined}>
+  style:--icon-pack-tint={tint} style:--folder-tint={entry.kind !== 'directory' ? undefined : decoration === 'repository' ? 'var(--icon-git-badge, #f05033)' : 'var(--icon-folder, var(--ctp-text))'}>
   <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><use href={`${spriteUrl}#${icon}`} width="16" height="16" />{#if Special}<Special {entry} {size} theme="catppuccin" sprite={spriteUrl} />{/if}</svg>
   {#if decoration !== 'none'}
     <svg class="folder-decoration" viewBox="0 0 48 48" fill="none" aria-hidden="true">
-      <FolderDecoration {entry} size="large" surface="catppuccin" rendered={size} arrowColor="var(--icon-link-arrow, var(--icon-folder, currentColor))" />
+      <FolderDecoration {entry} size="large" surface="catppuccin" rendered={size} repoStyle="outline" arrowColor="var(--icon-link-arrow, var(--icon-folder, currentColor))" />
     </svg>
   {/if}
 </span>

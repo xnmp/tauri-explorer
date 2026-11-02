@@ -100,7 +100,11 @@ const STARTUP_RAW_BUDGET = 866_617;
 // component mount each in FolderIcon and CatppuccinFileIcon. Importing the
 // Catppuccin sprite URL from the lazy chunk split it into its own startup
 // chunk (+576), so CatppuccinFileIcon passes its URL down instead.
-const STARTUP_GZIP_BUDGET = 280_768;
+// Raised 280,768 -> 281,024 (+256) for #1490 (pack-native repository folders):
+// alone it measured 280,496 (+159 over the pre-#1491 dev); combined with #1491
+// it measured 280,948. The extra startup cost is the per-pack repository
+// style (filled/outline) and the repository tint in FolderIcon/Catppuccin.
+const STARTUP_GZIP_BUDGET = 281_024;
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const clientDir = resolve(repoRoot, ".svelte-kit/output/client");

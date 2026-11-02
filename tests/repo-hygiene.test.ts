@@ -26,6 +26,18 @@ describe("public repository hygiene", () => {
     expect(dependabot).not.toMatch(/package-ecosystem: "npm"/);
   });
 
+  it("keeps zip major bumps out of the cargo Dependabot job, which renames its bzip2 feature (#1497)", () => {
+    const dependabot = readRepositoryFile(".github/dependabot.yml");
+    const cargo = dependabot
+      .split(/^  - package-ecosystem: /m)
+      .find((entry) => entry.startsWith('"cargo"'));
+
+    expect(cargo).toMatch(
+      /ignore:\n(?:\s*#.*\n)*\s*- dependency-name: "zip"\n\s*update-types: \["version-update:semver-major"\]/,
+    );
+    expect(readRepositoryFile("src-tauri/Cargo.toml")).toMatch(/^zip = \{ version = "2",.*"bzip2"/m);
+  });
+
   it("declares build scripts for vendored crates with links, so manifest-only Dependabot can parse them (#1479)", () => {
     const vendorRoot = new URL("../src-tauri/vendor/", import.meta.url);
     const manifests = readdirSync(vendorRoot, { withFileTypes: true })

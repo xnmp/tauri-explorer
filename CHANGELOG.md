@@ -2,6 +2,19 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.20.0 — 2026-11-03
+
+### Added
+
+- Special folder icons now also appear in Miller columns, the sidebar
+  (bookmarks and Quick Access), the window tab bar and the navigation history
+  menu, drawn in the active icon pack's style (#1499).
+
+### Fixed
+
+- Dependabot keeps `zip` major-version bumps out of the routine Cargo group so
+  its feature rename cannot break the grouped update (#1497).
+
 ## v1.19.0 — 2026-11-02
 
 ### Added

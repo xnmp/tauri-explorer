@@ -19,6 +19,12 @@ updates:
       routine-dependencies:
         patterns:
           - "*"
+    ignore:
+      # Dependabot rewrites zip's `bzip2` feature to `bzip9` when it bumps the
+      # requirement from 2 to 9, failing the whole job (#1497). A zip major
+      # upgrade changes its API anyway, so it is migrated by hand.
+      - dependency-name: "zip"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "github-actions"
     directory: "/"

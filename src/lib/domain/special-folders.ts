@@ -123,3 +123,15 @@ export function resolveSpecialFolderVariant(entry: FileEntry, pack: IconPack, si
     ink: `color-mix(in srgb, ${body} 40%, #000)`,
   };
 }
+
+/**
+ * Surfaces that know a folder only by name (#1499: tab bar, sidebar rows,
+ * history menu, collapsed preview root) draw a special folder through
+ * FileIcon with this synthetic directory entry, so every pack paints its
+ * native variant. Null means the host keeps its own folder art: an ordinary
+ * name, or a repository the host already marks with its Git styling (#1490).
+ */
+export function specialFolderIconEntry(name: string, options: { readonly path?: string; readonly repository?: boolean } = {}): FileEntry | null {
+  if (options.repository === true || getSpecialFolderKind(name) === null) return null;
+  return { name, path: options.path ?? name, kind: 'directory', size: 0, modified: '' };
+}

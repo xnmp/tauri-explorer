@@ -8,6 +8,8 @@
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { basename, parentDir } from "$lib/domain/path";
   import { rectToFixed, getZoomFactor } from "$lib/domain/zoom";
+  import FileIcon from "./FileIcon.svelte";
+  import { specialFolderIconEntry } from "./icons/special-folder-icons.svelte";
 
   interface Props {
     explorer: ExplorerInstance;
@@ -52,6 +54,8 @@
   <div class="history-menu" style="left: {left}px; top: {top}px;" role="menu">
     <div class="history-label">History</div>
     {#each items as item (item.index)}
+      <!-- A special folder name takes its pack-native icon (#1499). -->
+      {@const special = specialFolderIconEntry(basename(item.path))}
       <button
         class="history-item"
         class:current={item.index === explorer.historyIndex}
@@ -60,9 +64,13 @@
         aria-checked={item.index === explorer.historyIndex}
         title={item.path}
       >
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <path d="M3 3.5C3 2.67 3.67 2 4.5 2H7L8.5 3.5H12.5C13.33 3.5 14 4.17 14 5V12C14 12.83 13.33 13.5 12.5 13.5H4.5C3.67 13.5 3 12.83 3 12V3.5Z" fill="var(--icon-folder, #ffb900)" opacity="0.8"/>
-        </svg>
+        {#if special}
+          <span class="history-icon"><FileIcon entry={special} size="small" /></span>
+        {:else}
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M3 3.5C3 2.67 3.67 2 4.5 2H7L8.5 3.5H12.5C13.33 3.5 14 4.17 14 5V12C14 12.83 13.33 13.5 12.5 13.5H4.5C3.67 13.5 3 12.83 3 12V3.5Z" fill="var(--icon-folder, #ffb900)" opacity="0.8"/>
+          </svg>
+        {/if}
         <span class="history-name">{basename(item.path) || item.path}</span>
         <span class="history-parent">{parentDir(item.path)}</span>
         {#if item.index === explorer.historyIndex}
@@ -131,6 +139,11 @@
   }
 
   .history-item svg:first-of-type {
+    flex-shrink: 0;
+  }
+
+  .history-icon {
+    display: inline-flex;
     flex-shrink: 0;
   }
 

@@ -8,6 +8,7 @@
   import type { FileEntry } from "$lib/domain/file";
   import { getFileIconColor } from "$lib/domain/file-types";
   import FileIcon from "./FileIcon.svelte";
+  import { specialFolderIconEntry } from "./icons/special-folder-icons.svelte";
   import VirtualList from "./VirtualList.svelte";
 
   interface Props {
@@ -25,10 +26,16 @@
 
 <div class="preview-folder-list">
   {#if collapsedRoot}
+    <!-- The innermost folder names the icon (#1499). -->
+    {@const special = specialFolderIconEntry(collapsedRoot.split("/").pop() ?? "")}
     <div class="collapsed-root-indicator" title="Showing the contents of the only folder inside">
-      <svg class="collapsed-root-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-        <path d="M2 4C2 3.45 2.45 3 3 3H6L7.5 4.5H13C13.55 4.5 14 4.95 14 5.5V12C14 12.55 13.55 13 13 13H3C2.45 13 2 12.55 2 12V4Z" fill="currentColor" fill-opacity="0.2" stroke="currentColor" stroke-width="1.1"/>
-      </svg>
+      {#if special}
+        <span class="collapsed-root-special"><FileIcon entry={special} size="small" /></span>
+      {:else}
+        <svg class="collapsed-root-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M2 4C2 3.45 2.45 3 3 3H6L7.5 4.5H13C13.55 4.5 14 4.95 14 5.5V12C14 12.55 13.55 13 13 13H3C2.45 13 2 12.55 2 12V4Z" fill="currentColor" fill-opacity="0.2" stroke="currentColor" stroke-width="1.1"/>
+        </svg>
+      {/if}
       <span class="collapsed-root-name">{collapsedRoot}/</span>
       <span class="collapsed-root-note">{collapsedNote}</span>
     </div>
@@ -76,6 +83,11 @@
 
   .collapsed-root-icon {
     color: var(--accent-text, var(--accent));
+    flex-shrink: 0;
+  }
+
+  .collapsed-root-special {
+    display: inline-flex;
     flex-shrink: 0;
   }
 

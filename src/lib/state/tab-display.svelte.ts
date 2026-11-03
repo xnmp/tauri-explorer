@@ -27,8 +27,10 @@ const PANE_TITLE_SEPARATOR = " | ";
  *    name, and the current folder (`repo` is null when the cwd *is* the root).
  *  - single-pane normal mode: a folder icon and the (disambiguated) folder name.
  *  - multi-pane: the custom name if renamed, else every pane's folder name
- *    joined (no disambiguation — the combination is the identity). */
-export type TabDisplay = GitTabDisplay;
+ *    joined (no disambiguation — the combination is the identity).
+ *  `folder` is the single-pane normal-mode tab's own folder name (before
+ *  disambiguation), which picks a special folder icon (#1499). */
+export type TabDisplay = GitTabDisplay & { readonly folder?: string };
 
 export interface TabDisplayDeps {
   getTabs: () => WindowTab[];
@@ -63,11 +65,8 @@ export function createTabDisplay(deps: TabDisplayDeps) {
       if (g) {
         out.set(t.id, gitTabDisplay(g.cwd, g.repoRoot));
       } else {
-        out.set(t.id, {
-          isGitRoot: false,
-          repo: null,
-          name: disamb.get(t.id) ?? extractFolderName(deps.getTabLivePath(t)),
-        });
+        const folder = extractFolderName(deps.getTabLivePath(t));
+        out.set(t.id, { isGitRoot: false, repo: null, name: disamb.get(t.id) ?? folder, folder });
       }
     }
     return out;

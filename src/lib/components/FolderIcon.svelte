@@ -1,14 +1,18 @@
 <script lang="ts">
   import type { FileEntry } from '$lib/domain/file';
   import type { IconPack } from '$lib/domain/icon-themes';
-  import { getFolderDecoration } from '$lib/domain/file-icon-identity';
+  import { getFolderDecoration, repositoryFolderStyle } from '$lib/domain/file-icon-identity';
   import FolderDecoration from './FolderDecoration.svelte';
+  import { specialFolderArt } from './icons/special-folder-icons.svelte';
   let {entry,size,theme}: {entry:FileEntry;size:'small'|'large';theme:IconPack}=$props();
   const decoration=$derived(getFolderDecoration(entry));
+  const Special=$derived(specialFolderArt());
+  // A repository folder is drawn in the Git colour, like a pack's coloured special folder (#1490).
+  const tint=$derived(decoration==='repository' ? 'var(--icon-git-badge, #f05033)' : 'var(--icon-folder, #ffb900)');
 </script>
 
 <span class="icon-cat folder-icon" class:linked-folder={decoration==='linked'} class:git-repo-folder={decoration==='repository'} class:classic-large={theme==='classic' && size==='large'}
-  data-icon-theme={theme} style:color={'var(--icon-folder, #ffb900)'}>
+  data-icon-theme={theme} style:color={tint}>
   <svg class:folder-large={size==='large'} width={size==='small'?16:64} height={size==='small'?16:64} viewBox={size==='small'?'0 0 18 18':'0 0 48 48'} fill="none" aria-hidden="true">
     {#if theme==='minimal'}
       {#if size==='small'}
@@ -26,11 +30,14 @@
       <path d="M2 20C2 17.9 3.34 16.25 5 16.25H43C44.66 16.25 46 17.9 46 20V41.25C46 43.3 44.66 45 43 45H5C3.34 45 2 43.3 2 41.25V20Z" fill="currentColor"/>
       {#if theme==='classic'}<path d="M2 20C2 17.9 3.34 16.25 5 16.25H43C44.66 16.25 46 17.9 46 20V21.25H2V20Z" fill="#fff" opacity="0.25"/>{/if}
     {/if}
-    <FolderDecoration {entry} {size} arrowColor={theme==='minimal'?'var(--icon-link-arrow, currentColor)':undefined} />
+    {#if Special}<Special {entry} {size} {theme}/>{/if}
+    <FolderDecoration {entry} {size} repoStyle={repositoryFolderStyle(theme)} arrowColor={theme==='minimal'?'var(--icon-link-arrow, currentColor)':undefined} />
   </svg>
 </span>
 
 <style>
   .folder-icon { display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; line-height:0; }
+  /* A special folder that repaints the body (#1491) hides the plain one. */
+  .folder-icon:global(:has(.special-folder-body) > svg > path) { display:none; }
   .classic-large { filter:drop-shadow(0 2px 2px rgb(0 0 0 / .25)); }
 </style>

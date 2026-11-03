@@ -92,7 +92,19 @@ const STARTUP_RAW_BUDGET = 866_617;
 // label props; its label logic loads lazily with pane-lineage) +149, #1443's
 // late-reveal prune +37 and #1448's caret-less lineage toggle +22. Folding
 // that toggle into PeekOpenButton was measured and grew startup to 280,181.
-const STARTUP_GZIP_BUDGET = 280_512;
+// Raised 280,512 -> 280,768 (+256) for #1491 (special folder icons): dev
+// measured 280,337; the feature measured 280,735 (+398). The alias table,
+// per-pack variants, renderer and glyph sprite all load lazily
+// (icons/SpecialFolderArt.svelte); startup carries only the seam in
+// icons/special-folder-icons.svelte.ts, its preload wrapper, and one dynamic
+// component mount each in FolderIcon and CatppuccinFileIcon. Importing the
+// Catppuccin sprite URL from the lazy chunk split it into its own startup
+// chunk (+576), so CatppuccinFileIcon passes its URL down instead.
+// Raised 280,768 -> 281,024 (+256) for #1490 (pack-native repository folders):
+// alone it measured 280,496 (+159 over the pre-#1491 dev); combined with #1491
+// it measured 280,948. The extra startup cost is the per-pack repository
+// style (filled/outline) and the repository tint in FolderIcon/Catppuccin.
+const STARTUP_GZIP_BUDGET = 281_024;
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const clientDir = resolve(repoRoot, ".svelte-kit/output/client");

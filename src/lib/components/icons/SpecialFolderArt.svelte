@@ -7,6 +7,11 @@
   Catppuccin's small composite) carries a class the host's CSS uses to hide
   the plain folder underneath.
 -->
+<script module lang="ts">
+  // Re-exported so by-name folder surfaces (#1499) share this lazy chunk.
+  export { specialFolderIconEntry } from '$lib/domain/special-folders';
+</script>
+
 <script lang="ts">
   import { resolveSpecialFolderVariant } from '$lib/domain/special-folders';
   import type { SpecialFolderArtProps } from './special-folder-icons.svelte';

@@ -17,7 +17,6 @@
   import { getCommandShortcut } from "$lib/state/commands.svelte";
   import BreadcrumbAutocomplete from "./BreadcrumbAutocomplete.svelte";
   import CaretPicker from "./CaretPicker.svelte";
-  import NavigationHistoryMenu from "./NavigationHistoryMenu.svelte";
 
   interface Props {
     explorer: ExplorerInstance;
@@ -356,7 +355,8 @@
   {/if}
 
   {#if historyMenuAnchor}
-    <NavigationHistoryMenu {explorer} anchorEl={historyMenuAnchor} onClose={closeHistoryMenu} />
+    <!-- Loaded on first right-click: keeps the menu out of the startup bundle (#1499). -->
+    {#await import("./NavigationHistoryMenu.svelte") then { default: Menu }}<Menu {explorer} anchorEl={historyMenuAnchor} onClose={closeHistoryMenu} />{/await}
   {/if}
 
   {#if settingsStore.showAddressBar}

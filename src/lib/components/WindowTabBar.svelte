@@ -23,6 +23,7 @@
   import { getZoomFactor } from "$lib/domain/zoom";
   import { openNewWindow } from "$lib/state/commands/shared";
   import { showTabStrip } from "$lib/domain/titlebar";
+  import NamedFolderIcon from "./NamedFolderIcon.svelte";
   import type { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
   const tabs = $derived(windowTabsManager.tabs);
@@ -486,17 +487,12 @@
             />
           </svg>
         {:else}
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 16 16"
-            fill="none"
-            class="tab-icon"
-          >
-            <path
-              d="M2 3.5C2 2.67 2.67 2 3.5 2H6.17L8 3.83H12.5C13.33 3.83 14 4.5 14 5.33V12.5C14 13.33 13.33 14 12.5 14H3.5C2.67 14 2 13.33 2 12.5V3.5Z"
-            />
-          </svg>
+          <!-- A special folder name takes its pack-native icon (#1499). -->
+          <NamedFolderIcon name={display.folder ?? ""} class="tab-icon tab-icon-special">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="tab-icon">
+              <path d="M2 3.5C2 2.67 2.67 2 3.5 2H6.17L8 3.83H12.5C13.33 3.83 14 4.5 14 5.33V12.5C14 13.33 13.33 14 12.5 14H3.5C2.67 14 2 13.33 2 12.5V3.5Z" />
+            </svg>
+          </NamedFolderIcon>
         {/if}
         {#if renamingTabId === tab.id}
           <!-- svelte-ignore a11y_autofocus -->
@@ -820,9 +816,13 @@
     opacity: 0.85;
   }
 
-  .tab:hover .tab-icon {
+  .tab:hover .tab-icon,
+  .tab:hover :global(.tab-icon-special) {
     transform: scale(1.05);
   }
+
+  /* A special folder's pack icon (#1499) is FileIcon in a wrapper span. */
+  .tab :global(.tab-icon-special) { display: inline-flex; flex-shrink: 0; }
 
   .tab:hover .tab-icon path {
     opacity: 1;

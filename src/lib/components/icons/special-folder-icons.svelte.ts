@@ -4,7 +4,7 @@ import type { IconPack } from '$lib/domain/icon-themes';
 
 export type SpecialFolderArtProps = { entry: FileEntry; size: 'small' | 'large'; theme: IconPack; sprite?: string };
 
-let art = $state.raw<Component<SpecialFolderArtProps>>();
+let lazy = $state.raw<typeof import('./SpecialFolderArt.svelte')>();
 let loading: Promise<unknown> | undefined;
 
 /**
@@ -14,6 +14,16 @@ let loading: Promise<unknown> | undefined;
  * pick the renderer up reactively.
  */
 export function specialFolderArt(): Component<SpecialFolderArtProps> | undefined {
-  loading ??= import('./SpecialFolderArt.svelte').then((m) => (art = m.default));
-  return art;
+  loading ??= import('./SpecialFolderArt.svelte').then((m) => (lazy = m));
+  return lazy?.default;
+}
+
+/**
+ * The synthetic entry a by-name folder surface hands FileIcon (#1499; see
+ * `specialFolderIconEntry` in domain/special-folders), from the same lazy
+ * chunk. Null until it loads, then reactively the special entry or null.
+ */
+export function specialFolderIconEntry(name: string, repository?: boolean): FileEntry | null {
+  specialFolderArt();
+  return lazy?.specialFolderIconEntry(name, { repository }) ?? null;
 }

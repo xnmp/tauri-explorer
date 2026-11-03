@@ -384,7 +384,7 @@ test.describe("Bookmarks", () => {
       test("dragging a folder to Quick Access adds bookmark", async ({ page }) => {
         await pinFolder(page, paths[0]);
         await expect.poll(() => bookmarkPaths(page)).toEqual([paths[0]]);
-        await expect(bookmarks(page).locator(":scope > span")).toHaveText(["Documents"]);
+        await expect(bookmarks(page).locator(":scope > [data-region=\"sidebar-label\"]")).toHaveText(["Documents"]);
       });
 
       test("removing a bookmark works", async ({ page }) => {
@@ -405,7 +405,7 @@ test.describe("Bookmarks", () => {
         await page.reload();
         await waitForFileList(page);
         await expect.poll(() => bookmarkPaths(page)).toEqual(paths);
-        await expect(bookmarks(page).locator(":scope > span")).toHaveText(["Documents", "Downloads"]);
+        await expect(bookmarks(page).locator(":scope > [data-region=\"sidebar-label\"]")).toHaveText(["Documents", "Downloads"]);
       });
 
       test("bookmark reordering via drag", async ({ page }) => {

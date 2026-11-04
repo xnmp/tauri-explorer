@@ -219,12 +219,16 @@ test("expansions survive DOM retention eviction and remain independent in a spli
   await expect(page.locator(`.explorer-pane[data-pane-id="${leftId}"] .entry-item[data-path="${root}/Alpha/Nested/deep.txt"]`)).toBeVisible();
 });
 
-test("root filtering retains child names, typeahead stays at root, and virtual providers have no peeks", async ({ page }) => {
+test("filtering applies inside peeks (#1510), typeahead stays at root, and virtual providers have no peeks", async ({ page }) => {
   await expand(page);
+  await expect(row(page, `${root}/Alpha/same.txt`)).toBeVisible();
   await page.evaluate(async () => {
     const { windowTabsManager } = await import("/src/lib/state/window-tabs.svelte.ts"); windowTabsManager.getActiveExplorer()!.setFilter("Alpha");
   });
-  await expect(row(page, `${root}/Alpha/same.txt`)).toBeVisible();
+  // A name-matching folder stays, but its peek is filtered too, so a
+  // non-matching child leaves the open peek.
+  await expect(row(page, `${root}/Alpha`)).toBeVisible();
+  await expect(row(page, `${root}/Alpha/same.txt`)).toHaveCount(0);
   await row(page, `${root}/Alpha`).click(); await page.keyboard.type("same");
   expect((await snapshot(page)).selected).toEqual([`${root}/Alpha`]);
   await page.evaluate(async () => {

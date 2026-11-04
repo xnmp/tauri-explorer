@@ -118,17 +118,6 @@ export function isUncPath(path: string): boolean {
   return /^\/\/[^/]+\/[^/]+/.test(normalized);
 }
 
-/**
- * True for an entry inside a backend of the GVfs FUSE bridge
- * (`/run/user/<uid>/gvfs/<backend>/…`, e.g. Google Drive). Those locations
- * have no trash, so the native trash request refuses them (#1508) and the
- * delete flow asks for permanent deletion instead. The native mount table
- * remains the authority; this only chooses the dialog shown first.
- */
-export function isGvfsFusePath(path: string): boolean {
-  return /^\/run\/user\/\d+\/gvfs\/[^/]+\/./.test(path);
-}
-
 /** Normalize all forward-slash separators to backslashes. */
 export function toBackslashes(path: string): string {
   return path.replace(/\//g, "\\");

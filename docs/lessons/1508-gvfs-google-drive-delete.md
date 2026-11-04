@@ -8,10 +8,11 @@ mount's top directory, so Move to Trash could never work. Copying into the home
 trash is not an option either (ADR 0019 rules out a copy/delete fallback), and
 the Google backend itself reports `access::can-trash = FALSE`, which is why
 Nautilus only offers permanent deletion there. The trash planner now refuses a
-source on that filesystem before probing any layout. The renderer opens the
-permanent-delete confirmation when every selected entry is under
-`/run/user/<uid>/gvfs/<backend>/`. The mount table stays the authority, so a
-path the renderer misclassifies fails closed instead of being silently removed.
+source on that filesystem before probing any layout, with a per-item error
+telling the user to use Delete Permanently. The renderer deliberately does not
+pre-classify GVfs paths: a path-shape check to open the permanent-delete dialog
+first would have exceeded the startup bundle cap, and the mount table is the
+authority anyway, so nothing is ever silently made permanent.
 
 Permanent deletion normally captures the entry by renaming it into a fresh
 `.tauri-delete-*` sibling and verifying its `EntryVersion` there. On GVfs that

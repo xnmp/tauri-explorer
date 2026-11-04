@@ -1110,6 +1110,10 @@ TraceExplorer's image UI, provider adapters and SQLite journal are maintained in
 - `src/lib/api/text-connections.ts` — typed native settings/credential/check/test commands and revision subscriptions.
 - `src/lib/api/mock-text-connections.ts` — isolated browser fixture using the public validation/revision rules.
 - `src/lib/state/text-connections.ts` — dirty draft/CAS, stale result/cancellation and cross-window event reconciliation.
+- `src/lib/api/ai-text.ts` — default-profile describe/generate/cancel for core window features (`ai_text_*`, caller `window:<label>`).
+- `src/lib/domain/ai-filter.ts` — AI filter (#1506): bounded compact listing prompt (2000 entries / 60 KiB), reply validation against sent names, request state machine and status text.
+- `src/lib/state/ai-filter.svelte.ts` — AI filter request owner per explorer (lazy with FilterBar): availability gate, staleness by request ID + captured path + installed predicate, cancellation.
+- `src/lib/components/FilterBar.svelte` — lazy Ctrl+F filter box (moved out of NavigationBar); Alt+Enter AI filter, AI chip, hint and status line.
 - `src-tauri/src/ai/mod.rs` — native short-text service admission, owned cancellation/deadlines, settings commands and safe committed revision notifications.
 - `src-tauri/src/ai/domain.rs` — native profile/request contracts, URL/default validation, non-secret context identity and safe errors.
 - `src-tauri/src/ai/storage.rs` — cross-process locking, synced config replacement/CAS and resumable copy-if-unset legacy preferences.

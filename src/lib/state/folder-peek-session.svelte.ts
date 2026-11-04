@@ -9,10 +9,11 @@ import type { BandSide } from "$lib/domain/tile-panels";
 import { rememberListExpansion, type ListPeekExpansion } from "$lib/domain/folder-peek-memory";
 import { rememberCardRows } from "$lib/domain/list-cards";
 import { createDirectoryListing } from "./directory-listing";
+import { peekListingCache, type PeekListingCache } from "./peek-listing-cache";
 import { gitStatusStore } from "./git-status.svelte";
 import type { RefreshTarget } from "./pane-refresh";
 
-export function createFolderPeekSession(windows: boolean, initialExpanded: readonly string[] = []) {
+export function createFolderPeekSession(windows: boolean, initialExpanded: readonly string[] = [], cache: PeekListingCache = peekListingCache()) {
   const initialPaths = [...new Set(initialExpanded)].slice(-500);
   let expanded = $state.raw<ReadonlyMap<string, number>>(new Map(initialPaths.map((path, index) => [path, index + 1])));
   /** Spring-loaded peeks of a live drag (#1242), outer first: rendered and
@@ -83,23 +84,31 @@ export function createFolderPeekSession(windows: boolean, initialExpanded: reado
       if (resources.has(path)) continue;
       const owner = createDirectoryListing();
       let timer: ReturnType<typeof setTimeout> | undefined;
+      /** False until this resource's own first read (or mutation) publishes:
+       * a remembered paint (#1509) is not that read. */
+      let read = false;
       const current = () => !disposed && resources.get(path)?.target === target;
       const settle = () => { clearTimeout(timer); timer = undefined; };
       const target: RefreshTarget = {
         dirListing: owner,
         current,
         get entries() { return snapshots.get(path)?.entries ?? []; },
-        get initial() { return snapshots.get(path)?.status === "loading"; },
+        get initial() { return !read; },
         set entries(entries: readonly FileEntry[]) {
           if (!current()) return;
-          settle(); publish(path, { status: "loaded", entries });
+          settle(); read = true; publish(path, { status: "loaded", entries });
+          cache.put(path, entries);
         },
         fail(error: string) {
           if (!current()) return;
-          settle(); publish(path, { status: "error", entries: [], error });
+          settle(); read = true; publish(path, { status: "error", entries: [], error });
+          cache.invalidate([path]);
         },
       };
       resources.set(path, { target, retire: () => { settle(); return owner.cleanup(); } });
+      // Paint the remembered listing while the peek's first read revalidates it.
+      const remembered = cache.get(path);
+      if (remembered) { publish(path, { status: "loaded", entries: remembered }); continue; }
       publish(path, { status: "loading", entries: [], showLoading: false });
       timer = setTimeout(() => {
         if (current() && snapshots.get(path)?.status === "loading") publish(path, { status: "loading", entries: [], showLoading: true });

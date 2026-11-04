@@ -240,6 +240,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `folder-peek.svelte.ts` — per-pane facade that loads peek policies and resources on first use.
 - `folder-peek-session.svelte.ts` — lazy expansion membership, bounded List spill/full-flow/column stage choices (forgotten when a folder closes, #1365), and independently retired child-listing resources.
 - `pane-peek-watch.ts` — lazy pane-watch extension for capped child-directory and repository observation.
+- `peek-listing-cache.ts` — lazy, bounded window-wide LRU of the last complete listing each peek published (#1509): a re-opened peek paints it while its first read revalidates; shared directory events and local mutation broadcasts evict.
 - `directory-listing.ts` — complete directory snapshots, queued-request supersession, teardown and observation transfer.
 - `navigation.ts` — pure back/forward history utilities.
 - `src/lib/state/pane-pointer-focus.ts` — pointer gesture focus ownership without cancelling native drag acquisition.

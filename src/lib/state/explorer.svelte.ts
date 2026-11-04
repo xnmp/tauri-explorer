@@ -38,7 +38,7 @@ import type { RowClickInput, RowPeekTarget } from "$lib/domain/folder-peek-flat"
 import type { BandSide } from "$lib/domain/tile-panels";
 import { isVirtualPath } from "$lib/domain/virtual-path";
 import { providerFor } from "$lib/plugins/fs-providers";
-import { basename, toNativeSeparators, pathComparison, coverageOf } from "$lib/domain/path";
+import { basename, toNativeSeparators, pathComparison, coverageOf, isGvfsFusePath } from "$lib/domain/path";
 import { isWindows } from "$lib/domain/platform";
 import { fetchDirectory } from "$lib/api/files";
 import { sortEntries, filterHidden, type FileEntry, type SortField } from "$lib/domain/file";
@@ -947,7 +947,9 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     const arr = reduced.entries;
     if (arr.length === 0) return;
 
-    if (arr.some((entry) => entry.trash)) {
+    // GVfs locations such as Google Drive have no trash (#1508): ask for
+    // permanent deletion rather than sending a trash request native refuses.
+    if (arr.some((entry) => entry.trash) || (!isWindows && arr.every((entry) => isGvfsFusePath(entry.path)))) {
       dialogStore.startDelete(arr, true);
       return;
     }

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   isUncPath,
+  isGvfsFusePath,
   normalizePathInput,
   isDriveRoot,
   parentDir,
@@ -428,6 +429,23 @@ describe("Windows UNC syntax", () => {
   });
 });
 
+
+describe("isGvfsFusePath (#1508)", () => {
+  it("matches entries inside a GVfs FUSE backend such as Google Drive", () => {
+    expect(isGvfsFusePath("/run/user/1000/gvfs/google-drive:host=gmail.com,user=someone/0AAbc/1XyZ")).toBe(true);
+    expect(isGvfsFusePath("/run/user/1000/gvfs/smb-share:server=nas,share=media/movie.mkv")).toBe(true);
+  });
+  it("excludes backend roots, the bridge root and ordinary paths", () => {
+    for (const path of [
+      "/run/user/1000/gvfs/google-drive:host=gmail.com,user=someone",
+      "/run/user/1000/gvfs",
+      "/run/user/1000/other/file",
+      "/home/me/run/user/1000/gvfs/x/y",
+    ]) {
+      expect(isGvfsFusePath(path)).toBe(false);
+    }
+  });
+});
 
 it("retains literal POSIX backslashes when using native separators", () => {
   expect(toNativeSeparators("/images\\draft/out.png", "/")).toBe("/images\\draft/out.png");

@@ -16,6 +16,29 @@ pub(super) struct Mount {
     pub filesystem: OsString,
 }
 
+/// The FUSE bridge GVfs mounts at `$XDG_RUNTIME_DIR/gvfs` for every GIO
+/// backend (Google Drive, SMB, SFTP, MTP, WebDAV, ...). Its root is a
+/// read-only virtual listing of backend mounts, and each backend directory is
+/// a different remote service, so no Freedesktop trash can exist for it (#1508).
+const GVFS_FUSE: &[u8] = b"fuse.gvfsd-fuse";
+
+impl Mount {
+    /// Whether this mount can never hold a Freedesktop trash. GVfs reports
+    /// `access::can-trash = FALSE` for Google Drive, and its FUSE root refuses
+    /// every `.Trash`/`.Trash-$uid` creation, so trashing must be refused
+    /// before any effect and the user offered permanent deletion instead.
+    pub fn lacks_trash(&self) -> bool {
+        self.is_gvfs_fuse()
+    }
+
+    /// GVfs FUSE inode numbers are libfuse path-node ids, and every rename
+    /// or folder creation is a remote service mutation, so a staging capture
+    /// proves no object identity there (#1508).
+    pub fn is_gvfs_fuse(&self) -> bool {
+        self.filesystem.as_bytes() == GVFS_FUSE
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct MountSnapshot {
     mounts: Vec<Mount>,

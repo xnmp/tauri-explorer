@@ -383,3 +383,39 @@ describe("Trash deletion confirmation (#1216)", () => {
     }
   });
 });
+
+describe("GVfs deletion confirmation (#1508)", () => {
+  const drive = "/run/user/1000/gvfs/google-drive:host=gmail.com,user=someone/0AAbc";
+
+  it("asks for permanent deletion instead of sending a trash request native refuses", async () => {
+    const { dialogStore } = await import("$lib/state/dialogs.svelte");
+    const item = { ...entry("report.pdf"), path: `${drive}/1XyZ` };
+    settingsStore.toggleConfirmDelete();
+    deleteEntriesMock.mockResolvedValue({ ok: true, data: { succeeded: [], failed: [] } });
+    const explorer = createExplorerState();
+    try {
+      await explorer.startDelete(item);
+      expect(deleteEntriesMock).not.toHaveBeenCalled();
+      expect(dialogStore.deletingEntries.map(e => e.path)).toEqual([item.path]);
+      expect(dialogStore.isPermanentDelete).toBe(true);
+    } finally {
+      dialogStore.cancelDelete();
+      await explorer.destroy();
+    }
+  });
+
+  it("keeps a mixed local selection on the trash path", async () => {
+    const { dialogStore } = await import("$lib/state/dialogs.svelte");
+    const remote = { ...entry("report.pdf"), path: `${drive}/1XyZ` };
+    const local = entry("local.txt");
+    const explorer = createExplorerState();
+    try {
+      await explorer.startDelete([remote, local]);
+      expect(dialogStore.deletingEntries).toHaveLength(2);
+      expect(dialogStore.isPermanentDelete).toBe(false);
+    } finally {
+      dialogStore.cancelDelete();
+      await explorer.destroy();
+    }
+  });
+});

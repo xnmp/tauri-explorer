@@ -165,8 +165,19 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   let pendingNavigationFocus: NavigationFocusIntent | null = null;
   let onRevealCallback: (() => void) | null = null;
 
+  // Filenames, plus a lineage prompt where there is one (#1449).
+  const filterMatches = (e: FileEntry) => {
+    const q = filterQuery.toLowerCase();
+    return e.name.toLowerCase().includes(q) || !!lineage.labels?.matches(e.path, q);
+  };
+  // With Folder Peek, a folder with a match a bounded depth below it stays;
+  // the lazy session filters the peek levels the same way (#1510).
+  const filterShows = (e: FileEntry) => !filterQuery || filterMatches(e) || peek.filter?.keeps.has(e.path);
+
   // Filesystem observation ownership
-  const peek = createFolderPeekState(isWindows, initialPeeks);
+  const peek = createFolderPeekState(isWindows, initialPeeks, {
+    matcher: () => capability !== "none" && filterQuery ? filterMatches : undefined, state: coreState, visible: visibleEntriesFor,
+  });
   const paths = pathComparison(isWindows);
   const watch = createPaneWatch({ refresh: (options) => refresh(options), currentPath: () => coreState.currentPath, refreshPath: (path, options) => refresh(options, path) });
 
@@ -185,12 +196,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   const promptOf = (entry: FileEntry) => lineage.labels?.prompt(entry.path);
   const peekSort = (): [SortField, boolean, typeof promptOf] => coreState.viewMode === "details" ? [coreState.sortBy, coreState.sortAscending, promptOf] : ["name", true, promptOf];
   const ownDisplayEntries = $derived.by(() => {
-    let filtered = visibleEntriesFor(coreState.entries, coreState.currentPath);
-    if (filterQuery) {
-      // Filenames, plus a lineage prompt where there is one (#1449).
-      const q = filterQuery.toLowerCase(), labels = lineage.labels;
-      filtered = filtered.filter((e) => e.name.toLowerCase().includes(q) || !!labels?.matches(e.path, q));
-    }
+    let filtered = visibleEntriesFor(coreState.entries, coreState.currentPath).filter(filterShows);
     if (revealedPath && !filtered.some((entry) => entry.path === revealedPath)) {
       const revealed = coreState.entries.find((entry) => entry.path === revealedPath);
       if (revealed) filtered = [...filtered, revealed];

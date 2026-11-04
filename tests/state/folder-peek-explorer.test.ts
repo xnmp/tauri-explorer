@@ -61,9 +61,11 @@ it("prunes deleted remembered branches and their selected descendants after a ra
   await pane.refresh({ silent: true }); await settle();
   expect(pane.expandedPaths.has(a.path)).toBe(false); expect([...pane.selectedPaths]).toEqual([]); expect(pane.peekWatchSnapshot()).toEqual([]);
 });
-it("keeps root-only name filtering and rejects invisible requested paths", async () => {
+it("filters inside peeks, keeps a folder for its matching child, and rejects invisible requested paths (#1510)", async () => {
   const pane = create(); await pane.togglePeek(a.path); await settle();
-  pane.setFilter("a"); await settle(); expect(pane.displayEntries).toContain(child); expect(pane.ownDisplayEntries).toEqual([a]);
+  pane.setFilter("child"); await settle();
+  // "a" stays for its matching child; "nested" and "b" do not match.
+  expect(pane.displayEntries).toEqual([a, child]); expect(pane.ownDisplayEntries).toEqual([a]);
   pane.selectAll(); expect([...pane.selectedPaths]).toEqual([a.path]);
   pane.selectPaths(["/not-visible"]); expect([...pane.selectedPaths]).toEqual([]);
   pane.setFilter("b"); await settle(); expect(pane.displayEntries).toEqual([b]); expect(pane.expandedPaths.has(a.path)).toBe(true); expect(pane.peekWatchSnapshot()).toEqual([]);

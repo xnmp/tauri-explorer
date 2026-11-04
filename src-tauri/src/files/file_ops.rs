@@ -621,7 +621,10 @@ fn stage_copy(
                 tracker,
             )?;
             if let Some(mode) = outcome.final_mode {
-                fs::set_permissions(payload, fs::Permissions::from_mode(mode))?;
+                super::anchored_copy::apply_copied_mode(
+                    fs::set_permissions(payload, fs::Permissions::from_mode(mode)),
+                    source,
+                )?;
             }
             return Ok(());
         }

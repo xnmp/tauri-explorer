@@ -20,13 +20,17 @@ update_attempt_timeout=${APT_UPDATE_ATTEMPT_TIMEOUT:-120}
 packages=${APT_PACKAGES:-}
 archives=${APT_ARCHIVES:-}
 
-# bounded <label> <command...>: run with a per-attempt timeout and retries.
+# bounded <label> <command...>: run as root with a per-attempt timeout and
+# retries. timeout runs inside sudo: the runners' sudo (use_pty) puts the
+# command in its own session and ignores a signal sent to its own process
+# group, so `timeout sudo apt-get` killed only sudo and left apt-get/dpkg
+# holding the dpkg lock, refusing every retry (#1520).
 bounded() {
   local label=$1 n status reason
   shift
   for ((n = 1; n <= attempts; n++)); do
     status=0
-    timeout --kill-after=10 "$attempt_timeout" "$@" || status=$?
+    sudo timeout --kill-after=10 "$attempt_timeout" "$@" || status=$?
     [ "$status" -eq 0 ] && return 0
     case $status in
       124 | 137) reason="timed out after ${attempt_timeout}s" ;;
@@ -51,7 +55,7 @@ require() {
 
 case ${1:-} in
   update)
-    attempt_timeout=$update_attempt_timeout bounded "apt index refresh" sudo apt-get update
+    attempt_timeout=$update_attempt_timeout bounded "apt index refresh" apt-get update
     ;;
   key)
     require APT_PACKAGES
@@ -76,7 +80,7 @@ case ${1:-} in
     # The cache lives under the runner's home, which apt's _apt download
     # sandbox user cannot write; download as root instead of warning per file.
     # shellcheck disable=SC2086 # APT_PACKAGES is a space-separated list.
-    bounded "apt install" sudo env DEBIAN_FRONTEND=noninteractive \
+    bounded "apt install" env DEBIAN_FRONTEND=noninteractive \
       apt-get install -y \
       -o "Dir::Cache::archives=$archives" \
       -o APT::Keep-Downloaded-Packages=true \

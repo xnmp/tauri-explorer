@@ -20,7 +20,12 @@ afterEach(() => {
 
 /**
  * Runs apt.sh with sudo/apt-get/dpkg replaced by stubs. The apt-get stub logs
- * its arguments and, for `install`, sleeps on the attempts listed in HANG.
+ * its arguments and, for `install`, sleeps on the attempts listed in HANG while
+ * holding a dpkg-style lock that a later live holder refuses.
+ *
+ * The sudo stub behaves like the runners' `use_pty` sudo (#1520): the command
+ * runs in its own session, and a TERM sent to sudo's process group is not
+ * relayed, so only a timeout running inside sudo can stop a hung apt-get.
  */
 function run(command: string, env: Record<string, string> = {}) {
   const root = mkdtempSync(join(tmpdir(), "ci-apt-"));
@@ -32,7 +37,14 @@ function run(command: string, env: Record<string, string> = {}) {
     writeFileSync(join(bin, name), `#!/usr/bin/env bash\n${body}\n`);
     chmodSync(join(bin, name), 0o755);
   };
-  stub("sudo", 'exec "$@"');
+  stub(
+    "sudo",
+    `setsid "$@" & child=$!
+trap ':' TERM
+while :; do wait "$child"; status=$?; kill -0 "$child" 2>/dev/null || break; done
+exit "$status"`,
+  );
+  const lock = join(root, "lock-frontend");
   stub("dpkg", `echo "dpkg $*" >> ${log}`);
   stub(
     "apt-get",
@@ -41,7 +53,12 @@ case " $* " in
   *" -s install "*) printf '%s\\n' "\${SIM_PLAN:-Inst libfoo (1.0 Ubuntu:24.04 [amd64])}" ;;
   *" install "*)
     n=$(grep -c ' install ' ${log} || true)
+    if [ -f ${lock} ] && kill -0 "$(cat ${lock})" 2>/dev/null; then
+      echo "E: Unable to acquire the dpkg frontend lock" >&2; exit 100
+    fi
+    echo $$ > ${lock}
     case " \${HANG:-} " in *" $n "*) sleep 30 ;; esac
+    rm -f ${lock}
     if [ -n "\${APT_ARCHIVES_STUB:-}" ]; then touch "$APT_ARCHIVES_STUB/libfoo_1.0_amd64.deb"; fi ;;
 esac`,
   );
@@ -87,6 +104,13 @@ describe("apt.sh install", () => {
     expect(calls.filter((c) => / install /.test(c) && !/ -s /.test(c))).toHaveLength(2);
     expect(calls).toContain("dpkg --configure -a");
     expect(stdout).toContain("::warning title=apt install attempt 1/3::apt install timed out after 1s");
+  });
+
+  it("stops the hung apt-get itself, so the retry is not refused the dpkg lock (#1520)", () => {
+    const { status, stdout, stderr } = run("install", { HANG: "1" });
+    expect(stderr).not.toContain("Unable to acquire the dpkg frontend lock");
+    expect(stdout).not.toContain("exited with status 100");
+    expect(status).toBe(0);
   });
 
   it("fails the step after its bounded attempts instead of waiting on the mirror", () => {

@@ -9,7 +9,7 @@ use super::{
 use crate::{error::AppError, progress::ProgressTracker};
 use std::{
     ffi::OsStr,
-    fs,
+    fs, io,
     io::{Read, Write},
     os::unix::fs::PermissionsExt,
     path::Path,
@@ -66,6 +66,7 @@ pub(super) fn copy_entry(
         },
         progress,
         true,
+        set_native_mode,
     )
 }
 
@@ -93,6 +94,7 @@ pub(super) fn copy_entry_buffered(
         },
         progress,
         false,
+        set_native_mode,
     )
 }
 
@@ -101,6 +103,7 @@ fn copy_with(
     target: Target<'_>,
     progress: &mut impl CopyProgress,
     durable: bool,
+    set_mode: SetMode,
 ) -> Result<CopyOutcome, AppError> {
     let Source {
         parent: source_parent,
@@ -118,6 +121,7 @@ fn copy_with(
         progress,
         buffer: vec![0; COPY_BUFFER_BYTES],
         durable,
+        set_mode,
     };
     let version = copier.copy_node(source, target, 1, true)?;
     copier.progress.check_cancelled()?;
@@ -150,6 +154,7 @@ struct Copier<'a, P> {
     progress: &'a mut P,
     buffer: Vec<u8>,
     durable: bool,
+    set_mode: SetMode,
 }
 
 impl<P: CopyProgress> Copier<'_, P> {
@@ -229,9 +234,10 @@ impl<P: CopyProgress> Copier<'_, P> {
             source_entry.expected,
         )?;
         self.progress.check_cancelled()?;
-        target.set_permissions(fs::Permissions::from_mode(permission_mode(
-            source_entry.expected,
-        )))?;
+        apply_copied_mode(
+            (self.set_mode)(&target, permission_mode(source_entry.expected)),
+            source_entry.display_path,
+        )?;
         self.progress.check_cancelled()?;
         if self.durable {
             target.sync_all()?;
@@ -300,9 +306,10 @@ impl<P: CopyProgress> Copier<'_, P> {
         self.progress.check_cancelled()?;
         let final_mode = permission_mode(source_entry.expected);
         let applied_mode = if root { final_mode | 0o700 } else { final_mode };
-        target
-            .file
-            .set_permissions(fs::Permissions::from_mode(applied_mode))?;
+        apply_copied_mode(
+            (self.set_mode)(&target.file, applied_mode),
+            source_entry.display_path,
+        )?;
         self.progress.check_cancelled()?;
         if self.durable {
             target.sync()?;
@@ -390,6 +397,40 @@ fn verify_target(
         ));
     }
     Ok(())
+}
+
+/// Changes the Unix mode of a newly created payload through its handle.
+/// Injected so tests can model filesystems without a settable mode (#1507).
+type SetMode = fn(&fs::File, u32) -> io::Result<()>;
+
+fn set_native_mode(file: &fs::File, mode: u32) -> io::Result<()> {
+    file.set_permissions(fs::Permissions::from_mode(mode))
+}
+
+/// Mode preservation is metadata on newly created private payload, never a
+/// namespace or content effect. Filesystems with no settable Unix permission
+/// model reject it with `ENOTSUP`/`EOPNOTSUPP`: gvfsd-fuse maps every chmod to
+/// `unix::mode`, which the Google Drive backend (and other GVfs backends) do
+/// not implement, so a strict copy could never paste onto them (#1507). Keep
+/// the destination's synthesized mode there, as `cp` does, and observe the
+/// resulting version afterwards. Every other failure (`EPERM`, `EROFS`, `EIO`,
+/// ...) still fails the copy: those come from a permission model that exists.
+pub(super) fn apply_copied_mode(result: io::Result<()>, display_path: &Path) -> io::Result<()> {
+    match result {
+        Err(error) if mode_unsupported(&error) => {
+            log::debug!(
+                "Destination filesystem cannot set the copied mode of {}; keeping its own: {error}",
+                display_path.display()
+            );
+            Ok(())
+        }
+        other => other,
+    }
+}
+
+fn mode_unsupported(error: &io::Error) -> bool {
+    // Linux defines ENOTSUP as EOPNOTSUPP; other Unix targets keep two values.
+    matches!(error.raw_os_error(), Some(code) if code == libc::ENOTSUP || code == libc::EOPNOTSUPP)
 }
 
 fn permission_mode(version: &EntryVersion) -> u32 {

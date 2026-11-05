@@ -15,6 +15,8 @@ export function createMockTextConnections() {
   const context = (id: string): TextContext => ({ profileId: id, configurationRevision: configuration.revision, fingerprint: `fixture-${id}-${configuration.revision}`, transport: profile(id).transport, requestedModel: profile(id).model });
   return {
     read,
+    /** Context of the default profile, for default-profile generation. */
+    context: () => context(configuration.defaultProfileId ?? configuration.profiles[0]!.id),
     save: (input: unknown, expected: unknown) => { revision(expected); const next = input as TextConfiguration; const errors = validateTextConfiguration(next); if (errors.length) throw { code: "invalid_configuration", message: errors.join(" ") }; return commit(next); },
     credential: (id: unknown, key: unknown, expected: unknown) => {
       revision(expected); const target = profile(id); if (!isHttpProfile(target)) throw { code: "invalid_configuration", message: "CLI login is managed by the CLI." };

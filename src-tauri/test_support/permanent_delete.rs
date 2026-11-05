@@ -955,3 +955,120 @@ fn birth_is_read_for_each_source_before_its_claims_are_recorded() {
     );
     assert_eq!(fs::read(&source).unwrap(), b"selected");
 }
+
+fn select_in_place(path: &Path) -> unix::PreparedSelection {
+    unix::prepare_captured(
+        Arc::new(vec![path.to_str().unwrap().to_owned()]),
+        &mut fixed_nonce,
+        crate::files::prepared_selection::MAX_PLAN_BYTES,
+        &mut |_: &Path| Ok(None),
+        &mut |_: &Path| unix::Capture::InPlace,
+    )
+    .unwrap()
+}
+
+/// GVfs FUSE (Google Drive) items are removed where they are (#1508): no
+/// staging folder is created on the remote service and nothing is renamed.
+#[test]
+fn gvfs_in_place_deletion_never_stages_or_renames() {
+    let root = tempfile::tempdir().unwrap();
+    let file = root.path().join("report.pdf");
+    let tree = root.path().join("folder");
+    fs::write(&file, b"bytes").unwrap();
+    fs::create_dir_all(tree.join("nested")).unwrap();
+    fs::write(tree.join("nested").join("leaf"), b"leaf").unwrap();
+    for path in [&file, &tree] {
+        let mut deletion = select_in_place(path);
+        let mut calls = Vec::new();
+        let result = execute(&mut deletion, path, |call| {
+            calls.push(match call {
+                Call::Create { .. } | Call::Created { .. } => "create",
+                Call::Rename { .. } => "rename",
+                Call::Unlink { .. } => "unlink",
+            });
+            Ok(())
+        });
+        let success = result.expect("in-place deletion");
+        assert!(success.warning.is_none(), "{:?}", success.warning);
+        assert!(
+            !calls.contains(&"create") && !calls.contains(&"rename"),
+            "{calls:?}"
+        );
+        assert!(calls.contains(&"unlink"));
+        assert!(
+            fs::symlink_metadata(path).is_err(),
+            "{} remains",
+            path.display()
+        );
+    }
+    assert!(staging(root.path()).is_empty());
+}
+
+#[test]
+fn gvfs_in_place_deletion_refuses_a_replaced_source() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("selected");
+    let retained = root.path().join("original");
+    fs::write(&source, b"selected bytes").unwrap();
+    let mut deletion = select_in_place(&source);
+    fs::rename(&source, &retained).unwrap();
+    fs::write(&source, b"unrelated replacement").unwrap();
+    let result = execute(&mut deletion, &source, no_hook);
+    assert!(result.is_err() && !is_uncertain(&result), "{result:?}");
+    assert_eq!(fs::read(&source).unwrap(), b"unrelated replacement");
+    assert_eq!(fs::read(&retained).unwrap(), b"selected bytes");
+}
+
+#[test]
+fn gvfs_in_place_partial_removal_is_uncertain() {
+    let root = tempfile::tempdir().unwrap();
+    let tree = root.path().join("folder");
+    fs::create_dir(&tree).unwrap();
+    for name in ["a", "b"] {
+        fs::write(tree.join(name), name).unwrap();
+    }
+    let mut deletion = select_in_place(&tree);
+    let mut unlinks = 0;
+    let result = execute(&mut deletion, &tree, |call| {
+        if matches!(call, Call::Unlink { .. }) {
+            unlinks += 1;
+            if unlinks == 2 {
+                return Err(injected());
+            }
+        }
+        Ok(())
+    });
+    assert!(is_uncertain(&result), "{result:?}");
+    assert!(tree.is_dir());
+}
+
+/// The capture policy comes from the mount holding the source's parent:
+/// only the GVfs FUSE filesystem type selects in-place removal.
+#[cfg(target_os = "linux")]
+#[test]
+fn only_gvfs_fuse_mounts_select_in_place_removal() {
+    use crate::files::trash_mounts::{mount_id, MountSnapshot};
+    let root = tempfile::tempdir().unwrap();
+    let parent = fs::canonicalize(root.path()).unwrap();
+    if mount_id(&parent).unwrap().is_none() {
+        return; // Pre-5.8 kernels resolve by pathname; the fixture needs ids.
+    }
+    let mut mount = MountSnapshot::read()
+        .unwrap()
+        .resolve(&parent)
+        .unwrap()
+        .clone();
+    let source = parent.join("item");
+    let staged = MountSnapshot::from_mounts(vec![mount.clone()]);
+    assert_eq!(
+        unix::capture_for(Some(&staged), &source),
+        unix::Capture::Staged
+    );
+    mount.filesystem = "fuse.gvfsd-fuse".into();
+    let gvfs = MountSnapshot::from_mounts(vec![mount]);
+    assert_eq!(
+        unix::capture_for(Some(&gvfs), &source),
+        unix::Capture::InPlace
+    );
+    assert_eq!(unix::capture_for(None, &source), unix::Capture::Staged);
+}

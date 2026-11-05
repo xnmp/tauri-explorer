@@ -332,6 +332,9 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             ai::ai_connection_check,
             ai::ai_connection_test,
             ai::ai_connection_cancel_test,
+            ai::ai_text_describe,
+            ai::ai_text_generate,
+            ai::ai_text_cancel,
             // Launch info
             get_launch_cwd,
             native_file_drag::start_file_drag,

@@ -19,6 +19,29 @@ fn parses_mount_identity_root_and_non_utf8_paths_losslessly() {
     assert_eq!(table.mounts[0].filesystem.as_bytes(), b"ext4");
 }
 
+/// The GVfs FUSE bridge is one mount at `$XDG_RUNTIME_DIR/gvfs`; every
+/// backend (Google Drive included) lives below it and has no trash (#1508).
+#[test]
+fn gvfs_fuse_mounts_are_recognized_as_lacking_trash() {
+    let table = MountSnapshot::parse(
+        b"10 1 8:1 / / rw - ext4 /dev/sda1 rw\n\
+          30 10 0:40 / /run/user/1000 rw - tmpfs tmpfs rw\n\
+          31 30 0:52 / /run/user/1000/gvfs rw,nosuid,nodev - fuse.gvfsd-fuse gvfsd-fuse rw,user_id=1000,group_id=1000\n",
+    )
+    .expect("mount table");
+    let drive = table
+        .resolve_by_path(Path::new(
+            "/run/user/1000/gvfs/google-drive:host=gmail.com,user=someone/0AAbc/1XyZ",
+        ))
+        .expect("gvfs mount");
+    assert_eq!(drive.id, 31);
+    assert!(drive.lacks_trash() && drive.is_gvfs_fuse());
+    let runtime = table
+        .resolve_by_path(Path::new("/run/user/1000/other"))
+        .expect("tmpfs");
+    assert!(!runtime.lacks_trash() && !runtime.is_gvfs_fuse());
+}
+
 #[test]
 fn bind_mounts_with_one_device_remain_distinct_mount_identities() {
     let table = MountSnapshot::parse(

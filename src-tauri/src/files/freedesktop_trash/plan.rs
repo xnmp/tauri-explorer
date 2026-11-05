@@ -126,6 +126,15 @@ impl Context {
         let source_parent_identity = DirectoryIdentity::capture(&source_parent)?;
         let source_version = version_at(&source_parent, &source_name)?;
         let source_mount = self.mounts.resolve(&original_path)?;
+        if source_mount.lacks_trash() {
+            // Refuse before any layout is probed or created: the GVfs FUSE
+            // root cannot hold `.Trash-$uid`, and falling back to a copy into
+            // the home trash is excluded by ADR 0019 (#1508).
+            return Err(AppError::PermissionDenied(format!(
+                "{} is on a GVfs location (such as Google Drive) that has no trash; nothing was deleted. Use Delete Permanently instead",
+                original_path.display()
+            )));
+        }
         let home_mount = self.mounts.resolve_existing_ancestor(&self.data_home)?;
         let (layout, probes) = if home_mount.id == source_mount.id {
             (

@@ -11,6 +11,17 @@
 //!
 //! Windows keeps its path-based removal and makes no identity claim; a
 //! handle-disposition adapter is separate work.
+//!
+//! GVfs FUSE mounts (Google Drive, SMB, SFTP, ... under
+//! `$XDG_RUNTIME_DIR/gvfs`) are removed in place instead (#1508). Their inode
+//! numbers are libfuse path-node ids rather than remote object identities, and
+//! the staging folder and capture rename are remote service writes: Google
+//! Drive applies the capture as a metadata update whose refreshed entry can
+//! carry a new modification time, which the capture check compares. In-place
+//! removal keeps the selection's claims, the full version and birth-time check
+//! immediately before removal and the walk's depth-1 object admission; like
+//! every leaf `unlinkat`, it cannot fence a substitution between that last
+//! check and the removal.
 use crate::{error::AppError, files::trash_artifact::TrashSuccess};
 use std::path::Path;
 
@@ -166,6 +177,53 @@ mod unix {
         /// so a reused inode with replicated metadata still mismatches.
         birth: Option<Birth>,
         container: OsString,
+        capture: Capture,
+    }
+
+    /// How an item is bound to its selected object before removal.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub(super) enum Capture {
+        /// Rename into fresh private staging and verify there (the default).
+        Staged,
+        /// Verify at the selected name, then remove there: GVfs FUSE has no
+        /// stable object identity for staging to prove (#1508).
+        InPlace,
+    }
+
+    /// Capture policy for a physical source, from the mount holding its
+    /// parent. An unreadable mount table keeps the staged default.
+    #[cfg(target_os = "linux")]
+    pub(super) fn capture_for(
+        mounts: Option<&crate::files::trash_mounts::MountSnapshot>,
+        physical: &Path,
+    ) -> Capture {
+        let in_gvfs = physical
+            .parent()
+            .zip(mounts)
+            .and_then(|(parent, mounts)| mounts.resolve(parent).ok().map(|m| m.is_gvfs_fuse()))
+            .unwrap_or(false);
+        if in_gvfs {
+            Capture::InPlace
+        } else {
+            Capture::Staged
+        }
+    }
+
+    /// The default capture policy: one mount-table snapshot per selection.
+    fn native_capture() -> impl FnMut(&Path) -> Capture {
+        #[cfg(target_os = "linux")]
+        {
+            let mut mounts = None;
+            move |physical: &Path| {
+                let mounts = mounts
+                    .get_or_insert_with(|| crate::files::trash_mounts::MountSnapshot::read().ok());
+                capture_for(mounts.as_ref(), physical)
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            |_: &Path| Capture::Staged
+        }
     }
 
     pub(super) type Birth = (i64, u32);
@@ -250,6 +308,7 @@ mod unix {
             path,
             &mut random,
             &mut birth_of_path,
+            &mut native_capture(),
             None,
         )?;
         preparation
@@ -278,9 +337,28 @@ mod unix {
         maximum: usize,
         birth_of: &mut impl FnMut(&Path) -> io::Result<Option<Birth>>,
     ) -> Result<PreparedSelection, AppError> {
+        prepare_captured(paths, random, maximum, birth_of, &mut native_capture())
+    }
+
+    /// [`prepare_observed`] with an explicit capture policy, the seam tests
+    /// use to exercise GVfs in-place removal on an ordinary filesystem.
+    pub(super) fn prepare_captured(
+        paths: Arc<Vec<String>>,
+        random: &mut impl FnMut(&mut [u8]) -> io::Result<()>,
+        maximum: usize,
+        birth_of: &mut impl FnMut(&Path) -> io::Result<Option<Birth>>,
+        capture_of: &mut impl FnMut(&Path) -> Capture,
+    ) -> Result<PreparedSelection, AppError> {
         PreparedSelection::prepare(paths, maximum, |preparation, paths| {
             for path in paths {
-                prepare_item(preparation, Path::new(path), random, birth_of, None)?;
+                prepare_item(
+                    preparation,
+                    Path::new(path),
+                    random,
+                    birth_of,
+                    capture_of,
+                    None,
+                )?;
             }
             Ok(())
         })
@@ -292,6 +370,7 @@ mod unix {
         keys: Arc<Vec<String>>,
         entries: &[Result<(PathBuf, EntryVersion), String>],
     ) -> Result<PreparedSelection, AppError> {
+        let mut capture_of = native_capture();
         PreparedSelection::prepare(keys, MAX_PLAN_BYTES, |preparation, keys| {
             if keys.len() != entries.len() {
                 return Err(AppError::WorkerFailed(
@@ -305,6 +384,7 @@ mod unix {
                         path,
                         &mut random,
                         &mut birth_of_path,
+                        &mut capture_of,
                         Some(version),
                     )?,
                     Err(error) => preparation.push(Err(AppError::Other(error.clone())))?,
@@ -319,6 +399,7 @@ mod unix {
         path: &Path,
         random: &mut impl FnMut(&mut [u8]) -> io::Result<()>,
         birth_of: &mut impl FnMut(&Path) -> io::Result<Option<Birth>>,
+        capture_of: &mut impl FnMut(&Path) -> Capture,
         expected: Option<&EntryVersion>,
     ) -> Result<(), AppError> {
         // Birth time is read right after the version, before any claim.
@@ -339,6 +420,7 @@ mod unix {
         let (Some(parent), Some(name)) = (source.path.parent(), source.path.file_name()) else {
             return Err(AppError::InvalidPath(path.display().to_string()));
         };
+        let capture = capture_of(&source.path);
         let mut nonce = [0u8; 16];
         random(&mut nonce)?;
         let container: OsString = format!(
@@ -360,6 +442,7 @@ mod unix {
             version,
             birth,
             container,
+            capture,
         }))
     }
 
@@ -432,6 +515,9 @@ mod unix {
                     "{} changed after it was selected; nothing was deleted",
                     self.describe()
                 )));
+            }
+            if self.capture == Capture::InPlace {
+                return self.remove_in_place(&parent, operations);
             }
             match operations.make_directory(&parent, &self.container) {
                 Ok(()) => {}
@@ -537,6 +623,49 @@ mod unix {
                 warning,
                 ..TrashSuccess::default()
             })
+        }
+
+        /// Remove the verified entry at its selected name. The version was
+        /// just checked; birth time (where reported) and the walk's depth-1
+        /// object admission bind removal to the selected object.
+        fn remove_in_place(
+            &self,
+            parent: &Directory,
+            operations: &mut impl Operations,
+        ) -> Result<TrashSuccess, AppError> {
+            if self.birth.is_some() && birth_at(parent, &self.name)? != self.birth {
+                return Err(AppError::Other(format!(
+                    "{} was replaced before it could be deleted; nothing was deleted",
+                    self.describe()
+                )));
+            }
+            let mut captured = Captured {
+                operations,
+                object: self.version.object,
+            };
+            let mut unbounded = usize::MAX;
+            if let Err(partial) =
+                tree_removal::remove(parent, &self.name, REMOVAL, &mut unbounded, &mut captured)
+            {
+                return Err(if partial.removed {
+                    AppError::MutationUncertain(format!(
+                        "Could not delete {}: {}; it was partially deleted and what remains is still there",
+                        self.describe(),
+                        partial.error
+                    ))
+                } else {
+                    AppError::Other(format!(
+                        "Could not delete {}: {}; nothing was deleted",
+                        self.describe(),
+                        partial.error
+                    ))
+                });
+            }
+            log::info!(
+                "Permanently deleted entry in place (is_dir={})",
+                self.version.directory
+            );
+            Ok(TrashSuccess::default())
         }
 
         /// Remove staging that never held the payload; failure to do so is

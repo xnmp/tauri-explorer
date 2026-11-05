@@ -1368,3 +1368,11 @@ async fn http_empty_or_textless_bodies_are_classified_invalid() {
         worker.join().unwrap();
     }
 }
+#[test]
+fn window_callers_are_scoped_per_window_and_never_alias_brokered_callers() {
+    // AI filter (#1506): a window may only cancel its own requests.
+    assert_eq!(window_caller("main"), "window:main");
+    assert_ne!(window_caller("main"), window_caller("window-2"));
+    assert!(!window_caller("main").starts_with("plugin:"));
+    assert!(!window_caller("main").starts_with("settings:"));
+}

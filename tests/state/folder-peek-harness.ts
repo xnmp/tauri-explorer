@@ -45,6 +45,8 @@ export async function compileSettings(): Promise<typeof import("$lib/state/setti
 /** The real explorer → facade → session chain, with shared overrides (for
  * example a counting `./git-status.svelte`) applied to every layer. */
 export async function compileExplorer(overrides: Record<string, unknown> = {}): Promise<typeof CreateExplorerState> {
+  // The remembered-listing cache (#1509) is window-wide: each test starts cold.
+  (await import("$lib/state/peek-listing-cache")).peekListingCache().clear();
   const filter = await compileClient("peek-filter.svelte", overrides);
   const session = await compileClient("folder-peek-session.svelte", { ...overrides, "./peek-filter.svelte": filter });
   const peek = await compileClient("folder-peek.svelte", { ...overrides, "./folder-peek-session.svelte": session });

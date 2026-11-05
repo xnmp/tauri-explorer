@@ -14,6 +14,24 @@ const mockAiPresentation = () => getMockControl().nativeAiPresentation ??= creat
 
 const mockTextConnections = createMockTextConnections();
 
+function mockTextDescription() {
+  const configuration = mockTextConnections.read();
+  const available = configuration.enabled && !getMockControl().aiTextUnavailable;
+  return { version: 1, enabled: configuration.enabled, available, configurationRevision: configuration.revision, ...(available ? {} : { error: { code: "disabled", message: "Text generation is disabled" } }) };
+}
+
+const MOCK_FILTER_STOPWORDS = new Set(["the", "and", "all", "any", "from", "with", "that", "show", "only", "files", "file", "items", "folder", "folders", "last", "days"]);
+
+/** Deterministic stand-in for a model: names containing any query word. */
+function mockAiFilterReply(input: string): string {
+  const lines = input.split("\n");
+  const request = (lines.find(line => line.startsWith("Request: ")) ?? "").slice("Request: ".length).toLowerCase();
+  const words = request.split(/[^\p{L}\p{N}]+/u).filter(word => word.length >= 3 && !MOCK_FILTER_STOPWORDS.has(word));
+  const start = lines.findIndex(line => line.startsWith("Entries"));
+  const names = lines.slice(start + 1).map(line => line.split("\t")[1]).filter((name): name is string => !!name);
+  return JSON.stringify({ names: names.filter(name => words.some(word => name.toLowerCase().includes(word))) });
+}
+
 export const aiCommands: Record<string, CommandHandler> = {
   plugin_jobs_snapshot: () => mockAiPresentation().snapshot(),
   plugin_job_reveal: (args) => mockAiPresentation().snapshot().jobs.find(job => job.jobKey === args.jobKey)?.reveal ?? null,
@@ -29,6 +47,14 @@ export const aiCommands: Record<string, CommandHandler> = {
   ai_connection_check: ({ profileId }) => mockTextConnections.check(profileId),
   ai_connection_test: ({ profileId, expectedConfigurationRevision }) => mockTextConnections.test(profileId, expectedConfigurationRevision),
   ai_connection_cancel_test: () => undefined,
+  ai_text_describe: () => mockTextDescription(),
+  ai_text_generate: ({ input }) => {
+    if (!mockTextDescription().available) throw { code: "disabled", message: "Text generation is disabled" };
+    const text = String(input);
+    const reply = getMockControl().aiTextReply;
+    return { text: reply ? reply(text) : mockAiFilterReply(text), context: mockTextConnections.context() };
+  },
+  ai_text_cancel: () => true,
 
   start_nano_banana_job: () => 1,
 

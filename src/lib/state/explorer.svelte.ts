@@ -167,13 +167,11 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   let pendingNavigationFocus: NavigationFocusIntent | null = null;
   let onRevealCallback: (() => void) | null = null;
 
-  // Filenames, plus a lineage prompt where there is one (#1449).
+  // Filenames, plus a lineage prompt where there is one (#1449). With Folder Peek, a folder with a
+  // match a bounded depth below it stays; the lazy session filters the peek levels the same way (#1510).
   const filterMatches = (e: FileEntry) => {
-    const q = filterQuery.toLowerCase();
-    return e.name.toLowerCase().includes(q) || !!lineage.labels?.matches(e.path, q);
+    const q = filterQuery.toLowerCase(); return e.name.toLowerCase().includes(q) || !!lineage.labels?.matches(e.path, q);
   };
-  // With Folder Peek, a folder with a match a bounded depth below it stays;
-  // the lazy session filters the peek levels the same way (#1510).
   const filterShows = (e: FileEntry) => !filterQuery || filterMatches(e) || peek.filter?.keeps.has(e.path);
 
   // Filesystem observation ownership
@@ -199,8 +197,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   const peekSort = (): [SortField, boolean, typeof promptOf] => coreState.viewMode === "details" ? [coreState.sortBy, coreState.sortAscending, promptOf] : ["name", true, promptOf];
   const ownDisplayEntries = $derived.by(() => {
     let filtered = visibleEntriesFor(coreState.entries, coreState.currentPath);
-    // An AI filter predicate (#1506) replaces the substring match; the
-    // substring match keeps folders whose peeks hold a match (#1510).
+    // An AI filter predicate (#1506) replaces the substring match (which keeps peek-matched folders, #1510).
     filtered = filtered.filter(filterPredicate ?? filterShows);
     if (revealedPath && !filtered.some((entry) => entry.path === revealedPath)) {
       const revealed = coreState.entries.find((entry) => entry.path === revealedPath);

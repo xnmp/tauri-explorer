@@ -228,30 +228,6 @@
     explorer.navigateTo(path, { autoEnterSingleSubdir: false });
   }
 
-  // Filter input
-  let filterInputRef = $state<HTMLInputElement | null>(null);
-  let localFilter = $state("");
-
-  $effect(() => {
-    if (explorer.showFilter && filterInputRef) {
-      localFilter = explorer.filterQuery;
-      tick().then(() => filterInputRef?.focus());
-    }
-  });
-
-  function handleFilterInput() {
-    explorer.setFilter(localFilter);
-  }
-
-  function handleFilterKeydown(event: KeyboardEvent) {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      localFilter = "";
-      explorer.closeFilter();
-    }
-  }
-
   // Navigation history popup (right-click on back/forward)
   let historyMenuAnchor = $state<HTMLElement | null>(null);
 
@@ -480,33 +456,7 @@
   {/if}
 
   {#if explorer.showFilter}
-    <div class="filter-bar">
-      <svg class="filter-icon" width="14" height="14" viewBox="0 0 16 16" fill="none">
-        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
-        <path d="M11 11L14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-      </svg>
-      <input
-        type="text"
-        class="filter-input"
-        bind:value={localFilter}
-        bind:this={filterInputRef}
-        oninput={handleFilterInput}
-        onkeydown={handleFilterKeydown}
-        placeholder="Filter..."
-        autocomplete="off"
-        autocorrect="off"
-        autocapitalize="none"
-        spellcheck="false"
-        name="filter-nofill"
-      />
-      {#if localFilter}
-        <button class="filter-clear" onclick={() => { localFilter = ""; explorer.closeFilter(); }} aria-label="Clear filter">
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-            <path d="M3 3L9 9M9 3L3 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-          </svg>
-        </button>
-      {/if}
-    </div>
+    {#await import("./FilterBar.svelte") then { default: FilterBar }}<FilterBar {explorer} />{/await}
   {/if}
 </div>
 {/if}
@@ -734,74 +684,4 @@
   .separator .chevron-icon {
     display: var(--breadcrumb-chevron-display, flex);
   }
-
-  /* Filter bar — styled to match the address bar (.breadcrumbs-container).
-     Fixed width so it does not grow when the clear button appears on type. */
-  .filter-bar {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-shrink: 0;
-    box-sizing: border-box;
-    width: 220px;
-    height: 30px;
-    padding: 0 10px;
-    background: var(--address-bar-bg, rgba(255, 255, 255, 0.12));
-    border: 1px solid var(--address-bar-stroke, rgba(255, 255, 255, 0.18));
-    border-radius: var(--radius-pill);
-    box-shadow: inset 0 1px 0 var(--address-bar-highlight, rgba(255, 255, 255, 0.04));
-    animation: filterIn 150ms cubic-bezier(0, 0, 0, 1);
-  }
-
-  .filter-bar:focus-within {
-    border-color: var(--accent);
-    background: var(--control-fill-secondary);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 15%, transparent);
-  }
-
-  @keyframes filterIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
-  }
-
-  .filter-icon {
-    color: var(--text-tertiary);
-    flex-shrink: 0;
-  }
-
-  .filter-input {
-    flex: 1;
-    min-width: 0;
-    padding: 2px 0;
-    background: transparent;
-    border: none;
-    outline: none;
-    color: var(--text-primary);
-    font-family: inherit;
-    font-size: 13px;
-  }
-
-  .filter-input::placeholder {
-    color: var(--text-tertiary);
-  }
-
-  .filter-clear {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 18px;
-    height: 18px;
-    padding: 0;
-    background: transparent;
-    border: none;
-    border-radius: var(--radius-sm);
-    color: var(--text-tertiary);
-    cursor: pointer;
-  }
-
-  .filter-clear:hover {
-    background: var(--subtle-fill-secondary);
-    color: var(--text-primary);
-  }
-
 </style>

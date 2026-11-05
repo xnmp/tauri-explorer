@@ -489,6 +489,54 @@ pub async fn ai_connection_test(
 pub async fn ai_connection_cancel_test(window: tauri::Window, request_id: String) -> Result<bool> {
     Ok(cancel(&format!("settings:{}", window.label()), &request_id))
 }
+/// Core window consumers (AI filter, #1506) share one caller per window, so a
+/// window can only cancel its own requests and closing it cancels them.
+fn window_caller(label: &str) -> String {
+    format!("window:{label}")
+}
+fn window_owner(window: &tauri::Window) -> OwnerCheck {
+    use tauri::Manager;
+    let app = window.app_handle().clone();
+    let label = window.label().to_owned();
+    Arc::new(move || app.get_webview_window(&label).is_none())
+}
+/// Whether the default text profile is enabled and locally usable. Consumers
+/// check this before assembling any request content.
+#[tauri::command]
+pub async fn ai_text_describe() -> Result<Describe> {
+    blocking(describe).await
+}
+/// Generate with the default text profile on behalf of a core window feature.
+/// `expected_configuration_revision` pins the profile the caller described.
+#[tauri::command]
+pub async fn ai_text_generate(
+    window: tauri::Window,
+    request_id: String,
+    instructions: String,
+    input: String,
+    max_output_tokens: u32,
+    expected_configuration_revision: Option<u64>,
+) -> Result<TextResult> {
+    let request = json!({
+        "requestId": request_id,
+        "instructions": instructions,
+        "input": input,
+        "maxOutputTokens": max_output_tokens,
+        "expectedConfigurationRevision": expected_configuration_revision,
+    });
+    service()?
+        .generate(
+            window_caller(window.label()),
+            request,
+            window_owner(&window),
+            None,
+        )
+        .await
+}
+#[tauri::command]
+pub async fn ai_text_cancel(window: tauri::Window, request_id: String) -> Result<bool> {
+    Ok(cancel(&window_caller(window.label()), &request_id))
+}
 #[cfg(test)]
 mod cli_tests;
 #[cfg(test)]

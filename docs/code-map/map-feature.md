@@ -132,6 +132,7 @@ backend for E2E/browser).
 ## Navigation, address bar, breadcrumb, autocomplete
 
 - `components/NavigationBar.svelte` — back/fwd/up/refresh + breadcrumbs per pane
+- `components/FilterBar.svelte` — lazy Ctrl+F filter box. AI filter (#1506): Alt+Enter → `state/ai-filter.svelte.ts` (describe gate → `domain/ai-filter.ts` prompt → `api/ai-text.ts` `ai_text_generate` → validate names) → `explorer.setFilterPredicate`, which replaces the substring match in `ownDisplayEntries` until any filter reset. Hint only while focused with an available default text profile. Tests: `tests/domain/ai-filter.test.ts`, `tests/state/ai-filter.test.ts`, `e2e/ai-filter.spec.ts`.
 - `components/BreadcrumbAutocomplete.svelte` — path-typing dropdown
 - `components/NavigationHistoryMenu.svelte` — back/fwd history dropdown
 - `domain/autocomplete.ts` — `parsePathInput`, `filterDirectorySuggestions`

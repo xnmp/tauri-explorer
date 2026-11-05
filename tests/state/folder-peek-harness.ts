@@ -9,6 +9,7 @@ import type { createExplorerState as CreateExplorerState } from "$lib/state/expl
 
 const exportsFor: Record<string, string> = {
   "folder-peek-session.svelte": "createFolderPeekSession",
+  "peek-filter.svelte": "createPeekFilter",
   "folder-peek.svelte": "createFolderPeekState",
   "explorer.svelte": "createExplorerState",
   "settings.svelte": "settingsStore",
@@ -46,7 +47,8 @@ export async function compileSettings(): Promise<typeof import("$lib/state/setti
 export async function compileExplorer(overrides: Record<string, unknown> = {}): Promise<typeof CreateExplorerState> {
   // The remembered-listing cache (#1509) is window-wide: each test starts cold.
   (await import("$lib/state/peek-listing-cache")).peekListingCache().clear();
-  const session = await compileClient("folder-peek-session.svelte", overrides);
+  const filter = await compileClient("peek-filter.svelte", overrides);
+  const session = await compileClient("folder-peek-session.svelte", { ...overrides, "./peek-filter.svelte": filter });
   const peek = await compileClient("folder-peek.svelte", { ...overrides, "./folder-peek-session.svelte": session });
   return (await compileClient("explorer.svelte", { ...overrides, "./folder-peek.svelte": peek })).createExplorerState as typeof CreateExplorerState;
 }

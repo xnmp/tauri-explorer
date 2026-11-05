@@ -240,6 +240,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `folder-peek.svelte.ts` — per-pane facade that loads peek policies and resources on first use.
 - `folder-peek-session.svelte.ts` — lazy expansion membership, bounded List spill/full-flow/column stage choices (forgotten when a folder closes, #1365), and independently retired child-listing resources.
 - `pane-peek-watch.ts` — lazy pane-watch extension for capped child-directory and repository observation.
+- `peek-filter.svelte.ts` — lazy per-pane Folder Peek filter (#1510), owned by the peek session: runs the scan while the pane filters and publishes the folders a descendant match keeps (live peek listings win over scanned ones).
+- `peek-filter-scan.ts` — bounded breadth-first listing walk beneath a pane for that filter (depth/directory/entry caps, 4 in flight, superseded or cancelled replies dropped, cache reused per root).
 - `peek-listing-cache.ts` — lazy, bounded window-wide LRU of the last complete listing each peek published (#1509): a re-opened peek paints it while its first read revalidates; shared directory events and local mutation broadcasts evict.
 - `directory-listing.ts` — complete directory snapshots, queued-request supersession, teardown and observation transfer.
 - `navigation.ts` — pure back/forward history utilities.
@@ -471,6 +473,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/domain/entry-lineage.ts` — lineage peek grouping (#1431): validates a provider's parent relation against the listing (foreign/self edges dropped, cycles fall back to flat) and groups children under each parent (`projectLineage`: direct children, "with B" groups, roots, descendants).
 - `src/lib/domain/lineage-labels.ts` — lineage prompt labels (#1449): validates `EntryLineage.labels` (one-line, bounded, malformed ignored; null when absent), Prompt column text (prompt → title), row labels (title → prompt) gated to lineage children (`isLineageChildRow`), and the prompt name-filter match. Loaded with `pane-lineage`.
 - `src/lib/domain/lineage-co-parent.ts` — file-shaped stand-in for a lineage co-parent's icon, kept off the grouping module.
+- `src/lib/domain/peek-filter.ts` — Folder Peek filter subtree matching (#1510): `PEEK_FILTER_MAX_DEPTH` (3 levels below a top-level folder, nested folders get the remaining budget), scan caps, `peekFilterKeeps` (folders kept for a matching descendant) and `scanReaches`.
 - `src/lib/domain/folder-peek-pane.ts` — explorer-applied peek decisions: selection/cursor pruning after a projection hides peeked children, reopening a lineage reveal that grouping regrouped late (`lateRevealChain`, #1443), and spring-peek drop folders (#1242).
 - `src/lib/domain/explorer-entries.ts` — explorer entry-list helpers: multi-entry clipboard labels and merging a selected context-menu entry the listing lacks.
 - `src/lib/domain/file-operation-selection.ts` — Explorer recursive batch reduction, symlink-overlap admission, drag-primary remapping, and archive roots (same-basename refusal).

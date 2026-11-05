@@ -2,6 +2,23 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.21.0 — 2026-11-05
+
+### Added
+
+- AI filter: press Alt+Enter in the Ctrl+F filter box to ask the configured
+  language model which entries of the current folder match the query (#1506).
+- The pane filter now applies inside Folder Peek: peeked levels are filtered,
+  and folders with a match a bounded depth below them stay visible (#1510).
+- Peeked folder listings are remembered, so re-opening a peek paints at once
+  while its first read revalidates (#1509).
+
+### Fixed
+
+- Pasting onto Google Drive and other GVfs mounts no longer fails when the
+  mount rejects permission changes (#1507).
+- Deleting from Google Drive and other GVfs locations now works (#1508).
+
 ## v1.20.0 — 2026-11-03
 
 ### Added

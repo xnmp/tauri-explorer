@@ -222,7 +222,8 @@ export type PeekRow = ({ kind: "entry"; key: string; entry: FileEntry; entryInde
 export interface PeekGroup { path: string; depth: number; startRow: number; endRow: number }
 export interface PeekRows { rows: PeekRow[]; entryToRow: number[]; rowToEntry: (number | null)[]; groups: PeekGroup[] }
 
-export function buildPeekRows(tree: PeekTree, listing: (path: string) => PeekListing | undefined, creating = false): PeekRows {
+/** `filtered`: the pane filter is on, so a childless peek reads as no matches (#1510). */
+export function buildPeekRows(tree: PeekTree, listing: (path: string) => PeekListing | undefined, creating = false, filtered = false): PeekRows {
   // Nothing expanded is a flat listing: same rows, without per-entry lookups.
   if (!tree.expanded.length && !tree.lineageOpen?.length && !tree.headers?.length) return flatPeekRows(tree, creating);
   const rows: PeekRow[] = creating ? [{ kind: "create", key: "create" }] : [];
@@ -264,7 +265,7 @@ export function buildPeekRows(tree: PeekTree, listing: (path: string) => PeekLis
     const hasChildren = next && tree.meta.get(nextKey!)!.depth > placement.depth;
     const message = state?.status === "error" ? `Can't open folder: ${state.error}`
       : state?.status === "loading" ? state.showLoading ? "Loading…" : null
-      : state?.status === "loaded" && !hasChildren ? "Empty folder" : null;
+      : state?.status === "loaded" && !hasChildren ? filtered ? "No matching items" : "Empty folder" : null;
     if (message) rows.push({ kind: "peek-state", key: `state:${key}`, parentPath: entry.path, depth: placement.depth + 1, message });
   });
   emitHeaders(Infinity);

@@ -78,3 +78,23 @@ test("a slow listing shows Loading only after 150ms, then its result", async ({ 
   expect(first - clicked).toBeGreaterThanOrEqual(150);
   await expect(page.locator(".peek-state")).toHaveText("Empty folder");
 });
+
+test("re-opening a peek paints its remembered listing while a slow read revalidates (#1509)", async ({ page }) => {
+  await caret(page, "Alpha").click();
+  await expect(row(page, `${root}/Alpha/same.txt`)).toBeVisible();
+  await caret(page, "Alpha", "Collapse").click();
+  await expect(row(page, `${root}/Alpha/same.txt`)).toHaveCount(0);
+  // Without the remembered listing this read would show Loading at 150ms.
+  await page.evaluate(async () => {
+    const { getMockControl } = await import("/src/lib/api/mock-control.ts");
+    getMockControl().latency = { list_directory_fresh: 1500 };
+    // Only the re-open is under test; a loaded host can delay the first read.
+    (window as unknown as { __peekLoading: number[] }).__peekLoading.length = 0;
+  });
+  await caret(page, "Alpha").click();
+  await expect(row(page, `${root}/Alpha/same.txt`)).toBeVisible();
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: "screenshots/feat/cache-peeks/reopen-from-cache.png" });
+  expect(await loadingSeen(page)).toEqual([]);
+  await expect(row(page, `${root}/Alpha/same.txt`)).toBeVisible();
+});

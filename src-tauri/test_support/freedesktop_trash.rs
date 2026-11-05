@@ -49,6 +49,37 @@ fn artifact_paths(success: &TrashSuccess) -> (PathBuf, PathBuf) {
     )
 }
 
+/// A GVfs FUSE source (Google Drive, #1508) has no trash: it is refused
+/// before any trash layout is created, and the source is untouched.
+#[test]
+fn a_gvfs_fuse_source_is_refused_before_any_trash_effect() {
+    let (scratch, mut context, source) = fixture();
+    let path = source.join("report.pdf");
+    fs::write(&path, b"original").unwrap();
+    let physical = fs::canonicalize(&path).unwrap();
+    if super::super::trash_mounts::mount_id(&physical)
+        .unwrap()
+        .is_none()
+    {
+        return; // Pre-5.8 kernels resolve by pathname; the fixture needs ids.
+    }
+    let mut mount = context.mounts.resolve(&physical).unwrap().clone();
+    mount.filesystem = OsString::from("fuse.gvfsd-fuse");
+    context.mounts = MountSnapshot::from_mounts(vec![mount]);
+    let error = context
+        .trash(&path)
+        .expect_err("a GVfs source must not be trashed");
+    assert!(matches!(error, AppError::PermissionDenied(_)), "{error:?}");
+    assert!(error.to_string().contains("has no trash"), "{error}");
+    assert_eq!(fs::read(&path).unwrap(), b"original");
+    assert!(!context.data_home.exists());
+    let names: Vec<_> = fs::read_dir(scratch.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(names, [OsString::from("source")]);
+}
+
 #[test]
 fn selected_directory_cannot_contain_its_own_trash_destination() {
     let (_scratch, mut context, source) = fixture();

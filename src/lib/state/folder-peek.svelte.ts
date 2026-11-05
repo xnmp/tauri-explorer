@@ -5,11 +5,12 @@ import { caretlessDoubleClickNotice } from "$lib/domain/folder-peek-flat";
 import type { FileEntry } from "$lib/domain/file";
 import type { BandSide } from "$lib/domain/tile-panels";
 import type { createFolderPeekSession } from "./folder-peek-session.svelte";
+import type { PeekFilterSource } from "./peek-filter.svelte";
 
 const emptySides: ReadonlyMap<string, BandSide> = new Map();
 const noPaths: readonly string[] = [];
 const noFullFlow: ReadonlySet<string> = new Set();
-export function createFolderPeekState(windows: boolean, initialExpanded: readonly string[] = []) {
+export function createFolderPeekState(windows: boolean, initialExpanded: readonly string[] = [], filter?: PeekFilterSource) {
   let session = $state.raw<ReturnType<typeof createFolderPeekSession> | null>(null);
   let loading: Promise<void> | undefined;
   let disposed = false;
@@ -19,13 +20,17 @@ export function createFolderPeekState(windows: boolean, initialExpanded: readonl
   function activate(): Promise<void> {
     if (session || disposed) return Promise.resolve();
     return loading ??= import("./folder-peek-session.svelte").then(({ createFolderPeekSession }) => {
-      if (!disposed) session = createFolderPeekSession(windows, [...remembered.keys()]);
+      if (!disposed) session = createFolderPeekSession(windows, [...remembered.keys()], filter);
     }).finally(() => { loading = undefined; });
   }
   if (initialPaths.length) void activate();
   return {
     get watchFactory() { return session?.watchFactory; },
     get policies() { return session?.policies; },
+    /** Folders a descendant match keeps visible while filtering (#1510).
+     * Read only while filtering, so it loads the session even with no peek
+     * open (activation writes state only once the chunk has loaded). */
+    get filter() { return session ? session.filter : void activate(); },
     get expanded() { return session?.expanded ?? remembered; },
     /** Spring-loaded peeks (#1242); projected with `expanded`, never stored in it. */
     get temporary() { return session?.temporary ?? noPaths; },

@@ -442,3 +442,123 @@ fn excessive_directory_depth_is_bounded_and_retains_created_private_ancestors() 
     assert!(source.exists());
     assert!(temporary.path().join("target-parent/target").is_dir());
 }
+
+/// gvfsd-fuse answers every chmod with ENOTSUP when its backend (Google Drive,
+/// #1507) has no `unix::mode`; Linux reports the same code as EOPNOTSUPP.
+fn mode_unsupported(_: &fs::File, _: u32) -> std::io::Result<()> {
+    Err(std::io::Error::from_raw_os_error(libc::EOPNOTSUPP))
+}
+
+fn mode_denied(_: &fs::File, _: u32) -> std::io::Result<()> {
+    Err(std::io::Error::from_raw_os_error(libc::EPERM))
+}
+
+#[test]
+fn filesystem_without_settable_modes_still_receives_the_copied_tree() {
+    let temporary = tempfile::tempdir().unwrap();
+    let (source_parent, target_parent) = parents(temporary.path());
+    let source = temporary.path().join("source-parent/tree");
+    fs::create_dir(&source).unwrap();
+    fs::create_dir(source.join("nested")).unwrap();
+    fs::write(source.join("nested/file"), b"drive bytes").unwrap();
+    fs::set_permissions(
+        source.join("nested/file"),
+        fs::Permissions::from_mode(0o644),
+    )
+    .unwrap();
+    let expected = version_at(&source_parent, OsStr::new("tree")).unwrap();
+    let mut progress = TestProgress::default();
+
+    let outcome = copy_with(
+        Source {
+            parent: &source_parent,
+            name: OsStr::new("tree"),
+            display_path: &source,
+            expected: &expected,
+        },
+        Target {
+            parent: &target_parent,
+            name: OsStr::new("tree-copy"),
+        },
+        &mut progress,
+        false,
+        mode_unsupported,
+    )
+    .unwrap();
+    let target = temporary.path().join("target-parent/tree-copy");
+
+    assert_eq!(
+        fs::read(target.join("nested/file")).unwrap(),
+        b"drive bytes"
+    );
+    // The destination keeps its own creation mode; the observed version is
+    // taken after the refused change, so it describes the real payload.
+    assert_eq!(
+        fs::metadata(target.join("nested/file"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
+    assert_eq!(
+        outcome.version,
+        version_at(&target_parent, OsStr::new("tree-copy")).unwrap()
+    );
+    assert_eq!(progress.bytes, b"drive bytes".len() as u64);
+}
+
+#[test]
+fn a_refused_mode_change_on_a_permission_model_still_fails_the_copy() {
+    let temporary = tempfile::tempdir().unwrap();
+    let (source_parent, target_parent) = parents(temporary.path());
+    let source_path = temporary.path().join("source-parent/source");
+    fs::write(&source_path, b"bytes").unwrap();
+    let expected = version_at(&source_parent, OsStr::new("source")).unwrap();
+
+    let error = copy_with(
+        Source {
+            parent: &source_parent,
+            name: OsStr::new("source"),
+            display_path: &source_path,
+            expected: &expected,
+        },
+        Target {
+            parent: &target_parent,
+            name: OsStr::new("target"),
+        },
+        &mut TestProgress::default(),
+        false,
+        mode_denied,
+    )
+    .unwrap_err();
+
+    assert!(
+        error.to_string().contains("Operation not permitted"),
+        "{error}"
+    );
+    // Partial private output remains evidence for the staging owner.
+    assert!(temporary.path().join("target-parent/target").exists());
+}
+
+#[test]
+fn only_unsupported_mode_errors_are_tolerated() {
+    let path = Path::new("payload");
+    for code in [libc::ENOTSUP, libc::EOPNOTSUPP] {
+        apply_copied_mode(Err(std::io::Error::from_raw_os_error(code)), path).unwrap();
+    }
+    for code in [
+        libc::EPERM,
+        libc::EACCES,
+        libc::EROFS,
+        libc::EIO,
+        libc::ENOSYS,
+    ] {
+        assert_eq!(
+            apply_copied_mode(Err(std::io::Error::from_raw_os_error(code)), path)
+                .unwrap_err()
+                .raw_os_error(),
+            Some(code)
+        );
+    }
+}

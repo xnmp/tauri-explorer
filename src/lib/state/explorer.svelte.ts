@@ -154,6 +154,8 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   // Filter query for filtering displayed entries (Ctrl+F)
   let filterQuery = $state("");
   let showFilter = $state(false);
+  // An AI filter result (#1506) replaces the substring match; any filter reset clears it.
+  let filterPredicate = $state.raw<((entry: FileEntry) => boolean) | null>(null);
 
   // Per-pane miller columns layer count (#229). null = follow the global
   // setting, so panes without an explicit choice track Settings changes.
@@ -165,8 +167,17 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   let pendingNavigationFocus: NavigationFocusIntent | null = null;
   let onRevealCallback: (() => void) | null = null;
 
+  // Filenames, plus a lineage prompt where there is one (#1449). With Folder Peek, a folder with a
+  // match a bounded depth below it stays; the lazy session filters the peek levels the same way (#1510).
+  const filterMatches = (e: FileEntry) => {
+    const q = filterQuery.toLowerCase(); return e.name.toLowerCase().includes(q) || !!lineage.labels?.matches(e.path, q);
+  };
+  const filterShows = (e: FileEntry) => !filterQuery || filterMatches(e) || peek.filter?.keeps.has(e.path);
+
   // Filesystem observation ownership
-  const peek = createFolderPeekState(isWindows, initialPeeks);
+  const peek = createFolderPeekState(isWindows, initialPeeks, {
+    matcher: () => capability !== "none" && filterQuery && !filterPredicate ? filterMatches : undefined, state: coreState, visible: visibleEntriesFor,
+  });
   const paths = pathComparison(isWindows);
   const watch = createPaneWatch({ refresh: (options) => refresh(options), currentPath: () => coreState.currentPath, refreshPath: (path, options) => refresh(options, path) });
 
@@ -186,11 +197,8 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   const peekSort = (): [SortField, boolean, typeof promptOf] => coreState.viewMode === "details" ? [coreState.sortBy, coreState.sortAscending, promptOf] : ["name", true, promptOf];
   const ownDisplayEntries = $derived.by(() => {
     let filtered = visibleEntriesFor(coreState.entries, coreState.currentPath);
-    if (filterQuery) {
-      // Filenames, plus a lineage prompt where there is one (#1449).
-      const q = filterQuery.toLowerCase(), labels = lineage.labels;
-      filtered = filtered.filter((e) => e.name.toLowerCase().includes(q) || !!labels?.matches(e.path, q));
-    }
+    // An AI filter predicate (#1506) replaces the substring match (which keeps peek-matched folders, #1510).
+    filtered = filtered.filter(filterPredicate ?? filterShows);
     if (revealedPath && !filtered.some((entry) => entry.path === revealedPath)) {
       const revealed = coreState.entries.find((entry) => entry.path === revealedPath);
       if (revealed) filtered = [...filtered, revealed];
@@ -503,7 +511,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
         coreState.loading = true;
       }
       coreState.error = null;
-      filterQuery = "";
+      filterQuery = "", filterPredicate = null;
       revealedPath = null;
       showFilter = false;
 
@@ -647,6 +655,14 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
       }
     }
     return success;
+  }
+
+  /** Auto-select the first matching entry as the filter changes. */
+  function selectFirstDisplayed(): void {
+    const first = displayEntries[0];
+    setSelection(first ? [first.path] : []);
+    coreState.selectionAnchorPath = first?.path ?? null;
+    if (first) coreState.cursorPath = first.path;
   }
 
   /** Visible-entry filter matching `displayEntries` (hidden + manually-hidden
@@ -1265,26 +1281,18 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     // Filter
     get filterQuery() { return filterQuery; },
     get showFilter() { return showFilter; },
+    get filterPredicate() { return filterPredicate; },
     toggleFilter() {
       showFilter = !showFilter;
-      if (!showFilter) filterQuery = "";
+      if (!showFilter) filterQuery = "", filterPredicate = null;
     },
     openFilter() { showFilter = true; },
-    closeFilter() { showFilter = false; filterQuery = ""; },
-    setFilter(query: string) {
-      filterQuery = query;
-      // Auto-select the first matching entry as the user types
-      const first = displayEntries[0];
-      if (first) {
-        setSelection([first.path]);
-        coreState.selectionAnchorPath = first.path;
-        coreState.cursorPath = first.path;
-      } else {
-        setSelection([]);
-        coreState.selectionAnchorPath = null;
-      }
-    },
-    clearFilter() { filterQuery = ""; },
+    closeFilter() { showFilter = false; filterQuery = ""; filterPredicate = null; },
+    setFilter(query: string) { filterQuery = query; filterPredicate = null; selectFirstDisplayed(); },
+    setFilterPredicate(predicate: ((entry: FileEntry) => boolean) | null, select = false) { filterPredicate = predicate; if (select) selectFirstDisplayed(); },
+    /** Hidden/manually-hidden rules applied, before any filter or sort. */
+    visibleEntries: () => visibleEntriesFor(coreState.entries, coreState.currentPath),
+    clearFilter() { filterQuery = ""; filterPredicate = null; },
     // Selection and independent keyboard cursor
     get focusedEntry() { return focusedEntry; },
     /** The cursor's visible index (its occurrence when the path repeats); -1 when empty. */
@@ -1301,7 +1309,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
       const entry = coreState.entries.find((entry) => entry.path === path);
       if (!entry) return false;
       revealedPath = path;
-      filterQuery = "";
+      filterQuery = "", filterPredicate = null;
       showFilter = false;
       // Lineage peek: a held arrival is released, and a grouped file opens
       // the peeks down to one occurrence of it before it is selected. Until

@@ -156,6 +156,10 @@ export interface MockControl {
   /** Command name -> extra artificial latency in ms, on top of the base
    * simulated round-trip delay. Also settable via `?mockLatency=name:ms,...`. */
   latency?: Record<string, number>;
+  /** AI filter (#1506): `ai_text_describe` reports the default profile unavailable. */
+  aiTextUnavailable?: boolean;
+  /** AI filter (#1506): replaces the deterministic `ai_text_generate` reply. */
+  aiTextReply?: (input: string) => string;
 }
 
 /** The mock's single window-global control object. mock-invoke.ts creates

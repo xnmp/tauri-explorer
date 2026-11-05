@@ -55,16 +55,22 @@ afterEach(async () => {
   effects.splice(0).forEach(dispose => dispose());
 });
 
-it("root filter keystrokes re-project only the root level", async () => {
+// The filter applies inside peeks (#1510): keystrokes re-filter every level,
+// but only the root re-sorts.
+it("root filter keystrokes re-sort only the root level", async () => {
   const pane = create();
   await pane.togglePeek(large.path); await settle();
   await pane.togglePeek(small.path); await settle();
   expect(pane.displayEntries).toHaveLength(10_003);
   sorted.clear();
-  for (const query of ["l", "la", "lar", "larg"]) { pane.setFilter(query); flushSync(); }
+  // "large" stays because its children match; "small"'s child does not.
+  for (const query of ["i", "it", "ite", "item"]) { pane.setFilter(query); flushSync(); }
   expect(pane.displayEntries).toHaveLength(10_001);
   expect(sorted.get(large.path) ?? 0).toBe(0);
-  expect(sorted.get("/r") ?? 0).toBe(4);
+  // One pass per keystroke, plus one when the filter session first publishes
+  // its kept folders (#1510).
+  expect(sorted.get("/r") ?? 0).toBeLessThanOrEqual(5);
+  expect(sorted.get("/r") ?? 0).toBeGreaterThanOrEqual(4);
 });
 
 it("one peek's publish re-projects only that peek", async () => {

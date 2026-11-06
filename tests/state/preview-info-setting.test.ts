@@ -72,7 +72,8 @@ describe("preview auxiliary info setting (#494)", () => {
   });
 
   it("is reachable from the command palette as a toggle that mirrors the live value", async () => {
-    const { settingsStore, generateToggleCommands } = await freshModule();
+    const { settingsStore } = await freshModule();
+    const { generateToggleCommands } = await import("$lib/state/settings-toggles");
 
     const command = generateToggleCommands().find((c) => c.id === "view.togglePreviewInfo");
     expect(command, "no palette command registered for the preview info setting").toBeDefined();

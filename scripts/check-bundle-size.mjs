@@ -104,7 +104,17 @@ const STARTUP_RAW_BUDGET = 866_617;
 // alone it measured 280,496 (+159 over the pre-#1491 dev); combined with #1491
 // it measured 280,948. The extra startup cost is the per-pack repository
 // style (filled/outline) and the repository tint in FolderIcon/Catppuccin.
-const STARTUP_GZIP_BUDGET = 281_024;
+// Raised 281,024 -> 281,728 (+704) for #1523 (plugin file icons and Details
+// columns): dev 4fb8fffa measured 280,872; the feature measured 281,689
+// (+817). Eager by nature: the two registries' read paths (extension lookup,
+// offered columns memoized per provider set, per-provider request gating,
+// cell text, Length fallback), the SDK methods with their lazy-registration
+// wrapper, FileIcon's plugin branch, and the Details header, column-menu and
+// row wiring. Validation, provider construction (register-contributions.ts)
+// and the row-cell component load lazily. A first cut that registered
+// eagerly and rendered cells inline measured +2,781; the review fixes'
+// gating/memoization (+404) mostly moved modules between startup chunks.
+const STARTUP_GZIP_BUDGET = 281_728;
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const clientDir = resolve(repoRoot, ".svelte-kit/output/client");

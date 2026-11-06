@@ -32,7 +32,7 @@
     display:inline-flex; position:relative; align-items:center; justify-content:center; flex-shrink:0; line-height:0;
     --ctp-blue:#89b4fa; --ctp-sapphire:#74c7ec; --ctp-sky:#89dceb; --ctp-red:#f38ba8; --ctp-peach:#fab387; --ctp-yellow:#f9e2af; --ctp-green:#a6e3a1; --ctp-mauve:#cba6f7; --ctp-pink:#f5c2e7; --ctp-text:#cdd6f4; --ctp-flamingo:#f2cdcd; --ctp-maroon:#eba0ac; --ctp-teal:#94e2d5; --ctp-overlay1:#7f849c;
   }
-  /* Recomputed on special folder art (#1491) so its unset --icon-pack-tint
+  /* Recomputed on special folder badges (#1491, #1527) so their unset --icon-pack-tint
      leaves the glyph its Catppuccin accent rather than the folder colour. */
   .catppuccin-file-icon, .catppuccin-file-icon :global(.special-folder-art) {
     --vscode-ctp-blue:var(--icon-pack-tint,var(--ctp-blue)); --vscode-ctp-sapphire:var(--icon-pack-tint,var(--ctp-sapphire)); --vscode-ctp-sky:var(--icon-pack-tint,var(--ctp-sky));
@@ -47,6 +47,4 @@
   }
   .catppuccin-file-icon :global(svg) { width:100%; height:100%; }
   .folder-decoration { position:absolute; inset:0; }
-  /* Small special folders (#1491) draw Catppuccin's composite instead of the plain folder. */
-  .catppuccin-file-icon :global(svg:has(> .special-folder-art > .special-folder-composite) > use:first-child) { display:none; }
 </style>

@@ -30,6 +30,10 @@ export interface FileIconContribution {
   cannot read or restyle the host, so draw with explicit colours rather than
   `currentColor` or host CSS variables. The host adds the SVG namespace when
   the markup omits it.
+- Plugin icons get no CSS filter: built-in icons carry a small drop shadow,
+  but a filtered `<img>` is re-rasterized on every scroll frame in WebKitGTK
+  (Tiles frames went from ~17 ms to 120-190 ms, #1530). Draw any shading
+  into the artwork itself.
 - Extensions are owned by the first plugin in plugin order. When it
   deactivates, the next claimant (or the built-in icon) takes over.
 - Registration validates in a lazily loaded module. An invalid contribution

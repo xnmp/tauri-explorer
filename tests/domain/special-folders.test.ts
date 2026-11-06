@@ -1,17 +1,17 @@
 /**
  * Special folder icons (#1491): well-known directory names resolve to a kind,
- * and each icon pack gets its own native variant of that kind.
+ * and each icon pack badges that kind on its ordinary folder (#1527).
  */
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   getSpecialFolderKind,
   resolveSpecialFolderVariant,
-  specialFolderGlyphBox,
+  specialFolderBadgeBox,
   specialFolderHue,
   SPECIAL_FOLDER_KINDS,
 } from "$lib/domain/special-folders";
-import { repositoryEmblem, TILE_CARET_INSET } from "$lib/domain/file-icon-identity";
+import { TILE_CARET_INSET } from "$lib/domain/file-icon-identity";
 import { THUMBNAIL_SIZE_CONFIG } from "$lib/domain/tile-layout";
 import type { FileEntry } from "$lib/domain/file";
 import type { IconPack } from "$lib/domain/icon-themes";
@@ -45,13 +45,12 @@ describe("special folder names", () => {
     for (const kind of SPECIAL_FOLDER_KINDS) expect(specialFolderHue(kind)).toMatch(/^#[0-9a-f]{6}$/);
   });
 });
-
 describe("per-pack variants", () => {
   const src = dir("src");
+  const PACKS: IconPack[] = ["material", "classic", "minimal", "catppuccin"];
 
   it("ignores files and repository/linked folders, which keep their emblem", () => {
-    const packs: IconPack[] = ["material", "classic", "minimal", "catppuccin"];
-    for (const pack of packs) {
+    for (const pack of PACKS) {
       expect(resolveSpecialFolderVariant({ ...src, kind: "file" }, pack, "large")).toBeNull();
       expect(resolveSpecialFolderVariant(dir("src", { is_git_repo: true }), pack, "large")).toBeNull();
       expect(resolveSpecialFolderVariant(dir("src", { is_symlink: true }), pack, "small")).toBeNull();
@@ -59,30 +58,45 @@ describe("per-pack variants", () => {
     }
   });
 
-  it("Material recolours the folder per kind, honouring a colour theme's file tint", () => {
-    const v = resolveSpecialFolderVariant(src, "material", "large")!;
-    expect(v).toMatchObject({ kind: "src", sprite: "glyphs", symbol: "src", overlay: true });
-    expect(v.body).toBe(`var(--icon-file-tint, ${specialFolderHue("src")})`);
-    expect(v.ink).toBe(`color-mix(in srgb, ${v.body} 40%, #000)`);
-    expect(resolveSpecialFolderVariant(dir("tests"), "material", "large")!.body).not.toBe(v.body);
+  it("maps every kind to its own badge symbol in every pack (#1527)", () => {
+    const names = [["src", "src"], ["e2e", "tests"], ["node_modules", "node"], [".github", "github"], ["build", "dist"], ["Downloads", "download"]] as const;
+    for (const pack of PACKS) for (const size of ["small", "large"] as const) for (const [name, kind] of names) {
+      const v = resolveSpecialFolderVariant(dir(name), pack, size)!;
+      expect(v.kind, name).toBe(kind);
+      expect(v.symbol).toBe(pack === "catppuccin" ? `folder-${kind}-glyph` : kind);
+    }
   });
 
-  it("Classic keeps the theme folder colour and draws a deeper shade of it", () => {
-    const v = resolveSpecialFolderVariant(src, "classic", "small")!;
-    expect(v).toMatchObject({ sprite: "glyphs", symbol: "src", overlay: true, stroke: 3 });
-    expect(v.body).toBeUndefined();
-    expect(v.ink).toContain("var(--icon-folder");
+  it("never repaints the folder body: every pack draws a badge on the theme's surface", () => {
+    for (const pack of PACKS) for (const size of ["small", "large"] as const) {
+      const v = resolveSpecialFolderVariant(src, pack, size)!;
+      expect(v).not.toHaveProperty("body");
+      expect(v.fill).toBe("var(--background-solid, #fff)");
+    }
   });
 
-  it("Minimal draws an outline glyph in the folder's stroke colour", () => {
-    const v = resolveSpecialFolderVariant(src, "minimal", "large")!;
-    expect(v).toMatchObject({ sprite: "glyphs", ink: "currentColor", overlay: true });
-    expect(v.body).toBeUndefined();
+  it("Classic and Material tint the badge with the kind's hue, honouring a colour theme's file tint", () => {
+    for (const pack of ["classic", "material"] as const) {
+      const v = resolveSpecialFolderVariant(src, pack, "large")!;
+      expect(v).toMatchObject({ kind: "src", sprite: "glyphs", symbol: "src" });
+      expect(v.ink).toBe(`color-mix(in srgb, var(--icon-file-tint, ${specialFolderHue("src")}) 70%, var(--text-primary, #000))`);
+      expect(v.outline).toBe(v.ink);
+      expect(resolveSpecialFolderVariant(dir("tests"), pack, "large")!.ink).not.toBe(v.ink);
+    }
+    expect(resolveSpecialFolderVariant(src, "classic", "small")!.stroke).toBeGreaterThan(resolveSpecialFolderVariant(src, "classic", "large")!.stroke);
   });
 
-  it("Catppuccin uses the upstream composite when small and its glyph on the plain folder when large", () => {
-    expect(resolveSpecialFolderVariant(src, "catppuccin", "small")).toMatchObject({ sprite: "catppuccin", symbol: "folder-src", overlay: false, x: 0, y: 0, w: 16 });
-    expect(resolveSpecialFolderVariant(src, "catppuccin", "large")).toMatchObject({ sprite: "catppuccin", symbol: "folder-src-glyph", overlay: true });
+  it("Minimal draws an outline badge in the folder's stroke colour", () => {
+    expect(resolveSpecialFolderVariant(src, "minimal", "large")).toMatchObject({ sprite: "glyphs", ink: "currentColor", outline: "currentColor" });
+  });
+
+  it("Catppuccin keeps its plain folder and badges the upstream glyph in its own accent", () => {
+    for (const size of ["small", "large"] as const) {
+      const v = resolveSpecialFolderVariant(src, "catppuccin", size)!;
+      expect(v).toMatchObject({ sprite: "catppuccin", symbol: "folder-src-glyph", outline: "var(--vscode-ctp-text)" });
+      expect(v.ink).toBeUndefined();
+      expect(v.box).toBe(specialFolderBadgeBox("catppuccin", size));
+    }
   });
 
   it("ships artwork for every kind in both sprites", () => {
@@ -90,46 +104,47 @@ describe("per-pack variants", () => {
     const catppuccin = readFileSync("src/lib/components/icons/catppuccin-sprite.svg", "utf8");
     for (const kind of SPECIAL_FOLDER_KINDS) {
       expect(glyphs, kind).toContain(`<symbol id="${kind}"`);
-      expect(catppuccin, kind).toContain(`<symbol id="folder-${kind}"`);
       expect(catppuccin, kind).toContain(`<symbol id="folder-${kind}-glyph"`);
     }
   });
 });
 
-describe("special folder glyph geometry", () => {
-  const bodies = {
-    small: { left: 2.5, right: 15.5, top: 6.5, bottom: 14.5 },
-    large: { left: 2, right: 46, top: 16.25, bottom: 45 },
-  };
+describe("special folder badge geometry (#1527)", () => {
+  const boxes = (["folder", "catppuccin"] as const).flatMap((surface) =>
+    (["small", "large"] as const).map((size) => [surface, size, specialFolderBadgeBox(surface, size)] as const));
 
-  it.each(["small", "large"] as const)("folder/%s glyph sits on the front panel, centred like the repository emblem", (size) => {
-    const b = specialFolderGlyphBox("folder", size);
-    const body = bodies[size];
-    // Glyph artwork keeps a 2.5-unit margin inside its 24-unit grid.
-    const inset = (b.w * 2.5) / 24;
-    expect(b.x + inset).toBeGreaterThanOrEqual(body.left);
-    expect(b.x + b.w - inset).toBeLessThanOrEqual(body.right);
-    expect(b.y + inset).toBeGreaterThanOrEqual(body.top);
-    expect(b.y + b.w - inset).toBeLessThanOrEqual(body.bottom);
-    expect(Math.abs(b.x + b.w / 2 - repositoryEmblem("folder", size).cx)).toBeLessThanOrEqual(0.5);
+  it.each(boxes)("%s/%s badge sits in the bottom-left corner, clear of the top and right edges", (_surface, _size, b) => {
+    const half = b.ring / 2;
+    const painted = { left: b.x - half, right: b.x + b.w + half, top: b.y - half, bottom: b.y + b.w + half };
+    expect(painted.left).toBeGreaterThanOrEqual(0);
+    expect(painted.bottom).toBeLessThanOrEqual(b.viewBox);
+    expect(b.x + b.w / 2).toBeLessThan(b.viewBox / 2);
+    expect(b.y + b.w / 2).toBeGreaterThan(b.viewBox / 2);
+    // The Git badge/status letter (top-right) and symlink badge (top-left)
+    // keep the top band; the peek caret keeps the right side.
+    expect(painted.top / b.viewBox).toBeGreaterThanOrEqual(0.4);
+    expect(painted.right / b.viewBox).toBeLessThanOrEqual(0.6);
+  });
+
+  it.each(boxes)("%s/%s glyph sits inside its backing", (_surface, _size, b) => {
+    expect(b.glyph.w).toBeGreaterThan(0);
+    expect(b.glyph.x).toBeGreaterThanOrEqual(b.x);
+    expect(b.glyph.y).toBeGreaterThanOrEqual(b.y);
+    expect(b.glyph.x + b.glyph.w).toBeLessThanOrEqual(b.x + b.w);
+    expect(b.glyph.y + b.glyph.w).toBeLessThanOrEqual(b.y + b.w);
+  });
+
+  it("stays at least 8px across at 16px and 24px across at 64px", () => {
+    for (const [, size, b] of boxes) expect((b.w / b.viewBox) * (size === "small" ? 16 : 64)).toBeGreaterThanOrEqual(size === "small" ? 8 : 24);
   });
 
   const presets = Object.entries(THUMBNAIL_SIZE_CONFIG).map(([name, c]) => [name, c.displaySize] as const);
   it.each(presets)("never reaches the Tiles peek caret at the %s preset (%ipx)", (_name, px) => {
-    // Catppuccin's large glyph-only symbol keeps its art in the 16-unit box's
-    // lower-right quadrant (x 7.5–15.5, y 8.5–15.5), scaled by w/16.
-    const cat = specialFolderGlyphBox("catppuccin", "large");
-    const s = cat.w / 16;
-    const folder = specialFolderGlyphBox("folder", "large");
-    const boxes = [
-      { viewBox: folder.viewBox, right: folder.x + folder.w, bottom: folder.y + folder.w },
-      { viewBox: cat.viewBox, right: cat.x + 15.5 * s, bottom: cat.y + 15.5 * s },
-    ];
-    for (const b of boxes) {
+    for (const surface of ["folder", "catppuccin"] as const) {
+      const b = specialFolderBadgeBox(surface, "large");
       const unit = b.viewBox / px;
       const caretLeft = (px - TILE_CARET_INSET.right) * unit;
-      const caretTop = (px - TILE_CARET_INSET.bottom) * unit;
-      expect(b.right < caretLeft || b.bottom < caretTop, `${b.viewBox}-unit glyph at ${px}px`).toBe(true);
+      expect(b.x + b.w + b.ring / 2, `${surface} at ${px}px`).toBeLessThan(caretLeft);
     }
   });
 });

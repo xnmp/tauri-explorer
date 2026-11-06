@@ -22,21 +22,27 @@ beforeAll(async () => {
 
 describe("special folder icon rendering", () => {
   for (const theme of ["material", "classic", "minimal"] as const) for (const size of ["small", "large"] as const) {
-    it(`${theme}/${size} draws the kind's glyph on the pack's folder`, () => {
+    it(`${theme}/${size} badges the kind's glyph on the pack's unchanged folder (#1527)`, () => {
       const out = html(dir("SRC"), size, theme);
       expect(out).toContain('data-special-folder="src"');
+      expect(out).toMatch(/<rect class="special-folder-badge-backing"/);
       expect(out).toMatch(/<use class="special-folder-glyph"[^>]*href="[^"]*folder-glyphs-sprite[^"]*#src"/);
       expect(out).toContain(`data-icon-theme="${theme}"`);
-      // Only Material repaints the body, which hides the plain one underneath.
-      expect(out.includes("special-folder-body")).toBe(theme === "material");
+      // The folder keeps the theme's folder colour: same tint as a plain folder.
+      const tint = /folder-icon[^>]*style="color: ([^;"]*)/;
+      expect(out.match(tint)?.[1]).toBe("var(--icon-folder, #ffb900)");
+      expect(out.match(tint)?.[1]).toBe(html(dir("Folder"), size, theme).match(tint)?.[1]);
+      expect(out).not.toContain("special-folder-body");
     });
   }
 
-  it("catppuccin swaps in the upstream composite when small and overlays its glyph when large", () => {
-    const small = html(dir("tests"), "small", "catppuccin");
-    expect(small).toMatch(/<use class="special-folder-composite"[^>]*href="[^"]*catppuccin-sprite[^"]*#folder-tests"/);
-    const large = html(dir("tests"), "large", "catppuccin");
-    expect(large).toMatch(/<use class="special-folder-glyph"[^>]*href="[^"]*catppuccin-sprite[^"]*#folder-tests-glyph"/);
+  it("catppuccin keeps its plain folder and badges the upstream glyph at both sizes", () => {
+    for (const size of ["small", "large"] as const) {
+      const out = html(dir("tests"), size, "catppuccin");
+      expect(out).toMatch(/<use href="[^"]*catppuccin-sprite[^"]*#folder"/);
+      expect(out).toMatch(/<use class="special-folder-glyph"[^>]*href="[^"]*catppuccin-sprite[^"]*#folder-tests-glyph"/);
+      expect(out).not.toContain("special-folder-composite");
+    }
   });
 
   it("keeps ordinary folders plain", () => {

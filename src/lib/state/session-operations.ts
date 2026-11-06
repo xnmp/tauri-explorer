@@ -19,6 +19,7 @@ import { toastStore } from "./toast.svelte";
 import { broadcastFileChange } from "./file-events";
 import { emptyFolderResolver } from "./empty-folders.svelte";
 import { frecencyStore } from "./frecency.svelte";
+import { moveOpenHistory } from "./open-history-access.svelte";
 
 export interface SessionContext {
   onRefresh: () => unknown;
@@ -103,6 +104,10 @@ export async function runSession(
         ...committed.map((receipt) => parentDir(receipt.path)),
       ])];
       frecencyStore.pruneNonExistent();
+      // A moved item keeps its "Date opened" (#1525); items are positional.
+      if (kind.operation === "move") result.data.items.forEach((item, index) => {
+        if (item.status === "succeeded" && sources[index]) moveOpenHistory(sources[index], item.receipt.path);
+      });
     }
     if (error) operationsManager.failOperation(operation.id, error);
     else if (cancelled) operationsManager.cancelOperation(operation.id);

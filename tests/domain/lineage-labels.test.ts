@@ -160,7 +160,7 @@ describe("Prompt sort", () => {
 
 describe("Prompt column layout", () => {
   it("is a keyed column right after Name, projected only while visible", () => {
-    expect(COLUMN_KEYS).toEqual(["name", "prompt", "date", "type", "size", "length", "resolution"]);
+    expect(COLUMN_KEYS).toEqual(["name", "prompt", "date", "type", "size", "length", "resolution", "opened"]);
     const widths = { ...normalizeColumnWidths(), prompt: 222 };
     const visible = { date: false, type: false, size: false, length: false, resolution: false };
     expect(columnGridTemplate(widths, { ...visible, prompt: true })).toBe("300px 222px");
@@ -169,6 +169,6 @@ describe("Prompt column layout", () => {
 
   it("is visible by default, including for settings saved before the column existed", () => {
     expect(normalizeSettingsInput({ columnVisibility: { date: false } }).columnVisibility)
-      .toEqual({ prompt: true, date: false, type: true, size: true, length: true, resolution: true });
+      .toEqual({ prompt: true, date: false, type: true, size: true, length: true, resolution: true, opened: false });
   });
 });

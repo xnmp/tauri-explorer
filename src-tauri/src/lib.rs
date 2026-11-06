@@ -17,6 +17,7 @@ mod fal;
 mod file_history;
 mod file_mutation;
 mod file_picker;
+mod open_history;
 mod shared_history;
 // pub: criterion benches (src-tauri/benches/) call into
 // files::dir_listing::{scan_directory_parallel, sort_entries} directly.
@@ -457,6 +458,8 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             config::read_config_file,
             shared_history::shared_history_read,
             shared_history::shared_history_mutate,
+            open_history::read_open_history,
+            open_history::write_open_history,
             config::write_config_file,
             config::get_config_dir,
             config::list_user_themes,

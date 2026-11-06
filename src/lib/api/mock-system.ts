@@ -257,6 +257,10 @@ export const systemCommands: Record<string, CommandHandler> = {
     mockConfigFiles[filename] = data;
   },
 
+  // App-data open history (#1525): shared by the page's windows and reloads.
+  read_open_history: () => localStorage.getItem(MOCK_LOCAL_KEYS.openHistory) ?? "",
+  write_open_history: (args) => { localStorage.setItem(MOCK_LOCAL_KEYS.openHistory, args.data as string); },
+
   get_config_dir: () => "/home/user/.config/tauri-explorer",
 
   // ----- File-picker portal -----

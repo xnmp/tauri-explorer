@@ -336,6 +336,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `media-durations.svelte.ts` — lazy, batched, revision-cached (size+mtime) video-duration resolver for the Details Length column; rendered rows request, listings never carry durations (#995).
 - `batched-entry-resolver.svelte.ts` — generic lazy per-row metadata resolver (same-tick batching, bounded concurrency, size+mtime revision cache, abortable `dispose`); backs Length and plugin Details columns (#995, #1523).
 - `manual-hidden.svelte.ts` — per-folder manually-hidden entry registry.
+- `open-history-access.svelte.ts` — startup-light seam for the open history (#1525): registers the `api/open.ts` `onFileLaunched` listener, lazy-loads the store on first launch/mutation/read, reactive `lastOpenedAt` for FileItem and the "opened" sort.
+- `open-history.svelte.ts` — shared file open history for Details "Date opened" (#1525, loaded lazily): records successful launches, lazy tolerant load, BroadcastChannel publication, coalesced saves that replay unsaved changes over the stored document.
 - `settings.svelte.ts` — global settings store (toggles, defaults). Very hot for feature flags. `reloadFromDisk()` adopts external settings.json edits (#599).
 - `settings-toggles.ts` — `TOGGLE_SETTINGS` metadata and `generateToggleCommands` for the command palette (split from settings.svelte.ts, #1523).
 - `icon-theme.svelte.ts` — transient icon-pack preview and reactive resolution against saved settings and applied color-theme CSS revisions; previews never persist.
@@ -360,6 +362,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `src/lib/api/native-file-drag.ts` — host native drag start channel and enriched receiver event contract.
 - `image-resolution.ts` — lazy source pixel metadata IPC; virtual paths are unavailable.
+- `open-history.ts` — read/write the app-data open history document (#1525).
 
 - `pdf-preview.ts` — bounded native PDF bytes, lazy PDF.js worker/readiness, cancellable page rendering and validated native annotation-link dispatch (#728–#730).
 
@@ -562,6 +565,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `tile-panel-motion.ts` — Tiles panel motion: geometry mixing (opening grows from its row, closing collapses), animate/changed predicates, 150ms ease-out.
 - `image-resolution.ts` — source pixel shape, supported raster extensions and display formatting.
 - `detail-columns.ts` — Details column defaults, finite bounds, malformed-width normalization and visible grid projection.
+- `open-history.ts` — bounded (10k, oldest evicted) path → last-opened map: open/move/forget ops, max-wins merge, tolerant (de)serialization (#1525).
 - `media-duration.ts` — Length-cell formatting (m:ss / h:mm:ss via `mediaTime`, empty when unknown) and the size+mtime cache revision (#995).
 - `resize-size.ts` — bounded scalar normalization, visual/model delta conversion and axis-aware keyboard sizing.
 - `scroll-moves-handle.ts` — which scrolls end a panel drag: the document's, an ancestor's or a synced scroller's, never an unrelated list's.
@@ -709,6 +713,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `portal/parent_identifier.rs` — pure, bounded validation of X11 XIDs and Wayland exported handles.
 - `portal/parent.rs` — validates portal window identifiers and attaches GTK picker surfaces to native Wayland/X11 parents before mapping.
 - `shared_history/mod.rs`, `shared_history/model.rs`, `shared_history/store.rs` — async IPC, pure bounded history policy and cross-process SQLite transactions.
+- `open_history.rs` — opaque app-data `open-history.json` read (missing/oversized → empty) and atomic write for the Details "Date opened" column (#1525).
 - `portal.rs` — xdg-desktop-portal FileChooser backend (Linux); holds the process per request and executes the idle policy's timers, bus-name release and exit (#1427).
 - `portal/idle.rs` — pure idle-exit policy for the D-Bus-activated portal: request holds, generation-checked idle timers, open-window postponement, release-name-then-exit, replaced-executable fast exit (#1427).
 - `crash_report.rs` — local crash capture (#184).

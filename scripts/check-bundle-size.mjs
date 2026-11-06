@@ -114,7 +114,15 @@ const STARTUP_RAW_BUDGET = 866_617;
 // and the row-cell component load lazily. A first cut that registered
 // eagerly and rendered cells inline measured +2,781; the review fixes'
 // gating/memoization (+404) mostly moved modules between startup chunks.
-const STARTUP_GZIP_BUDGET = 281_728;
+// Raised 281,728 -> 282,240 (+512) for #1525 (Details "Date opened" column):
+// dev 7bd8eb05 measured 281,689 (39 bytes of headroom); the feature
+// measures 282,222 (+533). The history store, its pure policy and IPC load
+// lazily on first launch/mutation/column read (state/open-history.svelte.ts);
+// startup carries the launch-listener seam in api/open.ts, the lazy accessor
+// module with its preload wrapper (its own ~344-byte chunk), the "opened"
+// sort, and the Details header, column-menu item and row cell. An eager store
+// measured +1,841.
+const STARTUP_GZIP_BUDGET = 282_240;
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const clientDir = resolve(repoRoot, ".svelte-kit/output/client");

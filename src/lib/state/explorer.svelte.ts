@@ -56,6 +56,7 @@ import { contextMenuStore } from "./context-menu.svelte";
 import { undoStore } from "./undo.svelte";
 import { settingsStore } from "./settings.svelte";
 import { manualHiddenStore } from "./manual-hidden.svelte";
+import { lastOpenedAt } from "./open-history-access.svelte";
 import { getSortPref, saveSortPref } from "./sort-prefs";
 import { createDirectoryListing } from "./directory-listing";
 import { createPaneWatch } from "./pane-watch";
@@ -64,7 +65,6 @@ import { createPaneMutations } from "./pane-mutations";
 import { undoActionLabel } from "./undo-helpers";
 import { loadWatchdog, type LoadTraceHandle } from "./load-watchdog";
 import type { LoadReason } from "$lib/domain/load-diagnostics";
-
 import type { ExplorerSeed } from "$lib/domain/window-input";
 import type { PreviewTarget } from "$lib/plugins/preview-registry.svelte";
 
@@ -191,10 +191,10 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   // Derived State
   // ===================
 
-  // Only Details has sortable headers; List and Tiles sort by name ascending
-  // whatever the folder's Details sort. Lineage prompts (#1449) are the "prompt" sort's text.
+  // Only Details sorts by its headers (List/Tiles: name ascending). Lineage prompts (#1449): "prompt"; open history (#1525): "opened".
   const promptOf = (entry: FileEntry) => lineage.labels?.prompt(entry.path);
-  const peekSort = (): [SortField, boolean, typeof promptOf] => coreState.viewMode === "details" ? [coreState.sortBy, coreState.sortAscending, promptOf] : ["name", true, promptOf];
+  const openedAt = (entry: FileEntry) => lastOpenedAt(entry.path);
+  const peekSort = (): [SortField, boolean, typeof promptOf, typeof openedAt] => coreState.viewMode === "details" ? [coreState.sortBy, coreState.sortAscending, promptOf, openedAt] : ["name", true, promptOf, openedAt];
   const ownDisplayEntries = $derived.by(() => {
     let filtered = visibleEntriesFor(coreState.entries, coreState.currentPath);
     // An AI filter predicate (#1506) replaces the substring match (which keeps peek-matched folders, #1510).

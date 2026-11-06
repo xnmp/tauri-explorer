@@ -9,12 +9,14 @@ export const DETAIL_COLUMNS = {
   size: { label: "Size", min: 80, max: 4096, default: 100 },
   length: { label: "Length", min: 60, max: 4096, default: 90 },
   resolution: { label: "Resolution", min: 80, max: 4096, default: 160 },
+  // App-owned open history (#1525); hidden by default.
+  opened: { label: "Date opened", min: 80, max: 4096, default: 180 },
 } as const satisfies Record<string, ResizeSizeOptions & { label: string }>;
 // A generous finite layout bound keeps keyboard End useful and malformed widths
 // from creating effectively unreachable columns. Widths remain session-local.
 export type ColumnKey = keyof typeof DETAIL_COLUMNS;
 export type ColumnWidths = Record<ColumnKey, number>;
-export type ColumnVisibility = Record<Exclude<ColumnKey, "name" | "resolution" | "prompt">, boolean> & { resolution?: boolean; prompt?: boolean };
+export type ColumnVisibility = Record<Exclude<ColumnKey, "name" | "resolution" | "prompt" | "opened">, boolean> & { resolution?: boolean; prompt?: boolean; opened?: boolean };
 export const COLUMN_KEYS = Object.keys(DETAIL_COLUMNS) as ColumnKey[];
 
 export function normalizeColumnWidths(input?: Partial<Record<ColumnKey, unknown>> | null): ColumnWidths {

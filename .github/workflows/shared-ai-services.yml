@@ -93,6 +93,7 @@ jobs:
           run_native_fixture installed_plugins::startup_native_tests::native_a_process_without_the_profile_never_recovers_its_live_claims profile-not-owned
           run_native_fixture installed_plugins::startup_native_tests::native_unreadable_ai_storage_keeps_legacy_backends_and_retries storage-unreadable
           run_native_fixture installed_plugins::startup_native_tests::native_startup_recovery_errors_degrade_instead_of_failing_setup recovery-error
+          run_native_fixture installed_plugins::startup_native_tests::native_queued_installs_apply_when_ownership_is_acquired_after_startup queue-late-ownership
           run_native_fixture installed_plugins::service_bridge::native_tests::native_second_consumer_status_timeout_transport_loss_and_reverse_correlation service-routing te-service-native
           run_native_fixture installed_plugins::service_bridge::native_kill_tests::native_consumer_kill_while_provider_runs_settles_each_gate_order_once consumer-kill te-service-native
       - name: Build host fixture binary

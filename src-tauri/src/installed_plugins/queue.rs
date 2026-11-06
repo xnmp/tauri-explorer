@@ -98,7 +98,10 @@ pub(super) type WorkerSlot = Mutex<Option<JoinHandle<()>>>;
 /// Publishes the queue worker while the caller holds the mutation gate.
 /// Shutdown sets Closing before taking that gate, so a worker is either
 /// published before shutdown inspects the slot or never spawned at all.
-/// Returns Ok(false) when Closing already won.
+/// Returns Ok(false) when Closing already won, or when a published worker is
+/// still running: ownership can be reached from startup or a later retry, and
+/// two workers would race on the same queue entries (#1528). A finished
+/// worker is reaped and replaced, so its handle never outlives the slot.
 pub(super) fn publish_worker(
     slot: &WorkerSlot,
     closing: impl Fn() -> bool,
@@ -107,8 +110,17 @@ pub(super) fn publish_worker(
     if closing() {
         return Ok(false);
     }
-    let worker = spawn()?;
-    *slot.lock().unwrap_or_else(|cause| cause.into_inner()) = Some(worker);
+    let mut published = slot.lock().unwrap_or_else(|cause| cause.into_inner());
+    if published
+        .as_ref()
+        .is_some_and(|worker| !worker.is_finished())
+    {
+        return Ok(false);
+    }
+    if let Some(finished) = published.take() {
+        let _ = finished.join();
+    }
+    *published = Some(spawn()?);
     Ok(true)
 }
 
@@ -221,6 +233,32 @@ mod tests {
         assert!(!published);
         assert!(slot.lock().unwrap().is_none());
         settle_worker(&Mutex::new(()), &slot);
+    }
+    #[test]
+    fn a_running_worker_is_never_joined_by_a_second_one() {
+        use std::sync::mpsc;
+        let slot = WorkerSlot::new(None);
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        assert!(publish_worker(
+            &slot,
+            || false,
+            || std::thread::Builder::new().spawn(move || {
+                let _ = release_rx.recv();
+            })
+        )
+        .unwrap());
+        // A later ownership transition while the first worker still runs.
+        assert!(!publish_worker(&slot, || false, || panic!("Second worker spawned")).unwrap());
+        release_tx.send(()).unwrap();
+        while !slot.lock().unwrap().as_ref().unwrap().is_finished() {
+            std::thread::yield_now();
+        }
+        // A finished worker is reaped and replaced rather than leaked.
+        assert!(
+            publish_worker(&slot, || false, || std::thread::Builder::new().spawn(|| {})).unwrap()
+        );
+        settle_worker(&Mutex::new(()), &slot);
+        assert!(slot.lock().unwrap().is_none());
     }
     #[test]
     fn spawn_refusal_leaves_no_worker_and_reports_the_cause() {

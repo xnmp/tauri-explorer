@@ -49,28 +49,46 @@ const setPack = (page: Page, iconTheme: string) => page.evaluate(async (iconThem
 
 const intersects = (a: Box, b: Box) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
 
+/** Squared RGB distance from `p` to the segment between `q` and `r` (every blend of the two). */
+function blendDistance(p: number[], q: number[], r: number[]) {
+  const d = [r[0] - q[0], r[1] - q[1], r[2] - q[2]];
+  const len = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+  const t = len === 0 ? 0 : Math.max(0, Math.min(1, ((p[0] - q[0]) * d[0] + (p[1] - q[1]) * d[1] + (p[2] - q[2]) * d[2]) / len));
+  return [0, 1, 2].reduce((sum, i) => sum + (p[i] - (q[i] + t * d[i])) ** 2, 0);
+}
+
 /**
- * Fraction of pixels outside `exclude` (icon-relative) with no close match
- * within 1px in the other icon's capture. The neighbourhood absorbs the
- * sub-pixel offset between two tiles' antialiased edges.
+ * Fraction of pixels outside `exclude` (icon-relative) that the other icon's
+ * capture cannot explain. Two tiles sit at different sub-pixel offsets, so an
+ * antialiased edge pixel in one is a blend of two neighbouring pixels in the
+ * other: a pixel matches when it lies near the blend of any two pixels in the
+ * other capture's 3×3 neighbourhood. A recoloured body or an extra glyph
+ * still differs, since neither is a blend of the plain folder's colours.
  */
 async function bodyDifference(page: Page, exclude: Box) {
   const [a, b] = [decodePng(await icon(page, 'src').screenshot({ scale: 'css' })), decodePng(await icon(page, 'Folder').screenshot({ scale: 'css' }))];
   const [w, h] = [Math.min(a.width, b.width), Math.min(a.height, b.height)];
-  const close = (p: number[], q: number[]) => Math.abs(p[0] - q[0]) + Math.abs(p[1] - q[1]) + Math.abs(p[2] - q[2]) <= 60;
-  let differing = 0, counted = 0;
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    // The margin covers antialiasing and Classic's large drop shadow under the badge.
-    if (x >= exclude.x - 4 && x <= exclude.x + exclude.width + 4 && y >= exclude.y - 4 && y <= exclude.y + exclude.height + 4) continue;
-    counted++;
-    const p = a.pixel(x, y);
-    let matched = false;
-    for (let dy = -1; dy <= 1 && !matched; dy++) for (let dx = -1; dx <= 1 && !matched; dx++) {
-      const [qx, qy] = [x + dx, y + dy];
-      if (qx >= 0 && qy >= 0 && qx < w && qy < h && close(p, b.pixel(qx, qy))) matched = true;
+  let differing = 0, counted = 0, map = '';
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      // The margin covers antialiasing and Classic's large drop shadow under the badge.
+      if (x >= exclude.x - 4 && x <= exclude.x + exclude.width + 4 && y >= exclude.y - 4 && y <= exclude.y + exclude.height + 4) { map += ' '; continue; }
+      counted++;
+      const p = a.pixel(x, y);
+      const near: number[][] = [];
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const [qx, qy] = [x + dx, y + dy];
+        if (qx >= 0 && qy >= 0 && qx < w && qy < h) near.push(b.pixel(qx, qy));
+      }
+      let matched = false;
+      for (let i = 0; i < near.length && !matched; i++) for (let j = i; j < near.length && !matched; j++) matched = blendDistance(p, near[i], near[j]) <= 30 * 30;
+      if (!matched) differing++;
+      map += matched ? '.' : '#';
     }
-    if (!matched) differing++;
+    map += '\n';
   }
+  // Printed for CI diagnosis when the comparison fails.
+  if (differing / counted >= 0.01) console.log(`bodyDifference ${differing}/${counted} (${a.width}x${a.height} vs ${b.width}x${b.height})\n${map}`);
   return differing / counted;
 }
 

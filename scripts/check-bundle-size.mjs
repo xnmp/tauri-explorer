@@ -114,7 +114,16 @@ const STARTUP_RAW_BUDGET = 866_617;
 // and the row-cell component load lazily. A first cut that registered
 // eagerly and rendered cells inline measured +2,781; the review fixes'
 // gating/memoization (+404) mostly moved modules between startup chunks.
-const STARTUP_GZIP_BUDGET = 281_728;
+// Raised 281,728 -> 282,240 (+512) for #1531 (sort by Length): dev 7bd8eb05
+// measured 281,689 (39 bytes of headroom); the feature measured 282,108
+// (+419). Eager by nature: the "length" comparator in sortEntries and the
+// shared isSortField check, the Length header's sort button, the "Sort by
+// Length" palette command, and the startup seam (state/length-sort.svelte.ts:
+// reactive length reads, the Explorer request effect and its preload wrapper).
+// The folder-wide request controller and the resolvers' owner/cancel logic
+// load lazily (state/length-sort-requests.svelte.ts); a first cut that
+// imported them eagerly measured 284,756 (+3,067).
+const STARTUP_GZIP_BUDGET = 282_240;
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const clientDir = resolve(repoRoot, ".svelte-kit/output/client");

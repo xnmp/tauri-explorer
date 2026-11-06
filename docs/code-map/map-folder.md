@@ -334,7 +334,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `tile-size-context.ts` — Svelte context carrying the pane's tile size from PluginFileView to `ui/file-tiles` without `size`.
 - `empty-folders.svelte.ts` — lazy empty-folder resolver (avoids per-subdir read_dir, #129).
 - `media-durations.svelte.ts` — lazy, batched, revision-cached (size+mtime) video-duration resolver for the Details Length column; rendered rows request, listings never carry durations (#995).
-- `batched-entry-resolver.svelte.ts` — generic lazy per-row metadata resolver (same-tick batching, bounded concurrency, size+mtime revision cache, abortable `dispose`); backs Length and plugin Details columns (#995, #1523).
+- `batched-entry-resolver.svelte.ts` — generic lazy per-row metadata resolver (same-tick batching, bounded concurrency, size+mtime revision cache, abortable `dispose`, owner-tagged `requestAll`/`cancel` for folder-wide requests with per-batch abort); backs Length and plugin Details columns (#995, #1523, #1531).
+- `length-sort.svelte.ts` — Sort by Length (#1531), startup side: reactive `entryLengthSeconds`/`lengthRevision` and `trackLengthSort` (Explorer's folder-wide request effect), lazily importing `length-sort-requests.svelte.ts` on the first Length sort.
+- `length-sort-requests.svelte.ts` — Sort by Length resolver side (#1531): reads video durations else plugin `lengthSeconds`, and `createLengthSortRequests` requests every eligible listing entry per Explorer owner, withdrawing on leaving the sort or folder.
 - `manual-hidden.svelte.ts` — per-folder manually-hidden entry registry.
 - `settings.svelte.ts` — global settings store (toggles, defaults). Very hot for feature flags. `reloadFromDisk()` adopts external settings.json edits (#599).
 - `settings-toggles.ts` — `TOGGLE_SETTINGS` metadata and `generateToggleCommands` for the command palette (split from settings.svelte.ts, #1523).

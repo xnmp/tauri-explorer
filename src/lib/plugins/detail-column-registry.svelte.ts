@@ -73,6 +73,9 @@ function createDetailColumnRegistry() {
       }
       return undefined;
     },
+    /** Reactive: every provider's resolver, for the folder-wide Length sort
+     *  (#1531, `length-sort-requests.svelte.ts`); any may supply `lengthSeconds`. */
+    resolvers: () => providers.map((provider) => provider.resolver),
   };
 }
 

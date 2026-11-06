@@ -42,6 +42,9 @@ describe("special folder icon rendering", () => {
       expect(out).toMatch(/<use href="[^"]*catppuccin-sprite[^"]*#folder"/);
       expect(out).toMatch(/<use class="special-folder-glyph"[^>]*href="[^"]*catppuccin-sprite[^"]*#folder-tests-glyph"/);
       expect(out).not.toContain("special-folder-composite");
+      // Placed by transform: WebKit paints a nested <svg viewBox> badge differently (#1527).
+      expect(out).not.toMatch(/special-folder-badge[\s\S]*<svg/);
+      expect(out).toMatch(/<use class="special-folder-glyph"[^>]*transform="translate\([^)]*\) scale\([^)]*\) translate\(-7 -8\)"/);
     }
   });
 

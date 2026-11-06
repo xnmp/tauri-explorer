@@ -91,9 +91,10 @@ export function specialFolderBadgeBox(surface: SpecialFolderSurface, size: 'smal
 
 /**
  * Catppuccin's glyph-only symbols keep the upstream art in the 16-unit box's
- * lower-right quadrant (x 7.5–15.5, y 8.5–15.5); the badge crops to it.
+ * lower-right quadrant (x 7.5–15.5, y 8.5–15.5); the badge scales this square
+ * of the symbol into its glyph box.
  */
-export const CATPPUCCIN_GLYPH_CROP = '7 8 9 9';
+export const CATPPUCCIN_GLYPH_CROP = Object.freeze({ x: 7, y: 8, size: 9 });
 
 /** Everything a renderer needs to draw a special folder's badge in one icon pack. */
 export interface SpecialFolderVariant {

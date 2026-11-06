@@ -85,7 +85,9 @@ for (const mode of ALL_VIEW_MODES) {
       await expect(icon(page, 'Folder').locator('[data-special-folder]')).toHaveCount(0);
 
       const iconBox = (await icon(page, 'src').boundingBox())!;
-      const badgeBox = (await badge.boundingBox())!;
+      // The backing is a plain rect, measured alike in every engine; the glyph sits inside it.
+      await expect(badge.locator('.special-folder-badge-backing')).toHaveCount(1);
+      const badgeBox = (await badge.locator('.special-folder-badge-backing').boundingBox())!;
       expect(badgeBox.width, `${pack} ${mode} badge size`).toBeGreaterThanOrEqual(mode === 'tiles' ? 20 : 7);
       // Bottom-left quadrant of the icon.
       expect(badgeBox.x + badgeBox.width / 2, `${pack} ${mode}`).toBeLessThan(iconBox.x + iconBox.width / 2);

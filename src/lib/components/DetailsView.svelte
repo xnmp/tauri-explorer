@@ -10,7 +10,9 @@
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { useColumnResize } from "$lib/composables/use-column-resize.svelte";
-  import { DETAIL_COLUMNS, type ColumnKey } from "$lib/domain/detail-columns";
+  import { detailColumnRegistry } from "$lib/plugins/detail-column-registry.svelte";
+  import type { PeekRow } from "$lib/domain/folder-peek";
+  import { pluginColumnShown, togglePluginColumn } from "$lib/domain/plugin-detail-columns";
   import { fixedMenuPosition, getZoomFactor, probeSingleScaleFixedOffset } from "$lib/domain/zoom";
   import FileItem from "./FileItem.svelte";
   import VirtualList from "./VirtualList.svelte";
@@ -54,8 +56,16 @@
   const labels = $derived(explorer.lineageLabels);
   const visibility = $derived(labels ? settingsStore.columnVisibility : { ...settingsStore.columnVisibility, prompt: false });
 
+  // Plugin columns (#1523): offered while a listed or peeked file has a
+  // provider, shown unless the user hid them.
+  function* rowEntries(rows: readonly PeekRow[]): Iterable<FileEntry> {
+    for (const row of rows) if (row.kind === "entry") yield row.entry;
+  }
+  const offeredPluginColumns = $derived(detailColumnRegistry.columnsFor(rowEntries(explorer.detailRows.rows)));
+  const pluginColumns = $derived(offeredPluginColumns.filter((column) => pluginColumnShown(settingsStore.state.pluginColumnVisibility, column.id)));
+
   // Column resize composable
-  const columnResize = useColumnResize(undefined, () => visibility);
+  const columnResize = useColumnResize(undefined, () => visibility, () => pluginColumns);
 
   // The new-folder editor rides INSIDE the virtual list as a sentinel first
   // item (#257) — not as a band above the scroller.
@@ -96,13 +106,14 @@
   </svg>
 {/snippet}
 
-{#snippet resizeHandle(column: ColumnKey)}
+{#snippet resizeHandle(column: string)}
+  {@const spec = columnResize.options(column)}
   <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -- WAI movable separator is an interactive range. -->
   <div class="column-resize-handle" class:active={columnResize.activeColumn === column}
     role="separator" tabindex="0" aria-orientation="vertical"
-    aria-label={`Resize ${DETAIL_COLUMNS[column].label} column`} aria-controls={viewId}
-    aria-valuemin={DETAIL_COLUMNS[column].min} aria-valuemax={DETAIL_COLUMNS[column].max}
-    aria-valuenow={columnResize.columnWidths[column]} aria-valuetext={`${Math.round(columnResize.columnWidths[column])} pixels`}
+    aria-label={`Resize ${spec.label} column`} aria-controls={viewId}
+    aria-valuemin={spec.min} aria-valuemax={spec.max}
+    aria-valuenow={columnResize.width(column)} aria-valuetext={`${Math.round(columnResize.width(column))} pixels`}
     onpointerdown={event => columnResize.startResize(column, event)}
     onpointermove={columnResize.move} onpointerup={columnResize.finish}
     onpointercancel={columnResize.cancelPointer} onlostpointercapture={columnResize.cancelPointer}
@@ -180,6 +191,12 @@
       {@render resizeHandle("resolution")}
     </div>
     {/if}
+    {#each pluginColumns as column (column.id)}
+    <div class="column-header-wrapper">
+      <div class="column-header plugin-column" data-plugin-column={column.id}><span>{column.label}</span></div>
+      {@render resizeHandle(column.id)}
+    </div>
+    {/each}
   </div>
 
   <!-- Column visibility context menu -->
@@ -214,6 +231,12 @@
         <span class="column-menu-check">{settingsStore.columnVisibility.resolution ? "✓" : ""}</span>
         Resolution
       </button>
+      {#each offeredPluginColumns as column (column.id)}
+      <button class="column-menu-item" onclick={() => { settingsStore.update({ pluginColumnVisibility: togglePluginColumn(settingsStore.state.pluginColumnVisibility, column.id) }); closeColumnMenu(); }}>
+        <span class="column-menu-check">{pluginColumnShown(settingsStore.state.pluginColumnVisibility, column.id) ? "✓" : ""}</span>
+        {column.label}
+      </button>
+      {/each}
     </div>
   {/if}
 
@@ -255,7 +278,7 @@
           depth={row.depth} parentPath={row.parentPath} expanded={row.expanded}
           peek={explorer.peekEnabled} carets={explorer.peekCaretsShown} canPeek={explorer.peekEnabled && explorer.canPeekEntry(row.entry)}
           groups={explorer.detailRows.groups} rowIndex={index}
-          label={labels?.rowLabel(row, explorer.currentPath)} prompt={labels?.prompt(row.entry.path)} promptColumn={visibility.prompt}
+          label={labels?.rowLabel(row, explorer.currentPath)} prompt={labels?.prompt(row.entry.path)} promptColumn={visibility.prompt} {pluginColumns}
           onclick={(event) => onitemclick(row.entry, event)}
           ondblclick={() => onitemdblclick(row.entry)} selected={explorer.isSelected(row.entry)} />
       {/if}

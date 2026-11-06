@@ -19,6 +19,10 @@
   import { emptyFolderResolver } from "$lib/state/empty-folders.svelte";
   import { mediaDurationResolver } from "$lib/state/media-durations.svelte";
   import { formatMediaDuration } from "$lib/domain/media-duration";
+  import { detailColumnRegistry } from "$lib/plugins/detail-column-registry.svelte";
+  import { fileIconRegistry } from "$lib/plugins/file-icon-registry.svelte";
+  import type { PluginDetailColumn } from "$lib/domain/plugin-detail-columns";
+  import { pluginDetailCells } from "./plugin-detail-cells.svelte";
   import { useItemInteractions, isInClipboard as checkInClipboard, isClipboardCut } from "$lib/composables/use-item-interactions.svelte";
   import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
@@ -54,9 +58,11 @@
     prompt?: string | null;
     /** The Details Prompt column is shown (a lineage provider supplies labels). */
     promptColumn?: boolean;
+    /** Shown plugin Details columns (#1523), after the built-in ones. */
+    pluginColumns?: readonly PluginDetailColumn[];
   }
 
-  let { entry, index, onclick, ondblclick, selected = false, explorer, depth = 0, parentPath = explorer.currentPath, expanded = false, peek = false, canPeek = false, carets = true, groups = [], rowIndex = 0, label, prompt, promptColumn = false }: Props = $props();
+  let { entry, index, onclick, ondblclick, selected = false, explorer, depth = 0, parentPath = explorer.currentPath, expanded = false, peek = false, canPeek = false, carets = true, groups = [], rowIndex = 0, label, prompt, promptColumn = false, pluginColumns = [] }: Props = $props();
 
   const paneId = getPaneIdContext();
 
@@ -96,15 +102,19 @@
   const dateText = $derived(formatDate(entry.modified));
   const absoluteDateText = $derived(formatAbsoluteDate(entry.modified));
   // Trash rows show where the item came from in place of its type (#863).
-  const typeText = $derived(entry.trash ? entry.trash.originalFolder ?? "Unknown" : getFileType(entry));
+  const typeText = $derived(entry.trash ? entry.trash.originalFolder ?? "Unknown" : fileIconRegistry.forEntry(entry)?.typeName ?? getFileType(entry));
   const sizeText = $derived(entry.kind === "file" ? formatSize(entry.size) : "");
 
   // Video length is probed lazily for rendered rows only, and only while the
   // Length column is shown; unchanged files reuse the resolver's cache (#995).
+  // Plugin providers (#1523) load the same way, for their columns or Length.
   $effect(() => {
-    if (settingsStore.columnVisibility.length) mediaDurationResolver.request(entry);
+    const length = settingsStore.columnVisibility.length;
+    if (length) mediaDurationResolver.request(entry);
+    if (length || pluginColumns.length) detailColumnRegistry.request(entry, pluginColumns, length);
   });
-  const lengthText = $derived(formatMediaDuration(mediaDurationResolver.duration(entry)));
+  const PluginCells = $derived(pluginColumns.length ? pluginDetailCells() : undefined);
+  const lengthText = $derived(formatMediaDuration(mediaDurationResolver.duration(entry) ?? detailColumnRegistry.lengthSeconds(entry)));
 
   const isPeekControl = (event: Event) => event.target instanceof Element && !!event.target.closest(".peek-caret, .peek-open, .peek-toggle");
   function handleClick(event: MouseEvent) {
@@ -267,6 +277,7 @@
   {#if settingsStore.columnVisibility.resolution}
     <div class="resolution-cell" data-cell="resolution"><ImageResolutionCell {entry} /></div>
   {/if}
+  {#if PluginCells}<PluginCells {entry} columns={pluginColumns} />{/if}
 </div>
 
 <style>

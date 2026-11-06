@@ -10,6 +10,8 @@
  *   - a virtual-fs provider for `demo://`
  *   - a file view ("Demo Cards") with a Preview target, a Preview-info section,
  *     and a command toggling the view (SDK 2)
+ *   - a file icon and Details columns (Matchup, Map, plus Length) for the
+ *     `.demorec` recordings in demo:// (#1523)
  */
 
 import type { Plugin } from "../api";
@@ -36,9 +38,18 @@ function listDemo(path: string): DirectoryListing {
           entry("hello.txt", `${DEMO_ROOT}hello.txt`, "file", 12),
           entry("readme.md", `${DEMO_ROOT}readme.md`, "file", 128),
           entry("theme-source.png", `${DEMO_ROOT}theme-source.png`, "file", 64),
+          ...Object.keys(DEMO_RECORDINGS).map((name) => entry(name, `${DEMO_ROOT}${name}`, "file", 256)),
         ];
   return { path, entries };
 }
+
+/** Synthetic header values a `.demorec` provider "parses" (#1523). */
+export const DEMO_RECORDINGS: Readonly<Record<string, { matchup: string; map: string; seconds: number }>> = {
+  "final-game.demorec": { matchup: "PvZ", map: "Fighting Spirit", seconds: 734 },
+  "practice.demorec": { matchup: "TvT", map: "Circuit Breaker", seconds: 1261 },
+};
+
+const DEMO_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect x="3" y="5" width="26" height="22" rx="4" fill="#2b5fd9"/><path d="M13 11l9 5-9 5z" fill="#fff"/></svg>`;
 
 export const demoPlugin: Plugin = {
   id: "demo",
@@ -103,6 +114,17 @@ export const demoPlugin: Plugin = {
       id: "demo.info",
       component: DemoPreviewInfo,
       when: (subject) => subject.kind === "target" || subject.entry.kind === "file",
+    });
+
+    ctx.registerFileIcon?.({ id: "demo.recording", extensions: ["demorec"], svg: DEMO_ICON, typeName: "Demo recording" });
+    ctx.registerDetailColumns?.({
+      id: "demo.recording-header",
+      columns: [{ key: "matchup", label: "Matchup", width: 90 }, { key: "map", label: "Map", width: 160 }],
+      applies: (entry) => entry.kind === "file" && entry.name.endsWith(".demorec"),
+      load: async (entries) => entries.map((entry) => {
+        const recording = DEMO_RECORDINGS[entry.name];
+        return recording ? { columns: { matchup: recording.matchup, map: recording.map }, lengthSeconds: recording.seconds } : null;
+      }),
     });
 
     ctx.registerCommand({

@@ -29,6 +29,10 @@ export type { FileViewPane, FileViewContribution, FileViewEligibility } from "./
 import { entryLineageRegistry, type EntryLineageContribution } from "./entry-lineage-registry.svelte";
 export type { EntryLineageContribution, EntryLineage, LineageParent } from "./entry-lineage-registry.svelte";
 import { previewInfoRegistry, type PreviewInfoContribution } from "./preview-registry.svelte";
+import type { FileIconContribution } from "$lib/domain/plugin-file-icon";
+export type { FileIconContribution } from "$lib/domain/plugin-file-icon";
+import type { DetailColumnProvider } from "$lib/domain/plugin-detail-columns";
+export type { DetailColumnProvider, DetailColumnSpec, DetailRowValues } from "$lib/domain/plugin-detail-columns";
 import { toastStore, type ToastType } from "$lib/state/toast.svelte";
 import { readConfigFile } from "$lib/api/config";
 import { writeConfigQueued } from "$lib/state/persisted";
@@ -335,6 +339,14 @@ export interface PluginContext {
   registerEntryLineage?(contribution: EntryLineageContribution): void;
   /** SDK 2: contribute a Preview-info section for files or this plugin's targets. */
   registerPreviewInfo?(section: PreviewInfoContribution): void;
+  /** Capability "fileIcons": SVG artwork (and an optional Type-column name)
+   *  for file extensions, in every view. The first plugin in order owns an
+   *  extension; removed on deactivation (docs/plugin-file-icons.md). */
+  registerFileIcon?(icon: FileIconContribution): void;
+  /** Capability "detailColumns": Details columns whose values load lazily for
+   *  rendered rows of files the provider applies to; offered only while the
+   *  listing has such files. Removed on deactivation (docs/plugin-detail-columns.md). */
+  registerDetailColumns?(provider: DetailColumnProvider): void;
   /** Open a registered dialog, passing props to its component. `open` and an
    *  `onClose` (which closes the dialog) are injected by the renderer.
    *  `options` (capability "paneDialogs") scopes it to a captured pane. */
@@ -447,6 +459,14 @@ export function createPluginContext(
     else disposers.add(dispose);
     return dispose;
   };
+  // `<pluginId>.<name>` with a dot-free name: plugin ids may contain dots,
+  // so a prefix check alone would let "acme" claim "acme.trace"'s contributions.
+  const ownedId = (kind: string, value: unknown): string => {
+    const id = String(value);
+    const name = id.startsWith(`${pluginId}.`) ? id.slice(pluginId.length + 1) : null;
+    if (id !== pluginId && (!name || name.includes("."))) throw new Error(`${kind} ${id} must be named ${pluginId}.<name>`);
+    return id;
+  };
   const storage = createPluginStorage(pluginId);
   // Accepted jobs outlive the plugin, but their Retry runs its code: drop it.
   const pluginJobs = scopePluginJobs(pluginId);
@@ -466,6 +486,14 @@ export function createPluginContext(
   };
   const report = (error: unknown, contribution: string) => {
     toastStore.error(`${pluginName}: ${log(error, contribution)}`);
+  };
+  const trackValidated = (contribution: string, register: (registration: typeof import("./register-contributions")) => () => void) => {
+    let dispose: (() => void) | undefined;
+    let live = true;
+    track(() => { live = false; dispose?.(); });
+    void import("./register-contributions")
+      .then((registration) => { if (live) dispose = register(registration); })
+      .catch((error) => { if (live) report(error, contribution); });
   };
 
   const ctx: PluginContext = {
@@ -556,20 +584,26 @@ export function createPluginContext(
       track(inspectorRegistry.register({ ...descriptor, component: ownedComponent(descriptor.component) }, order));
     },
     registerFileView(view: FileViewContribution): void {
-      // `<pluginId>.<name>` with a dot-free name: plugin ids may contain dots,
-      // so a prefix check alone would let "acme" claim "acme.trace"'s views.
-      const name = view.id.startsWith(`${pluginId}.`) ? view.id.slice(pluginId.length + 1) : null;
-      if (view.id !== pluginId && (!name || name.includes("."))) throw new Error(`File view ${view.id} must be named ${pluginId}.<name>`);
+      ownedId("File view", view.id);
       track(fileViewRegistry.register(pluginId, { ...view, component: ownedComponent(view.component) }, order));
     },
     registerEntryLineage(contribution: EntryLineageContribution): void {
-      const id = String(contribution?.id);
-      const name = id.startsWith(`${pluginId}.`) ? id.slice(pluginId.length + 1) : null;
-      if (id !== pluginId && (!name || name.includes("."))) throw new Error(`Entry lineage ${id} must be named ${pluginId}.<name>`);
+      ownedId("Entry lineage", contribution?.id);
       track(entryLineageRegistry.register(pluginId, contribution, order));
     },
     registerPreviewInfo(section: PreviewInfoContribution): void {
       track(previewInfoRegistry.register(pluginId, { ...section, component: ownedComponent(section.component) }, order));
+    },
+    // Validation loads with the first registration (startup carries only the
+    // registries' read paths), so an invalid icon or column set is reported
+    // under the plugin's name instead of thrown.
+    registerFileIcon(icon: FileIconContribution): void {
+      const id = ownedId("File icon", icon?.id);
+      trackValidated(`file icon ${id}`, (r) => r.registerFileIcon(id, icon, order));
+    },
+    registerDetailColumns(provider: DetailColumnProvider): void {
+      const id = ownedId("Detail columns", provider?.id);
+      trackValidated(`detail columns ${id}`, (r) => r.registerDetailColumns(id, provider, (error) => void log(error, `detail columns ${id}`), order));
     },
     openDialog(id: string, props?: Record<string, unknown>, options?: PluginDialogOptions): void {
       try {

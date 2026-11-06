@@ -14,7 +14,7 @@ import {
   tabCommands,
   bookmarkCommands,
 } from "$lib/state/commands/general-commands";
-import { TOGGLE_SETTINGS } from "$lib/state/settings.svelte";
+import { TOGGLE_SETTINGS } from "$lib/state/settings-toggles";
 
 function collectShortcuts(): string[] {
   const fromCommands = [...windowCommands, ...tabCommands, ...bookmarkCommands]

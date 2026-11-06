@@ -56,6 +56,6 @@ it("rejects a malformed persisted value", async () => {
 });
 
 it("is a palette toggle", async () => {
-  const { TOGGLE_SETTINGS } = await import("$lib/state/settings.svelte");
+  const { TOGGLE_SETTINGS } = await import("$lib/state/settings-toggles");
   expect(TOGGLE_SETTINGS.some(meta => meta.key === "rowThumbnails")).toBe(true);
 });

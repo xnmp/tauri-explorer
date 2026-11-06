@@ -264,7 +264,10 @@
     justify-content: center;
     filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.25));
   }
-  .plugin-file-icon { object-fit: contain; pointer-events: none; }
+  /* No CSS filter on plugin artwork (#1530): WebKitGTK re-rasterizes a
+     filtered <img> on every scroll frame, which took Tiles scrolling from
+     ~17 ms to ~120-190 ms frames. Plugins draw their own shading. */
+  .icon-cat.plugin-file-icon { object-fit: contain; pointer-events: none; filter: none; }
   .icon-image      { color: var(--icon-file-tint, var(--icon-image)); }
   .icon-archive    { color: var(--icon-file-tint, var(--icon-archive)); }
   .icon-code       { color: var(--icon-file-tint, var(--icon-code)); }

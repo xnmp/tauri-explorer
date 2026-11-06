@@ -110,6 +110,9 @@ test.describe("plugin file icons and Details columns (#1523)", () => {
       const icon = row(page, "final-game.demorec").locator("img.plugin-file-icon");
       await expect(icon).toBeVisible();
       await expect.poll(() => icon.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
+      // A CSS filter on an <img> is re-rasterized every scroll frame in
+      // WebKitGTK; plugin icons must not inherit the icon drop shadow (#1530).
+      expect(await icon.evaluate((img) => getComputedStyle(img).filter)).toBe("none");
       await expect(row(page, "hello.txt").locator("img.plugin-file-icon")).toHaveCount(0);
       await page.screenshot({ path: `screenshots/feat/plugin-file-icons-and-detail-columns/${mode}-plugin-icon.png`, animations: "disabled" });
     });

@@ -173,6 +173,13 @@ export const viewCommands: Command[] = [
     handler: () => getActiveExplorer()?.setSorting("type"),
   },
   {
+    id: "view.sortByLength",
+    scope: "pane",
+    label: "Sort by Length",
+    category: "view",
+    handler: () => getActiveExplorer()?.setSorting("length"),
+  },
+  {
     id: "view.focusFilesSidebar",
     scope: "window",
     label: "Toggle Files Sidebar (Bookmarks & Recent)",

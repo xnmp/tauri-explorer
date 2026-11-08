@@ -1,5 +1,5 @@
 /** Pure validation for data received from another window or launch source. */
-import { isViewMode, type FileEntry, type SortField, type ViewMode } from "./file";
+import { isSortField, isViewMode, type FileEntry, type SortField, type ViewMode } from "./file";
 import { directoryKey } from "./path";
 
 // Seeds are an optional first-paint optimization. Larger listings load normally
@@ -106,7 +106,7 @@ export function normalizeDirectorySeed(raw: unknown, path: string, now: number):
   if (!isRecord(raw) || raw.currentPath !== path || !isWindowPath(path)
     || !isFreshSeed(raw.ts, now, 5_000) || !Array.isArray(raw.entries)
     || raw.entries.length > DIRECTORY_SEED_MAX_ENTRIES || !isViewMode(raw.viewMode)
-    || (raw.sortBy !== "name" && raw.sortBy !== "size" && raw.sortBy !== "modified" && raw.sortBy !== "type" && raw.sortBy !== "prompt")
+    || !isSortField(raw.sortBy)
     || typeof raw.sortAscending !== "boolean") return null;
   const entries: FileEntry[] = [];
   const paths = new Set<string>();
@@ -119,7 +119,7 @@ export function normalizeDirectorySeed(raw: unknown, path: string, now: number):
     paths.add(key);
     entries.push(entry);
   }
-  return { currentPath: path, entries, sortBy: raw.sortBy as SortField, sortAscending: raw.sortAscending, viewMode: raw.viewMode };
+  return { currentPath: path, entries, sortBy: raw.sortBy, sortAscending: raw.sortAscending, viewMode: raw.viewMode };
 }
 
 export interface WarmActivatePayload {

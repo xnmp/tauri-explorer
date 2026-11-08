@@ -21,6 +21,7 @@ import { broadcastFileChange } from "./file-events";
 import { clipboardStore } from "./clipboard.svelte";
 import { dialogStore } from "./dialogs.svelte";
 import { frecencyStore } from "./frecency.svelte";
+import { forgetOpenHistory, moveOpenHistory } from "./open-history-access.svelte";
 import { toastStore } from "./toast.svelte";
 import { renameThumbnailCache } from "$lib/state/thumbnail-cache";
 import { basename, joinPath, isInsideDir, parentDir, nativeParentDir } from "$lib/domain/path";
@@ -106,6 +107,7 @@ export function createPaneMutations(ctx: PaneMutationContext) {
       const { path, entry } = result.data;
       if (result.warning) toastStore.error(result.warning);
       renameThumbnailCache(oldPath, path);
+      moveOpenHistory(oldPath, path);
       if (origin.current()) {
         if (entry) {
           directory.publish(entries => entries.map((candidate) => candidate.path === oldPath ? entry : candidate));
@@ -170,6 +172,7 @@ export function createPaneMutations(ctx: PaneMutationContext) {
       }
       if (!error) dialogStore.cancelDelete(session);
       if (!fromTrash) {
+        forgetOpenHistory(removed);
         await navigateAwayIfNeeded(deletedPaths);
         frecencyStore.pruneNonExistent();
       }

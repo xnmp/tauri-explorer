@@ -144,8 +144,8 @@ describe("Prompt sort", () => {
   const names = (list: FileEntry[]) => list.map(entry => entry.name);
 
   it("sorts by prompt text, ties by name, files without one after, folders first", () => {
-    expect(names(sortEntries(entries, "prompt", true, promptOf))).toEqual(["Dir", "b.png", "d.png", "a.png", "c.png"]);
-    expect(names(sortEntries(entries, "prompt", false, promptOf))).toEqual(["Dir", "c.png", "a.png", "d.png", "b.png"]);
+    expect(names(sortEntries(entries, "prompt", true, { promptOf }))).toEqual(["Dir", "b.png", "d.png", "a.png", "c.png"]);
+    expect(names(sortEntries(entries, "prompt", false, { promptOf }))).toEqual(["Dir", "c.png", "a.png", "d.png", "b.png"]);
   });
 
   it("falls back to name order without prompts", () => {
@@ -160,7 +160,7 @@ describe("Prompt sort", () => {
 
 describe("Prompt column layout", () => {
   it("is a keyed column right after Name, projected only while visible", () => {
-    expect(COLUMN_KEYS).toEqual(["name", "prompt", "date", "type", "size", "length", "resolution"]);
+    expect(COLUMN_KEYS).toEqual(["name", "prompt", "date", "type", "size", "length", "resolution", "opened"]);
     const widths = { ...normalizeColumnWidths(), prompt: 222 };
     const visible = { date: false, type: false, size: false, length: false, resolution: false };
     expect(columnGridTemplate(widths, { ...visible, prompt: true })).toBe("300px 222px");
@@ -169,6 +169,6 @@ describe("Prompt column layout", () => {
 
   it("is visible by default, including for settings saved before the column existed", () => {
     expect(normalizeSettingsInput({ columnVisibility: { date: false } }).columnVisibility)
-      .toEqual({ prompt: true, date: false, type: true, size: true, length: true, resolution: true });
+      .toEqual({ prompt: true, date: false, type: true, size: true, length: true, resolution: true, opened: false });
   });
 });

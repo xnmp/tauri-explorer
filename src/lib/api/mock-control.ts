@@ -207,6 +207,8 @@ export const MOCK_LOCAL_KEYS = {
   /** "1" when set: `clipboard_has_image` reports true. */
   reportClipboardImage: "mock-report-clipboard-image",
   reportClipboardVideo: "mock-report-clipboard-video",
+  /** The app-data open history document (#1525), surviving reloads like the native file. */
+  openHistory: "mock-open-history",
   /** Error message: `open_recycle_bin` throws it. */
   openRecycleBinError: "mock-open-recycle-bin-error",
   /** JSON of the last `picker_respond` payload. */

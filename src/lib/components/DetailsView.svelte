@@ -120,7 +120,7 @@
     onkeydown={event => columnResize.keydown(column, event)}></div>
 {/snippet}
 
-<div id={viewId} class="details-view" class:resizing={columnResize.isResizing} style="--col-name: {columnResize.columnWidths.name}px; --col-date: {columnResize.columnWidths.date}px; --col-type: {columnResize.columnWidths.type}px; --col-size: {columnResize.columnWidths.size}px; --col-length: {columnResize.columnWidths.length}px; --col-resolution: {columnResize.columnWidths.resolution}px; --details-grid-columns: {columnResize.gridTemplateColumns}; --details-row-height: {layoutStore.detailsRowHeight}px;">
+<div id={viewId} class="details-view" class:resizing={columnResize.isResizing} style="--col-name: {columnResize.columnWidths.name}px; --col-date: {columnResize.columnWidths.date}px; --col-type: {columnResize.columnWidths.type}px; --col-size: {columnResize.columnWidths.size}px; --col-length: {columnResize.columnWidths.length}px; --col-resolution: {columnResize.columnWidths.resolution}px; --col-opened: {columnResize.columnWidths.opened}px; --details-grid-columns: {columnResize.gridTemplateColumns}; --details-row-height: {layoutStore.detailsRowHeight}px;">
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="column-headers" data-region="column-header" style="grid-template-columns: {columnResize.gridTemplateColumns};" oncontextmenu={handleColumnHeaderContextMenu}>
     <div class="column-header-wrapper">
@@ -179,9 +179,10 @@
     {/if}
     {#if settingsStore.columnVisibility.length}
     <div class="column-header-wrapper">
-      <div class="column-header length-column">
+      <button class="column-header length-column" onclick={() => explorer.setSorting("length")} class:active={explorer.sortBy === "length"}>
         <span>Length</span>
-      </div>
+        {#if explorer.sortBy === "length"}{@render sortIndicator()}{/if}
+      </button>
       {@render resizeHandle("length")}
     </div>
     {/if}
@@ -189,6 +190,15 @@
     <div class="column-header-wrapper">
       <div class="column-header resolution-column"><span>Resolution</span></div>
       {@render resizeHandle("resolution")}
+    </div>
+    {/if}
+    {#if settingsStore.columnVisibility.opened}
+    <div class="column-header-wrapper">
+      <button class="column-header opened-column" onclick={() => explorer.setSorting("opened")} class:active={explorer.sortBy === "opened"}>
+        <span>Date opened</span>
+        {#if explorer.sortBy === "opened"}{@render sortIndicator()}{/if}
+      </button>
+      {@render resizeHandle("opened")}
     </div>
     {/if}
     {#each pluginColumns as column (column.id)}
@@ -230,6 +240,10 @@
       <button class="column-menu-item" onclick={() => { settingsStore.toggleColumn("resolution"); closeColumnMenu(); }}>
         <span class="column-menu-check">{settingsStore.columnVisibility.resolution ? "✓" : ""}</span>
         Resolution
+      </button>
+      <button class="column-menu-item" onclick={() => { settingsStore.toggleColumn("opened"); closeColumnMenu(); }}>
+        <span class="column-menu-check">{settingsStore.columnVisibility.opened ? "✓" : ""}</span>
+        Date opened
       </button>
       {#each offeredPluginColumns as column (column.id)}
       <button class="column-menu-item" onclick={() => { settingsStore.update({ pluginColumnVisibility: togglePluginColumn(settingsStore.state.pluginColumnVisibility, column.id) }); closeColumnMenu(); }}>

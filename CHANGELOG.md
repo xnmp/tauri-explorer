@@ -2,6 +2,25 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.23.0 — 2026-11-08
+
+### Added
+
+- Details view gains a "Date opened" column, backed by an app-owned history of
+  files launched from Tauri Explorer; it is hidden by default and sortable
+  (#1525).
+- The Details Length column is sortable, covering video durations and plugin
+  lengths (#1531).
+- Special folders keep their folder colour and show their kind as a corner
+  badge (#1527).
+
+### Fixed
+
+- Built-in icon shadows are baked into the artwork instead of a per-frame CSS
+  filter, speeding up Tiles scrolling in WebKitGTK (#1532).
+- Queued plugin installs are applied when profile ownership is acquired after
+  startup instead of waiting for another restart (#1528).
+
 ## v1.22.0 — 2026-11-06
 
 ### Added

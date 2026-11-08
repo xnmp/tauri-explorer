@@ -9,7 +9,7 @@ import { useControlledSize } from "$lib/composables/use-controlled-size.svelte";
  * pending frame nor its final commit can be attributed to a replacement column.
  * Plugin columns (#1523) follow built-in columns, keyed by their qualified id. */
 export function useColumnResize(initialWidths?: Partial<ColumnWidths>,
-  getVisibility: () => ColumnVisibility = () => ({ date: true, type: true, size: true, length: true, resolution: true }),
+  getVisibility: () => ColumnVisibility = () => ({ date: true, type: true, size: true, length: true, resolution: true, opened: false }),
   getPluginColumns: () => readonly PluginDetailColumn[] = () => []) {
   let committed = $state<Record<string, number>>(normalizeColumnWidths(initialWidths));
   let column = $state<string>("name");

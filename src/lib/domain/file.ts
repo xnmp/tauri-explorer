@@ -67,8 +67,31 @@ export interface FileMutationRecovery {
   readonly displacedPath?: string;
 }
 
-/** "prompt": a lineage provider's prompt text (#1449, `sortEntries`). */
-export type SortField = "name" | "size" | "modified" | "type" | "prompt";
+/** "prompt": a lineage provider's prompt text (#1449, `sortEntries`).
+ *  "length": playback length in seconds — video durations and plugin
+ *  `lengthSeconds` (#1531). "opened": the app-owned open history (#1525). */
+export type SortField = "name" | "size" | "modified" | "type" | "prompt" | "length" | "opened";
+
+const SORT_FIELDS: readonly string[] = ["name", "size", "modified", "type", "prompt", "length", "opened"] satisfies SortField[];
+
+export function isSortField(value: unknown): value is SortField {
+  return typeof value === "string" && SORT_FIELDS.includes(value);
+}
+
+/** Per-entry sort accessors for fields whose values are not on the entry. */
+export interface SortKeys {
+  /** "prompt" (#1449): an entry's prompt text. */
+  promptOf?: (entry: FileEntry) => string | null | undefined;
+  /** "length" (#1531): playback seconds; anything but a finite, non-negative
+   *  number is unknown. */
+  lengthOf?: (entry: FileEntry) => number | null | undefined;
+  /** "opened" (#1525): when an entry was last opened (epoch ms). Never-opened
+   *  entries sort after opened ones in either direction; ties by name. */
+  openedAt?: (entry: FileEntry) => number | undefined;
+}
+
+const knownLength = (value: number | null | undefined): number =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : -1;
 
 function fileExtension(name: string): string {
   const dot = name.lastIndexOf(".");
@@ -95,16 +118,20 @@ export function sortEntries(
   entries: readonly FileEntry[],
   by: SortField = "name",
   ascending = true,
-  /** "prompt" only (#1449): an entry's prompt text. Entries without one sort
+  /** "prompt" (#1449), "length" (#1531) and "opened" (#1525) values. Entries without one sort
    * after those with one (ascending); ties sort by name. */
-  promptOf?: (entry: FileEntry) => string | null | undefined,
+  keys: SortKeys = {},
 ): FileEntry[] {
+  const { promptOf, lengthOf, openedAt } = keys;
   // Collation keys are derived once per entry, not per comparison (#1416):
   // a 100k-entry name sort makes ~1.7M comparisons and lowercased both names
   // in each; precomputing halved its time in JavaScriptCore (~200 → ~110 ms).
+  const opened = by === "opened" ? entries.map((e) => openedAt?.(e) ?? 0) : null;
   const names = by === "size" || by === "modified" ? null : entries.map((e) => e.name.toLowerCase());
   const extensions = by === "type" ? entries.map((e) => fileExtension(e.name)) : null;
   const prompts = by === "prompt" ? entries.map((e) => promptOf?.(e)?.toLowerCase() ?? "") : null;
+  // -1 marks an unknown length (pending, unreadable, ineligible or malformed).
+  const lengths = by === "length" ? entries.map((e) => (e.kind === "file" && lengthOf ? knownLength(lengthOf(e)) : -1)) : null;
   const compare = (i: number, j: number): number => {
     const a = entries[i];
     const b = entries[j];
@@ -135,6 +162,21 @@ export function sortEntries(
         const pb = prompts![j];
         // Missing text ("") sorts after any prompt; equal text by name.
         comparison = (!pa !== !pb ? (pa ? -1 : 1) : nameCollator.compare(pa, pb)) || nameCollator.compare(names![i], names![j]);
+        break;
+      }
+      case "opened": {
+        const oa = opened![i];
+        const ob = opened![j];
+        // Never opened (0) sorts after every opened entry in both directions.
+        if (!oa !== !ob) return oa ? -1 : 1;
+        comparison = oa - ob || nameCollator.compare(names![i], names![j]);
+        break;
+      }
+      case "length": {
+        const la = lengths![i];
+        const lb = lengths![j];
+        // Unknown (-1) sorts after any length; equal lengths by name.
+        comparison = ((la < 0) !== (lb < 0) ? (la < 0 ? 1 : -1) : la - lb) || nameCollator.compare(names![i], names![j]);
         break;
       }
       default:

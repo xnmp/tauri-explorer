@@ -3,7 +3,8 @@
  */
 
 import type { Command } from "../commands.svelte";
-import { settingsStore, generateToggleCommands } from "../settings.svelte";
+import { settingsStore } from "../settings.svelte";
+import { generateToggleCommands } from "../settings-toggles";
 import { themeStore } from "../theme.svelte";
 import { DEFAULT_LAYOUT_ID, FLOATING_ISLANDS_LAYOUT_ID } from "$lib/domain/layout-theme-ids";
 import { folderViewsStore } from "../folder-views.svelte";

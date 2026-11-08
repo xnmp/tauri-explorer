@@ -37,6 +37,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `PluginPreviewTarget.svelte` — Preview of a plugin target (a non-file subject): image, details and explicit actions only, no file actions, opening, sibling stepping or dragging. Its chrome is placed in a vertical dock by `PreviewPane.svelte`'s grid rules. Its image fullscreens like a file image through the pane's controller: a 1024px thumbnail in the pane, the full-resolution image (loaded like a file image) once fullscreen (#1033).
 - `PreviewImageSurface.svelte` — the Preview pane's image surface (container, image, zoom indicator, fullscreen styles) shared by file images and plugin targets; event handling comes from `use-preview-fullscreen` (#1033).
 - `ImageResolutionCell.svelte` — lazy intrinsic image metadata for mounted Details rows.
+- `PluginDetailCells.svelte`, `plugin-detail-cells.svelte.ts` — a Details row's plugin-column cells (#1523), loaded lazily through the startup seam the first time a row shows one.
 - `DetailsView.svelte` — virtual-scrolled table view (columns, resize, sort headers).
 - `ListColumnsView.svelte` — Folder Peek List: column-major tree (`role=tree`, per-level `aria-posinset`/`setsize` from `peekTreePositionLookup`, arithmetic while nothing is expanded; a listbox without peek) with horizontal windowing and shared reveal/navigation snapshot; an open top-level folder keeps its header row and renders a `ListCard`, and its inert `.list-motion-layer` holds `use-list-motion` ghosts (#1240).
 - `LineageGroupRow.svelte` — Details lineage group row ("with B"): caret, co-parent icon, label and count; toggles and previews the parents it combines; never a file (lineage peek #1431).
@@ -333,8 +334,10 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `tile-size-context.ts` — Svelte context carrying the pane's tile size from PluginFileView to `ui/file-tiles` without `size`.
 - `empty-folders.svelte.ts` — lazy empty-folder resolver (avoids per-subdir read_dir, #129).
 - `media-durations.svelte.ts` — lazy, batched, revision-cached (size+mtime) video-duration resolver for the Details Length column; rendered rows request, listings never carry durations (#995).
+- `batched-entry-resolver.svelte.ts` — generic lazy per-row metadata resolver (same-tick batching, bounded concurrency, size+mtime revision cache, abortable `dispose`); backs Length and plugin Details columns (#995, #1523).
 - `manual-hidden.svelte.ts` — per-folder manually-hidden entry registry.
 - `settings.svelte.ts` — global settings store (toggles, defaults). Very hot for feature flags. `reloadFromDisk()` adopts external settings.json edits (#599).
+- `settings-toggles.ts` — `TOGGLE_SETTINGS` metadata and `generateToggleCommands` for the command palette (split from settings.svelte.ts, #1523).
 - `icon-theme.svelte.ts` — transient icon-pack preview and reactive resolution against saved settings and applied color-theme CSS revisions; previews never persist.
 - `window-size.svelte.ts` — reactive `window.innerWidth`/`innerHeight` tracker (`windowSizeStore`); `+page.svelte` syncs on mount/resize. Feeds preview-pane auto-dock (#467).
 - `theme.svelte.ts` — active theme state + CSS var application.
@@ -625,10 +628,15 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `settings-registry.svelte.ts` — registry for plugin settings sections.
 - `inspector-registry.svelte.ts` — ordered, owner-disposed registry for selection-aware inspector contributions.
 - `entry-lineage-registry.svelte.ts` — `registerEntryLineage` contributions (capability `entryLineage`, #1431): owner-disposed, ordered, `available()` errors normalized to false; `showLineageLabel`.
+- `file-icon-registry.svelte.ts` — plugin file icons by extension (capability `fileIcons`, #1523): first registration in plugin order owns an extension; `forEntry` (files only) feeds `FileIcon` and the Details Type column.
+- `detail-column-registry.svelte.ts` — startup read side of plugin Details columns (capability `detailColumns`, #1523): `columnsFor` offered columns, per-row `request`, cell `text`, Length `lengthSeconds`; removal disposes the provider's resolver.
+- `register-contributions.ts` — lazily loaded with a plugin's first icon/column registration: validates (`domain/plugin-contribution-validation.ts`) and builds providers (failure-isolated `applies`/`load`, one report).
 - `file-view-registry.svelte.ts` — SDK 2 file view contributions (ordered, owner-disposed) and the pane handle type a view receives.
 - `preview-registry.svelte.ts` — SDK 2 Preview extension points: plugin preview targets (non-file subjects) and Preview-info sections.
 - `src/lib/plugins/image-editor-registry.svelte.ts` — ordered, owner-disposed image editing tool contributions with immutable captured source revisions and opaque service ports.
 - `src/lib/domain/plugin-image-editor.ts` — rules for `ctx.presentation.openImageEditor`: a plugin opens the editor directly only in a tool it registered, for one absolute file path.
+- `src/lib/domain/plugin-file-icon.ts`, `src/lib/domain/plugin-detail-columns.ts` — contracts for plugin file icons and Details columns (#1523), plus `pluginColumnShown`/`togglePluginColumn` for persisted visibility.
+- `src/lib/domain/plugin-contribution-validation.ts` — pure validation: SVG/extension/type-name checks into an `<img>` data URI, column specs into qualified ids/widths, loaded row values bounded to declared keys.
 - `fs-providers.ts` — virtual-filesystem provider registry + dispatch.
 - `demo/index.ts` — demo plugin exercising every contribution seam; view components load only on activation.
 - `src/lib/plugins/demo/DemoFileDropTarget.svelte` — contributed drop acceptance surface with enabled gating and visible ordered path/source receipts.

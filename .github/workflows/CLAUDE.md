@@ -61,7 +61,10 @@ cached `.deb` whose filename (package_version_arch) matches, so a stale entry
 only costs downloads. The step timeout (25 min) covers the worst case of all
 attempts (~19 min) plus cache restore. `rust-suite` refreshes the index in its own step
 before the test-result probe (the hashed candidate versions) and passes
-`update-index: "false"`. Contracts: `tests/ci-apt-install.test.ts`.
+`update-index: "false"`. `bounded` runs `sudo timeout …`, never
+`timeout sudo …`: the runners' `use_pty` sudo shields its command from
+timeout's group signal, orphaning apt/dpkg with the lock held (#1520).
+Contracts: `tests/ci-apt-install.test.ts`.
 
 # Browser jobs in the Playwright container (#1367)
 

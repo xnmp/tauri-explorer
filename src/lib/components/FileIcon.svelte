@@ -8,6 +8,7 @@
   import { getFileIconCategory, getFileExtensionLabel, isVideoMediaFile, getExtension } from "$lib/domain/file-types";
   import type { IconPack } from '$lib/domain/icon-themes';
   import { iconThemeStore } from '$lib/state/icon-theme.svelte';
+  import { fileIconRegistry } from '$lib/plugins/file-icon-registry.svelte';
   import { CLASSIC_LANGUAGE_ICONS, CLASSIC_BRAND_PATHS, type ClassicLanguageIcon } from './icons/classic-artwork';
   import FolderIcon from './FolderIcon.svelte';
   import MaterialFileIcon from './MaterialFileIcon.svelte';
@@ -21,6 +22,8 @@
 
   let { entry, size, theme }: Props = $props();
 
+  // A plugin's artwork for this extension wins over every icon pack (#1523).
+  const pluginIcon = $derived(fileIconRegistry.forEntry(entry));
   const iconCategory = $derived(getFileIconCategory(entry));
   const effectiveTheme = $derived(theme ?? iconThemeStore.effectiveTheme);
   const useMaterial = $derived(effectiveTheme === "material");
@@ -39,7 +42,10 @@
 
 </script>
 
-{#if useMaterial && entry.kind === 'file'}
+{#if pluginIcon}
+  <img class="icon-cat plugin-file-icon" src={pluginIcon.src} alt="" draggable="false"
+    width={size === "small" ? 16 : 64} height={size === "small" ? 16 : 64} />
+{:else if useMaterial && entry.kind === 'file'}
   <MaterialFileIcon {entry} {size} />
 {:else if effectiveTheme === 'catppuccin'}
   <CatppuccinFileIcon {entry} {size} />
@@ -258,6 +264,10 @@
     justify-content: center;
     filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.25));
   }
+  /* No CSS filter on plugin artwork (#1530): WebKitGTK re-rasterizes a
+     filtered <img> on every scroll frame, which took Tiles scrolling from
+     ~17 ms to ~120-190 ms frames. Plugins draw their own shading. */
+  .icon-cat.plugin-file-icon { object-fit: contain; pointer-events: none; filter: none; }
   .icon-image      { color: var(--icon-file-tint, var(--icon-image)); }
   .icon-archive    { color: var(--icon-file-tint, var(--icon-archive)); }
   .icon-code       { color: var(--icon-file-tint, var(--icon-code)); }

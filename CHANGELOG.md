@@ -2,6 +2,19 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.22.0 — 2026-11-06
+
+### Added
+
+- Plugins can register file-type icons and Details columns: plugin icons show
+  in every view mode, and plugin columns (with an optional Length value) load
+  lazily per rendered row (#1523).
+
+### Fixed
+
+- Plugin file icons no longer slow Tiles scrolling in WebKitGTK (#1530).
+- CI's Linux dependency install now times out apt and dpkg reliably (#1520).
+
 ## v1.21.0 — 2026-11-05
 
 ### Added

@@ -50,10 +50,12 @@ pub(super) fn initialize(app: tauri::AppHandle) -> Result<(), AppError> {
     if crate::portal::is_portal_mode() {
         return Ok(());
     }
-    backend::initialize(app.clone());
+    backend::initialize(app);
     // Ordinary browsing, and legacy backends with no durable AI involvement,
     // stay available when the profile is owned elsewhere or its AI ledger is
-    // damaged. Package rollback and queued updates wait for readable claims.
+    // damaged. Package rollback and queued updates wait for readable claims:
+    // the queue is applied when this process first becomes the ready owner,
+    // whether here or on a later retry (#1528).
     let services = mutation_lock().and_then(|_initializing| bootstrap_services());
     if let Err(cause) = &services {
         log::warn!("Plugin AI services are unavailable: {cause}");
@@ -71,49 +73,6 @@ pub(super) fn initialize(app: tauri::AppHandle) -> Result<(), AppError> {
                 _ => ownership::not_owner(),
             });
     }
-    #[cfg(target_os = "linux")]
-    {
-        let directory = config::config_dir()?.join("pending-plugins");
-        if services.is_ok()
-            && !matches!(std::fs::symlink_metadata(&directory), Err(cause) if cause.kind() == std::io::ErrorKind::NotFound)
-        {
-            let notify = app.clone();
-            let spawned = queue::publish_worker(&QUEUE_WORKER, backend::is_closing, || {
-                std::thread::Builder::new()
-                    .name("plugin-install-queue".into())
-                    .spawn(move || {
-                        let errors = queue::apply(
-                            &directory,
-                            |path| install_path(path).map(|_| ()),
-                            backend::is_closing,
-                        )
-                        .unwrap_or_else(|cause| {
-                            vec![format!(
-                                "Could not process queued plugin installation: {cause}"
-                            )]
-                        });
-                        for error in &errors {
-                            log::warn!("{error}");
-                        }
-                        PENDING_INSTALL_ERRORS
-                            .lock()
-                            .unwrap_or_else(|cause| cause.into_inner())
-                            .extend(errors);
-                        let _ = app.emit("plugins:changed", ());
-                    })
-            });
-            // Queued files stay in place, so a refused worker retries next launch.
-            if let Err(cause) = spawned {
-                PENDING_INSTALL_ERRORS
-                    .lock()
-                    .unwrap_or_else(|cause| cause.into_inner())
-                    .push(format!(
-                        "Queued plugin installation will retry on next launch: {cause}"
-                    ));
-                let _ = notify.emit("plugins:changed", ());
-            }
-        }
-    }
     Ok(())
 }
 /// Profile ownership, then the durable ledger, then startup recovery. The
@@ -121,8 +80,79 @@ pub(super) fn initialize(app: tauri::AppHandle) -> Result<(), AppError> {
 /// ready until all succeed, and a process that cannot own the profile never
 /// opens its ledger, recovers its claims or starts service participants.
 fn bootstrap_services() -> Result<(), AppError> {
-    bootstrap_services_in(crate::portal::is_portal_mode())
+    let was_ready = backend::ownership_ready();
+    bootstrap_services_in(crate::portal::is_portal_mode())?;
+    // Startup, explicit actions and opportunistic retries all transition to
+    // ownership here, under the mutation gate. Queued package requests wait
+    // for that transition, not for process startup: a process that acquires
+    // the profile after the previous owner exits must still apply them (#1528).
+    if !was_ready {
+        #[cfg(target_os = "linux")]
+        start_pending_queue();
+    }
+    Ok(())
 }
+/// Spawns the single queue worker once this process owns a ready profile.
+/// The caller holds the mutation gate, as `queue::publish_worker` requires.
+#[cfg(target_os = "linux")]
+fn start_pending_queue() {
+    let directory = match config::config_dir() {
+        Ok(config) => config.join("pending-plugins"),
+        Err(cause) => {
+            log::warn!("Could not locate queued plugin installations: {cause}");
+            return;
+        }
+    };
+    if matches!(std::fs::symlink_metadata(&directory), Err(cause) if cause.kind() == std::io::ErrorKind::NotFound)
+    {
+        return;
+    }
+    let notify = || {
+        if let Some(app) = backend::app() {
+            let _ = app.emit("plugins:changed", ());
+        }
+    };
+    let spawned = queue::publish_worker(&QUEUE_WORKER, backend::is_closing, || {
+        std::thread::Builder::new()
+            .name("plugin-install-queue".into())
+            .spawn(move || {
+                #[cfg(test)]
+                QUEUE_WORKERS_STARTED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let errors = queue::apply(
+                    &directory,
+                    |path| install_path(path).map(|_| ()),
+                    backend::is_closing,
+                )
+                .unwrap_or_else(|cause| {
+                    vec![format!(
+                        "Could not process queued plugin installation: {cause}"
+                    )]
+                });
+                for error in &errors {
+                    log::warn!("{error}");
+                }
+                PENDING_INSTALL_ERRORS
+                    .lock()
+                    .unwrap_or_else(|cause| cause.into_inner())
+                    .extend(errors);
+                notify();
+            })
+    });
+    // Queued files stay in place, so a refused worker retries next launch.
+    if let Err(cause) = spawned {
+        PENDING_INSTALL_ERRORS
+            .lock()
+            .unwrap_or_else(|cause| cause.into_inner())
+            .push(format!(
+                "Queued plugin installation will retry on next launch: {cause}"
+            ));
+        notify();
+    }
+}
+/// Queue workers started by this process; the native fixture asserts one.
+#[cfg(test)]
+static QUEUE_WORKERS_STARTED: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
 fn bootstrap_services_in(file_picker_portal: bool) -> Result<(), AppError> {
     // Every service entry point (startup, explicit actions, opportunistic
     // retries from IPC reads) reaches ownership only through here.

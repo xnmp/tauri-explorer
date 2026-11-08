@@ -236,6 +236,11 @@ pub(super) fn generation_live(generation: &crate::service_state::model::PackageG
 pub(super) fn initialize(app: AppHandle) {
     let _ = APP.set(app);
 }
+/// The host handle, for workers that start after initialization (#1528).
+#[cfg(target_os = "linux")]
+pub(super) fn app() -> Option<AppHandle> {
+    APP.get().cloned()
+}
 pub(super) fn finish_initialize() {
     OWNERSHIP_READY.store(true, Ordering::Release);
 }

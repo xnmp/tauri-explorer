@@ -41,7 +41,8 @@ import { providerFor } from "$lib/plugins/fs-providers";
 import { basename, toNativeSeparators, pathComparison, coverageOf } from "$lib/domain/path";
 import { isWindows } from "$lib/domain/platform";
 import { fetchDirectory } from "$lib/api/files";
-import { sortEntries, filterHidden, type FileEntry, type SortField } from "$lib/domain/file";
+import { sortEntries, filterHidden, type FileEntry, type SortField, type SortKeys } from "$lib/domain/file";
+import { entryLengthSeconds, lengthRevision, trackLengthSort } from "./length-sort.svelte";
 import type { ExplorerCoreState, SelectOptions, ViewMode } from "./types";
 import * as selection from "./selection";
 import * as navigation from "./navigation";
@@ -191,10 +192,11 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   // Derived State
   // ===================
 
-  // Only Details sorts by its headers (List/Tiles: name ascending). Lineage prompts (#1449): "prompt"; open history (#1525): "opened".
-  const promptOf = (entry: FileEntry) => lineage.labels?.prompt(entry.path);
-  const openedAt = (entry: FileEntry) => lastOpenedAt(entry.path);
-  const peekSort = (): [SortField, boolean, typeof promptOf, typeof openedAt] => coreState.viewMode === "details" ? [coreState.sortBy, coreState.sortAscending, promptOf, openedAt] : ["name", true, promptOf, openedAt];
+  // Only Details has sortable headers; List and Tiles sort by name ascending whatever the folder's
+  // Details sort. Lineage prompts (#1449), lengths (#1531, requested folder-wide) and open history (#1525) are sort keys.
+  const sortKeys: SortKeys = { promptOf: (entry) => lineage.labels?.prompt(entry.path), lengthOf: entryLengthSeconds, openedAt: (entry) => lastOpenedAt(entry.path) };
+  const peekSort = (): [SortField, boolean, SortKeys] => coreState.viewMode === "details" ? [coreState.sortBy, coreState.sortAscending, sortKeys] : ["name", true, sortKeys];
+  const stopLengthSort = trackLengthSort({ active: () => peekSort()[0] === "length", path: () => coreState.currentPath, entries: () => visibleEntriesFor(coreState.entries, coreState.currentPath) });
   const ownDisplayEntries = $derived.by(() => {
     let filtered = visibleEntriesFor(coreState.entries, coreState.currentPath);
     // An AI filter predicate (#1506) replaces the substring match (which keeps peek-matched folders, #1510).
@@ -225,13 +227,11 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   /** A directory, or a file with lineage children here. */
   const canPeekEntry = (entry: FileEntry): boolean => entry.kind === "directory" || !!lineageGrouping?.children(entry.path);
 
-  // Each peek level is projected once per listing snapshot and projection
-  // inputs, so a root keystroke or one peek's publish leaves other levels be.
+  // Each peek level is projected once per listing snapshot and projection inputs, so a root keystroke or one peek's publish leaves other levels be.
   let peekLevels: PeekLevelCache | undefined;
-  // Each level uses its view's sort, like the root: only Details has a sort UI;
-  // List (and Tiles) sort by name ascending (§3).
+  // Each level uses its view's sort, like the root (List/Tiles: name ascending, §3); settled lengths re-sort a Length sort.
   const peekProjectionKey = (parent: string) => [
-    ...peekSort().slice(0, 2), settingsStore.showHidden, settingsStore.showManuallyHidden,
+    ...peekSort().slice(0, 2), peekSort()[0] === "length" ? lengthRevision() : 0, settingsStore.showHidden, settingsStore.showManuallyHidden,
     ...(settingsStore.showManuallyHidden ? [] : manualHiddenStore.namesIn(parent)),
   ].join("\0");
   const peekTree = $derived.by(() => {
@@ -1401,7 +1401,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
       destroyed = true;
       pendingNavigationFocus?.request?.cancel();
       pendingNavigationFocus = null;
-      disposePeekEffects();
+      disposePeekEffects(); stopLengthSort();
       lineage.dispose();
       fileViewPresentation.dispose();
       creationSession = null;

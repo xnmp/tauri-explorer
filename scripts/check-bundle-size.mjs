@@ -114,7 +114,16 @@ const STARTUP_RAW_BUDGET = 866_617;
 // and the row-cell component load lazily. A first cut that registered
 // eagerly and rendered cells inline measured +2,781; the review fixes'
 // gating/memoization (+404) mostly moved modules between startup chunks.
-// Raised 281,728 -> 282,240 (+512) for #1525 (Details "Date opened" column):
+// Raised 281,728 -> 282,240 (+512) for #1531 (sort by Length): dev 7bd8eb05
+// measured 281,689 (39 bytes of headroom); the feature measured 282,108
+// (+419). Eager by nature: the "length" comparator in sortEntries and the
+// shared isSortField check, the Length header's sort button, the "Sort by
+// Length" palette command, and the startup seam (state/length-sort.svelte.ts:
+// reactive length reads, the Explorer request effect and its preload wrapper).
+// The folder-wide request controller and the resolvers' owner/cancel logic
+// load lazily (state/length-sort-requests.svelte.ts); a first cut that
+// imported them eagerly measured 284,756 (+3,067).
+// Then #1525 (Details "Date opened" column):
 // dev 7bd8eb05 measured 281,689 (39 bytes of headroom); the feature
 // measures 282,222 (+533). The history store, its pure policy and IPC load
 // lazily on first launch/mutation/column read (state/open-history.svelte.ts);
@@ -122,7 +131,11 @@ const STARTUP_RAW_BUDGET = 866_617;
 // module with its preload wrapper (its own ~344-byte chunk), the "opened"
 // sort, and the Details header, column-menu item and row cell. An eager store
 // measured +1,841.
-const STARTUP_GZIP_BUDGET = 282_240;
+// Raised 282,240 -> 282,368 (+128) when #1525 landed after #1531: each fit
+// the 282,240 cap alone (282,108 and 282,222), but both raised from the same
+// dev 7bd8eb05 baseline; combined on dev 6137ece6 the graph measured 282,313.
+// The merge shares one SortKeys bag, so no extra eager module was added.
+const STARTUP_GZIP_BUDGET = 282_368;
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const clientDir = resolve(repoRoot, ".svelte-kit/output/client");

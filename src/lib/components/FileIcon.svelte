@@ -13,6 +13,7 @@
   import FolderIcon from './FolderIcon.svelte';
   import MaterialFileIcon from './MaterialFileIcon.svelte';
   import CatppuccinFileIcon from './CatppuccinFileIcon.svelte';
+  import { largeFileArt, type LargeFileArtKind } from './icons/large-file-art.svelte';
 
   interface Props {
     entry: FileEntry;
@@ -39,6 +40,13 @@
     entry.kind === "file" && Object.hasOwn(CLASSIC_LANGUAGE_ICONS, getExtension(entry.name))
       ? CLASSIC_LANGUAGE_ICONS[getExtension(entry.name)] : null
   );
+  const LargeArt = $derived(size === "large" ? largeFileArt() : undefined);
+  const largeKind = $derived<LargeFileArtKind>(
+    iconCategory === "image" || iconCategory === "archive" ? iconCategory
+      : langIcon ? "lang"
+      : iconCategory === "code" || iconCategory === "media" || iconCategory === "executable" ? iconCategory
+      : "document"
+  );
 
 </script>
 
@@ -52,6 +60,10 @@
 {:else if isVideoMediaFile(entry)}
   <span class="icon-cat icon-video" role="img" aria-label="Video" style:color={useMinimal ? minimalColor : undefined}>
     <svg width={size === "small" ? 16 : 64} height={size === "small" ? 16 : 64} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <g class="baked-icon-shadow" transform="translate(0 0.75)">
+        <rect x="2.5" y="3.5" width="19" height="17" rx="2.5" stroke="currentColor" stroke-width="1.5" />
+        <path d="M9 7.5L16 12L9 16.5V7.5Z" fill="currentColor" />
+      </g>
       <rect x="2.5" y="3.5" width="19" height="17" rx="2.5" stroke="currentColor" stroke-width="1.5" />
       <path d="M9 7.5L16 12L9 16.5V7.5Z" fill="currentColor" />
     </svg>
@@ -61,12 +73,18 @@
 {:else if !useMinimal && langIcon && Object.hasOwn(CLASSIC_BRAND_PATHS, langIcon.id)}
   <span class="icon-cat" style:color={langIcon.color}>
     <svg width={size === 'small' ? 16 : 64} height={size === 'small' ? 16 : 64} viewBox="0 0 128 128" aria-hidden="true">
+      <g class="baked-icon-shadow" transform="translate(0 4)">
+        <path d={CLASSIC_BRAND_PATHS[langIcon.id]} fill="currentColor"/>
+      </g>
       <path d={CLASSIC_BRAND_PATHS[langIcon.id]} fill="currentColor"/>
     </svg>
   </span>
 {:else if !useMinimal && (langIcon?.id === 'typescript' || langIcon?.id === 'javascript')}
   <span class="icon-cat language-badge" data-icon-theme="classic">
     <svg width={size === 'small' ? 16 : 64} height={size === 'small' ? 16 : 64} viewBox="0 0 48 48" aria-hidden="true">
+      <g class="baked-icon-shadow" transform="translate(0 1.5)">
+        <rect x="3" y="3" width="42" height="42" rx="6" fill="currentColor"/>
+      </g>
       <rect x="3" y="3" width="42" height="42" rx="6" fill={langIcon.color}/>
       <text x="40" y="38" text-anchor="end" font-family="Arial, sans-serif" font-size="25" font-weight="700" letter-spacing="-1.3" fill={langIcon.id === 'typescript' ? '#fff' : '#252830'}>{langIcon.id === 'typescript' ? 'TS' : 'JS'}</text>
     </svg>
@@ -76,6 +94,13 @@
   <span class="icon-cat icon-html" style:color={useMinimal ? minimalColor : langIcon.color}>
     <svg width={size === "small" ? 16 : 64} height={size === "small" ? 16 : 64}
       viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <g class="baked-icon-shadow" transform="translate(0 0.75)">
+        <path d="M6 2.5H14L19 7.5V20A1.5 1.5 0 0 1 17.5 21.5H6A1.5 1.5 0 0 1 4.5 20V4A1.5 1.5 0 0 1 6 2.5Z"
+          fill="currentColor" fill-opacity="0.12" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+        <path d="M14 2.5V6A1.5 1.5 0 0 0 15.5 7.5H19" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+        <path d="M9 11.5L6.5 14L9 16.5M15 11.5L17.5 14L15 16.5M13 10.5L11 17.5"
+          stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+      </g>
       <path d="M6 2.5H14L19 7.5V20A1.5 1.5 0 0 1 17.5 21.5H6A1.5 1.5 0 0 1 4.5 20V4A1.5 1.5 0 0 1 6 2.5Z"
         fill="currentColor" fill-opacity="0.12" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
       <path d="M14 2.5V6A1.5 1.5 0 0 0 15.5 7.5H19" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
@@ -175,85 +200,9 @@
     </svg>
     </span>
   {/if}
-{:else}
-  <!--
-    Large icons: 64x64 element, 48x48 viewBox (tiles view)
-  -->
-  {#if iconCategory === "image"}
-    <span class="icon-cat icon-image">
-    <svg width="64" height="64" viewBox="0 0 48 48" fill="none">
-      <rect x="6" y="6" width="36" height="36" rx="4" fill="currentColor" fill-opacity="0.15"/>
-      <rect x="6" y="6" width="36" height="36" rx="4" stroke="currentColor" stroke-width="1.5"/>
-      <circle cx="16" cy="16" r="4" fill="currentColor"/>
-      <path d="M6 33L15 24L22 31L30 21L42 33V38C42 40.2091 40.2091 42 38 42H10C7.79086 42 6 40.2091 6 38V33Z" fill="currentColor" fill-opacity="0.4"/>
-    </svg>
-    </span>
-  {:else if iconCategory === "archive"}
-    <span class="icon-cat icon-archive">
-    <svg width="64" height="64" viewBox="0 0 48 48" fill="none">
-      <path d="M10 6C10 4.34315 11.3431 3 13 3H35C36.6569 3 38 4.34315 38 6V42C38 43.6569 36.6569 45 35 45H13C11.3431 45 10 43.6569 10 42V6Z" fill="currentColor" fill-opacity="0.15"/>
-      <path d="M10 6C10 4.34315 11.3431 3 13 3H35C36.6569 3 38 4.34315 38 6V42C38 43.6569 36.6569 45 35 45H13C11.3431 45 10 43.6569 10 42V6Z" stroke="currentColor" stroke-width="1.5"/>
-      <rect x="18" y="9" width="12" height="6" rx="1" fill="currentColor"/>
-      <rect x="18" y="18" width="12" height="6" rx="1" fill="currentColor"/>
-      <rect x="18" y="27" width="12" height="9" rx="1" fill="currentColor"/>
-    </svg>
-    </span>
-  {:else if langIcon}
-    <!-- Large language-specific icon (tiles view) -->
-    <span class="icon-cat" style:color={langIcon.color}>
-      <!-- Fallback: colored rounded rect with extension -->
-      <svg width="64" height="64" viewBox="0 0 48 48" fill="none">
-        <rect x="4" y="4" width="40" height="40" rx="6" fill="currentColor" fill-opacity="0.12" stroke="currentColor" stroke-width="1.5"/>
-        {#if extLabel}
-          <text x="24" y="30" text-anchor="middle" font-size="{extFontSize + 4}" font-weight="700" font-family="system-ui, sans-serif" fill="currentColor" fill-opacity="0.8">{extLabel}</text>
-        {/if}
-      </svg>
-    </span>
-  {:else if iconCategory === "code"}
-    <span class="icon-cat icon-code">
-    <svg width="64" height="64" viewBox="0 0 48 48" fill="none">
-      <path d="M10 6C10 4.34315 11.3431 3 13 3H27L38 14V42C38 43.6569 36.6569 45 35 45H13C11.3431 45 10 43.6569 10 42V6Z" fill="currentColor" fill-opacity="0.15"/>
-      <path d="M10 6C10 4.34315 11.3431 3 13 3H27L38 14V42C38 43.6569 36.6569 45 35 45H13C11.3431 45 10 43.6569 10 42V6Z" stroke="currentColor" stroke-width="1.5"/>
-      <path d="M27 3V11C27 12.6569 28.3431 14 30 14H38" stroke="currentColor" stroke-width="1.5"/>
-      {#if extLabel}
-        <text x="24" y="33" text-anchor="middle" font-size="{extFontSize}" font-weight="700" font-family="system-ui, -apple-system, sans-serif" fill="currentColor" fill-opacity="0.85">{extLabel}</text>
-      {:else}
-        <path d="M18 24L13 29L18 34M30 24L35 29L30 34" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-      {/if}
-    </svg>
-    </span>
-  {:else if iconCategory === "media"}
-    <span class="icon-cat icon-media">
-    <svg width="64" height="64" viewBox="0 0 48 48" fill="none">
-      <rect x="6" y="10" width="36" height="28" rx="4" fill="currentColor" fill-opacity="0.15"/>
-      <rect x="6" y="10" width="36" height="28" rx="4" stroke="currentColor" stroke-width="1.5"/>
-      <path d="M19 18V30L32 24L19 18Z" fill="currentColor"/>
-    </svg>
-    </span>
-  {:else if iconCategory === "executable"}
-    <span class="icon-cat icon-executable">
-    <svg width="64" height="64" viewBox="0 0 48 48" fill="none">
-      <rect x="6" y="6" width="36" height="36" rx="6" fill="currentColor" fill-opacity="0.15"/>
-      <rect x="6" y="6" width="36" height="36" rx="6" stroke="currentColor" stroke-width="1.5"/>
-      <path d="M15 24H33M24 15V33" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
-    </svg>
-    </span>
-  {:else}
-    <span class="icon-cat icon-document">
-    <svg width="64" height="64" viewBox="0 0 48 48" fill="none">
-      <path d="M11 7C11 5.34 12.34 4 14 4H28L41 17V43C41 44.66 39.66 46 38 46H14C12.34 46 11 44.66 11 43V7Z" fill="black" opacity="0.06"/>
-      <path d="M10 6C10 4.34 11.34 3 13 3H27L40 16V42C40 43.66 38.66 45 37 45H13C11.34 45 10 43.66 10 42V6Z" fill="white"/>
-      <path d="M10 6C10 4.34 11.34 3 13 3H27L40 16V42C40 43.66 38.66 45 37 45H13C11.34 45 10 43.66 10 42V6Z" stroke="currentColor" stroke-width="1.5" stroke-opacity="0.5"/>
-      <path d="M27 3V13C27 14.66 28.34 16 30 16H40" stroke="currentColor" stroke-width="1.5" stroke-opacity="0.5"/>
-      <path d="M27 3V12C27 14.21 28.79 16 31 16H40L27 3Z" fill="currentColor" fill-opacity="0.12"/>
-      {#if extLabel}
-        <text x="24" y="35" text-anchor="middle" font-size="{extFontSize}" font-weight="700" font-family="system-ui, -apple-system, sans-serif" fill="currentColor" fill-opacity="0.7">{extLabel}</text>
-      {:else}
-        <path d="M16 25H32M16 30H28M16 35H24" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-opacity="0.6"/>
-      {/if}
-    </svg>
-    </span>
-  {/if}
+{:else if LargeArt}
+  <!-- Large (Tiles) artwork lives in a lazy chunk with its static shadow (#1532). -->
+  <LargeArt kind={largeKind} label={extLabel} fontSize={extFontSize} color={langIcon?.color} />
 {/if}
 
 <style>
@@ -262,12 +211,17 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.25));
   }
-  /* No CSS filter on plugin artwork (#1530): WebKitGTK re-rasterizes a
-     filtered <img> on every scroll frame, which took Tiles scrolling from
-     ~17 ms to ~120-190 ms frames. Plugins draw their own shading. */
-  .icon-cat.plugin-file-icon { object-fit: contain; pointer-events: none; filter: none; }
+  /* No CSS filter on any icon (#1530, #1532): WebKitGTK re-rasterizes a
+     filtered element for every visible tile on every scroll frame (Tiles p95
+     ~105 ms vs ~24 ms unfiltered on 1,596 tiles). Large built-in artwork
+     instead carries a static copy of its shape, offset 2 CSS px and drawn
+     black at low opacity beneath the glyph (icons/LargeFileArt.svelte for
+     the category artwork); 16px rows draw none. Never swap this for an SVG
+     <filter>: it re-renders per paint just the same. */
+  .baked-icon-shadow { color: #000; opacity: 0.2; }
+  :global(svg[width="16"] > .baked-icon-shadow) { display: none; }
+  .icon-cat.plugin-file-icon { object-fit: contain; pointer-events: none; }
   .icon-image      { color: var(--icon-file-tint, var(--icon-image)); }
   .icon-archive    { color: var(--icon-file-tint, var(--icon-archive)); }
   .icon-code       { color: var(--icon-file-tint, var(--icon-code)); }

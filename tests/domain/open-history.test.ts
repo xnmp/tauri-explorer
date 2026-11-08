@@ -109,10 +109,10 @@ describe("sorting by Date opened", () => {
   const entries = [file("a-never.txt"), file("new.txt"), dir("folder"), file("old.txt"), file("b-never.txt")];
 
   it("orders opened files by time, never-opened files last, folders first", () => {
-    expect(names(sortEntries(entries, "opened", true, undefined, openedAt))).toEqual(["folder", "old.txt", "new.txt", "a-never.txt", "b-never.txt"]);
+    expect(names(sortEntries(entries, "opened", true, { openedAt }))).toEqual(["folder", "old.txt", "new.txt", "a-never.txt", "b-never.txt"]);
   });
 
   it("reverses opened files for descending order, keeping never-opened files last", () => {
-    expect(names(sortEntries(entries, "opened", false, undefined, openedAt))).toEqual(["folder", "new.txt", "old.txt", "b-never.txt", "a-never.txt"]);
+    expect(names(sortEntries(entries, "opened", false, { openedAt }))).toEqual(["folder", "new.txt", "old.txt", "b-never.txt", "a-never.txt"]);
   });
 });

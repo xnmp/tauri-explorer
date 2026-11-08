@@ -179,9 +179,10 @@
     {/if}
     {#if settingsStore.columnVisibility.length}
     <div class="column-header-wrapper">
-      <div class="column-header length-column">
+      <button class="column-header length-column" onclick={() => explorer.setSorting("length")} class:active={explorer.sortBy === "length"}>
         <span>Length</span>
-      </div>
+        {#if explorer.sortBy === "length"}{@render sortIndicator()}{/if}
+      </button>
       {@render resizeHandle("length")}
     </div>
     {/if}

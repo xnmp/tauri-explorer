@@ -144,8 +144,8 @@ describe("Prompt sort", () => {
   const names = (list: FileEntry[]) => list.map(entry => entry.name);
 
   it("sorts by prompt text, ties by name, files without one after, folders first", () => {
-    expect(names(sortEntries(entries, "prompt", true, promptOf))).toEqual(["Dir", "b.png", "d.png", "a.png", "c.png"]);
-    expect(names(sortEntries(entries, "prompt", false, promptOf))).toEqual(["Dir", "c.png", "a.png", "d.png", "b.png"]);
+    expect(names(sortEntries(entries, "prompt", true, { promptOf }))).toEqual(["Dir", "b.png", "d.png", "a.png", "c.png"]);
+    expect(names(sortEntries(entries, "prompt", false, { promptOf }))).toEqual(["Dir", "c.png", "a.png", "d.png", "b.png"]);
   });
 
   it("falls back to name order without prompts", () => {

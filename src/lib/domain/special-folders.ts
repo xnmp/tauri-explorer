@@ -1,7 +1,7 @@
 /**
  * Special folder icons (#1491): well-known directory names (`src`, `tests`,
- * `node_modules`, ...) get a kind, and each icon pack draws that kind in its
- * own idiom. This module is loaded lazily (see
+ * `node_modules`, ...) get a kind, and each icon pack draws that kind as a
+ * corner badge in its own idiom (#1527). This module is loaded lazily (see
  * `components/icons/special-folder-icons.svelte.ts`) so the alias table and
  * per-pack paint stay out of the startup bundle.
  */
@@ -16,7 +16,7 @@ export type SpecialFolderKind =
 /**
  * Names are matched case-insensitively. Each kind has artwork in
  * `icons/folder-glyphs/` and a vendored Catppuccin `icons/catppuccin/folder-<kind>.svg`.
- * `hue` is the Material pack's folder colour for the kind.
+ * `hue` tints the kind's corner badge in the Classic and Material packs.
  */
 const KINDS: Readonly<Record<SpecialFolderKind, { names: readonly string[]; hue: string }>> = {
   src: { names: ['src', 'source', 'sources'], hue: '#4caf50' },
@@ -64,40 +64,59 @@ export function specialFolderHue(kind: SpecialFolderKind): string {
 }
 
 /**
- * Where a kind's glyph sits, in the icon SVG's viewBox units. `folder` is
- * FolderIcon (18-unit small / 48-unit large), centred on the folder's front
- * panel like the repository emblem so Tiles' bottom-right peek caret stays
- * clear; `catppuccin` places the 16-unit glyph-only symbol (scaled 0.8) on the
- * sprite's outline folder when large, and the full upstream composite when small.
+ * The kind is drawn as a small corner badge (#1527), never by recolouring the
+ * folder: the body keeps the theme's folder colour in every pack. The badge
+ * sits in the bottom-left corner, the one free of every other decoration
+ * (Tiles' peek caret is bottom-right, the Git badge/status letter top-right,
+ * the symlink badge top-left). Boxes are in the host icon's viewBox units:
+ * `folder` is FolderIcon (18-unit small / 48-unit large), `catppuccin` the
+ * 16-unit sprite viewBox. `ring` is the backing's outline width and `glyph`
+ * the square the kind's glyph is drawn in, inset from the backing.
  */
 export type SpecialFolderSurface = 'folder' | 'catppuccin';
-export interface SpecialFolderGlyphBox { readonly viewBox: number; readonly x: number; readonly y: number; readonly w: number }
-export function specialFolderGlyphBox(surface: SpecialFolderSurface, size: 'small' | 'large'): SpecialFolderGlyphBox {
-  if (surface === 'catppuccin') return size === 'small' ? { viewBox: 16, x: 0, y: 0, w: 16 } : { viewBox: 16, x: -2.2, y: -0.4, w: 12.8 };
-  return size === 'small' ? { viewBox: 18, x: 4.5, y: 6, w: 9 } : { viewBox: 48, x: 15, y: 21.5, w: 18 };
+export interface SpecialFolderBadgeBox {
+  readonly viewBox: number;
+  readonly x: number; readonly y: number; readonly w: number; readonly rx: number; readonly ring: number;
+  readonly glyph: { readonly x: number; readonly y: number; readonly w: number };
+}
+const badgeBox = (viewBox: number, x: number, y: number, w: number, rx: number, ring: number, inset: number): SpecialFolderBadgeBox =>
+  ({ viewBox, x, y, w, rx, ring, glyph: { x: x + inset, y: y + inset, w: w - 2 * inset } });
+const BADGE_BOXES: Readonly<Record<SpecialFolderSurface, Readonly<Record<'small' | 'large', SpecialFolderBadgeBox>>>> = {
+  folder: { small: badgeBox(18, 0.75, 8.25, 9, 2.5, 1, 0.6), large: badgeBox(48, 1.25, 27.75, 19, 5, 1.5, 1.75) },
+  catppuccin: { small: badgeBox(16, 0.5, 7.5, 8, 2.2, 0.9, 0.55), large: badgeBox(16, 0.3, 9.2, 6.5, 1.7, 0.4, 0.55) },
+};
+export function specialFolderBadgeBox(surface: SpecialFolderSurface, size: 'small' | 'large'): SpecialFolderBadgeBox {
+  return BADGE_BOXES[surface][size];
 }
 
-/** Everything a renderer needs to draw a special folder in one icon pack. */
-export interface SpecialFolderVariant extends SpecialFolderGlyphBox {
+/**
+ * Catppuccin's glyph-only symbols keep the upstream art in the 16-unit box's
+ * lower-right quadrant (x 7.5–15.5, y 8.5–15.5); the badge scales this square
+ * of the symbol into its glyph box.
+ */
+export const CATPPUCCIN_GLYPH_CROP = Object.freeze({ x: 7, y: 8, size: 9 });
+
+/** Everything a renderer needs to draw a special folder's badge in one icon pack. */
+export interface SpecialFolderVariant {
   readonly kind: SpecialFolderKind;
   /** Which sprite carries `symbol`. */
   readonly sprite: 'glyphs' | 'catppuccin';
   readonly symbol: string;
-  /**
-   * Catppuccin small icons replace the whole folder with the upstream
-   * composite; every other variant overlays a glyph on the pack's own folder.
-   */
-  readonly overlay: boolean;
-  /** Folder body paint, when the pack recolours the folder (Material). */
-  readonly body?: string;
-  /** Glyph paint (the sprite's `currentColor`); unset for Catppuccin's own palette. */
+  readonly box: SpecialFolderBadgeBox;
+  /** Backing paint: the theme surface, so the badge reads on any folder colour. */
+  readonly fill: string;
+  /** Backing outline paint. */
+  readonly outline: string;
+  /** Glyph paint (the glyph sprite's `currentColor`); unset for Catppuccin's own palette. */
   readonly ink?: string;
-  /** Glyph stroke width in glyph units: heavier when drawn at 16px. */
-  readonly stroke?: number;
+  /** Glyph stroke width in the symbol's own units: heavier when drawn at 16px. */
+  readonly stroke: number;
 }
 
+const BADGE_SURFACE = 'var(--background-solid, #fff)';
+
 /**
- * Resolve a directory's special-folder variant for an icon pack. Link and
+ * Resolve a directory's special-folder badge for an icon pack. Link and
  * repository decorations take precedence: those folders keep their emblem.
  */
 export function resolveSpecialFolderVariant(entry: FileEntry, pack: IconPack, size: 'small' | 'large'): SpecialFolderVariant | null {
@@ -106,23 +125,20 @@ export function resolveSpecialFolderVariant(entry: FileEntry, pack: IconPack, si
   if (entry.kind !== 'directory' || entry.is_symlink === true || entry.is_git_repo === true) return null;
   const kind = getSpecialFolderKind(entry.name);
   if (!kind) return null;
+  const small = size === 'small';
   if (pack === 'catppuccin') {
-    const small = size === 'small';
-    return { kind, sprite: 'catppuccin', symbol: small ? `folder-${kind}` : `folder-${kind}-glyph`, overlay: !small, ...specialFolderGlyphBox('catppuccin', size) };
+    // The glyph keeps its Catppuccin accent; the outline takes the folder's tint.
+    return { kind, sprite: 'catppuccin', symbol: `folder-${kind}-glyph`, box: specialFolderBadgeBox('catppuccin', size), fill: BADGE_SURFACE, outline: 'var(--vscode-ctp-text)', stroke: small ? 1.4 : 1 };
   }
-  const box = specialFolderGlyphBox('folder', size);
-  const stroke = size === 'small' ? 3 : 2;
-  if (pack === 'minimal') return { kind, sprite: 'glyphs', symbol: kind, overlay: true, ink: 'currentColor', stroke: size === 'small' ? 2.6 : 1.6, ...box };
-  // Material recolours the folder per kind (honouring a colour theme's file
-  // tint, like its file icons); Classic keeps the theme's folder colour. Both
-  // draw the glyph as a deeper shade of the body.
-  const body = pack === 'material' ? `var(--icon-file-tint, ${KINDS[kind].hue})` : 'var(--icon-folder, #ffb900)';
-  return {
-    kind, sprite: 'glyphs', symbol: kind, overlay: true, stroke, ...box,
-    ...(pack === 'material' ? { body } : {}),
-    ink: `color-mix(in srgb, ${body} 40%, #000)`,
-  };
+  const box = specialFolderBadgeBox('folder', size);
+  if (pack === 'minimal') return { kind, sprite: 'glyphs', symbol: kind, box, fill: BADGE_SURFACE, outline: 'currentColor', ink: 'currentColor', stroke: small ? 3 : 2 };
+  // Classic and Material tint the badge (never the folder) with the kind's hue,
+  // honouring a colour theme's file tint, and pull it toward the theme's text
+  // colour so it keeps contrast on light and dark surfaces alike.
+  const ink = `color-mix(in srgb, var(--icon-file-tint, ${KINDS[kind].hue}) 70%, var(--text-primary, #000))`;
+  return { kind, sprite: 'glyphs', symbol: kind, box, fill: BADGE_SURFACE, outline: ink, ink, stroke: small ? 3.2 : 2.2 };
 }
+
 
 /**
  * Surfaces that know a folder only by name (#1499: tab bar, sidebar rows,

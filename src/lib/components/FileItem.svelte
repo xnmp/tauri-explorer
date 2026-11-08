@@ -19,6 +19,7 @@
   import { emptyFolderResolver } from "$lib/state/empty-folders.svelte";
   import { mediaDurationResolver } from "$lib/state/media-durations.svelte";
   import { formatMediaDuration } from "$lib/domain/media-duration";
+  import { lastOpenedAt } from "$lib/state/open-history-access.svelte";
   import { detailColumnRegistry } from "$lib/plugins/detail-column-registry.svelte";
   import { fileIconRegistry } from "$lib/plugins/file-icon-registry.svelte";
   import type { PluginDetailColumn } from "$lib/domain/plugin-detail-columns";
@@ -114,6 +115,9 @@
     if (length || pluginColumns.length) detailColumnRegistry.request(entry, pluginColumns, length);
   });
   const PluginCells = $derived(pluginColumns.length ? pluginDetailCells() : undefined);
+  // "Date opened" (#1525) reads the in-memory open history: no per-row I/O.
+  const openedAt = $derived(settingsStore.columnVisibility.opened && entry.kind === "file" ? lastOpenedAt(entry.path) : undefined);
+  const openedIso = $derived(openedAt === undefined ? "" : new Date(openedAt).toISOString());
   const lengthText = $derived(formatMediaDuration(mediaDurationResolver.duration(entry) ?? detailColumnRegistry.lengthSeconds(entry)));
 
   const isPeekControl = (event: Event) => event.target instanceof Element && !!event.target.closest(".peek-caret, .peek-open, .peek-toggle");
@@ -277,6 +281,9 @@
   {#if settingsStore.columnVisibility.resolution}
     <div class="resolution-cell" data-cell="resolution"><ImageResolutionCell {entry} /></div>
   {/if}
+  {#if settingsStore.columnVisibility.opened}
+  <div class="opened-cell" data-cell="opened" title={openedIso ? formatAbsoluteDate(openedIso) : undefined}>{openedIso ? formatDate(openedIso) : ""}</div>
+  {/if}
   {#if PluginCells}<PluginCells {entry} columns={pluginColumns} />{/if}
 </div>
 
@@ -289,7 +296,7 @@
 
   .file-item {
     display: grid;
-    grid-template-columns: var(--details-grid-columns, var(--col-name, 300px) var(--col-date, 180px) var(--col-type, 120px) var(--col-size, 90px) var(--col-length, 90px) var(--col-resolution, 160px));
+    grid-template-columns: var(--details-grid-columns, var(--col-name, 300px) var(--col-date, 180px) var(--col-type, 120px) var(--col-size, 90px) var(--col-length, 90px) var(--col-resolution, 160px) var(--col-opened, 180px));
     gap: 0;
     align-items: center;
     padding: 4px 16px;
@@ -434,7 +441,8 @@
   .type-cell,
   .size-cell,
   .length-cell,
-  .resolution-cell {
+  .resolution-cell,
+  .opened-cell {
     font-size: var(--font-size-caption);
     color: var(--text-tertiary);
     overflow: hidden;

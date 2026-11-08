@@ -57,6 +57,7 @@ import { contextMenuStore } from "./context-menu.svelte";
 import { undoStore } from "./undo.svelte";
 import { settingsStore } from "./settings.svelte";
 import { manualHiddenStore } from "./manual-hidden.svelte";
+import { lastOpenedAt } from "./open-history-access.svelte";
 import { getSortPref, saveSortPref } from "./sort-prefs";
 import { createDirectoryListing } from "./directory-listing";
 import { createPaneWatch } from "./pane-watch";
@@ -65,7 +66,6 @@ import { createPaneMutations } from "./pane-mutations";
 import { undoActionLabel } from "./undo-helpers";
 import { loadWatchdog, type LoadTraceHandle } from "./load-watchdog";
 import type { LoadReason } from "$lib/domain/load-diagnostics";
-
 import type { ExplorerSeed } from "$lib/domain/window-input";
 import type { PreviewTarget } from "$lib/plugins/preview-registry.svelte";
 
@@ -193,8 +193,8 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   // ===================
 
   // Only Details has sortable headers; List and Tiles sort by name ascending whatever the folder's
-  // Details sort. Lineage prompts (#1449) and lengths (#1531, requested folder-wide) are sort keys.
-  const sortKeys: SortKeys = { promptOf: (entry) => lineage.labels?.prompt(entry.path), lengthOf: entryLengthSeconds };
+  // Details sort. Lineage prompts (#1449), lengths (#1531, requested folder-wide) and open history (#1525) are sort keys.
+  const sortKeys: SortKeys = { promptOf: (entry) => lineage.labels?.prompt(entry.path), lengthOf: entryLengthSeconds, openedAt: (entry) => lastOpenedAt(entry.path) };
   const peekSort = (): [SortField, boolean, SortKeys] => coreState.viewMode === "details" ? [coreState.sortBy, coreState.sortAscending, sortKeys] : ["name", true, sortKeys];
   const stopLengthSort = trackLengthSort({ active: () => peekSort()[0] === "length", path: () => coreState.currentPath, entries: () => visibleEntriesFor(coreState.entries, coreState.currentPath) });
   const ownDisplayEntries = $derived.by(() => {

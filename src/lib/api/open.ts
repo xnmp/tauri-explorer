@@ -15,6 +15,22 @@ import {
 } from "./common";
 import type { OpenWithApplication } from "$lib/domain/open-with";
 
+/** Successful file launches (#1525): the single seam where the app hands a
+ * file to another program. Directory navigation is not an open. Listeners
+ * (the open history) run after the launch succeeds and never affect it. */
+type LaunchListener = (path: string) => void;
+const launchListeners = new Set<LaunchListener>();
+export function onFileLaunched(listener: LaunchListener): () => void {
+  launchListeners.add(listener);
+  return () => launchListeners.delete(listener);
+}
+function launched(path: string): ApiResult<void> {
+  for (const listener of launchListeners) {
+    try { listener(path); } catch { /* A listener never fails the launch. */ }
+  }
+  return { ok: true, data: undefined };
+}
+
 export async function listOpenWithApplications(path: string): Promise<ApiResult<OpenWithApplication[]>> {
   const guard = virtualPathGuard(path);
   if (guard) return guard;
@@ -27,7 +43,7 @@ export async function openFileWithApplication(path: string, applicationId: strin
   if (guard) return guard;
   try {
     await invoke("open_file_with_application", { path, applicationId });
-    return { ok: true, data: undefined };
+    return launched(path);
   } catch (error) { return { ok: false, error: extractError(error) }; }
 }
 
@@ -42,7 +58,7 @@ export async function openFile(path: string): Promise<ApiResult<void>> {
   if (guard) return guard;
   try {
     await invoke("open_file", { path });
-    return { ok: true, data: undefined };
+    return launched(path);
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }
@@ -67,7 +83,7 @@ export async function openFileAtLine(path: string, line: number): Promise<ApiRes
   if (guard) return guard;
   try {
     await invoke("open_file_at_line", { path, line });
-    return { ok: true, data: undefined };
+    return launched(path);
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }
@@ -85,7 +101,7 @@ export async function openFileWith(path: string, app: string): Promise<ApiResult
   if (guard) return guard;
   try {
     await invoke("open_file_with", { path, app });
-    return { ok: true, data: undefined };
+    return launched(path);
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }
@@ -100,7 +116,7 @@ export async function openImageWithSiblings(path: string): Promise<ApiResult<voi
   if (guard) return guard;
   try {
     await invoke("open_image_with_siblings", { path });
-    return { ok: true, data: undefined };
+    return launched(path);
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }

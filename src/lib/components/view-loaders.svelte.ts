@@ -9,6 +9,7 @@
  */
 import { untrack, type Component } from "svelte";
 import type { ViewMode } from "$lib/domain/file";
+import { loadLargeFileArt } from "./icons/large-file-art.svelte";
 
 export type ViewRenderer = "details" | "list-columns" | "list" | "tiles" | "tiles-panels";
 type ViewModule = { default: Component<any> };
@@ -18,9 +19,16 @@ const importers: Record<ViewRenderer, () => Promise<ViewModule>> = {
   details: () => import("./DetailsView.svelte"),
   "list-columns": () => import("./ListColumnsView.svelte"),
   list: () => import("./ListView.svelte"),
-  tiles: () => import("./TilesView.svelte"),
-  "tiles-panels": () => import("./TilePanelsView.svelte"),
+  tiles: () => withLargeFileArt(import("./TilesView.svelte")),
+  "tiles-panels": () => withLargeFileArt(import("./TilePanelsView.svelte")),
 };
+
+/** Tiles draw large file artwork, a lazy chunk of its own (#1532): settle it
+ * with the renderer so the first tiles paint their icons in the same flush.
+ * A failed artwork import must not fail the view; FileIcon retries it. */
+function withLargeFileArt(view: Promise<ViewModule>): Promise<ViewModule> {
+  return Promise.all([view, loadLargeFileArt().catch(() => undefined)]).then(([module]) => module);
+}
 
 const pending = new Map<ViewRenderer, Promise<ViewModule>>();
 let outcomes = $state.raw<Partial<Record<ViewRenderer, Outcome>>>({});

@@ -166,3 +166,80 @@ fn native_startup_recovery_errors_degrade_instead_of_failing_setup() {
     shutdown();
     drop(app);
 }
+
+/// A queued request as a `.teplugin` archive of a runnable scripted payload.
+fn queued_archive(config: &Path, id: &str) -> PathBuf {
+    use std::io::Write;
+    // Built outside the installed root so its payload is not pre-published.
+    let source = config.join("queued-source");
+    // SDK 3: private validation preflight requires a deferred (not ready) reply.
+    let installed = scripted(&source, id, 3, "quiesce");
+    let queue = config.join("pending-plugins");
+    fs::create_dir_all(&queue).unwrap();
+    let path = queue.join(format!("{id}.teplugin"));
+    let mut zip = zip::ZipWriter::new(fs::File::create(&path).unwrap());
+    let options = zip::write::SimpleFileOptions::default().unix_permissions(0o700);
+    zip.start_file("manifest.json", options).unwrap();
+    serde_json::to_writer(&mut zip, &installed.manifest).unwrap();
+    for name in installed.manifest.files.keys() {
+        zip.start_file(name, options).unwrap();
+        zip.write_all(
+            &fs::read(source.join("payloads").join(&installed.digest).join(name)).unwrap(),
+        )
+        .unwrap();
+    }
+    zip.finish().unwrap();
+    path
+}
+
+#[test]
+#[ignore = "requires a private native display/profile; execute via dedicated subprocess"]
+fn native_queued_installs_apply_when_ownership_is_acquired_after_startup() {
+    use std::sync::atomic::Ordering;
+    use std::time::{Duration, Instant};
+    const QUEUED: &str = "fixture.queued";
+    let app = native_app();
+    let config = config::config_dir().unwrap();
+    let request = queued_archive(&config, QUEUED);
+    // The previous instance still holds the lease while this one starts.
+    let previous = ownership::acquire(&config.canonicalize().unwrap()).unwrap();
+    super::initialize(app.handle().clone()).unwrap();
+    assert!(pending_errors().iter().any(|e| ownership::is_not_owner(e)));
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(request.exists(), "a non-owner must not apply the queue");
+    assert_eq!(QUEUE_WORKERS_STARTED.load(Ordering::SeqCst), 0);
+    // The previous instance exits; the opportunistic read-path retry is the
+    // first to acquire ownership (#1528).
+    drop(previous);
+    retry_services();
+    assert!(backend::ownership_ready());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while request.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        !request.exists(),
+        "queued install was skipped after late ownership: {:?}",
+        pending_errors()
+    );
+    assert!(
+        !config.join("pending-plugins/failed").exists(),
+        "queued install was quarantined: {:?}",
+        pending_errors()
+    );
+    assert!(package::list(&root().unwrap())
+        .unwrap()
+        .iter()
+        .any(|installed| installed.manifest.id == QUEUED));
+    assert!(serves(QUEUED));
+    // Later service entry points never start a second worker.
+    ensure_services().unwrap();
+    {
+        let _gate = mutation_lock().unwrap();
+        bootstrap_services().unwrap();
+    }
+    assert_eq!(QUEUE_WORKERS_STARTED.load(Ordering::SeqCst), 1);
+    assert!(!pending_errors().iter().any(|e| e.contains("Queued plugin")));
+    shutdown();
+    drop(app);
+}

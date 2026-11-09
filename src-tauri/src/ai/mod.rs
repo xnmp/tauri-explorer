@@ -501,10 +501,13 @@ fn window_owner(window: &tauri::Window) -> OwnerCheck {
     Arc::new(move || app.get_webview_window(&label).is_none())
 }
 /// Whether the default text profile is enabled and locally usable. Consumers
-/// check this before assembling any request content.
+/// check this before assembling any request content. Bounded like the plugin
+/// facade: a profile check that never returns (a locked Secret Service, a
+/// stalled CLI probe) must reach the AI filter as an error, not leave it
+/// waiting without feedback (#1522).
 #[tauri::command]
-pub async fn ai_text_describe() -> Result<Describe> {
-    blocking(describe).await
+pub async fn ai_text_describe(window: tauri::Window) -> Result<Describe> {
+    describe_owned(window_owner(&window)).await
 }
 /// Generate with the default text profile on behalf of a core window feature.
 /// `expected_configuration_revision` pins the profile the caller described.

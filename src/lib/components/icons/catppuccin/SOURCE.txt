@@ -6,3 +6,5 @@ MIT license: see LICENSE.txt.
 Special folder icons (#1491): folder-<kind>.svg are upstream folder_<kind>.svg,
 unmodified. scripts/build-icon-sprites.mjs also emits a folder-<kind>-glyph
 symbol from each with only the shared folder outline removed.
+folder-gdrive.svg (#1551) is app-authored original artwork in the same style,
+not upstream: Catppuccin ships no Google Drive folder.

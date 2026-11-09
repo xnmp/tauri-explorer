@@ -148,3 +148,47 @@ describe("special folder badge geometry (#1527)", () => {
     }
   });
 });
+
+describe("Google Drive folders (#1551)", () => {
+  it.each([
+    "Google Drive", "GoogleDrive", "google-drive", "gdrive", "GDrive", "My Drive",
+    // GVfs mount roots as listed under /run/user/<uid>/gvfs.
+    "google-drive:host=gmail.com,user=someone", "google-drive:host=example.com",
+  ])("%j → gdrive", (name) => {
+    expect(getSpecialFolderKind(name)).toBe("gdrive");
+  });
+
+  it.each(["Drive", "drive", "google", "google-drive-backup", "gdrive2", "sftp:host=example.com", "google-drive:"])(
+    "leaves %j an ordinary folder",
+    (name) => {
+      expect(getSpecialFolderKind(name)).toBeNull();
+    },
+  );
+
+  it("draws a tri-colour drive glyph in Classic and Material, honouring a colour theme's file tint", () => {
+    for (const pack of ["classic", "material"] as const) for (const size of ["small", "large"] as const) {
+      const v = resolveSpecialFolderVariant(dir("Google Drive"), pack, size)!;
+      expect(v).toMatchObject({ kind: "gdrive", sprite: "glyphs", symbol: "gdrive" });
+      expect(v.palette).toHaveLength(3);
+      expect(new Set(v.palette).size).toBe(3);
+      for (const paint of v.palette!) expect(paint).toMatch(/^var\(--icon-file-tint, #[0-9a-f]{6}\)$/);
+    }
+  });
+
+  it("stays monochrome in Minimal and uses Catppuccin's own accents there", () => {
+    expect(resolveSpecialFolderVariant(dir("gdrive"), "minimal", "small")!.palette).toBeUndefined();
+    const ctp = resolveSpecialFolderVariant(dir("gdrive"), "catppuccin", "small")!;
+    expect(ctp).toMatchObject({ kind: "gdrive", symbol: "folder-gdrive-glyph" });
+    expect(ctp.palette).toBeUndefined();
+  });
+
+  it("ordinary kinds carry no palette", () => {
+    expect(resolveSpecialFolderVariant(dir("src"), "material", "small")!.palette).toBeUndefined();
+  });
+
+  it("the glyph sprite paints each stroke from the palette, falling back to the ink", () => {
+    const glyphs = readFileSync("src/lib/components/icons/folder-glyphs-sprite.svg", "utf8");
+    const symbol = glyphs.match(/<symbol id="gdrive"[\s\S]*?<\/symbol>/)?.[0] ?? "";
+    for (const slot of ["a", "b", "c"]) expect(symbol).toContain(`var(--special-folder-glyph-${slot}, currentColor)`);
+  });
+});

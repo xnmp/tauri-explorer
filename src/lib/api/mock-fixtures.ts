@@ -182,6 +182,17 @@ export const mockFiles: Record<string, FileEntry[]> = {
   "/media/user/GoogleDrive/My Drive": [
     file("doc.gdoc", "/media/user/GoogleDrive/My Drive/doc.gdoc", 1024),
   ],
+  // GVfs mount roots (#1551): a Google Drive account root gets the Google
+  // Drive folder badge; other GVfs backends stay ordinary folders.
+  "/run/user/1000/gvfs": [
+    dir("google-drive:host=gmail.com,user=someone", "/run/user/1000/gvfs/google-drive:host=gmail.com,user=someone"),
+    dir("sftp:host=example.com", "/run/user/1000/gvfs/sftp:host=example.com"),
+  ],
+  "/run/user/1000/gvfs/google-drive:host=gmail.com,user=someone": [
+    dir("My Drive", "/run/user/1000/gvfs/google-drive:host=gmail.com,user=someone/My Drive"),
+  ],
+  "/run/user/1000/gvfs/google-drive:host=gmail.com,user=someone/My Drive": [],
+  "/run/user/1000/gvfs/sftp:host=example.com": [],
   "/home/user/Documents": [
     { ...dir("project", "/home/user/Documents/project"), modified: daysAgo(150) },
     { ...file("report.pdf", "/home/user/Documents/report.pdf", 102400), modified: daysAgo(35) },

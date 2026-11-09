@@ -49,12 +49,14 @@ print("Generated application and website favicons")
 # Generate .ico (Windows). Each sub-image is stored as PNG so the full
 # alpha channel survives — Pillow's default BMP encoding for ICO sub-frames
 # loses transparency on Windows and looks pixelated/whitewashed.
-# The source art carries macOS-style padding (glyph fills ~77% of the canvas),
-# which is the .icns convention but makes the Windows taskbar / title-bar icon
-# read noticeably small next to other apps. Zoom the glyph in slightly for the
-# .ico only (centered crop of a scaled copy) so it fills more of the frame. The
-# .icns below keeps the original padding.
-ICO_CONTENT_SCALE = 1.11
+# ICO_CONTENT_SCALE zooms the glyph for the .ico only (centered crop of a
+# scaled copy); the .icns below keeps its own framing. It was 1.11,
+# which stretched the folder to ~96% of each frame so it read oversized in the
+# Windows taskbar and title bar next to other apps (#1553). At 1.0 the folder
+# spans ~86% of the frame, matching the Windows icon keyline (28/32 = 87.5%),
+# and the filled tau (#1553) already adds visual weight at small sizes.
+# tests/app-icon.test.ts bounds this value.
+ICO_CONTENT_SCALE = 1.0
 ico_sizes = [16, 32, 48, 64, 128, 256]
 frames: list[tuple[int, bytes]] = []
 for size in ico_sizes:

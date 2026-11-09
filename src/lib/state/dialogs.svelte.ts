@@ -41,8 +41,6 @@ function createDialogStore() {
   let aboutOpen = $state(false);
   let contentSearchOpen = $state(false);
   let workspaceOpen = $state(false);
-  let bulkRenameOpen = $state(false);
-  let bulkRenameItems = $state<FileEntry[]>([]);
   let jobsPanelOpen = $state(false);
   let themePickerOpen = $state(false);
   let themePickerKind = $state<'color' | 'icon' | 'layout'>('color');
@@ -70,7 +68,7 @@ function createDialogStore() {
   }
 
   function anyModalOpen(): boolean {
-    return openWithStore.isOpen || modalOwnership.hasOpen || imageEditorTarget !== null || shortcutsOpen || keybindingsOpen || pluginsOpen || activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || aboutOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen || jobsPanelOpen || themePickerOpen || pickerConfig !== null || userReportOpen || fileRecoveryOpen;
+    return openWithStore.isOpen || modalOwnership.hasOpen || imageEditorTarget !== null || shortcutsOpen || keybindingsOpen || pluginsOpen || activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || aboutOpen || contentSearchOpen || workspaceOpen || jobsPanelOpen || themePickerOpen || pickerConfig !== null || userReportOpen || fileRecoveryOpen;
   }
 
   function closeIfActive(dialogType: DialogType, session = fileOperationSession): void {
@@ -101,8 +99,6 @@ function createDialogStore() {
     aboutOpen = false;
     contentSearchOpen = false;
     workspaceOpen = false;
-    bulkRenameOpen = false;
-    bulkRenameItems = [];
     jobsPanelOpen = false;
     themePickerOpen = false;
     pickerConfig = null;
@@ -172,12 +168,6 @@ function createDialogStore() {
     },
     get isWorkspaceOpen() {
       return workspaceOpen;
-    },
-    get isBulkRenameOpen() {
-      return bulkRenameOpen;
-    },
-    get bulkRenameEntries() {
-      return bulkRenameItems;
     },
     get isJobsPanelOpen() {
       return jobsPanelOpen;
@@ -342,16 +332,6 @@ function createDialogStore() {
 
     closeWorkspace(): void {
       workspaceOpen = false;
-    },
-
-    openBulkRename(entries: FileEntry[]): void {
-      bulkRenameItems = entries;
-      bulkRenameOpen = true;
-    },
-
-    closeBulkRename(): void {
-      bulkRenameOpen = false;
-      bulkRenameItems = [];
     },
 
     openJobsPanel(): void {

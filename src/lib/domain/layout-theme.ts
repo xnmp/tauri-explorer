@@ -356,7 +356,7 @@ export function describeLayoutFallback(reason: LayoutFallbackReason): string {
     case "empty":
       return "the file is empty";
     case "too-large":
-      return "the file is larger than 512 KiB";
+      return `the file is larger than ${MAX_LAYOUT_CSS_BYTES / 1024} KiB`;
     case "unterminated-comment":
       return "its leading comment is never closed";
     case "no-rules":

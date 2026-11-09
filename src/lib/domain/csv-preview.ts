@@ -9,7 +9,8 @@ export interface CsvPreview {
  * Parses CSV text into display rows. `null` means the caller should retain its
  * existing plain-text preview.
  */
-export function parseCsvPreview(text: string, maxRows = 200): CsvPreview | null {
+export function parseCsvPreview(source: string, maxRows = 200): CsvPreview | null {
+  const text = source.replace(/^\uFEFF/, "");
   const records: string[][] = [];
   let record: string[] = [];
   let field = "";
@@ -66,7 +67,6 @@ export function parseCsvPreview(text: string, maxRows = 200): CsvPreview | null 
 
   const [header, ...dataRows] = records;
   if (dataRows.some((row) => row.length !== header.length)) return null;
-  header[0] = header[0]?.replace(/^\uFEFF/, "") ?? "";
   return {
     header,
     rows: dataRows.slice(0, Math.max(0, maxRows)),

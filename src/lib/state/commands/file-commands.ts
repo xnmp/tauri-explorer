@@ -65,20 +65,6 @@ export const fileCommands: Command[] = [
     when: () => !getActiveExplorer()?.showsPluginView && (getActiveExplorer()?.getSelectedEntries().length ?? 0) > 0,
   },
   {
-    id: "file.bulkRename",
-    scope: "pane",
-    label: "Bulk Rename...",
-    category: "file",
-    handler: () => {
-      const explorer = getActiveExplorer();
-      const selected = explorer?.getSelectedEntries() ?? [];
-      if (selected.length >= 2) {
-        dialogStore.openBulkRename(selected);
-      }
-    },
-    when: () => (getActiveExplorer()?.getSelectedEntries().length ?? 0) >= 2,
-  },
-  {
     id: "file.delete",
     scope: "pane",
     label: "Delete",

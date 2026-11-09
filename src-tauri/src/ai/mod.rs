@@ -322,10 +322,6 @@ pub async fn describe_owned(is_cancelled: OwnerCheck) -> Result<Describe> {
     });
     tokio::select! {result=read=>result,error=control.stopped()=>Err(error)}
 }
-#[allow(dead_code)] // Native core consumers may use this unowned facade.
-pub async fn generate(caller: String, request: Value) -> Result<TextResult> {
-    generate_owned(caller, request, Arc::new(|| false)).await
-}
 pub async fn generate_owned(
     caller: String,
     request: Value,
@@ -393,6 +389,17 @@ pub async fn ai_connections_read() -> Result<Value> {
     })
     .await
 }
+/// Drops the read-only `hasCredential` marker from every profile; input of any
+/// other shape is left for `parse_configuration` to reject.
+fn strip_credential_flags(value: &mut Value) {
+    if let Some(profiles) = value.get_mut("profiles").and_then(Value::as_array_mut) {
+        for profile in profiles {
+            if let Some(p) = profile.as_object_mut() {
+                p.remove("hasCredential");
+            }
+        }
+    }
+}
 #[tauri::command]
 pub async fn ai_connections_save(
     app: tauri::AppHandle,
@@ -401,13 +408,7 @@ pub async fn ai_connections_save(
 ) -> Result<Value> {
     let config = blocking(move || {
         let mut value = configuration;
-        if let Some(profiles) = value["profiles"].as_array_mut() {
-            for profile in profiles {
-                if let Some(p) = profile.as_object_mut() {
-                    p.remove("hasCredential");
-                }
-            }
-        }
+        strip_credential_flags(&mut value);
         let config = parse_configuration(value)?;
         {
             let s = service()?;

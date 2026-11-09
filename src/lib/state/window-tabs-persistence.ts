@@ -14,7 +14,7 @@
  *   layout tree (arbitrary splits), an active pane, and an optional name.
  */
 
-import { clampSplitRatio, type PaneNode, type SplitDirection } from "$lib/domain/pane-layout";
+import { clampSplitRatio, type SplitDirection } from "$lib/domain/pane-layout";
 import { isRecord, isWindowPath } from "$lib/domain/window-input";
 import { isFileViewId } from "$lib/domain/file-view-id";
 
@@ -107,19 +107,6 @@ export interface PersistedTabState {
 export function persistedLeaves(node: PersistedNode): { id: string; path: string }[] {
   if (node.type === "leaf") return [{ id: node.id, path: node.path }];
   return [...persistedLeaves(node.first), ...persistedLeaves(node.second)];
-}
-
-/** Strip paths from a persisted layout, yielding the domain tree. */
-export function toLayoutTree(node: PersistedNode): PaneNode {
-  if (node.type === "leaf") return { type: "leaf", id: node.id };
-  return {
-    type: "split",
-    id: node.id,
-    direction: node.direction,
-    ratio: node.ratio,
-    first: toLayoutTree(node.first),
-    second: toLayoutTree(node.second),
-  };
 }
 
 /** Keeps a valid view id or an explicit built-in choice; an unknown value is
@@ -374,16 +361,6 @@ export function normalizePersistedState(state: unknown): PersistedTabState | nul
 /** Total tab count in a persisted state of any shape (workspace list UI). */
 export function countPersistedTabs(state: unknown): number {
   return normalizePersistedState(state)?.tabs.length ?? 0;
-}
-
-/** Total pane count in a persisted state of any shape (workspace list UI). */
-export function countPersistedPanes(state: unknown): number {
-  const s = normalizePersistedState(state);
-  if (!s) return 0;
-  return s.tabs.reduce(
-    (n, t) => n + (t.kind === "explorer" ? persistedLeaves(t.layout).length : 1),
-    0,
-  );
 }
 
 // ── Live-tab snapshots (cross-window transfer, tear-off, Ctrl+Shift+T) ───

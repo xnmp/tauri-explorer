@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { renameEntry, deleteEntry, deleteEntryPermanent, readTextFile, createDirectory, createSymlink } from "$lib/api/files";
+import { renameEntry, deleteEntry, deleteEntryPermanent, readTextFile, writeTextFile, createDirectory, createSymlink } from "$lib/api/files";
 import { openFile, openFileWith, listOpenWithApplications, openFileWithApplication } from "$lib/api/open";
 import { compressToZip, extractArchive } from "$lib/api/archive";
 import { getThumbnailData } from "$lib/api/thumbnails";
@@ -24,6 +24,7 @@ describe("virtual path guards", () => {
     await expectRejected(renameEntry(V, "b.txt"));
     await expectRejected(deleteEntry(V));
     await expectRejected(deleteEntryPermanent(V));
+    await expectRejected(writeTextFile(V, "x"));
     await expectRejected(createDirectory("demo://", "sub"));
     await expectRejected(createSymlink(V, "/tmp/link"));
     await expectRejected(compressToZip([V]));

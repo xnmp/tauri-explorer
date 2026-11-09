@@ -192,7 +192,7 @@
   }
   .pr-detail-ci-check:hover { background: color-mix(in srgb, var(--system-critical) 22%, transparent); }
   .pr-detail-ci-log {
-    border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+    border: 1px solid color-mix(in srgb, var(--surface-stroke) 70%, transparent);
     border-radius: 6px;
     overflow: hidden;
   }
@@ -211,7 +211,7 @@
     padding: 8px;
     white-space: pre-wrap;
     color: var(--text-secondary);
-    background: var(--background-base);
+    background: var(--background-card-secondary);
   }
   .pr-detail-error { color: var(--system-critical-text, var(--system-critical)); }
   .pr-detail-label {

@@ -121,7 +121,7 @@
     color: var(--text-secondary);
     background: color-mix(in srgb, var(--accent) 9%, var(--background-card));
     border-bottom: 1px solid color-mix(in srgb, var(--accent) 32%, var(--divider));
-    font-size: var(--font-size-small);
+    font-size: var(--font-size-caption);
   }
 
   .network-operation-banner button {

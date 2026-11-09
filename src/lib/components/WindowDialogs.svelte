@@ -83,11 +83,6 @@
     load: () => import("$lib/components/WorkspaceDialog.svelte"),
     onFailure: () => dialogStore.closeWorkspace(),
   }, notifyError);
-  const BulkRenameDialog = useLazyDialog({
-    label: "Bulk Rename", isOpen: () => !pickerInfo && dialogStore.isBulkRenameOpen,
-    load: () => import("$lib/components/BulkRenameDialog.svelte"),
-    onFailure: () => dialogStore.closeBulkRename(),
-  }, notifyError);
   const QuickOpen = useLazyDialog({
     label: "Quick Open", isOpen: () => !pickerInfo && dialogStore.isQuickOpenOpen,
     load: () => import("$lib/components/QuickOpen.svelte"),
@@ -220,16 +215,6 @@
 {#if WorkspaceDialog.component}
   <svelte:boundary onerror={dialogCrash("Workspaces", () => dialogStore.closeWorkspace())}>
     <WorkspaceDialog.component open={dialogStore.isWorkspaceOpen} onClose={() => dialogStore.closeWorkspace()} />
-  </svelte:boundary>
-{/if}
-{#if BulkRenameDialog.component}
-  <svelte:boundary onerror={dialogCrash("Bulk Rename", () => dialogStore.closeBulkRename())}>
-    <BulkRenameDialog.component
-      open={dialogStore.isBulkRenameOpen}
-      entries={dialogStore.bulkRenameEntries}
-      onClose={() => dialogStore.closeBulkRename()}
-      onComplete={onFilesChanged}
-    />
   </svelte:boundary>
 {/if}
 {#if PluginDialogMount.component}

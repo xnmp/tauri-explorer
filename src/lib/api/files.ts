@@ -244,6 +244,8 @@ export async function resolveShortcut(path: string): Promise<ShortcutTarget | nu
  * Write text content to a new file.
  */
 export async function writeTextFile(path: string, content: string): Promise<ApiResult<FileMutationReceipt>> {
+  const guard = virtualPathGuard(path);
+  if (guard) return guard;
   try {
     return await invokeFileMutation<FileMutationReceipt>("write_text_file", { path, content });
   } catch (err) {

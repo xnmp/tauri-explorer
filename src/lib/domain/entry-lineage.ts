@@ -235,11 +235,3 @@ function hasCycle(edges: ReadonlyMap<string, readonly string[]>): boolean {
   }
   return done !== pending.size;
 }
-
-/** The parent file of a group id, for pruning expanded state. */
-export function lineageGroupParent(id: string): string | null {
-  if (!id.startsWith("group:")) return null;
-  const at = id.indexOf("|", 6);
-  return at < 0 ? null : id.slice(6, at);
-}
-

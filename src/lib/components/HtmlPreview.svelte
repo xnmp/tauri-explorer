@@ -65,10 +65,10 @@
 
 <style>
   .html-preview { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
-  .html-controls { display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; padding: 6px 8px; border-bottom: 1px solid var(--border-subtle); background: var(--bg-secondary); }
+  .html-controls { display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; padding: 6px 8px; border-bottom: 1px solid var(--divider); background: var(--background-card-secondary); }
   .html-control-group { display: flex; align-items: center; gap: 2px; }
   button { border: 0; background: transparent; color: var(--text-secondary); min-width: 28px; height: 28px; padding: 0 6px; border-radius: 4px; font: inherit; cursor: pointer; }
-  button:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-primary); }
+  button:hover:not(:disabled) { background: var(--subtle-fill-secondary); color: var(--text-primary); }
   button:disabled { opacity: .4; cursor: default; }
   button[aria-pressed="true"] { color: var(--text-primary); background: var(--subtle-fill-secondary); }
   button:focus-visible { outline: 2px solid var(--focus-stroke-outer); outline-offset: -2px; }

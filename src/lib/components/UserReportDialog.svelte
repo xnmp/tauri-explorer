@@ -388,7 +388,7 @@
   .close { border: 0; background: transparent; font-size: 22px; }
   .kind-toggle {
     align-self: flex-start;
-    background: var(--surface-secondary);
+    background: var(--background-card-secondary);
     border-radius: var(--radius-md);
     padding: 2px;
   }
@@ -463,7 +463,7 @@
     padding: 6px;
     border: 1px solid var(--surface-stroke);
     border-radius: var(--radius-sm);
-    background: var(--surface-secondary);
+    background: var(--background-card-secondary);
   }
   .video-placeholder {
     height: 72px;
@@ -524,7 +524,7 @@
     padding: 8px;
     border: 1px solid var(--surface-stroke);
     border-radius: var(--radius-sm);
-    background: var(--surface-secondary);
+    background: var(--background-card-secondary);
     color: var(--text-primary);
     font-size: 11px;
     white-space: pre-wrap;

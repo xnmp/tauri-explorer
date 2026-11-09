@@ -380,9 +380,14 @@ const EXTRA_TEXT_EXTENSIONS = new Set([
   "editorconfig",
   "svelte", "vue",                   // Frontend templates
   "lua", "pl", "pm",                 // Scripting languages
-  "r", "R",                          // R language
+  "r",                               // R language
   "tex", "bib",                      // LaTeX
   "csv", "tsv",                      // Data files
+]);
+
+/** "document" icon extensions that are binary containers, not text. */
+const BINARY_DOCUMENT_EXTENSIONS = new Set([
+  "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp", "pdf",
 ]);
 
 /** Check if a file is a text/code file that can be previewed */
@@ -393,6 +398,7 @@ export function isTextFile(entry: FileEntry): boolean {
   if (KNOWN_TEXT_FILES.has(entry.name)) return true;
 
   const ext = getExtension(entry.name);
+  if (BINARY_DOCUMENT_EXTENSIONS.has(ext)) return false;
   const category = ICON_CATEGORY_MAP[ext];
   if (category === "code" || category === "document") return true;
   if (EXTRA_TEXT_EXTENSIONS.has(ext)) return true;

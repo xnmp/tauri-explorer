@@ -18,7 +18,7 @@ export function submitUserReport(
     contact: draft.contact || null,
     attachments: draft.attachments ?? [],
     diagnostics: draft.diagnostics || null,
-    useGitHubToken,
+    useGithubToken: useGitHubToken,
   });
 }
 

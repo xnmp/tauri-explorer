@@ -309,14 +309,14 @@
 
   .compare-status {
     margin: 6px 0;
-    color: var(--text-muted);
+    color: var(--text-secondary);
     font-size: 12px;
   }
 
   .compare-action {
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-stroke);
     border-radius: 4px;
-    background: var(--bg-secondary);
+    background: var(--control-fill);
     color: var(--text-primary);
     cursor: pointer;
     font-size: 12px;
@@ -324,7 +324,7 @@
   }
 
   .compare-action:hover {
-    background: var(--bg-hover);
+    background: var(--control-fill-secondary);
   }
 
   /* A large commit must not make its inline detail panel taller than the

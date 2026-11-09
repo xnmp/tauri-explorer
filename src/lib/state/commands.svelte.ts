@@ -123,11 +123,6 @@ export function getCommandFrecencyScore(id: string): number {
   return computeFrecencyScore(entry.accesses, Date.now());
 }
 
-/** @deprecated Use getCommandsByFrecency */
-export function getRecentCommands(): Command[] {
-  return getCommandsByFrecency();
-}
-
 // --- Command registry ---
 
 /** Register a command */

@@ -42,10 +42,6 @@ export interface AppError {
   message: string;
 }
 
-const APP_ERROR_KINDS: ReadonlySet<string> = new Set<AppErrorKind>([
-  "not_found", "permission_denied", "already_exists", "invalid_path", "io", "worker_failed", "mutation_uncertain", "other",
-]);
-
 /** Extract error message from Tauri command error (structured or string) */
 export function extractError(err: unknown): string {
   if (err instanceof Error) return err.message;
@@ -60,18 +56,6 @@ export function extractError(err: unknown): string {
     }
   }
   return String(err);
-}
-
-/** Extract structured error kind from Tauri command error.
- *  Returns null unless the kind is a known AppErrorKind. */
-export function extractErrorKind(err: unknown): AppErrorKind | null {
-  if (err && typeof err === "object" && "kind" in err) {
-    const kind = (err as { kind: unknown }).kind;
-    if (typeof kind === "string" && APP_ERROR_KINDS.has(kind)) {
-      return kind as AppErrorKind;
-    }
-  }
-  return null;
 }
 
 export type ApiResult<T> =

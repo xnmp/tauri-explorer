@@ -33,7 +33,7 @@ test.describe("macOS vibrancy", () => {
 
   test("native backdrop works under every layout, including Default", async ({ page }) => {
     await page.goto(HOME_URL);
-    for (const layoutTheme of ["default", "floating-islands", "hairline-ledger"]) {
+    for (const layoutTheme of ["default", "floating-islands", "hairline-ledger", "compact", "soft-cards"]) {
       await applySettingsAndReload(page, { macOsVibrancy: true, layoutTheme });
       await waitForEntries(page);
       const html = page.locator("html");

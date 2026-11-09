@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { AI_FILTER_UNAVAILABLE, createAiFilterController, type AiFilterHost, type AiTextBackend } from "$lib/state/ai-filter.svelte";
+import { AI_FILTER_EMPTY_QUERY, AI_FILTER_UNAVAILABLE, createAiFilterController, type AiFilterHost, type AiTextBackend } from "$lib/state/ai-filter.svelte";
 import type { FileEntry } from "$lib/domain/file";
 import type { TextDescription, TextResult } from "$lib/domain/text-connections";
 
@@ -145,11 +145,76 @@ describe("AI filter controller", () => {
     expect(h.shown()).toEqual(["notes.txt"]);
   });
 
-  it("does nothing for an empty query", async () => {
-    const h = host(), b = backend();
-    const ai = createAiFilterController(h, b, options);
+  it("sends nothing for an empty query but tells the user what to do (#1522)", async () => {
+    const h = host(), b = backend(), notify = vi.fn();
+    const ai = createAiFilterController(h, b, { ...options, notify });
     await ai.run("   ");
     expect(b.describeText).not.toHaveBeenCalled();
     expect(ai.state.kind).toBe("idle");
+    expect(notify).toHaveBeenCalledWith(AI_FILTER_EMPTY_QUERY, "info");
+  });
+});
+
+// #1522: Alt+Enter "does nothing, no notification or toast of any kind". The
+// inline status floats inside the toolbar and is not a reliable channel, so
+// every terminal outcome other than a non-empty result also raises a toast.
+describe("AI filter feedback (#1522)", () => {
+  it("toasts when no language model is available, including the backend's reason", async () => {
+    const h = host(), notify = vi.fn();
+    const b = backend(undefined, false);
+    b.describeText.mockResolvedValueOnce({ ...description(false), error: { code: "not_configured", message: "Select a default text profile" } });
+    const ai = createAiFilterController(h, b, { ...options, notify });
+    await ai.run("replays");
+    expect(ai.state).toMatchObject({ kind: "error", message: `${AI_FILTER_UNAVAILABLE} (Select a default text profile)` });
+    expect(notify).toHaveBeenCalledWith(`${AI_FILTER_UNAVAILABLE} (Select a default text profile)`, "error");
+  });
+
+  it("toasts backend failures and malformed replies", async () => {
+    const h = host(), notify = vi.fn(), b = backend("sorry, no idea");
+    const ai = createAiFilterController(h, b, { ...options, notify });
+    await ai.run("replays");
+    expect(notify).toHaveBeenLastCalledWith("The language model did not return a list of matching items.", "error");
+    b.describeText.mockRejectedValueOnce(new Error("command ai_text_describe not found"));
+    await ai.run("replays");
+    expect(ai.state).toMatchObject({ kind: "error" });
+    expect(notify).toHaveBeenLastCalledWith("AI filter failed: command ai_text_describe not found", "error");
+  });
+
+  it("toasts when the model matched nothing", async () => {
+    const h = host(), notify = vi.fn(), b = backend('{"names":[]}');
+    const ai = createAiFilterController(h, b, { ...options, notify });
+    await ai.run("replays");
+    expect(ai.state).toMatchObject({ kind: "applied" });
+    expect(notify).toHaveBeenCalledWith('AI filter: no items match "replays"', "info");
+  });
+
+  it("does not toast a successful filter", async () => {
+    const h = host(), notify = vi.fn(), b = backend();
+    const ai = createAiFilterController(h, b, { ...options, notify });
+    await ai.run("invoices");
+    expect(ai.state.kind).toBe("applied");
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("a backend cancellation the user did not ask for settles as an error instead of spinning forever", async () => {
+    const h = host(), notify = vi.fn(), b = backend();
+    b.generateText.mockRejectedValueOnce({ code: "cancelled", message: "Text request was cancelled" });
+    const ai = createAiFilterController(h, b, { ...options, notify });
+    await ai.run("replays");
+    expect(ai.state).toMatchObject({ kind: "error", message: "AI filter failed: Text request was cancelled" });
+    expect(h.filterPredicate).toBeNull();
+    expect(notify).toHaveBeenCalledWith("AI filter failed: Text request was cancelled", "error");
+  });
+
+  it("stays silent for its own cancellation, supersession and navigation", async () => {
+    const pending = deferred<TextResult>();
+    const h = host(), notify = vi.fn(), b = backend(pending.promise);
+    const ai = createAiFilterController(h, b, { ...options, notify });
+    const run = ai.run("invoices");
+    await vi.waitFor(() => expect(b.generateText).toHaveBeenCalled());
+    ai.clear();
+    pending.reject({ code: "cancelled", message: "Text request was cancelled" });
+    await run;
+    expect(notify).not.toHaveBeenCalled();
   });
 });

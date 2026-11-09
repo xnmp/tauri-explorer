@@ -1,0 +1,55 @@
+/*
+ * Settings/Plugins row buttons: the same control fill, stroke and radius as
+ * `.settings-select` and the switch. `.danger` keeps that neutral chrome and
+ * marks a destructive row action with the theme's critical colour. Hover is
+ * immediate — no transition settling on pointer highlights (#503, #1529).
+ */
+.settings-button {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--control-stroke);
+  border-radius: var(--radius-sm);
+  background: var(--control-fill);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.settings-button:hover:not(:disabled) {
+  background: var(--control-fill-secondary);
+}
+
+.settings-button:active:not(:disabled) {
+  background: var(--control-fill-tertiary);
+}
+
+.settings-button:focus-visible {
+  outline: 2px solid var(--focus-stroke-outer);
+  outline-offset: 2px;
+}
+
+.settings-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.settings-button.danger {
+  color: var(--system-critical-text, var(--system-critical));
+}
+
+.settings-button.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--system-critical) 12%, var(--control-fill));
+  border-color: color-mix(in srgb, var(--system-critical) 45%, var(--control-stroke));
+}
+
+.settings-button.danger:active:not(:disabled) {
+  background: color-mix(in srgb, var(--system-critical) 18%, var(--control-fill));
+}

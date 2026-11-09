@@ -108,7 +108,7 @@ export interface Settings {
   /** @deprecated Superseded by `layoutTheme` (#1306): read by the migration,
    *  mirrored from built-in layout choices for downgraded builds. */
   floatingIslands: boolean;
-  layoutTheme: string; // layout theme id: a built-in ("default", "floating-islands", "hairline-ledger") or a `<config>/layouts/*.css` file name (#1306)
+  layoutTheme: string; // layout theme id: a built-in ("default", "floating-islands", "hairline-ledger", "compact", "soft-cards") or a `<config>/layouts/*.css` file name (#1306)
   windowsBackdrop: WindowsBackdrop; // Windows: translucent system backdrop (Mica/Acrylic), requires restart
   windowsBackdropOpacity: number; // Windows: acrylic tint opacity 0-100 (lower = more see-through)
   yaziNavigation: boolean; // left/right arrows navigate up/into folders in Details view (and List when folderPeek is off)

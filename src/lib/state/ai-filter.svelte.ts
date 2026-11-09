@@ -12,6 +12,7 @@
 import * as textApi from "$lib/api/ai-text";
 import { extractError } from "$lib/api/common";
 import { watchTextConnections } from "$lib/api/text-connections";
+import { toastStore } from "$lib/state/toast.svelte";
 import {
   AI_FILTER_IDLE, AI_FILTER_MAX_OUTPUT_TOKENS, aiFilterOwnsListing, beginAiFilter, buildAiFilterPrompt,
   normalizeAiFilterQuery, parseAiFilterResponse, settleAiFilter, type AiFilterOutcome, type AiFilterState,
@@ -29,14 +30,24 @@ export interface AiFilterHost {
 }
 
 export const AI_FILTER_UNAVAILABLE = "AI filter needs a language model. Set one up in Settings → AI.";
+export const AI_FILTER_EMPTY_QUERY = "Type what you are looking for, then press Alt+Enter for an AI filter.";
+
+/**
+ * Window-level feedback for an AI filter outcome (#1522). The box's inline
+ * status floats inside the pane toolbar and is easy to miss (or paint under
+ * the listing), so every outcome that is not a non-empty result also toasts:
+ * Alt+Enter must never look like it did nothing.
+ */
+export type AiFilterNotify = (message: string, type: "info" | "error") => void;
 
 const showEverything = () => true;
 
 export function createAiFilterController(
   host: AiFilterHost,
   backend: AiTextBackend = textApi,
-  options: { now?: () => Date; requestId?: () => string; onAvailability?: (available: boolean) => void } = {},
+  options: { now?: () => Date; requestId?: () => string; onAvailability?: (available: boolean) => void; notify?: AiFilterNotify } = {},
 ) {
+  const notify = options.notify ?? (() => undefined);
   const now = options.now ?? (() => new Date());
   const nextId = options.requestId ?? (() => `ai-filter-${crypto.randomUUID()}`);
   let raw = $state.raw<AiFilterState>(AI_FILTER_IDLE);
@@ -64,7 +75,7 @@ export function createAiFilterController(
 
   async function run(query: string): Promise<void> {
     const request = normalizeAiFilterQuery(query);
-    if (!request) return;
+    if (!request) { notify(AI_FILTER_EMPTY_QUERY, "info"); return; }
     abandon();
     const requestId = nextId();
     const path = host.state.currentPath;
@@ -78,15 +89,21 @@ export function createAiFilterController(
       if (next.kind === "applied") {
         const names = next.names;
         install((entry) => names.has(entry.name), true);
-      } else {
+        if (names.size === 0) notify(`AI filter: no items match "${next.query}"`, "info");
+      } else if (next.kind === "error") {
         // An error gives the listing back to the box's substring match.
         install(null);
+        notify(next.message, "error");
       }
     };
     try {
       const description = await backend.describeText();
       options.onAvailability?.(description.available);
-      if (!description.available) { settle({ ok: false, message: AI_FILTER_UNAVAILABLE }); return; }
+      if (!description.available) {
+        const reason = description.error?.message;
+        settle({ ok: false, message: reason ? `${AI_FILTER_UNAVAILABLE} (${reason})` : AI_FILTER_UNAVAILABLE });
+        return;
+      }
       if (current() !== raw || raw.kind !== "loading" || raw.requestId !== requestId) return;
       const prompt = buildAiFilterPrompt(request, path, host.visibleEntries(), now());
       const result = await backend.generateText({
@@ -101,8 +118,10 @@ export function createAiFilterController(
         ? { ok: true, names: parsed.names, sent: prompt.sent.length, total: prompt.total, truncated: prompt.truncated, ignored: parsed.ignored }
         : parsed);
     } catch (error) {
-      const code = (error as { code?: unknown } | null)?.code;
-      if (code === "cancelled") return;
+      // Our own cancellation (clear, supersession) has already moved the state
+      // on, so `settle` drops it. A cancellation the user did not ask for
+      // (for example the native owner check) must not leave the box spinning
+      // without a word (#1522), so it settles as an ordinary failure.
       settle({ ok: false, message: `AI filter failed: ${extractError(error)}` });
     }
   }
@@ -132,7 +151,10 @@ const controllers = new WeakMap<AiFilterHost, AiFilterController>();
 export function aiFilterFor(host: AiFilterHost): AiFilterController {
   let controller = controllers.get(host);
   if (!controller) {
-    controller = createAiFilterController(host, textApi, { onAvailability: (available) => { availability = available; } });
+    controller = createAiFilterController(host, textApi, {
+      onAvailability: (available) => { availability = available; },
+      notify: (message, type) => toastStore.show(message, type),
+    });
     controllers.set(host, controller);
   }
   return controller;

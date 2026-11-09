@@ -11,16 +11,22 @@
 export const DEFAULT_LAYOUT_ID = "default";
 export const FLOATING_ISLANDS_LAYOUT_ID = "floating-islands";
 export const HAIRLINE_LEDGER_LAYOUT_ID = "hairline-ledger";
+export const COMPACT_LAYOUT_ID = "compact";
+export const SOFT_CARDS_LAYOUT_ID = "soft-cards";
 
 export type BuiltinLayoutId =
   | typeof DEFAULT_LAYOUT_ID
   | typeof FLOATING_ISLANDS_LAYOUT_ID
-  | typeof HAIRLINE_LEDGER_LAYOUT_ID;
+  | typeof HAIRLINE_LEDGER_LAYOUT_ID
+  | typeof COMPACT_LAYOUT_ID
+  | typeof SOFT_CARDS_LAYOUT_ID;
 
 const BUILTIN_IDS: readonly string[] = [
   DEFAULT_LAYOUT_ID,
   FLOATING_ISLANDS_LAYOUT_ID,
   HAIRLINE_LEDGER_LAYOUT_ID,
+  COMPACT_LAYOUT_ID,
+  SOFT_CARDS_LAYOUT_ID,
 ];
 
 export function isBuiltinLayoutId(value: unknown): value is BuiltinLayoutId {

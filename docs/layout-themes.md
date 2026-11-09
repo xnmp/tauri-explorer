@@ -6,13 +6,15 @@ row height. It is independent of the **colour theme** (Settings → Appearance �
 Color Theme), which supplies the palette. Any layout can be combined with any
 colour theme.
 
-Three layouts are built in:
+Five layouts are built in:
 
 | Layout | Id | What it does |
 | --- | --- | --- |
 | Default | `default` | The flat, edge-to-edge layout. |
 | Floating Islands | `floating-islands` | Rounded panels floating over the window backdrop (#277, #434). Ships in the startup CSS. |
 | Hairline Ledger | `hairline-ledger` | Square, dense panels ruled by 1px hairlines, monospaced metadata and an inverted selection. Loaded on demand. |
+| Compact | `compact` | Default's surfaces with tight chrome (30px title bar, 32px toolbar, 20px status bar) and 22px Details rows (#1548). Loaded on demand. |
+| Soft Cards | `soft-cards` | Opaque rounded cards with 1px borders and no shadows, 6px apart on a slightly darker backdrop; split panes become separate cards (#1548). Loaded on demand. |
 
 Choose one in **Settings → Appearance → Layout**, with **Switch Layout...** in the
 command palette (live preview while you move through the list), or with
@@ -26,7 +28,7 @@ command palette (live preview while you move through the list), or with
    - macOS: `~/Library/Application Support/tauri-explorer/layouts/`
    - Windows: `%APPDATA%\tauri-explorer\layouts\`
 2. Save a `.css` file there, for example
-   [`docs/examples/layouts/soft-cards.css`](examples/layouts/soft-cards.css).
+   [`docs/examples/layouts/roomy-cards.css`](examples/layouts/roomy-cards.css).
 3. Pick it in the Layout selector. No rebuild or restart is needed.
 
 Saving the file re-applies it in every open window. Adding or removing files
@@ -42,9 +44,9 @@ An optional leading comment names the layout:
 
 ```css
 /*
- * @name Soft Cards
+ * @name Roomy Cards
  * @description Roomy rounded cards on a quiet backdrop.
- * @extends floating-islands
+ * @extends soft-cards
  */
 ```
 
@@ -52,7 +54,7 @@ An optional leading comment names the layout:
 | --- | --- |
 | `@name` | Name shown in the selector. Defaults to the file name in title case (`dense-grid.css` → "Dense Grid"). |
 | `@description` | Shown in the layout picker. |
-| `@extends` | Built-in base: `default` (the default), `floating-islands` or `hairline-ledger`. The base's stylesheet and structural arrangement apply first and your file cascades on top. An unknown value means `default`. |
+| `@extends` | Built-in base: `default` (the default), `floating-islands`, `hairline-ledger`, `compact` or `soft-cards`. The base's stylesheet and structural arrangement apply first and your file cascades on top. An unknown value means `default`. |
 
 `@extends floating-islands` also takes the Floating Islands *arrangement*:
 with the sidebar hidden, Miller columns move into their own island, and split
@@ -140,7 +142,7 @@ to `:root[data-native-backdrop]` and keep them opaque otherwise.
 
 1. Application styles (component CSS, colour theme).
 2. Floating Islands rules, scoped to `:root[data-layout-base="floating-islands"]`.
-3. The base stylesheet of a lazily loaded built-in (Hairline Ledger).
+3. The base stylesheet of a lazily loaded built-in (Hairline Ledger, Compact, Soft Cards).
 4. Your layout file.
 
 Layout stylesheets are inserted after all application CSS, so a rule of equal
@@ -165,9 +167,10 @@ change, and vice versa.
 ```
 
 A full example covering spacing, borders/radii, surfaces, split panes and
-native material is in [`docs/examples/layouts/soft-cards.css`](examples/layouts/soft-cards.css).
-Hairline Ledger (`src/lib/layouts/hairline-ledger.css`) is written against the
-same contract and is a larger reference.
+native material is in [`docs/examples/layouts/roomy-cards.css`](examples/layouts/roomy-cards.css).
+Hairline Ledger (`src/lib/layouts/hairline-ledger.css`), Compact
+(`compact.css`) and Soft Cards (`soft-cards.css`) are written against the same
+contract and are larger references.
 
 ## Fallback and recovery
 

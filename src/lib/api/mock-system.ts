@@ -292,14 +292,20 @@ export const systemCommands: Record<string, CommandHandler> = {
   },
 
   open_in_terminal: () => {},
-  list_installed_plugins: () => [],
+  list_installed_plugins: () => structuredClone(getMockControl().installedPlugins ?? []),
   take_pending_plugin_install_errors: () => [],
   take_window_launch_requests: () => [],
   pick_file: (args) => ((args.options as { mode?: string; filename?: string } | undefined)?.mode === "save" ? `/home/user/Downloads/${(args.options as { filename?: string }).filename}` : null),
   save_file_copy: (args) => { (getMockControl().savedVideoCopies ??= []).push({ source: String(args.source), destination: String(args.destination) }); },
   install_plugin: () => { throw new Error("Install plugin packages in the native app"); },
-  uninstall_plugin: () => undefined,
-  set_plugin_package_enabled: () => undefined,
+  uninstall_plugin: (args) => {
+    const control = getMockControl();
+    control.installedPlugins = control.installedPlugins?.filter((entry) => entry.manifest.id !== args.id);
+  },
+  set_plugin_package_enabled: (args) => {
+    const entry = getMockControl().installedPlugins?.find((candidate) => candidate.manifest.id === args.id);
+    if (entry) entry.enabled = Boolean(args.enabled);
+  },
   plugin_backend_invoke: () => { throw new Error("No native plugin backend in the browser fixture"); },
   list_installed_terminals: () => ["ghostty", "kitty", "alacritty", "gnome-terminal", "xterm"],
   set_ffmpeg_path: () => {},

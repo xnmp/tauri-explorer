@@ -125,6 +125,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `settings/LayoutThemeSetting.svelte` — Settings → Appearance → Layout: selector, Open folder (layouts), Reset to Default, fallback reason (#1306).
 - `settings/ThumbnailSettings.svelte` — Settings → Appearance thumbnail rows: Tiles Thumbnail Size and the Details/List row-thumbnails toggle (#1465).
 - `settings/settings-select.css` — shared Settings dropdown styling (`.settings-select`).
+- `settings/settings-button.css` — shared Settings/Plugins row button chrome (`.settings-button`, destructive `.settings-button.danger`); immediate hover (#1529).
 - `PluginsDialog.svelte`, `PluginSettings.svelte` — lazy Plugins configuration surface; installed packages, contribution toggles and descriptor-driven settings, using shared modal ownership and viewport/zoom bounds.
 - `KeybindingsSettings.svelte` — keybinding customization UI in settings.
 - `ShortcutCheatsheet.svelte` — keyboard shortcut cheatsheet overlay.
@@ -1116,7 +1117,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/test-support/lineage-provider.ts` — browser-test `entryLineage` provider over the mock filesystem: install, update (fires `changed`), optional load delay and `labels` (`e2e/lineage-peek.spec.ts`, `e2e/lineage-prompt-labels.spec.ts`).
 - `src/test-support/file-view-eligibility.svelte.ts` — reactive pending/answer and activation gate for browser file-view first-paint tests; imported only by the intercepted demo fixture.
 - `src/lib/plugins/runtime-sdk.ts`, `src/lib/plugins/svelte-runtime.d.ts` — frozen SDK and exact shared Svelte compiler/runtime bindings; host modules `ui/modal`, `ui/image-editor`, `ui/file-tiles` (capability `fileTiles`), `ui/file-tile` (capability `fileTile`, including `tileGridMetrics`); capability `tileSize` (`FileViewPane.tileSize`, file-tiles `size`); capability `jobRetry` (`PluginJobs.accept` registration `retry`).
-- `src/lib/components/InstalledPluginSettings.svelte` — install, enable, remove and activation errors in Settings.
+- `src/lib/components/InstalledPluginSettings.svelte` — install, enable, remove and activation errors in the Plugins menu, built from the shared `SettingRow`/`SettingToggle`/`settings-button.css` chrome (#1529).
 
 TraceExplorer's image UI, provider adapters and SQLite journal are maintained in https://github.com/xnmp/TraceExplorer rather than compiled into this host. Core crop outcomes remain covered in `e2e/image-crop.spec.ts` and `e2e/image-editor.spec.ts`.
 

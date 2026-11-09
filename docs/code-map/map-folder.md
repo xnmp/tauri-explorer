@@ -347,7 +347,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `window-size.svelte.ts` — reactive `window.innerWidth`/`innerHeight` tracker (`windowSizeStore`); `+page.svelte` syncs on mount/resize. Feeds preview-pane auto-dock (#467).
 - `theme.svelte.ts` — active theme state + CSS var application.
 - `layout.svelte.ts` — eager layout-theme half (#1306): `layoutStore` paints `data-layout`/`data-layout-base` and injected layout sheets from a localStorage cache before mount, exposes the island arrangement, pane divider size and Details row height; `start()` follows `settings.layoutTheme` through the lazy controller.
-- `layout-controller.svelte.ts` — lazy layout-theme half (#1306): lists `layouts/`, resolves/falls back with one notice, loads Hairline Ledger's sheet, detects rule-less user CSS, generation-guards concurrent applications; used by the settings UI and layout picker.
+- `layout-controller.svelte.ts` — lazy layout-theme half (#1306): lists `layouts/`, resolves/falls back with one notice, loads the lazy built-in sheets (Hairline Ledger, Compact, Soft Cards), detects rule-less user CSS, generation-guards concurrent applications; used by the settings UI and layout picker.
 - `config-watch.ts` — applies `config-file-changed` to the settings/theme stores; `handleConfigFileChanged` is the routing seam (#599).
 - `terminal.svelte.ts` — embedded terminal panel state (#139).
 - `jobs.svelte.ts` — background jobs store (Ctrl+J); `retryJob` runs a failed job's `retry` once, then drops the entry or keeps it with the new error; a retrying entry is active (`isJobActive`: not dismissable or cleared); `dropRetries(owner)` for retired plugins.
@@ -670,6 +670,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `floating-islands.css` — Floating Islands, bundled in startup CSS and scoped to `[data-layout-base="floating-islands"]`.
 - `hairline-ledger.css` — Hairline Ledger, lazy `?inline` sheet injected like a user layout.
+- `compact.css` — Compact (#1548): Default surfaces, tight chrome, 22px Details rows; lazy `?inline` sheet.
+- `soft-cards.css` — Soft Cards (#1548): opaque bordered cards, no shadows, 6px gaps, flat arrangement; lazy `?inline` sheet.
 
 ## src/lib/types/
 

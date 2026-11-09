@@ -1,0 +1,99 @@
+/*
+ * @name Compact
+ * @description Default's flat panels with tight chrome and 22px rows, for large folders.
+ *
+ * Built-in layout theme (#1548), written only against the layout contract
+ * (docs/layout-themes.md): root attributes, [data-region] / [data-cell] hooks
+ * and --layout-* variables. Loaded lazily and injected after all application
+ * CSS, like a user layout, so its rules need no base-attribute scope.
+ *
+ * Nothing here sets a colour: Compact keeps Default's surfaces and only
+ * shrinks the chrome, so it composes with every colour theme.
+ */
+
+:root {
+  --layout-row-height: 22px;
+}
+
+/* Title bar and tabs: 30px strip, 26px tabs. */
+:root [data-region="titlebar"] {
+  height: 30px;
+}
+
+:root [data-region="tab"] {
+  height: 26px;
+  gap: 6px;
+  padding: 0 4px 0 10px;
+  font-size: 12px;
+}
+
+:root [data-region="titlebar"] button[aria-label="Minimize"],
+:root [data-region="titlebar"] button[aria-label="Maximize"],
+:root [data-region="titlebar"] button[aria-label="Restore"],
+:root [data-region="titlebar"] button[aria-label="Close"] {
+  height: 26px;
+}
+
+/* Toolbar: 32px line, 24px controls. */
+:root [data-region="toolbar"] {
+  height: 32px;
+  gap: 4px;
+  padding: 2px 8px;
+}
+
+:root [data-region="toolbar"] > div:not([data-region]) > button {
+  width: 24px;
+  height: 24px;
+}
+
+:root [data-region="address-bar"] {
+  height: 24px;
+}
+
+:root [data-region="address-bar"] button {
+  font-size: 12px;
+}
+
+/* Sidebar: 22px entries, tighter section headings. */
+:root [data-region="sidebar-section-header"] {
+  padding: 8px 10px 2px;
+  font-size: 10.5px;
+}
+
+:root [data-region="sidebar-item"] {
+  min-height: 22px;
+  padding: 0 10px;
+  gap: 7px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+/* File list: 22px column header, 12px text, small radii. */
+:root [data-region="column-header"] {
+  min-height: 22px;
+}
+
+:root [data-region="column-header"] button {
+  padding-top: 2px;
+  padding-bottom: 2px;
+  font-size: 11px;
+}
+
+:root [data-region="file-list"] {
+  font-size: 12px;
+}
+
+:root [data-region="row"] {
+  border-radius: 3px;
+}
+
+:root [data-region="row"] [data-cell] {
+  font-size: 12px;
+}
+
+/* Status bar: 20px. */
+:root [data-region="status-bar"] {
+  height: 20px;
+  padding: 0 10px;
+  font-size: 11px;
+}

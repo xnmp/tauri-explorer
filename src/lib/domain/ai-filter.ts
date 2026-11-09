@@ -198,6 +198,21 @@ export function settleAiFilter(state: AiFilterState, requestId: string, currentP
   return { kind: "applied", names: new Set(outcome.names), sent: outcome.sent, total: outcome.total, truncated: outcome.truncated, ignored: outcome.ignored, ...target };
 }
 
+type AiFilterKeyEvent = Pick<KeyboardEvent, "key" | "altKey" | "ctrlKey" | "metaKey" | "shiftKey" | "isComposing"> & {
+  getModifierState?(key: string): boolean;
+};
+
+/**
+ * Alt+Enter in the filter box. A right Alt that the keyboard layout maps to
+ * AltGraph (ISO_Level3_Shift on Linux, Ctrl+Alt on Windows) counts as Alt:
+ * otherwise the chord arrives as a plain Enter that nothing handles (#1522).
+ */
+export function isAiFilterKey(event: AiFilterKeyEvent): boolean {
+  if (event.key !== "Enter" || event.isComposing || event.metaKey || event.shiftKey) return false;
+  if (event.getModifierState?.("AltGraph")) return true;
+  return event.altKey && !event.ctrlKey;
+}
+
 /** Whether the AI state replaces the box's substring filter. */
 export function aiFilterOwnsListing(state: AiFilterState): boolean {
   return state.kind === "loading" || state.kind === "applied";

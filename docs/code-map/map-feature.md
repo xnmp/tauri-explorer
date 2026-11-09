@@ -483,7 +483,7 @@ backend for E2E/browser).
 
 - `components/SettingsDialog.svelte` — general settings and links to Keyboard Shortcuts and Plugins.
 - `components/settings/SettingRow.svelte`, `settings/SettingToggle.svelte`, `settings/TerminalShortcutSettings.svelte`, `settings/ExperimentalSettings.svelte` — row/switch chrome and the terminal shortcut recorder; `domain/settings-rows.ts` holds the search terms driving row/section visibility.
-- `components/PluginsDialog.svelte`, `components/PluginSettings.svelte` — dedicated lazy Plugins menu; package installation, contribution toggles and descriptor settings. Plugin settings actions and the Plugins palette command open this surface.
+- `components/PluginsDialog.svelte`, `components/PluginSettings.svelte` — dedicated lazy Plugins menu; package installation, contribution toggles and descriptor settings. Plugin settings actions and the Plugins palette command open this surface. Its rows reuse `settings/SettingRow.svelte`, `settings/SettingToggle.svelte` and `settings/settings-button.css` (#1529).
 - `state/settings.svelte.ts` — `settingsStore` (persisted flags/values)
 - `state/persisted.ts` — localStorage load/save helpers
 - `domain/settings-migration.ts` — versioned migrations for the persisted blob; add an entry here whenever a DEFAULT flips, or existing installs keep the old value (#471/#506)

@@ -514,6 +514,244 @@ pub(crate) async fn restore(
     Ok(outcome)
 }
 
+/// Resolve IDs into requests that restore into `destination` instead of the
+/// recorded original folder (#1554, dragging out of the Trash view). The
+/// renderer names only opaque IDs and an ordinary destination folder; each
+/// artifact is still the one captured natively by the listing (ADR 0019).
+/// Like [`plan_restore`], every refusal happens before any filesystem effect.
+pub(crate) fn plan_restore_to(
+    ids: &[String],
+    destination: &Path,
+) -> (Vec<RestoreRequest>, Vec<FileFailure>) {
+    plan_restore_to_in(
+        &REGISTRY.lock().unwrap_or_else(|poison| poison.into_inner()),
+        ids,
+        destination,
+    )
+}
+
+fn plan_restore_to_in(
+    registry: &Registry,
+    ids: &[String],
+    destination: &Path,
+) -> (Vec<RestoreRequest>, Vec<FileFailure>) {
+    let mut requests = Vec::new();
+    let mut failures = Vec::new();
+    if let Err(error) = destination_folder(destination) {
+        failures.extend(ids.iter().map(|id| FileFailure {
+            path: id.clone(),
+            error: error.clone(),
+        }));
+        return (requests, failures);
+    }
+    let mut targets = HashSet::new();
+    for id in ids {
+        let Some(registered) = registry.get(id) else {
+            failures.push(FileFailure {
+                path: id.clone(),
+                error: stale_id(),
+            });
+            continue;
+        };
+        let Some(Restorable {
+            destination: original,
+            artifact,
+            ..
+        }) = &registered.restore
+        else {
+            failures.push(FileFailure {
+                path: id.clone(),
+                error: "Tauri Explorer has no restore record for this item, so it cannot be moved out of the Trash here. Use Open in System File Manager instead.".into(),
+            });
+            continue;
+        };
+        let Some(name) = original.file_name() else {
+            failures.push(FileFailure {
+                path: id.clone(),
+                error: "This item has no name to restore under".into(),
+            });
+            continue;
+        };
+        let target = destination.join(name);
+        let key = target.to_string_lossy().into_owned();
+        let checked = inside_trash(artifact, destination)
+            .and_then(|()| same_volume(artifact, destination))
+            .and_then(|()| restorable(&target))
+            .and_then(|()| retarget(artifact, &target));
+        let (path, artifact) = match checked {
+            Ok(retargeted) => retargeted,
+            Err(error) => {
+                failures.push(FileFailure { path: key, error });
+                continue;
+            }
+        };
+        if !targets.insert(path.clone()) {
+            failures.push(FileFailure {
+                path: key,
+                error: format!(
+                    "Another selected item named {} is being restored to {}. Restore them one at a time.",
+                    name.to_string_lossy(),
+                    destination.display()
+                ),
+            });
+            continue;
+        }
+        requests.push(RestoreRequest {
+            path,
+            artifact: Arc::new(artifact),
+        });
+    }
+    (requests, failures)
+}
+
+/// The drop destination must be an existing, absolute folder.
+fn destination_folder(destination: &Path) -> Result<(), String> {
+    if !destination.is_absolute() {
+        return Err(format!(
+            "{} is not a folder on this computer",
+            destination.display()
+        ));
+    }
+    match std::fs::metadata(destination) {
+        Ok(metadata) if metadata.is_dir() => Ok(()),
+        Ok(_) => Err(format!("{} is not a folder", destination.display())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Err(format!(
+            "The folder {} no longer exists",
+            destination.display()
+        )),
+        Err(error) => Err(format!("Cannot open {}: {error}", destination.display())),
+    }
+}
+
+/// The folder that physically holds a listed item, when the platform has one.
+fn trash_container(artifact: &TrashArtifact) -> Option<PathBuf> {
+    match artifact {
+        TrashArtifact::Freedesktop { root, .. } => Some(root.clone()),
+        TrashArtifact::Recorded { trashed, .. } => trashed.parent().map(Path::to_path_buf),
+        TrashArtifact::WindowsShell { .. } => None,
+    }
+}
+
+/// Restoring into the trash itself would orphan the payload from its record.
+fn inside_trash(artifact: &TrashArtifact, destination: &Path) -> Result<(), String> {
+    let canonical = |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
+    let destination = canonical(destination);
+    let inside = match trash_container(artifact) {
+        Some(container) => destination.starts_with(canonical(&container)),
+        None => destination.components().any(|component| {
+            component
+                .as_os_str()
+                .to_string_lossy()
+                .eq_ignore_ascii_case("$Recycle.Bin")
+        }),
+    };
+    if inside {
+        Err("Items cannot be restored into the Trash itself".into())
+    } else {
+        Ok(())
+    }
+}
+
+/// Linux and macOS restore by one no-replace rename and never fall back to
+/// copy and delete (ADR 0019), so the destination must share the item's
+/// filesystem. The Windows Shell moves across volumes itself.
+#[cfg(unix)]
+fn same_volume(artifact: &TrashArtifact, destination: &Path) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+    let Some(container) = trash_container(artifact) else {
+        return Ok(());
+    };
+    let device = |path: &Path| std::fs::metadata(path).map(|metadata| metadata.dev());
+    match (device(&container), device(destination)) {
+        (Ok(source), Ok(target)) if source == target => Ok(()),
+        (Ok(_), Ok(_)) => Err(format!(
+            "{} is on a different drive than this item. Restore it to its original location, then move it.",
+            destination.display()
+        )),
+        (Err(error), _) => Err(format!("Cannot read the Trash: {error}")),
+        (_, Err(error)) => Err(format!("Cannot open {}: {error}", destination.display())),
+    }
+}
+
+#[cfg(not(unix))]
+fn same_volume(_: &TrashArtifact, _: &Path) -> Result<(), String> {
+    Ok(())
+}
+
+/// Point a natively captured artifact at a new publication path. Only the
+/// target changes; the engine still verifies the captured payload identity.
+fn retarget(artifact: &TrashArtifact, target: &Path) -> Result<(String, TrashArtifact), String> {
+    match artifact {
+        #[cfg(target_os = "linux")]
+        TrashArtifact::Freedesktop {
+            root,
+            name,
+            metadata_digest,
+            metadata_identity,
+            payload_version,
+            ..
+        } => {
+            // The engine compares its request with the resolved target.
+            let resolved = super::freedesktop_trash::resolved_restore_path(target)
+                .map_err(|error| error.to_string())?;
+            Ok((
+                resolved.to_string_lossy().into_owned(),
+                TrashArtifact::Freedesktop {
+                    root: root.clone(),
+                    name: name.clone(),
+                    original_path: resolved,
+                    metadata_digest: *metadata_digest,
+                    metadata_identity: metadata_identity.clone(),
+                    payload_version: payload_version.clone(),
+                },
+            ))
+        }
+        TrashArtifact::Recorded {
+            trashed,
+            device,
+            inode,
+            changed_seconds,
+            changed_nanos,
+            deleted_at,
+            ..
+        } => Ok((
+            target.to_string_lossy().into_owned(),
+            TrashArtifact::Recorded {
+                trashed: trashed.clone(),
+                original: target.to_owned(),
+                device: *device,
+                inode: *inode,
+                changed_seconds: *changed_seconds,
+                changed_nanos: *changed_nanos,
+                deleted_at: deleted_at.clone(),
+            },
+        )),
+        // The Shell restore publishes at the request path.
+        TrashArtifact::WindowsShell { .. } => {
+            Ok((target.to_string_lossy().into_owned(), artifact.clone()))
+        }
+        #[allow(unreachable_patterns)]
+        _ => Err("This trash item cannot be restored on this platform".into()),
+    }
+}
+
+/// Restore listed items into `destination` (#1554). Like restoring to the
+/// original location, this is not recorded as undoable history.
+pub(crate) async fn restore_to(
+    ids: Vec<String>,
+    destination: PathBuf,
+    runtime: &super::admission::Runtime,
+) -> Result<FileBatchOutcome, AppError> {
+    let (requests, refused) = plan_restore_to(&ids, &destination);
+    let mut outcome = if requests.is_empty() {
+        FileBatchOutcome::default()
+    } else {
+        super::trash::restore_to_existing_parents(requests, runtime).await?
+    };
+    outcome.failed.extend(refused);
+    Ok(outcome)
+}
+
 #[cfg(all(test, target_os = "linux"))]
 #[path = "../../test_support/trash_inventory.rs"]
 mod tests;

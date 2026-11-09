@@ -216,8 +216,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `open-with.svelte.ts` — captured application-choice sessions, late-result rejection and single launch lifecycle.
 
 - `recycle-bin.ts` — turns the native Recycle Bin IPC result into a user-visible failure toast; called by the Trash view's "Open in System File Manager" action (`trash-location.ts`).
-- `trash-provider.ts` — eager half of the in-app Trash (#863): registers the built-in `trash://` fs provider (installed by `+page.svelte`) and lazily loads `trash-location.ts`, passing it the startup-graph context-menu registry.
-- `trash-location.ts` — lazy half of the in-app Trash: lists through `list_trash`, reports unreadable sources once, registers the `scope: "trash"` Restore / Open in System File Manager menu actions, restores selected entries and refreshes open Trash views through the local file-change subscription. Contracts in `tests/state/trash-location.test.ts`.
+- `trash-provider.ts` — eager half of the in-app Trash (#863): registers the built-in `trash://` fs provider (installed by `+page.svelte`) and lazily loads `trash-location.ts`, passing it the startup-graph context-menu registry. `dropTrashEntries` is the drop seam for Trash drags (#1554), forwarding to the lazy route.
+- `trash-location.ts` — lazy half of the in-app Trash: lists through `list_trash`, reports unreadable sources once, registers the `scope: "trash"` Restore / Open in System File Manager menu actions, restores selected entries (or, for drops, `completeTrashDrop` → `restoreDroppedTrash` into a chosen folder via `restore_trash_items_to`, #1554) and refreshes open Trash views through the local file-change subscription. Contracts in `tests/state/trash-location.test.ts`.
 - `git-graph-component.ts` — resolved lazy graph component cache with an injected importer; coalesces first loads and preserves synchronous cached remounts.
 - `git-commit-files-cache.ts` — importable 50-entry LRU for immutable commit file lists; shared across graph remounts and behavior-tested through an injected loader.
 
@@ -516,6 +516,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `wsl.ts` — WSL path recognition.
 - `virtual-path.ts` — virtual (plugin-provided) path parsing, plus the eager `TRASH_PATH` / `isTrashPath` for the built-in Trash.
 - `trash.ts` — pure in-app Trash mapping (#863): `trash://` paths, trash wire entries → `FileEntry` with `trash` origin metadata, original-folder column text, source-issue and restore-outcome messages. Contracts in `tests/domain/trash.test.ts`.
+- `trash-drop.ts` — pure routing for dragging out of the Trash (#1554): Trash entry IDs from a drag source, and the drop target → restore-into-folder (or refusal) decision for pointer, DOM folder/listing and Bookmarks drops; lazy (imported only by `state/trash-location.ts`). Contracts in `tests/domain/trash-drop.test.ts`.
 - `drives.ts` — pure removable-drive tracking (isUnderRoot).
 - `load-diagnostics.ts` — pure slow directory-load traces (#1022): phase spans, 5 s threshold, frontend record, culprit diagnosis, bounded report text and chronological trace IDs. Contracts in `tests/domain/load-diagnostics.test.ts`.
 - `bookmark-drop-feedback.ts` — bookmark drop action feedback and effective local/cross-window drag-kind resolution (#675).

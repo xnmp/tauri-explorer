@@ -18,6 +18,12 @@ export function restoreTrashItems(ids: string[]): Promise<ApiResult<FileBatchOut
   return invokeFileMutation<FileBatchOutcome>("restore_trash_items", { ids });
 }
 
+/** Restore listed items into the folder they were dropped on (#1554). The
+ * native side validates that folder and keeps every artifact private. */
+export function restoreTrashItemsTo(ids: string[], destination: string): Promise<ApiResult<FileBatchOutcome>> {
+  return invokeFileMutation<FileBatchOutcome>("restore_trash_items_to", { ids, destination });
+}
+
 /** Permanently delete exact listed artifacts; never accepts filesystem paths. */
 export function deleteTrashItems(ids: string[]): Promise<ApiResult<FileBatchOutcome>> {
   return invokeFileMutation<FileBatchOutcome>("delete_trash_items", { ids });

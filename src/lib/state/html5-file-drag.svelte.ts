@@ -1,6 +1,6 @@
 import { onDestroy } from "svelte";
 import { endHtml5FileDrag } from "$lib/api/native-file-drag";
-import { html5DragUriList, html5DragHtml } from "$lib/domain/file-drop";
+import { html5DragUriList, html5DragHtml, isPrivateDragSource } from "$lib/domain/file-drop";
 import { dragState, type DragData } from "./drag.svelte";
 import { dragClock } from "./drag-clock";
 import { isTauri } from "$lib/api/common";
@@ -20,7 +20,7 @@ export function createHtml5FileDrag(onEnd: () => void = () => {}, copyPolicy: "m
     if (!ended) return false;
     dragState.endHtml5(ended);
     dragState.finish(ended);
-    if (ended.nativeCopyPolicy !== "link" && !isMac && !isWindows && isTauri()) {
+    if (!isPrivateDragSource(ended) && !isMac && !isWindows && isTauri()) {
       void endHtml5FileDrag(ended, reason).catch(error => console.warn("Could not retire native HTML5 drag", error));
     }
     return true;
@@ -53,7 +53,8 @@ export function createHtml5FileDrag(onEnd: () => void = () => {}, copyPolicy: "m
     event.dataTransfer.setData("application/x-explorer-session", source!.sessionId!);
     event.dataTransfer.setData("application/x-explorer-sequence", String(source!.gestureSequence));
     decorate?.();
-    if (copyPolicy !== "link" && !isMac && !isWindows && isTauri()) void startExternalDrag(paths);
+    // Private sources (Recent, Trash entries #1554) never hand off to the OS.
+    if (!isPrivateDragSource(source!) && !isMac && !isWindows && isTauri()) void startExternalDrag(paths);
   }
 
   /** A shared view owner can outlive the particular virtualized source row. */

@@ -84,10 +84,11 @@ export function trashIssuesMessage(issues: readonly TrashIssue[]): string | null
 export function restoreSummary(
   outcome: FileBatchOutcome,
   requested: readonly FileEntry[],
+  fallbackLabel: (key: string) => string = (key) => key,
 ): { restored: string[]; message: string; failed: boolean } {
   const label = (key: string) => {
     const entry = requested.find((candidate) => candidate.trash?.originalPath === key || candidate.trash?.id === key);
-    return entry?.name ?? key;
+    return entry?.name ?? fallbackLabel(key);
   };
   const problems = [
     ...outcome.failed.map(({ path, error }) => `${label(path)}: ${error}`),

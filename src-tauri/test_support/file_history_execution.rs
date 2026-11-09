@@ -420,6 +420,7 @@ fn batch_outcome_with_refresh(
         worker_error: None,
         uncertain: Vec::new(),
         unstarted: Vec::new(),
+        trash_unavailable: Vec::new(),
         refresh_dirs,
         succeeded,
         failed: failed

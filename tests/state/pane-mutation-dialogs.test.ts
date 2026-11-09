@@ -132,6 +132,7 @@ import {
 } from "$lib/state/file-events";
 import { undoStore } from "$lib/state/undo.svelte";
 import { toastStore } from "$lib/state/toast.svelte";
+import { settingsStore } from "$lib/state/settings.svelte";
 
 function entry(
   name: string,
@@ -559,5 +560,74 @@ describe("bulk trash receipts", () => {
     } finally {
       unsubscribe();
     }
+  });
+});
+
+describe("volumes without a usable trash (#1550)", () => {
+  it("explains the refusal and offers a confirmed permanent deletion of only those items", async () => {
+    const local = entry("notes.txt", "/home/u");
+    const drive = entry("report.pdf", "/run/user/1000/gvfs/google-drive:host=x");
+    const denied = entry("denied.txt", "/home/u");
+    mocks.deleteEntries.mockResolvedValueOnce({ ok: true, data: {
+      succeeded: [local.path],
+      failed: [
+        { path: drive.path, error: "Trash unavailable: no usable trash; nothing was deleted" },
+        { path: denied.path, error: "Permission denied" },
+      ],
+      trashUnavailable: [drive.path],
+    } });
+    const explorer = explorerAt("/home/u", [local, denied]);
+
+    const error = await explorer.confirmDelete([local, drive, denied], false);
+
+    expect(error).toContain(`${drive.path}: Trash unavailable`);
+    expect(error).toContain(`${denied.path}: Permission denied`);
+    expect(mocks.deleteEntries).toHaveBeenCalledExactlyOnceWith(
+      [local.path, drive.path, denied.path],
+      false,
+    );
+    expect(dialogStore.isDeleteOpen).toBe(true);
+    expect(dialogStore.isPermanentDelete).toBe(true);
+    expect(dialogStore.deletingEntries.map(({ path }) => path)).toEqual([drive.path]);
+
+    mocks.deleteEntries.mockResolvedValueOnce({ ok: true, data: { succeeded: [drive.path], failed: [] } });
+    expect(await explorer.confirmDelete()).toBeNull();
+    expect(mocks.deleteEntries).toHaveBeenLastCalledWith([drive.path], true);
+    expect(dialogStore.isDeleteOpen).toBe(false);
+  });
+
+  it("asks before deleting permanently even when trash confirmation is disabled", async () => {
+    const drive = entry("report.pdf", "/mnt/gdrive");
+    mocks.deleteEntries.mockResolvedValueOnce({ ok: true, data: {
+      succeeded: [],
+      failed: [{ path: drive.path, error: "Trash unavailable: no usable trash; nothing was deleted" }],
+      trashUnavailable: [drive.path],
+    } });
+    const explorer = explorerAt("/mnt/gdrive", [drive]);
+    const confirm = settingsStore.confirmDelete;
+    if (confirm) settingsStore.toggleConfirmDelete();
+    const errors = vi.spyOn(toastStore, "error");
+    try {
+      await explorer.startDelete(drive);
+      expect(mocks.deleteEntries).toHaveBeenCalledExactlyOnceWith([drive.path], false);
+      expect(errors).toHaveBeenCalledWith(expect.stringContaining("Trash unavailable"));
+      expect(dialogStore.isPermanentDelete).toBe(true);
+      expect(dialogStore.deletingEntries).toEqual([drive]);
+      expect(explorer.displayEntries).toEqual([drive]);
+    } finally {
+      errors.mockRestore();
+      if (confirm) settingsStore.toggleConfirmDelete();
+    }
+  });
+
+  it("keeps ordinary trash failures as errors without offering permanent deletion", async () => {
+    const denied = entry("denied.txt", "/A");
+    mocks.deleteEntries.mockResolvedValueOnce({ ok: true, data: {
+      succeeded: [], failed: [{ path: denied.path, error: "Permission denied" }],
+    } });
+    const explorer = explorerAt("/A", [denied]);
+
+    expect(await explorer.confirmDelete([denied], false)).toContain("Permission denied");
+    expect(dialogStore.isDeleteOpen).toBe(false);
   });
 });

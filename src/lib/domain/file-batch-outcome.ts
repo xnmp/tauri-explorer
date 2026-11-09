@@ -7,6 +7,8 @@ export interface FileBatchOutcome {
   warnings?: { path: string; error: string }[];
   /** Failure outside an active item, such as final worker cleanup. */
   workerError?: string;
+  /** Subset of `failed` refused before any effect: the volume has no usable trash (#1550). */
+  trashUnavailable?: string[];
 }
 
 /** Port result: transport/admission failure is distinct from per-item failure. */

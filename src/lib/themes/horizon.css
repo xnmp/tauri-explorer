@@ -9,6 +9,7 @@
  *   bg: #1c1e26   fg: #d5d8da   selection: #6c6f93
  *   red: #e95678   green: #29d398   yellow: #fab795
  *   blue: #26bbd9  magenta: #ee64ac  cyan: #59e1e3
+ *   lavender: #b877db (Horizon syntax purple; repository folders)
  */
 
 [data-theme="horizon"] {
@@ -103,7 +104,10 @@
 
   /* Icon colors */
   --icon-folder: #fab795;
-  --icon-git-badge: var(--accent);
+  /* Repository folders (#1552): Horizon's lavender rather than the accent,
+     which is the same saturated red as --system-critical and made every
+     repository read as an error. Distinct from the peach --icon-folder. */
+  --icon-git-badge: #b877db;
 }
 
 /* --- #437: non-premium (flat / high-contrast) fallback --- */

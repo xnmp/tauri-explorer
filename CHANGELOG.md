@@ -2,6 +2,32 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.24.1 — 2026-11-10
+
+### Fixed
+
+- Save a Copy refuses a destination that is the same file as the source
+  (symlink, hard link or `..` spelling) instead of copying it onto itself
+  (#1588).
+- Folder views keep refreshing under a continuous stream of file changes
+  instead of waiting for a quiet period (#1593).
+- Moving or copying a symlink into its own target moves the link itself
+  (#1594).
+- Unreadable, oversized or non-text files in the user theme folder are skipped
+  instead of breaking the theme list, which is now sorted (#1595).
+- Git unstage and discard treat file names literally rather than as patterns,
+  and unstaging matches `git reset` exactly, including case variants (#1589).
+- Branch sync never moves a branch checked out, rebasing or bisecting in
+  another worktree (#1590).
+- Add to .gitignore writes an anchored, escaped pattern and never writes
+  through a symlink (#1591).
+- A stale Git graph page cursor reloads instead of showing the wrong page
+  (#1596).
+- Discard never writes through a symlink, shows a working-tree rename as
+  separate deleted and untracked rows, refuses to replace a non-empty
+  directory, and refuses to remove nested repositories, linked worktrees or
+  ignored content (#1604, #1605, #1606, #1615).
+
 ## v1.24.0 — 2026-11-10
 
 ### Added

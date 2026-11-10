@@ -4,17 +4,19 @@
  * of the startup bundle. Panes navigate, sort, select and switch views through
  * the ordinary explorer path; only listing and restore are special.
  */
-import { listTrash, restoreTrashItems, deleteTrashItems } from "$lib/api/trash";
+import { listTrash, restoreTrashItems, restoreTrashItemsTo, deleteTrashItems } from "$lib/api/trash";
 import type { ApiResult } from "$lib/api/common";
 import type { DirectoryListing, FileEntry } from "$lib/domain/file";
 import { affectedBatchPaths, type FileBatchOutcome } from "$lib/domain/file-batch-outcome";
-import { parentDir } from "$lib/domain/path";
+import { basename, parentDir } from "$lib/domain/path";
+import { routeTrashDrop, trashDragNames } from "$lib/domain/trash-drop";
 import {
   TRASH_PATH, isTrashRoot, restoreSummary, toTrashListing, trashIssuesMessage,
   type TrashWireListing,
 } from "$lib/domain/trash";
 import { openRecycleBin } from "$lib/api/open";
 import type { contextMenuItems } from "./context-menu-items.svelte";
+import type { DragData } from "./drag.svelte";
 import { broadcastFileChange, subscribeToLocalFileChanges } from "./file-events";
 import { openRecycleBinWithFeedback } from "./recycle-bin";
 import { toastStore } from "./toast.svelte";
@@ -130,6 +132,59 @@ export async function restoreFromTrash(
   if (summary.failed) ports.error(summary.message);
   else ports.success(summary.message);
   return summary;
+}
+
+/** Ports for restoring a drop into a chosen folder (#1554). */
+export type TrashDropPorts = Pick<TrashPorts, "success" | "error" | "publish"> & {
+  restoreTo(ids: string[], destination: string): Promise<ApiResult<FileBatchOutcome>>;
+};
+
+const defaultDropPorts: TrashDropPorts = { ...defaultPorts, restoreTo: restoreTrashItemsTo };
+
+/**
+ * Complete a drop of Trash entries onto a real folder (#1554): restore their
+ * opaque IDs into it, never a move by path. Refusals (an occupied name, a
+ * folder on another drive) leave the items in the Trash and are reported per
+ * item; the Trash and the destination refresh either way.
+ */
+export async function restoreDroppedTrash(
+  ids: readonly string[],
+  destination: string,
+  names: ReadonlyMap<string, string> = new Map(),
+  ports: TrashDropPorts = defaultDropPorts,
+): Promise<{ restored: string[]; message: string; failed: boolean } | null> {
+  if (!ids.length) return null;
+  const result = await ports.restoreTo([...ids], destination);
+  if (!result.ok) {
+    const message = `Could not restore from the Trash: ${result.error}`;
+    ports.error(message);
+    return { restored: [], message, failed: true };
+  }
+  if (result.warning) ports.error(result.warning);
+  // Outcomes are keyed by the restored path, or by ID before one was chosen.
+  const summary = restoreSummary(result.data, [], (key) => names.get(key) ?? basename(key));
+  const message = summary.restored.length > 1 && !summary.failed
+    ? `Restored ${summary.restored.length} items to ${destination}` : summary.message;
+  ports.publish([...new Set([destination, ...affectedBatchPaths(result.data).map(parentDir)])]);
+  if (summary.failed) ports.error(message);
+  else ports.success(message);
+  return { ...summary, message };
+}
+
+/** Complete a drop whose source is a Trash drag (#1554): restore into the
+ * target's folder, or explain why this target cannot receive Trash items. */
+export async function completeTrashDrop(
+  source: DragData,
+  target: { type: string; path?: string } | null,
+  fallbackDirectory?: string,
+): Promise<void> {
+  const route = routeTrashDrop(source, target, fallbackDirectory);
+  if (!route) return;
+  if (route.kind === "refuse") {
+    if (route.message) toastStore.show(route.message, "info");
+    return;
+  }
+  await restoreDroppedTrash(route.ids, route.destination, trashDragNames(source));
 }
 
 /** Double-clicking a trashed item explains how to get it back. */

@@ -4,6 +4,8 @@ import { dragState } from "$lib/state/drag.svelte";
 import { isCopyModifier, isWindows } from "$lib/domain/platform";
 import { pathComparison } from "$lib/domain/path";
 import { isLinkOnlyFileTransfer } from "$lib/domain/file-drop";
+import { isTrashPath } from "$lib/domain/virtual-path";
+import { dropTrashEntries } from "$lib/state/trash-provider";
 import { resolveDropTargetFromElement } from "./use-native-drop-target.svelte";
 
 export type DirectoryDropKind = "folder" | "breadcrumb" | "tab" | "listing-background" | "miller-background";
@@ -24,6 +26,12 @@ export async function dropIntoDirectory(event: DragEvent, path: string, kind: Di
   const receipt = admitFileDrop(resolveDropTargetFromElement(event.target as Element | null), source, "dom");
   if (!receipt) return;
   try {
+    // Trash entries restore into this folder, never move by path (#1554).
+    if (source && isTrashPath(source.path)) {
+      event.preventDefault();
+      await dropTrashEntries(source, { type: "folder", path }, path);
+      return;
+    }
     if (isLinkOnlyFileTransfer(event.dataTransfer, source) || pathsForPlatform.key(path) === null) return;
     const paths = getDropSourcePaths(event.dataTransfer);
     if (!paths.length) return;

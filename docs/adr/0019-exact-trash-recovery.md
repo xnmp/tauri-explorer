@@ -54,6 +54,16 @@ before any effect, then runs the same exact engine, which re-verifies the
 artifact and publishes without replacement. Restores from the view are not
 recorded as undoable history, and never recreate a missing original folder.
 
+Dragging listed items onto a folder (#1554) is the same user-driven restore
+with a different destination: `restore_trash_items_to` accepts IDs plus an
+ordinary destination folder, never a trash location. Natively, each listed
+artifact is retargeted only in its publication path (Linux resolves the
+target like any restore; Windows passes it to the Shell move; macOS renames
+the recorded item there). The destination must be an existing folder outside
+the trash; occupied names and duplicate names in one selection are refused
+before any effect, and on Linux and macOS a folder on another filesystem is
+refused rather than copied. The exact engine then re-verifies the artifact.
+
 macOS keeps original locations private to Finder, so Tauri Explorer keeps its
 own deletion record (`files/trash_origins.rs`): after trashing an item it finds
 it in `~/.Trash` by device and inode and records the trashed path, original

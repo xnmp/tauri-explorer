@@ -363,7 +363,7 @@ fn source_path(path: &Path) -> Result<(PathBuf, OsString, PathBuf), AppError> {
     Ok((parent, name, original))
 }
 
-fn resolved_restore_path(path: &Path) -> Result<PathBuf, AppError> {
+pub(crate) fn resolved_restore_path(path: &Path) -> Result<PathBuf, AppError> {
     if !path.is_absolute() {
         return Err(AppError::InvalidPath(
             "Restore path must be absolute".into(),

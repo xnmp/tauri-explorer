@@ -11,6 +11,16 @@
 import { modalOwnership, type ModalScope } from "./modal-ownership.svelte";
 import { openWithStore } from "./open-with.svelte";
 import type { FileEntry } from "$lib/domain/file";
+import {
+  NO_OVERLAYS,
+  OVERLAY_IDS,
+  closeAllOverlays,
+  closeOverlay,
+  isOverlayOpen,
+  openOverlay,
+  type OpenOverlays,
+  type OverlayId,
+} from "$lib/domain/overlays";
 
 export type DialogType = "rename" | "delete" | null;
 
@@ -34,24 +44,20 @@ function createDialogStore() {
   let permanentDelete = $state(false);
   let fileOperationSession = $state.raw<object | null>(null);
 
-  // Overlay dialogs (independent, can coexist with file ops but not each other)
-  let quickOpenOpen = $state(false);
-  let commandPaletteOpen = $state(false);
-  let settingsOpen = $state(false);
-  let aboutOpen = $state(false);
-  let contentSearchOpen = $state(false);
-  let workspaceOpen = $state(false);
-  let bulkRenameOpen = $state(false);
-  let bulkRenameItems = $state<FileEntry[]>([]);
-  let jobsPanelOpen = $state(false);
-  let themePickerOpen = $state(false);
+  // Boolean overlays (independent, can coexist with file ops but not each other);
+  // the registry lives in domain/overlays.ts.
+  // `overlays` is the source of truth; `openFlags` mirrors it one signal per id,
+  // so a reader of one dialog is not invalidated when a different one changes.
+  let overlays: OpenOverlays = NO_OVERLAYS;
+  const openFlags = $state(Object.fromEntries(OVERLAY_IDS.map((id) => [id, false])) as Record<OverlayId, boolean>);
+  const commit = (next: OpenOverlays): void => {
+    overlays = next;
+    // Write-only: opening or closing a dialog is a command and must never
+    // subscribe a calling effect. Assigning an unchanged value notifies nobody.
+    for (const id of OVERLAY_IDS) openFlags[id] = isOverlayOpen(next, id);
+  };
   let themePickerKind = $state<'color' | 'icon' | 'layout'>('color');
-  let shortcutsOpen = $state(false);
-  let keybindingsOpen = $state(false);
-  let pluginsOpen = $state(false);
   let pickerConfig = $state<PickerConfig | null>(null);
-  let userReportOpen = $state(false);
-  let fileRecoveryOpen = $state(false);
   /** `tool` opens a plugin editor tool directly instead of crop. */
   let imageEditorTarget = $state.raw<{ path: string; name: string; tool?: string } | null>(null);
   // Plugin requests wait for their own editor opening to close.
@@ -69,8 +75,16 @@ function createDialogStore() {
     releaseImageEditor(target);
   }
 
+  const isOpen = (id: OverlayId): boolean => openFlags[id];
+  const open = (id: OverlayId, closing: readonly OverlayId[] = []): void => {
+    commit(openOverlay(overlays, id, closing));
+  };
+  const close = (id: OverlayId): void => {
+    commit(closeOverlay(overlays, id));
+  };
+
   function anyModalOpen(): boolean {
-    return openWithStore.isOpen || modalOwnership.hasOpen || imageEditorTarget !== null || shortcutsOpen || keybindingsOpen || pluginsOpen || activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || aboutOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen || jobsPanelOpen || themePickerOpen || pickerConfig !== null || userReportOpen || fileRecoveryOpen;
+    return openWithStore.isOpen || modalOwnership.hasOpen || imageEditorTarget !== null || activeDialog !== null || pickerConfig !== null || OVERLAY_IDS.some(isOpen);
   }
 
   function closeIfActive(dialogType: DialogType, session = fileOperationSession): void {
@@ -87,27 +101,13 @@ function createDialogStore() {
     releaseImageEditor(imageEditorTarget);
     imageEditorTarget = null;
     openWithStore.close();
-    shortcutsOpen = false;
     activeDialog = null;
-    pluginsOpen = false;
-    keybindingsOpen = false;
     fileOperationSession = null;
     permanentDelete = false;
     targetEntry = null;
     targetEntries = [];
-    quickOpenOpen = false;
-    commandPaletteOpen = false;
-    settingsOpen = false;
-    aboutOpen = false;
-    contentSearchOpen = false;
-    workspaceOpen = false;
-    bulkRenameOpen = false;
-    bulkRenameItems = [];
-    jobsPanelOpen = false;
-    themePickerOpen = false;
     pickerConfig = null;
-    userReportOpen = false;
-    fileRecoveryOpen = false;
+    commit(closeAllOverlays());
   }
 
   return {
@@ -143,44 +143,38 @@ function createDialogStore() {
 
     // Overlay dialog accessors
     get isQuickOpenOpen() {
-      return quickOpenOpen;
+      return isOpen("quickOpen");
     },
     get isCommandPaletteOpen() {
-      return commandPaletteOpen;
+      return isOpen("commandPalette");
     },
     get isThemePickerOpen() {
-      return themePickerOpen;
+      return isOpen("themePicker");
     },
     get themePickerKind() { return themePickerKind; },
     get isShortcutsOpen() {
-      return shortcutsOpen;
+      return isOpen("shortcuts");
     },
     get isAboutOpen() {
-      return aboutOpen;
+      return isOpen("about");
     },
     get isSettingsOpen() {
-      return settingsOpen;
+      return isOpen("settings");
     },
     get isPluginsOpen() {
-      return pluginsOpen;
+      return isOpen("plugins");
     },
     get isKeybindingsOpen() {
-      return keybindingsOpen;
+      return isOpen("keybindings");
     },
     get isContentSearchOpen() {
-      return contentSearchOpen;
+      return isOpen("contentSearch");
     },
     get isWorkspaceOpen() {
-      return workspaceOpen;
-    },
-    get isBulkRenameOpen() {
-      return bulkRenameOpen;
-    },
-    get bulkRenameEntries() {
-      return bulkRenameItems;
+      return isOpen("workspace");
     },
     get isJobsPanelOpen() {
-      return jobsPanelOpen;
+      return isOpen("jobsPanel");
     },
     get isPickerOpen() {
       return pickerConfig !== null;
@@ -189,14 +183,14 @@ function createDialogStore() {
       return pickerConfig;
     },
     get isUserReportOpen() {
-      return userReportOpen;
+      return isOpen("userReport");
     },
 
-    get isFileRecoveryOpen() { return fileRecoveryOpen; },
+    get isFileRecoveryOpen() { return isOpen("fileRecovery"); },
     get imageEditorTarget() { return imageEditorTarget; },
 
     openImageEditor(entry: FileEntry): void {
-      commandPaletteOpen = false;
+      close("commandPalette");
       // A replaced plugin opening is closed, so its caller still settles.
       releaseImageEditor(imageEditorTarget);
       imageEditorTarget = { path: entry.path, name: entry.name };
@@ -208,7 +202,7 @@ function createDialogStore() {
      */
     openImageEditorTool(path: string, name: string, tool: string): { closed: Promise<void>; close: () => void } {
       if (imageEditorTarget) throw new Error("Close the open image editor first");
-      commandPaletteOpen = false;
+      close("commandPalette");
       // It would register above a modal drawn over it and take its focus/Escape.
       if (anyModalOpen()) throw new Error("Close the open dialog first");
       const target = { path, name, tool };
@@ -262,113 +256,92 @@ function createDialogStore() {
 
     // Overlay dialog actions
     openQuickOpen(): void {
-      quickOpenOpen = true;
+      open("quickOpen");
     },
 
     closeQuickOpen(): void {
-      quickOpenOpen = false;
+      close("quickOpen");
     },
 
     openCommandPalette(): void {
-      commandPaletteOpen = true;
+      open("commandPalette");
     },
 
     closeCommandPalette(): void {
-      commandPaletteOpen = false;
+      close("commandPalette");
     },
 
     openAbout(): void {
-      commandPaletteOpen = false;
-      aboutOpen = true;
+      open("about", ["commandPalette"]);
     },
 
     closeAbout(): void {
-      aboutOpen = false;
+      close("about");
     },
 
     openSettings(): void {
-      pluginsOpen = false;
-      keybindingsOpen = false;
-      settingsOpen = true;
+      open("settings", ["plugins", "keybindings"]);
     },
 
     openKeybindings(): void {
-      pluginsOpen = false;
-      commandPaletteOpen = false;
-      shortcutsOpen = false;
-      settingsOpen = false;
-      keybindingsOpen = true;
+      open("keybindings", ["plugins", "commandPalette", "shortcuts", "settings"]);
     },
 
     openPlugins(): void {
-      commandPaletteOpen = false;
-      shortcutsOpen = false;
-      settingsOpen = false;
-      keybindingsOpen = false;
-      pluginsOpen = true;
+      open("plugins", ["commandPalette", "shortcuts", "settings", "keybindings"]);
     },
 
     closePlugins(): void {
-      pluginsOpen = false;
+      close("plugins");
     },
 
     closeKeybindings(): void {
-      keybindingsOpen = false;
+      close("keybindings");
     },
 
     openShortcuts(): void {
-      shortcutsOpen = true;
+      open("shortcuts");
     },
 
     closeShortcuts(): void {
-      shortcutsOpen = false;
+      close("shortcuts");
     },
 
     closeSettings(): void {
-      settingsOpen = false;
+      close("settings");
     },
 
     openContentSearch(): void {
-      contentSearchOpen = true;
+      open("contentSearch");
     },
 
     closeContentSearch(): void {
-      contentSearchOpen = false;
+      close("contentSearch");
     },
 
     openWorkspace(): void {
-      workspaceOpen = true;
+      open("workspace");
     },
 
     closeWorkspace(): void {
-      workspaceOpen = false;
-    },
-
-    openBulkRename(entries: FileEntry[]): void {
-      bulkRenameItems = entries;
-      bulkRenameOpen = true;
-    },
-
-    closeBulkRename(): void {
-      bulkRenameOpen = false;
-      bulkRenameItems = [];
+      close("workspace");
     },
 
     openJobsPanel(): void {
-      jobsPanelOpen = true;
+      open("jobsPanel");
     },
 
     closeJobsPanel(): void {
-      jobsPanelOpen = false;
+      close("jobsPanel");
     },
 
     openThemePicker(kind: 'color' | 'icon' | 'layout' = 'color'): void {
       themePickerKind = kind;
-      themePickerOpen = true;
+      open("themePicker");
     },
 
     closeThemePicker(): void {
-      themePickerOpen = false;
+      close("themePicker");
     },
 
     openPicker(config: PickerConfig): void {
@@ -380,20 +353,18 @@ function createDialogStore() {
     },
 
     openUserReport(): void {
-      commandPaletteOpen = false;
-      userReportOpen = true;
+      open("userReport", ["commandPalette"]);
     },
 
     closeUserReport(): void {
-      userReportOpen = false;
+      close("userReport");
     },
 
     openFileRecovery(): void {
-      commandPaletteOpen = false;
-      fileRecoveryOpen = true;
+      open("fileRecovery", ["commandPalette"]);
     },
 
-    closeFileRecovery(): void { fileRecoveryOpen = false; },
+    closeFileRecovery(): void { close("fileRecovery"); },
 
     requestCloseTop(event?: KeyboardEvent, scope: ModalScope = null): void {
       if (!modalOwnership.requestTopClose(event, scope) && !scope) closeUnmountedDialogs();

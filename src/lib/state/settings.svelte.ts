@@ -108,7 +108,7 @@ export interface Settings {
   /** @deprecated Superseded by `layoutTheme` (#1306): read by the migration,
    *  mirrored from built-in layout choices for downgraded builds. */
   floatingIslands: boolean;
-  layoutTheme: string; // layout theme id: a built-in ("default", "floating-islands", "hairline-ledger") or a `<config>/layouts/*.css` file name (#1306)
+  layoutTheme: string; // layout theme id: a built-in ("default", "floating-islands", "hairline-ledger", "compact", "soft-cards") or a `<config>/layouts/*.css` file name (#1306)
   windowsBackdrop: WindowsBackdrop; // Windows: translucent system backdrop (Mica/Acrylic), requires restart
   windowsBackdropOpacity: number; // Windows: acrylic tint opacity 0-100 (lower = more see-through)
   yaziNavigation: boolean; // left/right arrows navigate up/into folders in Details view (and List when folderPeek is off)
@@ -310,15 +310,6 @@ function createSettingsStore() {
   }
 
   /**
-   * Load settings from config file, migrating from localStorage if needed.
-   * Called once during app initialization.
-   *
-   * settings.json is the durable store of record; localStorage is a
-   * synchronous cache of it that this overwrites on every load. Schema
-   * migrations therefore run HERE and only here — on the authoritative blob,
-   * once, with the result written back to both stores (#506).
-   */
-  /**
    * Parse and migrate a settings.json blob. Returns null when the text is not
    * a usable settings object, so callers can distinguish "nothing to adopt"
    * from "adopted".
@@ -356,6 +347,15 @@ function createSettingsStore() {
     }
   }
 
+  /**
+   * Load settings from config file, migrating from localStorage if needed.
+   * Called once during app initialization.
+   *
+   * settings.json is the durable store of record; localStorage is a
+   * synchronous cache of it that this overwrites on every load. Schema
+   * migrations therefore run HERE and only here — on the authoritative blob,
+   * once, with the result written back to both stores (#506).
+   */
   async function init() {
     const result = await readConfigFile(CONFIG_FILENAME);
     const loaded = result.ok && result.data ? parseSettingsBlob(result.data) : null;

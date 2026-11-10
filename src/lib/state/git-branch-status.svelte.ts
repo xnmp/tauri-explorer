@@ -45,5 +45,3 @@ export function createGitBranchStatusSession(
     },
   };
 }
-
-export type GitBranchStatusSession = ReturnType<typeof createGitBranchStatusSession>;

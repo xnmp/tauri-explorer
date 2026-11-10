@@ -15,6 +15,10 @@ describe("parseCsvPreview", () => {
     });
   });
 
+  it("accepts a BOM before a quoted header field", () => {
+    expect(parseCsvPreview('\uFEFF"name","x"\n1,2')?.header).toEqual(["name", "x"]);
+  });
+
   it("returns null for malformed CSV so callers can use plain-text fallback", () => {
     expect(parseCsvPreview('name,note\nAda,"unterminated')).toBeNull();
   });

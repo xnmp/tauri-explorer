@@ -69,5 +69,15 @@ test(`Git repository folder badge follows the active theme in ${viewMode} view`,
   const hackerFolder = await renderedFolderColour(folder);
   expect(hackerBadge).not.toBe(hackerFolder);
   expect(hackerBadge).not.toBe(darkBadge);
+
+  // #1552: Horizon painted repositories in its error red (the accent). They
+  // now take Horizon's lavender, distinct from its peach folders.
+  await setTheme(page, "horizon");
+  const horizonBadge = await badge.evaluate((element) => getComputedStyle(element).fill);
+  const horizonFolder = await renderedFolderColour(folder);
+  expect(horizonBadge).toBe("rgb(184, 119, 219)");
+  expect(horizonBadge).not.toBe("rgb(233, 86, 120)");
+  expect(horizonBadge).not.toBe(horizonFolder);
+  await page.screenshot({ path: `screenshots/fix/git-folder-is-too-red/horizon-${viewMode}.png` });
 });
 }

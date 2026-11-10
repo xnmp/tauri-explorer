@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   AI_FILTER_IDLE, AI_FILTER_MAX_BYTES, AI_FILTER_MAX_ENTRIES, aiFilterOwnsListing, aiFilterStatus,
-  beginAiFilter, buildAiFilterPrompt, entryLine, normalizeAiFilterQuery, parseAiFilterResponse, settleAiFilter,
+  beginAiFilter, buildAiFilterPrompt, entryLine, isAiFilterKey, normalizeAiFilterQuery, parseAiFilterResponse, settleAiFilter,
 } from "$lib/domain/ai-filter";
 import type { FileEntry } from "$lib/domain/file";
 
@@ -119,5 +119,34 @@ describe("AI filter state machine", () => {
     expect(aiFilterStatus(settleAiFilter(beginAiFilter(target), "r1", "/d", applied))).toBe("1 item matches · Esc to clear");
     expect(aiFilterStatus(settleAiFilter(beginAiFilter(target), "r1", "/d", { ...applied, names: [], sent: 2000, total: 2400, truncated: true })))
       .toBe("No items match (AI saw the first 2000 of 2400) · Esc to clear");
+  });
+});
+
+describe("isAiFilterKey (#1522)", () => {
+  const key = (init: { key?: string; altKey?: boolean; ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean; altGraph?: boolean; isComposing?: boolean }) => ({
+    key: init.key ?? "Enter", altKey: !!init.altKey, ctrlKey: !!init.ctrlKey, metaKey: !!init.metaKey, shiftKey: !!init.shiftKey,
+    isComposing: !!init.isComposing, getModifierState: (name: string) => name === "AltGraph" && !!init.altGraph,
+  });
+
+  it("accepts Alt+Enter", () => {
+    expect(isAiFilterKey(key({ altKey: true }))).toBe(true);
+  });
+
+  it("accepts a right Alt that the keyboard layout reports as AltGraph", () => {
+    // Linux layouts commonly map right Alt to ISO_Level3_Shift: the webview
+    // then reports altKey=false with the AltGraph modifier, and the chord
+    // used to fall through as a plain Enter that nothing handles.
+    expect(isAiFilterKey(key({ altGraph: true }))).toBe(true);
+    // Windows reports AltGr as Ctrl+Alt plus AltGraph.
+    expect(isAiFilterKey(key({ altGraph: true, altKey: true, ctrlKey: true }))).toBe(true);
+  });
+
+  it("rejects plain Enter, other chords, other keys and IME composition", () => {
+    expect(isAiFilterKey(key({}))).toBe(false);
+    expect(isAiFilterKey(key({ altKey: true, ctrlKey: true }))).toBe(false);
+    expect(isAiFilterKey(key({ altKey: true, shiftKey: true }))).toBe(false);
+    expect(isAiFilterKey(key({ altKey: true, metaKey: true }))).toBe(false);
+    expect(isAiFilterKey(key({ key: "a", altKey: true }))).toBe(false);
+    expect(isAiFilterKey(key({ altKey: true, isComposing: true }))).toBe(false);
   });
 });

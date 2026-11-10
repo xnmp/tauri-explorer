@@ -111,6 +111,7 @@ impl plan::Prepared {
             original_path,
             source_version,
             source_mount,
+            mounted,
             layout,
             fallback,
             name,
@@ -133,14 +134,19 @@ impl plan::Prepared {
             ));
         }
         let mut last_error = None;
+        // Whether every destination was refused while opening or creating its
+        // trash directories, before any metadata or payload effect.
+        let mut only_layouts_refused = true;
         for layout in std::iter::once(layout).chain(fallback) {
             let directories = match layout.execute() {
                 Ok(directories) => directories,
                 Err(error) => {
+                    only_layouts_refused &= matches!(error, AppError::PermissionDenied(_));
                     last_error = Some(error);
                     continue;
                 }
             };
+            only_layouts_refused = false;
             let (metadata_identity, reserved) =
                 match reserve_info(&directories.info, &info_name, &temporary_name, &metadata) {
                     Ok(Some(reserved)) => reserved,
@@ -292,7 +298,13 @@ impl plan::Prepared {
                 }
             }
         }
-        Err(last_error.expect("each prepared destination either commits or records its failure"))
+        let error =
+            last_error.expect("each prepared destination either commits or records its failure");
+        Err(if mounted && only_layouts_refused {
+            plan::unavailable_on_mount(&original_path, error)
+        } else {
+            error
+        })
     }
 }
 
@@ -363,7 +375,7 @@ fn source_path(path: &Path) -> Result<(PathBuf, OsString, PathBuf), AppError> {
     Ok((parent, name, original))
 }
 
-fn resolved_restore_path(path: &Path) -> Result<PathBuf, AppError> {
+pub(crate) fn resolved_restore_path(path: &Path) -> Result<PathBuf, AppError> {
     if !path.is_absolute() {
         return Err(AppError::InvalidPath(
             "Restore path must be absolute".into(),

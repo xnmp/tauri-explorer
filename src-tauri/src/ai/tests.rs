@@ -1376,3 +1376,20 @@ fn window_callers_are_scoped_per_window_and_never_alias_brokered_callers() {
     assert!(!window_caller("main").starts_with("plugin:"));
     assert!(!window_caller("main").starts_with("settings:"));
 }
+
+#[test]
+fn strip_credential_flags_removes_marker_and_tolerates_non_object_input() {
+    let mut value = serde_json::json!({"profiles": [{"id": "a", "hasCredential": true}]});
+    strip_credential_flags(&mut value);
+    assert_eq!(value, serde_json::json!({"profiles": [{"id": "a"}]}));
+    for mut malformed in [
+        serde_json::json!("text"),
+        serde_json::json!(7),
+        serde_json::json!([1, 2]),
+        Value::Null,
+    ] {
+        let before = malformed.clone();
+        strip_credential_flags(&mut malformed);
+        assert_eq!(malformed, before);
+    }
+}

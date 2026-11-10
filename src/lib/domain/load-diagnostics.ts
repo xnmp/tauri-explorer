@@ -11,11 +11,11 @@
 export const SLOW_LOAD_THRESHOLD_MS = 5000;
 /** Bounds keep a pathological workload from growing a record. */
 export const MAX_TRACE_SPANS = 32;
-export const MAX_OTHERS_IN_FLIGHT = 5;
+const MAX_OTHERS_IN_FLIGHT = 5;
 /** Report-dialog defaults: records from the last day only (older ones are
  *  unlikely to be the bug being reported), and only a few of them. */
 export const REPORTABLE_SLOW_LOAD_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-export const MAX_REPORTED_SLOW_LOADS = 3;
+const MAX_REPORTED_SLOW_LOADS = 3;
 /** Must not exceed the native `MAX_DIAGNOSTICS_UNITS` in `user_report.rs`. */
 export const MAX_SLOW_LOAD_REPORT_UNITS = 6000;
 
@@ -35,7 +35,7 @@ export type FrontendLoadPhase =
 export type LoadReason = "navigate" | "history" | "initial" | "parent-fallback";
 export type LoadOutcome = "ok" | "error" | "superseded" | "destroyed";
 
-export interface PhaseSpan {
+interface PhaseSpan {
   readonly phase: FrontendLoadPhase;
   readonly startMs: number;
   readonly endMs: number | null;
@@ -138,7 +138,7 @@ export function finishLoadTrace(trace: LoadTrace, outcome: LoadOutcome, nowMono:
   };
 }
 
-export function traceElapsedMs(trace: LoadTrace, nowMono: number): number {
+function traceElapsedMs(trace: LoadTrace, nowMono: number): number {
   return Math.max(0, (trace.finishedMono ?? nowMono) - trace.startedMono);
 }
 
@@ -167,14 +167,14 @@ export function recordOnFinish(trace: LoadTrace, alreadyRecorded: boolean, thres
 // Records
 // ===================
 
-export interface RecordedPhase {
+interface RecordedPhase {
   phase: string;
   startMs: number;
   durationMs: number;
   pending: boolean;
 }
 
-export interface OtherLoad {
+interface OtherLoad {
   path: string;
   pendingPhase: string | null;
   elapsedMs: number;
@@ -203,7 +203,7 @@ export interface FrontendSlowLoadRecord {
   othersInFlight: OtherLoad[];
 }
 
-export interface NativePhaseSnapshot {
+interface NativePhaseSnapshot {
   phase: string;
   startMs: number;
   durationMs: number;
@@ -228,7 +228,7 @@ export interface NativeLoadSnapshot {
   slowestEntry: { name: string; elapsedMs: number } | null;
 }
 
-export interface FilesystemInfo {
+interface FilesystemInfo {
   fsType: string | null;
   mountPoint: string | null;
   category: "local" | "network" | "network-fuse" | "fuse" | "removable" | "memory" | "unknown";
@@ -328,7 +328,7 @@ const PHASE_LABELS: Record<string, string> = {
   "ipc-reply": "waiting on the IPC reply / webview",
 };
 
-export function describePhase(phase: string): string {
+function describePhase(phase: string): string {
   return PHASE_LABELS[phase] ?? phase;
 }
 
@@ -387,7 +387,7 @@ export function diagnoseSlowLoad(record: Pick<SlowLoadRecord, "phases" | "native
 // Report formatting
 // ===================
 
-export function formatSeconds(ms: number): string {
+function formatSeconds(ms: number): string {
   if (!Number.isFinite(ms) || ms < 0) return "?";
   return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
 }
@@ -425,7 +425,7 @@ function formatFilesystem(record: SlowLoadRecord): string | null {
 }
 
 /** One record as compact plain text for a public issue. */
-export function formatSlowLoadForReport(record: SlowLoadRecord, index: number): string {
+function formatSlowLoadForReport(record: SlowLoadRecord, index: number): string {
   const culprit = diagnoseSlowLoad(record);
   const status = record.outcome === "pending" ? "still pending when captured" : record.outcome;
   const lines = [
@@ -492,7 +492,7 @@ export function formatSlowLoadsForReport(records: readonly SlowLoadRecord[], max
 }
 
 /** The relay's body ceiling (`maxRelayBodyUnits` in the relay contract). */
-export const MAX_RELAY_BODY_UNITS = 8500;
+const MAX_RELAY_BODY_UNITS = 8500;
 /** Conservative allowance for the contact line, environment block and the
  *  collapsed-section wrapper that `user_report.rs` adds around diagnostics. */
 const REPORT_BODY_OVERHEAD_UNITS = 600;

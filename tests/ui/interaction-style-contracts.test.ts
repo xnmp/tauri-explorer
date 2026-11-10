@@ -11,7 +11,6 @@ function component(name: string): string {
 describe("interaction styling contracts", () => {
   it("does not animate every changed property on interactive controls", () => {
     const sources = [
-      "BulkRenameDialog.svelte",
       "ContentSearchDialog.svelte",
       "DetailsView.svelte",
       "FilesSidebarView.svelte",

@@ -14,7 +14,7 @@
  *   layout tree (arbitrary splits), an active pane, and an optional name.
  */
 
-import { clampSplitRatio, type PaneNode, type SplitDirection } from "$lib/domain/pane-layout";
+import { clampSplitRatio, type SplitDirection } from "$lib/domain/pane-layout";
 import { isRecord, isWindowPath } from "$lib/domain/window-input";
 import { isFileViewId } from "$lib/domain/file-view-id";
 
@@ -109,19 +109,6 @@ export function persistedLeaves(node: PersistedNode): { id: string; path: string
   return [...persistedLeaves(node.first), ...persistedLeaves(node.second)];
 }
 
-/** Strip paths from a persisted layout, yielding the domain tree. */
-export function toLayoutTree(node: PersistedNode): PaneNode {
-  if (node.type === "leaf") return { type: "leaf", id: node.id };
-  return {
-    type: "split",
-    id: node.id,
-    direction: node.direction,
-    ratio: node.ratio,
-    first: toLayoutTree(node.first),
-    second: toLayoutTree(node.second),
-  };
-}
-
 /** Keeps a valid view id or an explicit built-in choice; an unknown value is
  *  dropped (the pane falls back to the default) rather than invalidating its tab. */
 function persistedFileView(value: unknown): { fileView?: string | null } {
@@ -189,13 +176,13 @@ function normalizePersistedTab(tab: unknown): PersistedWindowTab | null {
 
 // ── v2 (per-pane strips, #140) ───────────────────────────────────────────
 
-export interface PersistedPaneTab {
+interface PersistedPaneTab {
   id: string;
   path: string;
   kind?: "explorer" | "git-graph";
 }
 
-export interface PersistedPaneTabs {
+interface PersistedPaneTabs {
   tabs: PersistedPaneTab[];
   activeTabId: string | null;
 }
@@ -374,16 +361,6 @@ export function normalizePersistedState(state: unknown): PersistedTabState | nul
 /** Total tab count in a persisted state of any shape (workspace list UI). */
 export function countPersistedTabs(state: unknown): number {
   return normalizePersistedState(state)?.tabs.length ?? 0;
-}
-
-/** Total pane count in a persisted state of any shape (workspace list UI). */
-export function countPersistedPanes(state: unknown): number {
-  const s = normalizePersistedState(state);
-  if (!s) return 0;
-  return s.tabs.reduce(
-    (n, t) => n + (t.kind === "explorer" ? persistedLeaves(t.layout).length : 1),
-    0,
-  );
 }
 
 // ── Live-tab snapshots (cross-window transfer, tear-off, Ctrl+Shift+T) ───

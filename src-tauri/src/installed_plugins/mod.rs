@@ -116,7 +116,7 @@ fn start_pending_queue() {
         std::thread::Builder::new()
             .name("plugin-install-queue".into())
             .spawn(move || {
-                #[cfg(test)]
+                #[cfg(all(test, target_os = "linux"))]
                 QUEUE_WORKERS_STARTED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 let errors = queue::apply(
                     &directory,
@@ -149,8 +149,9 @@ fn start_pending_queue() {
         notify();
     }
 }
-/// Queue workers started by this process; the native fixture asserts one.
-#[cfg(test)]
+/// Queue workers started by this process; the Linux-only native fixture
+/// (`startup_native_tests`) asserts one, so the counter shares its gate.
+#[cfg(all(test, target_os = "linux"))]
 static QUEUE_WORKERS_STARTED: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 fn bootstrap_services_in(file_picker_portal: bool) -> Result<(), AppError> {
@@ -323,7 +324,7 @@ fn install_path(path: &Path) -> Result<package::Installed, AppError> {
 }
 
 #[tauri::command]
-pub fn take_pending_plugin_install_errors(window: tauri::WebviewWindow) -> Vec<String> {
+pub async fn take_pending_plugin_install_errors(window: tauri::WebviewWindow) -> Vec<String> {
     if !error_window(window.label(), window.is_visible().unwrap_or(false)) {
         return vec![];
     }

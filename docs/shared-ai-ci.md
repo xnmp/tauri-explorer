@@ -1,18 +1,8 @@
 # Shared AI native CI
 
-The `Shared AI native acceptance` workflow runs the standalone native Windows
-namespace fixture on relevant pull requests/pushes and manual dispatches. It
-requires exactly twenty passing outcome tests plus one ignored child helper,
-which the crash-boundary parent test explicitly executes in three subprocesses.
-It refuses zero matches, changed lockfiles or missing real flush evidence, and
-retains the exact test executable/hash, host/source hashes and logs. The fixture
-uses a private NTFS temporary directory and does not request administrator
-volume flush or a user credential. This proves the exercised namespace boundary;
-it does not qualify host Store integration or provider/Trace handoff on Windows.
-The standalone job is bounded to 20 minutes.
-
-The same workflow provides a manually dispatched Linux installed-plugin gate.
-Its `plugin_revision` input must be a complete lowercase
+The `Shared AI native acceptance` workflow is a manually dispatched Linux
+installed-plugin gate; it has no push or pull-request trigger. Its
+`plugin_revision` input must be a complete lowercase
 40-hex commit from `xnmp/TraceExplorer`; branches and tags are refused. The host
 revision is the workflow checkout. Both revisions, three binary digests and the
 verified archive digests are retained with native outcome logs and screenshots.

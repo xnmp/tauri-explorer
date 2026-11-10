@@ -15,10 +15,10 @@ export const AI_FILTER_MAX_ENTRIES = 2000;
  * anything over 64 KiB combined; the margin absorbs the truncation note.
  */
 export const AI_FILTER_MAX_BYTES = 60 * 1024;
-export const AI_FILTER_MAX_QUERY = 500;
+const AI_FILTER_MAX_QUERY = 500;
 export const AI_FILTER_MAX_OUTPUT_TOKENS = 4096;
 
-export const AI_FILTER_INSTRUCTIONS = [
+const AI_FILTER_INSTRUCTIONS = [
   "You filter a file manager's folder listing for a user.",
   "Each listing line is: kind (d = folder, f = file), name, extension, size in bytes (- for folders), modified local time.",
   "Select every entry that satisfies the user's request, interpreting relative dates against the stated current time.",
@@ -41,7 +41,7 @@ const bytes = (text: string) => encoder.encode(text).length;
 const pad = (n: number) => String(n).padStart(2, "0");
 
 /** `YYYY-MM-DD HH:MM` in local time; empty for an unparsable date. */
-export function localTimestamp(value: string | Date): string {
+function localTimestamp(value: string | Date): string {
   const date = typeof value === "string" ? new Date(value) : value;
   if (Number.isNaN(date.getTime())) return "";
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
@@ -196,6 +196,21 @@ export function settleAiFilter(state: AiFilterState, requestId: string, currentP
   const target = { requestId, query: state.query, path: state.path };
   if (!outcome.ok) return { kind: "error", message: outcome.message, ...target };
   return { kind: "applied", names: new Set(outcome.names), sent: outcome.sent, total: outcome.total, truncated: outcome.truncated, ignored: outcome.ignored, ...target };
+}
+
+type AiFilterKeyEvent = Pick<KeyboardEvent, "key" | "altKey" | "ctrlKey" | "metaKey" | "shiftKey" | "isComposing"> & {
+  getModifierState?(key: string): boolean;
+};
+
+/**
+ * Alt+Enter in the filter box. A right Alt that the keyboard layout maps to
+ * AltGraph (ISO_Level3_Shift on Linux, Ctrl+Alt on Windows) counts as Alt:
+ * otherwise the chord arrives as a plain Enter that nothing handles (#1522).
+ */
+export function isAiFilterKey(event: AiFilterKeyEvent): boolean {
+  if (event.key !== "Enter" || event.isComposing || event.metaKey || event.shiftKey) return false;
+  if (event.getModifierState?.("AltGraph")) return true;
+  return event.altKey && !event.ctrlKey;
 }
 
 /** Whether the AI state replaces the box's substring filter. */

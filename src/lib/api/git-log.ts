@@ -13,7 +13,7 @@ import { invoke, isTauri } from "./common";
 import type { GitUndoAction } from "$lib/domain/git-graph-undo";
 import type { GitNetworkPhaseEvent } from "$lib/domain/git-network-operation";
 
-export type RefKind = "LocalBranch" | "RemoteBranch" | "Tag" | "Head";
+type RefKind = "LocalBranch" | "RemoteBranch" | "Tag" | "Head";
 
 export interface RefInfo {
   /** Display name, e.g. `main`, `origin/main`, `v1.0`. */
@@ -77,7 +77,7 @@ export interface GitLogOptions {
   file_path?: string;
 }
 
-export interface GitRef {
+interface GitRef {
   name: string;
   /** OID the ref resolves to (peeled for annotated tags). */
   target: string;

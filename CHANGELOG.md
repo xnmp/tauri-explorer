@@ -2,6 +2,36 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.24.0 — 2026-11-10
+
+### Added
+
+- Compact and Soft Cards built-in layout themes (#1548).
+- Drag items out of the Trash onto a folder, tab or bookmark to restore them
+  there (#1554).
+- Google Drive folders show a drive badge on their folder icon (#1551).
+- On volumes without a usable trash (such as some Google Drive mounts), Delete
+  offers a confirmed permanent delete instead of failing (#1550).
+
+### Changed
+
+- Plugin packages in the Plugins menu use the same row, switch and button
+  controls as the rest of Settings (#1529).
+- The app icon's tau is filled in, and the Windows icon is no longer enlarged
+  (#1553).
+- Bulk Rename has been removed (#1562).
+
+### Fixed
+
+- The AI filter always reports what happened (no model, failure, no matches),
+  accepts Alt+Enter from AltGr layouts, and times out after 5 s instead of
+  hanging (#1522).
+- Horizon theme repository folders are no longer painted in its error red
+  (#1552).
+- A saved GitHub token is now used for user reports; CSV previews with a BOM
+  parse their header; office/PDF files are no longer treated as text; Git
+  amend keeps the original author (#1562).
+
 ## v1.23.0 — 2026-11-08
 
 ### Added

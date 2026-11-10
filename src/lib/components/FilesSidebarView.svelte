@@ -23,7 +23,7 @@
   import { loadPersisted, savePersisted } from "$lib/state/persisted";
   import { useSidebarDrag } from "$lib/composables/use-sidebar-drag.svelte";
   import { usesPointerDrag, usesHtml5Drag } from "$lib/domain/platform";
-  import { TRASH_PATH } from "$lib/domain/virtual-path";
+  import { TRASH_PATH, isTrashPath } from "$lib/domain/virtual-path";
   import { toastStore } from "$lib/state/toast.svelte";
   import { getBookmarkDropHint, getEffectiveDragKind } from "$lib/domain/bookmark-drop-feedback";
   import { isExplorerFileTransfer } from "$lib/domain/file-drop";
@@ -55,6 +55,7 @@
   const bookmarkDropHint = $derived(getBookmarkDropHint(
     getEffectiveDragKind(dragState.current, dragState.readCrossWindow()),
     isBookmarkDropTarget,
+    isTrashPath((dragState.current ?? dragState.readCrossWindow())?.path ?? ""),
   ));
 
   let quickAccessEl: HTMLDivElement | undefined;

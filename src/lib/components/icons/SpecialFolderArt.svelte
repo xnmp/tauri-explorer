@@ -32,7 +32,9 @@
       <use class="special-folder-glyph" {href} width="16" height="16" stroke-width={v.stroke}
         transform={`translate(${g.x} ${g.y}) scale(${g.w / CATPPUCCIN_GLYPH_CROP.size}) translate(${-CATPPUCCIN_GLYPH_CROP.x} ${-CATPPUCCIN_GLYPH_CROP.y})`} />
     {:else}
-      <use class="special-folder-glyph" {href} x={g.x} y={g.y} width={g.w} height={g.w} stroke-width={v.stroke} style:color={v.ink} />
+      <!-- A multi-colour glyph (#1551) reads its strokes' paint from these slots; unset, they fall back to the ink. -->
+      <use class="special-folder-glyph" {href} x={g.x} y={g.y} width={g.w} height={g.w} stroke-width={v.stroke} style:color={v.ink}
+        style:--special-folder-glyph-a={v.palette?.[0]} style:--special-folder-glyph-b={v.palette?.[1]} style:--special-folder-glyph-c={v.palette?.[2]} />
     {/if}
   </g>
 {/if}

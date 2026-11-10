@@ -363,7 +363,7 @@ export function splitPathForDisplay(path: string): PathDisplayParts {
 export function isInsideDir(child: string, parent: string): boolean {
   const c = toForwardSlashes(child);
   const p = stripTrailingSlash(toForwardSlashes(parent));
-  return c === p || c.startsWith(p + "/");
+  return c === p || c.startsWith(p.endsWith("/") ? p : p + "/");
 }
 
 /**

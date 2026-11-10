@@ -528,6 +528,75 @@ it("applies a retention enforcement pass and reports its failure without losing 
   await Promise.all([state.dispose(), failing.dispose()]);
 });
 
+describe("reclaim and per-item actions are exclusive (#1582)", () => {
+  it("refuses an item action while reclaiming and stops loading when the reclaim settles", async () => {
+    const reclaim = deferred<FileRecoverySnapshot>();
+    const resolve = vi.fn(async () => snapshot(4, []));
+    const state = createFileRecoveryState(port({ retireEligible: vi.fn(() => reclaim.promise), resolve }));
+    await state.start();
+
+    const reclaiming = state.retireEligible();
+    expect(state.loading).toBe(true);
+    await state.resolve(state.items[0], "restore");
+    expect(resolve).not.toHaveBeenCalled();
+    expect(state.busyId).toBeNull();
+
+    reclaim.resolve(snapshot(3, []));
+    await reclaiming;
+    expect(state.loading).toBe(false);
+    expect(state.items).toEqual([]);
+    await state.dispose();
+  });
+
+  it("refuses a reclaim while an item action runs and leaves that action in charge", async () => {
+    const action = deferred<FileRecoverySnapshot>();
+    const retireEligible = vi.fn(async () => snapshot(9, []));
+    const state = createFileRecoveryState(port({ resolve: vi.fn(() => action.promise), retireEligible }));
+    await state.start();
+
+    const resolving = state.resolve(state.items[0], "restore");
+    expect(state.busyId).toBe("recovery-a");
+    await state.retireEligible();
+    expect(retireEligible).not.toHaveBeenCalled();
+    expect(state.loading).toBe(false);
+
+    action.resolve(snapshot(2, []));
+    await resolving;
+    expect(state.busyId).toBeNull();
+    expect(state.items).toEqual([]);
+    await state.retireEligible();
+    expect(retireEligible).toHaveBeenCalledOnce();
+    await state.dispose();
+  });
+
+  it("keeps loading while a reclaim outlives a refresh started during it", async () => {
+    const reclaim = deferred<FileRecoverySnapshot>();
+    const state = createFileRecoveryState(port({ retireEligible: vi.fn(() => reclaim.promise) }));
+    await state.start();
+    const reclaiming = state.retireEligible();
+    await state.refresh();
+    expect(state.loading).toBe(true);
+    reclaim.resolve(snapshot(3, []));
+    await reclaiming;
+    expect(state.loading).toBe(false);
+    await state.dispose();
+  });
+
+  it("a reclaim outliving a restart cannot settle the new session's state", async () => {
+    const reclaim = deferred<FileRecoverySnapshot>();
+    const state = createFileRecoveryState(port({ retireEligible: vi.fn(() => reclaim.promise) }));
+    await state.start();
+    const reclaiming = state.retireEligible();
+    await state.start();
+    expect(state.loading).toBe(false);
+    reclaim.resolve(snapshot(3, []));
+    await reclaiming;
+    expect(state.items).toHaveLength(1);
+    expect(state.loading).toBe(false);
+    await state.dispose();
+  });
+});
+
 it("accepts every retained folder a native item lists and rejects a malformed list", async () => {
   let receive!: (value: FileRecoverySnapshot) => void;
   const folders = ["/source/.tauri-explorer-recovery-1", "/target/.tauri-explorer-recovery-2"];

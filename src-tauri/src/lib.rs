@@ -122,8 +122,7 @@ fn e2e_webview2_browser_args() -> String {
 mod wsl;
 
 use system::{
-    get_launch_cwd, get_log_dir, log_startup_progress, log_startup_timing, open_recycle_bin,
-    set_window_theme, LaunchCwd,
+    get_log_dir, log_startup_progress, log_startup_timing, open_recycle_bin, set_window_theme,
 };
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 
@@ -215,7 +214,6 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         serde_json::to_string(&launch_cwd).unwrap(),
         serde_json::to_string(&home_dir).unwrap(),
     );
-    let launch_cwd_for_state = launch_cwd.clone();
 
     let t_plugins = std::time::Instant::now();
 
@@ -274,7 +272,6 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
     );
 
     builder
-        .manage(LaunchCwd(launch_cwd_for_state))
         .manage(window_launch::Requests::default())
         .manage(window_launch::FocusHistory::default())
         .manage(native_file_drag::Sessions::default())
@@ -304,9 +301,10 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
                 .targets(targets)
                 .build()
         })
+        // Load-bearing without any explicit invoke: its init script opens
+        // `target="_blank"` and Ctrl/Shift-clicked http(s)/mailto/tel links (Markdown
+        // preview, plugin UIs) in the system browser. Wry drops them otherwise.
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_drag::init())
         .on_window_event(|window, event| {
             native_file_drag::on_window_event(window, event);
             window_launch::on_window_event(window, event);
@@ -337,7 +335,6 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             ai::ai_text_generate,
             ai::ai_text_cancel,
             // Launch info
-            get_launch_cwd,
             native_file_drag::start_file_drag,
             native_file_drag::end_html5_file_drag,
             native_file_drag::native_file_drag_clock,
@@ -361,6 +358,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             // Trash operations
             file_mutation::delete_entries,
             file_mutation::restore_trash_items,
+            file_mutation::restore_trash_items_to,
             file_mutation::delete_trash_items,
             files::trash_inventory::list_trash,
             files::recovery::commands::file_recovery_list,
@@ -372,7 +370,6 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             open_recycle_bin,
             // File operations — directory listing
             files::dir_listing::list_directory,
-            files::dir_listing::invalidate_dir_cache,
             files::dir_listing::is_directory_empty,
             files::dir_listing::list_directory_fresh,
             files::dir_listing::start_observed_directory,
@@ -433,20 +430,16 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             clipboard::clipboard_claim_cut,
             clipboard::clipboard_release_cut,
             clipboard::clipboard_has_image,
-            clipboard::clipboard_read_report_image,
             clipboard::clipboard_has_report_attachment,
             clipboard::clipboard_read_report_attachment,
             clipboard::clipboard_paste_image,
             // Thumbnails
-            thumbnails::get_thumbnail,
             thumbnails::get_thumbnail_data,
             thumbnails::get_micro_thumbnail,
             thumbnails::get_video_thumbnail_data,
             media_duration::get_media_durations,
             thumbnails::get_folder_preview,
             thumbnails::set_ffmpeg_path,
-            thumbnails::clear_thumbnail_cache,
-            thumbnails::get_thumbnail_cache_stats,
             thumbnails::preview_rendition::get_preview_image,
             // Archive operations
             archive::compress_to_zip,
@@ -461,7 +454,6 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             open_history::read_open_history,
             open_history::write_open_history,
             config::write_config_file,
-            config::get_config_dir,
             config::list_user_themes,
             config::list_user_layouts,
             config::ensure_layouts_dir,

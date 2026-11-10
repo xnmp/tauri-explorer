@@ -69,7 +69,7 @@ Cross-cutting truth: most features flow **component → store (`src/lib/state`) 
 
 ## 9. Thumbnail / preview pipeline change
 1. `src/lib/components/ThumbnailImage.svelte` — img lifecycle, lazy load, error/fallback.
-2. `src/lib/api/thumbnails.ts` — `getThumbnail`/`getThumbnailData`/`getMicroThumbnail`/`getVideoThumbnailData`/`getFolderPreview` invokes.
+2. `src/lib/api/thumbnails.ts` — `getThumbnailData`/`getMicroThumbnail`/`getVideoThumbnailData`/`getFolderPreview` invokes.
 3. `src/lib/state/thumbnail-cache.ts` — in-memory cache/dedup.
 4. `src-tauri/src/thumbnails.rs` — generation, disk cache (large; images + video frames).
 5. `src/lib/components/FolderThumbnail.svelte` + `domain/folder-preview.ts` — folder collages.
@@ -77,7 +77,7 @@ Cross-cutting truth: most features flow **component → store (`src/lib/state`) 
 - Gotchas: sizes/quality tiers come from `settings.svelte.ts` (`thumbnailSize`/`ThumbnailSize`). Mock `get_thumbnail*` in mock-invoke for E2E.
 
 ## 10. SCM panel / git-badge change
-1. `src/lib/components/ScmSidebarView.svelte` (staging UI), `ScmPanel.svelte`, `ScmDiffView.svelte`, `GitStatusBadge.svelte` (per-file badge), `GitGraphView.svelte` (log/graph).
+1. `src/lib/components/ScmSidebarView.svelte` (staging UI), `ScmPanel.svelte`, `GitStatusBadge.svelte` (per-file badge), `GitGraphView.svelte` (log/graph).
 2. `src/lib/state/scm.svelte.ts` (staging/commit state), `git-status.svelte.ts` (per-file status store, badge source), `git-refresh.ts`.
 3. `src/lib/api/git.ts` / `git-log.ts` — invokes.
 4. `src/lib/domain/git-graph.ts`, `scm-tree.ts`, `diff.ts` — pure graph/tree/diff logic.
@@ -100,7 +100,7 @@ Cross-cutting truth: most features flow **component → store (`src/lib/state`) 
 
 ## 13. Dialog / progress / long-op change
 1. `src/lib/state/dialogs.svelte.ts` — active-dialog state machine (`DialogType`, `PickerConfig`).
-2. Dialog component: `DeleteDialog.svelte`, `ConflictDialog.svelte`, `BulkRenameDialog.svelte`, `ProgressDialog.svelte`, `WorkspaceDialog.svelte`, or `Modal.svelte` (shell) + `modal.css`.
+2. Dialog component: `DeleteDialog.svelte`, `ConflictDialog.svelte`, `ProgressDialog.svelte`, `WorkspaceDialog.svelte`, or `Modal.svelte` (shell) + `modal.css`.
 3. `src/lib/state/operations.svelte.ts` — file-op orchestration (delete/copy/move) that drives conflict/progress.
 4. `src/lib/state/jobs.svelte.ts` + `components/JobsPanel.svelte` — background job tracking; `src-tauri/src/progress.rs` + `task_registry.rs` for cancellable Rust tasks.
 - Gotchas: register a new dialog type in `dialogs.svelte.ts`. Progress needs Rust `emit` + a frontend `listen`; mirror in mock-invoke.
@@ -123,8 +123,7 @@ Cross-cutting truth: most features flow **component → store (`src/lib/state`) 
 ## 16. Perf: listing / render pipeline
 1. `src/lib/components/VirtualList.svelte` — virtual scroller (Details); windowing math.
 2. `src/lib/domain/virtual-layout.ts` — row/column layout math; `raf-coalesce.ts` — frame coalescing.
-3. `src/lib/composables/use-progressive-render.svelte.ts` — chunked reveal of large listings.
-4. `src/lib/state/directory-listing.ts` — listing ingestion/streaming into panes; `explorer.svelte.ts` consumes.
+3. `src/lib/state/directory-listing.ts` — listing ingestion/streaming into panes; `explorer.svelte.ts` consumes.
 - Gotchas: Tiles/List don't use VirtualList — they can blow up on huge dirs differently. Measure before changing; check `startup-timing.ts`.
 
 ## 17. Perf: IPC / streaming

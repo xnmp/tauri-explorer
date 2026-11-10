@@ -1,7 +1,8 @@
 /**
  * Content search stream lifecycle (src/lib/composables/use-content-search.svelte.ts):
- * batch accumulation + dedup, generation guard for superseded searches,
- * inline (mock-mode) fallback, filter/expand rebuilds, no-flicker re-search.
+ * batch accumulation + dedup, superseded and cancelled searches, attribution
+ * of app-wide events to the search that started them, inline (mock-mode)
+ * fallback, filter/expand rebuilds, no-flicker re-search.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -9,12 +10,21 @@ import type { ContentSearchEvent } from "../../src/lib/api/search";
 
 // --- Mocks -----------------------------------------------------------------
 
-let eventHandler: ((event: { payload: ContentSearchEvent }) => void) | null = null;
-const unlisten = vi.fn();
-const listen = vi.fn(async (_name: string, handler: (event: { payload: ContentSearchEvent }) => void) => {
-  eventHandler = handler;
-  return unlisten;
+type Handler = (event: { payload: ContentSearchEvent }) => void;
+
+// Plays Tauri's event bus: `content-search-results` reaches every listener
+// registered (by this or any other window) until its unlisten runs.
+const listeners = new Set<Handler>();
+const listen = vi.fn(async (_name: string, handler: Handler) => {
+  listeners.add(handler);
+  return () => {
+    listeners.delete(handler);
+  };
 });
+
+function emit(payload: ContentSearchEvent): void {
+  for (const deliver of [...listeners]) deliver({ payload });
+}
 
 vi.mock("@tauri-apps/api/event", () => ({
   listen: (...args: Parameters<typeof listen>) => listen(...args),
@@ -56,16 +66,26 @@ function batch(searchId: number, results: ReturnType<typeof fileResult>[], done 
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+const opts = { caseSensitive: false, regexMode: false };
+
 function okStart(searchId: number) {
   return { ok: true as const, data: { searchId, inline: null } };
 }
 
 beforeEach(() => {
-  eventHandler = null;
+  listeners.clear();
   listen.mockClear();
-  unlisten.mockClear();
   startContentSearch.mockReset();
-  cancelContentSearch.mockClear();
+  cancelContentSearch.mockReset();
+  cancelContentSearch.mockImplementation(async () => ({ ok: true, data: undefined }));
 });
 
 // --- Tests -------------------------------------------------------------------
@@ -78,13 +98,11 @@ describe("useContentSearch", () => {
     await search.start("q", "/root", { caseSensitive: false, regexMode: false });
     expect(search.loading).toBe(true);
 
-    eventHandler!({ payload: batch(1, [fileResult("/a.ts", [1])]) });
+    emit(batch(1, [fileResult("/a.ts", [1])]));
     expect(search.flattened).toHaveLength(1);
 
     // Second batch: one new file, one duplicate of /a.ts that must be dropped.
-    eventHandler!({
-      payload: batch(1, [fileResult("/a.ts", [1]), fileResult("/b.ts", [2])], true),
-    });
+    emit(batch(1, [fileResult("/a.ts", [1]), fileResult("/b.ts", [2])], true));
 
     expect(search.fileCount).toBe(2);
     expect(search.flattened.map((r) => r.filePath)).toEqual(["/a.ts", "/b.ts"]);
@@ -96,10 +114,10 @@ describe("useContentSearch", () => {
     const search = useContentSearch();
     await search.start("q", "/root", { caseSensitive: false, regexMode: false });
 
-    eventHandler!({ payload: batch(99, [fileResult("/stale.ts", [1])]) });
+    emit(batch(99, [fileResult("/stale.ts", [1])]));
     expect(search.flattened).toHaveLength(0);
 
-    eventHandler!({ payload: batch(7, [fileResult("/fresh.ts", [1])]) });
+    emit(batch(7, [fileResult("/fresh.ts", [1])]));
     expect(search.flattened.map((r) => r.filePath)).toEqual(["/fresh.ts"]);
   });
 
@@ -122,7 +140,7 @@ describe("useContentSearch", () => {
     // The first search resolved after being superseded: its backend id is
     // cancelled and results from search 2 keep flowing.
     expect(cancelContentSearch).toHaveBeenCalledWith(1);
-    eventHandler!({ payload: batch(2, [fileResult("/b.ts", [1])], true) });
+    emit(batch(2, [fileResult("/b.ts", [1])], true));
     expect(search.flattened.map((r) => r.filePath)).toEqual(["/b.ts"]);
   });
 
@@ -130,7 +148,7 @@ describe("useContentSearch", () => {
     startContentSearch.mockResolvedValue(okStart(1));
     const search = useContentSearch();
     await search.start("q", "/root", { caseSensitive: false, regexMode: false });
-    eventHandler!({ payload: batch(1, [fileResult("/old.ts", [1])], true) });
+    emit(batch(1, [fileResult("/old.ts", [1])], true));
     expect(search.flattened).toHaveLength(1);
 
     // Re-search: until the new stream emits, the old rows must stay.
@@ -138,7 +156,7 @@ describe("useContentSearch", () => {
     await search.start("q2", "/root", { caseSensitive: false, regexMode: false });
     expect(search.flattened.map((r) => r.filePath)).toEqual(["/old.ts"]);
 
-    eventHandler!({ payload: batch(2, [fileResult("/new.ts", [1])], true) });
+    emit(batch(2, [fileResult("/new.ts", [1])], true));
     expect(search.flattened.map((r) => r.filePath)).toEqual(["/new.ts"]);
   });
 
@@ -160,7 +178,7 @@ describe("useContentSearch", () => {
     startContentSearch.mockResolvedValue(okStart(1));
     const search = useContentSearch();
     await search.start("q", "/root", { caseSensitive: false, regexMode: false });
-    eventHandler!({ payload: batch(1, [fileResult("/a.ts", [1])], true) });
+    emit(batch(1, [fileResult("/a.ts", [1])], true));
 
     startContentSearch.mockResolvedValue({ ok: false, error: "bad pattern" });
     await search.start("(", "/root", { caseSensitive: false, regexMode: false });
@@ -175,9 +193,7 @@ describe("useContentSearch", () => {
     await search.start("q", "/root", { caseSensitive: false, regexMode: false });
 
     // 7 matches in one file: collapsed to 5 + show-more row.
-    eventHandler!({
-      payload: batch(1, [fileResult("/big.ts", [1, 2, 3, 4, 5, 6, 7])], true),
-    });
+    emit(batch(1, [fileResult("/big.ts", [1, 2, 3, 4, 5, 6, 7])], true));
     expect(search.flattened).toHaveLength(6);
     expect(search.flattened.at(-1)?.isShowMore).toBe(true);
 
@@ -196,7 +212,7 @@ describe("useContentSearch", () => {
     startContentSearch.mockResolvedValue(okStart(4));
     const search = useContentSearch();
     await search.start("q", "/root", { caseSensitive: false, regexMode: false });
-    eventHandler!({ payload: batch(4, [fileResult("/a.ts", [1])]) });
+    emit(batch(4, [fileResult("/a.ts", [1])]));
 
     search.reset();
 
@@ -204,5 +220,129 @@ describe("useContentSearch", () => {
     expect(search.fileCount).toBe(0);
     expect(search.loading).toBe(false);
     await vi.waitFor(() => expect(cancelContentSearch).toHaveBeenCalledWith(4));
+  });
+
+  describe("late cancellation (#1579)", () => {
+    it("a superseded search's late cancellation leaves its replacement's results flowing", async () => {
+      const cancels: Array<() => void> = [];
+      cancelContentSearch.mockImplementation((_id: number) => {
+        const reply = deferred<{ ok: true; data: undefined }>();
+        cancels.push(() => reply.resolve({ ok: true, data: undefined }));
+        return reply.promise;
+      });
+      const search = useContentSearch();
+      startContentSearch.mockResolvedValueOnce(okStart(1));
+      await search.start("a", "/root", opts);
+
+      // B cancels A; C supersedes B while that cancellation is still pending.
+      // Only C reaches the backend start.
+      startContentSearch.mockResolvedValueOnce(okStart(3));
+      const b = search.start("ab", "/root", opts);
+      await search.start("abc", "/root", opts);
+      expect(cancels).toHaveLength(1);
+      for (const resolve of cancels) resolve();
+      await b;
+
+      emit(batch(3, [fileResult("/c.ts", [1])], true));
+      expect(search.flattened.map((r) => r.filePath)).toEqual(["/c.ts"]);
+      expect(search.loading).toBe(false);
+      expect(listeners.size).toBe(1);
+    });
+
+    it("a reset's late cancellation leaves the next search's results flowing", async () => {
+      const cancel = deferred<{ ok: true; data: undefined }>();
+      cancelContentSearch.mockImplementation(() => cancel.promise);
+      const search = useContentSearch();
+      startContentSearch.mockResolvedValueOnce(okStart(1));
+      await search.start("a", "/root", opts);
+
+      search.reset();
+      startContentSearch.mockResolvedValueOnce(okStart(2));
+      await search.start("b", "/root", opts);
+      cancel.resolve({ ok: true, data: undefined });
+      await new Promise((r) => setTimeout(r, 0));
+
+      emit(batch(2, [fileResult("/b.ts", [1])], true));
+      expect(search.flattened.map((r) => r.filePath)).toEqual(["/b.ts"]);
+      expect(search.loading).toBe(false);
+    });
+
+    it("detaches a superseded search's listener before asking the backend to cancel it", async () => {
+      const search = useContentSearch();
+      startContentSearch.mockResolvedValueOnce(okStart(1));
+      await search.start("a", "/root", opts);
+      let attachedAtCancel = -1;
+      cancelContentSearch.mockImplementation(async () => {
+        attachedAtCancel = listeners.size;
+        return { ok: true, data: undefined };
+      });
+      startContentSearch.mockResolvedValueOnce(okStart(2));
+      const next = search.start("b", "/root", opts);
+      expect(cancelContentSearch).toHaveBeenCalledWith(1);
+      expect(attachedAtCancel).toBe(0);
+      await next;
+      expect(listeners.size).toBe(1);
+    });
+
+    it("releases a listener whose registration resolves after its search was superseded", async () => {
+      const registration = deferred<void>();
+      listen.mockImplementationOnce(async (_name: string, handler: Handler) => {
+        listeners.add(handler);
+        await registration.promise;
+        return () => {
+          listeners.delete(handler);
+        };
+      });
+      const search = useContentSearch();
+      startContentSearch.mockResolvedValue(okStart(2));
+      const first = search.start("a", "/root", opts);
+      await search.start("b", "/root", opts);
+      registration.resolve();
+      await first;
+
+      expect(listeners.size).toBe(1);
+      expect(startContentSearch).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("stream attribution before the start IPC returns (#1581)", () => {
+    it("never shows another search's events, and applies its own early batches in order", async () => {
+      const reply = deferred<ReturnType<typeof okStart>>();
+      startContentSearch.mockReturnValueOnce(reply.promise);
+      const search = useContentSearch();
+      const started = search.start("q", "/root", opts);
+      await vi.waitFor(() => expect(startContentSearch).toHaveBeenCalledTimes(1));
+
+      // Another window's search, then this search's own first batches, all
+      // arrive before this window's start IPC has named its stream.
+      emit(batch(77, [fileResult("/foreign.ts", [1])], true));
+      emit(batch(5, [fileResult("/own-1.ts", [1])]));
+      emit(batch(5, [fileResult("/own-2.ts", [1])]));
+      expect(search.flattened).toHaveLength(0);
+      expect(search.loading).toBe(true);
+
+      reply.resolve(okStart(5));
+      await started;
+      expect(search.flattened.map((r) => r.filePath)).toEqual(["/own-1.ts", "/own-2.ts"]);
+      expect(search.loading).toBe(true);
+
+      emit(batch(77, [fileResult("/foreign-late.ts", [1])]));
+      emit(batch(5, [fileResult("/own-3.ts", [1])], true));
+      expect(search.flattened.map((r) => r.filePath)).toEqual(["/own-1.ts", "/own-2.ts", "/own-3.ts"]);
+      expect(search.loading).toBe(false);
+    });
+
+    it("drops held events when the start IPC fails", async () => {
+      const reply = deferred<{ ok: false; error: string }>();
+      startContentSearch.mockReturnValueOnce(reply.promise);
+      const search = useContentSearch();
+      const started = search.start("q", "/root", opts);
+      await vi.waitFor(() => expect(startContentSearch).toHaveBeenCalledTimes(1));
+      emit(batch(9, [fileResult("/foreign.ts", [1])]));
+      reply.resolve({ ok: false, error: "bad pattern" });
+      await started;
+      expect(search.flattened).toHaveLength(0);
+      expect(search.loading).toBe(false);
+    });
   });
 });

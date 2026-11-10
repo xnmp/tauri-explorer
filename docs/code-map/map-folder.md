@@ -95,7 +95,6 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `scm/ScmSection.svelte` — one SCM section (Merge/Staged/Changes/Untracked): collapsible header + flat list or folder tree rows with hover actions (history, stage/unstage, discard/remove, archive, Trash, .gitignore).
 - `scm/ScmCommitPanel.svelte` — branch line + flat/tree toggle, commit message (Enter commits, Ctrl/Cmd+Enter amends), Amend toggle, Commit button.
 - `ScmPanel.svelte` — standalone SCM panel (stage/unstage/commit lists).
-- `ScmDiffView.svelte` — unified diff viewer replacing FileList for a diff.
 - `GitGraphView.svelte` — commit-graph pane content (#51/#58); the uncommitted-changes node opens an inline stage/unstage/commit panel (#466, logic in `domain/commit-panel.ts`), arbitrary commit comparison transitions live in `git-graph-comparison.ts` (#512), failed GitHub Actions checks can expose their failed `gh` log inline from an open-PR badge (#521), branch/tag delete, branch rename, merge, and pull record session undo snapshots with a confirmed Ctrl+Z inverse (#513), and `GitAuthorAvatar.svelte` renders opt-out round author images with deterministic local fallbacks (#514).
 - `git-graph/GitGraphBanners.svelte` — PR action toolbar/status, standing detached-HEAD banner (#524) and cancellable network-operation banner (#528).
 - `git-graph/GitGraphHeader.svelte` — graph column header: graph/author/date resize separators (#341) and the branch-filter slot.
@@ -107,9 +106,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-graph/GitGraphPrDetail.svelte` — inline PR dropdown contents: actions, description/comments, failed CI checks + logs, review threads (#459, #521).
 - `git-graph/GitGraphCommitMenu.svelte` — commit context menu and references disclosure (anchor in `composables/use-git-graph-menu.svelte.ts`).
 - `git-graph/GitGraphDialogs.svelte` — rename/name prompts, pull offer, reset/delete suboption modals, PR action and undo confirmations.
-- `icons/FilesIcon.svelte`, `icons/ScmIcon.svelte` — activity-bar SVG icons.
+- `icons/FilesIcon.svelte` — activity-bar SVG icon.
 - `CommandPalette.svelte` — Ctrl+Shift+P command palette UI.
-- `QuickOpen.svelte` — Ctrl+P fuzzy file finder.
+- `QuickOpen.svelte` — Ctrl+P fuzzy file finder: rendering, keyboard handling and store wiring over `state/quick-open-session` (#1577).
 - `PickerQuickOpen.svelte` — Quick Open for the portal file-picker window (#190).
 - `ContentSearchDialog.svelte` — Ctrl+Shift+F grep-across-files dialog + streamed results.
 - `OptionPicker.svelte` — generic secondary list picker.
@@ -125,11 +124,12 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `settings/LayoutThemeSetting.svelte` — Settings → Appearance → Layout: selector, Open folder (layouts), Reset to Default, fallback reason (#1306).
 - `settings/ThumbnailSettings.svelte` — Settings → Appearance thumbnail rows: Tiles Thumbnail Size and the Details/List row-thumbnails toggle (#1465).
 - `settings/settings-select.css` — shared Settings dropdown styling (`.settings-select`).
+- `settings/settings-button.css` — shared Settings/Plugins row button chrome (`.settings-button`, destructive `.settings-button.danger`); immediate hover (#1529).
 - `PluginsDialog.svelte`, `PluginSettings.svelte` — lazy Plugins configuration surface; installed packages, contribution toggles and descriptor-driven settings, using shared modal ownership and viewport/zoom bounds.
 - `KeybindingsSettings.svelte` — keybinding customization UI in settings.
 - `ShortcutCheatsheet.svelte` — keyboard shortcut cheatsheet overlay.
 - `ThemePicker.svelte` — color/icon theme picker with live preview, commit and rollback; icon options show stable per-pack file samples.
-- `RenameDialog`? see `dialogs.svelte.ts`; dialogs present: `DeleteDialog.svelte`, `ConflictDialog.svelte` (paste conflict overwrite/skip), `BulkRenameDialog.svelte`, `WorkspaceDialog.svelte` (save/restore workspaces), `ProgressDialog.svelte` (copy/move/extract progress), `InlineNewFolder.svelte` (inline new-entry input — folder or file, per `explorer.newEntryKind`), `FilePicker.svelte` (portal file-picker window).
+- `RenameDialog`? see `dialogs.svelte.ts`; dialogs present: `DeleteDialog.svelte`, `ConflictDialog.svelte` (paste conflict overwrite/skip), `WorkspaceDialog.svelte` (save/restore workspaces), `ProgressDialog.svelte` (copy/move/extract progress), `InlineNewFolder.svelte` (inline new-entry input — folder or file, per `explorer.newEntryKind`), `FilePicker.svelte` (portal file-picker window).
 - `PreviewFolderList.svelte` — folder/ZIP children list in the Preview pane, with the collapsed single-folder indicator; rows go through the shared VirtualList so huge folders render only a windowed slice (#1040).
 - `PreviewPane.svelte` — file preview (image/text/markdown/syntax/CSV table); CSV rows use the shared VirtualList with one shared column template and an outer horizontal scroll surface (#666). Image to image, the previous image stays (spinner over it when slow) until the next is decoded, so a selection change never blanks or re-lays out the pane (`e2e/preview-selection-stability.spec.ts`).
 - `PreviewDiffView.svelte` — the preview's SCM diff region: working-tree diff with Open File/Stage/Unstage/Discard, or a graph-routed commit/comparison diff (#366); loads through `state/preview-diff.svelte.ts`, renders lines with `PreviewDiffLines`.
@@ -171,9 +171,10 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-graph-query.svelte.ts` — mounted history/pagination owner, including merge-base target paging; shared reloader, captured query/walk, partial log paint, page-zero cache and invocation-scoped cleanup.
 - `src/lib/state/git-graph-detail.svelte.ts` — Selected commit/comparison files, mutation refresh tokens and inline diff ownership.
 - `git-pr-mutations.svelte.ts` — repository-scoped pending PR mutation ownership and retained outcomes across graph mounts; uncertain retries require acknowledgement.
-- `git-pr-session.svelte.ts` — mounted GitHub badge, PR detail and CI log requests; immutable snapshots, invocation identities and disposal.
+- `git-pr-session.svelte.ts` — mounted GitHub badge, PR detail and CI log requests; immutable snapshots, request-slot tokens (domain/request-slot.ts) and disposal.
 - `git-branch-status.svelte.ts` — newest-reload-only owner of the graph's trunk-aware branch-status badges (#1081); disposal and superseded reloads cannot publish.
 - `git-graph-branches.svelte.ts` — lazy branch/author metadata and cancellable merge-base jump owner; known-coverage fallback and query/popover request coordination.
+- `slot-cell.svelte.ts` — reactive home for a `domain/request-slot` slot: untracked `get`/`set` for commands, tracked `view` for `$derived` getters, so commands never subscribe their caller and getters notify only on their own value (#1569).
 - `git-graph-actions.svelte.ts` — git-graph mutations (checkout, cherry-pick, merge, reset, branch/tag create/rename/delete, remote delete, pull offer, confirmed undo, F5 fetch) and the prompt/modal state they drive; every mutation ends in `refreshAfterGitMutation`.
 - `git-graph-expansion.svelte.ts` — the graph's single inline expansion (commit details XOR PR dropdown) with its measured heights.
 - `git-graph-history-filter.svelte.ts` — per-repo branch subset / local-only / remote-only filters (persisted) and the ephemeral file-path filter.
@@ -201,6 +202,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `preview-resolution.ts` — full resolution on demand: loads the shown rendition's original once, off-screen, and hands it back only while that rendition is still shown (#1054).
 - `terminal-key-handler.ts` — xterm key adapter: eligible command ownership precedes clipboard/readline effects, with modifier tracking and chord retirement.
 - `pdf-preview.svelte.ts` — latest-document/page intent and detached-canvas render lifetimes; releases departed pages and cancels owned PDF workers (#728–#730).
+- `terminal-cwd-sync.ts` — terminal-follows-explorer cwd sync controller: one idle|queued state, injected status/write/scheduler deps, epoch guard so late status results never touch a dead/replaced shell (#1566); owns the follow dedupe and reconciles every newly spawned shell with the explorer's current path via `startFollowingShell` (#1580).
 - `terminal-session.ts` — frontend terminal reservation/listener/spawn lifetime; drains late resources and serializes restart/stop. Owns the session's only input path (`domain/terminal-input-queue.ts`): opened at start/restart so typeahead is kept, attached at reservation, closed on stop/exit; `insert` builds text (path insertions) in the spawned shell's dialect and holds it across an exited shell for the next start (#709, #882).
 - `repo-root-cache.svelte.ts` — bounded reactive repository discovery with positive/negative TTL, shared probes and invalidation-safe publication.
 - `owned-registry.ts` — framework-free contribution registration identity; old disposers cannot remove replacements even when values are reused.
@@ -216,8 +218,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `open-with.svelte.ts` — captured application-choice sessions, late-result rejection and single launch lifecycle.
 
 - `recycle-bin.ts` — turns the native Recycle Bin IPC result into a user-visible failure toast; called by the Trash view's "Open in System File Manager" action (`trash-location.ts`).
-- `trash-provider.ts` — eager half of the in-app Trash (#863): registers the built-in `trash://` fs provider (installed by `+page.svelte`) and lazily loads `trash-location.ts`, passing it the startup-graph context-menu registry.
-- `trash-location.ts` — lazy half of the in-app Trash: lists through `list_trash`, reports unreadable sources once, registers the `scope: "trash"` Restore / Open in System File Manager menu actions, restores selected entries and refreshes open Trash views through the local file-change subscription. Contracts in `tests/state/trash-location.test.ts`.
+- `trash-provider.ts` — eager half of the in-app Trash (#863): registers the built-in `trash://` fs provider (installed by `+page.svelte`) and lazily loads `trash-location.ts`, passing it the startup-graph context-menu registry. `dropTrashEntries` is the drop seam for Trash drags (#1554), forwarding to the lazy route.
+- `trash-location.ts` — lazy half of the in-app Trash: lists through `list_trash`, reports unreadable sources once, registers the `scope: "trash"` Restore / Open in System File Manager menu actions, restores selected entries (or, for drops, `completeTrashDrop` → `restoreDroppedTrash` into a chosen folder via `restore_trash_items_to`, #1554) and refreshes open Trash views through the local file-change subscription. Contracts in `tests/state/trash-location.test.ts`.
 - `git-graph-component.ts` — resolved lazy graph component cache with an injected importer; coalesces first loads and preserves synchronous cached remounts.
 - `git-commit-files-cache.ts` — importable 50-entry LRU for immutable commit file lists; shared across graph remounts and behavior-tested through an injected loader.
 
@@ -275,6 +277,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `paste-operations.ts` — clipboard-mode dispatch to the copy or move session and cut-clipboard release.
 - `src/lib/state/html5-file-drag.svelte.ts` — listing/Miller filesystem source MIME and native handoff; Recent private link MIME without OS filesystem export; source lifetime protocol.
 - `src/lib/state/sidebar-navigation.ts` — sidebar mouse/keyboard navigation through the active pane's modal ownership gate.
+- `src/lib/state/quick-open-session.svelte.ts` — Quick Open query/rows and recursive-search stream lifecycle as one discriminated state: synchronous local matches, trailing debounce, listener-before-start with search-id adoption, synchronous detach before cancellation IPC, superseded-run rejection and browser fallback (#1577).
 - `src/lib/state/quick-open-navigation.ts` — Quick Open directory/path navigation: closes Quick Open, then admits the destination pane via `admitsCommandDestination` (#1096).
 - `src/lib/state/plugin-dom-ownership.ts` — host-issued component/root identities and nearest-root plugin ownership, shared by mounted contributions and file-drop API admission.
 - `src/lib/state/file-drop-targets.svelte.ts` — plugin element registrations, terminal disabled/modal resolution and idempotent teardown; reactive position-feedback identity shared with row/panel class bindings.
@@ -289,7 +292,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `undo-helpers.ts` — pure completion labels for renderer and native-only history actions.
 - `tests/state/undo-helpers.test.ts` — completion labels for native replacement history and recursive batch presentation; executable renderer input remains the separate UndoAction contract.
 - `operations.svelte.ts` — progress tracking for copy/move/delete/compress/extract.
-- `dialogs.svelte.ts` — global dialog open/close state (rename/delete/etc).
+- `dialogs.svelte.ts` — global dialog open/close state (rename/delete/etc); boolean overlays live in one reactive set keyed by the overlay registry (see below).
+- `src/lib/domain/overlays.ts` — boolean overlay registry (#1565): id tuple + pure open/close/toggle/closeAll/any over an immutable set. Add a payload-free dialog by adding one id.
 - `report-token.svelte.ts` — saved-GitHub-report-token state (configured/absent/unavailable) with save/clear through the write-only native commands (#1455).
 - `user-report-draft.svelte.ts` — debounced localStorage text drafts, window-lifetime image selections, and exclusive Report Issue submission ownership; accepted reports clear only the unchanged draft they submitted.
 - `context-menu.svelte.ts` — context menu open state + position.
@@ -322,6 +326,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `window-backdrop.ts` — Windows Mica/Acrylic translucent backdrop (CSS strength).
 - `workspaces.svelte.ts` — save/restore named workspaces.
 - `bookmarks.svelte.ts` — sidebar bookmarks store.
+- `config-document.ts` — `createConfigDocument`: shared init/migrate/reload/write-through lifecycle for bookmarks.json and folder-views.json (#1568); shape gates and the migration value are per-file options.
 - `recent-files.svelte.ts` — recent files store.
 - `shared-history.ts` — native history IPC FIFO, accepted-write flush, epoch-guarded refresh and store registration; browser fallback keeps local history.
 - `picker-search.ts` (state) — revision-owned delayed picker search; new input/close revoke stale results before the debounce.
@@ -347,7 +352,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `window-size.svelte.ts` — reactive `window.innerWidth`/`innerHeight` tracker (`windowSizeStore`); `+page.svelte` syncs on mount/resize. Feeds preview-pane auto-dock (#467).
 - `theme.svelte.ts` — active theme state + CSS var application.
 - `layout.svelte.ts` — eager layout-theme half (#1306): `layoutStore` paints `data-layout`/`data-layout-base` and injected layout sheets from a localStorage cache before mount, exposes the island arrangement, pane divider size and Details row height; `start()` follows `settings.layoutTheme` through the lazy controller.
-- `layout-controller.svelte.ts` — lazy layout-theme half (#1306): lists `layouts/`, resolves/falls back with one notice, loads Hairline Ledger's sheet, detects rule-less user CSS, generation-guards concurrent applications; used by the settings UI and layout picker.
+- `layout-controller.svelte.ts` — lazy layout-theme half (#1306): lists `layouts/`, resolves/falls back with one notice, loads the lazy built-in sheets (Hairline Ledger, Compact, Soft Cards), detects rule-less user CSS, generation-guards concurrent applications; used by the settings UI and layout picker.
 - `config-watch.ts` — applies `config-file-changed` to the settings/theme stores; `handleConfigFileChanged` is the routing seam (#599).
 - `terminal.svelte.ts` — embedded terminal panel state (#139).
 - `jobs.svelte.ts` — background jobs store (Ctrl+J); `retryJob` runs a failed job's `retry` once, then drops the entry or keeps it with the new error; a retrying entry is active (`isJobActive`: not dismissable or cleared); `dropRetries(owner)` for retired plugins.
@@ -439,7 +444,6 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-marquee-selection.svelte.ts` — rubber-band marquee: candidate set + hit-testing.
 - `use-type-ahead.svelte.ts` — type-to-select matching in file lists.
 - `use-column-resize.svelte.ts` — One keyed resize owner with session-local Details widths, visibility projection and ordered retirement.
-- `use-progressive-render.svelte.ts` — chunked render to avoid freeze on huge dirs.
 - `use-drop-target.svelte.ts` — directory-entry drop-target behavior; `retireDropFeedback` ends every folder's feedback at once (drop, dragend, leave).
 - `use-native-drop-target.svelte.ts` — position-based drop target detection, shared pane/window owner resolution and live modality admission for deferred destinations.
 - `use-native-drop-handler.ts` — handle native (external) OS file drops.
@@ -452,7 +456,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/composables/use-sidebar-drag-end.ts` — source-bound document dragend capture, bookmark fallback and gesture retirement.
 - `src/lib/composables/use-sidebar-file-drop.ts` — MIME-scoped Quick Access pinning and bookmark reorder, independent of retained file consumers.
 - `src/lib/composables/use-dom-directory-drop.ts` — shared importable folder/breadcrumb/tab/listing/Miller DOM transfer destinations and copy policies.
-- `use-content-search.svelte.ts` — content-search stream lifecycle for the dialog.
+- `use-content-search.svelte.ts` — content-search stream lifecycle for the dialog: one run per search owns its listener (detached synchronously before an unawaited cancel, #1579) and attributes events only by its start IPC's id (#1581).
 - `use-file-watchers.ts` — subscribe file-change/event listeners.
 - `use-window-lifecycle.ts` — window lifecycle (focus/close/resize) handlers.
 - `use-pane-dividers.svelte.ts` — single captured divider gesture per workspace; pointer/keyboard adapter with geometry and lifetime validation.
@@ -486,7 +490,6 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/domain/folder-peek-pane.ts` — explorer-applied peek decisions: selection/cursor pruning after a projection hides peeked children, reopening a lineage reveal that grouping regrouped late (`lateRevealChain`, #1443), and spring-peek drop folders (#1242).
 - `src/lib/domain/explorer-entries.ts` — explorer entry-list helpers: multi-entry clipboard labels and merging a selected context-menu entry the listing lacks.
 - `src/lib/domain/file-operation-selection.ts` — Explorer recursive batch reduction, symlink-overlap admission, drag-primary remapping, and archive roots (same-basename refusal).
-- `src/lib/domain/bulk-rename.ts` — bulk rename plan: name-part find/replace previews, per-folder collision keys, and descendant-first rename order.
 - `src/lib/domain/file-drop.ts` — validated internal payloads, full path-set verification and explicit DOM/native transport authority.
 - `src/lib/domain/native-drop-paths.ts` — filesystem-only path admission for native drops; excludes blob URLs, relative paths and traversal before any transfer, bookmark or terminal action.
 - `src/lib/domain/file-view-id.ts` — bounded, plugin-scoped file view id format, validated wherever ids are persisted with pane layouts.
@@ -516,6 +519,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `wsl.ts` — WSL path recognition.
 - `virtual-path.ts` — virtual (plugin-provided) path parsing, plus the eager `TRASH_PATH` / `isTrashPath` for the built-in Trash.
 - `trash.ts` — pure in-app Trash mapping (#863): `trash://` paths, trash wire entries → `FileEntry` with `trash` origin metadata, original-folder column text, source-issue and restore-outcome messages. Contracts in `tests/domain/trash.test.ts`.
+- `trash-drop.ts` — pure routing for dragging out of the Trash (#1554): Trash entry IDs from a drag source, and the drop target → restore-into-folder (or refusal) decision for pointer, DOM folder/listing and Bookmarks drops; lazy (imported only by `state/trash-location.ts`). Contracts in `tests/domain/trash-drop.test.ts`.
 - `drives.ts` — pure removable-drive tracking (isUnderRoot).
 - `load-diagnostics.ts` — pure slow directory-load traces (#1022): phase spans, 5 s threshold, frontend record, culprit diagnosis, bounded report text and chronological trace IDs. Contracts in `tests/domain/load-diagnostics.test.ts`.
 - `bookmark-drop-feedback.ts` — bookmark drop action feedback and effective local/cross-window drag-kind resolution (#675).
@@ -524,7 +528,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `command-keywords.ts` — hidden palette search synonyms per command ID (#1247).
 - `command-score.ts` — pure command-palette scorer (`scoreCommand`, frecency points); split from `fuzzy-score.ts` so it stays out of the startup graph (#1247).
 - `palette-selection.ts` — command-palette highlight by command id over a live result list (#1236).  Also the clamped PgUp/PgDn step shared with Quick Open (#1419).
-- `quick-open-search.ts` — trailing scheduler for the expensive recursive Quick Open search; local results remain immediate while a rapid query produces one backend request (#600).
+- `quick-open-search.ts` — Quick Open result limit and debounce constants, plus the trailing scheduler the file picker uses for its recursive search (#600).
+- `stream-correlation.ts` — holds broadcast search-stream events (Quick Open, content search) per stream id until the run's own start IPC names its stream, so no window adopts another search's events (#1581).
+- `quick-open-ranking.ts` — pure Quick Open ranking: recents/frecency and active-pane local matches, frecency/filename re-ranking of backend hits, deduplicating 20-row merge, Recent view, display path and debug score breakdown (#385, #651, #1577).
 - `lazy-dialog.ts` — failure-safe loading for code-split dialogs: rejected import (#584) or mount crash via svelte:boundary (#585) rolls back the dialog open-flag + notifies, preventing the hasModalOpen hotkey soft-lock.
 - `theme-list.ts` — dedupe discovered themes by id, last wins (user CSS overrides built-ins; duplicate ids crashed ThemePicker's keyed each, #585).
 - `word-boundary.ts` — word-boundary helpers (fuzzy/rename).
@@ -590,14 +596,13 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `image-viewer-zoom.ts` — pure fullscreen image zoom/pan math: clamped zoom, cursor-anchored zoom, pan, transform and the fullscreen key map (#219, #236, #1033).
 - `image-crop.ts` — full-resolution crop bounds and measured pointer mapping; fixed ICNS canvas projection with transparent padding (#681, crop UI/save implementation pending).
 - `preview-pane-position.ts` — validate/cycle preview dock edge right/bottom/top, plus "auto" mode/heuristic (`resolveAutoDockPosition`, #460, #467).
-- `nerd-icons.ts` — legacy Nerd Font glyph mappings.
-- `special-folders.ts` — special folder names (src, tests, node_modules, …) → kind, and per-icon-pack corner badge (sprite symbol, badge hue/paint, bottom-left badge geometry clear of the Tiles caret, Git status and symlink badges; #1527); loaded lazily (#1491). `specialFolderIconEntry` gives by-name surfaces a synthetic directory entry (#1499).
+- `special-folders.ts` — special folder names (src, tests, node_modules, …) → kind, and per-icon-pack corner badge (sprite symbol, badge hue/paint, bottom-left badge geometry clear of the Tiles caret, Git status and symlink badges; #1527); loaded lazily (#1491). `specialFolderIconEntry` gives by-name surfaces a synthetic directory entry (#1499). Google Drive folders (#1551: `gdrive`/`Google Drive`/`My Drive` names and GVfs `google-drive:host=` mount roots) get a tri-colour badge via the variant's `palette`, which `SpecialFolderArt` feeds to the glyph's `--special-folder-glyph-{a,b,c}` slots.
 - `file-icon-identity.ts` — pure file-icon identity and paint-category resolution, including filename precedence, aliases and folder identity.
 - `icon-themes.ts` — icon pack types and explicit-choice versus color-theme-suggestion policy.
 - `syntax-highlight.ts` — highlight.js wrapper for preview.
 - `csv-preview.ts` — quoted CSV parser for PreviewPane table data, bounded to the preview's data-row limit (#666); `csvRowHeight` / `csvColumnTemplate` table layout.
 - `html-preview-zoom.ts` — pure HTML preview page-zoom model: unmeasurable sandboxed frame scales a fixed ≥1280px desktop layout like an image (#1361), Fit, zoom stops and labels (#1352).
-- `pdf-preview.ts` — pure PDF fit, zoom-anchor, measured pointer coordinates, pan bounds and safe-link policy (#728–#730).
+- `pdf-preview.ts` — pure PDF fit, zoom-anchor, measured pointer coordinates, pan bounds and safe-link policy (#728–#730), and the one-row toolbar density for a measured CSS-px width (#1583).
 - `markdown.ts` — safe markdown render for preview; `renderMarkdownBlocks` yields lazily typeset top-level blocks (#1418).
 - `progressive-reveal.ts` — reveals a lazily rendered document one bounded slice per frame, starting the frame after the request and stopping once it is stale (#1418).
 - `versioned-lru.ts` — bounded LRU holding one version per key; storing a version drops the older one (Markdown preview cache, #1418).
@@ -615,6 +620,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `terminal-keys.ts` — terminal vs app key-ownership rules (#249/#260).
 - `preview-rendition.ts` — Preview rendition policy: surface CSS size × devicePixelRatio × app zoom → 1024/2048/3072 edge buckets; which paths may have one (mirrors the backend's extensions, never virtual paths); fullscreen/zoom need the original (#1054).
 - `latest-only.ts` — one task in flight, only the newest waiting task runs next; skipped Preview selections never queue rendition decodes (#1054).
+- `request-slot.ts` — latest-request-wins slot (idle/loading/ready/failed): token-gated `settleSlot` returns the same object when stale; `clearSlot`/`cancelSlot` revoke; optional previous data across reload and failure (#1569).
 - `ordered-writer.ts` — one-in-flight, coalescing ordered stream over an IPC transport that does not preserve call order; PTY input (#709).
 - `terminal-input-queue.ts` — the terminal's one input queue: strings and promises (paste reads, insertions) in call order, held until the terminal has an id, sent through an ordered writer with gap-free `terminal_write` sequence numbers; unsent input never crosses to a successor stream (#882).
 - `terminal-paste.ts` — per-platform paste source order with injected browser/native readers, and xterm-equivalent paste bytes (CR line endings, bracketed paste) (#732, #882).
@@ -670,6 +676,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `floating-islands.css` — Floating Islands, bundled in startup CSS and scoped to `[data-layout-base="floating-islands"]`.
 - `hairline-ledger.css` — Hairline Ledger, lazy `?inline` sheet injected like a user layout.
+- `compact.css` — Compact (#1548): Default surfaces, tight chrome, 22px Details rows; lazy `?inline` sheet.
+- `soft-cards.css` — Soft Cards (#1548): opaque bordered cards, no shadows, 6px gaps, flat arrangement; lazy `?inline` sheet.
 
 ## src/lib/types/
 
@@ -803,6 +811,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/test_support/recovery_private_storage.rs` — real filesystem policy outcomes for retained files, hardlinks, retirement and widened permissions.
 - `src-tauri/test_support/native_directory_contract.rs` — cross-platform real filesystem contracts for retained anchors, exclusive creation/rename, removal kinds, existence and invalid-name rejection.
 - `src-tauri/test_support/preview_rendition.rs` — rendition sizing, encoding (alpha → PNG, ICC, 4:4:4, no halos), EXIF orientation, originals kept, cache keying, single decode under concurrency, and the asset scope serving a dot-directory cache (#1054).
+- `src-tauri/test_support/warm_pool_state_test.rs` — `PoolState` lifecycle contracts plus a seeded differential test against the previous five-collection model kept as an executable reference (#1575).
 - `src-tauri/test_support/wayland_data_control_compositor.rs` — in-process `wayland-server` compositor with a seat and both data-control protocols; drives the Wayland Cut owner over the real wire protocol and can serve real `wl-clipboard` clients on a socket (#927).
 - `src-tauri/test_support/case_only_rename.rs` — runtime case-sensitivity contracts for rename, move, ordered-session conflicts and physical identity, shared by native-directory and recovery admission tests.
 
@@ -1114,7 +1123,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/test-support/lineage-provider.ts` — browser-test `entryLineage` provider over the mock filesystem: install, update (fires `changed`), optional load delay and `labels` (`e2e/lineage-peek.spec.ts`, `e2e/lineage-prompt-labels.spec.ts`).
 - `src/test-support/file-view-eligibility.svelte.ts` — reactive pending/answer and activation gate for browser file-view first-paint tests; imported only by the intercepted demo fixture.
 - `src/lib/plugins/runtime-sdk.ts`, `src/lib/plugins/svelte-runtime.d.ts` — frozen SDK and exact shared Svelte compiler/runtime bindings; host modules `ui/modal`, `ui/image-editor`, `ui/file-tiles` (capability `fileTiles`), `ui/file-tile` (capability `fileTile`, including `tileGridMetrics`); capability `tileSize` (`FileViewPane.tileSize`, file-tiles `size`); capability `jobRetry` (`PluginJobs.accept` registration `retry`).
-- `src/lib/components/InstalledPluginSettings.svelte` — install, enable, remove and activation errors in Settings.
+- `src/lib/components/InstalledPluginSettings.svelte` — install, enable, remove and activation errors in the Plugins menu, built from the shared `SettingRow`/`SettingToggle`/`settings-button.css` chrome (#1529).
 
 TraceExplorer's image UI, provider adapters and SQLite journal are maintained in https://github.com/xnmp/TraceExplorer rather than compiled into this host. Core crop outcomes remain covered in `e2e/image-crop.spec.ts` and `e2e/image-editor.spec.ts`.
 

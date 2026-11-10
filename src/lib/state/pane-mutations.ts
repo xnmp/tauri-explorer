@@ -177,6 +177,10 @@ export function createPaneMutations(ctx: PaneMutationContext) {
         frecencyStore.pruneNonExistent();
       }
     }
+    // Items on a volume without a usable trash were left untouched: the error
+    // says why, and they are offered for confirmed permanent deletion (#1550).
+    const noTrash = batch.data.trashUnavailable;
+    if (noTrash && origin.current()) dialogStore.startDelete(entries.filter((entry) => noTrash.includes(entry.path)), true);
     return error;
   }
 
@@ -316,5 +320,3 @@ export function createPaneMutations(ctx: PaneMutationContext) {
     compressToZip,
   };
 }
-
-export type PaneMutations = ReturnType<typeof createPaneMutations>;

@@ -1,6 +1,6 @@
 /**
  * Tests for file-types domain helpers: formatDate guards and
- * getExtension semantics (shared with nerd-icons).
+ * getExtension semantics.
  */
 import { describe, it, expect } from "vitest";
 import {
@@ -142,6 +142,15 @@ describe("AutoHotkey (.ahk) and shortcut (.lnk) file types", () => {
   it("gives them distinct colors (not the default gray)", () => {
     expect(getFileIconColor(entry("remap.ahk"))).toBe("#5f9e54");
     expect(getFileIconColor(entry("game.lnk"))).toBe("#4273ca");
+  });
+
+  it("does not treat binary office/PDF documents as text, but keeps plain-text documents", () => {
+    for (const name of ["a.doc", "a.docx", "a.xls", "a.xlsx", "a.ppt", "a.pptx", "a.odt", "a.ods", "a.odp", "a.pdf"]) {
+      expect(isTextFile(entry(name))).toBe(false);
+    }
+    for (const name of ["a.txt", "a.rtf", "a.csv", "a.md"]) {
+      expect(isTextFile(entry(name))).toBe(true);
+    }
   });
 
   it("treats .ahk as previewable code, but .lnk as opaque binary", () => {

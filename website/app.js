@@ -196,7 +196,7 @@ ${shot("content-search.png", "Ctrl+Shift+F in the app: streaming matches, groupe
           content: `
 <h1>Command palette</h1>
 <p class="lede">Every action in the app, one keystroke away.</p>
-<p>New folder, bulk rename, toggle hidden files, set wallpaper, open
+<p>New folder, toggle hidden files, set wallpaper, open
 terminal, show the git graph, report a bug — everything is a palette
 command with frecency-ranked search, and every command's shortcut is
 rebindable in Settings.</p>
@@ -292,8 +292,8 @@ ${shot("minimal.png", "The same app with everything stripped off.")}
           content: `
 <h1>Keyboard everything</h1>
 <p class="lede">Every shortcut rebindable. Every action reachable without a mouse.</p>
-<p>Type-ahead jumps to files as you type their name. <kbd>F2</kbd> renames (with
-bulk rename over selections), <kbd>Space</kbd> previews, chorded bindings are
+<p>Type-ahead jumps to files as you type their name. <kbd>F2</kbd> renames,
+<kbd>Space</kbd> previews, chorded bindings are
 supported, and <kbd>Ctrl+/</kbd> shows a live cheatsheet of your actual
 bindings — customizations included. Try it here.</p>
 ${shot("cheatsheet.png", "The in-app cheatsheet, generated from the live keymap.")}

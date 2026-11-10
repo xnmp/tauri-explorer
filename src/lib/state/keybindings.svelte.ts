@@ -28,7 +28,7 @@ export interface Keybinding {
 }
 
 /** Map of command ID to user's custom shortcut (null = explicitly unbound) */
-export type UserKeybindings = Record<string, string | null>;
+type UserKeybindings = Record<string, string | null>;
 
 const STORAGE_KEY = "explorer-keybindings";
 const MIGRATION_KEY = "explorer-keybindings-sidebar-migration";

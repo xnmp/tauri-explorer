@@ -1,22 +1,24 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DirectoryListingResult } from "$lib/state/directory-listing";
-import type { TrashPorts } from "$lib/state/trash-location";
+import type { TrashDropPorts, TrashPorts } from "$lib/state/trash-location";
 import type { TrashWireListing } from "$lib/domain/trash";
 import type { FileEntry } from "$lib/domain/file";
 
 const mocks = vi.hoisted(() => ({
   listTrash: vi.fn(),
   restoreTrashItems: vi.fn(),
+  restoreTrashItemsTo: vi.fn(),
   deleteTrashItems: vi.fn(),
 }));
 
 vi.mock("$lib/api/trash", () => ({
   listTrash: mocks.listTrash,
   restoreTrashItems: mocks.restoreTrashItems,
+  restoreTrashItemsTo: mocks.restoreTrashItemsTo,
   deleteTrashItems: mocks.deleteTrashItems,
 }));
 
-import { installTrashActions, listTrashLocation, restoreFromTrash } from "$lib/state/trash-location";
+import { completeTrashDrop, installTrashActions, listTrashLocation, restoreDroppedTrash, restoreFromTrash } from "$lib/state/trash-location";
 import { installTrashLocation } from "$lib/state/trash-provider";
 import { createExplorerState, type ExplorerInstance } from "$lib/state/explorer.svelte";
 import { registerFsProvider, clearFsProviders } from "$lib/plugins/fs-providers";
@@ -99,6 +101,65 @@ describe("listTrashLocation", () => {
 
   it("refuses to open a trashed folder in place", async () => {
     await expect(listTrashLocation("trash://a1", ports())).rejects.toThrow("Restore this folder");
+  });
+});
+
+describe("restoreDroppedTrash (#1554)", () => {
+  function dropPorts(restoreTo: TrashDropPorts["restoreTo"]) {
+    return { restoreTo, success: vi.fn(), error: vi.fn(), publish: vi.fn() };
+  }
+
+  it("restores IDs into the drop folder and refreshes it with the Trash", async () => {
+    const restoreTo = vi.fn(async () => ({ ok: true as const, data: { succeeded: ["/work/report.txt", "/work/notes.txt"], failed: [] } }));
+    const port = dropPorts(restoreTo);
+    await restoreDroppedTrash(["a1", "b2"], "/work", new Map(), port);
+    expect(restoreTo).toHaveBeenCalledExactlyOnceWith(["a1", "b2"], "/work");
+    expect(port.publish).toHaveBeenCalledExactlyOnceWith(["/work"]);
+    expect(port.success).toHaveBeenCalledExactlyOnceWith("Restored 2 items to /work");
+    expect(port.error).not.toHaveBeenCalled();
+  });
+
+  it("names refusals by their target, or by the dragged row for a stale ID", async () => {
+    const port = dropPorts(vi.fn(async () => ({ ok: true as const, data: { succeeded: ["/work/a.txt"], failed: [
+      { path: "/work/report.txt", error: "/work/report.txt already exists. Rename or move it, then restore again." },
+      { path: "b2", error: "This item is no longer in the trash list. Refresh the Trash and try again." },
+    ] } })));
+    const summary = await restoreDroppedTrash(["a1", "b2", "c3"], "/work", new Map([["b2", "notes.txt"]]), port);
+    expect(summary?.failed).toBe(true);
+    expect(port.error).toHaveBeenCalledExactlyOnceWith(
+      "Restored a.txt to /work/a.txt. Could not restore 2 items: report.txt: /work/report.txt already exists. Rename or move it, then restore again.; notes.txt: This item is no longer in the trash list. Refresh the Trash and try again.",
+    );
+    expect(port.publish).toHaveBeenCalledExactlyOnceWith(["/work"]);
+  });
+
+  it("reports a rejected command without refreshing anything", async () => {
+    const port = dropPorts(vi.fn(async () => ({ ok: false as const, error: "boom" })));
+    await restoreDroppedTrash(["a1"], "/work", new Map(), port);
+    expect(port.error).toHaveBeenCalledExactlyOnceWith("Could not restore from the Trash: boom");
+    expect(port.publish).not.toHaveBeenCalled();
+  });
+
+  it("routes a Trash drag's drop to restore-to, never a move by path", async () => {
+    mocks.restoreTrashItemsTo.mockResolvedValue({ ok: true, data: { succeeded: ["/work/a.txt", "/work/b.txt"], failed: [] } });
+    const source = { path: "trash://a1", name: "a.txt", kind: "file", paths: ["trash://a1", "trash://b2"] };
+    await completeTrashDrop(source, { type: "folder", path: "/work" });
+    expect(mocks.restoreTrashItemsTo).toHaveBeenCalledExactlyOnceWith(["a1", "b2"], "/work");
+    mocks.restoreTrashItemsTo.mockClear();
+    // Background drops use the pane's folder; the Trash's own pane changes nothing.
+    await completeTrashDrop(source, { type: "background", path: "" }, "/srv");
+    expect(mocks.restoreTrashItemsTo).toHaveBeenCalledExactlyOnceWith(["a1", "b2"], "/srv");
+    mocks.restoreTrashItemsTo.mockClear();
+    await completeTrashDrop(source, { type: "background", path: "" }, "trash://");
+    await completeTrashDrop(source, { type: "sidebar" });
+    expect(mocks.restoreTrashItemsTo).not.toHaveBeenCalled();
+    expect(mocks.restoreTrashItems).not.toHaveBeenCalled();
+  });
+
+  it("uses the restore-to command by default", async () => {
+    mocks.restoreTrashItemsTo.mockResolvedValue({ ok: true, data: { succeeded: ["/work/report.txt"], failed: [] } });
+    await restoreDroppedTrash(["a1"], "/work");
+    expect(mocks.restoreTrashItemsTo).toHaveBeenCalledExactlyOnceWith(["a1"], "/work");
+    expect(mocks.restoreTrashItems).not.toHaveBeenCalled();
   });
 });
 

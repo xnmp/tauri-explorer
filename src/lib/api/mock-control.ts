@@ -68,6 +68,11 @@ export interface MockGitCommit {
 export interface MockControl {
   /** Controllable complete listings for browser race/loading contracts. */
   directoryEntries?: (path: string) => import("$lib/domain/file").FileEntry[] | Promise<import("$lib/domain/file").FileEntry[]>;
+  /**
+   * Installed plugin packages served by `list_installed_plugins`; uninstall
+   * and enable/disable mutate this list in place (#1529). Absent = none.
+   */
+  installedPlugins?: import("$lib/plugins/installed").InstalledPackage[];
   /** Private native-receipt fixtures; no provider execution or durable custody simulation. */
   nativeAiPresentation?: MockAiPresentation;
   // ----- Preview / thumbnails: fixture overrides + action hooks -----
@@ -219,5 +224,3 @@ export const MOCK_LOCAL_KEYS = {
    *  before the app boots (see `MOCK_CONFIG_SEED_KEY` in mock-invoke.ts). */
   configSeed: "mock-config-files",
 } as const;
-
-export type MockLocalKey = (typeof MOCK_LOCAL_KEYS)[keyof typeof MOCK_LOCAL_KEYS];

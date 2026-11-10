@@ -143,14 +143,14 @@ desktop, rather than by Explorer configuration.
 
 ## Verification
 
-`src-tauri/tests/linux_removable_volumes.rs` exercises the production adapter
+`src-tauri/test_support/linux_removable_volumes.rs` exercises the production adapter
 against an isolated D-Bus service: read-only discovery, mount success and errors,
 stable identity, stale mount-table snapshots, removal, missing service, and label
 handling, plus the subscription: pushed mount/unmount/removal/insertion on one
 connection with no refetch, a change racing the first snapshot, a signal burst
 during a refetch, a timed-out refetch, post-mount resync, the backstop, bus
 loss and recovery, and a service restart without reconnecting.
-`src-tauri/tests/linux_mount_watch.rs` (opt-in, in a private user and mount
+`src-tauri/test_support/linux_mount_watch.rs` (opt-in, in a private user and mount
 namespace) proves a real bind mount and unmount are pushed promptly while tmpfs
 mounts stay silent; unit tests in `linux_mount_watch.rs` cover the change
 detection and the degraded (unpollable) path.

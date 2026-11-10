@@ -28,7 +28,6 @@ backend for E2E/browser).
 - `components/TileSurface.svelte`, `components/TileVisual.svelte`, `domain/tile-layout.ts` — the one tile implementation (chrome CSS, icon/name, geometry) shared by TilesView and the plugin SDK's `src/lib/components/FileTile.svelte` / `components/FileTiles.svelte`; change tiles here so both stay identical
 - `components/VirtualList.svelte` — windowing engine (visible-range calc, persistent extent canvas and positioned rows); settled scroll/layout callbacks keep marquees and explicitly revealed cursors aligned with current virtual rows
 - `domain/virtual-layout.ts` — row/col geometry math for the virtualizer
-- `composables/use-progressive-render.svelte.ts` — chunked reveal of large lists
 - `composables/use-row-grid-view.svelte.ts` — shared virtualization wiring (rows, DnD, new-folder sentinel, scrollToIndex) behind Tiles
 - `state/commands/view-commands.ts` — view.details/list/tiles, sort, columns cmds
 - `state/sort-prefs.ts`, `state/folder-views.svelte.ts` — per-folder view+sort persistence; `state/folder-tile-size.ts` resolves a folder's effective tile size (override, else global) for every consumer
@@ -156,6 +155,7 @@ backend for E2E/browser).
 - `state/pane-mutations.ts` — a non-permanent delete also publishes `trash://` so open Trash views refresh (they have no watcher).
 - `state/recycle-bin.ts`, `api/open.ts`, `src-tauri/src/system.rs` — `open_recycle_bin` remains as the external launcher: Linux sends `trash:///` directly to FileManager1, falling back only on definite service unavailability to a registered graphical file manager opening the absolute `Trash/files` directory; Windows and macOS retain their native shell launchers.
 - FLOW: sidebar click → `navigateTo("trash://")` → provider → `list_trash`; Restore → `restore_trash_items` → per-item outcome toast + `publishTrashChanged`.
+- Drag out of the Trash (#1554): drop seams check `isTrashPath(source.path)` → eager `state/trash-provider.ts` `dropTrashEntries` → lazy `trash-location.ts` `completeTrashDrop` (`domain/trash-drop.ts` `routeTrashDrop`) → `restoreDroppedTrash` → `api/trash.ts` `restoreTrashItemsTo` → `file_mutation.rs` `restore_trash_items_to` → `files/trash_inventory.rs` `restore_to` (registry IDs + destination folder; retargets the listed artifact, refuses occupied names, the trash itself and another filesystem on Linux/macOS, then the same exact engine). Wired into `use-pointer-drag.svelte.ts` (macOS/Windows), `use-dom-directory-drop.ts` and `use-sidebar-file-drop.ts` (HTML5/Linux). Trash drags are private sources (`file-drop.ts` `isPrivateDragSource`): session URN instead of file URIs, no OS handoff. Routing stays lazy for the startup cap (`scripts/check-bundle-size.mjs`). Not undoable, like Restore. Coverage: `tests/domain/trash-drop.test.ts`, `tests/composables/trash-drop-dom.test.ts`, `tests/composables/pointer-drag.test.ts`, `tests/state/trash-location.test.ts`, `src-tauri/test_support/trash_inventory.rs`, `e2e/trash-drag-restore.spec.ts`.
 
 ## Window tabs
 
@@ -286,7 +286,6 @@ backend for E2E/browser).
 
 - `composables/use-inline-rename.svelte.ts` — inline edit field lifecycle
 - `components/EntryName.svelte` — name label + inline rename input; the label itself is `components/EntryNameLabel.svelte`
-- `components/BulkRenameDialog.svelte` — multi-file pattern rename; its plan (previews, per-folder collisions, descendant-first order) is `domain/bulk-rename.ts`
 - `components/InlineNewFolder.svelte` — inline new-entry create (folder or file, per `explorer.newEntryKind`; #436)
 - `state/rename-suggestion.svelte.ts`, `domain/ai-rename.ts`, `api/ai-rename.ts` — AI rename suggestions
 - `api/files.ts` (renameEntry, createDirectory, createEmptyFile), `api/file-mutations.ts`, `src-tauri/src/file_mutation.rs` — native forward admission and settled history receipts; reusable filesystem primitives remain in `files/file_ops.rs`.
@@ -334,7 +333,7 @@ backend for E2E/browser).
 - `domain/scroll-jank-monitor.ts` — pure rAF-gap sampler (long-frame count, worst gap, duration); rAF/cancel injected so it's unit-testable with synthetic frame timelines
 - `state/thumbnail-cache.ts` — in-memory cache (`getThumbnailCache`, `renameThumbnailCache`)
 - `state/thumbnail-loads.ts` — loads shared by key (`thumbnailLoads.watch`): pools, on-screen gating, cache publication after the tile unmounts
-- `api/thumbnails.ts` — getThumbnail/getThumbnailData/getMicroThumbnail/getVideoThumbnailData/getFolderPreview — per-item requests, deliberately not batched (a batched-IPC scheduler was tried and removed twice: it clumps responses into one main-thread burst and measures worse for scroll pacing than per-item dispatch even though it wins on raw throughput, #593)
+- `api/thumbnails.ts` — getThumbnailData/getMicroThumbnail/getVideoThumbnailData/getFolderPreview — per-item requests, deliberately not batched (a batched-IPC scheduler was tried and removed twice: it clumps responses into one main-thread burst and measures worse for scroll pacing than per-item dispatch even though it wins on raw throughput, #593)
 - `domain/folder-preview.ts` — folder-preview shaping
 - `src-tauri/src/thumbnails/preview_rendition.rs` (+ `src-tauri/test_support/preview_rendition.rs`) — Preview pane renditions live in this cache's `previews/` subdirectory (own 300 MB budget): `{key}.preview.{jpg,png}` under a namespaced key, same inflight lock, decode gate and pruning; startup adds that directory to the asset scope (#1054)
 - `src-tauri/src/thumbnails.rs` — disk cache, image/video decode; `with_decode_gate` bounds concurrent decodes to `cores/4` (2-8, `TAURI_EXPLORER_DECODE_PERMITS` override) and lowers decode-thread priority so decodes don't starve the webview compositor; `diag` module logs slow (>100ms) requests + rolling aggregates (#593); `files/dir_listing.rs` folder preview
@@ -395,7 +394,7 @@ backend for E2E/browser).
 
 - `components/ScmSidebarView.svelte` — staged/unstaged/untracked tree, commit box
 - `components/scm/*.svelte` (`ScmSection`, `ScmCommitPanel`), `state/scm-sidebar-actions.ts`, `domain/scm-sidebar.ts` — ScmSidebarView's regions, action/toast orchestration and pure row-order/commit-admission rules (#1372 split; same DOM/classes)
-- `components/ScmPanel.svelte`, `components/ScmDiffView.svelte` — panel shell + inline diff. ScmPanel renders docked/flat by default (like the miller bar); `island` prop opts into floating-island chrome (#434) — vibrancy alone no longer floats it.
+- `components/ScmPanel.svelte` — panel shell. ScmPanel renders docked/flat by default (like the miller bar); `island` prop opts into floating-island chrome (#434) — vibrancy alone no longer floats it.
 - `components/GitGraphView.svelte` — commit graph / log; its filter popover
   carries an ephemeral file-path query through `state/git-graph-cache.ts` to
   `git_log`, so pagination filters the complete history instead of only rows
@@ -419,7 +418,7 @@ backend for E2E/browser).
 - `state/git-graph-query.svelte.ts` — mounted graph history/page owner (merge-base navigation pages to the target) using the existing reloader; partial log paint precedes summary, stale query/append cleanup cannot overwrite replacements, complete page zero alone enters the shared cache.
 - `src/lib/state/git-graph-detail.svelte.ts` — Commit/comparison selection, current working-tree refresh and staged/unstaged inline diffs.
 - `state/git-pr-mutations.svelte.ts` — retained repository mutation admission, outcomes and explicit uncertain retry acknowledgement across pane remounts.
-- `state/git-pr-session.svelte.ts` — same-repository badge refresh, PR checks and CI logs use invocation identity and immutable payloads; close/reopen and disposal revoke stale completion.
+- `state/git-pr-session.svelte.ts` — same-repository badge refresh, PR checks and CI logs are `domain/request-slot.ts` latest-request-wins slots (token-gated settle, immutable payloads); close/reopen and disposal `clearSlot` so stale completion is ignored.
 - `src-tauri/src/git_branch_status.rs` → `api/git-log.ts` `gitBranchStatuses` → `state/git-branch-status.svelte.ts` → `domain/git-branch-status.ts` — trunk-aware merged/squashed/stale chip badges (#1081). Trunk is `<remote>/HEAD`, `init.defaultBranch`, `main`, `master` (never HEAD); badges never dim rows.
 - `state/git-graph-branches.svelte.ts` — merge-base lookup ownership and query/popover branch metadata requests coordinate current coverage; cold failure cannot silently cache an unfiltered graph under hide-remote-only, known coverage survives later failures.
 - `state/git-graph-debounced-reload.ts` — pending path-filter reload timer; `jumpToMergeBase`'s `onStart` cancels it so a reload cannot retire the lookup (#1281).
@@ -434,21 +433,25 @@ backend for E2E/browser).
 
 ## Quick Open (Ctrl+P fuzzy file finder)
 
-- `components/QuickOpen.svelte` — modal, streamed results, keyboard nav
-- `domain/quick-open-search.ts` — trailing debounce at the recursive backend-search boundary; active-pane/recent/frecency matches remain local and synchronous, while the merged rendered result set stays bounded (#600, #651)
+- `components/QuickOpen.svelte` — modal, keyboard nav, store wiring
+- `state/quick-open-session.svelte.ts` — query/rows and the recursive-search stream lifecycle (one discriminated state): local matches synchronous, trailing debounce before the backend walk, listener before start IPC, events attributed only by the id the start IPC returns (earlier ones held, #1581), new input/close detach the listener before cancellation IPC, superseded runs ignored (#600, #1577)
+- `domain/quick-open-ranking.ts` — pure local matching (recents/frecency/active pane), backend re-ranking, deduplicating merge capped at 20 rows (#385, #651)
+- `domain/quick-open-search.ts` — result-limit/debounce constants and the picker's trailing scheduler
+- `domain/stream-correlation.ts` — holds early broadcast stream events by id until the start IPC names the run's stream; shared with content search (#1581)
 - `components/PickerQuickOpen.svelte` — variant used inside file picker
 - `domain/fuzzy-score.ts` — match scoring/ranking
 - `domain/command-keywords.ts` — hidden command-palette synonyms (hotkeys → Keyboard Shortcuts), consumed by `scoreCommand`
 - `domain/command-score.ts` — command-palette scoring (lazy; split from fuzzy-score for the startup cap)
 - `api/search.ts` — `startStreamingSearch`, `fuzzySearch`, `cancelSearch`
 - `src-tauri/src/search.rs`, `search_cache.rs` — nucleo fuzzy engine, streaming emits, and a bounded short-lived cache of completed recursive listings (#651)
-- FLOW: query → bounded local matches render immediately; trailing `quick-open-search` scheduler → startStreamingSearch → recursively-covered watched-root completed listing cache or cold backend walk → backend emits result chunks (race-safe: listener before invoke) → sorted by fuzzy-score → Enter navigates/opens. Quick Open installs separate recursive invalidation coverage only for cache-eligible roots, leaving pane/thumbnail refresh watches non-recursive; uncovered or unwatched roots walk fresh. Descendant filesystem changes invalidate affected ancestor/descendant caches. Removing any recursive registration rebuilds all surviving registrations; coverage transitions advance exact-root revisions so overlapping parent/child roots retain real OS coverage without evicting unchanged listings. Cancelled cold walks are not published.
+- FLOW: query → bounded local matches render immediately; trailing `quick-open-session` debounce → startStreamingSearch → recursively-covered watched-root completed listing cache or cold backend walk → backend emits result chunks (race-safe: listener before invoke) → sorted by fuzzy-score → Enter navigates/opens. Quick Open installs separate recursive invalidation coverage only for cache-eligible roots, leaving pane/thumbnail refresh watches non-recursive; uncovered or unwatched roots walk fresh. Descendant filesystem changes invalidate affected ancestor/descendant caches. Removing any recursive registration rebuilds all surviving registrations; coverage transitions advance exact-root revisions so overlapping parent/child roots retain real OS coverage without evicting unchanged listings. Cancelled cold walks are not published.
 
 ## Content search (grep, Ctrl+Shift+F)
 
 - `components/ContentSearchDialog.svelte` — query/results UI
 - `composables/use-content-search.svelte.ts` — search lifecycle, streamed hits
 - `domain/content-search-flatten.ts` — file→line-hit flattening for list
+- `domain/stream-correlation.ts` — early-event attribution by stream id (see Quick Open, #1581)
 - `api/search.ts` — `startContentSearch`, `cancelContentSearch`
 - `src-tauri/src/content_search.rs` — ripgrep-based grep, streaming
 - FLOW: query → startContentSearch → backend emits per-file matches → flattened → click opens `openFileAtLine`.
@@ -483,7 +486,7 @@ backend for E2E/browser).
 
 - `components/SettingsDialog.svelte` — general settings and links to Keyboard Shortcuts and Plugins.
 - `components/settings/SettingRow.svelte`, `settings/SettingToggle.svelte`, `settings/TerminalShortcutSettings.svelte`, `settings/ExperimentalSettings.svelte` — row/switch chrome and the terminal shortcut recorder; `domain/settings-rows.ts` holds the search terms driving row/section visibility.
-- `components/PluginsDialog.svelte`, `components/PluginSettings.svelte` — dedicated lazy Plugins menu; package installation, contribution toggles and descriptor settings. Plugin settings actions and the Plugins palette command open this surface.
+- `components/PluginsDialog.svelte`, `components/PluginSettings.svelte` — dedicated lazy Plugins menu; package installation, contribution toggles and descriptor settings. Plugin settings actions and the Plugins palette command open this surface. Its rows reuse `settings/SettingRow.svelte`, `settings/SettingToggle.svelte` and `settings/settings-button.css` (#1529).
 - `state/settings.svelte.ts` — `settingsStore` (persisted flags/values)
 - `state/persisted.ts` — localStorage load/save helpers
 - `domain/settings-migration.ts` — versioned migrations for the persisted blob; add an entry here whenever a DEFAULT flips, or existing installs keep the old value (#471/#506)
@@ -496,7 +499,7 @@ backend for E2E/browser).
 ## Sidebar (bookmarks / recent / drives)
 
 - `components/Sidebar.svelte`, `components/FilesSidebarView.svelte` — sidebar shell + files tree
-- `state/bookmarks.svelte.ts` — `bookmarksStore` (pinned folders)
+- `state/bookmarks.svelte.ts` — `bookmarksStore` (pinned folders); `state/config-document.ts` is the shared config-file lifecycle it and `folder-views.svelte.ts` use (#1568)
 - `domain/quick-access.ts` + `state/home.svelte.ts` — default Quick Access rows are derived from the resolved home directory only; while `get_home_directory` is in flight there are no rows, because a placeholder root produced navigable `/home/Documents` links that stranded the pane on "Path not found" (#702)
 - `state/recent-files.svelte.ts` — `recentFilesStore`
 - `state/drives.svelte.ts` — `drivesStore` (discovered volumes; only non-null paths count as mounted roots; `drives-changed` push + backstop/fallback poll; a parked warm window reads once, and its push/poll feeds wait until `page-foreground` opens, #931). `domain/drives.ts::sidebarCloudDrives` omits the Google Drive shortcut from the sidebar while retaining its discovery and navigable mount (#731).
@@ -583,6 +586,7 @@ backend for E2E/browser).
 ## Terminal panel
 
 - `state/terminal-key-handler.ts` — shared xterm adapter resolves eligible Explorer command ownership before clipboard/readline side effects (#759)
+- `state/terminal-cwd-sync.ts` — cwd-sync queue/poll machine (idle|queued), follow dedupe, and the post-spawn reconcile (`startFollowingShell`) so a shell started during navigation follows the explorer; pure rules in `domain/terminal-cwd-sync.ts`; TerminalPanel only wires deps (#1566, #1580)
 - `state/terminal-session.ts` — frontend resource owner for reserve/listen/spawn/kill; late completions drain before restart/disposal. All PTY input (keys, shortcut bytes, pastes, path insertions, `cd` sync) goes through `session.write` into `domain/terminal-input-queue.ts`, which accepts promises so a clipboard read or a dialect-dependent insertion keeps its key position (#709, #882).
 - `domain/terminal-paste.ts` — paste source order per platform (#732) and the bytes xterm's `paste()` would emit.
 - `src-tauri/src/terminal/input.rs` — the ordering guarantee: `terminal_write(id, seq, data)` is admitted in `seq` order whatever order the async commands run in; typeahead before the PTY exists is held (64 KiB). An overflow discards ALL pre-start input, reports it in the receipt, and the panel logs it and shows a toast. One writer thread per PTY (#882).

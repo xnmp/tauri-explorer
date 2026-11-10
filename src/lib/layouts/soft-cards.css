@@ -1,0 +1,160 @@
+/*
+ * @name Soft Cards
+ * @description Panels as quiet rounded cards with thin borders and no shadows.
+ *
+ * Built-in layout theme (#1548): a middle ground between Default and Floating
+ * Islands. The sidebar, pane area and preview become opaque cards (6px
+ * radius, 1px border, no shadow, no blur) separated by 6px of a slightly
+ * darker window backdrop; title bar and status bar sit on that backdrop.
+ *
+ * Written only against the layout contract (docs/layout-themes.md). Loaded
+ * lazily and injected after all application CSS, like a user layout. The
+ * arrangement is flat: split dividers stay 6px, the same as the card gap, so
+ * split panes read as separate cards without the islands structure.
+ *
+ * Surfaces are opaque on purpose: the Details column header is sticky over
+ * scrolling rows, so the chrome surface behind it must never be transparent.
+ */
+
+:root {
+  --layout-gap: 6px;
+  --layout-inset: 0 6px 0 6px;
+  --layout-radius: 6px;
+  --layout-border: 1px solid var(--soft-cards-edge);
+  --layout-shadow: none;
+  --layout-surface: linear-gradient(var(--background-card), var(--background-card)), var(--background-solid);
+  --layout-chrome-surface: var(--layout-surface);
+  --layout-hairline: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  --soft-cards-edge: color-mix(in srgb, var(--text-primary) 10%, transparent);
+  --soft-cards-backdrop: color-mix(in srgb, var(--background-solid) 86%, black);
+  /* Structural card (sidebar): the secondary card tone, so content reads as
+     the foreground surface. */
+  --soft-cards-structural:
+    linear-gradient(
+      var(--background-card-secondary, var(--background-card)),
+      var(--background-card-secondary, var(--background-card))
+    ),
+    var(--background-solid);
+}
+
+/* Window backdrop. Native material, when present, shows through instead;
+   the cards themselves stay opaque either way. */
+:root [data-region="app"] {
+  background: var(--soft-cards-backdrop);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+:root[data-native-backdrop] [data-region="app"] {
+  background: transparent;
+}
+
+:root [data-region="backdrop"] {
+  display: none;
+}
+
+/* Title bar: tabs float on the backdrop as small cards; no fillets fusing the
+   active tab into the content. */
+:root [data-region="titlebar"] {
+  background: transparent;
+  box-shadow: none;
+  align-items: center;
+}
+
+:root [data-region="titlebar"]::before,
+:root [data-region="tab-strip"]::after,
+:root [data-region="tab-fillet"] {
+  display: none;
+}
+
+:root [data-region="tab"] {
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: var(--layout-radius);
+  background: transparent;
+  transform: none;
+}
+
+:root [data-region="tab"][aria-selected="true"] {
+  background: var(--layout-surface);
+  border-color: var(--soft-cards-edge);
+  box-shadow: none;
+  color: var(--text-primary);
+}
+
+/* Sidebar card. */
+:root [data-region="sidebar"] {
+  overflow: hidden;
+}
+
+:root [data-region="sidebar-body"] {
+  background: var(--soft-cards-structural);
+  box-shadow: none;
+  border: none;
+}
+
+:root [data-region="sidebar-item"] {
+  border-radius: 4px;
+}
+
+/* Pane card. A single pane is the card; in a split the container steps aside
+   and each pane becomes its own card. */
+:root [data-region="panes"] {
+  overflow: hidden;
+}
+
+:root [data-region="panes"][data-split] {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+:root [data-region="panes"][data-split] [data-region="pane"] {
+  border: var(--layout-border);
+  border-radius: var(--layout-radius);
+  overflow: hidden;
+}
+
+:root [data-region="panes"][data-split] [data-region="pane"][data-active] {
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+/* The divider is the gap between cards, not a drawn line, even while hovered
+   or dragged; the base rules key the line on the split direction, so only
+   !important outranks them here. */
+:root [data-region="split-divider"] {
+  border-color: transparent !important;
+}
+
+:root [data-region="toolbar"] {
+  border-bottom-color: var(--layout-hairline);
+}
+
+:root [data-region="row"] {
+  border-radius: 4px;
+}
+
+/* Preview card. */
+:root [data-region="preview"] {
+  overflow: hidden;
+}
+
+:root [data-region="preview-body"]:not([data-fullscreen]) {
+  border-left: none;
+}
+
+:root[data-preview-fullscreen] [data-region="preview"] {
+  overflow: visible;
+}
+
+:root [data-region="scm"][data-island] {
+  border: var(--layout-border);
+  border-radius: var(--layout-radius);
+  box-shadow: none;
+}
+
+/* Status bar: quiet text on the backdrop. */
+:root [data-region="status-bar"] {
+  background: transparent;
+  box-shadow: none;
+}

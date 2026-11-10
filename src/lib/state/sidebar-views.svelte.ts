@@ -13,12 +13,12 @@
 
 import { loadPersistedRaw, savePersistedRaw } from "$lib/state/persisted";
 
-export interface SidebarViewDescriptor {
+interface SidebarViewDescriptor {
   id: string;
   label: string;
 }
 
-export const ALL_SIDEBAR_VIEWS: SidebarViewDescriptor[] = [
+const ALL_SIDEBAR_VIEWS: SidebarViewDescriptor[] = [
   { id: "files", label: "Explorer" },
 ];
 

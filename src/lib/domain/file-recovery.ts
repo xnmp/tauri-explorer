@@ -187,3 +187,124 @@ export function mergeRecoveryPresentation(previous: FileRecoverySnapshot, incomi
     }),
   };
 }
+
+export function cloneRecoveryItem(item: FileRecoveryItem): FileRecoveryItem {
+  return { ...item, retainedBytes: item.retainedBytes ?? null, actions: [...item.actions] };
+}
+
+// ---- Inspection lifecycle --------------------------------------------------
+//
+// The explicit "Inspect" probe of one record. `token` identifies the request
+// (the staleness fence); `generation` pins the record revision the result
+// describes. Every transition returns the SAME state object when the event is
+// stale, so callers can assign unconditionally.
+
+export type RecoveryInspection =
+  | { kind: "none" }
+  /** `previous` is the last completed inspection, still displayed while the
+   *  next probe runs (the UI shows it until it is replaced or cleared). */
+  | { kind: "loading"; id: string; generation: string; token: number; previous: FileRecoveryItem | null }
+  | { kind: "ready"; id: string; generation: string; item: FileRecoveryItem }
+  /** `id`/`generation` are null when the record was already gone at request time. */
+  | { kind: "failed"; id: string | null; generation: string | null; message: string };
+
+export const NO_RECOVERY_INSPECTION: RecoveryInspection = { kind: "none" };
+
+export function beginRecoveryInspection(state: RecoveryInspection, id: string, generation: string, token: number): RecoveryInspection {
+  const previous = state.kind === "ready" ? state.item : state.kind === "loading" ? state.previous : null;
+  return { kind: "loading", id, generation, token, previous };
+}
+
+/** The requested record is not in the snapshot at all. */
+export function unavailableRecoveryInspection(message: string): RecoveryInspection {
+  return { kind: "failed", id: null, generation: null, message };
+}
+
+export function isRecoveryInspectionRequest(state: RecoveryInspection, token: number): boolean {
+  return state.kind === "loading" && state.token === token;
+}
+
+/** The probe returned a snapshot. Ready if the record is still present;
+ *  otherwise there is nothing to show. */
+export function settleRecoveryInspection(
+  state: RecoveryInspection,
+  token: number,
+  items: readonly FileRecoveryItem[],
+): RecoveryInspection {
+  if (state.kind !== "loading" || state.token !== token) return state;
+  const item = items.find(({ id }) => id === state.id);
+  if (!item) return NO_RECOVERY_INSPECTION;
+  return { kind: "ready", id: state.id, generation: item.generation, item: cloneRecoveryItem(item) };
+}
+
+/** The probe's result could not be used (stale or invalid snapshot). */
+export function abandonRecoveryInspection(state: RecoveryInspection, token: number): RecoveryInspection {
+  return isRecoveryInspectionRequest(state, token) ? NO_RECOVERY_INSPECTION : state;
+}
+
+/** The probe failed. The error is shown only if the record is still at the
+ *  generation that was requested; otherwise the failure is moot. */
+export function failRecoveryInspection(
+  state: RecoveryInspection,
+  token: number,
+  items: readonly FileRecoveryItem[],
+  message: string,
+): RecoveryInspection {
+  if (state.kind !== "loading" || state.token !== token) return state;
+  const latest = items.find(({ id }) => id === state.id);
+  if (latest?.generation !== state.generation) return NO_RECOVERY_INSPECTION;
+  return { kind: "failed", id: state.id, generation: state.generation, message };
+}
+
+/** A new snapshot arrived. A settled inspection of a vanished or re-generated
+ *  record is dropped; an in-flight probe settles on its own. */
+export function reconcileRecoveryInspection(state: RecoveryInspection, items: readonly FileRecoveryItem[]): RecoveryInspection {
+  if ((state.kind !== "ready" && state.kind !== "failed") || state.id === null) return state;
+  const item = items.find(({ id }) => id === state.id);
+  return !item || item.generation !== state.generation ? NO_RECOVERY_INSPECTION : state;
+}
+
+export const recoveryInspectingId = (s: RecoveryInspection): string | null => (s.kind === "loading" ? s.id : null);
+export const recoveryInspectionId = (s: RecoveryInspection): string | null => (s.kind === "none" ? null : s.id);
+export const recoveryInspectionGeneration = (s: RecoveryInspection): string | null => (s.kind === "none" ? null : s.generation);
+export const recoveryInspectionItem = (s: RecoveryInspection): FileRecoveryItem | null =>
+  s.kind === "ready" ? s.item : s.kind === "loading" ? s.previous : null;
+export const recoveryInspectionError = (s: RecoveryInspection): string | null => (s.kind === "failed" ? s.message : null);
+
+// ---- Resolve / reclaim operation ---------------------------------------------
+
+/**
+ * The one store mutation allowed at a time: a per-item action (`resolving`)
+ * or explicit retention enforcement (`reclaiming`). Each owns its `token`, so
+ * only the operation that began a state can settle it — a shared fence let a
+ * resolve started during a reclaim strand the reclaim's busy flag (#1582).
+ */
+export type RecoveryOperation =
+  | { kind: "idle" }
+  | { kind: "resolving"; id: string; token: number }
+  | { kind: "reclaiming"; token: number };
+
+export const IDLE_RECOVERY_OPERATION: RecoveryOperation = { kind: "idle" };
+
+export function beginRecoveryOperation(id: string, token: number): RecoveryOperation {
+  return { kind: "resolving", id, token };
+}
+
+export function beginRecoveryReclaim(token: number): RecoveryOperation {
+  return { kind: "reclaiming", token };
+}
+
+/** Whether any operation is in flight; a new one must not start meanwhile. */
+export const isRecoveryOperationActive = (state: RecoveryOperation): boolean => state.kind !== "idle";
+
+export function isRecoveryOperation(state: RecoveryOperation, token: number): boolean {
+  return state.kind !== "idle" && state.token === token;
+}
+
+/** Finish operation `token`; a superseded or already-cleared one is a no-op. */
+export function settleRecoveryOperation(state: RecoveryOperation, token: number): RecoveryOperation {
+  return isRecoveryOperation(state, token) ? IDLE_RECOVERY_OPERATION : state;
+}
+
+export const isRecoveryReclaiming = (s: RecoveryOperation): boolean => s.kind === "reclaiming";
+export const recoveryBusyId = (s: RecoveryOperation): string | null => (s.kind === "resolving" ? s.id : null);

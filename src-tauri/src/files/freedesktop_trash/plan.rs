@@ -38,6 +38,10 @@ pub(crate) struct Prepared {
     pub(super) source_name: OsString,
     pub(super) source_version: EntryVersion,
     pub(super) source_mount: u64,
+    /// Whether the destination is a per-volume (topdir) trash. Only those
+    /// classify a refused private trash as the volume having no usable trash;
+    /// a failing home trash remains an ordinary error.
+    pub(super) mounted: bool,
     pub(super) layout: Arc<LayoutPlan>,
     pub(super) fallback: Option<Arc<LayoutPlan>>,
     pub(super) name: OsString,
@@ -130,13 +134,14 @@ impl Context {
             // Refuse before any layout is probed or created: the GVfs FUSE
             // root cannot hold `.Trash-$uid`, and falling back to a copy into
             // the home trash is excluded by ADR 0019 (#1508).
-            return Err(AppError::PermissionDenied(format!(
-                "{} is on a GVfs location (such as Google Drive) that has no trash; nothing was deleted. Use Delete Permanently instead",
+            return Err(AppError::TrashUnavailable(format!(
+                "{} is on a GVfs location (such as Google Drive) that has no trash; nothing was deleted",
                 original_path.display()
             )));
         }
         let home_mount = self.mounts.resolve_existing_ancestor(&self.data_home)?;
-        let (layout, probes) = if home_mount.id == source_mount.id {
+        let mounted = home_mount.id != source_mount.id;
+        let (layout, probes) = if !mounted {
             (
                 TrashLayout::Home,
                 Destinations {
@@ -147,7 +152,8 @@ impl Context {
         } else {
             (
                 TrashLayout::Mounted(source_mount.clone()),
-                LayoutProbe::mounted(source_mount)?,
+                LayoutProbe::mounted(source_mount)
+                    .map_err(|error| unavailable_on_mount(&original_path, error))?,
             )
         };
         if probes.iter().any(|probe| {
@@ -208,6 +214,7 @@ impl Context {
                 source_name,
                 source_version,
                 source_mount: source_mount.id,
+                mounted,
                 layout: Arc::new(probes.primary.plan),
                 fallback: probes.fallback.map(|probe| Arc::new(probe.plan)),
                 name,
@@ -438,7 +445,14 @@ impl DirectoryStep {
                     Err(error) => return Err(error.into()),
                 };
                 parent.sync()?;
-                validate_private(&child)?;
+                if let Err(error) = validate_private(&child) {
+                    // A filesystem that ignores the requested owner or mode
+                    // (rclone and other cloud FUSE mounts, #1550) can never
+                    // hold a private trash. Remove the empty directory this
+                    // step just created so the refusal leaves no residue.
+                    discard_created(parent, &self.name, &child);
+                    return Err(error);
+                }
                 Ok(child)
             }
         }
@@ -579,6 +593,43 @@ pub(super) fn verify_directory(
         ));
     }
     Ok(())
+}
+
+/// Classify a refused per-volume trash as the volume having no usable trash
+/// (#1550). Permission refusals cover a trash directory that is not private
+/// and user-owned (including one a FUSE filesystem cannot make private) and a
+/// volume root the user cannot create it in. The private-directory check
+/// itself is unchanged: nothing is ever written to such a directory.
+pub(super) fn unavailable_on_mount(original: &Path, error: AppError) -> AppError {
+    match error {
+        AppError::PermissionDenied(reason) => AppError::TrashUnavailable(format!(
+            "{} is on a volume without a usable trash ({reason}); nothing was deleted",
+            original.display()
+        )),
+        error => error,
+    }
+}
+
+/// Best-effort removal of an empty trash directory created by this execution
+/// and then refused. The name must still denote the created object; a
+/// replacement, or a directory that has gained entries, is left alone.
+pub(super) fn discard_created(parent: &Directory, name: &OsStr, created: &Directory) {
+    let same = match (
+        DirectoryIdentity::capture(created),
+        parent
+            .open_existing(name)
+            .map_err(AppError::from)
+            .and_then(|current| DirectoryIdentity::capture(&current)),
+    ) {
+        (Ok(created), Ok(current)) => created == current,
+        _ => false,
+    };
+    if !same {
+        return;
+    }
+    if let Err(error) = parent.unlink(name, true).and_then(|()| parent.sync()) {
+        log::debug!("Could not remove a refused new trash directory: {error}");
+    }
 }
 
 fn can_create(directory: &Directory) -> bool {

@@ -1,6 +1,6 @@
 [package]
 name = "tauri-explorer"
-version = "1.23.0"
+version = "1.24.0"
 description = "A keyboard-first file manager: fuzzy quick-open, ripgrep content search, a command palette for every action"
 authors = ["xnmp"]
 license = "MIT"
@@ -46,9 +46,9 @@ tauri = { version = "2", features = ["protocol-asset", "macos-private-api"] }
 # Local callback-time drag metadata observer in the existing vendored Wry.
 wry = { version = "0.57", default-features = false }
 tauri-plugin-opener = "2"
-tauri-plugin-shell = "2"
-tauri-plugin-drag = "2"
-drag = "2.1.1"
+# `serde` serialises the drag completion payload (`native_file_drag::Completion`);
+# tauri-plugin-drag used to enable it implicitly.
+drag = { version = "2.1.1", features = ["serde"] }
 clipboard-rs = "0.3.5"
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"

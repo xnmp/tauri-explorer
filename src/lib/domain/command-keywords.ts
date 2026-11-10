@@ -18,7 +18,6 @@ export const COMMAND_KEYWORDS: Readonly<Record<string, readonly string[]>> = {
   "file.delete": ["remove", "trash", "erase"],
   "file.permanentDelete": ["remove", "erase", "destroy"],
   "file.rename": ["move", "retitle"],
-  "file.bulkRename": ["batch rename", "mass rename", "rename many"],
   "file.newFolder": ["mkdir", "create directory", "make folder", "new directory"],
   "file.newFile": ["touch", "create file", "make file"],
   "general.openQuickOpen": ["go to file", "find file", "open file", "fuzzy finder"],

@@ -7,5 +7,5 @@
     "e2e-tauri/wdio.conf.ts"
   ],
   "project": ["src/**/*.{ts,svelte}", "scripts/**/*.ts"],
-  "ignore": ["src-tauri/**"]
+  "ignore": ["src-tauri/**", ".worktrees/**", ".claude/worktrees/**"]
 }

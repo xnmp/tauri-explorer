@@ -18,7 +18,7 @@ export function submitUserReport(
     contact: draft.contact || null,
     attachments: draft.attachments ?? [],
     diagnostics: draft.diagnostics || null,
-    useGitHubToken,
+    useGithubToken: useGitHubToken,
   });
 }
 
@@ -33,10 +33,6 @@ export function saveUserReportToken(token: string): Promise<void> {
 
 export function clearUserReportToken(): Promise<void> {
   return invoke<void>("clear_user_report_token");
-}
-
-export function readClipboardReportImage(): Promise<UserReportAttachment> {
-  return invoke<UserReportAttachment>("clipboard_read_report_image");
 }
 
 export function readClipboardReportAttachment(): Promise<UserReportAttachment> {

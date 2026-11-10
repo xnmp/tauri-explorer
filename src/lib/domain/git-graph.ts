@@ -28,7 +28,7 @@ export interface GraphCommitLike {
 }
 
 /** A point on the layout grid: `lane` = column, `row` = commit index. */
-export interface GraphPoint {
+interface GraphPoint {
   lane: number;
   row: number;
 }
@@ -589,13 +589,6 @@ export function scrollTopToReveal(
   return scrollTop;
 }
 
-/**
- * SVG path for one branch line. Reference geometry: lane changes are cubic
- * beziers whose control points are PURE VERTICAL offsets (d = 0.8 × row
- * height) from each endpoint — vertical tangents at both ends, so stacked
- * curves join seamlessly. Consecutive collinear verticals merge into one
- * line command, keeping paths minimal and unbroken.
- */
 /** Vertical inset applied to rows below an inline expansion (e.g. the
  *  commit-details block opened under a row) so the graph stretches with the
  *  shifted rows instead of drifting out of alignment. */
@@ -606,6 +599,13 @@ export interface RowExpand {
   extra: number;
 }
 
+/**
+ * SVG path for one branch line. Reference geometry: lane changes are cubic
+ * beziers whose control points are PURE VERTICAL offsets (d = 0.8 × row
+ * height) from each endpoint — vertical tangents at both ends, so stacked
+ * curves join seamlessly. Consecutive collinear verticals merge into one
+ * line command, keeping paths minimal and unbroken.
+ */
 export function branchPath(
   line: BranchLine,
   laneWidth: number,
@@ -706,7 +706,7 @@ export interface RefChips {
 
 /** Split a remote shorthand (`origin/feat/x`) into remote + branch at the
  *  first slash. A name with no slash keeps its whole value as both parts. */
-export function splitRemoteRef(name: string): RemoteRefChip {
+function splitRemoteRef(name: string): RemoteRefChip {
   const i = name.indexOf("/");
   return i > 0
     ? { name, remote: name.slice(0, i), branch: name.slice(i + 1) }

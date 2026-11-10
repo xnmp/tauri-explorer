@@ -3,8 +3,8 @@
  *
  * A layout theme is a stylesheet that restyles the application's panel
  * chrome — spacing, panel surfaces, borders, rounding, row density —
- * independently of the colour theme. Three are built in (Default, Floating
- * Islands, Hairline Ledger); users add more as `.css` files in
+ * independently of the colour theme. Five are built in (Default, Floating
+ * Islands, Hairline Ledger, Compact, Soft Cards); users add more as `.css` files in
  * `<config>/layouts/`. The stylesheet contract (region hooks, variables,
  * precedence) is documented in `docs/layout-themes.md`.
  *
@@ -28,18 +28,27 @@
  */
 
 import {
+  COMPACT_LAYOUT_ID,
   DEFAULT_LAYOUT_ID,
   FLOATING_ISLANDS_LAYOUT_ID,
   HAIRLINE_LEDGER_LAYOUT_ID,
   isBuiltinLayoutId,
+  SOFT_CARDS_LAYOUT_ID,
   type BuiltinLayoutId,
 } from "./layout-theme-ids";
 
-export { DEFAULT_LAYOUT_ID, FLOATING_ISLANDS_LAYOUT_ID, HAIRLINE_LEDGER_LAYOUT_ID, isBuiltinLayoutId };
+export {
+  COMPACT_LAYOUT_ID,
+  DEFAULT_LAYOUT_ID,
+  FLOATING_ISLANDS_LAYOUT_ID,
+  HAIRLINE_LEDGER_LAYOUT_ID,
+  isBuiltinLayoutId,
+  SOFT_CARDS_LAYOUT_ID,
+};
 export type { BuiltinLayoutId };
 
 /** Structural arrangement the application renders for a layout. */
-export type LayoutArrangement = "flat" | "islands";
+type LayoutArrangement = "flat" | "islands";
 
 export interface LayoutThemeInfo {
   /** Built-in id, or the user file name (`compact.css`). */
@@ -72,7 +81,7 @@ export const MAX_LAYOUT_CSS_BYTES = 512 * 1024;
 const MAX_NAME_LENGTH = 80;
 const MAX_DESCRIPTION_LENGTH = 240;
 
-export const BUILTIN_LAYOUT_THEMES: readonly LayoutThemeInfo[] = [
+const BUILTIN_LAYOUT_THEMES: readonly LayoutThemeInfo[] = [
   {
     id: DEFAULT_LAYOUT_ID,
     name: "Default",
@@ -95,6 +104,22 @@ export const BUILTIN_LAYOUT_THEMES: readonly LayoutThemeInfo[] = [
     description: "Square, dense panels ruled by 1px hairlines, with monospaced metadata.",
     source: "builtin",
     base: HAIRLINE_LEDGER_LAYOUT_ID,
+    arrangement: "flat",
+  },
+  {
+    id: COMPACT_LAYOUT_ID,
+    name: "Compact",
+    description: "Default's flat panels with tight chrome and 22px rows, for large folders.",
+    source: "builtin",
+    base: COMPACT_LAYOUT_ID,
+    arrangement: "flat",
+  },
+  {
+    id: SOFT_CARDS_LAYOUT_ID,
+    name: "Soft Cards",
+    description: "Panels as quiet rounded cards with thin borders and no shadows.",
+    source: "builtin",
+    base: SOFT_CARDS_LAYOUT_ID,
     arrangement: "flat",
   },
 ];
@@ -144,7 +169,7 @@ function clip(value: string | undefined, max: number): string | undefined {
 }
 
 /** Plain file name ending in `.css`, no path separators or traversal. */
-export function isLayoutFilename(filename: unknown): filename is string {
+function isLayoutFilename(filename: unknown): filename is string {
   return (
     typeof filename === "string" &&
     filename.length > 4 &&
@@ -301,8 +326,8 @@ export function isNewLayoutFallback(previous: LayoutFallback | null, next: Layou
 
 /** Details row height the virtualized list and its rows share. */
 export const DEFAULT_DETAILS_ROW_HEIGHT = 32;
-export const MIN_DETAILS_ROW_HEIGHT = 20;
-export const MAX_DETAILS_ROW_HEIGHT = 64;
+const MIN_DETAILS_ROW_HEIGHT = 20;
+const MAX_DETAILS_ROW_HEIGHT = 64;
 
 /**
  * Parse the `--layout-row-height` custom property into a whole CSS-pixel row
@@ -331,7 +356,7 @@ export function describeLayoutFallback(reason: LayoutFallbackReason): string {
     case "empty":
       return "the file is empty";
     case "too-large":
-      return "the file is larger than 512 KiB";
+      return `the file is larger than ${MAX_LAYOUT_CSS_BYTES / 1024} KiB`;
     case "unterminated-comment":
       return "its leading comment is never closed";
     case "no-rules":

@@ -33,119 +33,249 @@ const TARGET_POOL_SIZE: usize = 1;
 const SPAWN_TIMEOUT: Duration = Duration::from_secs(30);
 const CLAIM_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// The live phase of a tracked warm window. Phases are mutually exclusive:
+/// every transition into one requires leaving the previous one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Stage {
+    /// Reserved; the webview is booting. Labels are unique reservation
+    /// identities, retained through native boot.
+    Spawning {
+        since: Instant,
+    },
+    /// Registered and claimable. `seq` preserves LIFO claim order.
+    Ready {
+        seq: u64,
+    },
+    /// A claim temporarily keeps the app alive, but must commit after reveal.
+    Claimed {
+        since: Instant,
+    },
+    Activated,
+}
+
+/// Per-label record. `retiring` is deliberately a flag, not a `Stage`: it is
+/// set by `retire_window` when native destruction fails, on a label in ANY
+/// phase (or none), and the phase keeps evolving independently of it.
+#[derive(Clone, Copy, Debug)]
+struct Entry {
+    stage: Option<Stage>,
+    retiring: bool,
+}
+
+/// Invariant: no entry has `stage == None && !retiring` (it is removed).
 #[derive(Default)]
 struct PoolState {
-    ready: Vec<String>,
-    activated: HashSet<String>,
-    // Labels are unique reservation identities, retained through native boot.
-    spawns_in_flight: HashMap<String, Instant>,
-    // A claim temporarily keeps the app alive, but must commit after reveal.
-    claimed: HashMap<String, Instant>,
-    retiring: HashSet<String>,
+    entries: HashMap<String, Entry>,
+    next_seq: u64,
 }
 
 impl PoolState {
+    fn stage(&self, label: &str) -> Option<Stage> {
+        self.entries.get(label).and_then(|entry| entry.stage)
+    }
+
+    fn set_stage(&mut self, label: &str, stage: Option<Stage>) {
+        match self.entries.get_mut(label) {
+            Some(entry) if entry.retiring || stage.is_some() => entry.stage = stage,
+            Some(_) => {
+                self.entries.remove(label);
+            }
+            None => {
+                if stage.is_some() {
+                    self.entries.insert(
+                        label.to_owned(),
+                        Entry {
+                            stage,
+                            retiring: false,
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    /// Spawning + Ready entries: the pool slots counted against the target.
+    fn slots_in_use(&self) -> usize {
+        self.entries
+            .values()
+            .filter(|entry| {
+                matches!(
+                    entry.stage,
+                    Some(Stage::Spawning { .. } | Stage::Ready { .. })
+                )
+            })
+            .count()
+    }
+
     fn try_reserve_spawn(&mut self, label: String, now: Instant) -> bool {
-        if self.ready.len() + self.spawns_in_flight.len() >= TARGET_POOL_SIZE || self.owns(&label) {
+        if self.slots_in_use() >= TARGET_POOL_SIZE || self.owns(&label) {
             return false;
         }
-        self.spawns_in_flight.insert(label, now);
+        self.set_stage(&label, Some(Stage::Spawning { since: now }));
         true
     }
 
     fn expire_spawn(&mut self, label: &str, started: Instant) -> bool {
-        if self.spawns_in_flight.get(label) != Some(&started) {
+        if self.stage(label) != Some(Stage::Spawning { since: started }) {
             return false;
         }
-        self.spawns_in_flight.remove(label);
-        self.retiring.insert(label.to_owned());
+        self.set_stage(label, None);
+        self.mark_retiring(label);
         true
     }
 
     fn release_spawn(&mut self, label: &str) {
-        self.spawns_in_flight.remove(label);
+        if self.is_spawning(label) {
+            self.set_stage(label, None);
+        }
+    }
+
+    fn is_spawning(&self, label: &str) -> bool {
+        matches!(self.stage(label), Some(Stage::Spawning { .. }))
+    }
+
+    /// Ready, claimed or activated: a live owner that a duplicate handshake
+    /// must not re-pool or destroy.
+    fn holds_live_window(&self, label: &str) -> bool {
+        matches!(
+            self.stage(label),
+            Some(Stage::Ready { .. } | Stage::Claimed { .. } | Stage::Activated)
+        )
+    }
+
+    /// Record a failed native retirement. Valid in any phase.
+    fn mark_retiring(&mut self, label: &str) {
+        self.entries
+            .entry(label.to_owned())
+            .and_modify(|entry| entry.retiring = true)
+            .or_insert(Entry {
+                stage: None,
+                retiring: true,
+            });
+    }
+
+    /// Withdraw from claim admission; no-op unless currently ready.
+    #[cfg(any(target_os = "macos", target_os = "linux", test))]
+    fn withdraw_ready(&mut self, label: &str) {
+        if matches!(self.stage(label), Some(Stage::Ready { .. })) {
+            self.set_stage(label, None);
+        }
     }
 
     fn owns(&self, label: &str) -> bool {
-        self.ready.iter().any(|entry| entry == label)
-            || self.activated.contains(label)
-            || self.claimed.contains_key(label)
-            || self.spawns_in_flight.contains_key(label)
-            || self.retiring.contains(label)
+        self.entries.contains_key(label)
     }
 
     fn register(&mut self, label: String, now: Instant) -> bool {
-        let Some(started) = self.spawns_in_flight.remove(&label) else {
+        let Some(Stage::Spawning { since: started }) = self.stage(&label) else {
             return false;
         };
+        // The reservation is consumed even when registration is rejected.
+        self.set_stage(&label, None);
         if now.duration_since(started) >= SPAWN_TIMEOUT || self.owns(&label) {
             return false;
         }
-        self.ready.push(label);
+        let seq = self.next_seq;
+        self.next_seq += 1;
+        self.set_stage(&label, Some(Stage::Ready { seq }));
         true
     }
 
     fn claim(&mut self, now: Instant, is_alive: impl Fn(&str) -> bool) -> Option<String> {
-        while let Some(label) = self.ready.pop() {
+        // Newest ready window first, discarding dead ones as they are met.
+        let mut ready: Vec<(u64, String)> = self
+            .entries
+            .iter()
+            .filter_map(|(label, entry)| match entry.stage {
+                Some(Stage::Ready { seq }) => Some((seq, label.clone())),
+                _ => None,
+            })
+            .collect();
+        ready.sort_by_key(|entry| std::cmp::Reverse(entry.0));
+        for (_, label) in ready {
             if is_alive(&label) {
-                self.claimed.insert(label.clone(), now);
+                self.set_stage(&label, Some(Stage::Claimed { since: now }));
                 return Some(label);
             }
+            self.set_stage(&label, None);
         }
         None
     }
 
     fn activate(&mut self, label: &str, now: Instant) -> bool {
-        let Some(started) = self.claimed.get(label) else {
+        let Some(Stage::Claimed { since: started }) = self.stage(label) else {
             return false;
         };
-        if now.duration_since(*started) >= CLAIM_TIMEOUT {
+        if now.duration_since(started) >= CLAIM_TIMEOUT {
             // Reject commitment without revoking the watchdog's authority to
             // retire the native window, even if this caller never resumes.
             return false;
         }
-        self.claimed.remove(label);
-        self.activated.insert(label.to_owned());
+        self.set_stage(label, Some(Stage::Activated));
         true
     }
 
     fn expire_claim(&mut self, label: &str, started: Instant) -> bool {
-        if self.claimed.get(label) != Some(&started) {
+        if self.stage(label) != Some(Stage::Claimed { since: started }) {
             return false;
         }
-        self.claimed.remove(label);
-        self.retiring.insert(label.to_owned());
+        self.set_stage(label, None);
+        self.mark_retiring(label);
         true
     }
 
     fn is_real(&self, label: &str) -> bool {
         !label.starts_with(WARM_LABEL_PREFIX)
-            || self.activated.contains(label)
-            || self.claimed.contains_key(label)
+            || matches!(
+                self.stage(label),
+                Some(Stage::Activated | Stage::Claimed { .. })
+            )
     }
 
     /// Not yet a committed user-facing window: ready, booting, retiring, or
     /// claimed with activation still unacknowledged (#942).
     #[cfg(any(target_os = "macos", target_os = "linux", test))]
     fn parked(&self, label: &str) -> bool {
-        label.starts_with(WARM_LABEL_PREFIX) && !self.activated.contains(label)
+        label.starts_with(WARM_LABEL_PREFIX) && self.stage(label) != Some(Stage::Activated)
     }
 
     fn forget(&mut self, label: &str) -> bool {
         let was_real = self.is_real(label);
-        self.ready.retain(|entry| entry != label);
-        self.activated.remove(label);
-        self.claimed.remove(label);
-        self.spawns_in_flight.remove(label);
-        self.retiring.remove(label);
+        self.entries.remove(label);
         was_real
     }
 
+    /// Ready (oldest first), then booting, then retiring labels. A label that
+    /// is both ready/booting and retiring is listed in both groups.
     fn drain_parked(&mut self) -> Vec<String> {
-        let mut labels = std::mem::take(&mut self.ready);
-        labels.extend(self.spawns_in_flight.drain().map(|(label, _)| label));
-        labels.extend(self.retiring.drain());
-        labels
+        let mut ready: Vec<(u64, String)> = Vec::new();
+        let mut labels: Vec<String> = Vec::new();
+        let mut retiring: Vec<String> = Vec::new();
+        for (label, entry) in &self.entries {
+            match entry.stage {
+                Some(Stage::Ready { seq }) => ready.push((seq, label.clone())),
+                Some(Stage::Spawning { .. }) => labels.push(label.clone()),
+                _ => {}
+            }
+            if entry.retiring {
+                retiring.push(label.clone());
+            }
+        }
+        ready.sort_by_key(|(seq, _)| *seq);
+        let mut drained: Vec<String> = ready.into_iter().map(|(_, label)| label).collect();
+        drained.extend(labels);
+        drained.extend(retiring);
+        self.entries.retain(|_, entry| {
+            if matches!(
+                entry.stage,
+                Some(Stage::Ready { .. } | Stage::Spawning { .. })
+            ) {
+                entry.stage = None;
+            }
+            entry.retiring = false;
+            entry.stage.is_some()
+        });
+        drained
     }
 }
 
@@ -185,7 +315,7 @@ pub async fn warm_pool_cancel_spawn(app: AppHandle, label: String) {
     }
     let pending = {
         let mut pool = POOL.lock().unwrap_or_else(|e| e.into_inner());
-        let pending = pool.spawns_in_flight.contains_key(&label);
+        let pending = pool.is_spawning(&label);
         pool.release_spawn(&label);
         pending
     };
@@ -214,10 +344,7 @@ pub async fn warm_pool_register(
             return true;
         }
         // A duplicate handshake is idempotent; never re-pool or destroy a live owner.
-        if pool.ready.contains(&label)
-            || pool.activated.contains(&label)
-            || pool.claimed.contains_key(&label)
-        {
+        if pool.holds_live_window(&label) {
             return true;
         }
         pool.release_spawn(&label);
@@ -319,8 +446,7 @@ pub fn is_parked(label: &str) -> bool {
 pub fn retire_parked(app: &AppHandle, label: &str) {
     POOL.lock()
         .unwrap_or_else(|e| e.into_inner())
-        .ready
-        .retain(|entry| entry != label);
+        .withdraw_ready(label);
     retire_window(app, label);
 }
 
@@ -331,8 +457,7 @@ fn retire_window(app: &AppHandle, label: &str) {
             // an attempted IPC. Retain failed retirement for later cleanup.
             POOL.lock()
                 .unwrap_or_else(|e| e.into_inner())
-                .retiring
-                .insert(label.to_owned());
+                .mark_retiring(label);
             log::error!("Could not retire warm window {label}: {error}");
         }
     } else {
@@ -378,7 +503,7 @@ mod tests {
         let now = Instant::now();
         assert!(s.try_reserve_spawn("explorer-warm-1".into(), now));
         assert!(s.register("explorer-warm-1".into(), now));
-        assert_eq!(s.spawns_in_flight.len(), 0);
+        assert!(!s.is_spawning("explorer-warm-1"));
         assert_eq!(
             s.claim(Instant::now(), |_| true),
             Some("explorer-warm-1".into())
@@ -414,7 +539,10 @@ mod tests {
         let mut s = state();
         ready(&mut s, "explorer-warm-dead");
         assert_eq!(s.claim(Instant::now(), |_| false), None);
-        assert!(s.ready.is_empty(), "dead label must be discarded");
+        assert!(
+            !s.owns("explorer-warm-dead"),
+            "dead label must be discarded"
+        );
     }
 
     #[test]
@@ -423,7 +551,7 @@ mod tests {
         let past = Instant::now()
             .checked_sub(SPAWN_TIMEOUT + Duration::from_secs(1))
             .expect("clock underflow");
-        s.spawns_in_flight.insert("explorer-warm-old".into(), past);
+        s.set_stage("explorer-warm-old", Some(Stage::Spawning { since: past }));
         assert!(s.expire_spawn("explorer-warm-old", past));
         assert!(
             s.try_reserve_spawn("explorer-warm-1".into(), Instant::now()),
@@ -596,3 +724,7 @@ mod tests {
         assert!(s.parked("explorer-warm-measure"), "never-registered probe");
     }
 }
+
+#[cfg(test)]
+#[path = "../test_support/warm_pool_state_test.rs"]
+mod state_contracts;

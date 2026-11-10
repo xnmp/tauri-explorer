@@ -1,4 +1,5 @@
 import { isNativeDropPath, nativeDropPaths } from "./native-drop-paths";
+import { isTrashPath } from "./virtual-path";
 
 /** Admission uses the current gesture's types, never unrelated retained state.
  * Bookmark reorder and plugin-specific/text payloads belong to their DOM owners. */
@@ -78,11 +79,16 @@ export function domOwnsFileDrop(nativeOwned: boolean): boolean {
   return !nativeOwned;
 }
 
+/** Sources that never export a filesystem object: Recent shortcuts, and
+ * Trash entries, which have no path until restored (#1554). */
+export const isPrivateDragSource = (source: { path: string; nativeCopyPolicy?: string }) =>
+  source.nativeCopyPolicy === "link" || isTrashPath(source.path);
+
 /** Filesystem export must remain a plain URI list: WebKit sanitizes it as a
- * single URL before native export. Recent carries only a non-filesystem URN. */
+ * single URL before native export. Private sources carry only a non-filesystem URN. */
 export function html5DragUriList(source: { sessionId?: string; path: string; paths?: string[]; nativeCopyPolicy?: string }): string {
   if (!source.sessionId) return "";
-  if (source.nativeCopyPolicy === "link") return `urn:tauri-explorer:drag:${source.sessionId}`;
+  if (isPrivateDragSource(source)) return `urn:tauri-explorer:drag:${source.sessionId}`;
   return (source.paths ?? [source.path]).map(path => {
     const normalized = path.startsWith("/") ? path : path.replace(/\\/g, "/");
     const prefix = normalized.startsWith("//") ? "file:" : normalized.startsWith("/") ? "file://" : "file:///";
@@ -100,7 +106,7 @@ export function html5TransferMatchesGesture(data: Pick<DataTransfer, "getData">,
   // Only Recent's URI proves identity. Ordinary file URIs never do, even if
   // the same paths are still retained after a missed dragend.
   return !!source.sessionId && (data.getData("text/html").trim() === html5DragHtml(source)
-    || (source.nativeCopyPolicy === "link" && data.getData("text/uri-list") === html5DragUriList(source)));
+    || (isPrivateDragSource(source) && data.getData("text/uri-list") === html5DragUriList(source)));
 }
 
 /** GTK/Wry preserves Recent's sole URI as a native path string. A mixed or

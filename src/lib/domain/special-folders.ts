@@ -11,7 +11,8 @@ import type { IconPack } from './icon-themes';
 export type SpecialFolderKind =
   | 'src' | 'lib' | 'app' | 'components' | 'tests' | 'docs' | 'node' | 'git' | 'github'
   | 'vscode' | 'config' | 'scripts' | 'assets' | 'images' | 'public' | 'dist' | 'packages'
-  | 'utils' | 'styles' | 'api' | 'types' | 'docker' | 'temp' | 'fonts' | 'audio' | 'video' | 'download';
+  | 'utils' | 'styles' | 'api' | 'types' | 'docker' | 'temp' | 'fonts' | 'audio' | 'video' | 'download'
+  | 'gdrive';
 
 /**
  * Names are matched case-insensitively. Each kind has artwork in
@@ -46,6 +47,26 @@ const KINDS: Readonly<Record<SpecialFolderKind, { names: readonly string[]; hue:
   audio: { names: ['music', 'audio', 'sounds', 'sound'], hue: '#ab47bc' },
   video: { names: ['videos', 'video', 'movies'], hue: '#ff7043' },
   download: { names: ['downloads', 'download'], hue: '#43a047' },
+  // Google Drive (#1551): the common local mount names (rclone `gdrive`,
+  // `~/GoogleDrive`, Drive for desktop's `My Drive`) plus GVfs mount roots
+  // (see GVFS_GOOGLE_DRIVE_ROOT).
+  gdrive: { names: ['google drive', 'googledrive', 'google-drive', 'gdrive', 'my drive'], hue: '#1e88e5' },
+};
+
+/**
+ * GVfs exposes each Google Drive account as a mount root named
+ * `google-drive:host=<domain>[,user=<name>]` under `/run/user/<uid>/gvfs`, the
+ * same spec `files/drives.rs::linux_gvfs_google_drives` discovers.
+ */
+const GVFS_GOOGLE_DRIVE_ROOT = /^google-drive:host=./;
+
+/**
+ * Tri-colour paint for kinds whose glyph is drawn in three strokes (the
+ * sprite's `--special-folder-glyph-{a,b,c}` slots). Original hues, not brand
+ * artwork; a colour theme's file tint still flattens them.
+ */
+const PALETTES: Partial<Record<SpecialFolderKind, readonly [string, string, string]>> = {
+  gdrive: ['#43a047', '#ffb300', '#1e88e5'],
 };
 
 export const SPECIAL_FOLDER_KINDS = Object.keys(KINDS) as SpecialFolderKind[];
@@ -56,7 +77,8 @@ const BY_NAME: ReadonlyMap<string, SpecialFolderKind> = new Map(
 
 /** The special kind for a directory name, or null for an ordinary folder. */
 export function getSpecialFolderKind(name: string): SpecialFolderKind | null {
-  return BY_NAME.get(name.toLowerCase()) ?? null;
+  const lower = name.toLowerCase();
+  return BY_NAME.get(lower) ?? (GVFS_GOOGLE_DRIVE_ROOT.test(lower) ? 'gdrive' : null);
 }
 
 export function specialFolderHue(kind: SpecialFolderKind): string {
@@ -111,6 +133,8 @@ export interface SpecialFolderVariant {
   readonly ink?: string;
   /** Glyph stroke width in the symbol's own units: heavier when drawn at 16px. */
   readonly stroke: number;
+  /** Per-stroke paint for a multi-colour glyph (Classic/Material only); unset draws it all in `ink`. */
+  readonly palette?: readonly [string, string, string];
 }
 
 const BADGE_SURFACE = 'var(--background-solid, #fff)';
@@ -136,7 +160,11 @@ export function resolveSpecialFolderVariant(entry: FileEntry, pack: IconPack, si
   // honouring a colour theme's file tint, and pull it toward the theme's text
   // colour so it keeps contrast on light and dark surfaces alike.
   const ink = `color-mix(in srgb, var(--icon-file-tint, ${KINDS[kind].hue}) 70%, var(--text-primary, #000))`;
-  return { kind, sprite: 'glyphs', symbol: kind, box, fill: BADGE_SURFACE, outline: ink, ink, stroke: small ? 3.2 : 2.2 };
+  const variant: SpecialFolderVariant = { kind, sprite: 'glyphs', symbol: kind, box, fill: BADGE_SURFACE, outline: ink, ink, stroke: small ? 3.2 : 2.2 };
+  const hues = PALETTES[kind];
+  if (!hues) return variant;
+  const [a, b, c] = hues.map((hue) => `var(--icon-file-tint, ${hue})`);
+  return { ...variant, palette: [a, b, c] };
 }
 
 

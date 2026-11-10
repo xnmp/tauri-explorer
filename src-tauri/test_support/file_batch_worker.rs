@@ -575,3 +575,50 @@ fn directory_effect_budget_stops_before_unrecorded_mutation_and_deduplicates() {
         );
     }
 }
+
+/// Only items refused because their volume has no usable trash are offered to
+/// the renderer for a confirmed permanent deletion (#1550).
+#[test]
+fn trash_unavailable_failures_are_listed_separately_from_other_failures() {
+    let directory = tempfile::tempdir().unwrap();
+    let unavailable = directory.path().join("unavailable");
+    let denied = directory.path().join("denied");
+    let succeeded = directory.path().join("succeeded");
+    let unavailable_path = path_string(&unavailable);
+    let denied_path = path_string(&denied);
+    let outcome = tauri::async_runtime::block_on(run(
+        plan(&[&unavailable, &denied, &succeeded]),
+        move |path| {
+            if path == unavailable_path {
+                Err(AppError::TrashUnavailable("no usable trash".into()))
+            } else if path == denied_path {
+                Err(AppError::PermissionDenied("denied".into()))
+            } else {
+                Ok(())
+            }
+        },
+    ));
+
+    assert_eq!(outcome.succeeded, [path_string(&succeeded)]);
+    assert_eq!(outcome.failed.len(), 2);
+    assert_eq!(outcome.failed[0].path, path_string(&unavailable));
+    assert_eq!(outcome.failed[1].path, path_string(&denied));
+    assert_eq!(outcome.trash_unavailable, [path_string(&unavailable)]);
+    let json = serde_json::to_value(&outcome).unwrap();
+    assert_eq!(
+        json["trashUnavailable"],
+        serde_json::json!([path_string(&unavailable)])
+    );
+    assert_eq!(
+        json["failed"][0]["error"],
+        "Trash unavailable: no usable trash"
+    );
+    let ordinary_path = directory.path().join("ordinary");
+    let ordinary = tauri::async_runtime::block_on(run(plan(&[&ordinary_path]), |_| {
+        Err(AppError::PermissionDenied("denied".into()))
+    }));
+    assert!(serde_json::to_value(&ordinary)
+        .unwrap()
+        .get("trashUnavailable")
+        .is_none());
+}

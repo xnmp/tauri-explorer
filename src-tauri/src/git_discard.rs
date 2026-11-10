@@ -1498,9 +1498,28 @@ mod tests {
         super::discard_paths(&repo, &paths, true).unwrap();
         assert_eq!(read(&d.path().join("staged.txt")), "S\n");
 
-        let status = collect_status(&repo).unwrap();
-        assert!(status.changes.is_empty(), "{:?}", status.changes);
-        assert!(status.staged.is_empty(), "{:?}", status.staged);
+        // Force a stat-cache miss without changing the restored content.
+        // The contract must not depend on checkout/status sharing a timestamp.
+        fs::OpenOptions::new()
+            .write(true)
+            .open(d.path().join("staged.txt"))
+            .unwrap()
+            .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1))
+            .unwrap();
+        // libgit2 cannot run the external clean filter: on a stat-cache miss
+        // it compares the smudged bytes with the blob and reports a false edit.
+        // Native Git is the oracle for both the index and filtered worktree.
+        let status = Command::new("git")
+            .current_dir(d.path())
+            .args(["status", "--porcelain=v1", "--untracked-files=all"])
+            .output()
+            .unwrap();
+        assert!(status.status.success(), "{status:?}");
+        assert!(
+            status.stdout.is_empty(),
+            "{}",
+            String::from_utf8_lossy(&status.stdout)
+        );
     }
 
     /// #1604 still holds on the git CLI route: a filtered file replaced by a

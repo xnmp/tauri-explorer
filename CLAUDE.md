@@ -315,6 +315,11 @@ SCM archive actions preserve each repo-relative path under `.archive/` and add
 
 ## Debugging
 
+External-filter discard tests must check index/worktree cleanliness with native
+Git. libgit2 does not run external clean filters, so its status can report a
+restored smudged file as modified when metadata forces a rehash. Force a stat
+cache miss in the fixture rather than relying on checkout timing (#1637).
+
 Cross-platform batch-worker tests must derive absolute paths from `tempfile`
 instead of Unix literals such as `/drive/a`. Windows treats those literals as
 root-relative, so batch admission rejects them before the behavior under test

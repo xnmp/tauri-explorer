@@ -19,7 +19,7 @@ export type StartQuickOpenSearch = (query: string) => void;
  * A trailing pause keeps normal typing from launching a full directory walk
  * for every intermediate character while still feeling immediate in the UI.
  */
-const QUICK_OPEN_SEARCH_DEBOUNCE_MS = 150;
+export const QUICK_OPEN_SEARCH_DEBOUNCE_MS = 150;
 
 /**
  * Creates the search-start boundary used by the file picker.

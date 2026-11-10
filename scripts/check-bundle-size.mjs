@@ -135,7 +135,17 @@ const STARTUP_RAW_BUDGET = 866_617;
 // the 282,240 cap alone (282,108 and 282,222), but both raised from the same
 // dev 7bd8eb05 baseline; combined on dev 6137ece6 the graph measured 282,313.
 // The merge shares one SortKeys bag, so no extra eager module was added.
-const STARTUP_GZIP_BUDGET = 282_368;
+// Raised 282,368 -> 282,880 (+512) for #1554 (drag out of the Trash): dev
+// dd87b7f3 measured 282,314 (54 bytes of headroom); the feature measured
+// 282,589 (+275). Eager by nature: one `trash://` source check in each drop
+// seam (pointer mouseup, DOM folder/listing, Bookmarks), the private-source
+// rule that keeps Trash drags off the OS drag and file URIs, the Bookmarks
+// "Restore to bookmark" hint, and the provider's dropTrashEntries forwarder,
+// which reuses the existing trash-location preload. Routing, toasts and the
+// restore load lazily (domain/trash-drop.ts via state/trash-location.ts); a
+// first cut that routed eagerly measured +758, and importing native-drop-paths
+// from the lazy route split it into its own startup chunk.
+const STARTUP_GZIP_BUDGET = 282_880;
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const clientDir = resolve(repoRoot, ".svelte-kit/output/client");

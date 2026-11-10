@@ -16,12 +16,14 @@
 import {
   BUILTIN_LAYOUT_CATALOG,
   buildLayoutCatalog,
+  COMPACT_LAYOUT_ID,
   describeLayoutFallback,
   HAIRLINE_LEDGER_LAYOUT_ID,
   isBuiltinLayoutId,
   isNewLayoutFallback,
   parseLayoutRowHeight,
   resolveLayoutTheme,
+  SOFT_CARDS_LAYOUT_ID,
   withLayoutFailure,
   type BuiltinLayoutId,
   type LayoutCatalog,
@@ -36,6 +38,8 @@ import { toastStore } from "./toast.svelte";
 /** Built-in bases outside the startup bundle. Floating Islands is bundled. */
 const LAZY_BASE_SHEETS: Partial<Record<BuiltinLayoutId, () => Promise<{ default: string }>>> = {
   [HAIRLINE_LEDGER_LAYOUT_ID]: () => import("$lib/layouts/hairline-ledger.css?inline"),
+  [COMPACT_LAYOUT_ID]: () => import("$lib/layouts/compact.css?inline"),
+  [SOFT_CARDS_LAYOUT_ID]: () => import("$lib/layouts/soft-cards.css?inline"),
 };
 
 let catalog = $state.raw<LayoutCatalog>(BUILTIN_LAYOUT_CATALOG);

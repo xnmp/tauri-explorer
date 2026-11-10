@@ -97,10 +97,186 @@ fn failure<'a>(outcome: &'a FileBatchOutcome, path: &Path) -> &'a str {
         .error
 }
 
-// One test owns the process-wide listing registry; parallel tests would race
-// its replacement on every listing.
+/// Real-filesystem tests own the process-wide listing registry one at a time;
+/// parallel tests would race its replacement on every listing.
+static REGISTRY_OWNER: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn own_registry() -> std::sync::MutexGuard<'static, ()> {
+    REGISTRY_OWNER
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+}
+
+/// Restore-to keys name the resolved target; match the refusal by its name.
+fn failure_named<'a>(outcome: &'a FileBatchOutcome, name: &str) -> &'a str {
+    &outcome
+        .failed
+        .iter()
+        .find(|failure| Path::new(&failure.path).file_name() == Some(name.as_ref()))
+        .unwrap_or_else(|| panic!("no failure for {name}: {outcome:?}"))
+        .error
+}
+
+impl Fixture {
+    fn restore_to(&self, ids: Vec<String>, destination: &Path) -> FileBatchOutcome {
+        tauri::async_runtime::block_on(restore_to(ids, destination.to_owned(), &self.runtime))
+            .expect("restore-to batch")
+    }
+}
+
+/// Dragging Trash entries onto a folder restores them there (#1554): the
+/// renderer names opaque IDs plus a folder, never a trash payload path, and
+/// every refusal leaves the item recoverable in the trash.
+#[test]
+fn trash_view_restores_dropped_items_into_a_chosen_folder() {
+    let _owner = own_registry();
+    let mut fixture = Fixture::new();
+    let drop = fixture.path("drop");
+    fs::create_dir(&drop).unwrap();
+
+    // Files and folders land in the destination byte-for-byte, even when
+    // their original folder no longer exists, and leave the trash.
+    let report = fixture.create("a/report.txt", b"report \x00\xff");
+    let child = fixture.create("b/album/child.txt", b"child");
+    let album = child.parent().unwrap().to_owned();
+    fixture.trash(&report);
+    fixture.trash(&album);
+    fs::remove_dir(fixture.path("a")).unwrap();
+    let listing = fixture.list();
+    let ids = vec![
+        fixture.id_for(&listing, &report),
+        fixture.id_for(&listing, &album),
+    ];
+    let outcome = fixture.restore_to(ids, &drop);
+    assert!(outcome.failed.is_empty(), "{outcome:?}");
+    assert_eq!(outcome.succeeded.len(), 2);
+    assert!(outcome
+        .succeeded
+        .iter()
+        .all(|key| Path::new(key).parent() == Some(fs::canonicalize(&drop).unwrap().as_path())));
+    assert_eq!(
+        fs::read(drop.join("report.txt")).unwrap(),
+        b"report \x00\xff"
+    );
+    assert_eq!(fs::read(drop.join("album/child.txt")).unwrap(), b"child");
+    assert!(
+        !fixture.path("a").exists(),
+        "no original folder is recreated"
+    );
+    assert!(!album.exists());
+    assert_eq!(fixture.trash_counts(), (0, 0));
+
+    // An occupied name is refused before any effect; nothing is replaced.
+    let notes = fixture.create("c/notes.txt", b"trashed");
+    fixture.trash(&notes);
+    fs::write(drop.join("notes.txt"), b"already here").unwrap();
+    let id = fixture.id_for(&fixture.list(), &notes);
+    let outcome = fixture.restore_to(vec![id.clone()], &drop);
+    assert!(failure_named(&outcome, "notes.txt").contains("already exists"));
+    assert!(outcome.succeeded.is_empty());
+    assert_eq!(fs::read(drop.join("notes.txt")).unwrap(), b"already here");
+    assert_eq!(fixture.trash_counts(), (1, 1));
+
+    // Same-named items from different folders cannot both take one name.
+    let first = fixture.create("p/same.txt", b"first");
+    let second = fixture.create("q/same.txt", b"second");
+    fixture.trash(&first);
+    fixture.trash(&second);
+    let listing = fixture.list();
+    let pair = vec![
+        fixture.id_for(&listing, &first),
+        fixture.id_for(&listing, &second),
+    ];
+    let outcome = fixture.restore_to(pair, &drop);
+    assert_eq!(outcome.succeeded.len(), 1, "{outcome:?}");
+    assert!(failure_named(&outcome, "same.txt").contains("Another selected item"));
+    assert_eq!(fs::read(drop.join("same.txt")).unwrap(), b"first");
+    assert_eq!(fixture.trash_counts(), (2, 2), "notes and second remain");
+
+    // Destinations that are not existing absolute folders refuse every ID.
+    let id = fixture.id_for(&fixture.list(), &notes);
+    for (destination, expected) in [
+        (fixture.path("missing"), "no longer exists"),
+        (drop.join("same.txt"), "not a folder"),
+        (
+            PathBuf::from("relative/folder"),
+            "not a folder on this computer",
+        ),
+    ] {
+        let outcome = fixture.restore_to(vec![id.clone()], &destination);
+        assert!(outcome.succeeded.is_empty());
+        assert_eq!(outcome.failed.len(), 1);
+        assert_eq!(outcome.failed[0].path, id);
+        assert!(
+            outcome.failed[0].error.contains(expected),
+            "{destination:?}: {outcome:?}"
+        );
+    }
+
+    // The trash itself is never a destination: the payload would lose its record.
+    let outcome = fixture.restore_to(vec![id.clone()], &fixture.trash_root().join("files"));
+    assert!(failure_named(&outcome, "notes.txt").contains("into the Trash itself"));
+    assert_eq!(fixture.trash_counts(), (2, 2));
+
+    // Stale IDs are refused without effects.
+    let outcome = fixture.restore_to(vec!["not-a-listed-id".into()], &drop);
+    assert!(outcome.failed[0]
+        .error
+        .contains("no longer in the trash list"));
+
+    // A symlinked destination publishes into the folder it resolves to.
+    let real = fixture.path("real");
+    fs::create_dir(&real).unwrap();
+    let link = fixture.path("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let outcome = fixture.restore_to(vec![id], &link);
+    assert!(outcome.failed.is_empty(), "{outcome:?}");
+    assert_eq!(fs::read(real.join("notes.txt")).unwrap(), b"trashed");
+    assert_eq!(fixture.trash_counts(), (1, 1));
+
+    // A payload changed after listing is still refused by the exact engine.
+    let id = fixture.id_for(&fixture.list(), &second);
+    let payload = fs::read_dir(fixture.trash_root().join("files"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .next()
+        .unwrap();
+    fs::write(&payload, b"tampered after listing").unwrap();
+    let outcome = fixture.restore_to(vec![id], &real);
+    assert!(
+        failure_named(&outcome, "same.txt").contains("changed"),
+        "{outcome:?}"
+    );
+    assert!(!real.join("same.txt").exists());
+    assert!(payload.exists(), "the trash item stays recoverable");
+}
+
+/// The Freedesktop engine restores by one same-filesystem rename and never
+/// copies (ADR 0019): another filesystem is refused before any effect.
+#[test]
+fn trash_view_refuses_restoring_into_another_filesystem() {
+    use std::os::unix::fs::MetadataExt;
+    let _owner = own_registry();
+    let mut fixture = Fixture::new();
+    let Ok(other) = tempfile::tempdir_in("/dev/shm") else {
+        return;
+    };
+    let device = |path: &Path| fs::metadata(path).unwrap().dev();
+    if device(other.path()) == device(fixture.scratch.path()) {
+        return; // No second filesystem is available on this host.
+    }
+    let item = fixture.create("e/far.txt", b"far");
+    fixture.trash(&item);
+    let id = fixture.id_for(&fixture.list(), &item);
+    let outcome = fixture.restore_to(vec![id], other.path());
+    assert!(failure_named(&outcome, "far.txt").contains("different drive"));
+    assert!(!other.path().join("far.txt").exists());
+    assert_eq!(fixture.trash_counts(), (1, 1));
+}
+
 #[test]
 fn trash_view_restores_exact_items_and_never_overwrites() {
+    let _owner = own_registry();
     let mut fixture = Fixture::new();
 
     // Same-named items from different folders keep separate identities and

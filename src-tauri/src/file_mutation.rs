@@ -135,37 +135,65 @@ pub(crate) async fn restore_trash_items(
     let owner = renderer_owner::acquire_owner(&window, &session_id)?;
     let runtime = admission::runtime(&window)?;
     file_history::run_forward(owner, false, Vec::new(), async move {
-        match crate::files::trash_inventory::restore(ids, &runtime).await {
-            Ok(result) => {
-                let mut affected: Vec<_> = result
-                    .affected_paths()
-                    .flat_map(|path| parent(path))
-                    .collect();
-                affected.sort_unstable();
-                affected.dedup();
-                let changed = !result.succeeded.is_empty()
-                    || !result.uncertain.is_empty()
-                    || result.worker_error.is_some();
-                MutationOutcome {
-                    result: Ok(result),
-                    warning: None,
-                    effect: if changed {
-                        ForwardEffect::Changed(None)
-                    } else {
-                        ForwardEffect::Unchanged
-                    },
-                    affected,
-                }
-            }
-            Err(error) => MutationOutcome {
-                result: Err(error),
-                warning: None,
-                effect: ForwardEffect::Unchanged,
-                affected: Vec::new(),
-            },
-        }
+        restore_outcome(crate::files::trash_inventory::restore(ids, &runtime).await)
     })
     .await
+}
+
+/// Restore Trash-view items into a folder they were dropped on (#1554). The
+/// renderer names listed entry IDs and an ordinary destination folder only;
+/// the artifacts and their verification stay native (ADR 0019). Like
+/// [`restore_trash_items`], this is not recorded as an undoable action.
+#[tauri::command]
+pub(crate) async fn restore_trash_items_to(
+    window: tauri::Window,
+    session_id: String,
+    ids: Vec<String>,
+    destination: String,
+) -> Result<MutationReply<FileBatchOutcome>, AppError> {
+    let owner = renderer_owner::acquire_owner(&window, &session_id)?;
+    let runtime = admission::runtime(&window)?;
+    file_history::run_forward(owner, false, vec![destination.clone()], async move {
+        restore_outcome(
+            crate::files::trash_inventory::restore_to(ids, destination.into(), &runtime).await,
+        )
+    })
+    .await
+}
+
+/// A Trash-view restore changes the published destination folders.
+fn restore_outcome(
+    result: Result<FileBatchOutcome, AppError>,
+) -> MutationOutcome<FileBatchOutcome> {
+    match result {
+        Ok(result) => {
+            let mut affected: Vec<_> = result
+                .affected_paths()
+                .flat_map(|path| parent(path))
+                .collect();
+            affected.sort_unstable();
+            affected.dedup();
+            let changed = !result.succeeded.is_empty()
+                || !result.uncertain.is_empty()
+                || result.worker_error.is_some();
+            MutationOutcome {
+                result: Ok(result),
+                warning: None,
+                effect: if changed {
+                    ForwardEffect::Changed(None)
+                } else {
+                    ForwardEffect::Unchanged
+                },
+                affected,
+            }
+        }
+        Err(error) => MutationOutcome {
+            result: Err(error),
+            warning: None,
+            effect: ForwardEffect::Unchanged,
+            affected: Vec::new(),
+        },
+    }
 }
 
 /// Permanently remove exact items listed in the Trash. Opaque IDs are receipt

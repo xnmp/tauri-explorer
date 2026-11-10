@@ -113,6 +113,25 @@ test.describe("AI filter lifecycle", () => {
     await expect(rows(page)).toHaveCount(NAMES.length);
   });
 
+  // #1522: Alt+Enter must never look like it did nothing.
+  test("an empty request and a model that matches nothing both say so in a toast", async ({ page }) => {
+    await pressShortcut(page, "f", { ctrlKey: true });
+    const input = page.locator(".filter-input");
+    await expect(input).toBeFocused();
+    await page.keyboard.press("Alt+Enter");
+    await expect(page.locator(".toast.info")).toContainText("Type what you are looking for");
+
+    await page.evaluate(() => {
+      (window as unknown as { __mockControl: MockControl }).__mockControl.aiTextReply = () => JSON.stringify({ names: [] });
+    });
+    await page.keyboard.type("replays");
+    await page.keyboard.press("Alt+Enter");
+    await expect(page.locator(".filter-bar")).toHaveAttribute("data-ai-filter", "applied");
+    await expect(page.locator(".toast.info")).toHaveText('AI filter: no items match "replays"');
+    await expect(rows(page)).toHaveCount(0);
+    await page.screenshot({ path: "screenshots/fix/ai-filter-not-working/no-match-toast.png", animations: "disabled" });
+  });
+
   test("without a configured language model there is no hint and nothing is sent", async ({ page }) => {
     await page.evaluate(() => {
       ((window as unknown as { __mockControl?: MockControl }).__mockControl ??= {}).aiTextUnavailable = true;
@@ -125,7 +144,9 @@ test.describe("AI filter lifecycle", () => {
     await input.press("Alt+Enter");
     await expect(page.locator(".filter-bar")).toHaveAttribute("data-ai-filter", "error");
     await expect(page.locator(".filter-ai-status")).toContainText("Settings → AI");
-    const sent = await page.evaluate(() => (window as unknown as { __mockControl: MockControl }).__mockControl.invokeArgs!.ai_text_generate!);
+    // #1522: the window-level toast is the feedback channel that cannot be missed.
+    await expect(page.locator(".toast.error")).toContainText("AI filter needs a language model");
+    const sent =await page.evaluate(() => (window as unknown as { __mockControl: MockControl }).__mockControl.invokeArgs!.ai_text_generate!);
     expect(sent).toHaveLength(0);
     // The box keeps working as an ordinary filter.
     await expect.poll(() => shownNames(page)).toEqual(["Invoice-0098.pdf", "Invoice-0142.pdf", "Invoice-0143.pdf"]);

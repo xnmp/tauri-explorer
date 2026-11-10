@@ -125,6 +125,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `settings/LayoutThemeSetting.svelte` — Settings → Appearance → Layout: selector, Open folder (layouts), Reset to Default, fallback reason (#1306).
 - `settings/ThumbnailSettings.svelte` — Settings → Appearance thumbnail rows: Tiles Thumbnail Size and the Details/List row-thumbnails toggle (#1465).
 - `settings/settings-select.css` — shared Settings dropdown styling (`.settings-select`).
+- `settings/settings-button.css` — shared Settings/Plugins row button chrome (`.settings-button`, destructive `.settings-button.danger`); immediate hover (#1529).
 - `PluginsDialog.svelte`, `PluginSettings.svelte` — lazy Plugins configuration surface; installed packages, contribution toggles and descriptor-driven settings, using shared modal ownership and viewport/zoom bounds.
 - `KeybindingsSettings.svelte` — keybinding customization UI in settings.
 - `ShortcutCheatsheet.svelte` — keyboard shortcut cheatsheet overlay.
@@ -216,8 +217,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `open-with.svelte.ts` — captured application-choice sessions, late-result rejection and single launch lifecycle.
 
 - `recycle-bin.ts` — turns the native Recycle Bin IPC result into a user-visible failure toast; called by the Trash view's "Open in System File Manager" action (`trash-location.ts`).
-- `trash-provider.ts` — eager half of the in-app Trash (#863): registers the built-in `trash://` fs provider (installed by `+page.svelte`) and lazily loads `trash-location.ts`, passing it the startup-graph context-menu registry.
-- `trash-location.ts` — lazy half of the in-app Trash: lists through `list_trash`, reports unreadable sources once, registers the `scope: "trash"` Restore / Open in System File Manager menu actions, restores selected entries and refreshes open Trash views through the local file-change subscription. Contracts in `tests/state/trash-location.test.ts`.
+- `trash-provider.ts` — eager half of the in-app Trash (#863): registers the built-in `trash://` fs provider (installed by `+page.svelte`) and lazily loads `trash-location.ts`, passing it the startup-graph context-menu registry. `dropTrashEntries` is the drop seam for Trash drags (#1554), forwarding to the lazy route.
+- `trash-location.ts` — lazy half of the in-app Trash: lists through `list_trash`, reports unreadable sources once, registers the `scope: "trash"` Restore / Open in System File Manager menu actions, restores selected entries (or, for drops, `completeTrashDrop` → `restoreDroppedTrash` into a chosen folder via `restore_trash_items_to`, #1554) and refreshes open Trash views through the local file-change subscription. Contracts in `tests/state/trash-location.test.ts`.
 - `git-graph-component.ts` — resolved lazy graph component cache with an injected importer; coalesces first loads and preserves synchronous cached remounts.
 - `git-commit-files-cache.ts` — importable 50-entry LRU for immutable commit file lists; shared across graph remounts and behavior-tested through an injected loader.
 
@@ -347,7 +348,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `window-size.svelte.ts` — reactive `window.innerWidth`/`innerHeight` tracker (`windowSizeStore`); `+page.svelte` syncs on mount/resize. Feeds preview-pane auto-dock (#467).
 - `theme.svelte.ts` — active theme state + CSS var application.
 - `layout.svelte.ts` — eager layout-theme half (#1306): `layoutStore` paints `data-layout`/`data-layout-base` and injected layout sheets from a localStorage cache before mount, exposes the island arrangement, pane divider size and Details row height; `start()` follows `settings.layoutTheme` through the lazy controller.
-- `layout-controller.svelte.ts` — lazy layout-theme half (#1306): lists `layouts/`, resolves/falls back with one notice, loads Hairline Ledger's sheet, detects rule-less user CSS, generation-guards concurrent applications; used by the settings UI and layout picker.
+- `layout-controller.svelte.ts` — lazy layout-theme half (#1306): lists `layouts/`, resolves/falls back with one notice, loads the lazy built-in sheets (Hairline Ledger, Compact, Soft Cards), detects rule-less user CSS, generation-guards concurrent applications; used by the settings UI and layout picker.
 - `config-watch.ts` — applies `config-file-changed` to the settings/theme stores; `handleConfigFileChanged` is the routing seam (#599).
 - `terminal.svelte.ts` — embedded terminal panel state (#139).
 - `jobs.svelte.ts` — background jobs store (Ctrl+J); `retryJob` runs a failed job's `retry` once, then drops the entry or keeps it with the new error; a retrying entry is active (`isJobActive`: not dismissable or cleared); `dropRetries(owner)` for retired plugins.
@@ -516,6 +517,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `wsl.ts` — WSL path recognition.
 - `virtual-path.ts` — virtual (plugin-provided) path parsing, plus the eager `TRASH_PATH` / `isTrashPath` for the built-in Trash.
 - `trash.ts` — pure in-app Trash mapping (#863): `trash://` paths, trash wire entries → `FileEntry` with `trash` origin metadata, original-folder column text, source-issue and restore-outcome messages. Contracts in `tests/domain/trash.test.ts`.
+- `trash-drop.ts` — pure routing for dragging out of the Trash (#1554): Trash entry IDs from a drag source, and the drop target → restore-into-folder (or refusal) decision for pointer, DOM folder/listing and Bookmarks drops; lazy (imported only by `state/trash-location.ts`). Contracts in `tests/domain/trash-drop.test.ts`.
 - `drives.ts` — pure removable-drive tracking (isUnderRoot).
 - `load-diagnostics.ts` — pure slow directory-load traces (#1022): phase spans, 5 s threshold, frontend record, culprit diagnosis, bounded report text and chronological trace IDs. Contracts in `tests/domain/load-diagnostics.test.ts`.
 - `bookmark-drop-feedback.ts` — bookmark drop action feedback and effective local/cross-window drag-kind resolution (#675).
@@ -670,6 +672,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `floating-islands.css` — Floating Islands, bundled in startup CSS and scoped to `[data-layout-base="floating-islands"]`.
 - `hairline-ledger.css` — Hairline Ledger, lazy `?inline` sheet injected like a user layout.
+- `compact.css` — Compact (#1548): Default surfaces, tight chrome, 22px Details rows; lazy `?inline` sheet.
+- `soft-cards.css` — Soft Cards (#1548): opaque bordered cards, no shadows, 6px gaps, flat arrangement; lazy `?inline` sheet.
 
 ## src/lib/types/
 
@@ -1114,7 +1118,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/test-support/lineage-provider.ts` — browser-test `entryLineage` provider over the mock filesystem: install, update (fires `changed`), optional load delay and `labels` (`e2e/lineage-peek.spec.ts`, `e2e/lineage-prompt-labels.spec.ts`).
 - `src/test-support/file-view-eligibility.svelte.ts` — reactive pending/answer and activation gate for browser file-view first-paint tests; imported only by the intercepted demo fixture.
 - `src/lib/plugins/runtime-sdk.ts`, `src/lib/plugins/svelte-runtime.d.ts` — frozen SDK and exact shared Svelte compiler/runtime bindings; host modules `ui/modal`, `ui/image-editor`, `ui/file-tiles` (capability `fileTiles`), `ui/file-tile` (capability `fileTile`, including `tileGridMetrics`); capability `tileSize` (`FileViewPane.tileSize`, file-tiles `size`); capability `jobRetry` (`PluginJobs.accept` registration `retry`).
-- `src/lib/components/InstalledPluginSettings.svelte` — install, enable, remove and activation errors in Settings.
+- `src/lib/components/InstalledPluginSettings.svelte` — install, enable, remove and activation errors in the Plugins menu, built from the shared `SettingRow`/`SettingToggle`/`settings-button.css` chrome (#1529).
 
 TraceExplorer's image UI, provider adapters and SQLite journal are maintained in https://github.com/xnmp/TraceExplorer rather than compiled into this host. Core crop outcomes remain covered in `e2e/image-crop.spec.ts` and `e2e/image-editor.spec.ts`.
 

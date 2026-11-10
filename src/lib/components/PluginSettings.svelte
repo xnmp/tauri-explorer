@@ -1,6 +1,8 @@
 <script lang="ts">
   import { matchesSettingsQuery } from "$lib/domain/settings-search";
   import InstalledPluginSettings from "./InstalledPluginSettings.svelte";
+  import SettingToggle from "./settings/SettingToggle.svelte";
+  import "./settings/settings-button.css";
   import { pluginRegistry } from "$lib/plugins/registry.svelte";
   import { pluginSettingsSections } from "$lib/plugins/settings-registry.svelte";
 
@@ -17,15 +19,11 @@
         <span class="setting-label">{plugin.name}</span>
         <span class="setting-description">{plugin.description}</span>
       </div>
-      <label class="toggle">
-        <input
-          type="checkbox"
-          aria-label={`Enable ${plugin.name}`}
-          checked={plugin.enabled}
-          onchange={(e) => pluginRegistry.setEnabled(plugin.id, e.currentTarget.checked)}
-        />
-        <span class="toggle-slider"></span>
-      </label>
+      <SettingToggle
+        aria-label={`Enable ${plugin.name}`}
+        checked={plugin.enabled}
+        onchange={(e) => pluginRegistry.setEnabled(plugin.id, e.currentTarget.checked)}
+      />
     </div>
   {/each}
 </section>
@@ -43,15 +41,11 @@
           {/if}
         </div>
         {#if row.type === "toggle"}
-          <label class="toggle">
-            <input
-              type="checkbox"
-              aria-label={row.label}
-              checked={!!section.valueOf(row)}
-              onchange={(e) => section.setValue(row.id, e.currentTarget.checked)}
-            />
-            <span class="toggle-slider"></span>
-          </label>
+          <SettingToggle
+            aria-label={row.label}
+            checked={!!section.valueOf(row)}
+            onchange={(e) => section.setValue(row.id, e.currentTarget.checked)}
+          />
         {:else if row.type === "select"}
           <select
             aria-label={row.label}
@@ -77,7 +71,7 @@
     {#each section.actions as action (action.id)}
       <div class="setting-row" class:hidden={!matchesSearch(section.title,action.label,action.description??"")}>
         <div class="setting-info"><span class="setting-label">{action.label}</span>{#if action.description}<span class="setting-description">{action.description}</span>{/if}</div>
-        <button class="settings-action" onclick={()=>action.run()}>{action.label}</button>
+        <button class="settings-button" onclick={() => action.run()}>{action.label}</button>
       </div>
     {/each}
   </section>
@@ -85,8 +79,6 @@
 
 <style>
   .hidden { display: none !important; }
-  .settings-action {flex-shrink:0;padding:6px 10px;border:1px solid var(--control-stroke);border-radius:var(--radius-sm);background:var(--control-fill);color:var(--text-primary);font:inherit;font-size:13px;cursor:pointer;}
-  .settings-action:focus-visible {outline:2px solid var(--focus-stroke-outer);outline-offset:2px;}
 
   .settings-section { margin-bottom: 24px; }
   .settings-section:last-child { margin-bottom: 0; }
@@ -98,55 +90,4 @@
   .setting-description { font-size: 12px; color: var(--text-tertiary); }
   .text-input, .theme-select { width: 220px; min-width: 0; max-width: 50%; padding: 6px 8px; border: 1px solid var(--control-stroke); border-radius: var(--radius-sm); background: var(--control-fill); color: var(--text-primary); font: inherit; font-size: 13px; }
   .text-input:focus-visible, .theme-select:focus-visible { outline: 2px solid var(--focus-stroke-outer); outline-offset: 2px; }
-  .toggle {
-    position: relative;
-    display: inline-block;
-    flex: 0 0 44px;
-    height: 24px;
-    cursor: pointer;
-  }
-
-  .toggle input {
-    opacity: 0;
-    width: 0;
-    height: 0;
-  }
-
-  .toggle-slider {
-    position: absolute;
-    inset: 0;
-    background: var(--control-fill-secondary);
-    border: 1px solid var(--control-stroke);
-    border-radius: 12px;
-    transition:
-      background-color var(--transition-fast),
-      border-color var(--transition-fast);
-  }
-
-  .toggle-slider::before {
-    content: "";
-    position: absolute;
-    height: 18px;
-    width: 18px;
-    left: 2px;
-    bottom: 2px;
-    background: var(--text-secondary);
-    border-radius: 50%;
-    transition: transform var(--transition-fast);
-  }
-
-  .toggle input:checked + .toggle-slider {
-    background: var(--accent);
-    border-color: var(--accent);
-  }
-
-  .toggle input:checked + .toggle-slider::before {
-    transform: translateX(20px);
-    background: var(--text-on-accent);
-  }
-
-  .toggle input:focus-visible + .toggle-slider {
-    outline: 2px solid var(--focus-stroke-outer);
-    outline-offset: 2px;
-  }
 </style>

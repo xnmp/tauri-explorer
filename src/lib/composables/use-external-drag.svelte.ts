@@ -6,6 +6,7 @@
 import { startFileDrag } from "$lib/api/native-file-drag";
 import { isWindows } from "$lib/domain/platform";
 import { dragState } from "$lib/state/drag.svelte";
+import { isTrashPath } from "$lib/domain/virtual-path";
 
 // 1×1 transparent PNG. The plugin requires a valid image for the drag preview;
 // an empty string deserializes to a bogus PathBuf and fails at runtime on some platforms.
@@ -39,7 +40,8 @@ export async function startExternalDrag(paths: string[], iconPath?: string): Pro
   const gesture = dragState.current;
   // OS Link effects are not portable (GTK Wayland maps Link to Copy).
   // Shortcut authority must never export the underlying filesystem object.
-  if (!isTauri() || paths.length === 0 || gesture?.nativeCopyPolicy === "link") return;
+  // Trash entries have no filesystem object to export until restored (#1554).
+  if (!isTauri() || paths.length === 0 || gesture?.nativeCopyPolicy === "link" || paths.some(isTrashPath)) return;
   const lease = dragState.beginNative(gesture);
   const item = isWindows ? paths.map(normalizeForWindowsShell) : paths;
   try {

@@ -30,6 +30,10 @@ vi.mock("$lib/state/drop-operations", () => ({
   handleFileDropMany: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("$lib/state/trash-provider", () => ({
+  dropTrashEntries: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock("$lib/composables/use-external-drag.svelte", () => ({
   startExternalDrag: vi.fn().mockResolvedValue(undefined),
 }));
@@ -48,6 +52,7 @@ import { dragState } from "$lib/state/drag.svelte";
 import { bookmarksStore } from "$lib/state/bookmarks.svelte";
 import { handleFileDropMany } from "$lib/state/drop-operations";
 import { startExternalDrag } from "$lib/composables/use-external-drag.svelte";
+import { dropTrashEntries } from "$lib/state/trash-provider";
 import { resolveDropTargetAtPoint, highlightTargetAtPoint, clearHighlights } from "$lib/composables/use-native-drop-target.svelte";
 
 function makeEntry(name: string, kind = "file") {
@@ -465,5 +470,50 @@ describe("usePointerDrag", () => {
     expect(registeredListeners["mouseup"] || []).toHaveLength(0);
     expect(registeredListeners["keydown"] || []).toHaveLength(0);
     expect(registeredListeners["blur"] || []).toHaveLength(0);
+  });
+
+  describe("Trash entries (#1554)", () => {
+    const trashed = (name: string, id: string, kind = "file") =>
+      ({ path: `trash://${id}`, name, kind, size: 1, modified: "", trash: { id, originalPath: `/old/${name}`, deletedAt: null, originalFolder: "/old" } }) as any;
+
+    beforeEach(() => { vi.mocked(dropTrashEntries).mockClear(); vi.mocked(bookmarksStore.addBookmark).mockClear(); });
+
+    async function dragOut(entries: any[], target: any) {
+      vi.mocked(resolveDropTargetAtPoint).mockReturnValue(target);
+      const explorer = { ...makeMockExplorer(), currentPath: "trash://" };
+      explorer.getSelectedEntries = () => entries;
+      const drag = usePointerDrag({ getExplorer: () => explorer });
+      drag.handlePointerDown(makeMouseEvent(), entries[0], entries.length > 1);
+      fireWindowEvent("mousemove", { clientX: 120, clientY: 100 });
+      await fireWindowEvent("mouseup", { clientX: 200, clientY: 200 });
+    }
+
+    it("hands a dropped selection to the Trash restore route, never a move by path", async () => {
+      const target = { type: "folder", path: "/home/user/Documents" };
+      await dragOut([trashed("a.txt", "a1"), trashed("b.txt", "b2")], target);
+      expect(dropTrashEntries).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ path: "trash://a1", paths: ["trash://a1", "trash://b2"] }), target, "trash://");
+      expect(handleFileDropMany).not.toHaveBeenCalled();
+    });
+
+    it("never pins a trashed folder dropped on a bookmark", async () => {
+      const target = { type: "bookmark", path: "/home/user/Pictures" };
+      await dragOut([trashed("Album", "c3", "directory")], target);
+      expect(dropTrashEntries).toHaveBeenCalledWith(expect.objectContaining({ path: "trash://c3" }), target, "trash://");
+      expect(bookmarksStore.addBookmark).not.toHaveBeenCalled();
+      expect(handleFileDropMany).not.toHaveBeenCalled();
+    });
+
+    it("never hands a Trash entry to an OS drag when leaving the window", () => {
+      const entry = trashed("a.txt", "a1");
+      const explorer = makeMockExplorer();
+      explorer.getSelectedEntries = () => [entry];
+      const drag = usePointerDrag({ getExplorer: () => explorer });
+      drag.handlePointerDown(makeMouseEvent(), entry, false);
+      fireWindowEvent("mousemove", { clientX: 110, clientY: 100 });
+      fireWindowEvent("mousemove", { clientX: 800, clientY: 300 });
+      expect(startExternalDrag).not.toHaveBeenCalled();
+      fireWindowEvent("keydown", { key: "Escape" });
+    });
   });
 });

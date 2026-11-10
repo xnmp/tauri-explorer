@@ -69,7 +69,7 @@ fn a_gvfs_fuse_source_is_refused_before_any_trash_effect() {
     let error = context
         .trash(&path)
         .expect_err("a GVfs source must not be trashed");
-    assert!(matches!(error, AppError::PermissionDenied(_)), "{error:?}");
+    assert!(matches!(error, AppError::TrashUnavailable(_)), "{error:?}");
     assert!(error.to_string().contains("has no trash"), "{error}");
     assert_eq!(fs::read(&path).unwrap(), b"original");
     assert!(!context.data_home.exists());
@@ -78,6 +78,141 @@ fn a_gvfs_fuse_source_is_refused_before_any_trash_effect() {
         .map(|entry| entry.unwrap().file_name())
         .collect();
     assert_eq!(names, [OsString::from("source")]);
+}
+
+/// The scratch directory's real mount, re-rooted at the scratch directory so
+/// its topdir trash lives there, with the home trash on another mount (#1550).
+/// None where the kernel lacks mount ids or `/proc` shares the scratch mount.
+fn mounted_fixture() -> Option<(tempfile::TempDir, Context, PathBuf)> {
+    let (scratch, mut context, source) = fixture();
+    let physical = fs::canonicalize(&source).unwrap();
+    super::super::trash_mounts::mount_id(&physical).unwrap()?;
+    let mut mount = context.mounts.resolve(&physical).unwrap().clone();
+    let home = context.mounts.resolve(Path::new("/proc")).ok()?.clone();
+    if home.id == mount.id {
+        return None;
+    }
+    mount.mount_point = fs::canonicalize(scratch.path()).unwrap();
+    context.mounts = MountSnapshot::from_mounts(vec![mount, home]);
+    context.data_home = PathBuf::from("/proc/tauri-explorer-test-unused-home");
+    Some((scratch, context, source))
+}
+
+fn topdir_trash(scratch: &tempfile::TempDir) -> PathBuf {
+    scratch
+        .path()
+        .join(format!(".Trash-{}", unsafe { libc::geteuid() }))
+}
+
+#[test]
+fn a_private_topdir_trash_is_still_used_on_a_mounted_volume() {
+    let Some((scratch, mut context, source)) = mounted_fixture() else {
+        return;
+    };
+    let path = source.join("kept.txt");
+    fs::write(&path, b"original").unwrap();
+
+    let success = context.trash(&path).expect("private topdir trash");
+
+    let (payload, _) = artifact_paths(&success);
+    assert!(payload.starts_with(fs::canonicalize(topdir_trash(&scratch)).unwrap()));
+    assert_eq!(fs::read(payload).unwrap(), b"original");
+    assert_eq!(
+        fs::metadata(topdir_trash(&scratch)).unwrap().mode() & 0o777,
+        0o700
+    );
+}
+
+/// A cloud FUSE volume (rclone, google-drive-ocamlfuse) reports a topdir
+/// trash that cannot be private. It is still refused, but as the volume
+/// having no usable trash, before any effect (#1550).
+#[test]
+fn a_non_private_topdir_trash_means_the_volume_has_no_usable_trash() {
+    let Some((scratch, mut context, source)) = mounted_fixture() else {
+        return;
+    };
+    let path = source.join("report.pdf");
+    fs::write(&path, b"original").unwrap();
+    let trash = topdir_trash(&scratch);
+    fs::create_dir(&trash).unwrap();
+    fs::set_permissions(&trash, fs::Permissions::from_mode(0o775)).unwrap();
+
+    let error = context
+        .trash(&path)
+        .expect_err("a non-private trash must not be used");
+
+    assert!(matches!(error, AppError::TrashUnavailable(_)), "{error:?}");
+    assert!(
+        error.to_string().contains("not a private directory"),
+        "{error}"
+    );
+    assert_eq!(fs::read(&path).unwrap(), b"original");
+    assert_eq!(fs::metadata(&trash).unwrap().mode() & 0o777, 0o775);
+    assert!(fs::read_dir(&trash).unwrap().next().is_none());
+}
+
+/// The same classification applies when the refusal is only observed while
+/// executing the prepared layout, and an adopted directory is never removed.
+#[test]
+fn a_topdir_trash_refused_during_execution_means_no_usable_trash() {
+    let Some((scratch, context, source)) = mounted_fixture() else {
+        return;
+    };
+    let path = source.join("report.pdf");
+    fs::write(&path, b"original").unwrap();
+    let prepared = context
+        .prepare(&path, &mut random_bytes)
+        .expect("first-use preparation");
+    let trash = topdir_trash(&scratch);
+    fs::create_dir(&trash).unwrap();
+    fs::set_permissions(&trash, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let error = match prepared.execute_with(rename_noreplace_at, |_, _, _| Ok(())) {
+        Ok(_) => panic!("a non-private trash must not be used"),
+        Err(error) => error,
+    };
+
+    assert!(matches!(error, AppError::TrashUnavailable(_)), "{error:?}");
+    assert_eq!(fs::read(&path).unwrap(), b"original");
+    assert_eq!(fs::metadata(&trash).unwrap().mode() & 0o777, 0o755);
+}
+
+/// A failing home trash is a real problem with the user's own trash, not a
+/// volume without one: it keeps its ordinary permission error.
+#[test]
+fn a_non_private_home_trash_is_not_reclassified() {
+    let (_scratch, mut context, source) = fixture();
+    let path = source.join("report.pdf");
+    fs::write(&path, b"original").unwrap();
+    let trash = context.data_home.join("Trash");
+    fs::create_dir_all(&trash).unwrap();
+    fs::set_permissions(&trash, fs::Permissions::from_mode(0o775)).unwrap();
+
+    let error = context.trash(&path).expect_err("non-private home trash");
+
+    assert!(matches!(error, AppError::PermissionDenied(_)), "{error:?}");
+    assert_eq!(fs::read(&path).unwrap(), b"original");
+}
+
+#[test]
+fn a_refused_new_trash_directory_is_removed_only_while_it_is_the_created_one() {
+    let scratch = tempfile::tempdir().unwrap();
+    let parent = Directory::open(scratch.path()).unwrap();
+    let name = OsStr::new(".Trash-test");
+
+    let created = parent.create_directory(name).unwrap();
+    plan::discard_created(&parent, name, &created);
+    assert!(!scratch.path().join(name).exists());
+
+    let created = parent.create_directory(name).unwrap();
+    fs::write(scratch.path().join(name).join("entry"), b"kept").unwrap();
+    plan::discard_created(&parent, name, &created);
+    assert!(scratch.path().join(name).join("entry").exists());
+
+    fs::rename(scratch.path().join(name), scratch.path().join("moved")).unwrap();
+    fs::create_dir(scratch.path().join(name)).unwrap();
+    plan::discard_created(&parent, name, &created);
+    assert!(scratch.path().join(name).is_dir(), "a replacement is kept");
 }
 
 #[test]

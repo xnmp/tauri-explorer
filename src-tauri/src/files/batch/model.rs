@@ -96,6 +96,27 @@ pub struct FileBatchOutcome {
     pub(crate) uncertain: Vec<FileFailure>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) unstarted: Vec<String>,
+    /// The subset of `failed` refused before any effect because the item's
+    /// volume has no usable trash. The renderer may offer a confirmed
+    /// permanent deletion for exactly these paths (#1550).
+    #[serde(rename = "trashUnavailable", skip_serializing_if = "Vec::is_empty")]
+    pub(crate) trash_unavailable: Vec<String>,
+}
+
+/// A per-item error retained by the batch ledger.
+#[derive(Debug)]
+pub(crate) struct ItemError {
+    message: String,
+    trash_unavailable: bool,
+}
+
+impl From<crate::error::AppError> for ItemError {
+    fn from(error: crate::error::AppError) -> Self {
+        Self {
+            trash_unavailable: matches!(error, crate::error::AppError::TrashUnavailable(_)),
+            message: error.to_string(),
+        }
+    }
 }
 
 impl FileBatchOutcome {
@@ -154,7 +175,7 @@ impl FileBatchOutcome {
 
 pub(super) fn settle(
     paths: Vec<String>,
-    states: Vec<ItemState<TrashSuccess>>,
+    states: Vec<ItemState<TrashSuccess, ItemError>>,
     worker_error: Option<String>,
 ) -> FileBatchOutcome {
     let mut outcome = FileBatchOutcome {
@@ -186,8 +207,19 @@ pub(super) fn settle(
                 }
                 outcome.succeeded.push(path);
             }
-            ItemState::Failed(error) => outcome.failed.push(FileFailure { path, error }),
-            ItemState::Uncertain(error) => outcome.uncertain.push(FileFailure { path, error }),
+            ItemState::Failed(error) => {
+                if error.trash_unavailable {
+                    outcome.trash_unavailable.push(path.clone());
+                }
+                outcome.failed.push(FileFailure {
+                    path,
+                    error: error.message,
+                })
+            }
+            ItemState::Uncertain(error) => outcome.uncertain.push(FileFailure {
+                path,
+                error: error.message,
+            }),
             ItemState::Active => outcome.uncertain.push(FileFailure {
                 path,
                 error: worker_error

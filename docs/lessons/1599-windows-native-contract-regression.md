@@ -1,23 +1,21 @@
 # Windows native contract regression
 
 The first failing Tauri binary E2E smoke run after PR #1561 failed in the
-Windows Rust contracts, before GUI execution. Its new
+Windows Rust contracts. Its new
 `trash_unavailable_failures_are_listed_separately_from_other_failures` test
-passed `/drive/a`, `/drive/b`, and `/drive/c` into `BatchPlan::new`.
+passed `/drive/a`, `/drive/b`, and `/local/c` into `BatchPlan::new`.
 On Windows these are root-relative paths, not absolute paths, so the fixture
-panicked during admission rather than exercising batch settlement.
+panicked during admission rather than exercising batch settlement. A second
+batch in the same test also used the invalid Windows path `/x`.
 
-The preceding dev smoke run passed. PR #1561 was the only intervening merge,
-and no later commits changed its files. Revert that PR to restore the known
-passing implementation, following the CI repair policy. This also withdraws
-its no-usable-trash permanent-delete fallback and newly-created trash-directory
-cleanup; those product changes need a corrected, cross-platform reintroduction.
+Derive all four fixture paths from `tempfile::tempdir()` and compare outcomes
+against the resulting native path strings. Preserve the success, failure,
+trash-unavailable subset and JSON assertions, including omission of the field
+for ordinary failures. Linux alone cannot reproduce the Windows admission
+failure; the first failing hosted Windows run provides the pre-fix evidence.
 
-For that reintroduction, derive fixtures from `tempfile::tempdir()` and compare
-against their native path strings. Preserve the outcome and serialization
-assertions. Run the Windows `files::batch::` contracts, not only Linux tests:
-the Linux result cannot expose Windows path-admission failures.
-
-The revert restores the preceding ADR 0017 batch outcome and ADR 0019 exact
-trash behavior; it does not weaken absolute-path admission or private-trash
-permission checks.
+Keep this repair in the test fixture. Reverting the whole feature also changes
+Linux delete behavior and requires separate running-app evidence. The final
+repair preserves the permanent-delete confirmation fallback and private-trash
+cleanup, with no production changes to the ADR 0017 batch outcome or ADR 0019
+exact-trash behavior.

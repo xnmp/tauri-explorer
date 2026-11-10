@@ -5,7 +5,6 @@ pub(in crate::files) mod receipts;
 use super::trash_artifact::TrashSuccess;
 use crate::error::AppError;
 pub(crate) use model::BatchPlan;
-use model::ItemError;
 pub use model::{FileBatchOutcome, FileFailure};
 use receipts::{ItemState, Receipts};
 use std::sync::{Arc, Mutex};
@@ -56,7 +55,7 @@ impl DirectoryEffects {
 #[derive(Clone)]
 struct Ledger {
     paths: Arc<Vec<String>>,
-    states: Receipts<TrashSuccess, ItemError>,
+    states: Receipts<TrashSuccess>,
     directories: DirectoryEffects,
 }
 
@@ -110,9 +109,9 @@ impl Ledger {
                     ItemState::Succeeded(success)
                 }
                 Err(error @ (AppError::WorkerFailed(_) | AppError::MutationUncertain(_))) => {
-                    ItemState::Uncertain(error.into())
+                    ItemState::Uncertain(error.to_string())
                 }
-                Err(error) => ItemState::Failed(error.into()),
+                Err(error) => ItemState::Failed(error.to_string()),
             };
             let stop = matches!(state, ItemState::Uncertain(_));
             self.states.complete(index, state);

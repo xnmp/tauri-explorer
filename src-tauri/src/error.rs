@@ -34,12 +34,6 @@ pub enum AppError {
     #[error("File operation may have changed files: {0}")]
     MutationUncertain(String),
 
-    /// Moving to trash was refused before any effect because the item's
-    /// volume has no usable trash (#1550). The renderer may offer a confirmed
-    /// permanent deletion instead; it never happens implicitly.
-    #[error("Trash unavailable: {0}")]
-    TrashUnavailable(String),
-
     #[error("{message}")]
     Service { code: String, message: String },
 
@@ -74,7 +68,6 @@ impl Serialize for AppError {
             AppError::Io(_) => "io",
             AppError::WorkerFailed(_) => "worker_failed",
             AppError::MutationUncertain(_) => "mutation_uncertain",
-            AppError::TrashUnavailable(_) => "trash_unavailable",
             AppError::Service { code, .. } => code.as_str(),
             AppError::Other(_) => "other",
         };

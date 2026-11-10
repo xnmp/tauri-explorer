@@ -315,6 +315,11 @@ SCM archive actions preserve each repo-relative path under `.archive/` and add
 
 ## Debugging
 
+Cross-platform batch-worker tests must derive absolute paths from `tempfile`
+instead of Unix literals such as `/drive/a`. Windows treats those literals as
+root-relative, so batch admission rejects them before the behavior under test
+runs (see `docs/lessons/1599-windows-native-contract-regression.md`).
+
 Windows Recycle Bin inventory must read `System.FileName` (`PKEY_FileName`)
 from the Shell item. `trash::list()` supplies a `SIGDN_PARENTRELATIVE` display
 name, which can omit registered extensions; joining it to the original parent

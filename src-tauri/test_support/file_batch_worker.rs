@@ -575,38 +575,3 @@ fn directory_effect_budget_stops_before_unrecorded_mutation_and_deduplicates() {
         );
     }
 }
-
-/// Only items refused because their volume has no usable trash are offered to
-/// the renderer for a confirmed permanent deletion (#1550).
-#[test]
-fn trash_unavailable_failures_are_listed_separately_from_other_failures() {
-    let outcome = tauri::async_runtime::block_on(run(
-        plan(&[
-            Path::new("/drive/a"),
-            Path::new("/drive/b"),
-            Path::new("/local/c"),
-        ]),
-        |path| match path {
-            "/drive/a" => Err(AppError::TrashUnavailable("no usable trash".into())),
-            "/drive/b" => Err(AppError::PermissionDenied("denied".into())),
-            _ => Ok(()),
-        },
-    ));
-
-    assert_eq!(outcome.succeeded, ["/local/c"]);
-    assert_eq!(outcome.failed.len(), 2);
-    assert_eq!(outcome.trash_unavailable, ["/drive/a"]);
-    let json = serde_json::to_value(&outcome).unwrap();
-    assert_eq!(json["trashUnavailable"], serde_json::json!(["/drive/a"]));
-    assert_eq!(
-        json["failed"][0]["error"],
-        "Trash unavailable: no usable trash"
-    );
-    let ordinary = tauri::async_runtime::block_on(run(plan(&[Path::new("/x")]), |_| {
-        Err(AppError::PermissionDenied("denied".into()))
-    }));
-    assert!(serde_json::to_value(&ordinary)
-        .unwrap()
-        .get("trashUnavailable")
-        .is_none());
-}

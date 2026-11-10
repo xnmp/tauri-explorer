@@ -111,3 +111,18 @@ it("a reader of one dialog is not re-run when a different dialog opens or closes
     expect(seen).toBe(false);
   } finally { stop(); f.dispose(); }
 });
+
+it("opening or closing a dialog inside an effect does not subscribe that effect (#1565)", () => {
+  const f = setup();
+  let runs = 0;
+  const stop = client.effect_root(() => {
+    client.render_effect(() => { runs += 1; f.store.openJobsPanel(); f.store.closeSettings(); });
+  });
+  try {
+    expect(runs).toBe(1);
+    client.flush(() => f.store.closeJobsPanel());
+    client.flush(() => f.store.openSettings());
+    client.flush(() => f.store.openQuickOpen());
+    expect(runs).toBe(1);
+  } finally { stop(); f.dispose(); }
+});

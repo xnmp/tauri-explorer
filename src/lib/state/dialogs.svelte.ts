@@ -52,10 +52,9 @@ function createDialogStore() {
   const openFlags = $state(Object.fromEntries(OVERLAY_IDS.map((id) => [id, false])) as Record<OverlayId, boolean>);
   const commit = (next: OpenOverlays): void => {
     overlays = next;
-    for (const id of OVERLAY_IDS) {
-      const value = isOverlayOpen(next, id);
-      if (openFlags[id] !== value) openFlags[id] = value;
-    }
+    // Write-only: opening or closing a dialog is a command and must never
+    // subscribe a calling effect. Assigning an unchanged value notifies nobody.
+    for (const id of OVERLAY_IDS) openFlags[id] = isOverlayOpen(next, id);
   };
   let themePickerKind = $state<'color' | 'icon' | 'layout'>('color');
   let pickerConfig = $state<PickerConfig | null>(null);

@@ -584,6 +584,7 @@ backend for E2E/browser).
 ## Terminal panel
 
 - `state/terminal-key-handler.ts` — shared xterm adapter resolves eligible Explorer command ownership before clipboard/readline side effects (#759)
+- `state/terminal-cwd-sync.ts` — cwd-sync queue/poll machine (idle|queued), pure rules in `domain/terminal-cwd-sync.ts`; TerminalPanel only wires deps (#1566)
 - `state/terminal-session.ts` — frontend resource owner for reserve/listen/spawn/kill; late completions drain before restart/disposal. All PTY input (keys, shortcut bytes, pastes, path insertions, `cd` sync) goes through `session.write` into `domain/terminal-input-queue.ts`, which accepts promises so a clipboard read or a dialect-dependent insertion keeps its key position (#709, #882).
 - `domain/terminal-paste.ts` — paste source order per platform (#732) and the bytes xterm's `paste()` would emit.
 - `src-tauri/src/terminal/input.rs` — the ordering guarantee: `terminal_write(id, seq, data)` is admitted in `seq` order whatever order the async commands run in; typeahead before the PTY exists is held (64 KiB). An overflow discards ALL pre-start input, reports it in the receipt, and the panel logs it and shows a toast. One writer thread per PTY (#882).

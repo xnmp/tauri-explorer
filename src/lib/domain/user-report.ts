@@ -1,12 +1,11 @@
 export type UserReportKind = "bug" | "feature";
 
-export const USER_REPORT_IMAGE_TYPES = [
+const USER_REPORT_IMAGE_TYPES = [
   "image/png",
   "image/jpeg",
   "image/gif",
 ] as const;
-export type UserReportImageType = (typeof USER_REPORT_IMAGE_TYPES)[number];
-export const USER_REPORT_MEDIA_TYPES = [...USER_REPORT_IMAGE_TYPES, "video/mp4", "video/webm", "video/quicktime"] as const;
+const USER_REPORT_MEDIA_TYPES = [...USER_REPORT_IMAGE_TYPES, "video/mp4", "video/webm", "video/quicktime"] as const;
 export type UserReportMediaType = (typeof USER_REPORT_MEDIA_TYPES)[number];
 
 // Mirrors the native boundary and the relay; all three assert these against
@@ -36,7 +35,7 @@ export interface UserReportAttachmentUsage {
   bytes: number;
 }
 
-export function userReportAttachmentBytes(data: string): number {
+function userReportAttachmentBytes(data: string): number {
   const padding = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
   return Math.max(0, Math.floor(data.length * 3 / 4) - padding);
 }
@@ -159,13 +158,13 @@ export function userReportAttachmentFailureMessage(
 }
 
 const REPO_ISSUES_URL = "https://github.com/xnmp/tauri-explorer/issues/new";
-export const MAX_GITHUB_ISSUE_URL_CHARS = 6000;
+const MAX_GITHUB_ISSUE_URL_CHARS = 6000;
 
 function stripControls(value: string): string {
   return value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "");
 }
 
-export function boundedGitHubIssueUrl(
+function boundedGitHubIssueUrl(
   title: string,
   body: string,
   labels?: string,

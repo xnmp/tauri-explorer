@@ -15,7 +15,7 @@ export interface SpringHitElement {
 
 /** `bridge`: a transparent region that belongs to a temporary peek (a Tiles band
  * gap, a stacked panel's channel or ribbon, a List card's wrap path). */
-export type SpringRowKind = "directory" | "file" | "state" | "bridge";
+type SpringRowKind = "directory" | "file" | "state" | "bridge";
 export interface SpringRow { readonly path: string; readonly kind: SpringRowKind }
 
 const ROWS = ".entry-item[data-path], [data-row-path], [data-peek-state], [data-spring-bridge]";

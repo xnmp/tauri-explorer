@@ -33,11 +33,11 @@ export interface CiCheckLogState {
 }
 
 export type FailedCiCheckSnapshot = Readonly<FailedCiCheck>;
-export type FailedCiCheckLogSnapshot = Readonly<FailedCiCheckLog>;
+type FailedCiCheckLogSnapshot = Readonly<FailedCiCheckLog>;
 
-export type PrCommentSnapshot = Readonly<PrComment>;
-export type PrReviewCommentSnapshot = Readonly<PrReviewComment>;
-export type PrReviewThreadSnapshot = Readonly<
+type PrCommentSnapshot = Readonly<PrComment>;
+type PrReviewCommentSnapshot = Readonly<PrReviewComment>;
+type PrReviewThreadSnapshot = Readonly<
   Omit<PrReviewThread, "comments"> & { comments: readonly PrReviewCommentSnapshot[] }
 >;
 export type PrSnapshot = Readonly<

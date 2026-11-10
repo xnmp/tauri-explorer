@@ -15,7 +15,7 @@ export function isTrashRoot(path: string): boolean {
 }
 
 /** Each trashed item has a unique, stable Explorer path built from its ID. */
-export function trashEntryPath(id: string): string {
+function trashEntryPath(id: string): string {
   return `${TRASH_PATH}${id}`;
 }
 
@@ -51,7 +51,7 @@ export interface TrashWireListing {
   issues: TrashIssue[];
 }
 
-export function toTrashEntry(item: TrashWireEntry): FileEntry {
+function toTrashEntry(item: TrashWireEntry): FileEntry {
   return {
     name: item.name,
     path: trashEntryPath(item.id),

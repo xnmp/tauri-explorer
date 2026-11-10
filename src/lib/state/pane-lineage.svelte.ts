@@ -21,14 +21,14 @@ import { pathComparison } from "$lib/domain/path";
 import { normalizeLineageLabels } from "$lib/domain/lineage-labels";
 import { entryLineageRegistry, type RegisteredEntryLineage } from "$lib/plugins/entry-lineage-registry.svelte";
 
-export const LINEAGE_FIRST_PAINT_MS = 400;
-export const LINEAGE_ARRIVAL_HOLD_MS = 300;
+const LINEAGE_FIRST_PAINT_MS = 400;
+const LINEAGE_ARRIVAL_HOLD_MS = 300;
 /** `changed` is coalesced per folder: a provider may wake every subscribed
  * folder at once, repeatedly (one plugin-wide invalidation). */
-export const LINEAGE_CHANGE_DEBOUNCE_MS = 50;
+const LINEAGE_CHANGE_DEBOUNCE_MS = 50;
 
 /** Grouping fallbacks (a cycle in a provider's graph), for diagnostics and tests. */
-export const lineageDiagnostics = { cycleFallbacks: 0 };
+const lineageDiagnostics = { cycleFallbacks: 0 };
 
 export interface PaneLineageInputs {
   directory(): string;

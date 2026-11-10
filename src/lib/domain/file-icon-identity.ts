@@ -10,7 +10,7 @@ export type FileIconIdentity = 'folder'
   | 'pdf' | 'word' | 'spreadsheet' | 'presentation' | 'database' | 'font'
   | 'executable' | 'shortcut' | 'text' | 'code' | 'file';
 
-export type FileIconCategory = 'folder' | 'code' | 'document' | 'image' | 'archive' | 'media' | 'executable';
+type FileIconCategory = 'folder' | 'code' | 'document' | 'image' | 'archive' | 'media' | 'executable';
 export interface FileIconDescriptor {
   readonly identity: FileIconIdentity;
   readonly category: FileIconCategory;

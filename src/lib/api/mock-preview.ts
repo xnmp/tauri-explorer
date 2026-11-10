@@ -113,10 +113,6 @@ export const previewCommands: Record<string, CommandHandler> = {
     : /\.(png|jpe?g|gif|webp|bmp)$/i.test(String(args.path))
     ? { width: 1920, height: 1080 } : null,
 
-  get_thumbnail: () => {
-    throw new Error("Thumbnails not available in mock mode");
-  },
-
   get_thumbnail_data: (args) => {
     const cropped = mockImageCrop.read((args.path as string) ?? "");
     if (cropped) return cropped;
@@ -236,13 +232,6 @@ export const previewCommands: Record<string, CommandHandler> = {
     };
   },
 
-  clear_thumbnail_cache: () => 0,
-
-  get_thumbnail_cache_stats: () => ({
-    count: 0,
-    totalSize: 0,
-    path: "/tmp/thumbnails",
-  }),
   probe_video_codec: (args) => getMockControl().videoCodecProbe?.(String(args.path)) ?? ({ container: null, videoCodec: null, audioCodec: null }),
   // Theme from Image (#203): deterministic palette; theme CSS goes into the
   // in-memory config store and is injected by the mocked list_user_themes.

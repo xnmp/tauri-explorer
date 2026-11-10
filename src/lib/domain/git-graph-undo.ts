@@ -30,7 +30,7 @@ export type GitUndoAction =
     };
 
 /** One session-only undo record, scoped to the repository that produced it. */
-export interface GitUndoEntry {
+interface GitUndoEntry {
   repoPath: string;
   action: GitUndoAction;
 }

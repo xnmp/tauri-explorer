@@ -32,7 +32,7 @@ const MAX_RESOLVE_DEPTH = 16;
  * stylesheets this targets, and it fails loudly (a missing declaration) rather
  * than silently mis-resolving one.
  */
-export function stripComments(css: string): string {
+function stripComments(css: string): string {
   return css.replace(/\/\*[\s\S]*?\*\//g, "");
 }
 

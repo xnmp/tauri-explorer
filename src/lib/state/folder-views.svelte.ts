@@ -13,7 +13,7 @@ import { loadPersisted } from "./persisted";
 import type { ThumbnailSize } from "./settings.svelte";
 
 /** View properties that can be overridden per folder */
-export interface FolderViewOverride {
+interface FolderViewOverride {
   thumbnailSize?: ThumbnailSize;
 }
 

@@ -26,7 +26,7 @@ import { fileViewRegistry } from "./file-view-registry.svelte";
 /** Statically-imported built-in plugins (explicit imports — no dynamic load). */
 const BUILT_IN_PLUGINS: Plugin[] = [demoPlugin, nanoBananaPlugin, aiRenamePlugin, aiOrganizePlugin, themeFromImagePlugin, upscalePlugin];
 
-export interface PluginInfo {
+interface PluginInfo {
   id: string;
   name: string;
   description: string;

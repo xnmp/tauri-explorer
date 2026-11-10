@@ -27,7 +27,7 @@ export function pdfPointerPoint(
   };
 }
 export const PDF_FIT: PdfView = { zoom: 1, pan: { x: 0, y: 0 } };
-export const PDF_MARGIN = 16;
+const PDF_MARGIN = 16;
 
 export function fitPdfScale(page: Size, viewport: Size): number {
   if (
@@ -42,7 +42,7 @@ export function fitPdfScale(page: Size, viewport: Size): number {
   );
 }
 
-export function constrainPdfPan(
+function constrainPdfPan(
   pan: Point,
   content: Size,
   viewport: Size,

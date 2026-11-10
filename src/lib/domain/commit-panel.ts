@@ -37,7 +37,7 @@ export interface StageGroup {
 }
 
 /** Minimal shape of a status entry as delivered by `git_status`. */
-export interface StatusEntryLike {
+interface StatusEntryLike {
   path: string;
   /** Status code ("Modified", "Added", …); resolved to a letter here. */
   status: string;
@@ -147,7 +147,7 @@ export function commitButtonLabel(stagedCount: number): string {
 
 // ── Commit-message editor state machine ──────────────────────────────────
 
-export type CommitPhase = "idle" | "committing";
+type CommitPhase = "idle" | "committing";
 
 export interface CommitPanelState {
   message: string;

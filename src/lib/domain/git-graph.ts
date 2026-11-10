@@ -28,7 +28,7 @@ export interface GraphCommitLike {
 }
 
 /** A point on the layout grid: `lane` = column, `row` = commit index. */
-export interface GraphPoint {
+interface GraphPoint {
   lane: number;
   row: number;
 }
@@ -706,7 +706,7 @@ export interface RefChips {
 
 /** Split a remote shorthand (`origin/feat/x`) into remote + branch at the
  *  first slash. A name with no slash keeps its whole value as both parts. */
-export function splitRemoteRef(name: string): RemoteRefChip {
+function splitRemoteRef(name: string): RemoteRefChip {
   const i = name.indexOf("/");
   return i > 0
     ? { name, remote: name.slice(0, i), branch: name.slice(i + 1) }

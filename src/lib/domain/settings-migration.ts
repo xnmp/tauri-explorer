@@ -43,7 +43,7 @@ export interface SettingsMigration {
 }
 
 /** The ledger. Append only; never renumber or remove a shipped entry. */
-export const SETTINGS_MIGRATIONS: readonly SettingsMigration[] = [
+const SETTINGS_MIGRATIONS: readonly SettingsMigration[] = [
   {
     version: 1,
     resetToDefault: ["tabTitleGitRoot"],

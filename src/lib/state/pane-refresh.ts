@@ -24,7 +24,7 @@ export interface RefreshTarget {
 }
 
 /** What one publication changed, for owners of listing-derived state. */
-export interface RefreshPublication {
+interface RefreshPublication {
   /** A complete snapshot could not establish removals; another read follows. */
   needsRefresh: boolean;
   /** The published entries differ from the ones they replace. */

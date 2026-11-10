@@ -18,8 +18,6 @@ function cancelledOutcome(count: number): ApiResult<CopySessionOutcome> {
   return { ok: true, data: { items: Array.from({ length: count }, () => ({ status: "unstarted" as const })), cancelled: true, warnings: [] } };
 }
 
-export type CopyEntriesOptions = SessionOptions;
-
 /** Copy and move share one native session registry, so both are cancelled and
  *  resolved through the same two control commands. */
 export async function copyEntries(

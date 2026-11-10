@@ -25,7 +25,7 @@ export interface GitPaletteTarget {
   summary: string;
 }
 
-export interface GitPaletteStash {
+interface GitPaletteStash {
   selector: string;
   summary: string;
 }

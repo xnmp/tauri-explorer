@@ -13,7 +13,7 @@ import { checkPathsExist } from "$lib/api/files";
 import { directoryKey } from "$lib/domain/path";
 import { loadPersisted, savePersisted } from "./persisted";
 
-export type RecentEntry = HistoryRecentEntry;
+type RecentEntry = HistoryRecentEntry;
 
 const STORAGE_KEY = "explorer-recent-files";
 const MAX_ENTRIES = 50;

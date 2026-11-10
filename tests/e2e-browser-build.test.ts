@@ -119,7 +119,7 @@ describe("app server per spec", () => {
     expect(needsDevServer("await context.routeFromHAR(file);")).toBe(true);
     expect(needsDevServer(`await page.goto("/?path=/home/user");`)).toBe(false);
     expect(needsDevServer("")).toBe(false);
-    expect(needsDevServer("// e2e-app-server: dev (#1384). Retire-when: #1384 closed")).toBe(true);
+    expect(needsDevServer("// e2e-app-server: dev (#NNN). Retire-when: #NNN closed")).toBe(true);
   });
 
   it("keeps the configured server outside bundle mode", () => {

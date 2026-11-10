@@ -79,23 +79,6 @@ pub async fn clipboard_has_image() -> Result<bool, AppError> {
         .map_err(|error| AppError::Other(format!("Clipboard task failed: {error}")))?
 }
 
-/// Read a clipboard screenshot for a user report without creating a file in
-/// the current directory.
-#[tauri::command]
-pub async fn clipboard_read_report_image(
-) -> Result<crate::user_report::ReportAttachment, crate::user_report::SubmitReportError> {
-    tokio::task::spawn_blocking(|| {
-        content::read_report_image_attachment(platform::reader().as_ref())
-    })
-    .await
-    .map_err(|error| {
-        crate::user_report::SubmitReportError::new(
-            "clipboard_unavailable",
-            format!("Clipboard task failed: {error}"),
-        )
-    })?
-}
-
 /// Report attachments include clipboard screenshots and copied video files.
 #[tauri::command]
 pub async fn clipboard_has_report_attachment() -> Result<bool, AppError> {

@@ -8,7 +8,7 @@
 import { nativeJobSettled, nativeJobTerminal, type NativeJobRecord, type NativeJobState } from "$lib/domain/native-plugin-jobs";
 import type { JobCost, JobReveal } from "$lib/plugins/api";
 import { jobCost, jobReveal } from "$lib/domain/job-presentation";
-export type JobStatus = NativeJobState;
+type JobStatus = NativeJobState;
 
 /** Starts a replacement for a failed job (a plugin's `accept` result). */
 export type JobRetry = () => Promise<{ ok: true; data: number } | { ok: false; error: string }>;
@@ -45,7 +45,7 @@ export interface Job {
   cancelRequested?: boolean;
 }
 
-export interface JobExtras {
+interface JobExtras {
   owner?: string;
   retry?: JobRetry;
   nativeOwner?: string;

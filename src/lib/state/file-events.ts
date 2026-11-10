@@ -8,7 +8,7 @@
  */
 import { emptyFolderResolver } from "./empty-folders.svelte";
 
-export interface FileChangeEvent {
+interface FileChangeEvent {
   /** Directories that were modified (source/destination) */
   affectedDirs: string[];
 }

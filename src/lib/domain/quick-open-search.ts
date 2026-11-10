@@ -76,7 +76,7 @@ export function createQuickOpenStreamResources(
  * A trailing pause keeps normal typing from launching a full directory walk
  * for every intermediate character while still feeling immediate in the UI.
  */
-export const QUICK_OPEN_SEARCH_DEBOUNCE_MS = 150;
+const QUICK_OPEN_SEARCH_DEBOUNCE_MS = 150;
 
 /**
  * Creates the search-start boundary for Quick Open.

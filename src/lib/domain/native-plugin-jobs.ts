@@ -24,7 +24,7 @@ const windowLabel = (v: unknown): v is string => typeof v === "string" && /^[!-~
 export const nativeJobTerminal = (state: NativeJobState): boolean => ["completed", "error", "cancelled", "discarded"].includes(state);
 /** Legacy parked presentation is inactive while native automatic settlement
  *  advances its durable record. Mirrors the host's `parked` job rule. */
-export const nativeJobParked = (state: NativeJobState, phase?: string | null): boolean =>
+const nativeJobParked = (state: NativeJobState, phase?: string | null): boolean =>
   state === "needs_attention" && (phase === "stopped" || phase === "provider_result_discarded");
 /** Terminal or parked: no longer active, and dismissable. */
 export const nativeJobSettled = (record: Pick<NativeJobRecord, "state" | "phase">): boolean =>

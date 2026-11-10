@@ -711,6 +711,10 @@ mod tests {
     fn repo(files: &[(&str, &str)]) -> TempDir {
         let d = TempDir::new().unwrap();
         git(d.path(), &["init", "-q", "-b", "main"]);
+        // The product's own git subprocesses read the host's config, and
+        // Windows runners set core.autocrlf=true globally, which would
+        // check fixture text out with CRLF line endings.
+        git(d.path(), &["config", "core.autocrlf", "false"]);
         for (rel, contents) in files {
             write(d.path(), rel, contents);
         }

@@ -488,17 +488,35 @@ mod tests {
         assert!(status.lines().any(|l| l == " M a"), "{status:?}");
     }
 
+    /// Commit `paths` (each holding "1\n") through the index alone, then turn
+    /// on `core.ignorecase`. Case variants cannot coexist in a worktree on a
+    /// case-insensitive filesystem (macOS, Windows), where `git init` also
+    /// defaults ignorecase on, so the entries never touch the filesystem.
+    fn commit_index_only(dir: &Path, paths: &[&str]) {
+        init(dir);
+        git(dir, &["config", "core.ignorecase", "false"]);
+        let one = blob(dir, "1\n");
+        for path in paths {
+            git(
+                dir,
+                &[
+                    "update-index",
+                    "--add",
+                    "--cacheinfo",
+                    &format!("100644,{one},{path}"),
+                ],
+            );
+        }
+        commit(dir);
+        git(dir, &["config", "core.ignorecase", "true"]);
+    }
+
     /// `core.ignorecase` makes libgit2 look paths up without regard to case;
     /// unstaging one of two case variants must still touch only that one.
     #[test]
     fn case_variants_under_ignorecase_match_git() {
         let both = |dir: &Path| {
-            init(dir);
-            write(dir, "a", "1\n");
-            write(dir, "A", "1\n");
-            git(dir, &["add", "-A"]);
-            commit(dir);
-            git(dir, &["config", "core.ignorecase", "true"]);
+            commit_index_only(dir, &["a", "A"]);
             let two = blob(dir, "2\n");
             let three = blob(dir, "3\n");
             git(
@@ -514,12 +532,7 @@ mod tests {
         assert_matches_git(&both, &["A"]);
 
         let upper_only = |dir: &Path| {
-            init(dir);
-            write(dir, "a", "1\n");
-            write(dir, "A", "1\n");
-            git(dir, &["add", "-A"]);
-            commit(dir);
-            git(dir, &["config", "core.ignorecase", "true"]);
+            commit_index_only(dir, &["a", "A"]);
             let two = blob(dir, "2\n");
             git(
                 dir,
@@ -530,12 +543,7 @@ mod tests {
         assert_matches_git(&upper_only, &["a"]);
 
         let file_and_dir = |dir: &Path| {
-            init(dir);
-            write(dir, "d", "1\n");
-            write(dir, "D/x", "1\n");
-            git(dir, &["add", "-A"]);
-            commit(dir);
-            git(dir, &["config", "core.ignorecase", "true"]);
+            commit_index_only(dir, &["d", "D/x"]);
             let two = blob(dir, "2\n");
             git(
                 dir,

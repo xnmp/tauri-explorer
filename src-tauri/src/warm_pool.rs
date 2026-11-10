@@ -155,7 +155,7 @@ impl PoolState {
     }
 
     /// Withdraw from claim admission; no-op unless currently ready.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", test))]
     fn withdraw_ready(&mut self, label: &str) {
         if matches!(self.stage(label), Some(Stage::Ready { .. })) {
             self.set_stage(label, None);

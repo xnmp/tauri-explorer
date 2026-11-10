@@ -1,3 +1,4 @@
+import { untrack } from "svelte";
 import { fileRecoveryPort } from "$lib/api/file-recovery";
 import { extractError } from "$lib/api/common";
 import {
@@ -263,7 +264,9 @@ export function createFileRecoveryState(port: FileRecoveryPort = fileRecoveryPor
     }
     const token = owner;
     const request = ++inspectSeq;
-    inspectionState = beginRecoveryInspection(inspectionState, id, currentItem.generation, request);
+    // A command: read the prior state untracked so calling inspect() from an
+    // effect never subscribes that effect to the inspection.
+    inspectionState = beginRecoveryInspection(untrack(() => inspectionState), id, currentItem.generation, request);
     try {
       const next = await port.inspect(id);
       if (!current(token) || !isRecoveryInspectionRequest(inspectionState, request)) return;

@@ -14,14 +14,12 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use git2::{
-    DiffFormat, DiffLineType, DiffOptions, ObjectType, Repository, Signature, Status, StatusOptions,
-};
+use git2::{DiffFormat, DiffLineType, DiffOptions, Repository, Signature, Status, StatusOptions};
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
 use crate::error::AppError;
-use crate::git_common::{open_repo, to_app_err, workdir_key};
+use crate::git_common::{literal_repo_path, open_repo, to_app_err, workdir_key, LiteralRepoPath};
 #[cfg(windows)]
 use crate::process_ext::output_cancellable;
 use crate::task_registry::TaskRegistry;
@@ -344,6 +342,8 @@ fn content_changed(
     for c in candidates {
         opts.pathspec(c);
     }
+    // Candidates are literal file names from the status list (#1589).
+    opts.disable_pathspec_match(true);
 
     let head_tree = match repo.head() {
         Ok(h) => Some(h.peel_to_tree().map_err(to_app_err)?),
@@ -388,7 +388,13 @@ fn collect_status_inner(
     opts.include_untracked(true)
         .recurse_untracked_dirs(true)
         .renames_head_to_index(true)
-        .renames_index_to_workdir(true)
+        // No worktree rename pairing (#1605): `git status` does not pair an
+        // unstaged delete with an untracked file either, and a merged row has
+        // no correct action. Discarding "new.txt (renamed from old.txt)" sent
+        // only `new.txt`, which deleted the file and its edits while
+        // `old.txt` stayed deleted. As separate rows, each action does what
+        // its row says: Discard restores `old.txt`, Remove deletes `new.txt`.
+        .renames_index_to_workdir(false)
         .include_ignored(false);
 
     let statuses_start = Instant::now();
@@ -554,12 +560,33 @@ fn push_v2_entry(p: &mut ParsedV2, xy: [u8; 2], path: String, orig: Option<Strin
         });
     }
     if y != b'.' {
-        let old_path = matches!(y, b'R' | b'C').then(|| orig.clone()).flatten();
-        p.changes.push(GitFileEntry {
-            path,
-            old_path,
-            status: v2_code(y),
-        });
+        if matches!(y, b'R' | b'C') {
+            // git pairs worktree renames only for intent-to-add files. Split
+            // the pair as `--no-renames` would, so no row is a rename whose
+            // discard deletes the destination (#1605): the source is an
+            // unstaged deletion, the destination an unstaged addition. The
+            // libgit2 status reports the intent-to-add destination
+            // differently (staged Added plus a Modified change); that
+            // disagreement is #1619.
+            if let (b'R', b'.', Some(orig)) = (y, x, orig) {
+                p.changes.push(GitFileEntry {
+                    path: orig,
+                    old_path: None,
+                    status: GitStatusCode::Deleted,
+                });
+            }
+            p.changes.push(GitFileEntry {
+                path,
+                old_path: None,
+                status: GitStatusCode::Added,
+            });
+        } else {
+            p.changes.push(GitFileEntry {
+                path,
+                old_path: None,
+                status: v2_code(y),
+            });
+        }
     }
 }
 
@@ -863,6 +890,8 @@ fn wsl_diff(distro: &str, linux_path: &str, path: &str, staged: bool) -> Option<
         "git",
         "-C",
         linux_path,
+        // The path is a literal file name, not a pathspec (#1589).
+        "--literal-pathspecs",
         "diff",
         "--no-color",
     ]);
@@ -957,33 +986,164 @@ pub async fn git_init(path: String) -> Result<String, AppError> {
     .await
 }
 
-/// Append `entry` to `.gitignore` at the repo root, creating the file if
-/// missing. Idempotent — does nothing if the entry is already present.
-/// Returns the relative path that was written.
+/// Escape a literal repo-relative path for use as a `.gitignore` pattern body
+/// (#1591), escaping only what gitignore(5) makes special: `\\` and the glob
+/// characters `* ? [` anywhere (`]` only closes a bracket that an escaped `[`
+/// can no longer open), and trailing spaces, which git drops unless escaped.
+/// `#` / `!` only matter at the start of a line, which the caller prevents by
+/// anchoring with a leading `/`. Tabs, `$`, parentheses and the like are
+/// ordinary characters to git and are written as is.
+fn escape_gitignore_pattern(path: &str) -> String {
+    let mut out = String::with_capacity(path.len() + 2);
+    for c in path.chars() {
+        if matches!(c, '\\' | '[' | '*' | '?') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    let trimmed_len = out.trim_end_matches(' ').len();
+    let trailing = out.len() - trimmed_len;
+    out.truncate(trimmed_len);
+    for _ in 0..trailing {
+        out.push_str("\\ ");
+    }
+    out
+}
+
+/// The `.gitignore` at `path` for reading and appending, never through a
+/// symlink: git (2.32+) refuses a symlinked `.gitignore`, and writing through
+/// one could change any file the link names. `None` when it does not exist.
+fn open_gitignore(path: &Path) -> Result<Option<std::fs::File>, AppError> {
+    let refuse = || {
+        AppError::Other(
+            "cannot add to .gitignore: it is a symbolic link, which git does not read \
+             and which could point outside the repository; replace it with a regular file"
+                .into(),
+        )
+    };
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // Opens a link itself, which the handle check below then refuses.
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let file = match options.open(path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // A dangling link also reports NotFound through a following open;
+            // with O_NOFOLLOW it is ELOOP instead, but check either way.
+            if std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
+                return Err(refuse());
+            }
+            return Ok(None);
+        }
+        #[cfg(unix)]
+        Err(e) if e.raw_os_error() == Some(libc::ELOOP) => return Err(refuse()),
+        Err(e) => return Err(AppError::Other(format!("failed to open .gitignore: {e}"))),
+    };
+    let meta = file
+        .metadata()
+        .map_err(|e| AppError::Other(format!("failed to read .gitignore: {e}")))?;
+    if meta.file_type().is_symlink() {
+        return Err(refuse());
+    }
+    if !meta.is_file() {
+        return Err(AppError::Other(
+            "cannot add to .gitignore: it is not a regular file".into(),
+        ));
+    }
+    Ok(Some(file))
+}
+
+/// Append a pattern for the literal repo-relative path `entry` to `.gitignore`
+/// at `root`, creating the file if missing. `entry` must be a literal repo path
+/// (`literal_repo_path`; a trailing `/` marks a directory and is kept). The
+/// pattern is anchored (`/entry`) so `cfg.json` does not also ignore
+/// `sub/cfg.json`, and escaped so names containing glob characters or a leading
+/// `#` / `!` match only themselves. Idempotent — an existing anchored or legacy
+/// unanchored line for the same path, not overridden by a later negation,
+/// counts as present. Never writes through a symlinked `.gitignore`. Returns
+/// the plain (unescaped) relative path for display.
 fn add_to_gitignore(root: &Path, entry: &str) -> Result<String, AppError> {
-    let normalized = entry
-        .trim_start_matches("./")
-        .trim_start_matches('/')
-        .to_string();
-    if normalized.is_empty() {
-        return Err(AppError::Other("ignore entry is empty".into()));
+    use std::io::{Read, Write};
+
+    if entry.contains(['\n', '\r']) {
+        return Err(AppError::InvalidPath(
+            "ignore entry contains a line break".into(),
+        ));
     }
+    let LiteralRepoPath {
+        path: normalized,
+        dir_only: is_dir,
+    } = literal_repo_path(entry)?;
+    let escaped = escape_gitignore_pattern(normalized);
+    let suffix = if is_dir { "/" } else { "" };
+    let pattern = format!("/{escaped}{suffix}");
+    // Lines that already ignore exactly this path: anchored, or the legacy
+    // unanchored spelling (with or without the directory slash).
+    let mut equivalent = vec![pattern.clone(), format!("{escaped}{suffix}")];
+    if is_dir {
+        // A bare name also ignores the directory.
+        equivalent.push(format!("/{escaped}"));
+        equivalent.push(escaped.clone());
+    }
+    let shown = format!("{normalized}{suffix}");
     let gitignore_path = root.join(".gitignore");
-    let existing = std::fs::read_to_string(&gitignore_path).unwrap_or_default();
-    let already_present = existing.lines().map(|l| l.trim()).any(|l| l == normalized);
+    // Bytes, not a String: a .gitignore that is not UTF-8 (or unreadable) must
+    // be appended to or refused, never silently replaced by our one line.
+    let mut existing = Vec::new();
+    let file = match open_gitignore(&gitignore_path)? {
+        Some(mut file) => {
+            file.read_to_end(&mut existing)
+                .map_err(|e| AppError::Other(format!("failed to read .gitignore: {e}")))?;
+            file
+        }
+        None => {
+            let mut options = std::fs::OpenOptions::new();
+            // Exclusive creation never follows a link that appears meanwhile.
+            options.append(true).create_new(true);
+            options
+                .open(&gitignore_path)
+                .map_err(|e| AppError::Other(format!("failed to create .gitignore: {e}")))?
+        }
+    };
+    // Present only if the last line ignoring exactly this path follows every
+    // negation: with `plain.txt` then `!plain.txt` the path is not ignored,
+    // and only a later line makes "Added" true (the last matching rule wins).
+    let lines: Vec<&[u8]> = existing
+        .split(|b| *b == b'\n')
+        .map(|l| l.strip_suffix(b"\r").unwrap_or(l))
+        .collect();
+    let last_equivalent = lines
+        .iter()
+        .rposition(|l| equivalent.iter().any(|e| e.as_bytes() == *l));
+    let last_negation = lines.iter().rposition(|l| l.starts_with(b"!"));
+    let already_present = match (last_equivalent, last_negation) {
+        (Some(eq), Some(neg)) => eq > neg,
+        (Some(_), None) => true,
+        (None, _) => false,
+    };
     if already_present {
-        return Ok(normalized);
+        return Ok(shown);
     }
-    let needs_leading_newline = !existing.is_empty() && !existing.ends_with('\n');
-    let mut next = existing;
-    if needs_leading_newline {
-        next.push('\n');
+    let mut addition = Vec::new();
+    if !existing.is_empty() && !existing.ends_with(b"\n") {
+        addition.push(b'\n');
     }
-    next.push_str(&normalized);
-    next.push('\n');
-    std::fs::write(&gitignore_path, next.as_bytes())
-        .map_err(|e| AppError::Other(format!("failed to write .gitignore: {}", e)))?;
-    Ok(normalized)
+    addition.extend_from_slice(pattern.as_bytes());
+    addition.push(b'\n');
+    (&file)
+        .write_all(&addition)
+        .map_err(|e| AppError::Other(format!("failed to write .gitignore: {e}")))?;
+    Ok(shown)
 }
 
 #[tauri::command]
@@ -1079,7 +1239,7 @@ pub async fn git_archive_untracked(repo_path: String, paths: Vec<String>) -> Res
             }
             moved.push((source, destination));
         }
-        if let Err(error) = add_to_gitignore(&workdir, ".archive") {
+        if let Err(error) = add_to_gitignore(&workdir, ".archive/") {
             for (source, destination) in moved.iter().rev() {
                 let _ = std::fs::rename(destination, source);
             }
@@ -1268,22 +1428,8 @@ pub async fn git_stage(repo_path: String, paths: Vec<String>) -> Result<(), AppE
 pub async fn git_unstage(repo_path: String, paths: Vec<String>) -> Result<(), AppError> {
     run_blocking(move |_cancel| {
         let repo = open_repo(Path::new(&repo_path))?;
-        let head_result = repo.head();
-        match head_result {
-            Ok(head) => {
-                let obj = head.peel(ObjectType::Commit).map_err(to_app_err)?;
-                let refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
-                repo.reset_default(Some(&obj), refs).map_err(to_app_err)
-            }
-            Err(e) if e.code() == git2::ErrorCode::UnbornBranch => {
-                let mut index = repo.index().map_err(to_app_err)?;
-                for p in &paths {
-                    index.remove_path(Path::new(p)).map_err(to_app_err)?;
-                }
-                index.write().map_err(to_app_err)
-            }
-            Err(e) => Err(to_app_err(e)),
-        }
+        let tree = crate::git_index_reset::head_tree(&repo)?;
+        crate::git_index_reset::reset_index_paths(&repo, tree.as_ref(), &paths)
     })
     .await
 }
@@ -1359,25 +1505,6 @@ pub async fn git_apply_patch(
     run_blocking(move |_cancel| apply_patch_inner(&repo_path, &patch, action)).await
 }
 
-fn has_staged_changes_for(repo: &Repository, path: &str) -> Result<bool, AppError> {
-    let mut opts = StatusOptions::new();
-    opts.pathspec(path);
-    let statuses = repo.statuses(Some(&mut opts)).map_err(to_app_err)?;
-    for s in statuses.iter() {
-        let flags = s.status();
-        if flags.intersects(
-            Status::INDEX_NEW
-                | Status::INDEX_MODIFIED
-                | Status::INDEX_DELETED
-                | Status::INDEX_RENAMED
-                | Status::INDEX_TYPECHANGE,
-        ) {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
 #[tauri::command]
 pub async fn git_discard(
     repo_path: String,
@@ -1387,76 +1514,7 @@ pub async fn git_discard(
     let opts = options.unwrap_or_default();
     run_blocking(move |_cancel| {
         let repo = open_repo(Path::new(&repo_path))?;
-
-        if !opts.force {
-            for p in &paths {
-                if has_staged_changes_for(&repo, p)? {
-                    return Err(AppError::Other(format!(
-                        "refusing to discard '{}' with staged changes; pass force=true to override",
-                        p
-                    )));
-                }
-            }
-        }
-
-        let workdir = repo
-            .workdir()
-            .ok_or_else(|| AppError::Other("git: bare repository has no working tree".into()))?
-            .to_path_buf();
-
-        let index = repo.index().map_err(to_app_err)?;
-
-        // Conflicted paths have NO stage-0 index entry (only stages 1/2/3),
-        // so the stage-0 probe below would misclassify them as untracked and
-        // DELETE them from disk — silent data loss. Detect them explicitly and
-        // refuse: discarding a conflict has no single obviously-correct
-        // resolution (ours vs theirs vs base), so the safe action is to make
-        // the user resolve the file or abort the whole operation. Never falls
-        // into the untracked-delete branch.
-        for p in &paths {
-            let pp = Path::new(p);
-            if index.get_path(pp, 1).is_some()
-                || index.get_path(pp, 2).is_some()
-                || index.get_path(pp, 3).is_some()
-            {
-                return Err(AppError::Other(format!(
-                    "cannot discard '{}': it has an unresolved merge conflict. \
-                     Resolve the conflict (stage the file) or abort the operation.",
-                    p
-                )));
-            }
-        }
-
-        // For tracked files, checkout from HEAD / index restores contents.
-        // For untracked files (no HEAD/index entry), just delete from disk.
-        let mut checkout_paths: Vec<String> = Vec::new();
-        let mut delete_paths: Vec<PathBuf> = Vec::new();
-
-        for p in &paths {
-            if index.get_path(Path::new(p), 0).is_some() {
-                checkout_paths.push(p.clone());
-            } else {
-                delete_paths.push(workdir.join(p));
-            }
-        }
-
-        if !checkout_paths.is_empty() {
-            let mut co = git2::build::CheckoutBuilder::new();
-            co.force();
-            for p in &checkout_paths {
-                co.path(p);
-            }
-            repo.checkout_head(Some(&mut co)).map_err(to_app_err)?;
-        }
-        for p in &delete_paths {
-            if p.is_dir() {
-                let _ = std::fs::remove_dir_all(p);
-            } else if p.exists() {
-                let _ = std::fs::remove_file(p);
-            }
-        }
-
-        Ok(())
+        crate::git_discard::discard_paths(&repo, &paths, opts.force)
     })
     .await
 }
@@ -1501,6 +1559,7 @@ pub async fn git_diff(
         let repo = open_repo(Path::new(&repo_path))?;
         let mut diff_opts = DiffOptions::new();
         diff_opts.pathspec(&path);
+        diff_opts.disable_pathspec_match(true);
         diff_opts.context_lines(3);
         // Same policy as the status list: on Windows a mode difference is an
         // artifact, not a change, so it must not render as a diff either (#392).
@@ -2037,7 +2096,7 @@ mod tests {
         assert!(std::fs::read_to_string(dir.path().join(".gitignore"))
             .unwrap()
             .lines()
-            .any(|line| line == ".archive"));
+            .any(|line| line == "/.archive/"));
         assert!(sync_status(dir.path()).untracked.is_empty());
     }
 
@@ -2435,16 +2494,413 @@ mod tests {
         commit_all(dir.path(), "init");
         write(dir.path(), "a.txt", "dirty\n");
 
-        let repo = open_repo(dir.path()).unwrap();
-        assert!(!has_staged_changes_for(&repo, "a.txt").unwrap());
-
-        // Run the core path (inline rather than tokio) to verify behavior.
-        let mut co = git2::build::CheckoutBuilder::new();
-        co.force().path("a.txt");
-        repo.checkout_head(Some(&mut co)).unwrap();
+        tokio_test_block(git_discard(
+            dir.path().to_str().unwrap().to_string(),
+            vec!["a.txt".into()],
+            None,
+        ))
+        .unwrap();
 
         let content = fs::read_to_string(dir.path().join("a.txt")).unwrap();
         assert_eq!(content, "original\n");
+    }
+
+    /// (target, sibling) pairs where `target` is a literal file name that a
+    /// pathspec parser would read as a glob matching `sibling` (#1589).
+    fn glob_like_pairs() -> Vec<(&'static str, &'static str)> {
+        let portable = [("f[1].txt", "f1.txt")];
+        // Windows forbids these characters in file names.
+        #[cfg(not(unix))]
+        let unix_only: [(&str, &str); 0] = [];
+        #[cfg(unix)]
+        let unix_only = [
+            ("a*.txt", "ab.txt"),
+            ("q?.txt", "qx.txt"),
+            ("d[0-9].txt", "d5.txt"),
+            // Leading pathspec magic is also just a name.
+            (":(glob)m*.txt", "mm.txt"),
+            (":!n.txt", "n.txt"),
+        ];
+        portable.into_iter().chain(unix_only).collect()
+    }
+
+    fn staged_names(dir: &Path) -> Vec<String> {
+        git_patch(dir, &["diff", "--cached", "--name-only", "-z"])
+            .split('\0')
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect()
+    }
+
+    fn repo_with_modified_pair(target: &str, sibling: &str) -> TempDir {
+        let d = init_repo();
+        write(d.path(), target, "orig-target\n");
+        write(d.path(), sibling, "orig-sibling\n");
+        commit_all(d.path(), "init");
+        write(d.path(), target, "edit-target\n");
+        write(d.path(), sibling, "PRECIOUS EDIT\n");
+        d
+    }
+
+    fn path_str(d: &TempDir) -> String {
+        d.path().to_str().unwrap().to_string()
+    }
+
+    #[test]
+    fn discard_glob_like_name_only_reverts_that_file() {
+        for (target, sibling) in glob_like_pairs() {
+            let d = repo_with_modified_pair(target, sibling);
+            tokio_test_block(git_discard(path_str(&d), vec![target.into()], None)).unwrap();
+            assert_eq!(
+                fs::read_to_string(d.path().join(target)).unwrap(),
+                "orig-target\n",
+                "{target} was not reverted"
+            );
+            assert_eq!(
+                fs::read_to_string(d.path().join(sibling)).unwrap(),
+                "PRECIOUS EDIT\n",
+                "discarding {target} reverted {sibling}"
+            );
+        }
+    }
+
+    #[test]
+    fn unstage_glob_like_name_only_unstages_that_file() {
+        for (target, sibling) in glob_like_pairs() {
+            let d = repo_with_modified_pair(target, sibling);
+            tokio_test_block(git_stage(path_str(&d), vec![target.into(), sibling.into()])).unwrap();
+            tokio_test_block(git_unstage(path_str(&d), vec![target.into()])).unwrap();
+            assert_eq!(staged_names(d.path()), vec![sibling.to_string()]);
+        }
+    }
+
+    #[test]
+    fn unstage_on_unborn_branch_is_literal() {
+        let d = init_repo();
+        write(d.path(), "f[1].txt", "a\n");
+        write(d.path(), "f1.txt", "b\n");
+        tokio_test_block(git_stage(
+            path_str(&d),
+            vec!["f[1].txt".into(), "f1.txt".into()],
+        ))
+        .unwrap();
+        tokio_test_block(git_unstage(path_str(&d), vec!["f[1].txt".into()])).unwrap();
+        assert_eq!(staged_names(d.path()), vec!["f1.txt".to_string()]);
+    }
+
+    #[test]
+    fn unstage_directory_covers_its_contents() {
+        let d = init_repo();
+        write(d.path(), "dir/a.txt", "1\n");
+        write(d.path(), "dir/sub/b.txt", "1\n");
+        write(d.path(), "keep.txt", "1\n");
+        commit_all(d.path(), "init");
+        write(d.path(), "dir/a.txt", "2\n");
+        write(d.path(), "dir/sub/b.txt", "2\n");
+        write(d.path(), "dir/new.txt", "2\n");
+        write(d.path(), "keep.txt", "2\n");
+        tokio_test_block(git_stage(
+            path_str(&d),
+            vec![
+                "dir/a.txt".into(),
+                "dir/sub/b.txt".into(),
+                "dir/new.txt".into(),
+                "keep.txt".into(),
+            ],
+        ))
+        .unwrap();
+        tokio_test_block(git_unstage(path_str(&d), vec!["dir".into()])).unwrap();
+        assert_eq!(staged_names(d.path()), vec!["keep.txt".to_string()]);
+        // Working-tree edits survive an unstage.
+        assert_eq!(
+            fs::read_to_string(d.path().join("dir/a.txt")).unwrap(),
+            "2\n"
+        );
+    }
+
+    #[test]
+    fn unstage_removes_a_newly_added_file_from_the_index() {
+        let d = init_repo();
+        write(d.path(), "base.txt", "1\n");
+        commit_all(d.path(), "init");
+        write(d.path(), "new.txt", "n\n");
+        tokio_test_block(git_stage(path_str(&d), vec!["new.txt".into()])).unwrap();
+        tokio_test_block(git_unstage(path_str(&d), vec!["new.txt".into()])).unwrap();
+        assert!(staged_names(d.path()).is_empty());
+        assert!(d.path().join("new.txt").exists());
+    }
+
+    #[test]
+    fn staged_sibling_does_not_block_discarding_glob_like_name() {
+        for (target, sibling) in glob_like_pairs() {
+            let d = repo_with_modified_pair(target, sibling);
+            tokio_test_block(git_stage(path_str(&d), vec![sibling.into()])).unwrap();
+            tokio_test_block(git_discard(path_str(&d), vec![target.into()], None))
+                .unwrap_or_else(|e| panic!("discard {target} refused: {e:?}"));
+            assert_eq!(
+                fs::read_to_string(d.path().join(target)).unwrap(),
+                "orig-target\n"
+            );
+        }
+    }
+
+    #[test]
+    fn staged_changes_to_the_named_file_still_block_discard() {
+        let d = repo_with_modified_pair("f[1].txt", "f1.txt");
+        tokio_test_block(git_stage(path_str(&d), vec!["f[1].txt".into()])).unwrap();
+        assert!(
+            tokio_test_block(git_discard(path_str(&d), vec!["f[1].txt".into()], None)).is_err()
+        );
+    }
+
+    #[test]
+    fn discard_untracked_directory_removes_it_with_its_contents() {
+        let d = init_repo();
+        write(d.path(), "other.txt", "orig\n");
+        commit_all(d.path(), "init");
+        write(d.path(), "dir/a.txt", "x\n");
+        write(d.path(), "dir/sub/b.txt", "x\n");
+        write(d.path(), "other.txt", "edit\n");
+        tokio_test_block(git_discard(path_str(&d), vec!["dir".into()], None)).unwrap();
+        assert!(!d.path().join("dir").exists());
+        assert_eq!(
+            fs::read_to_string(d.path().join("other.txt")).unwrap(),
+            "edit\n"
+        );
+    }
+
+    #[test]
+    fn staged_change_inside_directory_still_blocks_discarding_it() {
+        let d = init_repo();
+        write(d.path(), "base.txt", "1\n");
+        commit_all(d.path(), "init");
+        write(d.path(), "dir/a.txt", "x\n");
+        tokio_test_block(git_stage(path_str(&d), vec!["dir/a.txt".into()])).unwrap();
+        assert!(tokio_test_block(git_discard(path_str(&d), vec!["dir".into()], None)).is_err());
+        assert!(d.path().join("dir/a.txt").exists());
+    }
+
+    #[test]
+    fn diff_for_glob_like_name_shows_only_that_file() {
+        let d = repo_with_modified_pair("f[1].txt", "f1.txt");
+        let diff = tokio_test_block(git_diff(path_str(&d), "f[1].txt".into(), None)).unwrap();
+        assert!(diff.contains("edit-target"), "{diff}");
+        assert!(!diff.contains("PRECIOUS EDIT"), "{diff}");
+    }
+
+    fn is_ignored(dir: &Path, rel: &str) -> bool {
+        Command::new("git")
+            .current_dir(dir)
+            .args(["check-ignore", "-q", "--", rel])
+            .status()
+            .unwrap()
+            .success()
+    }
+
+    fn gitignore_text(dir: &Path) -> String {
+        fs::read_to_string(dir.join(".gitignore")).unwrap_or_default()
+    }
+
+    /// Names that need escaping; on Windows only the characters legal there.
+    fn ignore_names() -> Vec<&'static str> {
+        let portable = [
+            "#notes.txt",
+            "!bang.txt",
+            "f[1].txt",
+            "tail.txt",
+            "a]b.txt",
+            "$p(1){2}^~'%&;=@+,.txt",
+        ];
+        #[cfg(not(unix))]
+        let unix_only: [&str; 0] = [];
+        #[cfg(unix)]
+        let unix_only = [
+            "a*.txt",
+            "q?.txt",
+            "back\\slash.txt",
+            "trail ",
+            "two  ",
+            "#",
+            "!",
+            " lead.txt",
+            "tab\t",
+            "$x(1){2}^~'q\"%&;|<>=@+,.txt",
+            "**",
+            "a\\",
+        ];
+        portable.into_iter().chain(unix_only).collect()
+    }
+
+    #[test]
+    fn gitignore_entry_ignores_exactly_the_named_file() {
+        for name in ignore_names() {
+            let d = init_repo();
+            write(d.path(), name, "x");
+            // Decoys a loose pattern would also catch.
+            write(d.path(), "f1.txt", "x");
+            write(d.path(), "ab.txt", "x");
+            write(d.path(), "qx.txt", "x");
+            write(d.path(), &format!("sub/{name}"), "x");
+            let shown = add_to_gitignore(d.path(), name).unwrap();
+            assert_eq!(shown, name);
+            assert!(
+                is_ignored(d.path(), name),
+                "{name:?} not ignored: {:?}",
+                gitignore_text(d.path())
+            );
+            assert!(!is_ignored(d.path(), "f1.txt"), "{name:?} leaked to f1.txt");
+            assert!(!is_ignored(d.path(), "ab.txt"), "{name:?} leaked to ab.txt");
+            assert!(!is_ignored(d.path(), "qx.txt"), "{name:?} leaked to qx.txt");
+            assert!(
+                !is_ignored(d.path(), &format!("sub/{name}")),
+                "{name:?} leaked to a nested file"
+            );
+        }
+    }
+
+    #[test]
+    fn gitignore_entry_is_anchored_to_the_gitignore_directory() {
+        let d = init_repo();
+        write(d.path(), "cfg.json", "x");
+        write(d.path(), "sub/cfg.json", "x");
+        write(d.path(), "sub/deep/keep.txt", "x");
+        write(d.path(), "other/keep.txt", "x");
+        add_to_gitignore(d.path(), "cfg.json").unwrap();
+        add_to_gitignore(d.path(), "sub/deep/keep.txt").unwrap();
+        assert!(is_ignored(d.path(), "cfg.json"));
+        assert!(!is_ignored(d.path(), "sub/cfg.json"));
+        assert!(is_ignored(d.path(), "sub/deep/keep.txt"));
+        assert!(!is_ignored(d.path(), "other/keep.txt"));
+    }
+
+    #[test]
+    fn gitignore_directory_entry_ignores_its_contents_only() {
+        let d = init_repo();
+        write(d.path(), "build/out.o", "x");
+        write(d.path(), "pkg/build/out.o", "x");
+        let shown = add_to_gitignore(d.path(), "build/").unwrap();
+        assert_eq!(shown, "build/");
+        assert!(is_ignored(d.path(), "build/out.o"));
+        assert!(!is_ignored(d.path(), "pkg/build/out.o"));
+    }
+
+    #[test]
+    fn gitignore_entry_is_idempotent_and_recognises_legacy_lines() {
+        let d = init_repo();
+        add_to_gitignore(d.path(), "f[1].txt").unwrap();
+        add_to_gitignore(d.path(), "f[1].txt").unwrap();
+        assert_eq!(gitignore_text(d.path()), "/f\\[1].txt\n");
+
+        // An older unanchored line for the same path counts as present.
+        write(d.path(), ".gitignore", "cfg.json\r\nold-dir\n");
+        add_to_gitignore(d.path(), "cfg.json").unwrap();
+        add_to_gitignore(d.path(), "old-dir/").unwrap();
+        assert_eq!(gitignore_text(d.path()), "cfg.json\r\nold-dir\n");
+    }
+
+    /// "Added" must be true: a later negation of an existing exact line means
+    /// the path is not ignored, so a winning line is appended (#1591).
+    #[test]
+    fn gitignore_entry_overrides_a_later_negation_of_the_same_line() {
+        for existing in ["plain.txt\n!plain.txt\n", "/plain.txt\n!/plain.txt\n"] {
+            let d = init_repo();
+            write(d.path(), "plain.txt", "x");
+            write(d.path(), ".gitignore", existing);
+            assert!(!is_ignored(d.path(), "plain.txt"));
+
+            add_to_gitignore(d.path(), "plain.txt").unwrap();
+            assert!(is_ignored(d.path(), "plain.txt"), "{existing:?}");
+            let after = gitignore_text(d.path());
+            add_to_gitignore(d.path(), "plain.txt").unwrap();
+            assert_eq!(gitignore_text(d.path()), after, "not idempotent");
+        }
+    }
+
+    /// A .gitignore that is not valid UTF-8 is appended to, never replaced.
+    #[test]
+    fn gitignore_entry_preserves_a_non_utf8_gitignore() {
+        let d = init_repo();
+        let original: &[u8] = b"caf\xe9.log\n*.tmp\n";
+        fs::write(d.path().join(".gitignore"), original).unwrap();
+        add_to_gitignore(d.path(), "x.txt").unwrap();
+        let mut want = original.to_vec();
+        want.extend_from_slice(b"/x.txt\n");
+        assert_eq!(fs::read(d.path().join(".gitignore")).unwrap(), want);
+    }
+
+    #[test]
+    fn gitignore_entry_appends_after_a_file_without_trailing_newline() {
+        let d = init_repo();
+        write(d.path(), ".gitignore", "target");
+        add_to_gitignore(d.path(), "x.txt").unwrap();
+        assert_eq!(gitignore_text(d.path()), "target\n/x.txt\n");
+    }
+
+    /// Only what git treats as special is escaped (gitignore(5)): `\\`, the
+    /// glob characters `* ? [`, and trailing spaces. Everything else is
+    /// written as is, and still matches exactly that name.
+    #[test]
+    fn gitignore_escapes_only_what_git_treats_as_special() {
+        let d = init_repo();
+        let name = "$p(1){2}]^~'%&;=@+,.txt";
+        write(d.path(), name, "x");
+        add_to_gitignore(d.path(), name).unwrap();
+        assert_eq!(gitignore_text(d.path()), format!("/{name}\n"));
+        assert!(is_ignored(d.path(), name));
+    }
+
+    /// git (2.32+) refuses a symlinked .gitignore, and writing through one
+    /// could change any file the link names.
+    #[cfg(unix)]
+    #[test]
+    fn gitignore_symlink_is_refused_and_never_written_through() {
+        let outside = TempDir::new().unwrap();
+        let target = outside.path().join("bashrc");
+        fs::write(&target, "export X=1\n").unwrap();
+        let d = init_repo();
+        std::os::unix::fs::symlink(&target, d.path().join(".gitignore")).unwrap();
+
+        let err = format!("{:?}", add_to_gitignore(d.path(), "junk.txt").unwrap_err());
+        assert!(err.contains("symbolic link"), "{err}");
+        assert_eq!(fs::read_to_string(&target).unwrap(), "export X=1\n");
+        assert!(fs::symlink_metadata(d.path().join(".gitignore"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+
+        // A dangling link is not created through either.
+        let dangling = outside.path().join("created-by-link");
+        fs::remove_file(d.path().join(".gitignore")).unwrap();
+        std::os::unix::fs::symlink(&dangling, d.path().join(".gitignore")).unwrap();
+        assert!(add_to_gitignore(d.path(), "junk.txt").is_err());
+        assert!(!dangling.exists());
+    }
+
+    #[test]
+    fn gitignore_rejects_paths_that_are_not_literal_repo_paths() {
+        let d = init_repo();
+        for bad in [
+            "../x",
+            "a/../../x",
+            "./x",
+            "/x",
+            "a//b",
+            ".git/x",
+            ".GIT",
+            "d/.git/",
+        ] {
+            assert!(add_to_gitignore(d.path(), bad).is_err(), "{bad:?} accepted");
+        }
+        assert!(!d.path().join(".gitignore").exists());
+    }
+
+    #[test]
+    fn gitignore_rejects_empty_and_multiline_entries() {
+        let d = init_repo();
+        for bad in ["", "/", "./", "a\nb", "a\rb"] {
+            assert!(add_to_gitignore(d.path(), bad).is_err(), "{bad:?} accepted");
+        }
+        assert!(!d.path().join(".gitignore").exists());
     }
 
     /// Minimal single-threaded executor for the few async command tests.
@@ -2780,6 +3236,45 @@ mod tests {
             assert_eq!(paths(&p.changes), ["work.txt"]);
             assert_eq!(p.changes[0].status, GitStatusCode::Modified);
             assert!(p.untracked.is_empty() && p.merge.is_empty());
+        }
+
+        /// git pairs a worktree rename only for an intent-to-add file. The WSL
+        /// path must split it like `--no-renames` so no row offers a discard
+        /// that deletes `new.txt` while `old.txt` stays deleted (#1605). The
+        /// libgit2 status still lists `new.txt` differently (staged Added plus
+        /// a Modified change); that disagreement is tracked in #1619.
+        #[test]
+        fn worktree_rename_of_intent_to_add_file_splits_into_delete_and_add() {
+            let dir = init_repo();
+            write(dir.path(), "old.txt", "line1\nline2\nline3\nline4\n");
+            commit_all(dir.path(), "init");
+            fs::rename(dir.path().join("old.txt"), dir.path().join("new.txt")).unwrap();
+            write(dir.path(), "new.txt", "line1\nline2\nline3\nline4\nmore\n");
+            git_patch(dir.path(), &["add", "-N", "new.txt"]);
+            let raw = v2_bytes(dir.path());
+            assert!(
+                raw.starts_with(b"# ") && raw.windows(4).any(|w| w == b"2 .R"),
+                "git did not pair the rename: {}",
+                String::from_utf8_lossy(&raw)
+            );
+
+            let p = parse_status_v2(&raw);
+
+            let mut changes: Vec<(&str, GitStatusCode)> = p
+                .changes
+                .iter()
+                .map(|e| (e.path.as_str(), e.status))
+                .collect();
+            changes.sort_by_key(|(path, _)| *path);
+            assert_eq!(
+                changes,
+                [
+                    ("new.txt", GitStatusCode::Added),
+                    ("old.txt", GitStatusCode::Deleted)
+                ]
+            );
+            assert!(p.changes.iter().all(|e| e.old_path.is_none()));
+            assert!(p.staged.is_empty(), "{:?}", p.staged);
         }
 
         #[test]

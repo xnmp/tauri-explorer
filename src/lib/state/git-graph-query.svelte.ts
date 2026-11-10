@@ -1,6 +1,6 @@
 /** One mounted graph's history query and pagination. Refresh scheduling stays
  * with the existing reloader; the shared cache owns only complete page zero. */
-import { gitLog } from "$lib/api/git-log";
+import { gitLog, isStaleCursorError } from "$lib/api/git-log";
 import { branchWalkQuery, type BranchListEntry } from "$lib/domain/git-graph";
 import { createReloader, countGraphWalkCommits } from "./git-graph-refresh";
 import {
@@ -117,7 +117,11 @@ export function createGitGraphQuerySession(options: {
         refs: { ...snapshot.refs, ...page.refs }, hasMore: page.has_more, nextCursor: page.next_cursor,
       });
     } catch (cause) {
-      if (current()) error = cause instanceof Error ? cause.message : String(cause);
+      if (!current()) return;
+      // History moved under the cursor (rebase, gc, deleted branch): start over
+      // from the top rather than strand the user at a dead end (#1596).
+      if (isStaleCursorError(cause)) await reload();
+      else error = cause instanceof Error ? cause.message : String(cause);
     } finally {
       if (appendOwner === owner) {
         appendOwner = null;

@@ -287,4 +287,27 @@ describe("mounted graph query", () => {
     expect(session.loadingMore).toBe(false);
     session.dispose();
   });
+
+  it("reloads from the top when the paging cursor is stale instead of dead-ending", async () => {
+    const { session, dependencies } = fixture();
+    // The Rust backend rejects with a serialised AppError, not an Error.
+    dependencies.gitLog.mockRejectedValueOnce({ kind: "stale_cursor", message: "git log cursor is not in the current history" });
+    await session.loadMore();
+    expect(dependencies.gitLog).toHaveBeenCalledWith("/repo", { limit: 300, cursor: "seed" });
+    expect(dependencies.fetchPage0Snapshot).toHaveBeenCalledOnce();
+    expect(session.commits.map((row) => row.oid)).toEqual(["fresh"]);
+    expect(session.error).toBeNull();
+    expect(session.loadingMore).toBe(false);
+    session.dispose();
+  });
+
+  it("still surfaces other paging failures instead of reloading", async () => {
+    const { session, dependencies } = fixture();
+    dependencies.gitLog.mockRejectedValueOnce(new Error("disk on fire"));
+    await session.loadMore();
+    expect(dependencies.fetchPage0Snapshot).not.toHaveBeenCalled();
+    expect(session.error).toBe("disk on fire");
+    expect(session.commits.map((row) => row.oid)).toEqual(["seed"]);
+    session.dispose();
+  });
 });

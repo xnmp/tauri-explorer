@@ -100,6 +100,15 @@ export interface GitRefs {
   detached: boolean;
 }
 
+/** `kind` of the error `git_log` rejects with when `options.cursor` is malformed
+ *  or no longer in the walk (#1596). Must match `STALE_CURSOR_CODE` in Rust. */
+export const STALE_CURSOR_KIND = "stale_cursor";
+
+export function isStaleCursorError(cause: unknown): boolean {
+  return typeof cause === "object" && cause !== null
+    && (cause as { kind?: unknown }).kind === STALE_CURSOR_KIND;
+}
+
 /**
  * Fetch a page of commit history in topological order, with refs decoration.
  * Pass `skip`/`limit` to page; use `page.has_more` / `page.next_cursor` to

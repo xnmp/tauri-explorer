@@ -3,12 +3,15 @@
  * commit comparisons and the GitHub PR/CI surfaces.
  * Split out of mock-invoke.ts (#1372); `mockInvoke` dispatches every family.
  */
-import type { OpenPr, PrAction } from "./git-log";
+import { STALE_CURSOR_KIND, type OpenPr, type PrAction } from "./git-log";
 import { getMockControl } from "./mock-control";
 import { daysAgo, MOCK_GRAPH_REFS } from "./mock-fixtures";
 import type { CommandHandler } from "./mock-dispatch";
 import { holdGitNetworkOperation } from "./mock-git";
 import { getSyntheticGraph, loadRepoCommitCount, loadRepoIndex, MOCK_LONG_COMMIT_FILE_PATH, mockAddRef, mockAppendCommit, mockCheckout, mockCommitGraph, mockDetached, mockFindRef, mockHeadOid, mockIsLocalBranch, mockMoveHead, mockMoveRef, mockRemoveRef, mockResolveTarget, syntheticRefs } from "./mock-git-state";
+
+/** Rejects like the Rust `AppError::Service` serialisation (#1596). */
+const staleCursorError = () => ({ kind: STALE_CURSOR_KIND, message: "git log cursor is not in the current history" });
 
 let mockCreatedPr: OpenPr | null = null;
 const mockMergedPrs = new Set<number>();
@@ -217,7 +220,8 @@ export const gitHistoryCommands: Record<string, CommandHandler> = {
       let start = skip;
       if (opts.cursor) {
         const idx = all.findIndex((c) => c.oid === opts.cursor);
-        start = idx >= 0 ? idx + 1 : all.length; // unknown cursor → empty page
+        if (idx < 0) throw staleCursorError(); // like the backend: never a silent empty page
+        start = idx + 1;
       }
       const page = all.slice(start, start + limit);
       const refs = getSyntheticGraph(loadIdx, loadRepoCommitCount()).refs;
@@ -305,7 +309,8 @@ export const gitHistoryCommands: Record<string, CommandHandler> = {
     let start = skip;
     if (options.cursor) {
       const idx = all.findIndex((c) => !("stash" in c) && c.oid === options.cursor);
-      start = idx >= 0 ? idx + 1 : all.length; // unknown cursor → empty page
+      if (idx < 0) throw staleCursorError(); // like the backend: never a silent empty page
+      start = idx + 1;
     }
     const page = all.slice(start, start + limit);
     const hasMore = start + limit < all.length;

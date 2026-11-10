@@ -27,7 +27,8 @@
   import { buildTerminalTheme } from "$lib/domain/terminal-theme";
   import { buildCdSyncSequence, buildPathsInsertion } from "$lib/domain/terminal-command";
   import { defaultShellProfile, fromShellCwd, type ShellProfile } from "$lib/domain/terminal-shell";
-  import { decideCdSync, createInjectedCdTracker } from "$lib/domain/terminal-cwd-sync";
+  import { createInjectedCdTracker } from "$lib/domain/terminal-cwd-sync";
+  import { createTerminalCwdSync } from "$lib/state/terminal-cwd-sync";
   import { isWindows, isMac } from "$lib/domain/platform";
   import { resolveTerminalShortcut, effectiveTerminalShortcuts } from "$lib/domain/terminal-keys";
   import { createTerminalKeyHandler } from "$lib/state/terminal-key-handler";
@@ -54,22 +55,7 @@
   let spawning = false;
   let exited = $state(false);
 
-  // ── cwd sync (issue #149) ──────────────────────────────────────────────────
-  // The shell's last-known cwd (from OSC 7). Tracked always so the loop guard
-  // works even when explorer-follows-terminal is off. Not $state: only read
-  // inside async callbacks, never in the template.
-  let lastShellCwd: string | null = null;
-  // A cd deferred because the shell was busy; latest target wins.
-  let pendingCd: string | null = null;
-  let queuePoll: ReturnType<typeof setInterval> | null = null;
-  // Re-entrancy guard: terminalStatus is async and can outlive the 500ms tick.
-  // Without this, a slow IPC round-trip lets two callbacks overlap, and the
-  // second can observe `pendingCd` already nulled by the first — ending in a
-  // `writeCd(null)` that types `cd 'null'` into the shell (#154).
-  let pollInFlight = false;
-  // Whether the "will follow when it finishes" toast is already showing for
-  // the current queue episode (so we don't spam it on every navigation).
-  let queueToastShown = false;
+  // cwd sync (#149): queue/poll machine lives in state/terminal-cwd-sync.ts.
 
   const visible = $derived(terminalPanelStore.visible);
 
@@ -140,9 +126,7 @@
   async function restartShell(): Promise<void> {
     // The user's restart action owns focus; PTY completion does not.
     term?.focus();
-    stopQueuePoll();
-    pendingCd = null;
-    lastShellCwd = null;
+    cwdSync.reset();
     // Keys typed from here on are typeahead for the replacement shell.
     await spawnShell(true);
   }
@@ -178,11 +162,10 @@
       output: (payload) => term?.write(payload),
       exit: () => {
         exited = true;
-        stopQueuePoll();
+        cwdSync.shellExited();
       },
       cwd: (payload) => {
         const path = fromShellCwd(payload, shellProfile);
-        lastShellCwd = path;
         if (injectedCds.consume(path)) return;
         if (!settingsStore.explorerFollowsTerminal) return;
         const explorer = windowTabsManager.getActiveExplorer();
@@ -208,100 +191,26 @@
     },
   );
 
-  /**
-   * Inject a `cd` to `path`, clearing any half-typed prompt input first —
-   * the automatic sync must win regardless of what's on the prompt. The
-   * clear byte is shell-family-specific (see buildCdSyncSequence).
-   */
-  function writeCd(path: string): void {
-    // Defensive: never inject `cd 'null'` if a caller ever passes a nullish
-    // target (see the queue-poll re-entrancy guard, #154).
-    if (terminalSession.id === null || path == null) return;
-    injectedCds.add(path);
-    terminalSession.write(buildCdSyncSequence(path, shellProfile));
-  }
-
-  /** Terminal follows explorer: reconcile the shell's cwd with `path`. */
-  async function syncTerminalToPath(path: string): Promise<void> {
-    const id = terminalSession.id;
-    if (id === null) return;
-    const status = await terminalStatus(id);
-    const statusCwd = status.cwd !== null ? fromShellCwd(status.cwd, shellProfile) : null;
-    lastShellCwd = statusCwd ?? lastShellCwd;
-    // Fast tab switches: the status round-trip may outlive this sync's tab —
-    // a stale cd would drag the shell (and, via its echo, the NEW tab) to
-    // the previous tab's directory (#266). Latest target wins; drop the rest.
-    if (windowTabsManager.getActiveExplorer()?.currentPath !== path) return;
-    switch (decideCdSync(path, statusCwd, status.busy)) {
-      case "skip":
-        return;
-      case "write":
-        writeCd(path);
-        return;
-      case "queue":
-        queueCd(path);
-        return;
-    }
-  }
-
-  /** Defer a cd until the running command finishes (latest target wins). */
-  function queueCd(path: string): void {
-    pendingCd = path;
-    if (!queueToastShown) {
-      toastStore.show("Terminal is running a command — will follow when it finishes", "info");
-      queueToastShown = true;
-    }
-    startQueuePoll();
-  }
-
-  function startQueuePoll(): void {
-    if (queuePoll !== null) return;
-    queuePoll = setInterval(async () => {
-      // Skip this tick if the previous callback's IPC hasn't resolved yet.
-      if (pollInFlight) return;
-      pollInFlight = true;
-      try {
-        const id = terminalSession.id;
-        if (id === null || pendingCd === null) {
-          stopQueuePoll();
-          return;
-        }
-        const status = await terminalStatus(id);
-        const statusCwd = status.cwd !== null ? fromShellCwd(status.cwd, shellProfile) : null;
-        lastShellCwd = statusCwd ?? lastShellCwd;
-        if (status.busy) return;
-        const target = pendingCd;
-        pendingCd = null;
-        stopQueuePoll();
-        queueToastShown = false;
-        // Re-check against the shell's cwd (it may have cd'd itself) AND the
-        // active tab (it may have switched while the command ran, #266).
-        if (
-          target !== null &&
-          windowTabsManager.getActiveExplorer()?.currentPath === target &&
-          decideCdSync(target, statusCwd, false) === "write"
-        ) {
-          writeCd(target);
-        }
-      } catch (err) {
-        // terminalStatus rejected — e.g. the terminal died before its exit
-        // event landed. Stop polling instead of spinning on the rejection
-        // (an unhandled promise every 500ms otherwise).
-        console.error("[terminal] cd queue poll failed; stopping poll:", err);
-        stopQueuePoll();
-      } finally {
-        pollInFlight = false;
-      }
-    }, 500);
-  }
-
-  function stopQueuePoll(): void {
-    if (queuePoll !== null) {
-      clearInterval(queuePoll);
-      queuePoll = null;
-    }
-    queueToastShown = false;
-  }
+  const cwdSync = createTerminalCwdSync({
+    sessionId: () => terminalSession.id,
+    queryStatus: terminalStatus,
+    normalizeCwd: (raw) => fromShellCwd(raw, shellProfile),
+    activePath: () => windowTabsManager.getActiveExplorer()?.currentPath,
+    // Inject a `cd`, clearing any half-typed prompt input first — the
+    // automatic sync must win. The clear byte is shell-family-specific.
+    injectCd: (path) => {
+      injectedCds.add(path);
+      terminalSession.write(buildCdSyncSequence(path, shellProfile));
+    },
+    notifyQueued: () => toastStore.show("Terminal is running a command — will follow when it finishes", "info"),
+    reportError: (message, err) => console.error(`[terminal] ${message}:`, err),
+    scheduler: {
+      every: (ms, fn) => {
+        const handle = setInterval(fn, ms);
+        return () => clearInterval(handle);
+      },
+    },
+  });
 
   // App zoom compensation (#419): the app zooms via CSS `zoom` on the root,
   // but xterm's selection hit-testing breaks under ancestor zoom (pointer
@@ -383,7 +292,7 @@
       unregisterSink();
       resizeObserver.disconnect();
       if (rafId !== null) cancelAnimationFrame(rafId);
-      stopQueuePoll();
+      cwdSync.dispose();
       void terminalSession.dispose();
       term?.dispose();
     };
@@ -429,7 +338,7 @@
     if (!path || terminalSession.id === null || !terminalPanelStore.everOpened) return;
     if (path === lastSyncTarget) return;
     lastSyncTarget = path;
-    void syncTerminalToPath(path).catch((err) => {
+    void cwdSync.sync(path).catch((err) => {
       // terminalStatus may reject if the shell died between checks; a rejected
       // sync must not surface as an unhandled promise rejection (#154).
       console.error("[terminal] sync-to-path failed:", err);

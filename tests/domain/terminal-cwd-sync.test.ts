@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { decideCdSync, createInjectedCdTracker } from "$lib/domain/terminal-cwd-sync";
+import { decideCdSync, createInjectedCdTracker, shouldFlushQueuedCd } from "$lib/domain/terminal-cwd-sync";
 
 describe("decideCdSync", () => {
   it("writes when idle and the shell is elsewhere", () => {
@@ -80,5 +80,18 @@ describe("decideCdSync virtual paths (#152)", () => {
     expect(decideCdSync("demo://", null, false)).toBe("skip");
     expect(decideCdSync("demo://notes/a.txt", null, true)).toBe("skip");
     expect(decideCdSync("keep://x", "/home/user", false)).toBe("skip");
+  });
+});
+
+describe("shouldFlushQueuedCd", () => {
+  it("flushes when the tab and shell both still warrant it", () => {
+    expect(shouldFlushQueuedCd("/a", "/a", "/elsewhere")).toBe(true);
+    expect(shouldFlushQueuedCd("/a", "/a", null)).toBe(true);
+  });
+  it("refuses a switched tab, an already-there shell, and nullish/empty targets", () => {
+    expect(shouldFlushQueuedCd("/a", "/b", null)).toBe(false);
+    expect(shouldFlushQueuedCd("/a", "/a", "/a")).toBe(false);
+    expect(shouldFlushQueuedCd(null, null, null)).toBe(false);
+    expect(shouldFlushQueuedCd("", "", null)).toBe(false);
   });
 });

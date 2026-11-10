@@ -26,6 +26,8 @@ import { elementAtPoint, resolveDropTargetAtPoint, highlightTargetAtPoint, clear
 import { dispatchFileDrop, admitFileDrop } from "$lib/state/dispatch-file-drop";
 import { springEnd, springHover } from "./spring-load";
 import { internalDragPaths } from "$lib/domain/file-drop";
+import { isTrashPath } from "$lib/domain/virtual-path";
+import { dropTrashEntries } from "$lib/state/trash-provider";
 import { isWindows, isCopyModifier } from "$lib/domain/platform";
 import { getZoomFactor } from "$lib/domain/zoom";
 
@@ -147,8 +149,9 @@ export function usePointerDrag(deps: PointerDragDeps) {
     // viewport bounds so we can detect the exit. This is fine alongside the
     // pointer-drag because no HTML5/OLE drag is running until this point — it
     // only starts once the cursor has actually left the window.
+    // Trash entries have no file to hand to the OS; they stay in-window (#1554).
     if (
-      !nativeStarted && (
+      !nativeStarted && !isTrashPath(entryData!.path) && (
         event.clientX <= 0 ||
         event.clientX >= window.innerWidth - 1 ||
         event.clientY <= 0 ||
@@ -244,6 +247,8 @@ export function usePointerDrag(deps: PointerDragDeps) {
     const isCopy = !!isCopyModifier(event);
     const explorer = explorerOf();
     try {
+      // Trash entries restore into the destination, never move by path (#1554).
+      if (data && isTrashPath(data.path)) return await dropTrashEntries(data, target, explorer.currentPath);
       if (!paths.length) return;
       if (target?.type === "terminal") {
         // Type the paths into the shell prompt (#265).

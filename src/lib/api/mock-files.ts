@@ -121,6 +121,47 @@ function restoreMockTrashItems(ids: string[]): FileBatchOutcome {
   return result;
 }
 
+/** Restore into a dropped-on folder (#1554), mirroring the native refusals:
+ * an existing folder only, never overwrite, one name per selection. */
+function restoreMockTrashItemsTo(ids: string[], destination: string): FileBatchOutcome {
+  const result: FileBatchOutcome = { succeeded: [], failed: [] };
+  const entries = mockFiles[destination];
+  if (!entries) {
+    for (const id of ids) result.failed.push({ path: id, error: `The folder ${destination} no longer exists` });
+    return result;
+  }
+  const taken = new Set<string>();
+  for (const id of ids) {
+    const found = [...mockTrash].find(([, versions]) => versions.some((item) => item.id === id));
+    if (!found) {
+      result.failed.push({ path: id, error: "This item is no longer in the trash list. Refresh the Trash and try again." });
+      continue;
+    }
+    const [path, versions] = found;
+    const index = versions.findIndex((item) => item.id === id);
+    const item = versions[index];
+    const target = `${destination === "/" ? "" : destination}/${item.entry.name}`;
+    if (mockFiles[destination].some((entry) => entry.path === target)) {
+      result.failed.push({ path: target, error: `${target} already exists. Rename or move it, then restore again.` });
+      continue;
+    }
+    if (taken.has(target)) {
+      result.failed.push({ path: target, error: `Another selected item named ${item.entry.name} is being restored to ${destination}. Restore them one at a time.` });
+      continue;
+    }
+    taken.add(target);
+    versions.splice(index, 1);
+    if (!versions.length) mockTrash.delete(path);
+    const relocate = (value: string) => value === path || value.startsWith(`${path}/`) ? target + value.slice(path.length) : value;
+    mockFiles[destination] = [...mockFiles[destination], { ...item.entry, path: target }];
+    for (const [directory, listing] of item.listings) {
+      mockFiles[relocate(directory)] = listing.map((entry) => ({ ...entry, path: relocate(entry.path) }));
+    }
+    result.succeeded.push(target);
+  }
+  return result;
+}
+
 function deleteMockTrashItems(ids: string[]): FileBatchOutcome {
   const result: FileBatchOutcome = { succeeded: [], failed: [] };
   for (const id of ids) {
@@ -394,7 +435,7 @@ export function withMockFileHistory<T>(cmd: string, args: Record<string, unknown
       : actions.length === 1 ? actions[0] : { type: "batch", actions, label: "Delete" };
     return { result, history: mockFileHistory.push(action).summary } as T;
   }
-  if (cmd === "restore_trash_items" || cmd === "delete_trash_items") {
+  if (cmd === "restore_trash_items" || cmd === "restore_trash_items_to" || cmd === "delete_trash_items") {
     // Restoring from the Trash view records no undoable action.
     return { result, history: mockFileHistory.summary() } as T;
   }
@@ -684,4 +725,5 @@ export const fileCommands: Record<string, CommandHandler> = {
   list_trash: () => listMockTrash(),
   delete_trash_items: (args) => deleteMockTrashItems(args.ids as string[]),
   restore_trash_items: (args) => restoreMockTrashItems(args.ids as string[]),
+  restore_trash_items_to: (args) => restoreMockTrashItemsTo(args.ids as string[], args.destination as string),
 };

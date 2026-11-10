@@ -16,7 +16,13 @@ import {
   resolveLayoutTheme,
   withLayoutFailure,
 } from "$lib/domain/layout-theme";
-import { legacyLayoutThemeId, withLegacyLayoutMirror } from "$lib/domain/layout-theme-ids";
+import { isBuiltinLayoutId, legacyLayoutThemeId, withLegacyLayoutMirror } from "$lib/domain/layout-theme-ids";
+import { readFileSync } from "node:fs";
+
+// Vitest stubs CSS imports, so the shipped stylesheets are read from disk.
+const layoutSheet = (name: string) => readFileSync(new URL(`../../src/lib/layouts/${name}`, import.meta.url), "utf8");
+const compactCss = layoutSheet("compact.css");
+const softCardsCss = layoutSheet("soft-cards.css");
 import { migrateSettings } from "$lib/domain/settings-migration";
 
 const COMPACT = `/*
@@ -111,7 +117,7 @@ describe("buildLayoutCatalog", () => {
       { css: "no filename" },
     ]);
     expect(catalog.themes.map((theme) => theme.id)).toEqual([
-      "default", "floating-islands", "hairline-ledger", "zeta.css", "beta.css",
+      "default", "floating-islands", "hairline-ledger", "compact", "soft-cards", "zeta.css", "beta.css",
     ]);
     expect(catalog.userCss.get("beta.css")).toBe("b{}");
     expect(Object.fromEntries(catalog.failures)).toEqual({ "empty.css": "empty", "big.css": "too-large" });
@@ -119,7 +125,7 @@ describe("buildLayoutCatalog", () => {
 
   it("degrades a malformed listing to the built-ins", () => {
     expect(buildLayoutCatalog({ not: "an array" })).toBe(BUILTIN_LAYOUT_CATALOG);
-    expect(buildLayoutCatalog(undefined).themes).toHaveLength(3);
+    expect(buildLayoutCatalog(undefined).themes).toHaveLength(5);
   });
 });
 
@@ -132,6 +138,14 @@ describe("resolveLayoutTheme", () => {
   it("applies built-ins and usable user layouts as requested", () => {
     expect(resolveLayoutTheme(catalog, "hairline-ledger")).toMatchObject({ theme: { id: "hairline-ledger" }, fallback: null });
     expect(resolveLayoutTheme(catalog, "compact.css")).toMatchObject({ theme: { id: "compact.css" }, fallback: null });
+  });
+
+  it("keeps the Compact built-in distinct from a user file named compact.css (#1548)", () => {
+    expect(resolveLayoutTheme(catalog, "compact")).toMatchObject({
+      theme: { id: "compact", source: "builtin", base: "compact" },
+      fallback: null,
+    });
+    expect(resolveLayoutTheme(catalog, "compact.css").theme).toMatchObject({ source: "user", base: "floating-islands" });
   });
 
   it("falls back to Default, explaining why, without rewriting the request", () => {
@@ -233,5 +247,29 @@ describe("layoutNameFromFilename", () => {
   it("keeps a name with no stem readable", () => {
     expect(layoutNameFromFilename("---.css")).toBe("---.css");
     expect(layoutNameFromFilename("ünïcode-layout.css")).toBe("Ünïcode Layout");
+  });
+});
+
+describe("Compact and Soft Cards built-ins (#1548)", () => {
+  it("are their own flat bases, so user layouts can extend them", () => {
+    for (const id of ["compact", "soft-cards"]) {
+      expect(isBuiltinLayoutId(id)).toBe(true);
+      expect(resolveLayoutTheme(BUILTIN_LAYOUT_CATALOG, id)).toMatchObject({
+        theme: { id, base: id, arrangement: "flat", source: "builtin" },
+        fallback: null,
+      });
+      const parsed = parseUserLayout("mine.css", `/* @extends ${id} */ :root { --layout-gap: 1px; }`);
+      expect(parsed).toMatchObject({ ok: true, theme: { base: id, arrangement: "flat" } });
+    }
+  });
+
+  it("ship stylesheets whose metadata matches the catalog and whose row height is honoured", () => {
+    const sheets: Record<string, string> = { compact: compactCss, "soft-cards": softCardsCss };
+    for (const [id, css] of Object.entries(sheets)) {
+      const entry = BUILTIN_LAYOUT_CATALOG.themes.find((theme) => theme.id === id)!;
+      expect(parseLayoutMetadata(css)).toMatchObject({ name: entry.name, description: entry.description });
+    }
+    const rowHeight = /--layout-row-height:\s*([^;]+);/.exec(compactCss)?.[1];
+    expect(parseLayoutRowHeight(rowHeight)).toBe(22);
   });
 });

@@ -1,6 +1,6 @@
 /**
  * Layout themes (#1306): built-in Default / Floating Islands / Hairline
- * Ledger, user CSS layouts from `<config>/layouts/`, independence from the
+ * Ledger / Compact / Soft Cards (#1548), user CSS layouts from `<config>/layouts/`, independence from the
  * colour theme, persistence, live reload and fallback to Default.
  *
  * Assertions measure rendered geometry and computed styles, not just the
@@ -63,7 +63,7 @@ test.describe("Layout themes (#1306)", () => {
 
     const dialog = await openSettings(page);
     const select = dialog.locator(".layout-theme-select");
-    await expect(select.locator("option")).toHaveText(["Default", "Floating Islands", "Hairline Ledger"]);
+    await expect(select.locator("option")).toHaveText(["Default", "Floating Islands", "Hairline Ledger", "Compact", "Soft Cards"]);
 
     await select.selectOption("floating-islands");
     await expect(html).toHaveAttribute("data-layout-base", "floating-islands");
@@ -82,6 +82,81 @@ test.describe("Layout themes (#1306)", () => {
     await waitForEntries(page);
     await expect(html).toHaveAttribute("data-layout", "hairline-ledger");
     expect(await firstRowHeight(page)).toBe(28);
+  });
+
+  test("Compact tightens the chrome and fits more Details rows (#1548)", async ({ page }) => {
+    await page.setViewportSize({ width: 1100, height: 700 });
+    await page.goto(HOME_URL);
+    await waitForEntries(page);
+    const height = (selector: string) =>
+      page.locator(selector).first().evaluate(el => el.getBoundingClientRect().height);
+    const listHeight = () => page.locator(".details-view:visible").first().evaluate(el => el.clientHeight);
+    const defaults = {
+      row: await firstRowHeight(page),
+      titlebar: await height('[data-region="titlebar"]'),
+      toolbar: await height('[data-region="toolbar"]:visible'),
+      status: await height('[data-region="status-bar"]'),
+      list: await listHeight(),
+    };
+
+    await applySettingsAndReload(page, { layoutTheme: "compact" });
+    await waitForEntries(page);
+    await expect(page.locator("html")).toHaveAttribute("data-layout", "compact");
+    await expect.poll(() => firstRowHeight(page)).toBe(22);
+    expect(await height('[data-region="titlebar"]')).toBe(30);
+    expect(await height('[data-region="toolbar"]:visible')).toBe(32);
+    expect(await height('[data-region="status-bar"]')).toBe(20);
+    // Every chrome strip shrinks, so the same window shows more rows.
+    expect(await height('[data-region="titlebar"]')).toBeLessThan(defaults.titlebar);
+    expect(await height('[data-region="toolbar"]:visible')).toBeLessThan(defaults.toolbar);
+    expect(await height('[data-region="status-bar"]')).toBeLessThan(defaults.status);
+    const rowsThatFit = (list: number, row: number) => Math.floor(list / row);
+    expect(rowsThatFit(await listHeight(), 22)).toBeGreaterThan(rowsThatFit(defaults.list, defaults.row) + 5);
+    await page.screenshot({ path: "screenshots/feat/compact-soft-cards-layouts/compact-details.png" });
+  });
+
+  test("Soft Cards paints opaque bordered cards without shadows (#1548)", async ({ page }) => {
+    await page.setViewportSize({ width: 1100, height: 700 });
+    await seedSettings(page, { layoutTheme: "soft-cards", theme: "dark" });
+    await page.goto(HOME_URL);
+    await waitForEntries(page);
+    await expect(page.locator("html")).toHaveAttribute("data-layout", "soft-cards");
+
+    expect(await css(page, ".main-content", "gap")).toBe("6px");
+    for (const card of [".sidebar-container", '[data-region="panes"]']) {
+      expect(parseFloat(await css(page, card, "border-top-left-radius"))).toBe(6);
+      expect(await css(page, card, "border-top-width")).toBe("1px");
+      expect(await css(page, card, "box-shadow")).toBe("none");
+    }
+    // Title and status bars sit on the backdrop; the sticky column header
+    // stays opaque so scrolled rows never show through it.
+    expect(await css(page, '[data-region="status-bar"]', "background-color")).toBe("rgba(0, 0, 0, 0)");
+    const header = await css(page, '[data-region="column-header"]:visible', "background-color");
+    expect(header).not.toBe("rgba(0, 0, 0, 0)");
+    expect(header).not.toMatch(/rgba\(.*, 0\)$/);
+    await expect(page.locator('[data-region="tab-fillet"]:visible')).toHaveCount(0);
+    await page.screenshot({ path: "screenshots/feat/compact-soft-cards-layouts/soft-cards-details.png" });
+
+    // A split turns each pane into its own card, separated by the gap.
+    await page.evaluate(async () => {
+      const { windowTabsManager } = await (new Function("return import('/src/lib/state/window-tabs.svelte.ts')"))();
+      windowTabsManager.splitPane("right");
+    });
+    const panes = page.locator('.pane-tree:not(.retained) [data-region="pane"]');
+    await expect(panes).toHaveCount(2);
+    await expect(page.locator('[data-region="panes"][data-split]:visible')).toHaveCount(1);
+    expect(await css(page, '[data-region="panes"][data-split]:visible', "border-top-width")).toBe("0px");
+    const boxes = await panes.evaluateAll(els => els.map(el => {
+      const r = el.getBoundingClientRect();
+      return { left: r.left, right: r.right, radius: parseFloat(getComputedStyle(el).borderTopLeftRadius), border: getComputedStyle(el).borderTopWidth };
+    }));
+    for (const box of boxes) {
+      expect(box.radius).toBe(6);
+      expect(box.border).toBe("1px");
+    }
+    expect(boxes[1].left - boxes[0].right).toBeGreaterThanOrEqual(6);
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: "screenshots/feat/compact-soft-cards-layouts/soft-cards-split.png" });
   });
 
   test("layout and colour theme change independently", async ({ page }) => {

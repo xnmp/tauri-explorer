@@ -8,7 +8,7 @@
   import { onDestroy, tick } from "svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { aiFilterFor, aiTextAvailability, refreshAiTextAvailability } from "$lib/state/ai-filter.svelte";
-  import { aiFilterStatus } from "$lib/domain/ai-filter";
+  import { aiFilterStatus, isAiFilterKey } from "$lib/domain/ai-filter";
 
   interface Props {
     explorer: ExplorerInstance;
@@ -57,10 +57,11 @@
       event.preventDefault();
       event.stopPropagation();
       close();
-    } else if (event.key === "Enter" && event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+    } else if (isAiFilterKey(event)) {
       event.preventDefault();
       event.stopPropagation();
-      if (localFilter.trim()) void ai.run(localFilter);
+      // The controller reports every outcome, an empty box included (#1522).
+      void ai.run(localFilter);
     }
   }
 

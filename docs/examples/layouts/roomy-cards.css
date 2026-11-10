@@ -1,11 +1,11 @@
 /*
- * @name Soft Cards
+ * @name Roomy Cards
  * @description Roomy rounded cards on a quiet backdrop, with taller rows.
  * @extends default
  *
  * Example user layout for tauri-explorer (#1306). Copy it into your layouts
  * folder (Settings → Appearance → Layout → "Open folder"), then pick
- * "Soft Cards" in the Layout selector. Edits apply as soon as you save.
+ * "Roomy Cards" in the Layout selector. Edits apply as soon as you save.
  *
  * It uses only the documented contract (docs/layout-themes.md): --layout-*
  * variables, [data-region] hooks and root attributes. Colours come from the

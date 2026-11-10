@@ -43,11 +43,16 @@ export function buildTree(rows: GitFileEntry[]): ScmTreeNode {
 
 /** All file paths under a node (depth-first), e.g. for folder-level actions. */
 export function collectPaths(node: ScmTreeNode): string[] {
-  const paths: string[] = node.files.map((f) => f.path);
+  return collectEntries(node).map((f) => f.path);
+}
+
+/** All file entries under a node, in `collectPaths` order. */
+export function collectEntries(node: ScmTreeNode): GitFileEntry[] {
+  const entries: GitFileEntry[] = [...node.files];
   for (const child of node.children.values()) {
-    paths.push(...collectPaths(child));
+    entries.push(...collectEntries(child));
   }
-  return paths;
+  return entries;
 }
 
 /**

@@ -6,8 +6,8 @@
 <script lang="ts">
   import type { GitFileEntry } from "$lib/api/git";
   import { basename } from "$lib/domain/path";
-  import { buildTree, collectPaths, type ScmTreeNode } from "$lib/domain/scm-tree";
-  import { splitScmPath as splitPath, statusClass, statusLetter, type ScmSectionKind } from "$lib/domain/scm-sidebar";
+  import { buildTree, collectEntries, type ScmTreeNode } from "$lib/domain/scm-tree";
+  import { canDiscardScmRow, discardableScmPaths, splitScmPath as splitPath, statusClass, statusLetter, type ScmSectionKind } from "$lib/domain/scm-sidebar";
   import type { ScmStore } from "$lib/state/scm.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
 
@@ -99,10 +99,12 @@
     <button type="button" class="row-btn" title="Stage" aria-label="Stage {row.path}"
       onclick={(e) => { e.stopPropagation(); scmStore.stage([row.path]); }}>{@render actionIcon("stage")}</button>
   {:else}
+    {#if canDiscardScmRow(kind, row)}
     <button type="button" class="row-btn destructive"
       title={kind === "untracked" ? "Remove file" : "Discard changes"}
       aria-label={kind === "untracked" ? `Remove ${row.path}` : `Discard ${row.path}`}
       onclick={(e) => { e.stopPropagation(); onRequestDiscard([row.path], kind === "untracked"); }}>{@render actionIcon("discard")}</button>
+    {/if}
     {#if kind === "untracked"}
       <button type="button" class="row-btn" title="Archive to .archive" aria-label="Archive {row.path} to .archive"
         onclick={(e) => { e.stopPropagation(); onArchive([row.path]); }}>{@render actionIcon("archive")}</button>
@@ -147,7 +149,9 @@
   <ul class="row-list tree-list" role={depth === 0 ? "tree" : "group"} style="padding-left: {depth === 0 ? 4 : 0}px">
     {#each Array.from(node.children.values()) as child (child.fullDir)}
       {@const collapsed = collapsedFolders.has(child.fullDir)}
-      {@const folderPaths = collectPaths(child)}
+      {@const folderEntries = collectEntries(child)}
+      {@const folderPaths = folderEntries.map((entry) => entry.path)}
+      {@const folderDiscardPaths = discardableScmPaths(kind, folderEntries)}
       <li
         class="row tree-folder"
         style="padding-left: {depth * 12 + 4}px"
@@ -174,10 +178,12 @@
             <button type="button" class="row-btn" title="Stage folder" aria-label="Stage {child.name}"
               onclick={(e) => { e.stopPropagation(); scmStore.stage(folderPaths); }}>{@render actionIcon("stage")}</button>
           {:else}
+            {#if folderDiscardPaths.length > 0}
             <button type="button" class="row-btn destructive"
               title={kind === "untracked" ? "Remove folder" : "Discard folder changes"}
               aria-label={kind === "untracked" ? `Remove ${child.name}` : `Discard ${child.name}`}
-              onclick={(e) => { e.stopPropagation(); onRequestDiscard(folderPaths, kind === "untracked"); }}>{@render actionIcon("discard")}</button>
+              onclick={(e) => { e.stopPropagation(); onRequestDiscard(folderDiscardPaths, kind === "untracked"); }}>{@render actionIcon("discard")}</button>
+            {/if}
             {#if kind === "untracked"}
               <button type="button" class="row-btn" title="Archive to .archive" aria-label="Archive {child.name} to .archive"
                 onclick={(e) => { e.stopPropagation(); onArchive(folderPaths); }}>{@render actionIcon("archive")}</button>

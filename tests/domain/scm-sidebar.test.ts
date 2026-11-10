@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { GitFileEntry } from "$lib/domain/git";
 import {
   canCommitScm,
+  canDiscardScmRow,
+  discardableScmPaths,
   nextScmSelection,
   splitScmPath,
   statusClass,
@@ -101,5 +103,24 @@ describe("canCommitScm", () => {
   it("blocks every commit outside a repo or with unresolved conflicts", () => {
     expect(canCommitScm({ ...ready, isRepo: false })).toBe(false);
     expect(canCommitScm({ ...ready, conflicted: 1, amend: true })).toBe(false);
+  });
+});
+
+describe("Discard offers (#1619)", () => {
+  const row = (path: string, status: GitFileEntry["status"]): GitFileEntry => ({ path, status }) as GitFileEntry;
+
+  it("does not offer Discard on an intent-to-add row, which the backend refuses", () => {
+    expect(canDiscardScmRow("changes", row("new.txt", "Added"))).toBe(false);
+    expect(canDiscardScmRow("changes", row("a.txt", "Modified"))).toBe(true);
+    expect(canDiscardScmRow("changes", row("d.txt", "Deleted"))).toBe(true);
+    expect(canDiscardScmRow("untracked", row("u.txt", "Untracked"))).toBe(true);
+    expect(canDiscardScmRow("staged", row("s.txt", "Modified"))).toBe(false);
+    expect(canDiscardScmRow("merge", row("m.txt", "Conflicted"))).toBe(false);
+  });
+
+  it("leaves intent-to-add rows out of a folder batch instead of sinking it", () => {
+    const rows = [row("dir/a.txt", "Modified"), row("dir/new.txt", "Added"), row("dir/d.txt", "Deleted")];
+    expect(discardableScmPaths("changes", rows)).toEqual(["dir/a.txt", "dir/d.txt"]);
+    expect(discardableScmPaths("changes", [row("dir/new.txt", "Added")])).toEqual([]);
   });
 });

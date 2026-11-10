@@ -95,7 +95,6 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `scm/ScmSection.svelte` — one SCM section (Merge/Staged/Changes/Untracked): collapsible header + flat list or folder tree rows with hover actions (history, stage/unstage, discard/remove, archive, Trash, .gitignore).
 - `scm/ScmCommitPanel.svelte` — branch line + flat/tree toggle, commit message (Enter commits, Ctrl/Cmd+Enter amends), Amend toggle, Commit button.
 - `ScmPanel.svelte` — standalone SCM panel (stage/unstage/commit lists).
-- `ScmDiffView.svelte` — unified diff viewer replacing FileList for a diff.
 - `GitGraphView.svelte` — commit-graph pane content (#51/#58); the uncommitted-changes node opens an inline stage/unstage/commit panel (#466, logic in `domain/commit-panel.ts`), arbitrary commit comparison transitions live in `git-graph-comparison.ts` (#512), failed GitHub Actions checks can expose their failed `gh` log inline from an open-PR badge (#521), branch/tag delete, branch rename, merge, and pull record session undo snapshots with a confirmed Ctrl+Z inverse (#513), and `GitAuthorAvatar.svelte` renders opt-out round author images with deterministic local fallbacks (#514).
 - `git-graph/GitGraphBanners.svelte` — PR action toolbar/status, standing detached-HEAD banner (#524) and cancellable network-operation banner (#528).
 - `git-graph/GitGraphHeader.svelte` — graph column header: graph/author/date resize separators (#341) and the branch-filter slot.
@@ -107,7 +106,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-graph/GitGraphPrDetail.svelte` — inline PR dropdown contents: actions, description/comments, failed CI checks + logs, review threads (#459, #521).
 - `git-graph/GitGraphCommitMenu.svelte` — commit context menu and references disclosure (anchor in `composables/use-git-graph-menu.svelte.ts`).
 - `git-graph/GitGraphDialogs.svelte` — rename/name prompts, pull offer, reset/delete suboption modals, PR action and undo confirmations.
-- `icons/FilesIcon.svelte`, `icons/ScmIcon.svelte` — activity-bar SVG icons.
+- `icons/FilesIcon.svelte` — activity-bar SVG icon.
 - `CommandPalette.svelte` — Ctrl+Shift+P command palette UI.
 - `QuickOpen.svelte` — Ctrl+P fuzzy file finder.
 - `PickerQuickOpen.svelte` — Quick Open for the portal file-picker window (#190).
@@ -130,7 +129,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `KeybindingsSettings.svelte` — keybinding customization UI in settings.
 - `ShortcutCheatsheet.svelte` — keyboard shortcut cheatsheet overlay.
 - `ThemePicker.svelte` — color/icon theme picker with live preview, commit and rollback; icon options show stable per-pack file samples.
-- `RenameDialog`? see `dialogs.svelte.ts`; dialogs present: `DeleteDialog.svelte`, `ConflictDialog.svelte` (paste conflict overwrite/skip), `BulkRenameDialog.svelte`, `WorkspaceDialog.svelte` (save/restore workspaces), `ProgressDialog.svelte` (copy/move/extract progress), `InlineNewFolder.svelte` (inline new-entry input — folder or file, per `explorer.newEntryKind`), `FilePicker.svelte` (portal file-picker window).
+- `RenameDialog`? see `dialogs.svelte.ts`; dialogs present: `DeleteDialog.svelte`, `ConflictDialog.svelte` (paste conflict overwrite/skip), `WorkspaceDialog.svelte` (save/restore workspaces), `ProgressDialog.svelte` (copy/move/extract progress), `InlineNewFolder.svelte` (inline new-entry input — folder or file, per `explorer.newEntryKind`), `FilePicker.svelte` (portal file-picker window).
 - `PreviewFolderList.svelte` — folder/ZIP children list in the Preview pane, with the collapsed single-folder indicator; rows go through the shared VirtualList so huge folders render only a windowed slice (#1040).
 - `PreviewPane.svelte` — file preview (image/text/markdown/syntax/CSV table); CSV rows use the shared VirtualList with one shared column template and an outer horizontal scroll surface (#666). Image to image, the previous image stays (spinner over it when slow) until the next is decoded, so a selection change never blanks or re-lays out the pane (`e2e/preview-selection-stability.spec.ts`).
 - `PreviewDiffView.svelte` — the preview's SCM diff region: working-tree diff with Open File/Stage/Unstage/Discard, or a graph-routed commit/comparison diff (#366); loads through `state/preview-diff.svelte.ts`, renders lines with `PreviewDiffLines`.
@@ -440,7 +439,6 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-marquee-selection.svelte.ts` — rubber-band marquee: candidate set + hit-testing.
 - `use-type-ahead.svelte.ts` — type-to-select matching in file lists.
 - `use-column-resize.svelte.ts` — One keyed resize owner with session-local Details widths, visibility projection and ordered retirement.
-- `use-progressive-render.svelte.ts` — chunked render to avoid freeze on huge dirs.
 - `use-drop-target.svelte.ts` — directory-entry drop-target behavior; `retireDropFeedback` ends every folder's feedback at once (drop, dragend, leave).
 - `use-native-drop-target.svelte.ts` — position-based drop target detection, shared pane/window owner resolution and live modality admission for deferred destinations.
 - `use-native-drop-handler.ts` — handle native (external) OS file drops.
@@ -487,7 +485,6 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/domain/folder-peek-pane.ts` — explorer-applied peek decisions: selection/cursor pruning after a projection hides peeked children, reopening a lineage reveal that grouping regrouped late (`lateRevealChain`, #1443), and spring-peek drop folders (#1242).
 - `src/lib/domain/explorer-entries.ts` — explorer entry-list helpers: multi-entry clipboard labels and merging a selected context-menu entry the listing lacks.
 - `src/lib/domain/file-operation-selection.ts` — Explorer recursive batch reduction, symlink-overlap admission, drag-primary remapping, and archive roots (same-basename refusal).
-- `src/lib/domain/bulk-rename.ts` — bulk rename plan: name-part find/replace previews, per-folder collision keys, and descendant-first rename order.
 - `src/lib/domain/file-drop.ts` — validated internal payloads, full path-set verification and explicit DOM/native transport authority.
 - `src/lib/domain/native-drop-paths.ts` — filesystem-only path admission for native drops; excludes blob URLs, relative paths and traversal before any transfer, bookmark or terminal action.
 - `src/lib/domain/file-view-id.ts` — bounded, plugin-scoped file view id format, validated wherever ids are persisted with pane layouts.

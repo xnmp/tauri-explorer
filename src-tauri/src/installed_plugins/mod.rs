@@ -324,7 +324,7 @@ fn install_path(path: &Path) -> Result<package::Installed, AppError> {
 }
 
 #[tauri::command]
-pub fn take_pending_plugin_install_errors(window: tauri::WebviewWindow) -> Vec<String> {
+pub async fn take_pending_plugin_install_errors(window: tauri::WebviewWindow) -> Vec<String> {
     if !error_window(window.label(), window.is_visible().unwrap_or(false)) {
         return vec![];
     }

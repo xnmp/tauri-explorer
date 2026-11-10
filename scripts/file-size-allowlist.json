@@ -4,7 +4,7 @@
   "src/lib/components/FilesSidebarView.svelte": 869,
   "src/lib/components/GitGraphView.svelte": 837,
   "src/lib/components/PreviewPane.svelte": 894,
-  "src/lib/components/QuickOpen.svelte": 978,
+  "src/lib/components/QuickOpen.svelte": 975,
   "src/lib/components/WindowTabBar.svelte": 962,
   "src/lib/domain/git-graph.ts": 1114,
   "src/lib/state/explorer.svelte.ts": 1421,

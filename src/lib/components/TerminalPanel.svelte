@@ -32,7 +32,7 @@
   import { resolveTerminalShortcut, effectiveTerminalShortcuts } from "$lib/domain/terminal-keys";
   import { createTerminalKeyHandler } from "$lib/state/terminal-key-handler";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
-  import { getCommand } from "$lib/state/commands.svelte";
+  import { getCommand, getCommandShortcut } from "$lib/state/commands.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { themeStore } from "$lib/state/theme.svelte";
   import { terminalPanelStore } from "$lib/state/terminal.svelte";
@@ -311,6 +311,11 @@
   const BASE_FONT_SIZE = 13;
   const zoomFactor = $derived(settingsStore.zoomLevel / 100);
 
+  const hideTerminalTitle = $derived.by(() => {
+    const shortcut = getCommandShortcut("view.toggleTerminal");
+    return `Hide terminal${shortcut ? ` (${shortcut})` : ""}`;
+  });
+
   onMount(() => {
     term = new Terminal({
       cursorBlink: true,
@@ -503,7 +508,7 @@
     <div class="terminal-actions">
       <button
         class="action-btn"
-        title="Hide terminal (Alt+M T)"
+        title={hideTerminalTitle}
         aria-label="Hide terminal"
         onclick={() => terminalPanelStore.close()}
       >

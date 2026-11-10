@@ -310,15 +310,6 @@ function createSettingsStore() {
   }
 
   /**
-   * Load settings from config file, migrating from localStorage if needed.
-   * Called once during app initialization.
-   *
-   * settings.json is the durable store of record; localStorage is a
-   * synchronous cache of it that this overwrites on every load. Schema
-   * migrations therefore run HERE and only here — on the authoritative blob,
-   * once, with the result written back to both stores (#506).
-   */
-  /**
    * Parse and migrate a settings.json blob. Returns null when the text is not
    * a usable settings object, so callers can distinguish "nothing to adopt"
    * from "adopted".
@@ -356,6 +347,15 @@ function createSettingsStore() {
     }
   }
 
+  /**
+   * Load settings from config file, migrating from localStorage if needed.
+   * Called once during app initialization.
+   *
+   * settings.json is the durable store of record; localStorage is a
+   * synchronous cache of it that this overwrites on every load. Schema
+   * migrations therefore run HERE and only here — on the authoritative blob,
+   * once, with the result written back to both stores (#506).
+   */
   async function init() {
     const result = await readConfigFile(CONFIG_FILENAME);
     const loaded = result.ok && result.data ? parseSettingsBlob(result.data) : null;

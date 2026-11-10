@@ -65,7 +65,3 @@ export function truncateBreadcrumbs(
 
   return [crumbs[0], { name: "…", path: null }, crumbs[crumbs.length - 1]];
 }
-
-export function measureTotalBreadcrumbWidth(names: string[]): number {
-  return names.reduce((sum, name) => sum + measureCrumbWidth(name), 0) + CONTAINER_H_PAD;
-}

@@ -15,11 +15,8 @@
   import { windowTabsManager, type TabTransfer } from "$lib/state/window-tabs.svelte";
   import { dropIntoDirectory } from "$lib/composables/use-dom-directory-drop";
   import { settingsStore } from "$lib/state/settings.svelte";
-  import {
-    tabDragState,
-    windowAtScreenPos,
-    sendTabToWindow,
-  } from "$lib/state/tab-transfer";
+  import { getCommandShortcut } from "$lib/state/commands.svelte";
+  import { tabDragState, windowAtScreenPos, sendTabToWindow } from "$lib/state/tab-transfer";
   import { getZoomFactor } from "$lib/domain/zoom";
   import { openNewWindow } from "$lib/state/commands/shared";
   import { showTabStrip } from "$lib/domain/titlebar";
@@ -66,6 +63,9 @@
       windowTabsManager.closeTab(tabId);
     }
   }
+
+  const newTabShortcut = $derived(getCommandShortcut("tabs.newTab"));
+  const newTabTitle = $derived(`New Tab${newTabShortcut ? ` (${newTabShortcut})` : ""}`);
 
   function handleNewTab(): void {
     windowTabsManager.createTab();
@@ -545,7 +545,7 @@
       class="new-tab-btn"
       onclick={handleNewTab}
       aria-label="New tab"
-      title="New Tab (Ctrl+T)"
+      title={newTabTitle}
     >
       <svg width="12" height="12" viewBox="0 0 12 12">
         <path

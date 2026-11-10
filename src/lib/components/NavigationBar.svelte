@@ -28,9 +28,11 @@
   const navigationTitles = $derived.by(() => {
     const backShortcut = getCommandShortcut("navigation.goBack");
     const forwardShortcut = getCommandShortcut("navigation.goForward");
+    const upShortcut = getCommandShortcut("navigation.goUp");
 
     return {
       back: `Back${backShortcut ? ` (${backShortcut})` : ""} — right-click for history`,
+      up: `Up${upShortcut ? ` (${upShortcut})` : ""}`,
       forward: `Forward${forwardShortcut ? ` (${forwardShortcut})` : ""} — right-click for history`,
     };
   });
@@ -306,7 +308,7 @@
       <button
         class="nav-btn"
         onclick={() => explorer.goUp()}
-        title="Up (Alt+Up)"
+        title={navigationTitles.up}
         aria-label="Go up one level"
       >
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">

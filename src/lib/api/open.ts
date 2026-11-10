@@ -3,8 +3,8 @@
  * image viewers, terminals).
  * Issue: refactor/finish-api-files-split-into-open-and-system-modules (#282)
  *
- * Split out of files.ts; re-exported there so existing importers of
- * Feature consumers import this module directly.
+ * Split out of files.ts. Feature consumers import this module directly;
+ * files.ts does not re-export it.
  */
 
 import {

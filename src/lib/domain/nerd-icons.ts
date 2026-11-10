@@ -18,7 +18,6 @@ export const DEFAULT_FILE_ICON: NerdIcon = { glyph: "\uF15B", color: "#6D8086" }
 
 /** Folder icons */
 export const FOLDER_ICON: NerdIcon = { glyph: "\uE5FF", color: "#E8A028" };
-export const FOLDER_OPEN_ICON: NerdIcon = { glyph: "\uE5FE", color: "#F0B400" };
 
 /** Extension-to-icon mapping */
 const EXT_ICONS: Record<string, NerdIcon> = {

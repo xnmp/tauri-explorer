@@ -897,8 +897,8 @@ fn wsl_diff(distro: &str, linux_path: &str, path: &str, staged: bool) -> Option<
     Some(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-fn map_non_repo(path: &Path) -> Result<GitStatusSummary, AppError> {
-    Ok(GitStatusSummary {
+fn map_non_repo() -> GitStatusSummary {
+    GitStatusSummary {
         is_repo: false,
         repo_root: None,
         branch: None,
@@ -908,10 +908,7 @@ fn map_non_repo(path: &Path) -> Result<GitStatusSummary, AppError> {
         untracked: Vec::new(),
         merge: Vec::new(),
         op_state: "clean".to_string(),
-    })
-    .inspect(|_s| {
-        let _ = path;
-    })
+    }
 }
 
 async fn run_blocking<T, F>(f: F) -> Result<T, AppError>
@@ -1215,7 +1212,7 @@ pub async fn git_status(
         let p = PathBuf::from(&repo_path);
         let result = match open_repo(&p) {
             Ok(repo) => collect_status(&repo),
-            Err(_) => map_non_repo(&p),
+            Err(_) => Ok(map_non_repo()),
         };
         if cancelled.load(Ordering::Relaxed) {
             return Err(AppError::Other("git status cancelled".into()));
@@ -1247,7 +1244,8 @@ fn stage_paths_inner(repo: &Repository, paths: &[String]) -> Result<(), AppError
         let pp = Path::new(p);
         // Deleted files: remove from index. Others: add.
         let abs = workdir.join(pp);
-        if abs.exists() {
+        // `symlink_metadata`: a dangling symlink is a real entry to stage.
+        if abs.symlink_metadata().is_ok() {
             index.add_path(pp).map_err(to_app_err)?;
         } else {
             index.remove_path(pp).map_err(to_app_err)?;
@@ -1601,7 +1599,8 @@ pub async fn git_commit(
             parent
                 .amend(
                     Some("HEAD"),
-                    Some(&sig),
+                    // Keep the original author; only the committer changes.
+                    None,
                     Some(&sig),
                     None,
                     Some(&msg),
@@ -1657,7 +1656,7 @@ mod tests {
     fn sync_status(path: &Path) -> GitStatusSummary {
         match open_repo(path) {
             Ok(repo) => collect_status(&repo).unwrap(),
-            Err(_) => map_non_repo(path).unwrap(),
+            Err(_) => map_non_repo(),
         }
     }
 
@@ -2196,6 +2195,45 @@ mod tests {
     /// stage a working-tree change through the async command, commit it with a
     /// message, and assert HEAD advanced with that message while the index
     /// emptied — then that unstaging a re-modified file returns it to `changes`.
+    #[test]
+    fn amend_preserves_original_author() {
+        let dir = init_repo(); // configured identity: Test User <test@example.com>
+        write(dir.path(), "a.txt", "v1\n");
+        commit_all(dir.path(), "init"); // authored by Test <t@x>
+        write(dir.path(), "a.txt", "v2\n");
+        let path = dir.path().to_str().unwrap().to_string();
+        tokio_test_block(git_stage(path.clone(), vec!["a.txt".into()])).unwrap();
+
+        tokio_test_block(git_commit(
+            path,
+            "amended".into(),
+            Some(GitCommitOptions { amend: true }),
+        ))
+        .unwrap();
+
+        let repo = Repository::open(dir.path()).unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        assert_eq!(head.message().unwrap().trim(), "amended");
+        assert_eq!(head.author().name(), Ok("Test"));
+        assert_eq!(head.author().email(), Ok("t@x"));
+        assert_eq!(head.committer().name(), Ok("Test User"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staging_an_untracked_dangling_symlink_adds_it_to_the_index() {
+        let dir = init_repo();
+        write(dir.path(), "a.txt", "v1\n");
+        commit_all(dir.path(), "init");
+        std::os::unix::fs::symlink("missing-target", dir.path().join("dangling")).unwrap();
+        let repo = Repository::open(dir.path()).unwrap();
+
+        stage_paths_inner(&repo, &["dangling".into()]).unwrap();
+
+        let index = Repository::open(dir.path()).unwrap().index().unwrap();
+        assert!(index.get_path(Path::new("dangling"), 0).is_some());
+    }
+
     #[test]
     fn stage_commit_advances_head_and_empties_index() {
         let dir = init_repo();

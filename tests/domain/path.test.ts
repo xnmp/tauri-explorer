@@ -233,6 +233,10 @@ describe("joinPath", () => {
 });
 
 describe("isInsideDir", () => {
+  it("treats a filesystem root as containing everything under it", () => {
+    expect(isInsideDir("/etc", "/")).toBe(true);
+    expect(isInsideDir("C:\\a", "C:\\")).toBe(true);
+  });
   it("matches nested unix paths", () => {
     expect(isInsideDir("/a/b/c", "/a/b")).toBe(true);
     expect(isInsideDir("/a/b", "/a/b")).toBe(true);

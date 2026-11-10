@@ -28,7 +28,6 @@ backend for E2E/browser).
 - `components/TileSurface.svelte`, `components/TileVisual.svelte`, `domain/tile-layout.ts` — the one tile implementation (chrome CSS, icon/name, geometry) shared by TilesView and the plugin SDK's `src/lib/components/FileTile.svelte` / `components/FileTiles.svelte`; change tiles here so both stay identical
 - `components/VirtualList.svelte` — windowing engine (visible-range calc, persistent extent canvas and positioned rows); settled scroll/layout callbacks keep marquees and explicitly revealed cursors aligned with current virtual rows
 - `domain/virtual-layout.ts` — row/col geometry math for the virtualizer
-- `composables/use-progressive-render.svelte.ts` — chunked reveal of large lists
 - `composables/use-row-grid-view.svelte.ts` — shared virtualization wiring (rows, DnD, new-folder sentinel, scrollToIndex) behind Tiles
 - `state/commands/view-commands.ts` — view.details/list/tiles, sort, columns cmds
 - `state/sort-prefs.ts`, `state/folder-views.svelte.ts` — per-folder view+sort persistence; `state/folder-tile-size.ts` resolves a folder's effective tile size (override, else global) for every consumer
@@ -287,7 +286,6 @@ backend for E2E/browser).
 
 - `composables/use-inline-rename.svelte.ts` — inline edit field lifecycle
 - `components/EntryName.svelte` — name label + inline rename input; the label itself is `components/EntryNameLabel.svelte`
-- `components/BulkRenameDialog.svelte` — multi-file pattern rename; its plan (previews, per-folder collisions, descendant-first order) is `domain/bulk-rename.ts`
 - `components/InlineNewFolder.svelte` — inline new-entry create (folder or file, per `explorer.newEntryKind`; #436)
 - `state/rename-suggestion.svelte.ts`, `domain/ai-rename.ts`, `api/ai-rename.ts` — AI rename suggestions
 - `api/files.ts` (renameEntry, createDirectory, createEmptyFile), `api/file-mutations.ts`, `src-tauri/src/file_mutation.rs` — native forward admission and settled history receipts; reusable filesystem primitives remain in `files/file_ops.rs`.
@@ -396,7 +394,7 @@ backend for E2E/browser).
 
 - `components/ScmSidebarView.svelte` — staged/unstaged/untracked tree, commit box
 - `components/scm/*.svelte` (`ScmSection`, `ScmCommitPanel`), `state/scm-sidebar-actions.ts`, `domain/scm-sidebar.ts` — ScmSidebarView's regions, action/toast orchestration and pure row-order/commit-admission rules (#1372 split; same DOM/classes)
-- `components/ScmPanel.svelte`, `components/ScmDiffView.svelte` — panel shell + inline diff. ScmPanel renders docked/flat by default (like the miller bar); `island` prop opts into floating-island chrome (#434) — vibrancy alone no longer floats it.
+- `components/ScmPanel.svelte` — panel shell. ScmPanel renders docked/flat by default (like the miller bar); `island` prop opts into floating-island chrome (#434) — vibrancy alone no longer floats it.
 - `components/GitGraphView.svelte` — commit graph / log; its filter popover
   carries an ephemeral file-path query through `state/git-graph-cache.ts` to
   `git_log`, so pagination filters the complete history instead of only rows

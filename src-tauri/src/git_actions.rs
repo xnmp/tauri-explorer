@@ -2773,6 +2773,9 @@ mod tests {
         let work = r.join("work");
         fs::create_dir(&work).unwrap();
         git(&work, &["init", "-b", "main"]);
+        // Windows runners set core.autocrlf=true globally; keep fixture text
+        // byte-exact in this repository and its linked worktrees.
+        git(&work, &["config", "core.autocrlf", "false"]);
         git(
             &work,
             &["remote", "add", "origin", origin.to_str().unwrap()],

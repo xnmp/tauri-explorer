@@ -1,5 +1,4 @@
 use super::*;
-use std::os::unix::fs::PermissionsExt;
 
 fn fixture() -> (tempfile::TempDir, String, String, std::path::PathBuf) {
     let dir = tempfile::tempdir().unwrap();
@@ -27,8 +26,8 @@ fn fixture() -> (tempfile::TempDir, String, String, std::path::PathBuf) {
     repo.set_head("refs/heads/feature").unwrap();
     let exe = dir.path().join("fake-gh");
     std::fs::write(&exe, "#!/bin/sh\nprintf '%s\\0' \"$@\" > argv\necho call >> calls\necho https://github.com/repair-test/example/pull/15\n").unwrap();
-    std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
-    (dir, root, slug, exe)
+    let launcher = Path::new(env!("CARGO_MANIFEST_DIR")).join("test_support/fixtures/github-gh.sh");
+    (dir, root, slug, launcher)
 }
 fn approval(slug: &str) -> PrAction {
     PrAction::Approve {
@@ -71,7 +70,7 @@ fn pr_actions_repair_host_is_explicit_for_create_merge_and_approve() {
 #[test]
 fn pr_actions_repair_other_windows_are_refused_until_child_is_reaped() {
     let (_dir, root, slug, exe) = fixture();
-    std::fs::write(&exe, "#!/bin/sh\necho call >> calls\ntouch started\ni=0; while [ ! -f release ] && [ $i -lt 500 ]; do sleep 0.02; i=$((i+1)); done\necho done\n").unwrap();
+    std::fs::write(Path::new(&root).join("fake-gh"), "#!/bin/sh\necho call >> calls\ntouch started\ni=0; while [ ! -f release ] && [ $i -lt 500 ]; do sleep 0.02; i=$((i+1)); done\necho done\n").unwrap();
     let worker_root = root.clone();
     let worker_slug = slug.clone();
     let worker_exe = exe.clone();
@@ -102,16 +101,23 @@ fn pr_actions_repair_other_windows_are_refused_until_child_is_reaped() {
 #[test]
 fn pr_actions_repair_accepted_then_lost_ack_is_uncertain_and_never_replayed() {
     let (_dir, root, slug, exe) = fixture();
-    std::fs::write(&exe, "#!/bin/sh\necho approved >> accepted\necho 'connection lost after remote acceptance' >&2\nexit 9\n").unwrap();
+    std::fs::write(Path::new(&root).join("fake-gh"), "#!/bin/sh\necho approved >> accepted\necho 'connection lost after remote acceptance' >&2\nexit 9\n").unwrap();
     cache_put_if_current(
         slug.clone(),
         CacheState::Hit(vec![]),
         PR_CACHE_REVISION.load(Ordering::Relaxed),
     );
+    // Model another thread's fork retaining a writable descriptor until exec.
+    // The response must be shell input, never the executable being launched.
+    let _writer = std::fs::OpenOptions::new()
+        .write(true)
+        .open(Path::new(&root).join("fake-gh"))
+        .unwrap();
     let error = execute_pr_action(&root, approval(&slug), &exe).unwrap_err();
     assert_eq!(
         serde_json::to_value(&error).unwrap()["kind"],
-        "pr_mutation_uncertain"
+        "pr_mutation_uncertain",
+        "unexpected CLI failure: {error}"
     );
     assert!(error.to_string().contains("GitHub may have applied"));
     assert_eq!(

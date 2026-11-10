@@ -1,6 +1,5 @@
 //! Actual subprocess contract tests; no network or global PATH mutation.
 use super::*;
-use std::os::unix::fs::PermissionsExt;
 
 fn cache_put(key: String, state: CacheState) {
     cache_put_if_current(key, state, PR_CACHE_REVISION.load(Ordering::Relaxed));
@@ -35,8 +34,8 @@ fn fixture() -> (tempfile::TempDir, String, std::path::PathBuf) {
     repo.set_head("refs/heads/feature").unwrap();
     let executable = dir.path().join("fake-gh");
     std::fs::write(&executable, "#!/bin/sh\nprintf '%s\\n' \"$@\" > argv\npwd > cwd\nprintf 'https://github.com/action-tests/example/pull/9\\n'\n").unwrap();
-    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
-    (dir, root, executable)
+    let launcher = Path::new(env!("CARGO_MANIFEST_DIR")).join("test_support/fixtures/github-gh.sh");
+    (dir, root, launcher)
 }
 fn create(head: &str) -> PrAction {
     PrAction::Create {
@@ -160,7 +159,7 @@ fn pr_actions_cli_errors_are_not_success_and_clear_stale_badges() {
         .remote_set_url("origin", "https://github.com/action-tests/failure.git")
         .unwrap();
     std::fs::write(
-        &exe,
+        Path::new(&root).join("fake-gh"),
         "#!/bin/sh\necho 'authentication required' >&2\nexit 1\n",
     )
     .unwrap();

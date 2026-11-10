@@ -17,6 +17,9 @@ pub mod batch;
 mod case_only_rename_tests;
 pub(crate) mod copy_session;
 pub mod dir_listing;
+// The SCM panel's untracked-file removal (#1618).
+#[cfg(unix)]
+pub(crate) mod contained_removal;
 mod directory_cache;
 mod directory_identity;
 mod directory_watches;

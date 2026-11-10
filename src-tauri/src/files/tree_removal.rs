@@ -20,7 +20,8 @@
 //! - **Bounded.** Depth counts the named root as 1, and every observed entry
 //!   spends one unit of the caller's entry budget.
 //! - **Caller authority.** [`Removal::admit`] sees every entry, from the same
-//!   observation the walk acts on, before it is entered or unlinked.
+//!   observation the walk acts on, before it is entered or unlinked, and
+//!   [`Removal::entering`] sees each directory before anything in it is.
 //!
 //! No portable call unlinks a leaf by handle, so a leaf name can still be
 //! swapped between its observation and `unlinkat`; the kernel itself refuses
@@ -100,6 +101,12 @@ pub(super) trait Removal {
         Ok(directory.unlink(name, is_directory)?)
     }
 
+    /// `directory` (at `relative`, the root's name first) was just entered;
+    /// nothing in it has been unlinked yet. A refusal leaves it untouched.
+    fn entering(&mut self, _directory: &Directory, _relative: &Path) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
     /// `directory` is now empty and is about to be unlinked.
     fn emptied(&mut self, _directory: &Directory) -> Result<(), Self::Error> {
         Ok(())
@@ -160,6 +167,7 @@ impl<R: Removal> Walk<'_, R> {
         let fence = root_fence.below(directory_mount(&current)?);
         let mut current_object = root.object;
         self.path.push(name);
+        self.removal.entering(&current, &self.path)?;
         // Each frame is the parent's identity and this directory's name in it.
         let mut stack: Vec<(ObjectId, OsString)> = Vec::new();
         loop {
@@ -168,6 +176,7 @@ impl<R: Removal> Walk<'_, R> {
             {
                 let opened = enter(&current, &child, &version, &fence)?;
                 self.path.push(&child);
+                self.removal.entering(&opened, &self.path)?;
                 stack.push((current_object, child));
                 current = opened;
                 current_object = version.object;

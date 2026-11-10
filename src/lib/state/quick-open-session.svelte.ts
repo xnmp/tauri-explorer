@@ -16,9 +16,13 @@
  *   synchronously, and only then is backend cancellation requested. The
  *   cancellation IPC is never awaited, so its completion cannot touch a later
  *   stream's listener.
- * - The listener is registered BEFORE the start IPC, and the first event's
- *   search id is adopted while the start IPC is still in flight (the backend
- *   can emit before `invoke` returns); later events must match that id.
+ * - The listener is registered BEFORE the start IPC (the backend can emit
+ *   before `invoke` returns). `search-results` reaches every window, so an
+ *   event is attributed to a run only by the id its own start IPC returned:
+ *   events that arrive earlier are held per id, and on learning its id the
+ *   run renders only its own stream's latest snapshot (#1581). Adopting the
+ *   first event's id could lock onto another window's search or the last
+ *   batch of a search this window had just cancelled.
  * - A start that resolves after its run was superseded cancels the orphaned
  *   backend search and changes nothing else.
  * - Outside Tauri `listen` rejects, and the session falls back to the
@@ -28,6 +32,12 @@ import type { ApiResult } from "$lib/api/common";
 import type { SearchResult } from "$lib/domain/search";
 import { clampSelection, mergeResultsByScore } from "$lib/domain/quick-open-ranking";
 import { QUICK_OPEN_RESULT_LIMIT, QUICK_OPEN_SEARCH_DEBOUNCE_MS } from "$lib/domain/quick-open-search";
+import {
+  heldEventsFor,
+  holdStreamEvent,
+  noHeldStreamEvents,
+  type HeldStreamEvents,
+} from "$lib/domain/stream-correlation";
 
 /** Payload of one `search-results` event. */
 export interface QuickOpenStreamEvent {
@@ -73,16 +83,17 @@ type StreamState =
   /** A non-empty query waits out the trailing pause. */
   | { readonly kind: "debouncing"; readonly query: string; readonly timer: unknown }
   /**
-   * Listener registration (`unlisten` null) or the stream itself. Events are
-   * accepted from the moment the listener exists. `searchId` is adopted from
-   * the first event or set by the start IPC; `settled` once `done` arrives or
-   * the start IPC fails. The listener stays attached until the run is left.
+   * Listener registration (`unlisten` null) or the stream itself. Events
+   * received before the start IPC sets `searchId` are `held`; afterwards only
+   * that stream's events apply. `settled` once `done` arrives or the start
+   * IPC fails. The listener stays attached until the run is left.
    */
   | {
       readonly kind: "streaming";
       readonly run: StreamRun;
       readonly unlisten: Unlisten | null;
       readonly searchId: number | null;
+      readonly held: HeldStreamEvents<QuickOpenStreamEvent>;
       readonly settled: boolean;
     }
   /** Streaming is unavailable; the one-shot search is in flight. */
@@ -155,10 +166,14 @@ export function createQuickOpenSession(deps: QuickOpenSessionDeps) {
     const current = streamingFor(run);
     if (!current) return;
     if (current.searchId === null) {
-      stream = { ...current, searchId: event.searchId };
-    } else if (event.searchId !== current.searchId) {
+      // Each event is a complete ranked snapshot: the latest per id suffices.
+      stream = { ...current, held: holdStreamEvent(current.held, event, "latest") };
       return;
     }
+    if (event.searchId === current.searchId) apply(run, event);
+  }
+
+  function apply(run: StreamRun, event: QuickOpenStreamEvent): void {
     publishBackend(run, event.results);
     totalScanned = event.totalScanned;
     if (event.done) settle(run);
@@ -201,7 +216,13 @@ export function createQuickOpenSession(deps: QuickOpenSessionDeps) {
       if (started.ok) void deps.cancelStream(started.data);
       return;
     }
-    stream = started.ok ? { ...current, searchId: started.data } : { ...current, settled: true };
+    if (!started.ok) {
+      stream = { ...current, held: noHeldStreamEvents(), settled: true };
+      return;
+    }
+    const early = heldEventsFor(current.held, started.data);
+    stream = { ...current, searchId: started.data, held: noHeldStreamEvents() };
+    for (const event of early) apply(run, event);
   }
 
   function fire(timer: unknown): void {
@@ -210,7 +231,7 @@ export function createQuickOpenSession(deps: QuickOpenSessionDeps) {
     // The pause may have changed the stores (e.g. the pane finished loading).
     publishLocal(run.query);
     const root = deps.searchRoot();
-    stream = { kind: "streaming", run, unlisten: null, searchId: null, settled: false };
+    stream = { kind: "streaming", run, unlisten: null, searchId: null, held: noHeldStreamEvents(), settled: false };
     void attachAndStart(run, root);
   }
 

@@ -7,6 +7,7 @@ import {
   resizePdfView,
   safePdfLink,
   pdfPointerPoint,
+  pdfControlsDensity,
 } from "$lib/domain/pdf-preview";
 
 describe("PDF viewing geometry", () => {
@@ -110,3 +111,21 @@ describe("PDF viewing geometry", () => {
       "https://example.com/page",
     ));
 });
+
+describe("PDF toolbar density (#1583)", () => {
+  it("keeps every control at the 280px default and drops only zoom below 270px", () => {
+    expect(pdfControlsDensity(420)).toBe("regular");
+    expect(pdfControlsDensity(331)).toBe("regular");
+    expect(pdfControlsDensity(330)).toBe("compact");
+    expect(pdfControlsDensity(280)).toBe("compact");
+    expect(pdfControlsDensity(270)).toBe("compact");
+    expect(pdfControlsDensity(269.5)).toBe("minimal");
+    expect(pdfControlsDensity(160)).toBe("minimal");
+  });
+
+  it("treats an unmeasured or malformed width as regular", () => {
+    for (const width of [0, -5, Number.NaN, Number.POSITIVE_INFINITY]) expect(pdfControlsDensity(width)).toBe("regular");
+    expect(pdfControlsDensity(Number.MAX_SAFE_INTEGER)).toBe("regular");
+  });
+});
+

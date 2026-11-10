@@ -434,9 +434,10 @@ backend for E2E/browser).
 ## Quick Open (Ctrl+P fuzzy file finder)
 
 - `components/QuickOpen.svelte` — modal, keyboard nav, store wiring
-- `state/quick-open-session.svelte.ts` — query/rows and the recursive-search stream lifecycle (one discriminated state): local matches synchronous, trailing debounce before the backend walk, listener before start IPC with first-event id adoption, new input/close detach the listener before cancellation IPC, superseded runs ignored (#600, #1577)
+- `state/quick-open-session.svelte.ts` — query/rows and the recursive-search stream lifecycle (one discriminated state): local matches synchronous, trailing debounce before the backend walk, listener before start IPC, events attributed only by the id the start IPC returns (earlier ones held, #1581), new input/close detach the listener before cancellation IPC, superseded runs ignored (#600, #1577)
 - `domain/quick-open-ranking.ts` — pure local matching (recents/frecency/active pane), backend re-ranking, deduplicating merge capped at 20 rows (#385, #651)
 - `domain/quick-open-search.ts` — result-limit/debounce constants and the picker's trailing scheduler
+- `domain/stream-correlation.ts` — holds early broadcast stream events by id until the start IPC names the run's stream; shared with content search (#1581)
 - `components/PickerQuickOpen.svelte` — variant used inside file picker
 - `domain/fuzzy-score.ts` — match scoring/ranking
 - `domain/command-keywords.ts` — hidden command-palette synonyms (hotkeys → Keyboard Shortcuts), consumed by `scoreCommand`
@@ -450,6 +451,7 @@ backend for E2E/browser).
 - `components/ContentSearchDialog.svelte` — query/results UI
 - `composables/use-content-search.svelte.ts` — search lifecycle, streamed hits
 - `domain/content-search-flatten.ts` — file→line-hit flattening for list
+- `domain/stream-correlation.ts` — early-event attribution by stream id (see Quick Open, #1581)
 - `api/search.ts` — `startContentSearch`, `cancelContentSearch`
 - `src-tauri/src/content_search.rs` — ripgrep-based grep, streaming
 - FLOW: query → startContentSearch → backend emits per-file matches → flattened → click opens `openFileAtLine`.
@@ -584,7 +586,7 @@ backend for E2E/browser).
 ## Terminal panel
 
 - `state/terminal-key-handler.ts` — shared xterm adapter resolves eligible Explorer command ownership before clipboard/readline side effects (#759)
-- `state/terminal-cwd-sync.ts` — cwd-sync queue/poll machine (idle|queued), pure rules in `domain/terminal-cwd-sync.ts`; TerminalPanel only wires deps (#1566)
+- `state/terminal-cwd-sync.ts` — cwd-sync queue/poll machine (idle|queued), follow dedupe, and the post-spawn reconcile (`startFollowingShell`) so a shell started during navigation follows the explorer; pure rules in `domain/terminal-cwd-sync.ts`; TerminalPanel only wires deps (#1566, #1580)
 - `state/terminal-session.ts` — frontend resource owner for reserve/listen/spawn/kill; late completions drain before restart/disposal. All PTY input (keys, shortcut bytes, pastes, path insertions, `cd` sync) goes through `session.write` into `domain/terminal-input-queue.ts`, which accepts promises so a clipboard read or a dialect-dependent insertion keeps its key position (#709, #882).
 - `domain/terminal-paste.ts` — paste source order per platform (#732) and the bytes xterm's `paste()` would emit.
 - `src-tauri/src/terminal/input.rs` — the ordering guarantee: `terminal_write(id, seq, data)` is admitted in `seq` order whatever order the async commands run in; typeahead before the PTY exists is held (64 KiB). An overflow discards ALL pre-start input, reports it in the receipt, and the panel logs it and shows a toast. One writer thread per PTY (#882).

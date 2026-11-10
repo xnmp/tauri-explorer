@@ -202,7 +202,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `preview-resolution.ts` — full resolution on demand: loads the shown rendition's original once, off-screen, and hands it back only while that rendition is still shown (#1054).
 - `terminal-key-handler.ts` — xterm key adapter: eligible command ownership precedes clipboard/readline effects, with modifier tracking and chord retirement.
 - `pdf-preview.svelte.ts` — latest-document/page intent and detached-canvas render lifetimes; releases departed pages and cancels owned PDF workers (#728–#730).
-- `terminal-cwd-sync.ts` — terminal-follows-explorer cwd sync controller: one idle|queued state, injected status/write/scheduler deps, epoch guard so late status results never touch a dead/replaced shell (#1566).
+- `terminal-cwd-sync.ts` — terminal-follows-explorer cwd sync controller: one idle|queued state, injected status/write/scheduler deps, epoch guard so late status results never touch a dead/replaced shell (#1566); owns the follow dedupe and reconciles every newly spawned shell with the explorer's current path via `startFollowingShell` (#1580).
 - `terminal-session.ts` — frontend terminal reservation/listener/spawn lifetime; drains late resources and serializes restart/stop. Owns the session's only input path (`domain/terminal-input-queue.ts`): opened at start/restart so typeahead is kept, attached at reservation, closed on stop/exit; `insert` builds text (path insertions) in the spawned shell's dialect and holds it across an exited shell for the next start (#709, #882).
 - `repo-root-cache.svelte.ts` — bounded reactive repository discovery with positive/negative TTL, shared probes and invalidation-safe publication.
 - `owned-registry.ts` — framework-free contribution registration identity; old disposers cannot remove replacements even when values are reused.
@@ -456,7 +456,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/composables/use-sidebar-drag-end.ts` — source-bound document dragend capture, bookmark fallback and gesture retirement.
 - `src/lib/composables/use-sidebar-file-drop.ts` — MIME-scoped Quick Access pinning and bookmark reorder, independent of retained file consumers.
 - `src/lib/composables/use-dom-directory-drop.ts` — shared importable folder/breadcrumb/tab/listing/Miller DOM transfer destinations and copy policies.
-- `use-content-search.svelte.ts` — content-search stream lifecycle for the dialog.
+- `use-content-search.svelte.ts` — content-search stream lifecycle for the dialog: one run per search owns its listener (detached synchronously before an unawaited cancel, #1579) and attributes events only by its start IPC's id (#1581).
 - `use-file-watchers.ts` — subscribe file-change/event listeners.
 - `use-window-lifecycle.ts` — window lifecycle (focus/close/resize) handlers.
 - `use-pane-dividers.svelte.ts` — single captured divider gesture per workspace; pointer/keyboard adapter with geometry and lifetime validation.
@@ -529,6 +529,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `command-score.ts` — pure command-palette scorer (`scoreCommand`, frecency points); split from `fuzzy-score.ts` so it stays out of the startup graph (#1247).
 - `palette-selection.ts` — command-palette highlight by command id over a live result list (#1236).  Also the clamped PgUp/PgDn step shared with Quick Open (#1419).
 - `quick-open-search.ts` — Quick Open result limit and debounce constants, plus the trailing scheduler the file picker uses for its recursive search (#600).
+- `stream-correlation.ts` — holds broadcast search-stream events (Quick Open, content search) per stream id until the run's own start IPC names its stream, so no window adopts another search's events (#1581).
 - `quick-open-ranking.ts` — pure Quick Open ranking: recents/frecency and active-pane local matches, frecency/filename re-ranking of backend hits, deduplicating 20-row merge, Recent view, display path and debug score breakdown (#385, #651, #1577).
 - `lazy-dialog.ts` — failure-safe loading for code-split dialogs: rejected import (#584) or mount crash via svelte:boundary (#585) rolls back the dialog open-flag + notifies, preventing the hasModalOpen hotkey soft-lock.
 - `theme-list.ts` — dedupe discovered themes by id, last wins (user CSS overrides built-ins; duplicate ids crashed ThemePicker's keyed each, #585).
@@ -601,7 +602,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `syntax-highlight.ts` — highlight.js wrapper for preview.
 - `csv-preview.ts` — quoted CSV parser for PreviewPane table data, bounded to the preview's data-row limit (#666); `csvRowHeight` / `csvColumnTemplate` table layout.
 - `html-preview-zoom.ts` — pure HTML preview page-zoom model: unmeasurable sandboxed frame scales a fixed ≥1280px desktop layout like an image (#1361), Fit, zoom stops and labels (#1352).
-- `pdf-preview.ts` — pure PDF fit, zoom-anchor, measured pointer coordinates, pan bounds and safe-link policy (#728–#730).
+- `pdf-preview.ts` — pure PDF fit, zoom-anchor, measured pointer coordinates, pan bounds and safe-link policy (#728–#730), and the one-row toolbar density for a measured CSS-px width (#1583).
 - `markdown.ts` — safe markdown render for preview; `renderMarkdownBlocks` yields lazily typeset top-level blocks (#1418).
 - `progressive-reveal.ts` — reveals a lazily rendered document one bounded slice per frame, starting the frame after the request and stopping once it is stale (#1418).
 - `versioned-lru.ts` — bounded LRU holding one version per key; storing a version drops the older one (Markdown preview cache, #1418).

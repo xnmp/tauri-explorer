@@ -498,9 +498,10 @@ The About surface uses the existing `AppInfo` contract and `getAppInfo()` bridge
 lazy-loaded through `WindowDialogs.svelte`, with modal ownership provided by
 `Modal.svelte`; do not read package.json for the running application version.
 The store must include About in `hasModalOpen` and `closeAll`, including while
-its lazy import is pending. Add the flag to `anyModalOpen` and
-`closeUnmountedDialogs` so pane input blocking and mounted close guards share
-the same lifecycle. The command declares window scope for destination admission.
+its lazy import is pending. Payload-free dialogs are ids in `domain/overlays.ts`
+(`OVERLAY_IDS`); `anyModalOpen`, `closeUnmountedDialogs` and `closeAll` iterate
+that registry, so add the id plus its open/close methods and extend the typed
+opener table in `tests/state/dialog-registry.test.ts`. The command declares window scope for destination admission.
 Browser evidence for this surface must finish CSS
 animations (`page.screenshot({ animations: "disabled", ... })`): a visible DOM
 assertion can succeed on the first transparent frame of the shared modal fade.

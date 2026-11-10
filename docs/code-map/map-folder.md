@@ -323,6 +323,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `window-backdrop.ts` — Windows Mica/Acrylic translucent backdrop (CSS strength).
 - `workspaces.svelte.ts` — save/restore named workspaces.
 - `bookmarks.svelte.ts` — sidebar bookmarks store.
+- `config-document.ts` — `createConfigDocument`: shared init/migrate/reload/write-through lifecycle for bookmarks.json and folder-views.json (#1568); shape gates and the migration value are per-file options.
 - `recent-files.svelte.ts` — recent files store.
 - `shared-history.ts` — native history IPC FIFO, accepted-write flush, epoch-guarded refresh and store registration; browser fallback keeps local history.
 - `picker-search.ts` (state) — revision-owned delayed picker search; new input/close revoke stale results before the debounce.

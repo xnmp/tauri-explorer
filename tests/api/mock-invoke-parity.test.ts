@@ -49,6 +49,10 @@ const BROWSER_UNREACHABLE_ALLOWLIST = new Set([
   // `list_directory_fresh` instead, so `start_observed_directory` is never
   // invoked outside a real Tauri window.
   "start_observed_directory",
+  // Registered for completeness, but the frontend never calls it directly —
+  // Rust invalidates its own directory cache internally via
+  // `invalidate_dir_cache_sync` (src-tauri/src/files/fs_watcher.rs).
+  "invalidate_dir_cache",
   // Qualification-only native streaming metrics are deliberately not mocked.
   // Browser UI tests cannot provide evidence about native reads or handles.
   "e2e_video_preview_stats",

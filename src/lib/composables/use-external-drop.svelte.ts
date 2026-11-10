@@ -6,7 +6,7 @@
  * dropped from external applications (like the system file manager).
  *
  * On macOS, this also handles "self-drops" where the native drag
- * session (started by `start_file_drag`) drops back onto the same window.
+ * session (started by tauri-plugin-drag) drops back onto the same window.
  */
 
 import { getCurrentWebview } from "@tauri-apps/api/webview";

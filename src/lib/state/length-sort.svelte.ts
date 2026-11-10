@@ -15,7 +15,7 @@ let loaded = $state.raw<Requests | null>(null);
 let loading: Promise<void> | null = null;
 
 /** Load the resolver side once; a failed import may be retried later. */
-function loadLengthSort(): Promise<void> {
+export function loadLengthSort(): Promise<void> {
   loading ??= import("./length-sort-requests.svelte").then(
     (module) => { loaded = module; },
     () => { loading = null; },

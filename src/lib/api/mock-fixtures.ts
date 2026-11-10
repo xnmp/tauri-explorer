@@ -14,7 +14,7 @@ import type { FileEntry } from "$lib/domain/file";
 // Deterministic, varied timestamps: each created entry gets a distinct
 // modified time (1h apart from a fixed base) so sort-by-modified is testable.
 export const TIMESTAMP_BASE = Date.UTC(2024, 0, 1, 12, 0, 0);
-const TIMESTAMP_STEP_MS = 60 * 60 * 1000;
+export const TIMESTAMP_STEP_MS = 60 * 60 * 1000;
 let timestampSeq = 0;
 export function nextTimestamp(): string {
   return new Date(TIMESTAMP_BASE + timestampSeq++ * TIMESTAMP_STEP_MS).toISOString();
@@ -51,7 +51,7 @@ export function dir(name: string, path: string, is_empty?: boolean, is_git_repo?
 
 /** Markdown navigation fixture (#1418): odd-numbered files are math-heavy
  *  (inline and display TeX on every section), even-numbered files plain. */
-const MATH_NAV_ROOT = "/home/math-nav";
+export const MATH_NAV_ROOT = "/home/math-nav";
 const MATH_NAV_COUNT = 12;
 const mathNavName = (index: number) => `nav-${String(index + 1).padStart(2, "0")}.md`;
 function mathNavContent(index: number): string {

@@ -51,7 +51,7 @@ export interface TrashWireListing {
   issues: TrashIssue[];
 }
 
-function toTrashEntry(item: TrashWireEntry): FileEntry {
+export function toTrashEntry(item: TrashWireEntry): FileEntry {
   return {
     name: item.name,
     path: trashEntryPath(item.id),

@@ -55,7 +55,7 @@ export type PreviewImageLoad =
   /** Superseded: the caller shows nothing from this load. */
   | { readonly status: "stale" };
 
-interface PreviewRenditionOptions {
+export interface PreviewRenditionOptions {
   /** Longest rendition edge in device pixels (see `domain/preview-rendition`). */
   readonly maxEdge: number;
   /**

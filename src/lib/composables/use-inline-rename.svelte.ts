@@ -13,6 +13,12 @@ import { dialogStore } from "$lib/state/dialogs.svelte";
 import { renameSuggestionStore } from "$lib/state/rename-suggestion.svelte";
 import { findNextWordBoundary, findPrevWordBoundary } from "$lib/domain/word-boundary";
 
+export interface InlineRenameState {
+  editedName: string;
+  renameError: string | null;
+  submittingRename: boolean;
+}
+
 export function useInlineRename(getExplorer: () => ExplorerInstance) {
   const captureFocusReturn = getFileListFocusReturn();
   let renameInputRef = $state<HTMLInputElement | HTMLTextAreaElement | null>(null);

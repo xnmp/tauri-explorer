@@ -6,7 +6,7 @@
  * leaves the handle alone. An unrecognised target counts as moving it.
  *
  * Structural types keep this rule testable without a DOM. */
-interface ContainingNode { contains(other: unknown): boolean }
+export interface ContainingNode { contains(other: unknown): boolean }
 
 export function scrollMovesHandle(target: unknown, handle: unknown, documentTarget: unknown,
   synced: readonly unknown[] = []): boolean {

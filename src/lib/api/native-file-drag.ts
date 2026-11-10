@@ -1,15 +1,10 @@
 import { Channel } from "@tauri-apps/api/core";
 import { invoke } from "./common";
+import type { CallbackPayload, Options } from "@crabnebula/tauri-plugin-drag";
 import type { DragData } from "$lib/state/drag.svelte";
 
-/** Arguments of the native `start_file_drag` command: absolute paths plus the drag preview image path. */
-export interface FileDragOptions { item: string[]; icon: string }
-
-/** Completion payload the host sends over the drag result channel (`native_file_drag::Completion`). */
-export interface CallbackPayload { result: "Dropped" | "Cancel"; cursorPos: { x: number; y: number } }
-
 /** The host binds the source to native events before either IPC channel runs. */
-export function startFileDrag(options: FileDragOptions, onEvent: (result: CallbackPayload) => void, source: DragData | null): Promise<void> {
+export function startFileDrag(options: Options, onEvent: (result: CallbackPayload) => void, source: DragData | null): Promise<void> {
   const channel = new Channel<CallbackPayload>();
   channel.onmessage = onEvent;
   return invoke("start_file_drag", { item: options.item, image: options.icon, source, onEvent: channel });

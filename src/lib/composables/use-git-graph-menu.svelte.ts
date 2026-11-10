@@ -17,14 +17,14 @@ import { clampMenuPosition } from "$lib/domain/git-graph-view";
 import { graphViewportMoved, type GraphViewportPosition, type RemoteRefChip } from "$lib/domain/git-graph";
 import type { GraphCommit } from "$lib/state/git-graph-cache";
 
-interface MenuAnchor {
+export interface MenuAnchor {
   x: number;
   y: number;
   commit: GraphCommit;
   trigger?: HTMLElement;
   viewport?: GraphViewportPosition;
 }
-interface ActionMenu extends MenuAnchor {
+export interface ActionMenu extends MenuAnchor {
   kind: "actions";
   /** Branch to attach on Checkout, or null → detached checkout of the OID. */
   checkoutBranch: string | null;
@@ -147,3 +147,5 @@ export function useGitGraphMenu(options: GitGraphMenuOptions) {
     },
   };
 }
+
+export type GitGraphMenu = ReturnType<typeof useGitGraphMenu>;

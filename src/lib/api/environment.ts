@@ -6,6 +6,11 @@ export async function getHomeDirectory(): Promise<ApiResult<string>> {
   catch (err) { return { ok: false, error: extractError(err) }; }
 }
 
+export async function getLaunchCwd(): Promise<ApiResult<string>> {
+  try { return { ok: true, data: await invoke<string>("get_launch_cwd") }; }
+  catch (err) { return { ok: false, error: extractError(err) }; }
+}
+
 export function getLogDir(): Promise<string> {
   return invoke<string>("get_log_dir");
 }

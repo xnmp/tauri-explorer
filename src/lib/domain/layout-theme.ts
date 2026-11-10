@@ -48,7 +48,7 @@ export {
 export type { BuiltinLayoutId };
 
 /** Structural arrangement the application renders for a layout. */
-type LayoutArrangement = "flat" | "islands";
+export type LayoutArrangement = "flat" | "islands";
 
 export interface LayoutThemeInfo {
   /** Built-in id, or the user file name (`compact.css`). */
@@ -81,7 +81,7 @@ export const MAX_LAYOUT_CSS_BYTES = 512 * 1024;
 const MAX_NAME_LENGTH = 80;
 const MAX_DESCRIPTION_LENGTH = 240;
 
-const BUILTIN_LAYOUT_THEMES: readonly LayoutThemeInfo[] = [
+export const BUILTIN_LAYOUT_THEMES: readonly LayoutThemeInfo[] = [
   {
     id: DEFAULT_LAYOUT_ID,
     name: "Default",
@@ -169,7 +169,7 @@ function clip(value: string | undefined, max: number): string | undefined {
 }
 
 /** Plain file name ending in `.css`, no path separators or traversal. */
-function isLayoutFilename(filename: unknown): filename is string {
+export function isLayoutFilename(filename: unknown): filename is string {
   return (
     typeof filename === "string" &&
     filename.length > 4 &&
@@ -326,8 +326,8 @@ export function isNewLayoutFallback(previous: LayoutFallback | null, next: Layou
 
 /** Details row height the virtualized list and its rows share. */
 export const DEFAULT_DETAILS_ROW_HEIGHT = 32;
-const MIN_DETAILS_ROW_HEIGHT = 20;
-const MAX_DETAILS_ROW_HEIGHT = 64;
+export const MIN_DETAILS_ROW_HEIGHT = 20;
+export const MAX_DETAILS_ROW_HEIGHT = 64;
 
 /**
  * Parse the `--layout-row-height` custom property into a whole CSS-pixel row

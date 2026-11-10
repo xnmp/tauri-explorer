@@ -27,7 +27,7 @@ export interface PreviewImageCacheLimits {
 }
 
 /** About 16 2048 px renditions, or 7 at 3072 px (~190 MB as RGBA). */
-const PREVIEW_IMAGE_CACHE_LIMITS: PreviewImageCacheLimits = { maxEntries: 16, maxPixels: 48_000_000 };
+export const PREVIEW_IMAGE_CACHE_LIMITS: PreviewImageCacheLimits = { maxEntries: 16, maxPixels: 48_000_000 };
 
 export interface PreviewImageCache {
   /** A remembered image for this file version and request, now most recent; or null. */

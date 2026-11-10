@@ -20,7 +20,7 @@ import { themeStore } from "./theme.svelte";
 import { layoutStore } from "./layout.svelte";
 import { toastStore } from "./toast.svelte";
 
-const CONFIG_CHANGED_EVENT = "config-file-changed";
+export const CONFIG_CHANGED_EVENT = "config-file-changed";
 const SETTINGS_FILE = "settings.json";
 const BOOKMARKS_FILE = "bookmarks.json";
 const FOLDER_VIEWS_FILE = "folder-views.json";

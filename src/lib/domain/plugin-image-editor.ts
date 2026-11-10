@@ -3,6 +3,11 @@
  * of the plugin's own editor tools.
  */
 
+export interface ImageEditorRequest {
+  readonly path: string;
+  readonly tool: string;
+}
+
 const MAX_PATH = 4096;
 
 /** POSIX absolute, Windows drive-absolute (`C:\` or `C:/`) or UNC. */

@@ -27,7 +27,7 @@ export interface RevealLimits {
 }
 
 /** ~48 KB of KaTeX HTML lays out in about 10–20 ms in WebKit. */
-const PREVIEW_REVEAL_LIMITS: RevealLimits = { sliceMs: 8, sliceChars: 48_000 };
+export const PREVIEW_REVEAL_LIMITS: RevealLimits = { sliceMs: 8, sliceChars: 48_000 };
 
 /**
  * Pulls `source` slice by slice. Every slice but the last is passed to `show`

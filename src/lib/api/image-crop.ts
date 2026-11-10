@@ -5,7 +5,7 @@ import type { ImageCropRect, ImagePixelSize } from "$lib/domain/image-crop";
 import type { FileMutationReceipt } from "$lib/domain/file";
 
 /** Opaque native source observation, echoed unchanged when saving. */
-interface ImageCropRevision {
+export interface ImageCropRevision {
   readonly digest: string;
   readonly size: number;
   readonly modifiedSeconds: number;

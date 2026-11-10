@@ -11,7 +11,7 @@
 import type { SettingRowDescriptor, SettingsSectionDescriptor, PluginStorage } from "./api";
 import { createOrderedRegistry } from "$lib/state/ordered-registry";
 
-interface RegisteredSettingsSection {
+export interface RegisteredSettingsSection {
   pluginId: string;
   id: string;
   title: string;

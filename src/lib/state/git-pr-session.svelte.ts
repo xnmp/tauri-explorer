@@ -16,8 +16,6 @@ import {
   type PrReviewThread,
 } from "$lib/api/git-log";
 import { indexPrsByBranch } from "$lib/domain/git-graph";
-import { createSlotCell } from "$lib/state/slot-cell.svelte";
-import { beginSlot, clearSlot, idleSlot, isSlotLoading, settleSlot, slotData, type Slot } from "$lib/domain/request-slot";
 
 export interface FailedCiChecksState {
   readonly prNumber: number;
@@ -33,11 +31,11 @@ export interface CiCheckLogState {
 }
 
 export type FailedCiCheckSnapshot = Readonly<FailedCiCheck>;
-type FailedCiCheckLogSnapshot = Readonly<FailedCiCheckLog>;
+export type FailedCiCheckLogSnapshot = Readonly<FailedCiCheckLog>;
 
-type PrCommentSnapshot = Readonly<PrComment>;
-type PrReviewCommentSnapshot = Readonly<PrReviewComment>;
-type PrReviewThreadSnapshot = Readonly<
+export type PrCommentSnapshot = Readonly<PrComment>;
+export type PrReviewCommentSnapshot = Readonly<PrReviewComment>;
+export type PrReviewThreadSnapshot = Readonly<
   Omit<PrReviewThread, "comments"> & { comments: readonly PrReviewCommentSnapshot[] }
 >;
 export type PrSnapshot = Readonly<
@@ -85,28 +83,14 @@ export function createGitPrSession(
     checkLog: gitFailedCiCheckLog,
   },
 ) {
+  let prsByBranch = $state.raw<Map<string, PrSnapshot>>(new Map());
   let prDetail = $state.raw<{ readonly oid: string; readonly pr: PrSnapshot } | null>(null);
-  // Each async result is a latest-request-wins slot; settled states are built
-  // (and frozen) once so getters return stable objects. The loading slot's key
-  // is the loading-state object itself where consumers read it.
-  const badges = createSlotCell<Slot<Map<string, PrSnapshot>>>(idleSlot());
-  const checks = createSlotCell<Slot<FailedCiChecksState, number, FailedCiChecksState>>(idleSlot());
-  const checkLog = createSlotCell<Slot<CiCheckLogState, CiCheckLogState, CiCheckLogState>>(idleSlot());
-  // Getters notify only when their own value changes, not when a reload begins.
-  const badgeData = $derived(slotData(badges.view()));
-  const checksView = $derived.by((): FailedCiChecksState | null => {
-    const slot = checks.view();
-    return slot.kind === "ready" ? slot.data : slot.kind === "failed" ? slot.error : null;
-  });
-  const checksLoading = $derived(isSlotLoading(checks.view()));
-  const checkLogView = $derived.by((): CiCheckLogState | null => {
-    const slot = checkLog.view();
-    return slot.kind === "loading" ? slot.key
-      : slot.kind === "ready" ? slot.data
-      : slot.kind === "failed" ? slot.error : null;
-  });
-  let tokens = 0;
-  const nextToken = () => ++tokens;
+  let failedCiChecks = $state.raw<FailedCiChecksState | null>(null);
+  let failedCiChecksLoading = $state(false);
+  let ciCheckLog = $state.raw<CiCheckLogState | null>(null);
+  let badgeRequest = 0;
+  let checksRequest = 0;
+  let logRequest = 0;
   let disposed = false;
   const mutation = getPrMutationOwner(repoPath);
   let contextBusy = $state(false);
@@ -114,7 +98,7 @@ export function createGitPrSession(
   const unsubscribeMutation = mutation.subscribe(async () => {
     await reloadBadges();
     if (disposed || !prDetail) return;
-    const updated = [...(slotData(badges.get()) ?? new Map<string, PrSnapshot>()).values()].find(pr => pr.number === prDetail?.pr.number);
+    const updated = [...prsByBranch.values()].find(pr => pr.number === prDetail?.pr.number);
     if (updated) prDetail = Object.freeze({ oid: prDetail.oid, pr: updated });
     else closeDetail();
   });
@@ -139,15 +123,20 @@ export function createGitPrSession(
     await mutation.run(request, request => (dependencies.mutate ?? gitPrAction)(repoPath, request), checkedRetry);
   }
 
+
+  const detailIsCurrent = (request: number, prNumber: number) =>
+    !disposed && checksRequest === request && prDetail?.pr.number === prNumber;
+
   async function reloadBadges(): Promise<void> {
     if (disposed) return;
-    const token = nextToken();
-    badges.set(beginSlot(badges.get(), undefined, token));
+    const request = ++badgeRequest;
     try {
       const prs = await dependencies.openPrs(repoPath);
-      badges.set(settleSlot(badges.get(), token, { ok: true, data: indexPrsByBranch(prs.map(snapshotPr)) }));
+      if (!disposed && badgeRequest === request) {
+        prsByBranch = indexPrsByBranch(prs.map(snapshotPr));
+      }
     } catch {
-      badges.set(settleSlot(badges.get(), token, { ok: false, error: "" }));
+      if (!disposed && badgeRequest === request) prsByBranch = new Map();
     }
   }
 
@@ -156,73 +145,85 @@ export function createGitPrSession(
     const ownedPr = snapshotPr(pr);
     const prNumber = ownedPr.number;
     prDetail = Object.freeze({ oid, pr: ownedPr });
-    checkLog.set(clearSlot(checkLog.get()));
+    failedCiChecks = null;
+    ciCheckLog = null;
+    logRequest += 1;
+    const request = ++checksRequest;
     if (ownedPr.ciStatus !== "failure") {
-      checks.set(clearSlot(checks.get()));
+      failedCiChecksLoading = false;
       return;
     }
-    const token = nextToken();
-    checks.set(beginSlot(clearSlot(checks.get()), prNumber, token));
+    failedCiChecksLoading = true;
     try {
-      const failed = await dependencies.failedChecks(repoPath, prNumber);
-      checks.set(settleSlot(checks.get(), token, {
-        ok: true,
-        data: Object.freeze({ prNumber, checks: Object.freeze(failed.map(snapshotCheck)), error: null }),
-      }));
+      const checks = await dependencies.failedChecks(repoPath, prNumber);
+      if (detailIsCurrent(request, prNumber)) {
+        failedCiChecks = Object.freeze({
+          prNumber,
+          checks: Object.freeze(checks.map(snapshotCheck)),
+          error: null,
+        });
+      }
     } catch (error) {
-      checks.set(settleSlot(checks.get(), token, {
-        ok: false,
-        error: Object.freeze({
+      if (detailIsCurrent(request, prNumber)) {
+        failedCiChecks = Object.freeze({
           prNumber,
           checks: Object.freeze([]),
           error: errorMessage(error, "Could not load failed checks"),
-        }),
-      }));
+        });
+      }
+    } finally {
+      if (detailIsCurrent(request, prNumber)) failedCiChecksLoading = false;
     }
   }
 
   function closeDetail(): void {
     prDetail = null;
-    checks.set(clearSlot(checks.get()));
-    checkLog.set(clearSlot(checkLog.get()));
+    failedCiChecks = null;
+    failedCiChecksLoading = false;
+    ciCheckLog = null;
+    checksRequest += 1;
+    logRequest += 1;
   }
 
   async function openCheckLog(pr: PrSnapshot, check: FailedCiCheckSnapshot): Promise<void> {
     if (disposed || prDetail?.pr.number !== pr.number) return;
     const prNumber = pr.number;
     const ownedCheck = snapshotCheck(check);
-    const token = nextToken();
-    const loading: CiCheckLogState = Object.freeze({ prNumber, check: ownedCheck, result: null, error: null });
-    checkLog.set(beginSlot(clearSlot(checkLog.get()), loading, token));
+    const request = ++logRequest;
+    ciCheckLog = Object.freeze({ prNumber, check: ownedCheck, result: null, error: null });
     try {
       const result = await dependencies.checkLog(repoPath, ownedCheck);
-      checkLog.set(settleSlot(checkLog.get(), token, {
-        ok: true,
-        data: Object.freeze({ prNumber, check: ownedCheck, result: Object.freeze({ ...result }), error: null }),
-      }));
+      if (!disposed && logRequest === request && prDetail?.pr.number === prNumber) {
+        ciCheckLog = Object.freeze({
+          prNumber,
+          check: ownedCheck,
+          result: Object.freeze({ ...result }),
+          error: null,
+        });
+      }
     } catch (error) {
-      checkLog.set(settleSlot(checkLog.get(), token, {
-        ok: false,
-        error: Object.freeze({
+      if (!disposed && logRequest === request && prDetail?.pr.number === prNumber) {
+        ciCheckLog = Object.freeze({
           prNumber,
           check: ownedCheck,
           result: null,
           error: errorMessage(error, "Could not load CI check log"),
-        }),
-      }));
+        });
+      }
     }
   }
 
   function closeCheckLog(): void {
-    checkLog.set(clearSlot(checkLog.get()));
+    logRequest += 1;
+    ciCheckLog = null;
   }
 
   return {
-    get prsByBranch(): ReadonlyMap<string, PrSnapshot> { return new Map(badgeData ?? []); },
+    get prsByBranch(): ReadonlyMap<string, PrSnapshot> { return new Map(prsByBranch); },
     get prDetail() { return prDetail; },
-    get failedCiChecks(): FailedCiChecksState | null { return checksView; },
-    get failedCiChecksLoading() { return checksLoading; },
-    get ciCheckLog(): CiCheckLogState | null { return checkLogView; },
+    get failedCiChecks() { return failedCiChecks; },
+    get failedCiChecksLoading() { return failedCiChecksLoading; },
+    get ciCheckLog() { return ciCheckLog; },
     get actionBusy() { return !disposed && (contextBusy || mutation.busy); },
     get actionError() { return disposed ? null : contextError ?? mutation.error; },
     get actionResult() { return disposed ? null : mutation.result; },
@@ -238,10 +239,14 @@ export function createGitPrSession(
     dispose(): void {
       disposed = true;
       unsubscribeMutation();
-      badges.set(clearSlot(badges.get()));
-      checks.set(clearSlot(checks.get()));
-      checkLog.set(clearSlot(checkLog.get()));
+      badgeRequest += 1;
+      checksRequest += 1;
+      logRequest += 1;
+      prsByBranch = new Map();
       prDetail = null;
+      failedCiChecks = null;
+      failedCiChecksLoading = false;
+      ciCheckLog = null;
     },
   };
 }

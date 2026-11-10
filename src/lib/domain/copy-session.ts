@@ -24,7 +24,7 @@ export type CopySessionEvent =
   | { type: "progress"; item: number; progress: { jobId: number; bytesDone: number; bytesTotal: number; currentFile: string } }
   | { type: "completed"; item: number; total: number; entry: FileEntry | null };
 
-type CopyItemOutcome =
+export type CopyItemOutcome =
   | { status: "succeeded"; receipt: FileMutationReceipt }
   | { status: "skipped" }
   | { status: "unstarted" }

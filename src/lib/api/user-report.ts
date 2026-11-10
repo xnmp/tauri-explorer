@@ -35,6 +35,10 @@ export function clearUserReportToken(): Promise<void> {
   return invoke<void>("clear_user_report_token");
 }
 
+export function readClipboardReportImage(): Promise<UserReportAttachment> {
+  return invoke<UserReportAttachment>("clipboard_read_report_image");
+}
+
 export function readClipboardReportAttachment(): Promise<UserReportAttachment> {
   return invoke<UserReportAttachment>("clipboard_read_report_attachment");
 }

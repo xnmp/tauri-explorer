@@ -22,7 +22,7 @@ export interface Oklch {
  * Contrast every generated text token must reach against its worst surface.
  * Above WCAG AA's 4.5:1 so hex rounding cannot drop a token below it (#791).
  */
-const TEXT_CONTRAST_TARGET = 4.6;
+export const TEXT_CONTRAST_TARGET = 4.6;
 
 export function hexToRgb(hex: string): Rgb | null {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
@@ -46,7 +46,7 @@ export function luminance({ r, g, b }: Rgb): number {
 }
 
 /** Saturation in [0,1] (HSL definition). */
-function saturation({ r, g, b }: Rgb): number {
+export function saturation({ r, g, b }: Rgb): number {
   const max = Math.max(r, g, b) / 255;
   const min = Math.min(r, g, b) / 255;
   if (max === min) return 0;

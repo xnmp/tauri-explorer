@@ -31,7 +31,7 @@ import { detailsRowHeight, listRowHeight } from "$lib/domain/row-thumbnails";
 import { loadPersisted, savePersisted } from "./persisted";
 import { settingsStore } from "./settings.svelte";
 
-interface AppliedLayout {
+export interface AppliedLayout {
   /** Applied layout id (Default after a fallback). */
   readonly id: string;
   readonly base: BuiltinLayoutId;

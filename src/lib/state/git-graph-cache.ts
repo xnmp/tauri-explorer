@@ -27,7 +27,7 @@ export const PAGE_SIZE = 300;
 
 export type GraphCommit = Readonly<Omit<CommitInfo, "parents">> & { readonly parents: readonly string[] };
 export type GraphRefs = Readonly<Record<string, readonly Readonly<RefInfo>[]>>;
-interface GraphWalk {
+export interface GraphWalk {
   readonly branches: readonly string[] | null;
   readonly excludeBranches: readonly string[] | null;
 }

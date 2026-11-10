@@ -325,8 +325,8 @@ The previous deletion screenshot's stale-selection finding is resolved.
 Independent GPT-5.6 Sol review accepts the source and scoped native evidence.
 See [the evidence record](directory-reconciliation-acceptance-2026-09-08.json).
 
-The Bun unchanged-listing benchmark (`scripts/bench-directory-reconciliation.ts`,
-since removed) measured 100k entries at 18.12 ms old
+The reproducible Bun unchanged-listing benchmark (`bun
+scripts/bench-directory-reconciliation.ts`) measures 100k entries at 18.12 ms old
 versus 0.88 ms new p50. This is a comparison microbenchmark, not WebView or startup
 latency; concurrent-mutation reconciliation has additional cost. Normal startup
 JavaScript is 666,782 raw / 217,696 gzip bytes (+448 gzip bytes), within budget.

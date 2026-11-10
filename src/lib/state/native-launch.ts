@@ -5,7 +5,7 @@ import { windowTabsManager } from "./window-tabs.svelte";
 
 /** A secondary-process launch routed to this window (`window_launch.rs`).
  *  `newTab` comes from `tauri-explorer --new-tab PATH` (#1478). */
-interface NativeLaunchRequest {
+export interface NativeLaunchRequest {
   path: string;
   newTab: boolean;
 }

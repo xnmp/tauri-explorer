@@ -59,7 +59,7 @@ export function getAlwaysActiveTerminalCommandId(
   return undefined;
 }
 
-function isAlwaysActiveTerminalShortcut(event: KeyEventLike): boolean {
+export function isAlwaysActiveTerminalShortcut(event: KeyEventLike): boolean {
   return getAlwaysActiveTerminalCommandId(event) !== undefined;
 }
 

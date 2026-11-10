@@ -22,7 +22,7 @@ interface ThemeColors {
   accent: string;
 }
 
-interface ThemeInfo {
+export interface ThemeInfo {
   id: string;
   name: string;
   description: string;

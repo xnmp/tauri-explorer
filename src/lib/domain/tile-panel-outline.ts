@@ -162,9 +162,9 @@ function ribbonNeck(route: RibbonRoute, geometry: RibbonGeometry, parent: Rect, 
   ].join(" ");
 }
 
-interface GradientStop { readonly offset: number; readonly opacity: number }
+export interface GradientStop { readonly offset: number; readonly opacity: number }
 /** A vertical userSpaceOnUse accent gradient. */
-interface AccentGradient { readonly y1: number; readonly y2: number; readonly stops: readonly GradientStop[] }
+export interface AccentGradient { readonly y1: number; readonly y2: number; readonly stops: readonly GradientStop[] }
 
 export interface PanelOutline {
   readonly path: string;

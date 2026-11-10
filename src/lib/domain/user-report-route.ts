@@ -12,7 +12,7 @@ export type ReportTokenState = "configured" | "absent" | "unavailable";
 
 export type UserReportRoute = "github-token" | "relay";
 
-const MAX_GITHUB_TOKEN_CHARS = 255;
+export const MAX_GITHUB_TOKEN_CHARS = 255;
 
 export function userReportRoute(
   tokenState: ReportTokenState,

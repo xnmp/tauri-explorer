@@ -10,7 +10,7 @@
 import { createOrderedRegistry } from "./ordered-registry";
 import type { FileEntry } from "$lib/domain/file";
 
-type ContextMenuItemGroup = "ai";
+export type ContextMenuItemGroup = "ai";
 
 export interface ContextMenuItem {
   id: string;

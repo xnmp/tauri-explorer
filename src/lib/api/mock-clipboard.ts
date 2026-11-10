@@ -78,6 +78,12 @@ export const clipboardCommands: Record<string, CommandHandler> = {
     ? { name: "Copied video.mp4", mediaType: "video/mp4", data: "AAAAGGZ0eXBpc29tAAAAAGlzb21tcDQy" }
     : { name: "Clipboard screenshot.png", mediaType: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=" },
 
+  clipboard_read_report_image: () => ({
+    name: "Clipboard screenshot.png",
+    mediaType: "image/png",
+    data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+  }),
+
   // Mirrors the real backend: writes a PNG into `directory` and returns its
   // full path. Adds the entry to the mock fs so the pasted image shows up in
   // the directory listing. A deterministic filename keeps E2E assertions stable.

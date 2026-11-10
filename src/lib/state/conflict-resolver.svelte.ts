@@ -18,7 +18,7 @@ export interface ConflictInfo {
   destModified?: string;
 }
 
-interface ConflictResult {
+export interface ConflictResult {
   choice: ConflictChoice;
   applyToAll: boolean;
 }

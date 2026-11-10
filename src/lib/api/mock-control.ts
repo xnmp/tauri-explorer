@@ -224,3 +224,5 @@ export const MOCK_LOCAL_KEYS = {
    *  before the app boots (see `MOCK_CONFIG_SEED_KEY` in mock-invoke.ts). */
   configSeed: "mock-config-files",
 } as const;
+
+export type MockLocalKey = (typeof MOCK_LOCAL_KEYS)[keyof typeof MOCK_LOCAL_KEYS];

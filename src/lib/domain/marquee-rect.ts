@@ -49,7 +49,7 @@ export interface MarqueeLayerTransforms {
 }
 
 /** Thickness of each edge line in CSS pixels (the edge layers' intrinsic size). */
-const MARQUEE_EDGE_PX = 1;
+export const MARQUEE_EDGE_PX = 1;
 
 function transform(x: number, y: number, scaleX: number, scaleY: number): string {
   return `translate(${x}px, ${y}px) scale(${scaleX}, ${scaleY})`;

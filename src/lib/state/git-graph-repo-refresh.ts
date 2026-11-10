@@ -17,7 +17,7 @@ export interface GraphRepoRefreshHandlers {
   reload: () => void;
 }
 
-const GRAPH_REPO_REFRESH_DELAY_MS = 300;
+export const GRAPH_REPO_REFRESH_DELAY_MS = 300;
 
 /** Start watching `repo`; the returned function stops the watch, the
  *  subscription and any pending trailing reload. */

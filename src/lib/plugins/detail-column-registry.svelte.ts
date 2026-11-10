@@ -11,7 +11,7 @@ import type { DetailRowValues, PluginDetailColumn } from "$lib/domain/plugin-det
 import type { BatchedEntryResolver } from "$lib/state/batched-entry-resolver.svelte";
 import { createOrderedRegistry } from "$lib/state/ordered-registry";
 
-interface RegisteredDetailProvider {
+export interface RegisteredDetailProvider {
   readonly columns: readonly PluginDetailColumn[];
   /** Never throws. */
   readonly applies: (entry: FileEntry) => boolean;

@@ -7,11 +7,6 @@ import {
   type GitRefs,
 } from "$lib/api/git-log";
 import type { BranchListEntry } from "$lib/domain/git-graph";
-import { createSlotCell } from "$lib/state/slot-cell.svelte";
-import {
-  beginSlot, cancelSlot, clearSlot, idleSlot, isSlotCurrent, isSlotLoading, settleSlot, slotData,
-  type Slot, type SlotOutcome,
-} from "$lib/domain/request-slot";
 
 export interface GitGraphBranchesDependencies {
   refs(repoPath: string): Promise<GitRefs>;
@@ -31,10 +26,6 @@ const snapshotBranches = (refs: GitRefs): readonly Readonly<BranchListEntry>[] =
 const snapshotAuthors = (values: readonly BranchAuthor[]): ReadonlyMap<string, string> =>
   new Map(values.map(({ name, author }) => [name, author]));
 
-type Branches = readonly Readonly<BranchListEntry>[];
-type MergeBase = { first: string; second: string; oid: string };
-const NO_BRANCHES: Branches = Object.freeze([]);
-
 type RefsResult =
   | { ok: true }
   | { ok: false; error: string; superseded: boolean };
@@ -47,42 +38,28 @@ export function createGitGraphBranches(
     branchAuthors: gitBranchAuthors,
   },
 ) {
-  // Each async result is a latest-request-wins slot. Tokens come from one
-  // counter. Refs and authors keep their data across a failed or invalidated
-  // reload; the popover and merge-base slots do not.
-  const refs = createSlotCell<Slot<Branches>>(idleSlot());
-  const authors = createSlotCell<Slot<ReadonlyMap<string, string>>>(idleSlot());
-  const popover = createSlotCell<Slot<true>>(idleSlot());
-  const mergeBase = createSlotCell<Slot<MergeBase, { first: string; second: string }>>(idleSlot());
-  // Commands touch slots untracked; getters and the guards the old code read
-  // reactively are `$derived`, so each notifies only when its own value changes.
-  const branchesView = $derived(slotData(refs.view()) ?? NO_BRANCHES);
-  const authorsView = $derived(slotData(authors.view()));
-  const knownView = $derived(slotData(refs.view()) !== undefined);
-  const popoverLoaded = $derived(popover.view().kind === "ready");
-  const popoverLoading = $derived(isSlotLoading(popover.view()));
-  const popoverError = $derived.by(() => {
-    const slot = popover.view();
-    return slot.kind === "failed" ? slot.error : null;
-  });
-  const mergeBaseBusy = $derived(isSlotLoading(mergeBase.view()));
-  const mergeBaseError = $derived.by(() => {
-    const slot = mergeBase.view();
-    return slot.kind === "failed" ? slot.error : null;
-  });
-  const mergeBaseResult = $derived.by(() => {
-    const slot = mergeBase.view();
-    return slot.kind === "ready" ? slot.data : null;
-  });
-  let tokens = 0;
-  const nextToken = () => ++tokens;
-  const known = () => slotData(refs.get()) !== undefined;
-  let refsSequence = 0; // identifies the newest refs promise for coalescing
+  let branches = $state.raw<readonly Readonly<BranchListEntry>[]>(Object.freeze([]));
+  let authors = $state.raw<ReadonlyMap<string, string>>(new Map());
+  let known = $state(false);
+  let popoverLoaded = $state(false);
+  let popoverLoading = $state(false);
+  let popoverError = $state<string | null>(null);
+  let refsRequest = 0;
+  let refsEpoch = 0;
   let latestRefs: { request: number; result: Promise<RefsResult> } | null = null;
+  let authorsRequest = 0;
+  let popoverRequest = 0;
   let disposed = false;
+  let mergeBaseRequest = 0;
+  let mergeBaseBusy = $state(false);
+  let mergeBaseError = $state<string | null>(null);
+  let mergeBaseResult = $state<{ first: string; second: string; oid: string } | null>(null);
 
   function cancelMergeBase(): void {
-    mergeBase.set(clearSlot(mergeBase.get()));
+    mergeBaseRequest += 1;
+    mergeBaseBusy = false;
+    mergeBaseError = null;
+    mergeBaseResult = null;
   }
 
   async function jumpToMergeBase(
@@ -97,58 +74,55 @@ export function createGitGraphBranches(
     onSettled?: (revealed: boolean) => void,
   ): Promise<void> {
     if (disposed || mergeBaseBusy || (first.name === second.name && first.remote === second.remote)) return;
-    const token = nextToken();
-    const before = mergeBase.get();
-    // onStart runs before the slot changes, as it always did: it sees the
-    // previous error/result and busy=false.
+    const request = ++mergeBaseRequest;
+    const current = () => !disposed && request === mergeBaseRequest;
     onStart?.();
-    // A lookup begun (or a cancel done) inside onStart owns the slot now.
-    if (mergeBase.get() !== before) return;
-    mergeBase.set(beginSlot(before, { first: first.name, second: second.name }, token));
-    const current = () => !disposed && isSlotCurrent(mergeBase.get(), token);
-    // Busy stays on until the reveal finishes, so `current` holds throughout.
-    let outcome: SlotOutcome<MergeBase> | null = null;
+    mergeBaseBusy = true;
+    mergeBaseError = null;
+    mergeBaseResult = null;
     try {
       const oid = await (dependencies.mergeBase ?? gitMergeBase)(repoPath, first, second);
       if (!current()) return;
       if (!oid) {
-        outcome = { ok: false, error: "These branches have no common ancestor" };
+        mergeBaseError = "These branches have no common ancestor";
       } else {
         const revealed = await reveal(oid, current);
         if (current()) {
-          outcome = revealed
-            ? { ok: true, data: { first: first.name, second: second.name, oid } }
-            : { ok: false, error: "Could not reveal the merge-base; history changed or is incomplete. Try again." };
+          if (revealed) mergeBaseResult = { first: first.name, second: second.name, oid };
+          else mergeBaseError = "Could not reveal the merge-base; history changed or is incomplete. Try again.";
         }
       }
     } catch (cause) {
-      if (current()) outcome = { ok: false, error: message(cause, "Could not find the merge-base") };
+      if (current()) mergeBaseError = message(cause, "Could not find the merge-base");
     } finally {
-      // A null outcome means the lookup was retired, so it is not current here.
-      if (outcome && current()) {
-        mergeBase.set(settleSlot(mergeBase.get(), token, outcome));
-        onSettled?.(outcome.ok);
+      if (current()) {
+        mergeBaseBusy = false;
+        onSettled?.(mergeBaseResult !== null);
       }
     }
   }
 
   function requestRefs(): Promise<RefsResult> {
-    const request = ++refsSequence;
-    const token = nextToken();
-    refs.set(beginSlot(refs.get(), undefined, token));
-    const superseded = (): RefsResult =>
-      ({ ok: false, error: "Branch metadata request was superseded", superseded: true });
+    const request = ++refsRequest;
+    const epoch = refsEpoch;
     const result = (async (): Promise<RefsResult> => {
       try {
-        const loaded = await dependencies.refs(repoPath);
-        if (!isSlotCurrent(refs.get(), token)) return superseded();
-        refs.set(settleSlot(refs.get(), token, { ok: true, data: snapshotBranches(loaded) }));
-        return { ok: true };
+        const refs = await dependencies.refs(repoPath);
+        if (!disposed && refsEpoch === epoch && refsRequest === request) {
+          branches = snapshotBranches(refs);
+          known = true;
+          return { ok: true };
+        }
+        return { ok: false, error: "Branch metadata request was superseded", superseded: true };
       } catch (cause) {
-        if (!isSlotCurrent(refs.get(), token)) return superseded();
-        const error = message(cause, "Could not load branches");
-        refs.set(settleSlot(refs.get(), token, { ok: false, error, keepPrevious: true }));
-        return { ok: false, error, superseded: false };
+        if (disposed || refsEpoch !== epoch || refsRequest !== request) {
+          return { ok: false, error: "Branch metadata request was superseded", superseded: true };
+        }
+        return {
+          ok: false,
+          error: message(cause, "Could not load branches"),
+          superseded: false,
+        };
       }
     })();
     latestRefs = { request, result };
@@ -168,47 +142,45 @@ export function createGitGraphBranches(
   async function refreshForQuery(): Promise<void> {
     if (disposed) return;
     const result = await settleCurrentRefs(await requestRefs());
-    if (!result.ok && (!known() || result.superseded) && !disposed) throw new Error(result.error);
+    if (!result.ok && (!known || result.superseded) && !disposed) throw new Error(result.error);
   }
 
   async function requestAuthors(): Promise<{ ok: true } | { ok: false; error: string }> {
-    const token = nextToken();
-    authors.set(beginSlot(authors.get(), undefined, token));
+    const request = ++authorsRequest;
     try {
       const result = await dependencies.branchAuthors(repoPath);
-      authors.set(settleSlot(authors.get(), token, { ok: true, data: snapshotAuthors(result) }));
+      if (!disposed && authorsRequest === request) authors = snapshotAuthors(result);
       return { ok: true };
     } catch (cause) {
-      // Reported even when superseded; the slot ignores a stale failure.
-      const error = message(cause, "Could not load branch authors");
-      authors.set(settleSlot(authors.get(), token, { ok: false, error, keepPrevious: true }));
-      return { ok: false, error };
+      return { ok: false, error: message(cause, "Could not load branch authors") };
     }
   }
 
   async function loadForPopover(): Promise<void> {
     if (disposed || popoverLoaded || popoverLoading) return;
-    const token = nextToken();
-    popover.set(beginSlot(popover.get(), undefined, token));
+    const request = ++popoverRequest;
+    popoverLoading = true;
+    popoverError = null;
     const [refsResult, authorsResult] = await Promise.all([
       requestRefs().then(settleCurrentRefs),
       requestAuthors(),
     ]);
-    if (disposed || !isSlotCurrent(popover.get(), token)) return;
+    if (disposed || popoverRequest !== request) return;
     const errors = [refsResult, authorsResult]
       .flatMap((result) => result.ok ? [] : [result.error]);
-    popover.set(settleSlot(popover.get(), token, errors.length > 0
-      ? { ok: false, error: errors.join("; ") }
-      : { ok: true, data: true }));
+    popoverError = errors.length > 0 ? errors.join("; ") : null;
+    popoverLoaded = errors.length === 0;
+    popoverLoading = false;
   }
 
-  /** Drops in-flight work but keeps loaded branches and authors. Refs are
-   *  retired by cancelling their slot; a newer request is unaffected. */
   function invalidate(): void {
     if (disposed) return;
-    popover.set(clearSlot(popover.get()));
-    authors.set(cancelSlot(authors.get()));
-    refs.set(cancelSlot(refs.get()));
+    popoverRequest += 1;
+    authorsRequest += 1;
+    refsEpoch += 1;
+    popoverLoaded = false;
+    popoverLoading = false;
+    popoverError = null;
   }
 
   return {
@@ -217,9 +189,9 @@ export function createGitGraphBranches(
     get mergeBaseResult() { return mergeBaseResult; },
     jumpToMergeBase,
     cancelMergeBase,
-    get branches(): readonly Readonly<BranchListEntry>[] { return branchesView; },
-    get authors(): ReadonlyMap<string, string> { return new Map(authorsView ?? []); },
-    get hasKnownBranches(): boolean { return knownView; },
+    get branches(): readonly Readonly<BranchListEntry>[] { return branches; },
+    get authors(): ReadonlyMap<string, string> { return new Map(authors); },
+    get hasKnownBranches(): boolean { return known; },
     get popoverLoaded(): boolean { return popoverLoaded; },
     get popoverLoading(): boolean { return popoverLoading; },
     get popoverError(): string | null { return popoverError; },
@@ -229,10 +201,17 @@ export function createGitGraphBranches(
     dispose(): void {
       cancelMergeBase();
       disposed = true;
+      refsRequest += 1;
+      refsEpoch += 1;
       latestRefs = null;
-      refs.set(clearSlot(refs.get()));
-      authors.set(clearSlot(authors.get()));
-      popover.set(clearSlot(popover.get()));
+      authorsRequest += 1;
+      popoverRequest += 1;
+      branches = Object.freeze([]);
+      authors = new Map();
+      known = false;
+      popoverLoaded = false;
+      popoverLoading = false;
+      popoverError = null;
     },
   };
 }

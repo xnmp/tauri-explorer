@@ -94,3 +94,5 @@ export function createGitGraphExpansion(deps: GitGraphExpansionDeps) {
     },
   };
 }
+
+export type GitGraphExpansion = ReturnType<typeof createGitGraphExpansion>;

@@ -5,6 +5,8 @@ import type { CopySessionOutcome } from "$lib/domain/copy-session";
 import { runOrderedSession, type SessionOptions } from "./copy-session";
 import type { ApiResult } from "./common";
 
+export type MoveEntriesOptions = SessionOptions;
+
 export async function moveEntries(
   sources: readonly string[],
   destDir: string,

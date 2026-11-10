@@ -79,7 +79,7 @@ export function paneTileSize(size: ThumbnailSize): PaneTileSize {
 }
 
 /** Reserved fixed name height: two lines at line-height 1.4 * 13px font. */
-const TILE_NAME_HEIGHT = 37;
+export const TILE_NAME_HEIGHT = 37;
 
 /** Horizontal padding (8px each side) a tile grid reserves around its tiles. */
 export const TILE_GRID_PAD_X = 16;
@@ -128,6 +128,8 @@ export function tileLayout(size: ThumbnailSize): TileLayout {
     showFolderThumbnails: resolved === "large" || resolved === "xlarge",
   };
 }
+
+export type GridKey = "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown" | "Home" | "End";
 
 /**
  * Where keyboard focus moves in a row-major grid of `total` items laid out

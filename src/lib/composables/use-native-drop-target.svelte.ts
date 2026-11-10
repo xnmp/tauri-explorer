@@ -50,7 +50,7 @@ export function adjustForPointerZoom(pos: { x: number; y: number }): { x: number
 
 /** Every surface has an owner. Tabs target their active pane even though the
  * strip is outside its DOM; other window chrome has explicit window ownership. */
-function resolveDropOwner(element: Element | null): string | null {
+export function resolveDropOwner(element: Element | null): string | null {
   const tabId = element?.closest?.(".tab[data-tab-id]")?.getAttribute("data-tab-id");
   if (tabId) {
     const tab = windowTabsManager.tabs.find(tab => tab.id === tabId);

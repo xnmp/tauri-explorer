@@ -17,6 +17,13 @@ pub(super) fn read_report_image(reader: &dyn ClipboardReader) -> Option<(Vec<u8>
     })
 }
 
+/// Build the screenshot attachment without touching the filesystem.
+pub(super) fn read_report_image_attachment(
+    reader: &dyn ClipboardReader,
+) -> Result<crate::user_report::ReportAttachment, crate::user_report::SubmitReportError> {
+    report_image_attachment(read_report_image(reader))
+}
+
 fn report_image_attachment(
     image: Option<(Vec<u8>, &'static str)>,
 ) -> Result<crate::user_report::ReportAttachment, crate::user_report::SubmitReportError> {

@@ -4,7 +4,7 @@ import { directoryKey } from "./path";
 export interface HistoryRecentEntry { name: string; path: string; kind: "file" | "directory"; timestamp: number; revision?: number }
 export interface HistoryFrecencyEntry { path: string; accesses: number[]; dismissedFromRecent?: boolean; revision?: number }
 export interface HistorySnapshot { recent: HistoryRecentEntry[]; frecency: HistoryFrecencyEntry[] }
-type HistoryCollection = "recent" | "frecency";
+export type HistoryCollection = "recent" | "frecency";
 export type HistoryMutation =
   | { type: "recent"; key: string; entry: HistoryRecentEntry }
   | { type: "access"; key: string; path: string; timestamp: number }

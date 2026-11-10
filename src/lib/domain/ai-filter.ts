@@ -15,10 +15,10 @@ export const AI_FILTER_MAX_ENTRIES = 2000;
  * anything over 64 KiB combined; the margin absorbs the truncation note.
  */
 export const AI_FILTER_MAX_BYTES = 60 * 1024;
-const AI_FILTER_MAX_QUERY = 500;
+export const AI_FILTER_MAX_QUERY = 500;
 export const AI_FILTER_MAX_OUTPUT_TOKENS = 4096;
 
-const AI_FILTER_INSTRUCTIONS = [
+export const AI_FILTER_INSTRUCTIONS = [
   "You filter a file manager's folder listing for a user.",
   "Each listing line is: kind (d = folder, f = file), name, extension, size in bytes (- for folders), modified local time.",
   "Select every entry that satisfies the user's request, interpreting relative dates against the stated current time.",
@@ -41,7 +41,7 @@ const bytes = (text: string) => encoder.encode(text).length;
 const pad = (n: number) => String(n).padStart(2, "0");
 
 /** `YYYY-MM-DD HH:MM` in local time; empty for an unparsable date. */
-function localTimestamp(value: string | Date): string {
+export function localTimestamp(value: string | Date): string {
   const date = typeof value === "string" ? new Date(value) : value;
   if (Number.isNaN(date.getTime())) return "";
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;

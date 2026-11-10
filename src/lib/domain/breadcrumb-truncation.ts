@@ -1,6 +1,6 @@
 import { prepareWithSegments, measureNaturalWidth } from "@chenglou/pretext";
 
-const CRUMB_FONT = "500 13px 'Inter Variable', Inter";
+export const CRUMB_FONT = "500 13px 'Inter Variable', Inter";
 export const SEPARATOR_WIDTH = 16; // 12px SVG icon + 4px horizontal padding (2px each side)
 export const CRUMB_H_PAD = 16; // 8px padding each side
 export const CONTAINER_H_PAD = 20; // 10px padding each side
@@ -24,7 +24,7 @@ export function setTextMeasurer(fn: TextMeasureFn): void {
   ellipsisWidth = null;
 }
 
-function measureCrumbWidth(name: string): number {
+export function measureCrumbWidth(name: string): number {
   return measureText(name, CRUMB_FONT) + CRUMB_H_PAD + SEPARATOR_WIDTH;
 }
 

@@ -1,6 +1,14 @@
 name: Shared AI native acceptance
 
 on:
+  push:
+    branches: [dev, main]
+    paths:
+      - 'src-tauri/src/ai/**'
+      - 'src-tauri/src/installed_plugins/**'
+      - 'src-tauri/src/service_state/**'
+      - 'src-tauri/test_support/legacy_trace_preflight.py'
+      - '.github/workflows/shared-ai-services.yml'
   workflow_dispatch:
     inputs:
       plugin_revision:
@@ -13,7 +21,7 @@ permissions:
 
 concurrency:
   group: shared-ai-native-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   linux-installed-plugins:

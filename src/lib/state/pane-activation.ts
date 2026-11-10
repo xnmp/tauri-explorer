@@ -1,7 +1,7 @@
 /** Cooperative materialization of a restored layout. Pane sessions own the
  * resources; this owner only controls when their reserved factories may run. */
 export type PaneActivationScheduler = (callback: () => void) => () => void;
-const PANE_ACTIVATION_BATCH_SIZE = 4;
+export const PANE_ACTIVATION_BATCH_SIZE = 4;
 
 /** Leave a paint opportunity before each bounded batch. The task fallback is
  * for nonvisual hosts; browser restoration always follows animation frames. */

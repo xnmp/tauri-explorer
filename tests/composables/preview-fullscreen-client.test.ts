@@ -4,7 +4,6 @@ import { compileModule } from "svelte/compiler";
 import ts from "typescript";
 import * as client from "svelte/internal/client";
 import * as math from "$lib/domain/image-viewer-zoom";
-import * as overlays from "$lib/domain/overlays";
 import type { usePreviewFullscreen, PreviewFullscreen } from "$lib/composables/use-preview-fullscreen.svelte";
 import type { modalOwnership } from "$lib/state/modal-ownership.svelte";
 import type { dialogStore } from "$lib/state/dialogs.svelte";
@@ -25,8 +24,8 @@ function compileClient(path: string): string {
 function setup() {
   const ownership = new Function("$", `${compileClient("../../src/lib/state/modal-ownership.svelte.ts")}\nreturn modalOwnership;`)
     (client) as typeof modalOwnership;
-  const store = new Function("$", "modalOwnership", "openWithStore", "overlays", `const { ${Object.keys(overlays).join(", ")} } = overlays;\n${compileClient("../../src/lib/state/dialogs.svelte.ts")}\nreturn dialogStore;`)
-    (client, ownership, { isOpen: false }, overlays) as typeof dialogStore;
+  const store = new Function("$", "modalOwnership", "openWithStore", `${compileClient("../../src/lib/state/dialogs.svelte.ts")}\nreturn dialogStore;`)
+    (client, ownership, { isOpen: false }) as typeof dialogStore;
   const attrs = new Set<string>();
   const window = new EventTarget();
   const document = { documentElement: {
@@ -90,39 +89,4 @@ it("window Settings owns keys while fullscreen survives underneath and resumes E
     expect(f.fullscreen.active).toBe(false);
     expect(f.attrs.has("data-preview-fullscreen")).toBe(false);
   } finally { f.dispose(); }
-});
-
-it("a reader of one dialog is not re-run when a different dialog opens or closes (#1565)", () => {
-  const f = setup();
-  let runs = 0;
-  let seen = false;
-  const stop = client.effect_root(() => {
-    client.render_effect(() => { seen = f.store.isSettingsOpen; runs += 1; });
-  });
-  try {
-    expect(runs).toBe(1);
-    client.flush(() => f.store.openJobsPanel());
-    client.flush(() => f.store.closeJobsPanel());
-    expect(runs).toBe(1);
-    client.flush(() => f.store.openSettings());
-    expect(runs).toBe(2);
-    expect(seen).toBe(true);
-    client.flush(() => f.store.closeSettings());
-    expect(seen).toBe(false);
-  } finally { stop(); f.dispose(); }
-});
-
-it("opening or closing a dialog inside an effect does not subscribe that effect (#1565)", () => {
-  const f = setup();
-  let runs = 0;
-  const stop = client.effect_root(() => {
-    client.render_effect(() => { runs += 1; f.store.openJobsPanel(); f.store.closeSettings(); });
-  });
-  try {
-    expect(runs).toBe(1);
-    client.flush(() => f.store.closeJobsPanel());
-    client.flush(() => f.store.openSettings());
-    client.flush(() => f.store.openQuickOpen());
-    expect(runs).toBe(1);
-  } finally { stop(); f.dispose(); }
 });

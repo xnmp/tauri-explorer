@@ -320,3 +320,5 @@ export function createPaneMutations(ctx: PaneMutationContext) {
     compressToZip,
   };
 }
+
+export type PaneMutations = ReturnType<typeof createPaneMutations>;

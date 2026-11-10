@@ -17,7 +17,7 @@
 import type { Plugin } from "../api";
 import type { DirectoryListing, FileEntry } from "$lib/domain/file";
 
-const DEMO_FILE_VIEW = "demo.cards";
+export const DEMO_FILE_VIEW = "demo.cards";
 
 const DEMO_ROOT = "demo://";
 
@@ -44,7 +44,7 @@ function listDemo(path: string): DirectoryListing {
 }
 
 /** Synthetic header values a `.demorec` provider "parses" (#1523). */
-const DEMO_RECORDINGS: Readonly<Record<string, { matchup: string; map: string; seconds: number }>> = {
+export const DEMO_RECORDINGS: Readonly<Record<string, { matchup: string; map: string; seconds: number }>> = {
   "final-game.demorec": { matchup: "PvZ", map: "Fighting Spirit", seconds: 734 },
   "practice.demorec": { matchup: "TvT", map: "Circuit Breaker", seconds: 1261 },
 };

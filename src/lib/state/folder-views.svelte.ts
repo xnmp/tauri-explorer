@@ -7,13 +7,20 @@
  * file with localStorage as synchronous fallback.
  */
 
-import type { ConfigReloadReason } from "$lib/domain/config-reload";
-import { createConfigDocument } from "./config-document";
-import { loadPersisted } from "./persisted";
+import {
+  configWriteActivity,
+  configWriteRaced,
+  lastWrittenConfig,
+  loadPersisted,
+  savePersisted,
+  writeConfigQueued,
+} from "./persisted";
+import { readConfigFile } from "$lib/api/config";
+import { decideConfigReload, type ConfigReloadReason } from "$lib/domain/config-reload";
 import type { ThumbnailSize } from "./settings.svelte";
 
 /** View properties that can be overridden per folder */
-interface FolderViewOverride {
+export interface FolderViewOverride {
   thumbnailSize?: ThumbnailSize;
 }
 
@@ -24,34 +31,61 @@ const CONFIG_FILENAME = "folder-views.json";
 const CONFIG_WRITER = "folder-views-store";
 
 function createFolderViewsStore() {
-  let views = $state<FolderViewMap>(
-    loadPersisted<FolderViewMap>(STORAGE_KEY, {}),
-  );
+  let views = $state<FolderViewMap>(loadPersisted<FolderViewMap>(STORAGE_KEY, {}));
 
-  const configDoc = createConfigDocument<FolderViewMap>({
-    file: CONFIG_FILENAME,
-    key: STORAGE_KEY,
-    writer: CONFIG_WRITER,
-    get: () => views,
-    set: (next) => (views = next),
-    // First load keeps the historical looser gate (arrays and `{}` are
-    // adopted); reload is strict (plain objects only).
-    acceptOnInit: (parsed): parsed is FolderViewMap =>
-      !!parsed && typeof parsed === "object",
-    acceptOnReload: (parsed): parsed is FolderViewMap =>
-      !!parsed && typeof parsed === "object" && !Array.isArray(parsed),
-    // Re-reads the cache at init time rather than trusting the live value.
-    migration: () => {
-      const saved = loadPersisted<FolderViewMap>(STORAGE_KEY, {});
-      return Object.keys(saved).length > 0 ? saved : null;
-    },
-  });
+  function save(): void {
+    savePersisted(STORAGE_KEY, views);
+    writeConfigQueued(CONFIG_FILENAME, JSON.stringify(views, null, 2));
+  }
 
-  const save = configDoc.save;
-  const init = configDoc.init;
+  async function init(): Promise<void> {
+    try {
+      const result = await readConfigFile(CONFIG_FILENAME);
+      if (result.ok && result.data) {
+        const loaded = JSON.parse(result.data) as FolderViewMap;
+        if (loaded && typeof loaded === "object") {
+          views = loaded;
+          savePersisted(STORAGE_KEY, views);
+          return;
+        }
+      }
+    } catch {
+      // Config file doesn't exist or is invalid
+    }
+
+    // Migrate from localStorage if config file was empty
+    const saved = loadPersisted<FolderViewMap>(STORAGE_KEY, {});
+    if (Object.keys(saved).length > 0) {
+      writeConfigQueued(CONFIG_FILENAME, JSON.stringify(saved, null, 2));
+    }
+  }
 
   /** Re-read external folder-view edits without replaying this store's writes. */
-  const reloadFromDisk: () => Promise<ConfigReloadReason> = configDoc.reload;
+  async function reloadFromDisk(): Promise<ConfigReloadReason> {
+    const beforeRead = configWriteActivity(CONFIG_FILENAME, CONFIG_WRITER);
+    const result = await readConfigFile(CONFIG_FILENAME);
+    if (!result.ok) return "unusable";
+    let loaded: FolderViewMap | null = null;
+    try {
+      const parsed = JSON.parse(result.data);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        loaded = parsed as FolderViewMap;
+      }
+    } catch {
+      // `decideConfigReload` reports invalid external files consistently.
+    }
+    const decision = decideConfigReload({
+      raw: result.data,
+      normalized: loaded ? JSON.stringify(loaded) : null,
+      currentNormalized: JSON.stringify(views),
+      lastWritten: lastWrittenConfig(CONFIG_FILENAME, CONFIG_WRITER),
+      selfWriteRaced: configWriteRaced(CONFIG_FILENAME, beforeRead, CONFIG_WRITER),
+    });
+    if (!decision.apply || !loaded) return decision.reason;
+    views = loaded;
+    savePersisted(STORAGE_KEY, views);
+    return decision.reason;
+  }
 
   /** Get the override for a folder, or undefined if none set */
   function get(path: string): FolderViewOverride | undefined {
@@ -74,10 +108,7 @@ function createFolderViewsStore() {
   }
 
   /** Get the effective thumbnail size for a folder (override ?? global default) */
-  function getThumbnailSize(
-    path: string,
-    globalDefault: ThumbnailSize,
-  ): ThumbnailSize {
+  function getThumbnailSize(path: string, globalDefault: ThumbnailSize): ThumbnailSize {
     return views[path]?.thumbnailSize ?? globalDefault;
   }
 

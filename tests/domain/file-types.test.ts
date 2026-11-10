@@ -1,6 +1,6 @@
 /**
  * Tests for file-types domain helpers: formatDate guards and
- * getExtension semantics.
+ * getExtension semantics (shared with nerd-icons).
  */
 import { describe, it, expect } from "vitest";
 import {

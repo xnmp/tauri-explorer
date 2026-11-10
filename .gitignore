@@ -36,6 +36,9 @@ test-screenshots/
 *.db
 *.pid.lock
 
+# Dev server state
+.dev-port
+
 # direnv (`.envrc` -> `use flake` is checked in; its local cache isn't)
 .direnv/
 

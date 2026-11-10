@@ -247,6 +247,14 @@ pub async fn write_config_file(filename: String, data: String) -> Result<(), App
     .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
 }
 
+/// Get the app config directory path.
+#[tauri::command]
+pub async fn get_config_dir() -> Result<String, AppError> {
+    tokio::task::spawn_blocking(|| config_dir().map(|p| p.to_string_lossy().into_owned()))
+        .await
+        .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
+}
+
 /// Read all CSS files from ~/.config/tauri-explorer/themes/.
 /// Returns a vec of (filename, css_content) pairs.
 /// Returns empty vec if directory doesn't exist.

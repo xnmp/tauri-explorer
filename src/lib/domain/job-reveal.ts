@@ -4,7 +4,7 @@ import { nativeParentDir, sameNativeDirectory } from "./path";
 import { jobReveal } from "./job-presentation";
 
 export interface RevealPane { tabId: string; paneId: string; directory: string; viewId?: string | null }
-function findRevealPane(panes: readonly RevealPane[], reveal: JobReveal): RevealPane | undefined {
+export function findRevealPane(panes: readonly RevealPane[], reveal: JobReveal): RevealPane | undefined {
   const directory = reveal.kind === "file" ? nativeParentDir(reveal.path) : reveal.directory;
   return panes.find(pane => sameNativeDirectory(pane.directory, directory) && (reveal.kind === "file" || pane.viewId === reveal.viewId));
 }

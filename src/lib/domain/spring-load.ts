@@ -63,12 +63,12 @@ const sameTarget = (paths: SpringPaths, a: SpringTarget | null, b: SpringTarget 
   a === b || (!!a && !!b && a.pane === b.pane && paths.same(a.path, b.path));
 
 /** Whether the point described by `observation` lies inside `target`'s folder row or peek. */
-function springInside(paths: SpringPaths, target: SpringTarget, observation: SpringObservation): boolean {
+export function springInside(paths: SpringPaths, target: SpringTarget, observation: SpringObservation): boolean {
   return observation.pane === target.pane && observation.anchors.some(anchor => paths.contains(anchor, target.path));
 }
 
 /** The folder under the pointer, if it may spring open now. */
-function springCandidate(paths: SpringPaths, open: readonly SpringTarget[], observation: SpringObservation): SpringTarget | null {
+export function springCandidate(paths: SpringPaths, open: readonly SpringTarget[], observation: SpringObservation): SpringTarget | null {
   const folder = observation.folder;
   if (!observation.pane || !folder || paths.key(folder.path) === null || !folder.plain || folder.expanded) return null;
   // Tiles panels show top-level folders only; Details and List nest.
@@ -124,7 +124,7 @@ export interface SpringLoadControllerOptions {
  * Leave must not leave a temporary peek open until the next drag. */
 export const SPRING_LOST_LEAVE_MS = 500;
 
-const defaultSpringTimer: SpringTimer = {
+export const defaultSpringTimer: SpringTimer = {
   set: (callback, ms) => setTimeout(callback, ms),
   clear: handle => clearTimeout(handle as ReturnType<typeof setTimeout>),
 };

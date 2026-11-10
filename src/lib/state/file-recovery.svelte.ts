@@ -1,7 +1,33 @@
 import { fileRecoveryPort } from "$lib/api/file-recovery";
 import { extractError } from "$lib/api/common";
-import { compareRecoveryCounters, emptyRecoveryStorage, isRecoveryCounter, mergeRecoveryPresentation } from "$lib/domain/file-recovery";
+import {
+  IDLE_RECOVERY_OPERATION,
+  NO_RECOVERY_INSPECTION,
+  abandonRecoveryInspection,
+  beginRecoveryInspection,
+  beginRecoveryOperation,
+  cloneRecoveryItem,
+  compareRecoveryCounters,
+  emptyRecoveryStorage,
+  failRecoveryInspection,
+  isRecoveryCounter,
+  isRecoveryInspectionRequest,
+  isRecoveryOperation,
+  mergeRecoveryPresentation,
+  reconcileRecoveryInspection,
+  recoveryBusyId,
+  recoveryInspectingId,
+  recoveryInspectionError,
+  recoveryInspectionGeneration,
+  recoveryInspectionId,
+  recoveryInspectionItem,
+  settleRecoveryInspection,
+  settleRecoveryOperation,
+  unavailableRecoveryInspection,
+} from "$lib/domain/file-recovery";
 import type {
+  RecoveryInspection,
+  RecoveryOperation,
   FileRecoveryChoice,
   FileRecoveryItem,
   FileRecoveryPort,
@@ -61,14 +87,10 @@ function validSnapshot(value: unknown): value is FileRecoverySnapshot {
     && (snapshot.error === null || typeof snapshot.error === "string");
 }
 
-function cloneItem(item: FileRecoveryItem): FileRecoveryItem {
-  return { ...item, retainedBytes: item.retainedBytes ?? null, actions: [...item.actions] };
-}
-
 function cloneSnapshot(snapshot: FileRecoverySnapshot): FileRecoverySnapshot {
   return {
     revision: snapshot.revision,
-    items: snapshot.items.map(cloneItem),
+    items: snapshot.items.map(cloneRecoveryItem),
     storage: { ...(snapshot.storage ?? emptyRecoveryStorage()) },
     error: snapshot.error,
   };
@@ -77,17 +99,16 @@ function cloneSnapshot(snapshot: FileRecoverySnapshot): FileRecoverySnapshot {
 export function createFileRecoveryState(port: FileRecoveryPort = fileRecoveryPort) {
   let snapshot = $state<FileRecoverySnapshot>(cloneSnapshot(EMPTY_SNAPSHOT));
   let loading = $state(false);
-  let busyId = $state<string | null>(null);
-  let inspectingId = $state<string | null>(null);
-  let inspectionId = $state<string | null>(null);
-  let inspectionGeneration = $state<string | null>(null);
-  let inspection = $state<FileRecoveryItem | null>(null);
-  let inspectionError = $state<string | null>(null);
+  // Immutable lifecycle unions (domain/file-recovery.ts); the public getters
+  // below are derived from them.
+  let resolution = $state.raw<RecoveryOperation>(IDLE_RECOVERY_OPERATION);
+  let inspectionState = $state.raw<RecoveryInspection>(NO_RECOVERY_INSPECTION);
 
   let running = false;
   let owner = 0;
   let refreshRequest = 0;
-  let inspectRequest = 0;
+  /** Mints inspection request tokens; never reset, so tokens are unique. */
+  let inspectSeq = 0;
   let resolveRequest = 0;
   interface Subscription {
     token: number;
@@ -111,20 +132,12 @@ export function createFileRecoveryState(port: FileRecoveryPort = fileRecoveryPor
     if (compareRecoveryCounters(value.revision, snapshot.revision) < 0) return false;
     // Normalize the optional accounting once, so nothing downstream has to.
     snapshot = mergeRecoveryPresentation(snapshot, cloneSnapshot(value));
-    if (inspectionId && !inspectingId) {
-      const item = snapshot.items.find(({ id }) => id === inspectionId);
-      if (!item || item.generation !== inspectionGeneration) clearInspection();
-    }
+    inspectionState = reconcileRecoveryInspection(inspectionState, snapshot.items);
     return true;
   }
 
   function clearInspection(): void {
-    ++inspectRequest;
-    inspectingId = null;
-    inspectionId = null;
-    inspectionGeneration = null;
-    inspection = null;
-    inspectionError = null;
+    inspectionState = NO_RECOVERY_INSPECTION;
   }
 
   function releaseSubscription(subscription: Subscription): Promise<void> {
@@ -154,11 +167,10 @@ export function createFileRecoveryState(port: FileRecoveryPort = fileRecoveryPor
   function start(): Promise<void> {
     const token = ++owner;
     ++refreshRequest;
-    ++inspectRequest;
     ++resolveRequest;
     running = true;
     loading = true;
-    busyId = null;
+    resolution = IDLE_RECOVERY_OPERATION;
     clearInspection();
     retireSubscriptions();
 
@@ -203,11 +215,10 @@ export function createFileRecoveryState(port: FileRecoveryPort = fileRecoveryPor
   function dispose(): Promise<void> {
     ++owner;
     ++refreshRequest;
-    ++inspectRequest;
     ++resolveRequest;
     running = false;
     loading = false;
-    busyId = null;
+    resolution = IDLE_RECOVERY_OPERATION;
     clearInspection();
     snapshot = cloneSnapshot(EMPTY_SNAPSHOT);
     const pending = [...subscriptions].map(async (subscription) => {
@@ -247,87 +258,68 @@ export function createFileRecoveryState(port: FileRecoveryPort = fileRecoveryPor
     if (!running) return;
     const currentItem = snapshot.items.find((item) => item.id === id);
     if (!currentItem) {
-      clearInspection();
-      inspectionError = "Recovery item is no longer available";
+      inspectionState = unavailableRecoveryInspection("Recovery item is no longer available");
       return;
     }
     const token = owner;
-    const operation = ++inspectRequest;
-    const generation = currentItem.generation;
-    inspectingId = id;
-    inspectionId = id;
-    inspectionGeneration = generation;
-    inspectionError = null;
+    const request = ++inspectSeq;
+    inspectionState = beginRecoveryInspection(inspectionState, id, currentItem.generation, request);
     try {
       const next = await port.inspect(id);
-      if (!current(token) || operation !== inspectRequest) return;
+      if (!current(token) || !isRecoveryInspectionRequest(inspectionState, request)) return;
       if (!apply(next, token)) {
-        clearInspection();
+        inspectionState = abandonRecoveryInspection(inspectionState, request);
         return;
       }
-      const currentItem = snapshot.items.find((candidate) => candidate.id === id);
-      if (!currentItem) {
-        clearInspection();
-        return;
-      }
-      inspectionGeneration = currentItem.generation;
-      inspection = cloneItem(currentItem);
+      inspectionState = settleRecoveryInspection(inspectionState, request, snapshot.items);
     } catch (error) {
-      if (current(token) && operation === inspectRequest) {
-        const latest = snapshot.items.find((candidate) => candidate.id === id);
-        if (latest?.generation === generation) {
-          inspection = null;
-          inspectionError = extractError(error);
-        } else {
-          clearInspection();
-        }
+      if (current(token)) {
+        inspectionState = failRecoveryInspection(inspectionState, request, snapshot.items, extractError(error));
       }
-    } finally {
-      if (current(token) && operation === inspectRequest) inspectingId = null;
     }
   }
 
   /** Explicit retention enforcement. Shares the resolve request fence so it
    *  cannot interleave with an in-flight per-item action. */
   async function retireEligible(): Promise<void> {
-    if (!running || busyId) return;
+    if (!running || recoveryBusyId(resolution)) return;
     const token = owner;
-    const operation = ++resolveRequest;
+    const request = ++resolveRequest;
     loading = true;
     try {
       if (!port.retireEligible) {
         throw new Error("This recovery source cannot reclaim retained files");
       }
       const next = await port.retireEligible();
-      if (current(token) && operation === resolveRequest) apply(next, token);
+      if (current(token) && request === resolveRequest) apply(next, token);
     } catch (error) {
-      if (current(token) && operation === resolveRequest) {
+      if (current(token) && request === resolveRequest) {
         snapshot = { ...snapshot, error: extractError(error) };
       }
     } finally {
-      if (current(token) && operation === resolveRequest) loading = false;
+      if (current(token) && request === resolveRequest) loading = false;
     }
   }
 
   async function resolve(item: FileRecoveryItem, choice: FileRecoveryChoice): Promise<void> {
-    if (!running || busyId) return;
+    if (!running || recoveryBusyId(resolution)) return;
     const latest = snapshot.items.find(({ id }) => id === item.id);
     if (!latest || latest.generation !== item.generation || !latest.actions.includes(choice)) {
       snapshot = { ...snapshot, error: `Recovery action is no longer authorized: ${choice}` };
       return;
     }
     const token = owner;
-    const operation = ++resolveRequest;
-    busyId = item.id;
+    const request = ++resolveRequest;
+    resolution = beginRecoveryOperation(item.id, request);
     try {
       const next = await port.resolve(latest.id, latest.generation, choice);
-      if (current(token) && operation === resolveRequest) apply(next, token);
+      if (current(token) && isRecoveryOperation(resolution, request)) apply(next, token);
     } catch (error) {
-      if (current(token) && operation === resolveRequest) {
+      if (current(token) && isRecoveryOperation(resolution, request)) {
         snapshot = { ...snapshot, error: extractError(error) };
       }
     } finally {
-      if (current(token) && operation === resolveRequest) busyId = null;
+      if (current(token)) resolution = settleRecoveryOperation(resolution, request);
     }
   }
 
@@ -337,12 +329,12 @@ export function createFileRecoveryState(port: FileRecoveryPort = fileRecoveryPor
     get storage() { return snapshot.storage; },
     get error() { return snapshot.error; },
     get loading() { return loading; },
-    get busyId() { return busyId; },
-    get inspectingId() { return inspectingId; },
-    get inspectionId() { return inspectionId; },
-    get inspectionGeneration() { return inspectionGeneration; },
-    get inspection() { return inspection; },
-    get inspectionError() { return inspectionError; },
+    get busyId() { return recoveryBusyId(resolution); },
+    get inspectingId() { return recoveryInspectingId(inspectionState); },
+    get inspectionId() { return recoveryInspectionId(inspectionState); },
+    get inspectionGeneration() { return recoveryInspectionGeneration(inspectionState); },
+    get inspection() { return recoveryInspectionItem(inspectionState); },
+    get inspectionError() { return recoveryInspectionError(inspectionState); },
     start,
     dispose,
     refresh,

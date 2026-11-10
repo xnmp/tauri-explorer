@@ -172,9 +172,10 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-graph-query.svelte.ts` — mounted history/pagination owner, including merge-base target paging; shared reloader, captured query/walk, partial log paint, page-zero cache and invocation-scoped cleanup.
 - `src/lib/state/git-graph-detail.svelte.ts` — Selected commit/comparison files, mutation refresh tokens and inline diff ownership.
 - `git-pr-mutations.svelte.ts` — repository-scoped pending PR mutation ownership and retained outcomes across graph mounts; uncertain retries require acknowledgement.
-- `git-pr-session.svelte.ts` — mounted GitHub badge, PR detail and CI log requests; immutable snapshots, invocation identities and disposal.
+- `git-pr-session.svelte.ts` — mounted GitHub badge, PR detail and CI log requests; immutable snapshots, request-slot tokens (domain/request-slot.ts) and disposal.
 - `git-branch-status.svelte.ts` — newest-reload-only owner of the graph's trunk-aware branch-status badges (#1081); disposal and superseded reloads cannot publish.
 - `git-graph-branches.svelte.ts` — lazy branch/author metadata and cancellable merge-base jump owner; known-coverage fallback and query/popover request coordination.
+- `slot-cell.svelte.ts` — reactive home for a `domain/request-slot` slot: untracked `get`/`set` for commands, tracked `view` for `$derived` getters, so commands never subscribe their caller and getters notify only on their own value (#1569).
 - `git-graph-actions.svelte.ts` — git-graph mutations (checkout, cherry-pick, merge, reset, branch/tag create/rename/delete, remote delete, pull offer, confirmed undo, F5 fetch) and the prompt/modal state they drive; every mutation ends in `refreshAfterGitMutation`.
 - `git-graph-expansion.svelte.ts` — the graph's single inline expansion (commit details XOR PR dropdown) with its measured heights.
 - `git-graph-history-filter.svelte.ts` — per-repo branch subset / local-only / remote-only filters (persisted) and the ephemeral file-path filter.
@@ -617,6 +618,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `terminal-keys.ts` — terminal vs app key-ownership rules (#249/#260).
 - `preview-rendition.ts` — Preview rendition policy: surface CSS size × devicePixelRatio × app zoom → 1024/2048/3072 edge buckets; which paths may have one (mirrors the backend's extensions, never virtual paths); fullscreen/zoom need the original (#1054).
 - `latest-only.ts` — one task in flight, only the newest waiting task runs next; skipped Preview selections never queue rendition decodes (#1054).
+- `request-slot.ts` — latest-request-wins slot (idle/loading/ready/failed): token-gated `settleSlot` returns the same object when stale; `clearSlot`/`cancelSlot` revoke; optional previous data across reload and failure (#1569).
 - `ordered-writer.ts` — one-in-flight, coalescing ordered stream over an IPC transport that does not preserve call order; PTY input (#709).
 - `terminal-input-queue.ts` — the terminal's one input queue: strings and promises (paste reads, insertions) in call order, held until the terminal has an id, sent through an ordered writer with gap-free `terminal_write` sequence numbers; unsent input never crosses to a successor stream (#882).
 - `terminal-paste.ts` — per-platform paste source order with injected browser/native readers, and xterm-equivalent paste bytes (CR line endings, bracketed paste) (#732, #882).

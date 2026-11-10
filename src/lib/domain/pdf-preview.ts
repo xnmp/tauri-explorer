@@ -27,6 +27,23 @@ export function pdfPointerPoint(
   };
 }
 export const PDF_FIT: PdfView = { zoom: 1, pan: { x: 0, y: 0 } };
+
+/**
+ * How much of the PDF toolbar fits one row of a preview `width` CSS px wide
+ * (#1583): `regular` spacing, `compact` spacing (all controls), or `minimal`
+ * (page navigation and fullscreen; zoom stays on the keyboard, Ctrl+wheel
+ * and the wider fullscreen bar). The width is the layout (CSS px) width, not
+ * the zoomed one: a CSS container query cannot be used because WebKit
+ * evaluates it against the root-`zoom`ed width. Unmeasured (0) is `regular`.
+ */
+export type PdfControlsDensity = "regular" | "compact" | "minimal";
+export const PDF_CONTROLS_COMPACT_BELOW = 331;
+export const PDF_CONTROLS_MINIMAL_BELOW = 270;
+
+export function pdfControlsDensity(width: number): PdfControlsDensity {
+  if (!Number.isFinite(width) || width <= 0 || width >= PDF_CONTROLS_COMPACT_BELOW) return "regular";
+  return width >= PDF_CONTROLS_MINIMAL_BELOW ? "compact" : "minimal";
+}
 const PDF_MARGIN = 16;
 
 export function fitPdfScale(page: Size, viewport: Size): number {

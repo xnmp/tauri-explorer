@@ -9,10 +9,11 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
-function setup(initial: { id?: number | null; active?: string } = {}) {
+function setup(initial: { id?: number | null; active?: string; follows?: boolean } = {}) {
   const env = {
     id: initial.id === undefined ? 1 : initial.id,
     active: initial.active as string | undefined,
+    follows: initial.follows ?? true,
     status: vi.fn<(id: number) => Promise<CwdSyncStatus>>(),
     injected: [] as string[],
     toasts: 0,
@@ -23,6 +24,7 @@ function setup(initial: { id?: number | null; active?: string } = {}) {
     queryStatus: (id) => env.status(id),
     normalizeCwd: (raw) => raw,
     activePath: () => env.active,
+    followsExplorer: () => env.follows,
     injectCd: (p) => { env.injected.push(p); },
     notifyQueued: () => { env.toasts++; },
     reportError: (m) => { env.errors.push(m); },
@@ -321,6 +323,89 @@ describe("terminal cwd sync", () => {
       await vi.advanceTimersByTimeAsync(3000);
       expect(env.status).not.toHaveBeenCalled();
       expect(sync.state.kind).toBe("idle");
+    });
+  });
+
+  describe("following the explorer across shell starts (#1580)", () => {
+    it("brings a shell that started during navigation to the explorer's current folder", async () => {
+      const { env, sync } = setup({ id: null, active: "/old" });
+      env.status.mockResolvedValue(idle(null));
+      // The shell is (re)starting in /old when the explorer moves on.
+      env.active = "/new";
+      await sync.follow("/new");
+      expect(env.injected).toEqual([]);
+
+      env.id = 2;
+      await sync.shellStarted("/old");
+      expect(env.injected).toEqual(["/new"]);
+      // The effect re-reporting the same path injects nothing more.
+      await sync.follow("/new");
+      expect(env.injected).toEqual(["/new"]);
+    });
+
+    it("writes no cd into a fresh shell that started where the explorer still is", async () => {
+      const { env, sync } = setup({ id: 3, active: "/home/me/" });
+      env.status.mockResolvedValue(idle(null));
+      await sync.shellStarted("/home/me");
+      expect(env.status).not.toHaveBeenCalled();
+      expect(env.injected).toEqual([]);
+    });
+
+    it("a path followed while no shell ran is followed again after returning to it", async () => {
+      // Restart in /a; navigate to /b during it; the new shell is reconciled
+      // to /b. Navigating back to /a must cd again — the old dedupe still
+      // remembered /a and skipped it, stranding the shell in /b.
+      const { env, sync } = setup({ id: 1, active: "/a" });
+      env.status.mockResolvedValue(idle(null));
+      await sync.follow("/a");
+      expect(env.injected).toEqual(["/a"]);
+      sync.reset();
+      env.id = null;
+      env.active = "/b";
+      await sync.follow("/b");
+      env.id = 2;
+      await sync.shellStarted("/a");
+      env.active = "/a";
+      await sync.follow("/a");
+      expect(env.injected).toEqual(["/a", "/b", "/a"]);
+    });
+
+    it("leaves a new shell where it started while following is off, then follows once enabled", async () => {
+      const { env, sync } = setup({ id: 4, active: "/b", follows: false });
+      env.status.mockResolvedValue(idle(null));
+      await sync.shellStarted("/a");
+      expect(env.injected).toEqual([]);
+      env.follows = true;
+      await sync.follow("/b");
+      expect(env.injected).toEqual(["/b"]);
+    });
+
+    it("queues behind a busy starting shell like any other sync", async () => {
+      const { env, sync } = setup({ id: 5, active: "/new" });
+      env.status.mockResolvedValue(busy(null));
+      await sync.shellStarted("/old");
+      expect(sync.state.kind).toBe("queued");
+      expect(env.toasts).toBe(1);
+      sync.dispose();
+    });
+
+    it("does not cd twice when navigation reaches the shell just before its start resolves", async () => {
+      const { env, sync } = setup({ id: null, active: "/a" });
+      env.status.mockResolvedValue(idle(null));
+      // The shell is live (it has an id) but its start has not resolved yet.
+      env.id = 7;
+      env.active = "/b";
+      await sync.follow("/b");
+      expect(env.injected).toEqual(["/b"]);
+      await sync.shellStarted("/a");
+      expect(env.injected).toEqual(["/b"]);
+    });
+
+    it("ignores empty explorer paths", async () => {
+      const { env, sync } = setup({ id: 6, active: "" });
+      await sync.follow("");
+      await sync.shellStarted("/old");
+      expect(env.status).not.toHaveBeenCalled();
     });
   });
 });

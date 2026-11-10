@@ -229,23 +229,53 @@ describe("Quick Open session: stream lifecycle", () => {
     expect(h.log).toEqual(["listen:1", "start:x"]);
   });
 
-  it("adopts the first event's search id before the start IPC returns, then locks to it", async () => {
+  it("never adopts another window's search before its own start IPC names the stream (#1581)", async () => {
     const h = harness();
     await h.startStreamFor("rep");
+    // `search-results` reaches every window: the first event here is another
+    // window's search, then this run's own first snapshots arrive, all before
+    // this window's start IPC has returned.
+    h.emit({ searchId: 8, results: [hit("intruder", 99)], done: true, totalScanned: 500 });
     h.emit({ searchId: 7, results: [hit("report", 60)], totalScanned: 12 });
-    expect(names(h.session.results)).toEqual(["report", "rep-local"]);
-    expect(h.session.totalScanned).toBe(12);
+    h.emit({ searchId: 7, results: [hit("report", 60), hit("rep.md", 58)], totalScanned: 20 });
+    expect(names(h.session.results)).toEqual(["rep-local"]);
+    expect(h.session.loading).toBe(true);
+    expect(h.onBackendResults).not.toHaveBeenCalled();
+
+    // Its id arrives: only its own latest snapshot is shown.
+    h.starts[0].reply.resolve({ ok: true, data: 7 });
+    await flush();
+    expect(names(h.session.results)).toEqual(["report", "rep.md", "rep-local"]);
+    expect(h.session.totalScanned).toBe(20);
+    expect(h.session.loading).toBe(true);
     expect(h.onBackendResults).toHaveBeenCalledTimes(1);
 
     h.emit({ searchId: 8, results: [hit("intruder", 99)] });
-    expect(names(h.session.results)).toEqual(["report", "rep-local"]);
-
-    h.starts[0].reply.resolve({ ok: true, data: 7 });
-    await flush();
     h.emit({ searchId: 7, results: [hit("report", 60), hit("repo", 55)], done: true, totalScanned: 40 });
     expect(names(h.session.results)).toEqual(["report", "repo", "rep-local"]);
     expect(h.session.loading).toBe(false);
     expect(h.session.totalScanned).toBe(40);
+  });
+
+  it("settles on a done snapshot that arrived before the start IPC returned", async () => {
+    const h = harness();
+    await h.startStreamFor("rep");
+    h.emit({ searchId: 7, results: [hit("report", 60)], done: true, totalScanned: 3 });
+    expect(h.session.loading).toBe(true);
+    h.starts[0].reply.resolve({ ok: true, data: 7 });
+    await flush();
+    expect(names(h.session.results)).toEqual(["report", "rep-local"]);
+    expect(h.session.loading).toBe(false);
+  });
+
+  it("drops held events when the start IPC fails", async () => {
+    const h = harness();
+    await h.startStreamFor("rep");
+    h.emit({ searchId: 8, results: [hit("intruder", 99)] });
+    h.starts[0].reply.resolve({ ok: false, error: "boom" });
+    await flush();
+    expect(names(h.session.results)).toEqual(["rep-local"]);
+    expect(h.session.loading).toBe(false);
   });
 
   it("replaces rows per batch, merges local matches without duplicates and caps the list", async () => {
@@ -265,6 +295,8 @@ describe("Quick Open session: stream lifecycle", () => {
     const h = harness();
     h.setLocal(() => []);
     await h.startStreamFor("q");
+    h.starts[0].reply.resolve({ ok: true, data: 1 });
+    await flush();
     h.emit({ searchId: 1, results: [hit("a"), hit("b"), hit("c")] });
     h.session.selectedIndex = 2;
     h.emit({ searchId: 1, results: [hit("a")] });
@@ -318,6 +350,8 @@ describe("Quick Open session: stream lifecycle", () => {
   it("re-ranks the current backend hits for a downvote and ignores an empty query", async () => {
     const h = harness();
     await h.startStreamFor("q");
+    h.starts[0].reply.resolve({ ok: true, data: 1 });
+    await flush();
     h.emit({ searchId: 1, results: [hit("a", 50), hit("b", 40)] });
     h.setLocal(() => [hit("promoted", 500)]);
     h.session.rerank();
@@ -395,6 +429,8 @@ describe("Quick Open session: supersession and cancellation", () => {
     expect(h.session.loading).toBe(true);
 
     h.emitTo(2, { searchId: 2, results: [hit("fresh", 5)] });
+    h.starts[0].reply.resolve({ ok: true, data: 2 });
+    await flush();
     expect(names(h.session.results)).toEqual(["new-local", "fresh"]);
   });
 

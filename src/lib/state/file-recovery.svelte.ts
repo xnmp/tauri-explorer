@@ -7,6 +7,7 @@ import {
   abandonRecoveryInspection,
   beginRecoveryInspection,
   beginRecoveryOperation,
+  beginRecoveryReclaim,
   cloneRecoveryItem,
   compareRecoveryCounters,
   emptyRecoveryStorage,
@@ -14,6 +15,8 @@ import {
   isRecoveryCounter,
   isRecoveryInspectionRequest,
   isRecoveryOperation,
+  isRecoveryOperationActive,
+  isRecoveryReclaiming,
   mergeRecoveryPresentation,
   reconcileRecoveryInspection,
   recoveryBusyId,
@@ -282,30 +285,32 @@ export function createFileRecoveryState(port: FileRecoveryPort = fileRecoveryPor
     }
   }
 
-  /** Explicit retention enforcement. Shares the resolve request fence so it
-   *  cannot interleave with an in-flight per-item action. */
+  /** Explicit retention enforcement. It is one of the store's exclusive
+   *  operations, so it cannot interleave with a per-item action (#1582). */
   async function retireEligible(): Promise<void> {
-    if (!running || recoveryBusyId(resolution)) return;
+    // Commands read their own state untracked so an effect calling them is
+    // not subscribed to it.
+    if (!running || isRecoveryOperationActive(untrack(() => resolution))) return;
     const token = owner;
     const request = ++resolveRequest;
-    loading = true;
+    resolution = beginRecoveryReclaim(request);
     try {
       if (!port.retireEligible) {
         throw new Error("This recovery source cannot reclaim retained files");
       }
       const next = await port.retireEligible();
-      if (current(token) && request === resolveRequest) apply(next, token);
+      if (current(token) && isRecoveryOperation(resolution, request)) apply(next, token);
     } catch (error) {
-      if (current(token) && request === resolveRequest) {
+      if (current(token) && isRecoveryOperation(resolution, request)) {
         snapshot = { ...snapshot, error: extractError(error) };
       }
     } finally {
-      if (current(token) && request === resolveRequest) loading = false;
+      if (current(token)) resolution = settleRecoveryOperation(resolution, request);
     }
   }
 
   async function resolve(item: FileRecoveryItem, choice: FileRecoveryChoice): Promise<void> {
-    if (!running || recoveryBusyId(resolution)) return;
+    if (!running || isRecoveryOperationActive(untrack(() => resolution))) return;
     const latest = snapshot.items.find(({ id }) => id === item.id);
     if (!latest || latest.generation !== item.generation || !latest.actions.includes(choice)) {
       snapshot = { ...snapshot, error: `Recovery action is no longer authorized: ${choice}` };
@@ -331,7 +336,8 @@ export function createFileRecoveryState(port: FileRecoveryPort = fileRecoveryPor
     get items() { return snapshot.items; },
     get storage() { return snapshot.storage; },
     get error() { return snapshot.error; },
-    get loading() { return loading; },
+    /** Listing, subscribing or reclaiming retained space. */
+    get loading() { return loading || isRecoveryReclaiming(resolution); },
     get busyId() { return recoveryBusyId(resolution); },
     get inspectingId() { return recoveryInspectingId(inspectionState); },
     get inspectionId() { return recoveryInspectionId(inspectionState); },

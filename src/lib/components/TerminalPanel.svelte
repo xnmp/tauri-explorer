@@ -28,7 +28,7 @@
   import { buildCdSyncSequence, buildPathsInsertion } from "$lib/domain/terminal-command";
   import { defaultShellProfile, fromShellCwd, type ShellProfile } from "$lib/domain/terminal-shell";
   import { createInjectedCdTracker } from "$lib/domain/terminal-cwd-sync";
-  import { createTerminalCwdSync } from "$lib/state/terminal-cwd-sync";
+  import { createTerminalCwdSync, startFollowingShell } from "$lib/state/terminal-cwd-sync";
   import { isWindows, isMac } from "$lib/domain/platform";
   import { resolveTerminalShortcut, effectiveTerminalShortcuts } from "$lib/domain/terminal-keys";
   import { createTerminalKeyHandler } from "$lib/state/terminal-key-handler";
@@ -105,16 +105,17 @@
     spawning = true;
     exited = false;
     try {
-      const cwd = windowTabsManager.getActiveExplorer()?.currentPath;
-      const starting = restart
-        ? terminalSession.restart(cwd, term.cols, term.rows)
-        : terminalSession.start(cwd, term.cols, term.rows);
+      const { cols, rows } = term;
+      const starting = startFollowingShell(
+        cwdSync,
+        windowTabsManager.getActiveExplorer()?.currentPath,
+        (cwd) => restart ? terminalSession.restart(cwd, cols, rows) : terminalSession.start(cwd, cols, rows),
+        (info) => { shellProfile = profileOf(info); },
+      );
       // The old shell's output stops at restart's first step, so the cleared
       // screen belongs to the replacement.
       if (restart) term.clear();
-      const info = await starting;
-      if (info === null) return;
-      shellProfile = profileOf(info);
+      await starting;
     } catch (err) {
       term.writeln(`\r\nFailed to start shell: ${err}`);
       exited = true;
@@ -196,6 +197,7 @@
     queryStatus: terminalStatus,
     normalizeCwd: (raw) => fromShellCwd(raw, shellProfile),
     activePath: () => windowTabsManager.getActiveExplorer()?.currentPath,
+    followsExplorer: () => settingsStore.terminalFollowsExplorer,
     // Inject a `cd`, clearing any half-typed prompt input first — the
     // automatic sync must win. The clear byte is shell-family-specific.
     injectCd: (path) => {
@@ -324,21 +326,19 @@
 
   // Terminal follows explorer: when the active pane navigates, cd the shell.
   // Runs even while the panel is hidden (the shell is alive), but only after
-  // the panel has been opened at least once (the session id is live). The
-  // decideCdSync skip guard makes the reverse-direction navigateTo a no-op,
-  // so the two directions don't ping-pong.
+  // the panel has been opened at least once. The decideCdSync skip guard
+  // makes the reverse-direction navigateTo a no-op, so the two directions
+  // don't ping-pong.
   // The settings store replaces its whole state object on ANY update, so this
   // effect also re-runs for unrelated changes — e.g. terminalPanelHeight on
-  // every pointermove of a panel drag-resize. Only a genuine path change may
-  // inject a cd, or a resize floods the shell with them (#409).
-  let lastSyncTarget: string | null = null;
+  // every pointermove of a panel drag-resize. `follow` syncs only a genuine
+  // path change, or a resize floods the shell with cds (#409). A path seen
+  // while no shell runs is reconciled when the next one starts (#1580).
   $effect(() => {
     const path = windowTabsManager.getActiveExplorer()?.currentPath;
     if (!settingsStore.terminalFollowsExplorer) return;
-    if (!path || terminalSession.id === null || !terminalPanelStore.everOpened) return;
-    if (path === lastSyncTarget) return;
-    lastSyncTarget = path;
-    void cwdSync.sync(path).catch((err) => {
+    if (!path || !terminalPanelStore.everOpened) return;
+    void cwdSync.follow(path).catch((err) => {
       // terminalStatus may reject if the shell died between checks; a rejected
       // sync must not surface as an unhandled promise rejection (#154).
       console.error("[terminal] sync-to-path failed:", err);

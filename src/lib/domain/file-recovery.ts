@@ -271,11 +271,18 @@ export const recoveryInspectionItem = (s: RecoveryInspection): FileRecoveryItem 
   s.kind === "ready" ? s.item : s.kind === "loading" ? s.previous : null;
 export const recoveryInspectionError = (s: RecoveryInspection): string | null => (s.kind === "failed" ? s.message : null);
 
-// ---- Resolve operation -----------------------------------------------------
+// ---- Resolve / reclaim operation ---------------------------------------------
 
+/**
+ * The one store mutation allowed at a time: a per-item action (`resolving`)
+ * or explicit retention enforcement (`reclaiming`). Each owns its `token`, so
+ * only the operation that began a state can settle it — a shared fence let a
+ * resolve started during a reclaim strand the reclaim's busy flag (#1582).
+ */
 export type RecoveryOperation =
   | { kind: "idle" }
-  | { kind: "resolving"; id: string; token: number };
+  | { kind: "resolving"; id: string; token: number }
+  | { kind: "reclaiming"; token: number };
 
 export const IDLE_RECOVERY_OPERATION: RecoveryOperation = { kind: "idle" };
 
@@ -283,8 +290,15 @@ export function beginRecoveryOperation(id: string, token: number): RecoveryOpera
   return { kind: "resolving", id, token };
 }
 
+export function beginRecoveryReclaim(token: number): RecoveryOperation {
+  return { kind: "reclaiming", token };
+}
+
+/** Whether any operation is in flight; a new one must not start meanwhile. */
+export const isRecoveryOperationActive = (state: RecoveryOperation): boolean => state.kind !== "idle";
+
 export function isRecoveryOperation(state: RecoveryOperation, token: number): boolean {
-  return state.kind === "resolving" && state.token === token;
+  return state.kind !== "idle" && state.token === token;
 }
 
 /** Finish operation `token`; a superseded or already-cleared one is a no-op. */
@@ -292,4 +306,5 @@ export function settleRecoveryOperation(state: RecoveryOperation, token: number)
   return isRecoveryOperation(state, token) ? IDLE_RECOVERY_OPERATION : state;
 }
 
+export const isRecoveryReclaiming = (s: RecoveryOperation): boolean => s.kind === "reclaiming";
 export const recoveryBusyId = (s: RecoveryOperation): string | null => (s.kind === "resolving" ? s.id : null);

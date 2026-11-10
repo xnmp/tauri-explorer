@@ -3,7 +3,7 @@
   import { loadPdf, openPdfLink, type PdfLink } from "$lib/api/pdf-preview";
   import { toastStore } from "$lib/state/toast.svelte";
   import { createPdfPreview, createPdfRenderLifetime } from "$lib/state/pdf-preview.svelte";
-  import { PDF_FIT, fitPdfScale, panPdf, pdfPointerPoint, resizePdfView, zoomPdf, type PdfView, type Size } from "$lib/domain/pdf-preview";
+  import { PDF_FIT, fitPdfScale, panPdf, pdfControlsDensity, pdfPointerPoint, resizePdfView, zoomPdf, type PdfView, type Size } from "$lib/domain/pdf-preview";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 
@@ -26,6 +26,8 @@
   const scale = $derived(page ? fitPdfScale(page.size, viewport) * view.zoom : 0);
   const width = $derived(page ? page.size.width * scale : 0);
   const height = $derived(page ? page.size.height * scale : 0);
+  // The viewport spans the preview's width; its observer reports CSS px.
+  const density = $derived(pdfControlsDensity(viewport.width));
   const ready = $derived(!!page && renderedPage === page && !renderError && !preview.state.error);
 
   $effect(() => {
@@ -176,18 +178,20 @@
 
 <svelte:window onblur={cancelPan} />
 <div class="pdf-preview" data-path={path}>
-  <div class="pdf-controls" role="group" aria-label="PDF viewing controls">
+  <div class="pdf-controls" class:compact={density !== "regular"} data-density={density} role="group" aria-label="PDF viewing controls">
     <div class="pdf-control-group">
       <button type="button" aria-label="Previous PDF page" disabled={preview.state.pageNumber <= 1 || preview.state.loading} onclick={() => preview.selectPage(preview.state.pageNumber - 1)}>‹</button>
       <span class="page-count" aria-live="polite">{preview.state.pageNumber} / {preview.state.pageCount || "…"}</span>
       <button type="button" aria-label="Next PDF page" disabled={preview.state.pageNumber >= preview.state.pageCount || preview.state.loading} onclick={() => preview.selectPage(preview.state.pageNumber + 1)}>›</button>
     </div>
-    <div class="pdf-control-group">
+    {#if density !== "minimal"}
+    <div class="pdf-control-group pdf-zoom-group">
       <button type="button" aria-label="Zoom PDF out" disabled={!page || view.zoom <= 1} onclick={() => changeZoom(view.zoom - 0.1)}>−</button>
       <output class="pdf-zoom" aria-label="PDF magnification">{Math.round(view.zoom * 100)}%</output>
       <button type="button" aria-label="Zoom PDF in" disabled={!page || view.zoom >= 8} onclick={() => changeZoom(view.zoom + 0.1)}>+</button>
       <button type="button" class="fit-button" disabled={!page} onclick={() => { view = PDF_FIT; cancelPan(); }}>Fit</button>
     </div>
+    {/if}
     <button type="button" aria-label={fullscreen ? "Exit PDF fullscreen" : "View PDF fullscreen"} disabled={!page} onclick={ontogglefullscreen}>⛶</button>
   </div>
   <!-- The viewport is a keyboard focusable document interaction surface. -->
@@ -216,16 +220,26 @@
 </div>
 
 <style>
+  /* The controls are one toolbar row at every preview width (#1583); the
+     density (domain/pdf-preview.ts) tightens spacing, then drops the zoom
+     group, before anything could wrap. */
   .pdf-preview { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
-  .pdf-controls { display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; padding: 6px 8px; border-bottom: 1px solid var(--divider); background: var(--background-card-secondary); }
-  .pdf-control-group { display: flex; align-items: center; gap: 2px; }
-  button { border: 0; background: transparent; color: var(--text-secondary); min-width: 28px; height: 28px; padding: 0 6px; border-radius: 4px; font: inherit; cursor: pointer; }
+  .pdf-controls { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 6px 8px; border-bottom: 1px solid var(--divider); background: var(--background-card-secondary); }
+  .pdf-control-group { display: flex; align-items: center; gap: 2px; min-width: 0; }
+  button { flex: none; border: 0; background: transparent; color: var(--text-secondary); min-width: 28px; height: 28px; padding: 0 6px; border-radius: 4px; font: inherit; cursor: pointer; }
   button:hover:not(:disabled) { background: var(--subtle-fill-secondary); color: var(--text-primary); }
   button:disabled { opacity: .4; cursor: default; }
   button:focus-visible, .pdf-link:focus-visible, .pdf-viewport:focus-visible { outline: 2px solid var(--focus-stroke-outer); outline-offset: -2px; }
   .grabbable .pdf-page { will-change: transform; }
   .page-count, .pdf-zoom { font-size: 11px; color: var(--text-secondary); font-variant-numeric: tabular-nums; text-align: center; }
-  .page-count { min-width: 38px; } .pdf-zoom { min-width: 38px; }
+  .page-count, .pdf-zoom { min-width: 38px; white-space: nowrap; }
+  /* A long "123 / 456" gives way (ellipsis, full text in its live region)
+     rather than wrapping the row. */
+  .page-count { overflow: hidden; text-overflow: ellipsis; }
+  .pdf-zoom { flex: none; }
+  .pdf-controls.compact { gap: 4px; padding: 4px 6px; }
+  .compact .pdf-control-group { gap: 0; }
+  .compact button { min-width: 24px; padding: 0 4px; }
   .fit-button { font-size: 11px; }
   .pdf-viewport { position: relative; flex: 1; min-height: 0; overflow: hidden; touch-action: none; user-select: none; }
   .grabbable, .grabbable .pdf-link { cursor: grab; } .panning, .panning .pdf-link { cursor: grabbing; }

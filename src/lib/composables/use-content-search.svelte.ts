@@ -1,10 +1,11 @@
 /**
  * Content search stream lifecycle for ContentSearchDialog.
  *
- * Owns the IPC stream: the search id, the 'content-search-results' event
- * listener (registered BEFORE the invoke so fast-completing searches can't
- * emit before we listen), the generation counter that discards stale events,
- * and the per-search dedup set. Pure flattening lives in
+ * Owns the IPC stream: one run per search holding its listener (registered
+ * BEFORE the invoke so fast-completing searches can't emit before we listen)
+ * and its backend id, plus the per-search dedup set. Leaving a run detaches
+ * its listener synchronously; events are attributed to a run only by the id
+ * its own start IPC returned (domain/stream-correlation). Pure flattening lives in
  * domain/content-search-flatten.
  *
  * Rendering-facing arrays use $state.raw: rows are plain immutable objects,
@@ -14,6 +15,12 @@
 
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { startContentSearch, cancelContentSearch, type ContentSearchEvent, type ContentSearchResult } from "$lib/api/search";
+import {
+  heldEventsFor,
+  holdStreamEvent,
+  noHeldStreamEvents,
+  type HeldStreamEvents,
+} from "$lib/domain/stream-correlation";
 import {
   flattenBatch,
   rebuildAllFlattened,
@@ -27,6 +34,15 @@ export interface ContentSearchOptions {
 }
 
 const DEFAULT_MAX_RESULTS = 5000;
+
+/** One search: the identity every async continuation checks. */
+interface StreamRun {
+  /** Backend stream id, known once the start IPC returns. */
+  searchId: number | null;
+  /** Events that arrived before `searchId` was known (#1581). */
+  held: HeldStreamEvents<ContentSearchEvent>;
+  unlisten: UnlistenFn | null;
+}
 
 export function useContentSearch() {
   // Published render state.
@@ -43,44 +59,42 @@ export function useContentSearch() {
   let seenPaths = new Set<string>();
   let filterLower = "";
 
-  // Stream lifecycle.
-  let generation = 0;
-  let activeSearchId: number | null = null;
-  let unlisten: UnlistenFn | null = null;
+  // Stream lifecycle: the current run owns its listener and its backend id;
+  // a continuation whose run is no longer `run` was superseded.
+  let run: StreamRun | null = null;
 
   function publish(): void {
     flattened = allFlattened.slice();
     fileCount = results.length;
   }
 
-  function teardownListener(): void {
-    if (unlisten) {
-      unlisten();
-      unlisten = null;
-    }
+  /**
+   * Leave the current run. Its listener is detached synchronously and the
+   * backend cancellation goes out last, unawaited: nothing a later run owns
+   * may depend on that IPC's completion, or a late cancellation would tear
+   * down its replacement's listener (#1579).
+   */
+  function leaveRun(): void {
+    const previous = run;
+    run = null;
+    if (!previous) return;
+    previous.unlisten?.();
+    if (previous.searchId !== null) void cancelContentSearch(previous.searchId);
   }
 
-  async function cancelActive(): Promise<void> {
-    if (activeSearchId !== null) {
-      const id = activeSearchId;
-      activeSearchId = null;
-      await cancelContentSearch(id);
-    }
-    teardownListener();
-  }
-
-  function ingest(gen: number, payload: ContentSearchEvent): void {
-    if (gen !== generation) return;
-
-    // Accept events matching our search id, OR adopt the id from the first
-    // event if we haven't learned it yet (the backend thread can emit before
-    // the invoke returns). Once adopted, lock to it.
-    if (activeSearchId === null) {
-      activeSearchId = payload.searchId;
-    } else if (payload.searchId !== activeSearchId) {
+  function receive(current: StreamRun, payload: ContentSearchEvent): void {
+    if (run !== current) return;
+    // Results are app-wide events: until the start IPC names this run's
+    // stream, an event may be another window's search or a cancelled one.
+    // Hold it rather than adopt its id (#1581).
+    if (current.searchId === null) {
+      current.held = holdStreamEvent(current.held, payload, "all");
       return;
     }
+    if (payload.searchId === current.searchId) ingest(payload);
+  }
 
+  function ingest(payload: ContentSearchEvent): void {
     // Dedup across batches with a persistent set — O(batch), not O(total).
     const fresh = payload.results.filter((r) => {
       if (seenPaths.has(r.path)) return false;
@@ -101,24 +115,16 @@ export function useContentSearch() {
     if (payload.done) loading = false;
   }
 
-  async function setupListener(gen: number): Promise<void> {
-    teardownListener();
-    unlisten = await listen<ContentSearchEvent>("content-search-results", (event) => {
-      ingest(gen, event.payload);
-    });
-  }
-
   /**
    * Start a new search, superseding any in-flight one. The previous search's
    * rows stay on screen until the new search produces data, so re-searching
    * never flashes an empty list.
    */
   async function start(query: string, root: string, opts: ContentSearchOptions): Promise<void> {
-    const gen = ++generation;
+    leaveRun();
+    const current: StreamRun = { searchId: null, held: noHeldStreamEvents(), unlisten: null };
+    run = current;
     loading = true;
-
-    await cancelActive();
-    if (gen !== generation) return;
 
     results = [];
     allFlattened = [];
@@ -133,11 +139,19 @@ export function useContentSearch() {
     // returns the complete result set inline instead.
     let streaming = true;
     try {
-      await setupListener(gen);
+      const unlisten = await listen<ContentSearchEvent>("content-search-results", (event) => {
+        receive(current, event.payload);
+      });
+      if (run !== current) {
+        // Superseded while registering: never let a stale listener survive.
+        unlisten();
+        return;
+      }
+      current.unlisten = unlisten;
     } catch {
       streaming = false;
     }
-    if (gen !== generation) return;
+    if (run !== current) return;
 
     const res = await startContentSearch(
       query,
@@ -147,25 +161,30 @@ export function useContentSearch() {
       opts.maxResults ?? DEFAULT_MAX_RESULTS
     );
 
-    if (gen !== generation) {
+    if (run !== current) {
       // Superseded while awaiting: cancel the now-orphaned backend search.
       if (res.ok && res.data.searchId !== null) void cancelContentSearch(res.data.searchId);
       return;
     }
 
     if (!res.ok) {
+      current.held = noHeldStreamEvents();
       publish(); // accumulators are empty — clears stale rows
       loading = false;
       return;
     }
 
     if (res.data.inline) {
-      ingest(gen, res.data.inline);
+      ingest(res.data.inline);
       if (!res.data.inline.done) loading = false;
       return;
     }
 
-    activeSearchId = res.data.searchId;
+    const searchId = res.data.searchId;
+    const early = searchId === null ? [] : heldEventsFor(current.held, searchId);
+    current.searchId = searchId;
+    current.held = noHeldStreamEvents();
+    for (const payload of early) ingest(payload);
     if (!streaming) loading = false;
   }
 
@@ -191,7 +210,6 @@ export function useContentSearch() {
 
   /** Clear all state and cancel any in-flight search. */
   function reset(): void {
-    generation++;
     results = [];
     allFlattened = [];
     seenPaths = new Set();
@@ -202,7 +220,7 @@ export function useContentSearch() {
     filesSearched = 0;
     totalMatches = 0;
     loading = false;
-    void cancelActive();
+    leaveRun();
   }
 
   return {

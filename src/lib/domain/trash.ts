@@ -15,7 +15,7 @@ export function isTrashRoot(path: string): boolean {
 }
 
 /** Each trashed item has a unique, stable Explorer path built from its ID. */
-function trashEntryPath(id: string): string {
+export function trashEntryPath(id: string): string {
   return `${TRASH_PATH}${id}`;
 }
 

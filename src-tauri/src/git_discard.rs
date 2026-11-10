@@ -31,6 +31,11 @@
 //! path-based: libgit2's checkout of the restored files, after a path-based
 //! re-check of their ancestors and of the path itself; and on Windows the
 //! removals too, after the same re-check.
+//!
+//! libgit2 applies the built-in conversions (eol, `ident`) but not external
+//! filter drivers, so a restored file that `git checkout` would smudge (Git
+//! LFS, #1616) is written by the git CLI instead, with literal pathspecs,
+//! after the same re-checks.
 
 use std::collections::BTreeSet;
 use std::ffi::OsStr;
@@ -658,6 +663,19 @@ fn discard_paths_with(
             restore.push(path);
         }
     }
+    let (filtered, restore): (Vec<&str>, Vec<&str>) = {
+        let tree = head_tree(repo)?;
+        let mut filtered = Vec::new();
+        let mut plain = Vec::new();
+        for p in restore {
+            if runs_filter_driver(repo, tree.as_ref(), p)? {
+                filtered.push(p);
+            } else {
+                plain.push(p);
+            }
+        }
+        (filtered, plain)
+    };
     if !restore.is_empty() {
         let mut co = git2::build::CheckoutBuilder::new();
         co.force();
@@ -669,7 +687,114 @@ fn discard_paths_with(
         repo.checkout_head(Some(&mut co))
             .map_err(|e| effect_error(&restore.join("', '"), removed, to_app_err(e)))?;
     }
+    // After libgit2's checkout, which writes its in-memory index over the
+    // file: git then updates the on-disk index for these paths itself.
+    if !filtered.is_empty() {
+        checkout_with_git_cli(&workdir, &filtered)
+            .map_err(|e| effect_error(&filtered.join("', '"), removed, e))?;
+    }
     Ok(())
+}
+
+/// Whether `git checkout` writes `rel` through an external filter driver
+/// (`filter=<name>` with `filter.<name>.smudge` or `.process` configured, as
+/// Git LFS is), which libgit2 does not run: it would write the stored blob,
+/// for LFS the pointer text (#1616). Only a regular blob in HEAD qualifies:
+/// symlinks and submodules are never filtered, and a path HEAD lacks is
+/// removed, not written.
+fn runs_filter_driver(
+    repo: &Repository,
+    head: Option<&git2::Tree<'_>>,
+    rel: &str,
+) -> Result<bool, AppError> {
+    let Some(head) = head else {
+        return Ok(false);
+    };
+    let blob = match head.get_path(Path::new(rel)) {
+        Ok(entry) => entry.kind() == Some(git2::ObjectType::Blob) && entry.filemode() != 0o120000,
+        Err(e) if e.code() == git2::ErrorCode::NotFound => false,
+        Err(e) => return Err(to_app_err(e)),
+    };
+    if !blob {
+        return Ok(false);
+    }
+    // Checkout reads attributes from the index first, as git does.
+    let value = repo
+        .get_attr(
+            Path::new(rel),
+            "filter",
+            git2::AttrCheckFlags::INDEX_THEN_FILE,
+        )
+        .map_err(to_app_err)?;
+    let git2::AttrValue::String(driver) = git2::AttrValue::from_string(value) else {
+        return Ok(false);
+    };
+    let config = repo.config().map_err(to_app_err)?;
+    for key in ["smudge", "process"] {
+        match config.get_string(&format!("filter.{driver}.{key}")) {
+            Ok(command) if !command.trim().is_empty() => return Ok(true),
+            Ok(_) => {}
+            Err(e) if e.code() == git2::ErrorCode::NotFound => {}
+            Err(e) => return Err(to_app_err(e)),
+        }
+    }
+    Ok(false)
+}
+
+/// Restore `paths` from HEAD with `git checkout`, which runs filter drivers.
+/// Pathspecs are literal (#1589) and read NUL-separated from stdin, so no
+/// name is parsed as an option or glob and no command line grows too long.
+/// Git itself refuses to write beyond a symbolic link and replaces, rather
+/// than follows, a link at the path; each path was re-checked just before.
+fn checkout_with_git_cli(workdir: &Path, paths: &[&str]) -> Result<(), AppError> {
+    use crate::process_ext::NoConsole;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let mut child = Command::new("git")
+        .no_console()
+        .current_dir(workdir)
+        .args([
+            "--literal-pathspecs",
+            "checkout",
+            "--pathspec-from-file=-",
+            "--pathspec-file-nul",
+            "HEAD",
+        ])
+        // The repository is the one at `workdir`, whatever the app inherited.
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_GLOB_PATHSPECS")
+        .env_remove("GIT_NOGLOB_PATHSPECS")
+        .env_remove("GIT_ICASE_PATHSPECS")
+        // A filter (LFS downloading an object) must fail, not wait on a prompt.
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| AppError::Other(format!("could not run git to apply filters: {e}")))?;
+    let mut input = Vec::new();
+    for p in paths {
+        input.extend_from_slice(p.as_bytes());
+        input.push(0);
+    }
+    let written = child
+        .stdin
+        .take()
+        .ok_or_else(|| AppError::Other("could not open git's input".into()))
+        .and_then(|mut stdin| stdin.write_all(&input).map_err(AppError::Io));
+    let output = child.wait_with_output()?;
+    if output.status.success() {
+        return written;
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    Err(AppError::Other(if stderr.is_empty() {
+        format!("git checkout failed ({})", output.status)
+    } else {
+        stderr
+    }))
 }
 
 #[cfg(test)]
@@ -1231,6 +1356,74 @@ mod tests {
         assert!(err.contains("1 other item"), "{err}");
         assert!(fs::symlink_metadata(d.path().join("u1.txt")).is_err());
         assert!(d.path().join("zz/f").is_dir());
+    }
+
+    /// A repository whose `*.txt` files pass through a `tr` filter driver:
+    /// stored lower-case, checked out upper-case, as `git checkout` writes
+    /// them. The local `core.autocrlf` overrides Windows runners' global one.
+    fn filtered_repo() -> TempDir {
+        let d = TempDir::new().unwrap();
+        git(d.path(), &["init", "-q", "-b", "main"]);
+        git(d.path(), &["config", "core.autocrlf", "false"]);
+        git(d.path(), &["config", "filter.upper.smudge", "tr a-z A-Z"]);
+        git(d.path(), &["config", "filter.upper.clean", "tr A-Z a-z"]);
+        write(d.path(), ".gitattributes", "*.txt filter=upper\n");
+        write(d.path(), "f.txt", "hello\n");
+        write(d.path(), "gone.txt", "bye\n");
+        write(d.path(), "staged.txt", "s\n");
+        write(d.path(), "plain.md", "plain\n");
+        git(d.path(), &["add", "-A"]);
+        git(d.path(), &["commit", "-q", "-m", "init"]);
+        d
+    }
+
+    /// #1616: Discard writes what `git checkout` writes, running the smudge
+    /// filter (for Git LFS, the file rather than its pointer text), and
+    /// leaves the index matching the restored files.
+    #[test]
+    fn discarding_runs_the_smudge_filter_like_git_checkout() {
+        let d = filtered_repo();
+        write(d.path(), "f.txt", "edited\n");
+        fs::remove_file(d.path().join("gone.txt")).unwrap();
+        write(d.path(), "staged.txt", "staged edit\n");
+        git(d.path(), &["add", "staged.txt"]);
+        write(d.path(), "plain.md", "EDIT\n");
+
+        discard(d.path(), &["f.txt", "gone.txt", "plain.md"]).unwrap();
+        assert_eq!(read(&d.path().join("f.txt")), "HELLO\n");
+        assert_eq!(read(&d.path().join("gone.txt")), "BYE\n");
+        assert_eq!(read(&d.path().join("plain.md")), "plain\n");
+
+        let repo = crate::git_common::open_repo(d.path()).unwrap();
+        let paths: Vec<String> = vec!["staged.txt".into()];
+        super::discard_paths(&repo, &paths, true).unwrap();
+        assert_eq!(read(&d.path().join("staged.txt")), "S\n");
+
+        let status = collect_status(&repo).unwrap();
+        assert!(status.changes.is_empty(), "{:?}", status.changes);
+        assert!(status.staged.is_empty(), "{:?}", status.staged);
+    }
+
+    /// #1604 still holds on the git CLI route: a filtered file replaced by a
+    /// symlink is restored in place of the link, never through it.
+    #[cfg(unix)]
+    #[test]
+    fn a_filtered_file_replaced_by_a_symlink_is_not_written_through() {
+        let outside = TempDir::new().unwrap();
+        let secret = outside.path().join("secret.txt");
+        fs::write(&secret, "secret\n").unwrap();
+        let d = filtered_repo();
+        fs::remove_file(d.path().join("f.txt")).unwrap();
+        symlink(&secret, &d.path().join("f.txt"));
+
+        discard(d.path(), &["f.txt"]).unwrap();
+        assert_eq!(read(&secret), "secret\n");
+        let restored = d.path().join("f.txt");
+        assert!(fs::symlink_metadata(&restored)
+            .unwrap()
+            .file_type()
+            .is_file());
+        assert_eq!(read(&restored), "HELLO\n");
     }
 
     #[test]

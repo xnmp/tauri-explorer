@@ -3,7 +3,7 @@ import {
   type TerminalInputReceipt,
 } from "$lib/domain/terminal-input-queue";
 
-export type TerminalSessionUnlisten = () => void;
+type TerminalSessionUnlisten = () => void;
 
 export interface TerminalSessionSpawnInfo {
   shellKind: "posix" | "powershell" | "cmd";
@@ -284,5 +284,3 @@ export function createTerminalSession(
     insert,
   };
 }
-
-export type TerminalSession = ReturnType<typeof createTerminalSession>;

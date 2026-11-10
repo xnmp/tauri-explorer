@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-    "test": "vitest run && vitest run -c vitest.perf.config.ts",
+    "test": "vitest run && vitest run -c vitest.client.config.ts && vitest run -c vitest.perf.config.ts",
+    "test:client": "vitest run -c vitest.client.config.ts",
     "test:watch": "vitest",
     "test:config-watch": "cargo test --manifest-path src-tauri/Cargo.toml --lib config_watch -- --nocapture && cargo test --manifest-path src-tauri/Cargo.toml --test config_watch_nested_root_test --test config_watch_symlinks -- --nocapture",
     "test:portal-lifecycle": "xvfb-run -a cargo test --manifest-path src-tauri/Cargo.toml --test portal_lifecycle -- --ignored",
@@ -50,7 +51,6 @@
   "license": "MIT",
   "dependencies": {
     "@chenglou/pretext": "^0.0.9",
-    "@crabnebula/tauri-plugin-drag": "^2.1.0",
     "@fontsource-variable/inter": "^5.2.8",
     "@tauri-apps/api": "^2.12.0",
     "@xterm/addon-fit": "^0.11.0",

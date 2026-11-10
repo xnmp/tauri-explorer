@@ -15,7 +15,7 @@
 import { pathComparison } from "./path";
 
 /** One file's provider text (SDK `EntryLineage.labels` values). */
-export interface LineageLabel { prompt?: string; title?: string }
+interface LineageLabel { prompt?: string; title?: string }
 
 /** Bounds a hostile or accidental megabyte prompt; the cell ellipsizes long before. */
 export const LINEAGE_PROMPT_MAX = 2000;

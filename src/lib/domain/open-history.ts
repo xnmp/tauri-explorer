@@ -12,7 +12,7 @@
 import { directoryKey } from "./path";
 
 /** Most files kept; recording past this evicts the least recently opened. */
-export const OPEN_HISTORY_CAPACITY = 10_000;
+const OPEN_HISTORY_CAPACITY = 10_000;
 /** Serialized documents above this are treated as corrupt (≈16 MiB). */
 export const OPEN_HISTORY_MAX_TEXT = 16 * 1024 * 1024;
 const MAX_KEY_LENGTH = 32_768;
@@ -28,7 +28,7 @@ export type OpenHistoryOp =
   | { readonly type: "move"; readonly from: string; readonly to: string }
   | { readonly type: "forget"; readonly paths: readonly string[] };
 
-export const openHistoryKey = (path: string): string => directoryKey(path);
+const openHistoryKey = (path: string): string => directoryKey(path);
 
 const validKey = (key: unknown): key is string =>
   typeof key === "string" && key.length > 0 && key.length <= MAX_KEY_LENGTH && !key.includes("\0");

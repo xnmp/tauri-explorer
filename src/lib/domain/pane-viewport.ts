@@ -1,7 +1,7 @@
 import type { LeafRect, PaneNode } from "./pane-layout";
 
 export interface PaneSize { width: number; height: number }
-export const MIN_PANE_SIZE: Readonly<PaneSize> = { width: 240, height: 200 };
+const MIN_PANE_SIZE: Readonly<PaneSize> = { width: 240, height: 200 };
 export interface SplitGeometry { rect: LeafRect; ratio: number; min: number; max: number }
 export interface PaneGeometry extends PaneSize {
   /** Leaf rectangles in workspace CSS pixels, also used by directional focus. */

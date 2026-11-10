@@ -7,7 +7,7 @@ import { fileBatchError, type FileBatchResult } from "$lib/domain/file-batch-out
 import type { UndoAction } from "$lib/domain/file-history";
 
 /** Minimal result type matching the API contract (data is irrelevant for undo/redo). */
-export type UndoResult = { ok: true } | { ok: false; error: string };
+type UndoResult = { ok: true } | { ok: false; error: string };
 
 /** The subset of API functions needed for undo/redo execution. */
 export interface UndoApiDeps {

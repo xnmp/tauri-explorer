@@ -7,17 +7,10 @@
  * localStorage as synchronous fallback for immediate state.
  */
 
-import {
-  configWriteActivity,
-  configWriteRaced,
-  lastWrittenConfig,
-  loadPersisted,
-  savePersisted,
-  writeConfigQueued,
-} from "./persisted";
 import { basename } from "$lib/domain/path";
-import { decideConfigReload, type ConfigReloadReason } from "$lib/domain/config-reload";
-import { readConfigFile } from "$lib/api/config";
+import type { ConfigReloadReason } from "$lib/domain/config-reload";
+import { createConfigDocument } from "./config-document";
+import { loadPersisted } from "./persisted";
 
 export interface Bookmark {
   name: string;
@@ -33,61 +26,31 @@ const CONFIG_WRITER = "bookmarks-store";
 function createBookmarksState() {
   let bookmarks = $state<Bookmark[]>(loadPersisted(STORAGE_KEY, []));
 
-  function save() {
-    // Write-through: save to both localStorage (sync) and config file (async)
-    savePersisted(STORAGE_KEY, bookmarks);
-    writeConfigQueued(CONFIG_FILENAME, JSON.stringify(bookmarks, null, 2));
-  }
+  const configDoc = createConfigDocument<Bookmark[]>({
+    file: CONFIG_FILENAME,
+    key: STORAGE_KEY,
+    writer: CONFIG_WRITER,
+    get: () => bookmarks,
+    set: (next) => (bookmarks = next),
+    // An empty file does not override the cache: it lets localStorage migrate.
+    acceptOnInit: (parsed): parsed is Bookmark[] =>
+      Array.isArray(parsed) && parsed.length > 0,
+    acceptOnReload: (parsed): parsed is Bookmark[] => Array.isArray(parsed),
+    // Migrates the live value (loaded from the cache at creation).
+    migration: () => (bookmarks.length > 0 ? bookmarks : null),
+  });
+
+  /** Write-through: localStorage (sync) and config file (async). */
+  const save = configDoc.save;
 
   /**
    * Load bookmarks from config file, migrating from localStorage if needed.
    * Called once during app initialization.
    */
-  async function init() {
-    try {
-      const result = await readConfigFile(CONFIG_FILENAME);
-      if (result.ok && result.data) {
-        const loaded = JSON.parse(result.data) as Bookmark[];
-        if (Array.isArray(loaded) && loaded.length > 0) {
-          bookmarks = loaded;
-          savePersisted(STORAGE_KEY, bookmarks);
-          return;
-        }
-      }
-    } catch {
-      // Config file doesn't exist or is invalid - fall through
-    }
-
-    // If config file was empty but localStorage has data, migrate
-    if (bookmarks.length > 0) {
-      writeConfigQueued(CONFIG_FILENAME, JSON.stringify(bookmarks, null, 2));
-    }
-  }
+  const init = configDoc.init;
 
   /** Re-read external bookmark edits without treating this store's writes as edits. */
-  async function reloadFromDisk(): Promise<ConfigReloadReason> {
-    const beforeRead = configWriteActivity(CONFIG_FILENAME, CONFIG_WRITER);
-    const result = await readConfigFile(CONFIG_FILENAME);
-    if (!result.ok) return "unusable";
-    let loaded: Bookmark[] | null = null;
-    try {
-      const parsed = JSON.parse(result.data);
-      if (Array.isArray(parsed)) loaded = parsed as Bookmark[];
-    } catch {
-      // `decideConfigReload` reports invalid external files consistently.
-    }
-    const decision = decideConfigReload({
-      raw: result.data,
-      normalized: loaded ? JSON.stringify(loaded) : null,
-      currentNormalized: JSON.stringify(bookmarks),
-      lastWritten: lastWrittenConfig(CONFIG_FILENAME, CONFIG_WRITER),
-      selfWriteRaced: configWriteRaced(CONFIG_FILENAME, beforeRead, CONFIG_WRITER),
-    });
-    if (!decision.apply || !loaded) return decision.reason;
-    bookmarks = loaded;
-    savePersisted(STORAGE_KEY, bookmarks);
-    return decision.reason;
-  }
+  const reloadFromDisk: () => Promise<ConfigReloadReason> = configDoc.reload;
 
   function addBookmark(path: string, name?: string) {
     // Don't add duplicates

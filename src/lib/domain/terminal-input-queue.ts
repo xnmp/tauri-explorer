@@ -39,7 +39,7 @@ export interface TerminalInputReceipt {
 }
 
 /** Deliver write number `seq` of the current stream to its PTY. */
-export type TerminalInputSend = (seq: number, data: string) => Promise<TerminalInputReceipt>;
+type TerminalInputSend = (seq: number, data: string) => Promise<TerminalInputReceipt>;
 
 export interface TerminalInputQueueEvents {
   /** A send or a queued asynchronous input failed; it contributes nothing. */

@@ -15,7 +15,7 @@ export interface WindowLaunchPlan {
  * process terminated (`src-tauri/src/renderer_owner/reload.rs`, #942, #1138). The
  * replacement document belongs to a window that already had a session.
  */
-export const RENDERER_RECOVERY_PARAM = "rendererRecovery";
+const RENDERER_RECOVERY_PARAM = "rendererRecovery";
 
 export function isRendererRecovery(search: string): boolean {
   return new URLSearchParams(search).get(RENDERER_RECOVERY_PARAM) === "1";

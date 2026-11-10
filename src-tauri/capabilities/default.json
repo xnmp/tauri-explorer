@@ -25,7 +25,6 @@
     "core:window:allow-is-minimized",
     "opener:default",
     "core:webview:allow-create-webview-window",
-    "log:default",
-    "drag:default"
+    "log:default"
   ]
 }

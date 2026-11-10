@@ -42,7 +42,7 @@ function medianDuration(samples: readonly ImageJobTiming[]): number | null {
 
 /** Successful, bounded samples only; keyed history → source history → default.
  * Completion time defines recency, independent of revisions or array order. */
-export function estimatedImageDuration(job: ImageJobTiming, history: readonly ImageJobTiming[], now: number): number {
+function estimatedImageDuration(job: ImageJobTiming, history: readonly ImageJobTiming[], now: number): number {
   const samples = history.filter(item => item !== job && item.presentation === "image" && item.source === job.source && item.status === "completed"
     && timestamp(item.startTime) && timestamp(item.endTime) && item.endTime <= now
     && item.endTime - item.startTime >= 1000 && item.endTime - item.startTime <= 3_600_000);

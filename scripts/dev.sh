@@ -84,9 +84,6 @@ if [[ -z "$PORT" ]]; then
   PORT=$(find_free_port "$BASE_PORT")
 fi
 
-# Write port to .dev-port so scripts/validate.sh can find the running server
-echo "$PORT" > .dev-port
-
 # Always sync SvelteKit generated files right before starting the dev server.
 npx svelte-kit sync
 

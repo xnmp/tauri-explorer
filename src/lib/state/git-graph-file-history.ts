@@ -40,7 +40,7 @@ export function showFileHistoryInPane(
 }
 
 /** Request a graph view limited to `filePath` for a pane. */
-export function requestGraphFileHistory(paneId: string, filePath: string): void {
+function requestGraphFileHistory(paneId: string, filePath: string): void {
   if (!filePath.trim()) return;
   const handler = handlers.get(paneId);
   if (handler) {

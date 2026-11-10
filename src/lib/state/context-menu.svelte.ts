@@ -7,7 +7,7 @@
  * Only one context menu can be open at a time.
  */
 
-export interface ContextMenuPosition {
+interface ContextMenuPosition {
   x: number;
   y: number;
 }

@@ -91,3 +91,18 @@ export function createInjectedCdTracker(cap = 8): InjectedCdTracker {
     },
   };
 }
+
+/**
+ * Whether a cd that was queued behind a busy command should now be written.
+ * Re-checks both the shell (it may have cd'd itself) and the active explorer
+ * tab (it may have switched while the command ran, #266). Nullish/empty
+ * targets are never written (`cd 'null'`, #154).
+ */
+export function shouldFlushQueuedCd(
+  target: string | null | undefined,
+  activePath: string | null | undefined,
+  shellCwd: string | null
+): target is string {
+  if (target == null || target === "") return false;
+  return activePath === target && decideCdSync(target, shellCwd, false) === "write";
+}

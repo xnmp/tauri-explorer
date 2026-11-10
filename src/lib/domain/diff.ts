@@ -7,7 +7,7 @@
  * with +/− gutters without further bookkeeping.
  */
 
-export type DiffLineKind = "header" | "hunk" | "context" | "add" | "remove" | "binary" | "meta";
+type DiffLineKind = "header" | "hunk" | "context" | "add" | "remove" | "binary" | "meta";
 
 export interface DiffLine {
   /** Monotonic index in the original stream — useful as a virtual-list key. */

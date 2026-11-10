@@ -243,7 +243,7 @@ describe("unit test step", () => {
     expect(calls()).toEqual([cached, "bun run test"]);
   });
 
-  it("runs only tests related to the selected inputs, in both Vitest configs", () => {
+  it("runs only tests related to the selected inputs, in every Vitest config", () => {
     const selection = "src/lib/domain/zoom.ts tests/domain/zoom.test.ts";
     const log = runStep(unit.run as string, {
       UNIT_SELECTION: selection,
@@ -255,6 +255,7 @@ describe("unit test step", () => {
     expect(calls()).toEqual([
       cached,
       "bunx vitest related --run --passWithNoTests src/lib/domain/zoom.ts tests/domain/zoom.test.ts",
+      "bunx vitest related --run --passWithNoTests -c vitest.client.config.ts src/lib/domain/zoom.ts tests/domain/zoom.test.ts",
       "bunx vitest related --run --passWithNoTests -c vitest.perf.config.ts src/lib/domain/zoom.ts tests/domain/zoom.test.ts",
     ]);
   });

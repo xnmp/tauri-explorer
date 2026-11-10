@@ -10,5 +10,6 @@ case "${UNIT_SELECTION:?}" in
   *)
     read -ra inputs <<< "$UNIT_SELECTION"
     bunx vitest related --run --passWithNoTests "${inputs[@]}"
+    bunx vitest related --run --passWithNoTests -c vitest.client.config.ts "${inputs[@]}"
     bunx vitest related --run --passWithNoTests -c vitest.perf.config.ts "${inputs[@]}" ;;
 esac

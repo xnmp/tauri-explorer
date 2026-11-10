@@ -553,7 +553,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `commit-panel.ts` — pure state machine + derivations for the git-graph uncommitted-node inline commit panel: stage-status grouping, commit-button enablement/label, ephemeral message-editor transitions (#466).
 - `scm-tree.ts` — fold flat repo file list into a tree.
 - `scm-filter.ts` — fuzzy filter for the SCM sidebar's pending files (#517); `filterScmEntries`/`filterScmSummary` over `fuzzyScorePath`.
-- `scm-sidebar.ts` — SCM sidebar rules: status letter/class, row path split, visual row order for Up/Down (`visibleScmRowPaths`, `nextScmSelection`), commit admission (`canCommitScm`).
+- `scm-sidebar.ts` — SCM sidebar rules: status letter/class, row path split, visual row order for Up/Down (`visibleScmRowPaths`, `nextScmSelection`), commit admission (`canCommitScm`), Discard offers that skip intent-to-add rows (`canDiscardScmRow`, `discardableScmPaths`, #1619).
 - `diff.ts` — unified-diff parser (#55); `visibleDiffLines` / `diffSubtitle` for the preview diff view.
 - `css-tokens.ts` — parse a stylesheet's `--token` table and resolve `var()` the way the browser would, so a unit test can catch a `var(--undefined, fallback)` silently degrading (#499).
 - `file-batch-outcome.ts` — typed successful/failed path receipt and aggregate error formatting for best-effort file mutations.

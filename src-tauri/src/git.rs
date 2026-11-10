@@ -178,8 +178,45 @@ struct Classified {
     merge: Option<GitFileEntry>,
 }
 
-fn classify(entry: &git2::StatusEntry<'_>, workdir: &Path) -> Classified {
-    let _ = workdir; // reserved for future absolute-path mapping
+/// Whether the index entry at `path` is an intent-to-add placeholder
+/// (`git add -N`). libgit2's status has no notion of one and reports it as a
+/// staged addition plus a worktree modification.
+fn is_intent_to_add(index: &git2::Index, path: &str) -> bool {
+    index
+        .get_path(Path::new(path), 0)
+        .is_some_and(|e| e.flags_extended & git2::IndexEntryExtendedFlag::INTENT_TO_ADD.bits() != 0)
+}
+
+/// Whether `git status` pairs staged renames in this repository:
+/// `status.renames`, falling back to `diff.renames`, default on. `copies`
+/// enables rename detection too (libgit2's status cannot report copies).
+fn status_detects_renames(repo: &Repository) -> bool {
+    let Ok(config) = repo.config() else {
+        return true;
+    };
+    for key in ["status.renames", "diff.renames"] {
+        let Ok(entry) = config.get_entry(key) else {
+            continue;
+        };
+        // A bare `renames` key (no `= value`) is boolean true in git.
+        if !entry.has_value() {
+            return true;
+        }
+        let value = String::from_utf8_lossy(entry.value_bytes())
+            .trim()
+            .to_ascii_lowercase();
+        if value == "copies" || value == "copy" {
+            return true;
+        }
+        return git2::Config::parse_bool(value).unwrap_or(true);
+    }
+    true
+}
+
+/// Classify one libgit2 status entry into SCM rows the way `git status`
+/// does, so the native path and the WSL porcelain-v2 path agree (#1619).
+/// `index` must be supplied for entries flagged `INDEX_NEW`.
+fn classify(entry: &git2::StatusEntry<'_>, index: Option<&git2::Index>) -> Classified {
     let flags = entry.status();
     let mut out = Classified::default();
 
@@ -206,8 +243,31 @@ fn classify(entry: &git2::StatusEntry<'_>, workdir: &Path) -> Classified {
         | Status::INDEX_RENAMED
         | Status::INDEX_TYPECHANGE;
 
-    // Untracked: working tree has a new file AND the index has nothing for it.
-    if flags.contains(Status::WT_NEW) && !flags.intersects(index_flags) {
+    // Intent-to-add (`git add -N`): git lists it as an unstaged addition (or
+    // an unstaged deletion once the file is gone) with nothing staged —
+    // porcelain v2 `.A` / `.D`. Its index entry is a placeholder, not content.
+    if flags.contains(Status::INDEX_NEW) {
+        if let (Ok(p), Some(index)) = (entry.path(), index) {
+            if is_intent_to_add(index, p) {
+                let status = if flags.contains(Status::WT_DELETED) {
+                    GitStatusCode::Deleted
+                } else {
+                    GitStatusCode::Added
+                };
+                out.worktree = Some(GitFileEntry {
+                    path: p.replace('\\', "/"),
+                    old_path: None,
+                    status,
+                });
+                return out;
+            }
+        }
+    }
+
+    // Untracked: the working tree has a file the index does not. Usually the
+    // index has nothing for the path at all; after `git rm --cached` it holds
+    // a staged deletion as well, and git lists both rows (`D.` and `?`).
+    if flags.contains(Status::WT_NEW) {
         if let Ok(p) = entry.path() {
             out.untracked = Some(GitFileEntry {
                 path: p.replace('\\', "/"),
@@ -215,7 +275,9 @@ fn classify(entry: &git2::StatusEntry<'_>, workdir: &Path) -> Classified {
                 status: GitStatusCode::Untracked,
             });
         }
-        return out;
+        if !flags.intersects(index_flags) {
+            return out;
+        }
     }
 
     // Staged side (HEAD → index)
@@ -380,14 +442,15 @@ fn collect_status_inner(
     repo: &Repository,
     hide_empty_diffs: bool,
 ) -> Result<GitStatusSummary, AppError> {
-    let workdir = repo
-        .workdir()
+    repo.workdir()
         .ok_or_else(|| AppError::Other("git: bare repository has no working tree".into()))?;
 
     let mut opts = StatusOptions::new();
     opts.include_untracked(true)
         .recurse_untracked_dirs(true)
-        .renames_head_to_index(true)
+        // Staged rename pairing follows the repository config, as `git
+        // status` (and so the WSL delegation) does (#1619).
+        .renames_head_to_index(status_detects_renames(repo))
         // No worktree rename pairing (#1605): `git status` does not pair an
         // unstaged delete with an untracked file either, and a merged row has
         // no correct action. Discarding "new.txt (renamed from old.txt)" sent
@@ -431,15 +494,20 @@ fn collect_status_inner(
         Err(e) => return Err(to_app_err(e)),
     }
 
+    // Intent-to-add detection reads the index, loaded only once some entry
+    // is new to it; `statuses()` has just refreshed it from disk.
+    let mut index: Option<git2::Index> = None;
     for entry in statuses.iter() {
-        let c = classify(&entry, workdir);
+        if index.is_none() && entry.status().contains(Status::INDEX_NEW) {
+            index = Some(repo.index().map_err(to_app_err)?);
+        }
+        let c = classify(&entry, index.as_ref());
         if let Some(m) = c.merge {
             summary.merge.push(m);
             continue;
         }
         if let Some(u) = c.untracked {
             summary.untracked.push(u);
-            continue;
         }
         if let Some(s) = c.staged {
             summary.staged.push(s);
@@ -564,10 +632,8 @@ fn push_v2_entry(p: &mut ParsedV2, xy: [u8; 2], path: String, orig: Option<Strin
             // git pairs worktree renames only for intent-to-add files. Split
             // the pair as `--no-renames` would, so no row is a rename whose
             // discard deletes the destination (#1605): the source is an
-            // unstaged deletion, the destination an unstaged addition. The
-            // libgit2 status reports the intent-to-add destination
-            // differently (staged Added plus a Modified change); that
-            // disagreement is #1619.
+            // unstaged deletion, the destination an unstaged addition — the
+            // rows the libgit2 status gives the same tree (#1619).
             if let (b'R', b'.', Some(orig)) = (y, x, orig) {
                 p.changes.push(GitFileEntry {
                     path: orig,
@@ -3241,8 +3307,8 @@ mod tests {
         /// git pairs a worktree rename only for an intent-to-add file. The WSL
         /// path must split it like `--no-renames` so no row offers a discard
         /// that deletes `new.txt` while `old.txt` stays deleted (#1605). The
-        /// libgit2 status still lists `new.txt` differently (staged Added plus
-        /// a Modified change); that disagreement is tracked in #1619.
+        /// libgit2 path's identical rows are checked by
+        /// `intent_to_add_worktree_rename_splits_identically` (#1619).
         #[test]
         fn worktree_rename_of_intent_to_add_file_splits_into_delete_and_add() {
             let dir = init_repo();
@@ -3427,6 +3493,188 @@ mod tests {
             assert_eq!(sorted(&parsed.staged), sorted(&libgit2.staged));
             assert_eq!(sorted(&parsed.changes), sorted(&libgit2.changes));
             assert_eq!(sorted(&parsed.untracked), sorted(&libgit2.untracked));
+        }
+
+        /// Every row of a summary as `(bucket, path, old_path, status)`,
+        /// sorted, so the two status paths compare exactly.
+        fn rows(
+            s: &GitStatusSummary,
+        ) -> Vec<(&'static str, String, Option<String>, GitStatusCode)> {
+            let mut out = Vec::new();
+            for (bucket, entries) in [
+                ("staged", &s.staged),
+                ("changes", &s.changes),
+                ("untracked", &s.untracked),
+                ("merge", &s.merge),
+            ] {
+                for e in entries {
+                    out.push((bucket, e.path.clone(), e.old_path.clone(), e.status));
+                }
+            }
+            out.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
+            out
+        }
+
+        fn run_git(dir: &Path, args: &[&str]) {
+            let out = Command::new("git")
+                .current_dir(dir)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+
+        /// #1619: the native (libgit2) collector and the WSL path (real git's
+        /// porcelain v2 through `parse_status_v2`) must produce identical rows
+        /// for the same repository, and those rows must be git's own view.
+        fn assert_twin(dir: &Path, expected: &[(&'static str, &str, Option<&str>, GitStatusCode)]) {
+            let native = rows(&collect_status_inner(&open_repo(dir).unwrap(), false).unwrap());
+            let wsl = rows(&summary_from_v2(
+                parse_status_v2(&v2_bytes(dir)),
+                String::new(),
+                "clean".into(),
+            ));
+            let mut expected: Vec<_> = expected
+                .iter()
+                .map(|(b, p, o, s)| (*b, p.to_string(), o.map(str::to_string), *s))
+                .collect();
+            expected.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
+            assert_eq!(wsl, expected, "porcelain v2 rows differ from git's view");
+            assert_eq!(native, expected, "native rows differ from git's view");
+        }
+
+        fn twin_repo(files: &[&str]) -> TempDir {
+            let dir = init_repo();
+            for f in files {
+                write(dir.path(), f, &format!("{f} line one\n{f} line two\n"));
+            }
+            commit_all(dir.path(), "init");
+            dir
+        }
+
+        #[test]
+        fn intent_to_add_is_an_unstaged_addition_on_both_paths() {
+            let dir = twin_repo(&["a.txt"]);
+            write(dir.path(), "new.txt", "fresh\n");
+            run_git(dir.path(), &["add", "-N", "new.txt"]);
+            assert_twin(
+                dir.path(),
+                &[("changes", "new.txt", None, GitStatusCode::Added)],
+            );
+        }
+
+        /// Stage, the intent-to-add row's action, records its content.
+        #[test]
+        fn staging_an_intent_to_add_row_makes_it_a_staged_addition() {
+            let dir = twin_repo(&["a.txt"]);
+            write(dir.path(), "new.txt", "fresh\n");
+            run_git(dir.path(), &["add", "-N", "new.txt"]);
+            stage_paths_inner(&open_repo(dir.path()).unwrap(), &["new.txt".into()]).unwrap();
+            assert_twin(
+                dir.path(),
+                &[("staged", "new.txt", None, GitStatusCode::Added)],
+            );
+        }
+
+        #[test]
+        fn intent_to_add_removed_from_disk_is_an_unstaged_deletion() {
+            let dir = twin_repo(&["a.txt"]);
+            write(dir.path(), "new.txt", "fresh\n");
+            run_git(dir.path(), &["add", "-N", "new.txt"]);
+            fs::remove_file(dir.path().join("new.txt")).unwrap();
+            assert_twin(
+                dir.path(),
+                &[("changes", "new.txt", None, GitStatusCode::Deleted)],
+            );
+        }
+
+        #[test]
+        fn intent_to_add_worktree_rename_splits_identically() {
+            let dir = twin_repo(&["old.txt"]);
+            fs::rename(dir.path().join("old.txt"), dir.path().join("moved.txt")).unwrap();
+            run_git(dir.path(), &["add", "-N", "moved.txt"]);
+            assert_twin(
+                dir.path(),
+                &[
+                    ("changes", "old.txt", None, GitStatusCode::Deleted),
+                    ("changes", "moved.txt", None, GitStatusCode::Added),
+                ],
+            );
+        }
+
+        #[test]
+        fn rm_cached_is_a_staged_deletion_plus_an_untracked_file() {
+            let dir = twin_repo(&["a.txt", "b.txt"]);
+            run_git(dir.path(), &["rm", "-q", "--cached", "b.txt"]);
+            assert_twin(
+                dir.path(),
+                &[
+                    ("staged", "b.txt", None, GitStatusCode::Deleted),
+                    ("untracked", "b.txt", None, GitStatusCode::Untracked),
+                ],
+            );
+        }
+
+        #[test]
+        fn staged_renames_follow_status_and_diff_renames_config() {
+            let dir = twin_repo(&["a.txt", "b.txt"]);
+            run_git(dir.path(), &["mv", "a.txt", "renamed.txt"]);
+            let split = [
+                ("staged", "a.txt", None, GitStatusCode::Deleted),
+                ("staged", "renamed.txt", None, GitStatusCode::Added),
+            ];
+            let paired = [(
+                "staged",
+                "renamed.txt",
+                Some("a.txt"),
+                GitStatusCode::Renamed,
+            )];
+
+            // Default: renames detected.
+            assert_twin(dir.path(), &paired);
+            run_git(dir.path(), &["config", "status.renames", "false"]);
+            assert_twin(dir.path(), &split);
+            // status.renames falls back to diff.renames …
+            run_git(dir.path(), &["config", "--unset", "status.renames"]);
+            run_git(dir.path(), &["config", "diff.renames", "false"]);
+            assert_twin(dir.path(), &split);
+            // … and overrides it when set.
+            run_git(dir.path(), &["config", "status.renames", "true"]);
+            assert_twin(dir.path(), &paired);
+            run_git(dir.path(), &["config", "status.renames", "copies"]);
+            assert_twin(dir.path(), &paired);
+        }
+
+        #[test]
+        fn mixed_tree_rows_agree_on_both_paths() {
+            let dir = twin_repo(&["s.txt", "w.txt", "d.txt", "sw.txt"]);
+            write(dir.path(), "s.txt", "staged edit\n");
+            write(dir.path(), "sw.txt", "staged edit\n");
+            run_git(dir.path(), &["add", "s.txt", "sw.txt"]);
+            write(dir.path(), "sw.txt", "then unstaged edit\n");
+            write(dir.path(), "w.txt", "unstaged edit\n");
+            fs::remove_file(dir.path().join("d.txt")).unwrap();
+            write(dir.path(), "nested/dir/u.txt", "untracked\n");
+            assert_twin(
+                dir.path(),
+                &[
+                    ("staged", "s.txt", None, GitStatusCode::Modified),
+                    ("staged", "sw.txt", None, GitStatusCode::Modified),
+                    ("changes", "sw.txt", None, GitStatusCode::Modified),
+                    ("changes", "w.txt", None, GitStatusCode::Modified),
+                    ("changes", "d.txt", None, GitStatusCode::Deleted),
+                    (
+                        "untracked",
+                        "nested/dir/u.txt",
+                        None,
+                        GitStatusCode::Untracked,
+                    ),
+                ],
+            );
         }
 
         #[test]

@@ -35,7 +35,9 @@
 //! libgit2 applies the built-in conversions (eol, `ident`) but not external
 //! filter drivers, so a restored file that `git checkout` would smudge (Git
 //! LFS, #1616) is written by the git CLI instead, with literal pathspecs,
-//! after the same re-checks.
+//! after the same re-checks. Everything else runs under our `index.lock`
+//! (#1617); the CLI, which takes that lock itself, runs after our index is
+//! committed and the lock released, still within this process's turn.
 
 use std::collections::BTreeSet;
 use std::ffi::OsStr;
@@ -46,7 +48,8 @@ use std::path::{Path, PathBuf};
 use git2::{Index, Repository};
 
 use crate::error::AppError;
-use crate::git_common::{exact_case_index, literal_repo_path, to_app_err, LiteralRepoPath};
+use crate::git_common::{literal_repo_path, to_app_err, LiteralRepoPath};
+use crate::git_index_lock::{with_locked_index_mapped, IndexCase, IndexUpdate};
 use crate::git_index_reset::{head_tree, index_differs_from_tree};
 
 const GITLINK_MODE: u32 = 0o160000;
@@ -483,15 +486,15 @@ fn not_writable(target: &str, dir: &Path, workdir: &Path) -> AppError {
 
 /// Refuse the whole batch before any change when a planned effect is already
 /// bound to fail: a directory it must modify is not writable, a restore path
-/// no longer passes its checks, or another git process holds the index.
-fn preflight(repo: &Repository, workdir: &Path, plans: &[Plan<'_>]) -> Result<(), AppError> {
+/// no longer passes its checks. (Another git process holding the index is
+/// refused earlier still: the whole batch runs under `index.lock`, #1617.)
+fn preflight(workdir: &Path, plans: &[Plan<'_>]) -> Result<(), AppError> {
     let parent_of = |rel: &str| {
         Path::new(rel)
             .parent()
             .map(|p| workdir.join(p))
             .unwrap_or_else(|| workdir.to_path_buf())
     };
-    let mut restores = false;
     for plan in plans {
         match *plan {
             Plan::Remove { path, kind } => {
@@ -519,7 +522,6 @@ fn preflight(repo: &Repository, workdir: &Path, plans: &[Plan<'_>]) -> Result<()
                 obstacle,
                 gitlink,
             } => {
-                restores = true;
                 check_ancestors(workdir, path)?;
                 if gitlink {
                     continue;
@@ -552,13 +554,6 @@ fn preflight(repo: &Repository, workdir: &Path, plans: &[Plan<'_>]) -> Result<()
             }
         }
     }
-    if restores && repo.path().join("index.lock").exists() {
-        return Err(AppError::Other(
-            "cannot discard: another git process holds the index (.git/index.lock); \
-             nothing was changed. Retry when it finishes, or remove a stale lock."
-                .into(),
-        ));
-    }
     Ok(())
 }
 
@@ -581,17 +576,19 @@ pub(crate) fn discard_paths(
     paths: &[String],
     force: bool,
 ) -> Result<(), AppError> {
-    discard_paths_with(repo, paths, force, || {})
+    discard_paths_with(repo, paths, force, || {}, || {})
 }
 
 /// `after_planning` runs once every path is validated, planned and
 /// pre-flighted, before the first mutation: tests use it to change the work
-/// tree in that window.
+/// tree in that window. `before_write` runs after the effects, before the
+/// updated index is written.
 fn discard_paths_with(
     repo: &Repository,
     paths: &[String],
     force: bool,
     after_planning: impl FnOnce(),
+    before_write: impl FnOnce(),
 ) -> Result<(), AppError> {
     let requested = paths
         .iter()
@@ -602,98 +599,131 @@ fn discard_paths_with(
         .ok_or_else(|| AppError::Other("git: bare repository has no working tree".into()))?
         .to_path_buf();
 
-    let mut index = exact_case_index(repo)?;
-    // Checkout uses the repository's index; give it this exact-case one, or
-    // under `core.ignorecase` libgit2's checkout of `B` also rewrites (or
-    // deletes) a tracked `b`. Only this `Repository` handle is affected.
-    repo.set_index(&mut index).map_err(to_app_err)?;
-    // Conflicted paths have no stage-0 entry, so they would otherwise look
-    // untracked and be deleted. Discarding a conflict has no single correct
-    // resolution: the user resolves it or aborts the operation.
-    for &LiteralRepoPath { path: p, .. } in &requested {
-        if (1..=3).any(|stage| index.get_path(Path::new(p), stage).is_some()) {
-            return Err(AppError::Other(format!(
-                "cannot discard '{p}': it has an unresolved merge conflict. \
-                 Resolve the conflict (stage the file) or abort the operation."
-            )));
-        }
-    }
-    if !force {
-        let tree = head_tree(repo)?;
-        for &target in &requested {
-            if index_differs_from_tree(repo, tree.as_ref(), &index, target)? {
+    // The whole batch runs under `index.lock` (#1617): the index it plans
+    // from is the one checkout rewrites, and a concurrent git command fails
+    // rather than being overwritten. Checkout uses the repository's index,
+    // which `with_locked_index_mapped` makes this exact-case one; otherwise under
+    // `core.ignorecase` libgit2's checkout of `B` also rewrites (or deletes) a
+    // tracked `b`. Only this `Repository` handle is affected.
+    let update = |index: &mut git2::Index| {
+        // Conflicted paths have no stage-0 entry, so they would otherwise look
+        // untracked and be deleted. Discarding a conflict has no single correct
+        // resolution: the user resolves it or aborts the operation.
+        for &LiteralRepoPath { path: p, .. } in &requested {
+            if (1..=3).any(|stage| index.get_path(Path::new(p), stage).is_some()) {
                 return Err(AppError::Other(format!(
-                    "refusing to discard '{}' with staged changes; pass force=true to override",
-                    target.path
+                    "cannot discard '{p}': it has an unresolved merge conflict. \
+                     Resolve the conflict (stage the file) or abort the operation."
                 )));
             }
         }
-    }
-
-    let mut plans = Vec::new();
-    for &target in &requested {
-        plans.extend(plan_one(repo, &index, &workdir, target)?);
-    }
-    preflight(repo, &workdir, &plans)?;
-    after_planning();
-
-    let mut removed = 0;
-    for plan in &plans {
-        if let Plan::Remove { path, kind } = plan {
-            remove_untracked(repo, &workdir, path, *kind)
-                .map_err(|e| effect_error(path, removed, e))?;
-            removed += 1;
+        if !force {
+            let tree = head_tree(repo)?;
+            for &target in &requested {
+                if index_differs_from_tree(repo, tree.as_ref(), index, target)? {
+                    return Err(AppError::Other(format!(
+                        "refusing to discard '{}' with staged changes; pass force=true to override",
+                        target.path
+                    )));
+                }
+            }
         }
-    }
-    let mut restore: Vec<&str> = Vec::new();
-    for plan in &plans {
-        if let Plan::Restore {
-            path,
-            obstacle,
-            gitlink,
-        } = plan
-        {
-            clear_obstacle(&workdir, path, *obstacle)
-                .map_err(|e| effect_error(path, removed, e))?;
-            if *obstacle != Obstacle::None {
+
+        let mut plans = Vec::new();
+        for &target in &requested {
+            plans.extend(plan_one(repo, index, &workdir, target)?);
+        }
+        preflight(&workdir, &plans)?;
+        after_planning();
+
+        let mut removed = 0;
+        for plan in &plans {
+            if let Plan::Remove { path, kind } = plan {
+                remove_untracked(repo, &workdir, path, *kind)
+                    .map_err(|e| effect_error(path, removed, e))?;
                 removed += 1;
             }
-            recheck_restore(&workdir, path, *gitlink)
-                .map_err(|e| effect_error(path, removed, e))?;
-            restore.push(path);
         }
-    }
-    let (filtered, restore): (Vec<&str>, Vec<&str>) = {
-        let tree = head_tree(repo)?;
-        let mut filtered = Vec::new();
-        let mut plain = Vec::new();
-        for p in restore {
-            if runs_filter_driver(repo, tree.as_ref(), p)? {
-                filtered.push(p);
-            } else {
-                plain.push(p);
+        let mut restore: Vec<&str> = Vec::new();
+        for plan in &plans {
+            if let Plan::Restore {
+                path,
+                obstacle,
+                gitlink,
+            } = plan
+            {
+                clear_obstacle(&workdir, path, *obstacle)
+                    .map_err(|e| effect_error(path, removed, e))?;
+                if *obstacle != Obstacle::None {
+                    removed += 1;
+                }
+                recheck_restore(&workdir, path, *gitlink)
+                    .map_err(|e| effect_error(path, removed, e))?;
+                restore.push(path);
             }
         }
-        (filtered, plain)
-    };
-    if !restore.is_empty() {
-        let mut co = git2::build::CheckoutBuilder::new();
-        co.force();
-        // User-selected names are literal files, never globs (#1589).
-        co.disable_pathspec_match(true);
-        for p in &restore {
-            co.path(*p);
+        let (filtered, restore): (Vec<&str>, Vec<&str>) = {
+            let tree = head_tree(repo)?;
+            let mut filtered = Vec::new();
+            let mut plain = Vec::new();
+            for p in restore {
+                if runs_filter_driver(repo, tree.as_ref(), p)? {
+                    filtered.push(p);
+                } else {
+                    plain.push(p);
+                }
+            }
+            (filtered, plain)
+        };
+        if !restore.is_empty() {
+            let mut co = git2::build::CheckoutBuilder::new();
+            co.force();
+            // User-selected names are literal files, never globs (#1589).
+            co.disable_pathspec_match(true);
+            for p in &restore {
+                co.path(*p);
+            }
+            repo.checkout_head(Some(&mut co))
+                .map_err(|e| effect_error(&restore.join("', '"), removed, to_app_err(e)))?;
         }
-        repo.checkout_head(Some(&mut co))
-            .map_err(|e| effect_error(&restore.join("', '"), removed, to_app_err(e)))?;
-    }
-    // After libgit2's checkout, which writes its in-memory index over the
-    // file: git then updates the on-disk index for these paths itself.
-    if !filtered.is_empty() {
-        checkout_with_git_cli(&workdir, &filtered)
-            .map_err(|e| effect_error(&filtered.join("', '"), removed, e))?;
-    }
-    Ok(())
+        let update = if restore.is_empty() {
+            IndexUpdate::Unchanged
+        } else {
+            IndexUpdate::Write
+        };
+        let filtered: Vec<String> = filtered.into_iter().map(str::to_owned).collect();
+        Ok(((restore.join("', '"), removed, filtered), update))
+    };
+    with_locked_index_mapped(
+        repo,
+        IndexCase::Exact,
+        update,
+        before_write,
+        // Installing the index happens after the checkout: report it as a
+        // partial discard, like any other failure after an effect.
+        |(restored, removed, _), e| {
+            effect_error(
+                restored,
+                *removed,
+                AppError::Other(format!(
+                    "the work tree was restored, but the index could not be updated: {e}"
+                )),
+            )
+        },
+        // Filtered paths are restored by `git checkout`, which takes
+        // `index.lock` itself: it runs once our index is committed and the
+        // lock released, never while we hold it, and its own index update
+        // for these paths (which ours left alone) is never overwritten.
+        |(_, removed, filtered)| {
+            if filtered.is_empty() {
+                return Ok(());
+            }
+            let filtered: Vec<&str> = filtered.iter().map(String::as_str).collect();
+            checkout_with_git_cli(&workdir, &filtered)
+                .map_err(|e| effect_error(&filtered.join("', '"), *removed, e))
+        },
+    )
+    .map(|_| ())
 }
 
 /// Whether `git checkout` writes `rel` through an external filter driver
@@ -1058,7 +1088,36 @@ mod tests {
     ) -> Result<(), AppError> {
         let repo = crate::git_common::open_repo(dir).unwrap();
         let paths: Vec<String> = paths.iter().map(|p| p.to_string()).collect();
-        super::discard_paths_with(&repo, &paths, false, after_planning)
+        super::discard_paths_with(&repo, &paths, false, after_planning, || {})
+    }
+
+    /// A failure to install the index after checkout restored the work tree
+    /// is reported as that partial discard, naming the path (#1617 review).
+    #[test]
+    fn a_failure_to_install_the_index_after_checkout_names_what_happened() {
+        let d = repo(&[("a", "1\n")]);
+        git(d.path(), &["config", "core.autocrlf", "false"]);
+        write(d.path(), "a", "EDIT\n");
+        let index_path = d.path().join(".git/index");
+        let repo = crate::git_common::open_repo(d.path()).unwrap();
+        let err = super::discard_paths_with(
+            &repo,
+            &["a".to_string()],
+            false,
+            || {},
+            // A non-empty directory cannot be replaced by a rename.
+            || {
+                fs::remove_file(&index_path).unwrap();
+                fs::create_dir(&index_path).unwrap();
+                fs::write(index_path.join("x"), "").unwrap();
+            },
+        )
+        .unwrap_err();
+        let err = message(err);
+        assert!(err.contains("cannot discard 'a'"), "{err}");
+        assert!(err.contains("work tree was restored"), "{err}");
+        assert_eq!(read(&d.path().join("a")), "1\n");
+        crate::git_index_lock::tests::assert_no_leftovers(&d.path().join(".git"));
     }
 
     /// `core.ignorecase` must not turn a Remove of the untracked `A` into a
@@ -1336,6 +1395,46 @@ mod tests {
         assert!(err.contains("index.lock"), "{err}");
         assert_eq!(read(&d.path().join("u.txt")), "U\n");
         assert_eq!(read(&d.path().join("a")), "EDIT\n");
+    }
+
+    /// A `git add` run while a discard is between planning and writing the
+    /// index must never exit 0 and then vanish (#1617): the discard holds
+    /// `index.lock`, so git refuses and the restore still lands.
+    #[test]
+    fn a_concurrent_git_add_during_discard_is_never_silently_lost() {
+        let d = repo(&[("a", "1\n")]);
+        git(d.path(), &["config", "core.autocrlf", "false"]);
+        write(d.path(), "a", "EDIT\n");
+        write(d.path(), "concurrent.txt", "c\n");
+        let mut concurrent = None;
+        discard_racing(d.path(), &["a"], || {
+            concurrent = Some(
+                Command::new("git")
+                    .current_dir(d.path())
+                    .args(["add", "concurrent.txt"])
+                    .output()
+                    .unwrap(),
+            );
+        })
+        .unwrap();
+        let concurrent = concurrent.unwrap();
+        let tracked = Command::new("git")
+            .current_dir(d.path())
+            .args(["ls-files"])
+            .output()
+            .unwrap();
+        let tracked = String::from_utf8_lossy(&tracked.stdout).into_owned();
+        assert!(
+            !concurrent.status.success() || tracked.lines().any(|l| l == "concurrent.txt"),
+            "git add exited 0 but concurrent.txt was lost:\n{tracked}"
+        );
+        assert!(
+            String::from_utf8_lossy(&concurrent.stderr).contains("index.lock"),
+            "{concurrent:?}"
+        );
+        assert_eq!(read(&d.path().join("a")), "1\n");
+        crate::git_index_lock::tests::assert_no_leftovers(&d.path().join(".git"));
+        git(d.path(), &["add", "concurrent.txt"]);
     }
 
     /// A failure after earlier removals names the failing path and how many

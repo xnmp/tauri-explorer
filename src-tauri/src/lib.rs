@@ -30,6 +30,7 @@ mod git_avatar;
 pub mod git_branch_status;
 mod git_common;
 mod git_discard;
+mod git_index_lock;
 mod git_index_reset;
 pub mod git_log;
 #[cfg(all(target_os = "linux", feature = "e2e-renderer-recovery"))]

@@ -24,7 +24,8 @@ use std::path::Path;
 use git2::{IndexEntry, IndexEntryExtendedFlag, IndexTime, ObjectType, Oid, Repository, Tree};
 
 use crate::error::AppError;
-use crate::git_common::{exact_case_index, literal_repo_path, to_app_err, LiteralRepoPath};
+use crate::git_common::{literal_repo_path, to_app_err, LiteralRepoPath};
+use crate::git_index_lock::{with_locked_index_hooked, IndexCase, IndexUpdate};
 
 const GITLINK_MODE: u32 = 0o160000;
 
@@ -142,7 +143,7 @@ fn index_paths_under(
             Err(e) if e.code() == git2::ErrorCode::NotFound => return Ok(()),
             Err(e) => return Err(to_app_err(e)),
         };
-    // The index is exact-case (`exact_case_index`), so it is sorted bytewise
+    // The index is exact-case (`IndexCase::Exact`), so it is sorted bytewise
     // like git's and the descendants form one exact run.
     let prefix = prefix.as_bytes();
     for pos in start..index.len() {
@@ -156,7 +157,7 @@ fn index_paths_under(
 }
 
 /// The entry at exactly `path` and `stage`. The index is opened exact-case
-/// (`exact_case_index`); the byte comparison keeps that an invariant here.
+/// (`IndexCase::Exact`); the byte comparison keeps that an invariant here.
 fn exact_entry(index: &git2::Index, path: &[u8], stage: i32) -> Option<IndexEntry> {
     let entry = index.get_path(index_path(path).ok()?, stage)?;
     (entry.path == path).then_some(entry)
@@ -259,22 +260,49 @@ pub(crate) fn reset_index_paths(
     tree: Option<&Tree<'_>>,
     paths: &[String],
 ) -> Result<(), AppError> {
+    reset_index_paths_with(repo, tree, paths, || {})
+}
+
+/// `before_write` runs after the index is read and planned, just before the
+/// write: tests run a concurrent `git add` in that window (#1617).
+fn reset_index_paths_with(
+    repo: &Repository,
+    tree: Option<&Tree<'_>>,
+    paths: &[String],
+    before_write: impl FnOnce(),
+) -> Result<(), AppError> {
     let targets = paths
         .iter()
         .map(|p| literal_repo_path(p))
         .collect::<Result<BTreeSet<LiteralRepoPath<'_>>, _>>()?;
-    let mut index = exact_case_index(repo)?;
-    let ResetPlan {
-        removals,
-        additions,
-    } = plan_reset(repo, tree, &index, &targets)?;
-    if removals.is_empty() && additions.is_empty() {
-        return Ok(());
-    }
+    // Read, plan and write under one `index.lock` (#1617): a concurrent git
+    // command fails instead of being overwritten.
+    with_locked_index_hooked(
+        repo,
+        IndexCase::Exact,
+        |index| {
+            let ResetPlan {
+                removals,
+                additions,
+            } = plan_reset(repo, tree, index, &targets)?;
+            if removals.is_empty() && additions.is_empty() {
+                return Ok(((), IndexUpdate::Unchanged));
+            }
+            apply_plan(index, removals, additions)?;
+            Ok(((), IndexUpdate::Write))
+        },
+        before_write,
+    )
+}
 
+fn apply_plan(
+    index: &mut git2::Index,
+    removals: Vec<Vec<u8>>,
+    additions: Vec<(Vec<u8>, Leaf, bool)>,
+) -> Result<(), AppError> {
     for path in &removals {
         for stage in 0..=3 {
-            if exact_entry(&index, path, stage).is_some() {
+            if exact_entry(index, path, stage).is_some() {
                 index.remove(index_path(path)?, stage).map_err(to_app_err)?;
             }
         }
@@ -303,12 +331,9 @@ pub(crate) fn reset_index_paths(
             .map_err(to_app_err)?;
     }
     // libgit2 smudges racily clean entries (`truncate_racily_clean`) only
-    // when writing an index that belongs to a repository; an ownerless one
-    // would leave a same-size, same-mtime edit invisible to `git status`.
-    // Installing it keeps its exact-case capability (caps are read only when
-    // the repository loads its own index).
-    repo.set_index(&mut index).map_err(to_app_err)?;
-    index.write().map_err(to_app_err)
+    // when writing an index that belongs to a repository; `with_locked_index_hooked`
+    // installs it as the repository's index, keeping it exact-case.
+    Ok(())
 }
 
 #[cfg(test)]
@@ -430,6 +455,53 @@ mod tests {
         let file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
         file.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs))
             .unwrap();
+    }
+
+    /// A `git add` that runs while an unstage is between reading and writing
+    /// the index must never exit 0 and then vanish (#1617): the unstage holds
+    /// `index.lock` for its whole read-plan-write, so git refuses instead.
+    #[test]
+    fn a_concurrent_git_add_during_unstage_is_never_silently_lost() {
+        let d = TempDir::new().unwrap();
+        base(d.path());
+        git(d.path(), &["config", "core.autocrlf", "false"]);
+        write(d.path(), "a.txt", "A2\n");
+        git(d.path(), &["add", "a.txt"]);
+        write(d.path(), "concurrent.txt", "c\n");
+        let repo = git2::Repository::open(d.path()).unwrap();
+        let tree = super::head_tree(&repo).unwrap();
+        let mut concurrent = None;
+        super::reset_index_paths_with(&repo, tree.as_ref(), &["a.txt".into()], || {
+            concurrent = Some(
+                Command::new("git")
+                    .current_dir(d.path())
+                    .args(["add", "concurrent.txt"])
+                    .output()
+                    .unwrap(),
+            );
+        })
+        .unwrap();
+        let concurrent = concurrent.unwrap();
+        let staged = git(d.path(), &["diff", "--cached", "--name-only"]);
+        let tracked = git(d.path(), &["ls-files"]);
+        assert!(!staged.lines().any(|l| l == "a.txt"), "a.txt still staged");
+        if concurrent.status.success() {
+            assert!(
+                tracked.lines().any(|l| l == "concurrent.txt"),
+                "git add exited 0 but concurrent.txt was lost:\n{tracked}"
+            );
+        }
+        assert!(
+            !concurrent.status.success()
+                && String::from_utf8_lossy(&concurrent.stderr).contains("index.lock"),
+            "git add should be refused while the index is locked: {concurrent:?}"
+        );
+        // The lock is released afterwards and no private file is left over.
+        git(d.path(), &["add", "concurrent.txt"]);
+        assert!(git(d.path(), &["ls-files"])
+            .lines()
+            .any(|l| l == "concurrent.txt"));
+        super::super::git_index_lock::tests::assert_no_leftovers(&d.path().join(".git"));
     }
 
     /// An entry whose stat data cannot prove it clean (mtime not older than

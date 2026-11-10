@@ -806,6 +806,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/test_support/recovery_private_storage.rs` — real filesystem policy outcomes for retained files, hardlinks, retirement and widened permissions.
 - `src-tauri/test_support/native_directory_contract.rs` — cross-platform real filesystem contracts for retained anchors, exclusive creation/rename, removal kinds, existence and invalid-name rejection.
 - `src-tauri/test_support/preview_rendition.rs` — rendition sizing, encoding (alpha → PNG, ICC, 4:4:4, no halos), EXIF orientation, originals kept, cache keying, single decode under concurrency, and the asset scope serving a dot-directory cache (#1054).
+- `src-tauri/test_support/warm_pool_state_test.rs` — `PoolState` lifecycle contracts plus a seeded differential test against the previous five-collection model kept as an executable reference (#1575).
 - `src-tauri/test_support/wayland_data_control_compositor.rs` — in-process `wayland-server` compositor with a seat and both data-control protocols; drives the Wayland Cut owner over the real wire protocol and can serve real `wl-clipboard` clients on a socket (#927).
 - `src-tauri/test_support/case_only_rename.rs` — runtime case-sensitivity contracts for rename, move, ordered-session conflicts and physical identity, shared by native-directory and recovery admission tests.
 

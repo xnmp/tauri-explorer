@@ -1462,23 +1462,40 @@ pub async fn cancel_git_status(task_id: u64) -> Result<(), AppError> {
 }
 
 fn stage_paths_inner(repo: &Repository, paths: &[String]) -> Result<(), AppError> {
-    let mut index = repo.index().map_err(to_app_err)?;
+    stage_paths_with(repo, paths, || {})
+}
+
+/// `before_write` runs after the index is updated in memory, before it is
+/// written: tests run a concurrent `git add` there (#1617).
+fn stage_paths_with(
+    repo: &Repository,
+    paths: &[String],
+    before_write: impl FnOnce(),
+) -> Result<(), AppError> {
     let workdir = repo
         .workdir()
         .ok_or_else(|| AppError::Other("git: bare repository has no working tree".into()))?;
-    for p in paths {
-        let pp = Path::new(p);
-        // Deleted files: remove from index. Others: add.
-        let abs = workdir.join(pp);
-        // `symlink_metadata`: a dangling symlink is a real entry to stage.
-        if abs.symlink_metadata().is_ok() {
-            index.add_path(pp).map_err(to_app_err)?;
-        } else {
-            index.remove_path(pp).map_err(to_app_err)?;
-        }
-    }
-    index.write().map_err(to_app_err)?;
-    Ok(())
+    // Read, update and write under one `index.lock` (#1617), with the
+    // repository's own case handling as `Repository::index()` gives it.
+    crate::git_index_lock::with_locked_index_hooked(
+        repo,
+        crate::git_index_lock::IndexCase::Repository,
+        |index| {
+            for p in paths {
+                let pp = Path::new(p);
+                // Deleted files: remove from index. Others: add.
+                let abs = workdir.join(pp);
+                // `symlink_metadata`: a dangling symlink is a real entry to stage.
+                if abs.symlink_metadata().is_ok() {
+                    index.add_path(pp).map_err(to_app_err)?;
+                } else {
+                    index.remove_path(pp).map_err(to_app_err)?;
+                }
+            }
+            Ok(((), crate::git_index_lock::IndexUpdate::Write))
+        },
+        before_write,
+    )
 }
 
 #[tauri::command]
@@ -2342,6 +2359,46 @@ mod tests {
         assert_eq!(head.author().name(), Ok("Test"));
         assert_eq!(head.author().email(), Ok("t@x"));
         assert_eq!(head.committer().name(), Ok("Test User"));
+    }
+
+    /// A `git add` run while staging is between reading and writing the
+    /// index must never exit 0 and then vanish (#1617).
+    #[test]
+    fn a_concurrent_git_add_during_staging_is_never_silently_lost() {
+        let dir = init_repo();
+        write(dir.path(), "a.txt", "v1\n");
+        commit_all(dir.path(), "init");
+        write(dir.path(), "a.txt", "v2\n");
+        write(dir.path(), "concurrent.txt", "c\n");
+        let repo = Repository::open(dir.path()).unwrap();
+        let mut concurrent = None;
+        stage_paths_with(&repo, &["a.txt".into()], || {
+            concurrent = Some(
+                Command::new("git")
+                    .current_dir(dir.path())
+                    .args(["add", "concurrent.txt"])
+                    .output()
+                    .unwrap(),
+            );
+        })
+        .unwrap();
+        let concurrent = concurrent.unwrap();
+        let index = Repository::open(dir.path()).unwrap().index().unwrap();
+        assert!(
+            !concurrent.status.success()
+                || index.get_path(Path::new("concurrent.txt"), 0).is_some(),
+            "git add exited 0 but concurrent.txt was lost"
+        );
+        assert!(
+            String::from_utf8_lossy(&concurrent.stderr).contains("index.lock"),
+            "{concurrent:?}"
+        );
+        let a = index.get_path(Path::new("a.txt"), 0).unwrap();
+        assert_eq!(
+            a.id,
+            git2::Oid::hash_object(git2::ObjectType::Blob, b"v2\n").unwrap()
+        );
+        crate::git_index_lock::tests::assert_no_leftovers(&dir.path().join(".git"));
     }
 
     #[cfg(unix)]

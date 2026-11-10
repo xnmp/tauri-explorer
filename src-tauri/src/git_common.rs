@@ -121,19 +121,6 @@ fn names_git_metadata(segment: &str) -> bool {
     before_stream.bytes().all(|b| b == b'.' || b == b' ')
 }
 
-/// The repository's index, opened so that every lookup, removal and insertion
-/// is exact-case.
-///
-/// `Repository::index()` inherits `core.ignorecase`; libgit2 then finds,
-/// removes and replaces entries without regard to case, so working on `A`
-/// silently touched a tracked `a` (#1589 review). git itself matches literal
-/// paths case-sensitively and only folds case when talking to the filesystem.
-/// An index opened by path has no owning repository and so no ignore-case
-/// capability; `write` still sorts and writes it exactly as git expects.
-pub(crate) fn exact_case_index(repo: &Repository) -> Result<git2::Index, AppError> {
-    git2::Index::open(&repo.path().join("index")).map_err(to_app_err)
-}
-
 #[cfg(test)]
 mod tests {
     use super::literal_repo_path;

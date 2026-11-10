@@ -705,7 +705,7 @@ mod tests {
             "zeta.css",
             "Alpha.css",
             "mid.css",
-            "alpha.css",
+            "beta.css",
             "b-2.css",
             "b-10.css",
         ];

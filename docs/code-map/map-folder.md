@@ -589,7 +589,6 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `image-viewer-zoom.ts` — pure fullscreen image zoom/pan math: clamped zoom, cursor-anchored zoom, pan, transform and the fullscreen key map (#219, #236, #1033).
 - `image-crop.ts` — full-resolution crop bounds and measured pointer mapping; fixed ICNS canvas projection with transparent padding (#681, crop UI/save implementation pending).
 - `preview-pane-position.ts` — validate/cycle preview dock edge right/bottom/top, plus "auto" mode/heuristic (`resolveAutoDockPosition`, #460, #467).
-- `nerd-icons.ts` — legacy Nerd Font glyph mappings.
 - `special-folders.ts` — special folder names (src, tests, node_modules, …) → kind, and per-icon-pack corner badge (sprite symbol, badge hue/paint, bottom-left badge geometry clear of the Tiles caret, Git status and symlink badges; #1527); loaded lazily (#1491). `specialFolderIconEntry` gives by-name surfaces a synthetic directory entry (#1499).
 - `file-icon-identity.ts` — pure file-icon identity and paint-category resolution, including filename precedence, aliases and folder identity.
 - `icon-themes.ts` — icon pack types and explicit-choice versus color-theme-suggestion policy.

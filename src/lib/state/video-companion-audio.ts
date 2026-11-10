@@ -21,7 +21,7 @@ export interface MediaClock extends EventTarget {
 }
 
 /** Larger drifts are corrected by seeking the audio; smaller ones are inaudible. */
-export const MAX_AUDIO_DRIFT_SECONDS = 0.25;
+const MAX_AUDIO_DRIFT_SECONDS = 0.25;
 
 /**
  * Only WebKitGTK (Linux) needs the fallback. Engines without the

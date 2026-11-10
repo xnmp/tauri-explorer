@@ -1,8 +1,8 @@
 /** Native and cloud drive discovery. */
 import { invoke, extractError, type ApiResult } from "./common";
 
-export type DriveKind = "fixed" | "removable" | "network" | "cloud" | "unknown";
-export type CloudProvider = "googledrive" | "wsl";
+type DriveKind = "fixed" | "removable" | "network" | "cloud" | "unknown";
+type CloudProvider = "googledrive" | "wsl";
 export interface Drive {
   name: string;
   /** Mount root and only navigable route; null for an unmounted volume. */

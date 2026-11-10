@@ -176,13 +176,13 @@ function normalizePersistedTab(tab: unknown): PersistedWindowTab | null {
 
 // ── v2 (per-pane strips, #140) ───────────────────────────────────────────
 
-export interface PersistedPaneTab {
+interface PersistedPaneTab {
   id: string;
   path: string;
   kind?: "explorer" | "git-graph";
 }
 
-export interface PersistedPaneTabs {
+interface PersistedPaneTabs {
   tabs: PersistedPaneTab[];
   activeTabId: string | null;
 }

@@ -17,9 +17,6 @@ pub struct StartupClock {
     pub epoch_ms: f64,
 }
 
-/// Stores the working directory from which the app was launched.
-pub struct LaunchCwd(pub String);
-
 /// Reap a launcher child asynchronously so opening a native surface does not
 /// accumulate zombies on Unix.
 #[cfg(not(target_os = "linux"))]
@@ -289,12 +286,6 @@ pub async fn open_recycle_bin() -> Result<(), AppError> {
         })
         .await
     }
-}
-
-/// Get the directory the app was launched from.
-#[tauri::command]
-pub async fn get_launch_cwd(state: tauri::State<'_, LaunchCwd>) -> Result<String, AppError> {
-    Ok(state.0.clone())
 }
 
 /// True when the launch cwd is a launcher artifact rather than a place the

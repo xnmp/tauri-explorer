@@ -6,7 +6,7 @@
  * injected so tests can drive synthetic frame timelines.
  */
 
-export interface ScrollJankReport {
+interface ScrollJankReport {
   /** Total frames observed (gaps measured between consecutive frames). */
   frames: number;
   /** Frames whose gap from the previous frame exceeded `longFrameMs`. */

@@ -79,7 +79,6 @@ export const systemCommands: Record<string, CommandHandler> = {
   start_file_drag: () => { throw "Native file dragging is unavailable in the browser"; },
   end_html5_file_drag: () => undefined,
   get_home_directory: () => "/home/user",
-  get_launch_cwd: () => "/home/user",
   list_drives: () => {
     const control = getMockControl();
     const drives = control.linuxVolumes ?? mockDrives;
@@ -260,8 +259,6 @@ export const systemCommands: Record<string, CommandHandler> = {
   // App-data open history (#1525): shared by the page's windows and reloads.
   read_open_history: () => localStorage.getItem(MOCK_LOCAL_KEYS.openHistory) ?? "",
   write_open_history: (args) => { localStorage.setItem(MOCK_LOCAL_KEYS.openHistory, args.data as string); },
-
-  get_config_dir: () => "/home/user/.config/tauri-explorer",
 
   // ----- File-picker portal -----
 

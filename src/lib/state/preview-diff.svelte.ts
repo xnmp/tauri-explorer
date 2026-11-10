@@ -124,5 +124,3 @@ export function createPreviewDiff(deps: PreviewDiffDeps) {
     load,
   };
 }
-
-export type PreviewDiff = ReturnType<typeof createPreviewDiff>;

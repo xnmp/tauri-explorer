@@ -69,7 +69,7 @@ Cross-cutting truth: most features flow **component → store (`src/lib/state`) 
 
 ## 9. Thumbnail / preview pipeline change
 1. `src/lib/components/ThumbnailImage.svelte` — img lifecycle, lazy load, error/fallback.
-2. `src/lib/api/thumbnails.ts` — `getThumbnail`/`getThumbnailData`/`getMicroThumbnail`/`getVideoThumbnailData`/`getFolderPreview` invokes.
+2. `src/lib/api/thumbnails.ts` — `getThumbnailData`/`getMicroThumbnail`/`getVideoThumbnailData`/`getFolderPreview` invokes.
 3. `src/lib/state/thumbnail-cache.ts` — in-memory cache/dedup.
 4. `src-tauri/src/thumbnails.rs` — generation, disk cache (large; images + video frames).
 5. `src/lib/components/FolderThumbnail.svelte` + `domain/folder-preview.ts` — folder collages.

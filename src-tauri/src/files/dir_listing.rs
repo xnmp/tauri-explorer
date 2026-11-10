@@ -32,13 +32,6 @@ pub(crate) fn invalidate_dir_cache_sync(path: &str) {
     }
 }
 
-/// Invalidate cache for a specific directory.
-#[tauri::command]
-pub async fn invalidate_dir_cache(path: String) -> Result<(), AppError> {
-    invalidate_dir_cache_sync(&path);
-    Ok(())
-}
-
 /// Returns true when the directory has no entries visible under the given
 /// `include_hidden` rule. Skips directories the caller can't read (returns
 /// false so a folder isn't optimistically hidden).

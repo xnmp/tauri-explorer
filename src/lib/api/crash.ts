@@ -34,7 +34,7 @@ export function logFrontendError(message: string): Promise<void> {
  * Persist a webview error as a local crash file (#302), so the next launch's
  * crash notice can offer it exactly like a Rust panic. Local write only.
  */
-export function recordFrontendCrash(message: string, stack?: string): Promise<void> {
+function recordFrontendCrash(message: string, stack?: string): Promise<void> {
   return invoke<void>("record_frontend_crash", { message, stack: stack ?? null });
 }
 

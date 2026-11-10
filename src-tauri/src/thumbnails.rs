@@ -7,7 +7,7 @@
 
 use crate::error::AppError;
 use base64::Engine as _;
-use image::{ImageFormat, ImageReader};
+use image::ImageReader;
 use lru::LruCache;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -373,6 +373,7 @@ fn lru_put(key: String, value: String) {
     }
 }
 
+#[cfg(test)]
 fn lru_clear() {
     if let Ok(mut cache) = get_lru_cache().lock() {
         cache.clear();
@@ -744,11 +745,7 @@ fn with_decode_gate<T>(work: impl FnOnce() -> T) -> (T, std::time::Duration) {
     (result, waited)
 }
 
-fn decode_image(path: &Path, target_size: u32) -> Result<image::DynamicImage, AppError> {
-    decode_image_timed(path, target_size).0
-}
-
-/// As `decode_image`, but also reports gate-queue wait for diagnostics.
+/// Decode under the gate; also reports gate-queue wait for diagnostics.
 fn decode_image_timed(
     path: &Path,
     target_size: u32,
@@ -792,54 +789,7 @@ fn validate_thumbnail_path(path: &Path, path_str: &str) -> Result<(), AppError> 
     Ok(())
 }
 
-/// Generate thumbnail and save to cache
-fn generate_and_cache_thumbnail(
-    source_path: &Path,
-    cache_key: &str,
-    size: u32,
-) -> Result<PathBuf, AppError> {
-    let cache_dir =
-        get_cache_dir().ok_or(AppError::Other("Failed to get cache directory".into()))?;
-
-    // Create cache directory if it doesn't exist
-    fs::create_dir_all(&cache_dir)?;
-
-    let img = decode_image(source_path, size)?;
-    let thumbnail = img.thumbnail(size, size).to_rgb8();
-
-    // Save to cache as JPEG for smaller size and fast loading.
-    // Encode in memory, then write atomically (temp + rename).
-    let cache_path = cache_dir.join(format!("{}.jpg", cache_key));
-    let mut buffer = Cursor::new(Vec::new());
-    image::DynamicImage::ImageRgb8(thumbnail)
-        .write_to(&mut buffer, ImageFormat::Jpeg)
-        .map_err(|e| AppError::Other(format!("Failed to encode thumbnail: {}", e)))?;
-    write_file_atomic(&cache_path, buffer.get_ref())
-        .map_err(|e| AppError::Other(format!("Failed to save thumbnail: {}", e)))?;
-    maybe_prune_disk_cache(&cache_dir, buffer.get_ref().len() as u64);
-
-    Ok(cache_path)
-}
-
 // ─── Sync implementations ───────────────────────────────────────────────────
-
-fn get_thumbnail_sync(path: String, size: Option<u32>) -> Result<String, AppError> {
-    let source_path = PathBuf::from(&path);
-    let size = size.unwrap_or(THUMBNAIL_SIZE);
-    validate_thumbnail_path(&source_path, &path)?;
-
-    let cache_key = generate_cache_key(&source_path, size)
-        .ok_or_else(|| AppError::Other(format!("Failed to generate cache key for: {}", path)))?;
-
-    with_inflight_lock(&cache_key, || {
-        if let Some(cached_path) = get_cached_thumbnail(&cache_key) {
-            return Ok(cached_path.to_string_lossy().to_string());
-        }
-
-        let thumb_path = generate_and_cache_thumbnail(&source_path, &cache_key, size)?;
-        Ok(thumb_path.to_string_lossy().to_string())
-    })
-}
 
 fn get_thumbnail_data_sync(
     path: String,
@@ -1397,15 +1347,6 @@ fn get_folder_preview_sync(path: String) -> Result<FolderPreview, AppError> {
 
 // ─── Async Tauri commands ───────────────────────────────────────────────────
 
-/// Get or generate thumbnail for an image file.
-/// Returns the path to the cached thumbnail.
-#[tauri::command]
-pub async fn get_thumbnail(path: String, size: Option<u32>) -> Result<String, AppError> {
-    tokio::task::spawn_blocking(move || get_thumbnail_sync(path, size))
-        .await
-        .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
-}
-
 /// Get thumbnail as base64-encoded data URI.
 /// More efficient for small thumbnails as it avoids file I/O.
 #[tauri::command]
@@ -1467,98 +1408,6 @@ pub async fn get_folder_preview(path: String) -> Result<FolderPreview, AppError>
     tokio::task::spawn_blocking(move || get_folder_preview_sync(path))
         .await
         .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
-}
-
-/// Clear the thumbnail cache
-#[tauri::command]
-pub async fn clear_thumbnail_cache() -> Result<u64, AppError> {
-    tokio::task::spawn_blocking(clear_thumbnail_cache_sync)
-        .await
-        .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
-}
-
-fn clear_thumbnail_cache_sync() -> Result<u64, AppError> {
-    let cache_dir =
-        get_cache_dir().ok_or(AppError::Other("Failed to get cache directory".into()))?;
-
-    if !cache_dir.exists() {
-        return Ok(0);
-    }
-
-    log::info!("Clearing thumbnail cache");
-    lru_clear();
-    let mut cleared = 0u64;
-
-    for (path, len) in cache_files(&cache_dir)? {
-        if fs::remove_file(path).is_ok() {
-            cleared += len;
-        }
-    }
-
-    Ok(cleared)
-}
-
-/// Every cached file with its length: tile thumbnails plus the Preview
-/// renditions subdirectory (#1054).
-fn cache_files(cache_dir: &Path) -> Result<Vec<(PathBuf, u64)>, AppError> {
-    let mut files = Vec::new();
-    let renditions = preview_rendition::rendition_cache_dir(cache_dir);
-    for dir in [cache_dir, renditions.as_path()] {
-        let read_dir = match fs::read_dir(dir) {
-            Ok(read_dir) => read_dir,
-            Err(error) if dir != cache_dir && error.kind() == std::io::ErrorKind::NotFound => {
-                continue
-            }
-            Err(error) => return Err(AppError::Io(error)),
-        };
-        for entry in read_dir.flatten() {
-            if let Ok(metadata) = entry.metadata() {
-                if metadata.is_file() {
-                    files.push((entry.path(), metadata.len()));
-                }
-            }
-        }
-    }
-    Ok(files)
-}
-
-/// Get cache statistics
-#[tauri::command]
-pub async fn get_thumbnail_cache_stats() -> Result<ThumbnailCacheStats, AppError> {
-    tokio::task::spawn_blocking(get_thumbnail_cache_stats_sync)
-        .await
-        .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
-}
-
-fn get_thumbnail_cache_stats_sync() -> Result<ThumbnailCacheStats, AppError> {
-    let cache_dir =
-        get_cache_dir().ok_or(AppError::Other("Failed to get cache directory".into()))?;
-
-    if !cache_dir.exists() {
-        return Ok(ThumbnailCacheStats {
-            count: 0,
-            total_size: 0,
-            path: cache_dir.to_string_lossy().to_string(),
-        });
-    }
-
-    let files = cache_files(&cache_dir)?;
-    let count = files.len();
-    let total_size = files.iter().map(|(_, len)| len).sum();
-
-    Ok(ThumbnailCacheStats {
-        count,
-        total_size,
-        path: cache_dir.to_string_lossy().to_string(),
-    })
-}
-
-#[derive(Debug, serde::Serialize)]
-pub struct ThumbnailCacheStats {
-    count: usize,
-    #[serde(rename = "totalSize")]
-    total_size: u64,
-    path: String,
 }
 
 #[cfg(test)]
@@ -1750,7 +1599,7 @@ mod tests {
         drop(file);
 
         assert!(check_image_file_size(&path).is_err());
-        assert!(decode_image(&path, 128).is_err());
+        assert!(decode_image_timed(&path, 128).0.is_err());
     }
 
     #[test]
@@ -1801,7 +1650,7 @@ mod tests {
         let path = dir.path().join("bomb.png");
         std::fs::write(&path, &png).unwrap();
 
-        let err = decode_image(&path, 128);
+        let err = decode_image_timed(&path, 128).0;
         assert!(err.is_err(), "decode of 65500x65500 header must fail");
     }
 
@@ -1896,7 +1745,9 @@ mod tests {
         assert!(is_supported_image(Path::new("PHOTO.AVIF")));
 
         let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/red32.avif");
-        let img = decode_image(&fixture, 64).expect("AVIF fixture must decode");
+        let img = decode_image_timed(&fixture, 64)
+            .0
+            .expect("AVIF fixture must decode");
         assert_eq!((img.width(), img.height()), (32, 32));
         let pixel = img.to_rgb8().get_pixel(16, 16).0;
         assert!(
@@ -2072,18 +1923,6 @@ mod tests {
             128,
         );
         assert_eq!(key, GOLDEN_THUMBNAIL_KEY);
-    }
-
-    #[test]
-    fn clearing_the_cache_removes_renditions_too() {
-        let dir = tempdir().unwrap();
-        let renditions = preview_rendition::rendition_cache_dir(dir.path());
-        fs::create_dir_all(&renditions).unwrap();
-        fs::write(dir.path().join("t.jpg"), [0u8; 10]).unwrap();
-        fs::write(renditions.join("r.preview.jpg"), [0u8; 30]).unwrap();
-
-        let files = cache_files(dir.path()).unwrap();
-        assert_eq!(files.iter().map(|(_, len)| len).sum::<u64>(), 40);
     }
 
     #[test]

@@ -230,5 +230,3 @@ export function useContentSearch() {
     reset,
   };
 }
-
-export type ContentSearchStore = ReturnType<typeof useContentSearch>;

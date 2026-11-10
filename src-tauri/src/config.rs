@@ -208,13 +208,25 @@ pub async fn write_theme_file(filename: String, data: String) -> Result<(), AppE
     let dir = config_dir()?.join("themes");
     tokio::task::spawn_blocking(move || {
         let _guard = write_lock().blocking_lock();
-        std::fs::create_dir_all(&dir)
-            .map_err(|e| AppError::Other(format!("Failed to create themes dir: {e}")))?;
-        write_atomic(&dir.join(&filename), &data)
-            .map_err(|e| AppError::Other(format!("Failed to write theme '{filename}': {e}")))
+        write_theme_file_in(&dir, &filename, &data)
     })
     .await
     .map_err(|e| AppError::Other(format!("Task join error: {e}")))?
+}
+
+/// Refuses a theme the listing would skip ([`MAX_THEME_CSS_BYTES`]), so a
+/// write never reports success for a theme that then cannot appear (#1595).
+fn write_theme_file_in(dir: &Path, filename: &str, data: &str) -> Result<(), AppError> {
+    if data.len() as u64 > MAX_THEME_CSS_BYTES {
+        return Err(AppError::InvalidPath(format!(
+            "Theme '{filename}' is {} bytes; themes are limited to {MAX_THEME_CSS_BYTES} bytes",
+            data.len()
+        )));
+    }
+    std::fs::create_dir_all(dir)
+        .map_err(|e| AppError::Other(format!("Failed to create themes dir: {e}")))?;
+    write_atomic(&dir.join(filename), data)
+        .map_err(|e| AppError::Other(format!("Failed to write theme '{filename}': {e}")))
 }
 
 /// Write a JSON config file. Creates or overwrites the file atomically.
@@ -258,35 +270,124 @@ pub async fn list_user_themes() -> Result<Vec<(String, String)>, AppError> {
 }
 
 fn list_user_themes_sync() -> Result<Vec<(String, String)>, AppError> {
-    let themes_dir = config_dir()?.join("themes");
-    if !themes_dir.exists() {
-        return Ok(Vec::new());
-    }
+    list_user_themes_in(&config_dir()?.join("themes"))
+}
+
+/// Lists `<config>/themes/*.css` with the same per-file rules as layouts: a
+/// file that is not a regular file (directory, FIFO, dangling symlink), larger
+/// than [`MAX_THEME_CSS_BYTES`], unreadable or not UTF-8 is skipped with a
+/// warning and never hides the other themes (#1595). A file whose NAME is not
+/// UTF-8 is skipped too: lossy conversion could give two files the same name.
+///
+/// Sorted by filename (byte order): the frontend injects one `<style>` per
+/// theme in this order, and a later stylesheet wins both the cascade and a
+/// theme id reused across files, so precedence must not follow directory
+/// hash order.
+fn list_user_themes_in(themes_dir: &Path) -> Result<Vec<(String, String)>, AppError> {
+    let entries = match fs::read_dir(themes_dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(AppError::Other(format!("Failed to read themes dir: {}", e))),
+    };
 
     let mut themes = Vec::new();
-    let entries = fs::read_dir(&themes_dir)
-        .map_err(|e| AppError::Other(format!("Failed to read themes dir: {}", e)))?;
-
     for entry in entries {
-        let entry =
-            entry.map_err(|e| AppError::Other(format!("Failed to read dir entry: {}", e)))?;
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(e) => {
+                log::warn!("Skipping unreadable themes dir entry: {e}");
+                continue;
+            }
+        };
         let path = entry.path();
-
-        if path.extension().and_then(|e| e.to_str()) == Some("css") {
-            let filename = path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into_owned();
-            let content = fs::read_to_string(&path).map_err(|e| {
-                AppError::Other(format!("Failed to read theme '{}': {}", filename, e))
-            })?;
-            themes.push((filename, content));
+        if path.extension().and_then(|e| e.to_str()) != Some("css") {
+            continue;
+        }
+        let Some(filename) = path.file_name().and_then(|n| n.to_str()) else {
+            log::warn!(
+                "Skipping theme with a non-UTF-8 file name: {}",
+                path.display()
+            );
+            continue;
+        };
+        match read_bounded_css(&path, MAX_THEME_CSS_BYTES) {
+            Ok(css) => themes.push((filename.to_owned(), css)),
+            Err(CssReadError::TooLarge) => {
+                log::warn!("Skipping theme '{filename}': larger than {MAX_THEME_CSS_BYTES} bytes")
+            }
+            Err(reason) => log::warn!("Skipping theme '{filename}': {}", reason.as_str()),
         }
     }
-
+    themes.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(themes)
 }
+
+/// Why a user stylesheet was not read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CssReadError {
+    NotAFile,
+    TooLarge,
+    Unreadable,
+}
+
+impl CssReadError {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::NotAFile => "not-a-file",
+            Self::TooLarge => "too-large",
+            Self::Unreadable => "unreadable",
+        }
+    }
+}
+
+/// Reads a user stylesheet (following symlinks) only if it is a regular file
+/// of at most `limit` bytes of UTF-8. The open is non-blocking and the handle
+/// is re-checked, so a FIFO (named or swapped in after the metadata check)
+/// cannot hang the listing; at most one byte past the limit is read, so a file
+/// that grows after its metadata was read (or reports no length) cannot be
+/// read unbounded. A leased regular file is retried with a blocking open; only
+/// a FIFO swapped in during that retry's window could still block.
+fn read_bounded_css(path: &Path, limit: u64) -> Result<String, CssReadError> {
+    use std::io::Read;
+    let metadata = fs::metadata(path).map_err(|_| CssReadError::Unreadable)?;
+    if !metadata.is_file() {
+        return Err(CssReadError::NotAFile);
+    }
+    if metadata.len() > limit {
+        return Err(CssReadError::TooLarge);
+    }
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let file = match options.open(path) {
+        // A lease holder (Samba, NFS server) makes a non-blocking open fail
+        // while it breaks the lease. The metadata said regular file, so wait
+        // for the break like any other reader; the type is re-checked below.
+        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => fs::File::open(path),
+        other => other,
+    }
+    .map_err(|_| CssReadError::Unreadable)?;
+    if !file.metadata().is_ok_and(|m| m.is_file()) {
+        return Err(CssReadError::NotAFile);
+    }
+    let mut bytes = Vec::new();
+    file.take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| CssReadError::Unreadable)?;
+    if bytes.len() as u64 > limit {
+        return Err(CssReadError::TooLarge);
+    }
+    String::from_utf8(bytes).map_err(|_| CssReadError::Unreadable)
+}
+
+/// Largest user colour theme read from `<config>/themes/` (#1595). Built-in
+/// themes are about 5 KiB; the cap only stops a stray huge file from being
+/// read into memory and injected into the document.
+const MAX_THEME_CSS_BYTES: u64 = 512 * 1024;
 
 /// Largest user layout stylesheet read from `<config>/layouts/` (#1306).
 /// Mirrors `MAX_LAYOUT_CSS_BYTES` in `src/lib/domain/layout-theme.ts`.
@@ -327,11 +428,10 @@ fn list_user_layouts_in(dir: &Path) -> Result<Vec<UserLayoutFile>, AppError> {
         let Some(filename) = path.file_name().and_then(|n| n.to_str()) else {
             continue;
         };
-        let (css, error) = match fs::metadata(&path) {
-            Ok(meta) if !meta.is_file() => continue,
-            Ok(meta) if meta.len() > MAX_LAYOUT_CSS_BYTES => (None, Some("too-large")),
-            Ok(_) => read_bounded_layout(&path),
-            Err(_) => (None, Some("unreadable")),
+        let (css, error) = match read_bounded_css(&path, MAX_LAYOUT_CSS_BYTES) {
+            Ok(css) => (Some(css), None),
+            Err(CssReadError::NotAFile) => continue,
+            Err(reason) => (None, Some(reason.as_str())),
         };
         layouts.push(UserLayoutFile {
             filename: filename.to_owned(),
@@ -341,23 +441,6 @@ fn list_user_layouts_in(dir: &Path) -> Result<Vec<UserLayoutFile>, AppError> {
     }
     layouts.sort_by(|a, b| a.filename.cmp(&b.filename));
     Ok(layouts)
-}
-
-/// Read at most one byte past the limit, so a file that grows after its
-/// metadata was read (or reports no length) cannot be read unbounded.
-fn read_bounded_layout(path: &Path) -> (Option<String>, Option<&'static str>) {
-    use std::io::Read;
-    let mut bytes = Vec::new();
-    let read = fs::File::open(path)
-        .and_then(|file| file.take(MAX_LAYOUT_CSS_BYTES + 1).read_to_end(&mut bytes));
-    match read {
-        Err(_) => (None, Some("unreadable")),
-        Ok(_) if bytes.len() as u64 > MAX_LAYOUT_CSS_BYTES => (None, Some("too-large")),
-        Ok(_) => match String::from_utf8(bytes) {
-            Ok(css) => (Some(css), None),
-            Err(_) => (None, Some("unreadable")),
-        },
-    }
 }
 
 /// Create `<config>/layouts/` if needed and return its absolute path, for
@@ -580,5 +663,212 @@ mod tests {
         assert!(list_user_layouts_in(&dir.path().join("absent"))
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn issue_1595_one_bad_theme_does_not_hide_the_rest() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("good.css"), "body{}").unwrap();
+        fs::write(dir.path().join("bad.css"), [0xff, 0xfe, 0x80]).unwrap();
+        fs::create_dir(dir.path().join("dir.css")).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(dir.path().join("nowhere"), dir.path().join("dangling.css"))
+            .unwrap();
+        fs::write(dir.path().join("notes.txt"), "x").unwrap();
+        let themes = list_user_themes_in(dir.path()).unwrap();
+        assert_eq!(themes, vec![("good.css".to_string(), "body{}".to_string())]);
+    }
+
+    #[test]
+    fn issue_1595_missing_themes_dir_is_empty() {
+        let dir = tempdir().unwrap();
+        assert!(list_user_themes_in(&dir.path().join("absent"))
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn issue_1595_themes_path_that_is_a_file_errors() {
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("themes");
+        fs::write(&f, "x").unwrap();
+        assert!(list_user_themes_in(&f).is_err());
+    }
+
+    /// Themes are injected as `<style>` elements in listing order, and a
+    /// later stylesheet wins both the cascade and a reused theme id, so the
+    /// order must not depend on directory hash order (#1595).
+    #[test]
+    fn issue_1595_themes_are_listed_in_filename_order() {
+        let dir = tempdir().unwrap();
+        let names = [
+            "zeta.css",
+            "Alpha.css",
+            "mid.css",
+            "alpha.css",
+            "b-2.css",
+            "b-10.css",
+        ];
+        for name in names {
+            fs::write(dir.path().join(name), name).unwrap();
+        }
+        let listed: Vec<String> = list_user_themes_in(dir.path())
+            .unwrap()
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        let mut expected: Vec<String> = names.iter().map(|n| n.to_string()).collect();
+        expected.sort();
+        assert_eq!(listed, expected);
+    }
+
+    #[test]
+    fn issue_1595_oversized_theme_is_skipped() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("good.css"), "body{}").unwrap();
+        fs::write(
+            dir.path().join("huge.css"),
+            vec![b'a'; MAX_THEME_CSS_BYTES as usize + 1],
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("limit.css"),
+            vec![b'a'; MAX_THEME_CSS_BYTES as usize],
+        )
+        .unwrap();
+        let names: Vec<String> = list_user_themes_in(dir.path())
+            .unwrap()
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        assert_eq!(names, ["good.css", "limit.css"]);
+    }
+
+    /// Opening a FIFO for reading blocks until a writer appears, which would
+    /// hang theme loading at startup; it must be skipped from its metadata.
+    #[cfg(unix)]
+    #[test]
+    fn issue_1595_fifo_named_like_a_theme_is_skipped_without_blocking() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("good.css"), "body{}").unwrap();
+        assert!(std::process::Command::new("mkfifo")
+            .arg(dir.path().join("pipe.css"))
+            .status()
+            .unwrap()
+            .success());
+        let (tx, rx) = std::sync::mpsc::channel();
+        let path = dir.path().to_path_buf();
+        // A blocked open cannot be cancelled: bound the wait on a detached thread.
+        std::thread::spawn(move || {
+            let _ = tx.send(list_user_themes_in(&path).map_err(|e| e.to_string()));
+        });
+        let themes = rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("theme listing blocked on a FIFO")
+            .unwrap();
+        assert_eq!(themes, vec![("good.css".to_string(), "body{}".to_string())]);
+    }
+
+    /// Lossy conversion would map distinct non-UTF-8 names onto the same
+    /// `\u{FFFD}` name (and data-user-theme attribute); such files are skipped.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn issue_1595_non_utf8_theme_names_are_skipped() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("good.css"), "body{}").unwrap();
+        for raw in [&b"\xff.css"[..], b"\xfe.css"] {
+            let name = std::ffi::OsStr::from_bytes(raw);
+            fs::write(dir.path().join(name), "body{color:red}").unwrap();
+        }
+        let themes = list_user_themes_in(dir.path()).unwrap();
+        assert_eq!(themes, vec![("good.css".to_string(), "body{}".to_string())]);
+    }
+
+    #[test]
+    fn issue_1595_theme_writes_share_the_listing_size_limit() {
+        let dir = tempdir().unwrap();
+        let limit = MAX_THEME_CSS_BYTES as usize;
+        let at_limit = "a".repeat(limit);
+        write_theme_file_in(dir.path(), "fits.css", &at_limit).unwrap();
+        let too_big = "a".repeat(limit + 1);
+        let error = write_theme_file_in(dir.path(), "big.css", &too_big).unwrap_err();
+        assert!(
+            matches!(&error, AppError::InvalidPath(m) if m.contains("big.css") && m.contains(&limit.to_string())),
+            "{error:?}"
+        );
+        assert!(!dir.path().join("big.css").exists());
+        let names: Vec<String> = list_user_themes_in(dir.path())
+            .unwrap()
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        assert_eq!(names, ["fits.css"]);
+    }
+
+    /// A file under a write lease (held here by a child process, as Samba or
+    /// an NFS server would) refuses a non-blocking open with EWOULDBLOCK while
+    /// the lease breaks; the theme must still be listed once it is released.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn issue_1595_leased_theme_is_read_after_the_lease_breaks() {
+        use std::io::{BufRead, Write};
+        let skip = |reason: &str| {
+            let _ = writeln!(
+                std::io::stderr(),
+                "SKIPPED issue_1595_leased_theme_is_read_after_the_lease_breaks: {reason}"
+            );
+        };
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("good.css"), "body{}").unwrap();
+        let leased = dir.path().join("leased.css");
+        fs::write(&leased, "p{}").unwrap();
+        const HOLDER: &str = r#"
+import fcntl, os, signal, sys
+F_SETLEASE = 1024
+fd = os.open(sys.argv[1], os.O_RDONLY)
+signal.signal(signal.SIGIO, lambda *_: fcntl.fcntl(fd, F_SETLEASE, fcntl.F_UNLCK))
+try:
+    fcntl.fcntl(fd, F_SETLEASE, fcntl.F_WRLCK)
+except OSError as e:
+    print("no-lease", e, flush=True)
+    sys.exit(0)
+print("leased", flush=True)
+sys.stdin.read()
+"#;
+        let Ok(mut holder) = std::process::Command::new("python3")
+            .args(["-c", HOLDER])
+            .arg(&leased)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+        else {
+            return skip("python3 is not available");
+        };
+        let mut line = String::new();
+        std::io::BufReader::new(holder.stdout.take().unwrap())
+            .read_line(&mut line)
+            .unwrap();
+        if line.trim() != "leased" {
+            let _ = holder.wait();
+            return skip(&format!("the lease could not be taken: {}", line.trim()));
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let path = dir.path().to_path_buf();
+        std::thread::spawn(move || {
+            let _ = tx.send(list_user_themes_in(&path).map_err(|e| e.to_string()));
+        });
+        // Bounded by the kernel's lease-break-time (45 s by default) if the
+        // holder ever failed to release on SIGIO.
+        let listed = rx.recv_timeout(std::time::Duration::from_secs(60));
+        drop(holder.stdin.take());
+        let _ = holder.wait();
+        let names: Vec<String> = listed
+            .expect("theme listing did not return")
+            .unwrap()
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        assert_eq!(names, ["good.css", "leased.css"]);
     }
 }

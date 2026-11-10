@@ -67,6 +67,7 @@ fn blocked_recursive_registration_does_not_delay_unrelated_folder_navigation() {
 fn change(origin: ChangeOrigin, at: Instant, observed_at_ms: u64) -> PendingChange {
     PendingChange {
         origin,
+        first_event: at,
         last_event: at,
         observed_at_ms,
     }
@@ -892,4 +893,126 @@ fn issue_1152_arming_waits_for_a_queued_overlap_rebuild_before_a_write() {
         ),
     );
     receipt.wait_after(write_started);
+}
+
+/// Feeds one event every `step` for `total` and records each time the flush
+/// predicate would fire (then clears the batch like the flush thread does).
+fn flush_times(step: Duration, total: Duration) -> Vec<Duration> {
+    let start = Instant::now();
+    let mut flushes = Vec::new();
+    let mut batch: Option<PendingChange> = None;
+    let mut elapsed = Duration::ZERO;
+    while elapsed <= total {
+        let at = start + elapsed;
+        let next = change(ChangeOrigin::Watcher, at, elapsed.as_millis() as u64);
+        match batch.as_mut() {
+            Some(b) => b.merge(next),
+            None => batch = Some(next),
+        }
+        if batch.is_some_and(|b| b.ready(at)) {
+            flushes.push(elapsed);
+            batch = None;
+        }
+        elapsed += step;
+    }
+    flushes
+}
+
+#[test]
+fn issue_1593_continuous_writes_flush_at_the_cap_and_keep_flushing() {
+    let flushes = flush_times(Duration::from_millis(100), Duration::from_secs(6));
+    assert!(flushes.len() >= 3, "periodic flushes expected: {flushes:?}");
+    assert_eq!(flushes[0], MAX_WAIT);
+    for pair in flushes.windows(2) {
+        assert!(pair[1] - pair[0] >= MAX_WAIT, "no flush storm: {flushes:?}");
+    }
+}
+
+#[test]
+fn issue_1593_short_burst_flushes_once_after_quiet_not_at_the_cap() {
+    let start = Instant::now();
+    let mut batch = change(ChangeOrigin::Watcher, start, 1);
+    for i in 1..=5u64 {
+        batch.merge(change(
+            ChangeOrigin::Watcher,
+            start + Duration::from_millis(50 * i),
+            1 + i,
+        ));
+    }
+    let last = start + Duration::from_millis(250);
+    assert!(!batch.ready(last + DEBOUNCE - Duration::from_millis(1)));
+    assert!(batch.ready(last + DEBOUNCE));
+    assert!(last + DEBOUNCE < start + MAX_WAIT);
+    // Observation time is the newest event's, not the first's.
+    assert_eq!(batch.observed_at_ms, 6);
+}
+
+#[test]
+fn issue_1593_cap_never_fires_before_the_quiet_debounce_could() {
+    let start = Instant::now();
+    let batch = change(ChangeOrigin::Watcher, start, 1);
+    assert!(!batch.ready(start + DEBOUNCE - Duration::from_millis(1)));
+    // First event old, last event fresh: the cap fires exactly at MAX_WAIT
+    // and the newest observation is kept.
+    let mut batch = change(ChangeOrigin::Watcher, start, 1);
+    batch.merge(change(ChangeOrigin::Watcher, start + MAX_WAIT, 9));
+    assert!(batch.ready(start + MAX_WAIT));
+    assert_eq!(batch.observed_at_ms, 9);
+}
+
+/// Drives the flush thread's own queue/flush functions in real time: one
+/// thread records an event every 20 ms while this one polls at FLUSH_INTERVAL,
+/// as the flush thread does. A flush must arrive while events are still
+/// streaming in. A feeder stalled by host load can produce a legitimate quiet
+/// flush, so the test waits (generously bounded) for one that the quiet rule
+/// cannot explain: its newest event younger than DEBOUNCE.
+#[test]
+fn issue_1593_flush_path_publishes_under_a_continuous_event_stream() {
+    let pending = Arc::new(Mutex::new(HashMap::new()));
+    let streaming = Arc::new(AtomicBool::new(true));
+    let dir = Path::new("/issue-1593/continuous");
+    let feeder = {
+        let (pending, streaming) = (pending.clone(), streaming.clone());
+        std::thread::spawn(move || {
+            let mut n = 0;
+            while streaming.load(Ordering::Acquire) {
+                n += 1;
+                let mut map = pending.lock().unwrap();
+                record_change(&mut map, dir, ChangeOrigin::Watcher, Instant::now(), n);
+                drop(map);
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        })
+    };
+    let started = Instant::now();
+    let capped = loop {
+        std::thread::sleep(FLUSH_INTERVAL);
+        let now = Instant::now();
+        let flushed = take_ready_changes(&mut pending.lock().unwrap(), now);
+        if let Some((_, change)) = flushed
+            .into_iter()
+            .find(|(_, change)| now.duration_since(change.last_event) < DEBOUNCE)
+        {
+            break Some((now, change));
+        }
+        if started.elapsed() > Duration::from_secs(20) {
+            break None;
+        }
+    };
+    streaming.store(false, Ordering::Release);
+    feeder.join().unwrap();
+    let (flushed_at, change) = capped.expect("no flush while events kept arriving");
+    assert!(flushed_at.duration_since(change.first_event) >= MAX_WAIT);
+
+    // The flushed batch is gone: the next event starts a fresh batch that is
+    // debounced again rather than flushed at once by the old anchor.
+    let mut map = pending.lock().unwrap();
+    map.clear();
+    let next = Instant::now();
+    record_change(&mut map, dir, ChangeOrigin::Watcher, next, 0);
+    assert!(take_ready_changes(&mut map, next + DEBOUNCE - Duration::from_millis(1)).is_empty());
+    let ready = take_ready_changes(&mut map, next + DEBOUNCE);
+    assert_eq!(ready.len(), 1);
+    assert_eq!(ready[0].1.first_event, next);
+    assert!(map.is_empty());
 }

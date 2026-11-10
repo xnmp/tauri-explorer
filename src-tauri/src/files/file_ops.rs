@@ -67,8 +67,12 @@ fn is_same_entry(a: &Path, b: &Path) -> bool {
 }
 
 /// Reject copying/moving a directory into itself or one of its descendants.
+///
+/// A symlink source is judged as the link, never its target: copy recreates
+/// links (see [`copy_recursively`]) and move renames them, so neither ever
+/// recurses into the target directory (#1594).
 pub(super) fn reject_dir_into_itself(source: &Path, dest_dir: &Path) -> Result<(), AppError> {
-    if !source.is_dir() {
+    if !fs::symlink_metadata(source).is_ok_and(|meta| meta.is_dir()) {
         return Ok(());
     }
     let dest_inside_source = match (fs::canonicalize(source), fs::canonicalize(dest_dir)) {
@@ -1942,5 +1946,93 @@ mod tests {
         let mut tb = 0u64;
         estimate_path_size(&dest.join("src"), &mut fc, &mut tb);
         assert_eq!(fc, 20_000);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn issue_1594_symlink_to_dir_moves_into_its_own_target() {
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("A");
+        std::fs::create_dir_all(target.join("sub")).unwrap();
+        let link = root.path().join("L");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        // The link is a file-like entry: copy recreates it, move renames it.
+        assert!(reject_dir_into_itself(&link, &target.join("sub")).is_ok());
+        // Control: the real directory into itself via a symlinked spelling.
+        assert!(reject_dir_into_itself(&target, &link.join("sub")).is_err());
+        assert!(reject_dir_into_itself(&target, &target.join("sub")).is_err());
+    }
+
+    /// Behaviours the #1594 review found sound, pinned through the real copy
+    /// and move entry points: a link to a directory is an entry of its own.
+    #[cfg(unix)]
+    #[test]
+    fn issue_1594_symlink_into_its_own_target_through_copy_and_move() {
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("A");
+        std::fs::create_dir_all(target.join("sub")).unwrap();
+        std::fs::write(target.join("file.txt"), "kept").unwrap();
+        let link = root.path().join("L");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let s = |p: &Path| p.to_string_lossy().into_owned();
+        // Tree below A, without following links, as (relative path, is link).
+        let tree = || {
+            let mut out = Vec::new();
+            let mut stack = vec![target.clone()];
+            while let Some(dir) = stack.pop() {
+                for entry in std::fs::read_dir(&dir).unwrap() {
+                    let path = entry.unwrap().path();
+                    let kind = std::fs::symlink_metadata(&path).unwrap().file_type();
+                    if kind.is_dir() {
+                        stack.push(path.clone());
+                    }
+                    let rel = path
+                        .strip_prefix(&target)
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned();
+                    out.push((rel, kind.is_symlink()));
+                }
+            }
+            out.sort();
+            out
+        };
+
+        // Copied into its own target: recreated as a link, no recursion.
+        ordinary_copy_for_test(s(&link), s(&target.join("sub")), None).unwrap();
+        let copy = target.join("sub").join("L");
+        assert_eq!(std::fs::read_link(&copy).unwrap(), target);
+        assert_eq!(
+            tree(),
+            [
+                ("file.txt".to_string(), false),
+                ("sub".to_string(), false),
+                ("sub/L".to_string(), true),
+            ]
+        );
+
+        // Moved into its own target: the link is renamed, the target intact.
+        move_entry_impl(s(&link), s(&target), None).unwrap();
+        assert!(std::fs::symlink_metadata(&link).is_err());
+        assert_eq!(std::fs::read_link(target.join("L")).unwrap(), target);
+        assert_eq!(
+            std::fs::read_to_string(target.join("file.txt")).unwrap(),
+            "kept"
+        );
+
+        // The real directory into itself through a symlinked spelling of its
+        // destination is still refused, for both copy and move.
+        let alias = root.path().join("M");
+        std::os::unix::fs::symlink(&target, &alias).unwrap();
+        let before = tree();
+        let moved = move_entry_impl(s(&target), s(&alias.join("sub")), None);
+        assert!(matches!(moved, Err(AppError::InvalidPath(_))), "{moved:?}");
+        let copied = ordinary_copy_for_test(s(&target), s(&alias.join("sub")), None);
+        assert!(
+            matches!(copied, Err(AppError::InvalidPath(_))),
+            "{copied:?}"
+        );
+        assert!(target.is_dir());
+        assert_eq!(tree(), before);
     }
 }

@@ -16,6 +16,30 @@ pub(super) fn of_file(file: &File) -> io::Result<ObjectId> {
     Ok(from_metadata(&file.metadata()?))
 }
 
+#[cfg(all(windows, test))]
+pub(super) use windows::indexed_file_id;
+#[cfg(windows)]
+pub(super) use windows::{file_id, is_unsupported_class};
+
+/// The identity of an existing path without opening it for data. Unix reads
+/// dev/ino from the metadata the caller already holds; Windows opens an
+/// attribute-only handle, falling back to the file index on FAT (#793).
+#[cfg(unix)]
+pub(super) fn of_path(
+    _path: &std::path::Path,
+    metadata: &std::fs::Metadata,
+) -> io::Result<ObjectId> {
+    Ok(from_metadata(metadata))
+}
+
+#[cfg(windows)]
+pub(super) fn of_path(
+    path: &std::path::Path,
+    _metadata: &std::fs::Metadata,
+) -> io::Result<ObjectId> {
+    windows::of_path(path)
+}
+
 /// Unix path observations also carry dev/ino without reopening a symlink leaf.
 #[cfg(unix)]
 pub(super) fn from_metadata(metadata: &std::fs::Metadata) -> ObjectId {

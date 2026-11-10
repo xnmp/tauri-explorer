@@ -906,8 +906,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/files/recovery/journal.rs` — bounded opaque SQLite records, recognized schema, unique global generations, atomic multi-record admission and transactional compare-and-swap writes.
 - `src-tauri/src/files/entry_version.rs` — shared bounded object/content/mode/ownership observations that survive link and rename operations; durable shape validation.
 - `src-tauri/src/files/object_id.rs` — pure native-platform identity codec, full-width Windows IDs and separate volume equality; rejects foreign/untagged authority.
-- `src-tauri/src/files/file_identity.rs` — native object/version capture from supplied handles, Unix metadata and descriptor-relative Linux stat; no-follow leaf semantics.
-- `src-tauri/src/files/file_identity/windows.rs` — FileIdInfo query on the supplied Windows handle, preserving volume serial and all 128 identifier bits without path fallback.
+- `src-tauri/src/files/file_identity.rs` — native object/version capture from supplied handles, Unix metadata and descriptor-relative Linux stat; no-follow leaf semantics. `of_path` gives a path's identity without a data open (Save a Copy alias check, #1588).
+- `src-tauri/src/files/file_identity/windows.rs` — FileIdInfo query on the supplied Windows handle, preserving volume serial and all 128 identifier bits without path fallback; the shared `file_id` FAT fallback (unsupported class → volume serial + file index, #793) used by `native_directory/windows.rs`, and attribute-only `of_path`.
 - `src-tauri/src/files/directory_identity.rs` — one native directory spelling shared by listing and watch admission; Unix folds lexical separators while keeping case distinct, and Windows delegates stored-component spelling.
 - `src-tauri/src/files/directory_identity/windows.rs` — Windows drive/UNC parsing and stored-case component lookup, with literal device namespaces and case-sensitive WSL shares left unrewritten. Contracts live in `src-tauri/test_support/directory_identity.rs`; native listing/watch acceptance is in `e2e-tauri/specs/directory-identity.spec.ts`.
 - `src-tauri/test_support/directory_identity.rs` — pure directory-spelling contracts for Unix case sensitivity and Windows drive, UNC, WSL and literal namespace parsing.
@@ -1086,7 +1086,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `src/lib/components/VideoPreview.svelte` — explicit native-decoder playback controls, focused media keys, error fallback and synchronous source detachment.
 - `src/lib/domain/video-preview.ts` — pure time/seek values and keyboard ownership, including held-key and Super handling.
-- `src-tauri/src/files/video_info.rs` — bounded head/tail codec sniffing (MP4/MOV, Matroska/WebM, AVI) and `save_file_copy` for the unsupported-codec preview state.
+- `src-tauri/src/files/video_info.rs` — bounded head/tail codec sniffing (MP4/MOV, Matroska/WebM, AVI) and `save_file_copy` for the unsupported-codec preview state: plain `fs::copy` after refusing any destination that is the source by file identity (#1588); contracts in `src-tauri/test_support/save_file_copy_test.rs`.
 - `src/lib/state/video-preview-lifetime.ts` — two-phase capability adoption and cancellation; rejects late source URLs and releases once.
 - `src/lib/state/video-companion-audio.ts` — Linux-only dropped-audio-track detection and the hidden `<audio>` follower (play/pause/seek/drift/volume/mute) (#1171).
 - `src/lib/api/video-preview.ts` — acknowledged native-session acquisition, scoped preparation and release IPC.

@@ -580,29 +580,37 @@ fn directory_effect_budget_stops_before_unrecorded_mutation_and_deduplicates() {
 /// the renderer for a confirmed permanent deletion (#1550).
 #[test]
 fn trash_unavailable_failures_are_listed_separately_from_other_failures() {
+    // Paths only need to be absolute on the host platform; nothing touches disk.
+    let root = tempfile::tempdir().unwrap();
+    let drive_a = path_string(&root.path().join("drive").join("a"));
+    let drive_b = path_string(&root.path().join("drive").join("b"));
+    let local_c = path_string(&root.path().join("local").join("c"));
     let outcome = tauri::async_runtime::block_on(run(
-        plan(&[
-            Path::new("/drive/a"),
-            Path::new("/drive/b"),
-            Path::new("/local/c"),
-        ]),
-        |path| match path {
-            "/drive/a" => Err(AppError::TrashUnavailable("no usable trash".into())),
-            "/drive/b" => Err(AppError::PermissionDenied("denied".into())),
-            _ => Ok(()),
+        BatchPlan::new(vec![drive_a.clone(), drive_b.clone(), local_c.clone()]).unwrap(),
+        {
+            let (unavailable, denied) = (drive_a.clone(), drive_b.clone());
+            move |path| {
+                if path == unavailable {
+                    Err(AppError::TrashUnavailable("no usable trash".into()))
+                } else if path == denied {
+                    Err(AppError::PermissionDenied("denied".into()))
+                } else {
+                    Ok(())
+                }
+            }
         },
     ));
 
-    assert_eq!(outcome.succeeded, ["/local/c"]);
+    assert_eq!(outcome.succeeded, [local_c.as_str()]);
     assert_eq!(outcome.failed.len(), 2);
-    assert_eq!(outcome.trash_unavailable, ["/drive/a"]);
+    assert_eq!(outcome.trash_unavailable, [drive_a.as_str()]);
     let json = serde_json::to_value(&outcome).unwrap();
-    assert_eq!(json["trashUnavailable"], serde_json::json!(["/drive/a"]));
+    assert_eq!(json["trashUnavailable"], serde_json::json!([drive_a]));
     assert_eq!(
         json["failed"][0]["error"],
         "Trash unavailable: no usable trash"
     );
-    let ordinary = tauri::async_runtime::block_on(run(plan(&[Path::new("/x")]), |_| {
+    let ordinary = tauri::async_runtime::block_on(run(plan(&[&root.path().join("x")]), |_| {
         Err(AppError::PermissionDenied("denied".into()))
     }));
     assert!(serde_json::to_value(&ordinary)

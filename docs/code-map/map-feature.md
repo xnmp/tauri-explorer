@@ -433,15 +433,17 @@ backend for E2E/browser).
 
 ## Quick Open (Ctrl+P fuzzy file finder)
 
-- `components/QuickOpen.svelte` — modal, streamed results, keyboard nav
-- `domain/quick-open-search.ts` — trailing debounce at the recursive backend-search boundary; active-pane/recent/frecency matches remain local and synchronous, while the merged rendered result set stays bounded (#600, #651)
+- `components/QuickOpen.svelte` — modal, keyboard nav, store wiring
+- `state/quick-open-session.svelte.ts` — query/rows and the recursive-search stream lifecycle (one discriminated state): local matches synchronous, trailing debounce before the backend walk, listener before start IPC with first-event id adoption, new input/close detach the listener before cancellation IPC, superseded runs ignored (#600, #1577)
+- `domain/quick-open-ranking.ts` — pure local matching (recents/frecency/active pane), backend re-ranking, deduplicating merge capped at 20 rows (#385, #651)
+- `domain/quick-open-search.ts` — result-limit/debounce constants and the picker's trailing scheduler
 - `components/PickerQuickOpen.svelte` — variant used inside file picker
 - `domain/fuzzy-score.ts` — match scoring/ranking
 - `domain/command-keywords.ts` — hidden command-palette synonyms (hotkeys → Keyboard Shortcuts), consumed by `scoreCommand`
 - `domain/command-score.ts` — command-palette scoring (lazy; split from fuzzy-score for the startup cap)
 - `api/search.ts` — `startStreamingSearch`, `fuzzySearch`, `cancelSearch`
 - `src-tauri/src/search.rs`, `search_cache.rs` — nucleo fuzzy engine, streaming emits, and a bounded short-lived cache of completed recursive listings (#651)
-- FLOW: query → bounded local matches render immediately; trailing `quick-open-search` scheduler → startStreamingSearch → recursively-covered watched-root completed listing cache or cold backend walk → backend emits result chunks (race-safe: listener before invoke) → sorted by fuzzy-score → Enter navigates/opens. Quick Open installs separate recursive invalidation coverage only for cache-eligible roots, leaving pane/thumbnail refresh watches non-recursive; uncovered or unwatched roots walk fresh. Descendant filesystem changes invalidate affected ancestor/descendant caches. Removing any recursive registration rebuilds all surviving registrations; coverage transitions advance exact-root revisions so overlapping parent/child roots retain real OS coverage without evicting unchanged listings. Cancelled cold walks are not published.
+- FLOW: query → bounded local matches render immediately; trailing `quick-open-session` debounce → startStreamingSearch → recursively-covered watched-root completed listing cache or cold backend walk → backend emits result chunks (race-safe: listener before invoke) → sorted by fuzzy-score → Enter navigates/opens. Quick Open installs separate recursive invalidation coverage only for cache-eligible roots, leaving pane/thumbnail refresh watches non-recursive; uncovered or unwatched roots walk fresh. Descendant filesystem changes invalidate affected ancestor/descendant caches. Removing any recursive registration rebuilds all surviving registrations; coverage transitions advance exact-root revisions so overlapping parent/child roots retain real OS coverage without evicting unchanged listings. Cancelled cold walks are not published.
 
 ## Content search (grep, Ctrl+Shift+F)
 

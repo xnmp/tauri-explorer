@@ -108,7 +108,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-graph/GitGraphDialogs.svelte` — rename/name prompts, pull offer, reset/delete suboption modals, PR action and undo confirmations.
 - `icons/FilesIcon.svelte` — activity-bar SVG icon.
 - `CommandPalette.svelte` — Ctrl+Shift+P command palette UI.
-- `QuickOpen.svelte` — Ctrl+P fuzzy file finder.
+- `QuickOpen.svelte` — Ctrl+P fuzzy file finder: rendering, keyboard handling and store wiring over `state/quick-open-session` (#1577).
 - `PickerQuickOpen.svelte` — Quick Open for the portal file-picker window (#190).
 - `ContentSearchDialog.svelte` — Ctrl+Shift+F grep-across-files dialog + streamed results.
 - `OptionPicker.svelte` — generic secondary list picker.
@@ -277,6 +277,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `paste-operations.ts` — clipboard-mode dispatch to the copy or move session and cut-clipboard release.
 - `src/lib/state/html5-file-drag.svelte.ts` — listing/Miller filesystem source MIME and native handoff; Recent private link MIME without OS filesystem export; source lifetime protocol.
 - `src/lib/state/sidebar-navigation.ts` — sidebar mouse/keyboard navigation through the active pane's modal ownership gate.
+- `src/lib/state/quick-open-session.svelte.ts` — Quick Open query/rows and recursive-search stream lifecycle as one discriminated state: synchronous local matches, trailing debounce, listener-before-start with search-id adoption, synchronous detach before cancellation IPC, superseded-run rejection and browser fallback (#1577).
 - `src/lib/state/quick-open-navigation.ts` — Quick Open directory/path navigation: closes Quick Open, then admits the destination pane via `admitsCommandDestination` (#1096).
 - `src/lib/state/plugin-dom-ownership.ts` — host-issued component/root identities and nearest-root plugin ownership, shared by mounted contributions and file-drop API admission.
 - `src/lib/state/file-drop-targets.svelte.ts` — plugin element registrations, terminal disabled/modal resolution and idempotent teardown; reactive position-feedback identity shared with row/panel class bindings.
@@ -527,7 +528,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `command-keywords.ts` — hidden palette search synonyms per command ID (#1247).
 - `command-score.ts` — pure command-palette scorer (`scoreCommand`, frecency points); split from `fuzzy-score.ts` so it stays out of the startup graph (#1247).
 - `palette-selection.ts` — command-palette highlight by command id over a live result list (#1236).  Also the clamped PgUp/PgDn step shared with Quick Open (#1419).
-- `quick-open-search.ts` — trailing scheduler for the expensive recursive Quick Open search; local results remain immediate while a rapid query produces one backend request (#600).
+- `quick-open-search.ts` — Quick Open result limit and debounce constants, plus the trailing scheduler the file picker uses for its recursive search (#600).
+- `quick-open-ranking.ts` — pure Quick Open ranking: recents/frecency and active-pane local matches, frecency/filename re-ranking of backend hits, deduplicating 20-row merge, Recent view, display path and debug score breakdown (#385, #651, #1577).
 - `lazy-dialog.ts` — failure-safe loading for code-split dialogs: rejected import (#584) or mount crash via svelte:boundary (#585) rolls back the dialog open-flag + notifies, preventing the hasModalOpen hotkey soft-lock.
 - `theme-list.ts` — dedupe discovered themes by id, last wins (user CSS overrides built-ins; duplicate ids crashed ThemePicker's keyed each, #585).
 - `word-boundary.ts` — word-boundary helpers (fuzzy/rename).

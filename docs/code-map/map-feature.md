@@ -497,7 +497,7 @@ backend for E2E/browser).
 ## Sidebar (bookmarks / recent / drives)
 
 - `components/Sidebar.svelte`, `components/FilesSidebarView.svelte` — sidebar shell + files tree
-- `state/bookmarks.svelte.ts` — `bookmarksStore` (pinned folders)
+- `state/bookmarks.svelte.ts` — `bookmarksStore` (pinned folders); `state/config-document.ts` is the shared config-file lifecycle it and `folder-views.svelte.ts` use (#1568)
 - `domain/quick-access.ts` + `state/home.svelte.ts` — default Quick Access rows are derived from the resolved home directory only; while `get_home_directory` is in flight there are no rows, because a placeholder root produced navigable `/home/Documents` links that stranded the pane on "Path not found" (#702)
 - `state/recent-files.svelte.ts` — `recentFilesStore`
 - `state/drives.svelte.ts` — `drivesStore` (discovered volumes; only non-null paths count as mounted roots; `drives-changed` push + backstop/fallback poll; a parked warm window reads once, and its push/poll feeds wait until `page-foreground` opens, #931). `domain/drives.ts::sidebarCloudDrives` omits the Google Drive shortcut from the sidebar while retaining its discovery and navigable mount (#731).

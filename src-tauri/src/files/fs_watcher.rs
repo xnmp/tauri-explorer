@@ -32,6 +32,14 @@ use crate::search::{invalidate_search_cache_for_change, invalidate_search_cache_
 
 /// Trailing debounce window for `directory-changed` events.
 const DEBOUNCE: Duration = Duration::from_millis(300);
+/// Longest a watcher batch may wait, measured from its FIRST pending event.
+/// A trailing-only debounce never flushes a directory that is written
+/// continuously (build output, downloads, logs), leaving its listing stale for
+/// as long as the writes last (#1593). The cap trades a few extra refreshes
+/// during sustained churn (at most one per cap) for bounded staleness; it must
+/// not undercut DEBOUNCE, so a lone burst still coalesces after its quiet period.
+const MAX_WAIT: Duration = Duration::from_millis(1500);
+const _: () = assert!(MAX_WAIT.as_millis() >= DEBOUNCE.as_millis());
 /// Poll interval for the debounce flush thread.
 const FLUSH_INTERVAL: Duration = Duration::from_millis(100);
 
@@ -57,12 +65,15 @@ struct DirectoryChangedPayload {
 #[derive(Clone, Copy)]
 struct PendingChange {
     origin: ChangeOrigin,
+    /// Earliest pending event: anchors the MAX_WAIT cap.
+    first_event: Instant,
     last_event: Instant,
     observed_at_ms: u64,
 }
 
 impl PendingChange {
     fn merge(&mut self, next: Self) {
+        self.first_event = self.first_event.min(next.first_event);
         self.last_event = self.last_event.max(next.last_event);
         self.observed_at_ms = self.observed_at_ms.max(next.observed_at_ms);
         if next.origin == ChangeOrigin::Mutation {
@@ -71,7 +82,9 @@ impl PendingChange {
     }
 
     fn ready(self, now: Instant) -> bool {
-        self.origin == ChangeOrigin::Mutation || now.duration_since(self.last_event) >= DEBOUNCE
+        self.origin == ChangeOrigin::Mutation
+            || now.duration_since(self.last_event) >= DEBOUNCE
+            || now.duration_since(self.first_event) >= MAX_WAIT
     }
 }
 
@@ -243,16 +256,47 @@ pub(crate) fn publish_file_changes(paths: &[String]) {
 
 fn queue_directory_change(path: &Path, origin: ChangeOrigin) {
     if let Ok(mut pending) = pending_changes().lock() {
-        let change = PendingChange {
-            origin,
-            last_event: Instant::now(),
-            observed_at_ms: unix_time_ms(),
-        };
-        pending
-            .entry(path.to_string_lossy().into_owned())
-            .and_modify(|previous| previous.merge(change))
-            .or_insert(change);
+        record_change(&mut pending, path, origin, Instant::now(), unix_time_ms());
     }
+}
+
+/// Adds one event to its directory's pending batch (the queue side of the
+/// flush thread's contract).
+fn record_change(
+    pending: &mut HashMap<String, PendingChange>,
+    path: &Path,
+    origin: ChangeOrigin,
+    now: Instant,
+    observed_at_ms: u64,
+) {
+    let change = PendingChange {
+        origin,
+        first_event: now,
+        last_event: now,
+        observed_at_ms,
+    };
+    pending
+        .entry(path.to_string_lossy().into_owned())
+        .and_modify(|previous| previous.merge(change))
+        .or_insert(change);
+}
+
+/// Removes and returns every batch ready at `now` (the flush side). A later
+/// event for a flushed directory starts a new batch, so its debounce and
+/// MAX_WAIT both restart from that event.
+fn take_ready_changes(
+    pending: &mut HashMap<String, PendingChange>,
+    now: Instant,
+) -> Vec<(String, PendingChange)> {
+    let ready: Vec<(String, PendingChange)> = pending
+        .iter()
+        .filter(|(_, change)| change.ready(now))
+        .map(|(dir, change)| (dir.clone(), *change))
+        .collect();
+    for (dir, _) in &ready {
+        pending.remove(dir);
+    }
+    ready
 }
 
 fn native_watcher(callback: Callback) -> notify::Result<Box<dyn Watcher + Send>> {
@@ -396,20 +440,11 @@ pub fn init_watcher<R: Runtime>(app: &AppHandle<R>) {
                 }
             }
 
-            let ready: Vec<(String, PendingChange)> = {
+            let ready = {
                 let Ok(mut pending) = pending_changes().lock() else {
                     continue;
                 };
-                let now = Instant::now();
-                let ready: Vec<(String, PendingChange)> = pending
-                    .iter()
-                    .filter(|(_, change)| change.ready(now))
-                    .map(|(dir, change)| (dir.clone(), *change))
-                    .collect();
-                for (dir, _) in &ready {
-                    pending.remove(dir);
-                }
-                ready
+                take_ready_changes(&mut pending, Instant::now())
             };
 
             for (dir, change) in ready {

@@ -33,28 +33,26 @@ use windows::{
     },
     Win32::{
         Foundation::{
-            ERROR_FILE_NOT_FOUND, ERROR_INVALID_FUNCTION, ERROR_INVALID_PARAMETER,
-            ERROR_NOT_SUPPORTED, ERROR_PATH_NOT_FOUND, HANDLE, NTSTATUS, STATUS_NO_MORE_FILES,
+            ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, HANDLE, NTSTATUS, STATUS_NO_MORE_FILES,
             STATUS_NO_SUCH_FILE, UNICODE_STRING,
         },
         Security::SECURITY_DESCRIPTOR,
         Storage::FileSystem::{
-            FileAttributeTagInfo, FileBasicInfo, FileDispositionInfoEx, FileIdInfo,
-            GetFileInformationByHandle, GetFileInformationByHandleEx,
-            GetVolumeInformationByHandleW, SetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
-            DELETE, FILE_ACCESS_RIGHTS, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL,
-            FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_TAG_INFO, FILE_BASIC_INFO,
-            FILE_DISPOSITION_FLAG_DELETE, FILE_DISPOSITION_FLAG_POSIX_SEMANTICS,
+            FileAttributeTagInfo, FileBasicInfo, FileDispositionInfoEx,
+            GetFileInformationByHandleEx, GetVolumeInformationByHandleW,
+            SetFileInformationByHandle, DELETE, FILE_ACCESS_RIGHTS, FILE_ATTRIBUTE_DIRECTORY,
+            FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_TAG_INFO,
+            FILE_BASIC_INFO, FILE_DISPOSITION_FLAG_DELETE, FILE_DISPOSITION_FLAG_POSIX_SEMANTICS,
             FILE_DISPOSITION_INFO_EX, FILE_DISPOSITION_INFO_EX_FLAGS, FILE_FLAG_BACKUP_SEMANTICS,
-            FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_ID_128,
-            FILE_ID_INFO, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
-            FILE_SHARE_MODE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE, READ_CONTROL,
-            SYNCHRONIZE,
+            FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_ID_INFO,
+            FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_MODE,
+            FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE, READ_CONTROL, SYNCHRONIZE,
         },
         System::IO::IO_STATUS_BLOCK,
     },
 };
 
+use crate::files::file_identity::{file_id, is_unsupported_class};
 use crate::files::windows_io::{io_error, nt_error};
 
 use super::{
@@ -542,18 +540,6 @@ fn attributes(file: &File) -> io::Result<FILE_ATTRIBUTE_TAG_INFO> {
     }
 }
 
-/// The status a filesystem returns for an information class it does not
-/// implement. FastFAT answers STATUS_INVALID_PARAMETER (#793).
-fn is_unsupported_class(error: &io::Error) -> bool {
-    matches!(
-        error.raw_os_error(),
-        Some(code)
-            if code == ERROR_INVALID_PARAMETER.0 as i32
-                || code == ERROR_INVALID_FUNCTION.0 as i32
-                || code == ERROR_NOT_SUPPORTED.0 as i32
-    )
-}
-
 fn ensure_kind(file: &File, expected: EntryKind, reject_reparse: bool) -> io::Result<()> {
     let attributes = attributes(file)?;
     if reject_reparse && attributes.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 {
@@ -664,51 +650,6 @@ fn aligned_storage(bytes: usize) -> Vec<usize> {
     vec![0; bytes.div_ceil(size_of::<usize>())]
 }
 
-/// The volume serial and 128-bit file ID. Filesystems without
-/// `FileIdInformation`, such as FAT (#793), fall back to the 64-bit file
-/// index, zero-extended, which is what they would report there.
-fn file_id(file: &File) -> io::Result<FILE_ID_INFO> {
-    let mut identity = FILE_ID_INFO::default();
-    // SAFETY: the handle is valid and the output buffer is exactly one
-    // FILE_ID_INFO for the synchronous call.
-    let extended = unsafe {
-        GetFileInformationByHandleEx(
-            file_handle(file),
-            FileIdInfo,
-            ptr::from_mut(&mut identity).cast(),
-            size_of::<FILE_ID_INFO>() as u32,
-        )
-        .map_err(io_error)
-    };
-    match extended {
-        Ok(()) => Ok(identity),
-        Err(error) if is_unsupported_class(&error) => {
-            let mut information = BY_HANDLE_FILE_INFORMATION::default();
-            // SAFETY: the handle is valid and the output buffer is writable
-            // for the synchronous call.
-            unsafe {
-                GetFileInformationByHandle(file_handle(file), &mut information)
-                    .map_err(io_error)?;
-            }
-            Ok(indexed_file_id(&information))
-        }
-        Err(error) => Err(error),
-    }
-}
-
-fn indexed_file_id(information: &BY_HANDLE_FILE_INFORMATION) -> FILE_ID_INFO {
-    let index =
-        (u64::from(information.nFileIndexHigh) << 32) | u64::from(information.nFileIndexLow);
-    let mut identifier = [0u8; 16];
-    identifier[..8].copy_from_slice(&index.to_le_bytes());
-    FILE_ID_INFO {
-        VolumeSerialNumber: u64::from(information.dwVolumeSerialNumber),
-        FileId: FILE_ID_128 {
-            Identifier: identifier,
-        },
-    }
-}
-
 /// Opens a second handle, with its own file object and so its own
 /// enumeration cursor, to the directory behind `directory`. `ReOpenFile`
 /// rejects directory handles with ERROR_ACCESS_DENIED (#772), and
@@ -757,6 +698,11 @@ fn invalid_data(message: &'static str) -> io::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::files::file_identity::indexed_file_id;
+    use windows::Win32::{
+        Foundation::{ERROR_INVALID_FUNCTION, ERROR_INVALID_PARAMETER, ERROR_NOT_SUPPORTED},
+        Storage::FileSystem::BY_HANDLE_FILE_INFORMATION,
+    };
 
     const HEADER_BYTES: usize = offset_of!(FILE_NAMES_INFORMATION, FileName);
 

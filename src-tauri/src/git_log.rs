@@ -136,6 +136,26 @@ pub struct GitLogOptions {
     pub cursor: Option<String>,
 }
 
+/// `AppError::Service` code for a paging cursor that cannot be resumed: either
+/// not a valid OID, or no longer reachable in the walk (rebase, gc, branch
+/// delete). The renderer reloads from the top instead of paging on (#1596).
+pub const STALE_CURSOR_CODE: &str = "stale_cursor";
+
+fn stale_cursor(why: &str) -> AppError {
+    AppError::Service {
+        code: STALE_CURSOR_CODE.into(),
+        message: format!("git log cursor {why}"),
+    }
+}
+
+/// `Ok(None)` when no cursor was requested; an error when one was but is not a
+/// full OID.
+fn cursor_oid_or_stale(cursor: Option<&str>) -> Result<Option<Oid>, AppError> {
+    cursor
+        .map(|c| Oid::from_str(c).map_err(|_| stale_cursor("is not a valid commit id")))
+        .transpose()
+}
+
 const DEFAULT_LIMIT: usize = 500;
 const MAX_LIMIT: usize = 5000;
 
@@ -369,6 +389,10 @@ fn build_log(
         }
     }
     if !seeded {
+        // Nothing to walk, so an explicit cursor cannot be found in it.
+        if cursor_oid_or_stale(opts.cursor.as_deref())?.is_some() {
+            return Err(stale_cursor("is not in the current history"));
+        }
         return Ok(GitLogPage {
             commits: Vec::new(),
             refs: std::collections::HashMap::new(),
@@ -385,9 +409,11 @@ fn build_log(
 
     // Cursor resume (#431): discard every commit up to and including the cursor
     // OID, then collect. `passed_cursor` starts true when there is no cursor, so
-    // the numeric-`skip` path below runs unchanged. An unresolvable cursor OID
-    // is treated as "no cursor" (fall back to skip) rather than erroring.
-    let cursor_oid = opts.cursor.as_deref().and_then(|s| Oid::from_str(s).ok());
+    // the numeric-`skip` path below runs unchanged. A cursor that is malformed
+    // or never turns up in the walk is an error (#1596): treating it as "no
+    // cursor" would replay page one, and returning an empty page would look like
+    // the end of history.
+    let cursor_oid = cursor_oid_or_stale(opts.cursor.as_deref())?;
     let mut passed_cursor = cursor_oid.is_none();
     let file_path = opts
         .file_path
@@ -444,6 +470,10 @@ fn build_log(
                 .to_string(),
             stash: None,
         });
+    }
+
+    if !passed_cursor {
+        return Err(stale_cursor("is not in the current history"));
     }
 
     let next_cursor = commits.last().map(|c| c.oid.clone());
@@ -2434,5 +2464,58 @@ mod tests {
         let page = build_log(&repo, &GitLogOptions::default(), Vec::new(), &no_cancel()).unwrap();
         assert!(page.commits.is_empty());
         assert!(!page.detached);
+    }
+
+    fn page_with_cursor(repo: &Repository, cursor: &str) -> Result<GitLogPage, AppError> {
+        build_log(
+            repo,
+            &GitLogOptions {
+                limit: Some(2),
+                cursor: Some(cursor.into()),
+                ..Default::default()
+            },
+            Vec::new(),
+            &no_cancel(),
+        )
+    }
+
+    /// A cursor must never look like "end of history" or "page one again" (#1596).
+    #[test]
+    fn cursor_absent_from_the_walk_is_a_distinct_error() {
+        let (_dir, repo, _oids) = linear_repo();
+        let err = page_with_cursor(&repo, "1111111111111111111111111111111111111111").unwrap_err();
+        assert!(
+            matches!(&err, AppError::Service { code, .. } if code == STALE_CURSOR_CODE),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn malformed_cursor_is_a_distinct_error() {
+        let (_dir, repo, _oids) = linear_repo();
+        for bad in ["not-an-oid", "", "abc", "zz"] {
+            let err = page_with_cursor(&repo, bad).unwrap_err();
+            assert!(
+                matches!(&err, AppError::Service { code, .. } if code == STALE_CURSOR_CODE),
+                "{bad:?}: {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn cursor_on_the_last_commit_is_an_empty_final_page_not_an_error() {
+        let (_dir, repo, oids) = linear_repo();
+        let page = page_with_cursor(&repo, &oids[0].to_string()).unwrap();
+        assert!(page.commits.is_empty() && !page.has_more);
+    }
+
+    #[test]
+    fn stale_cursor_on_a_repo_without_refs_is_still_an_error() {
+        let (_dir, repo) = init_repo();
+        let err = page_with_cursor(&repo, "1111111111111111111111111111111111111111").unwrap_err();
+        assert!(
+            matches!(&err, AppError::Service { code, .. } if code == STALE_CURSOR_CODE),
+            "{err:?}"
+        );
     }
 }

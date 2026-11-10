@@ -1,8 +1,11 @@
 //! Best-effort video codec identification and save-a-copy for previews the
 //! webview cannot decode. Probing reads bounded head/tail windows only.
+use super::object_id::ObjectId;
 use crate::error::AppError;
 use serde::Serialize;
+use std::fs::Metadata;
 use std::io::{Read, Seek, SeekFrom};
+use std::path::Path;
 
 const WINDOW: u64 = 4 * 1024 * 1024;
 
@@ -129,25 +132,103 @@ pub async fn probe_video_codec(path: String) -> VideoCodecInfo {
         .unwrap_or_default()
 }
 
-/// Copies `source` to the user-chosen `destination`; the source is never modified.
+/// Copies `source` to the user-chosen `destination` with the platform copy
+/// (`fs::copy`: an existing destination is overwritten in place, a dangling
+/// symlink's target is created). The source is never modified (#1588):
+///
+/// - The source must be a regular file, judged from metadata without opening
+///   it (a FIFO would block): missing is `NotFound`, anything else
+///   `InvalidPath`.
+/// - An existing destination (after following symlinks) must be a regular
+///   file, and must not be the source under another spelling: symlink, hard
+///   link, `..`, symlinked parent, `/proc/self/fd`. `fs::copy` truncates the
+///   destination before reading the source, so copying a file onto itself
+///   empties it. Identity is compared, not paths.
+///
+/// Residual: a concurrent process that swaps the destination for an alias of
+/// the source between this check and the copy can still truncate the source.
+/// Before #1588 every alias did; now only that race does.
 #[tauri::command]
 pub async fn save_file_copy(source: String, destination: String) -> Result<(), AppError> {
-    let (src, dst) = (
-        std::path::PathBuf::from(&source),
-        std::path::PathBuf::from(&destination),
-    );
-    if src == dst {
-        return Err(AppError::InvalidPath(
-            "Choose a different destination".into(),
-        ));
+    tokio::task::spawn_blocking(move || {
+        save_copy(
+            Path::new(&source),
+            Path::new(&destination),
+            super::file_identity::of_path,
+        )
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("Task join error: {e}")))?
+}
+
+fn save_copy(
+    source: &Path,
+    destination: &Path,
+    identity: impl Fn(&Path, &Metadata) -> std::io::Result<ObjectId>,
+) -> Result<(), AppError> {
+    let source_metadata = match std::fs::metadata(source) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(AppError::NotFound(source.to_string_lossy().into_owned()))
+        }
+        other => other?,
+    };
+    if !source_metadata.is_file() {
+        return Err(AppError::InvalidPath("Source is not a regular file".into()));
     }
-    if !src.is_file() {
-        return Err(AppError::NotFound(source));
+    match std::fs::metadata(destination) {
+        // Missing, or a dangling symlink whose target the copy creates.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
+        Ok(meta) if meta.is_dir() => {
+            return Err(AppError::InvalidPath("Destination is a folder".into()))
+        }
+        Ok(meta) if !meta.is_file() => {
+            return Err(AppError::InvalidPath(
+                "Destination is not a regular file".into(),
+            ))
+        }
+        Ok(meta) => {
+            if is_same_file((source, &source_metadata), (destination, &meta), identity)? {
+                return Err(AppError::InvalidPath(
+                    "Choose a different destination".into(),
+                ));
+            }
+        }
     }
-    tokio::fs::copy(&src, &dst)
-        .await
-        .map(|_| ())
+    std::fs::copy(source, destination)
+        .map(drop)
         .map_err(AppError::from)
+}
+
+/// Whether two existing paths name one file. When a file identity cannot be
+/// read (a filesystem or redirector without file IDs), canonical paths are
+/// compared instead: that still catches symlink and `..` spellings, though not
+/// hard links. A path that cannot be canonicalised fails the save.
+fn is_same_file(
+    (a, a_metadata): (&Path, &Metadata),
+    (b, b_metadata): (&Path, &Metadata),
+    identity: impl Fn(&Path, &Metadata) -> std::io::Result<ObjectId>,
+) -> Result<bool, AppError> {
+    match (identity(a, a_metadata), identity(b, b_metadata)) {
+        (Ok(a), Ok(b)) => Ok(a == b),
+        (Err(error), _) | (_, Err(error)) => {
+            log::warn!("save_file_copy: file identity unavailable ({error}); comparing paths");
+            Ok(same_canonical_path(
+                &std::fs::canonicalize(a)?,
+                &std::fs::canonicalize(b)?,
+            ))
+        }
+    }
+}
+
+/// Windows paths are case-insensitive; elsewhere identity never fails, so
+/// exact comparison is only a fallback for the injected test seam.
+fn same_canonical_path(a: &Path, b: &Path) -> bool {
+    if cfg!(windows) {
+        a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
+    } else {
+        a == b
+    }
 }
 
 #[cfg(test)]
@@ -199,4 +280,43 @@ mod tests {
         );
         std::fs::remove_dir_all(dir).unwrap();
     }
+
+    /// When file identity is unavailable (Windows filesystems or
+    /// redirectors without file IDs), the alias check falls back to
+    /// canonical paths instead of failing every save.
+    #[test]
+    fn issue_1588_identity_failure_falls_back_to_canonical_paths() {
+        let unavailable = |_: &Path, _: &Metadata| -> std::io::Result<ObjectId> {
+            Err(std::io::Error::from_raw_os_error(87))
+        };
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path();
+        let src = dir.join("a.mkv");
+        std::fs::write(&src, b"precious").unwrap();
+        let base = dir.file_name().unwrap().to_str().unwrap();
+        let mut aliases = vec![dir.join("..").join(base).join("a.mkv")];
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&src, dir.join("link.mkv")).unwrap();
+            aliases.push(dir.join("link.mkv"));
+        }
+        #[cfg(windows)]
+        aliases.push(dir.join("A.MKV"));
+        for alias in aliases {
+            let r = save_copy(&src, &alias, unavailable);
+            assert!(
+                matches!(r, Err(AppError::InvalidPath(_))),
+                "{alias:?}: {r:?}"
+            );
+            assert_eq!(std::fs::read(&src).unwrap(), b"precious");
+        }
+        let other = dir.join("b.mkv");
+        std::fs::write(&other, b"old").unwrap();
+        save_copy(&src, &other, unavailable).unwrap();
+        assert_eq!(std::fs::read(&other).unwrap(), b"precious");
+    }
 }
+
+#[cfg(test)]
+#[path = "../../test_support/save_file_copy_test.rs"]
+mod save_file_copy_tests;

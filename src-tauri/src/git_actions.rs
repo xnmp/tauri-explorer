@@ -17,6 +17,7 @@
 //! panel then shows the conflicted / merge entries as usual. Callers refresh
 //! the graph and SCM after the call resolves (success or error).
 
+use std::collections::HashSet;
 use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -997,8 +998,11 @@ pub struct SyncLocalBranchesResult {
     pub fast_forwarded: Vec<String>,
     /// Branches that have diverged (ahead > 0 AND behind > 0) — left untouched.
     pub diverged: Vec<String>,
-    /// Branches skipped for safety (the checked-out branch with a dirty tree,
-    /// or a fast-forward that git unexpectedly refused).
+    /// Branches skipped for safety: the checked-out branch with a dirty tree;
+    /// a branch checked out, rebased or bisected in any worktree (moving it
+    /// would desync that worktree or break `rebase --continue`); or a
+    /// fast-forward that git refused, that raced, or whose safety could not be
+    /// established (#1590).
     pub skipped: Vec<String>,
 }
 
@@ -1013,7 +1017,188 @@ fn working_tree_clean(repo_path: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// How a branch that is not this worktree's HEAD branch is fast-forwarded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OtherBranchUpdate {
+    /// `git fetch . <upstream>:refs/heads/<branch>`. From git 2.36 fetch
+    /// refuses a branch that any worktree has checked out, is rebasing or is
+    /// bisecting (including the current worktree while its HEAD is detached),
+    /// and refuses non-fast-forwards; its ref update is a compare-and-swap.
+    Fetch,
+    /// Older git, whose fetch protects only the current worktree's branch:
+    /// skip every branch checked out in some worktree, and skip all of them
+    /// while any worktree is detached (it may be rebasing or bisecting a
+    /// branch, which `git worktree list` does not report). Free branches move
+    /// by compare-and-swap `update-ref`.
+    Conservative,
+}
+
+/// First git release whose `fetch` refuses branches checked out, rebased or
+/// bisected in any worktree. Verified against 2.32.7, 2.34.1, 2.34.8 (no
+/// linked-worktree, rebase or bisect protection), 2.36.6, 2.39.5 and 2.56.0.
+const FETCH_GUARDS_ALL_WORKTREES: (u32, u32) = (2, 36);
+
+/// `(major, minor)` from `git version` output, e.g. `git version 2.39.3
+/// (Apple Git-146)` or `git version 2.45.1.windows.1`.
+fn parse_git_version(output: &str) -> Option<(u32, u32)> {
+    let version = output.trim().strip_prefix("git version ")?;
+    let mut parts = version.split(|c: char| !c.is_ascii_digit());
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    Some((major, minor))
+}
+
+fn other_branch_update(repo_path: &str) -> OtherBranchUpdate {
+    let mut cmd = Command::new("git");
+    cmd.no_console()
+        .arg("version")
+        .current_dir(Path::new(repo_path));
+    let version = cmd
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| parse_git_version(&String::from_utf8_lossy(&o.stdout)));
+    match version {
+        Some(v) if v >= FETCH_GUARDS_ALL_WORKTREES => OtherBranchUpdate::Fetch,
+        _ => OtherBranchUpdate::Conservative,
+    }
+}
+
+/// What the worktrees of a repository hold, from `git worktree list
+/// --porcelain`.
+#[derive(Debug, Default)]
+struct WorktreeOccupancy {
+    branches: HashSet<String>,
+    any_detached: bool,
+}
+
+fn worktree_occupancy(repo_path: &str) -> Result<WorktreeOccupancy, AppError> {
+    let mut cmd = Command::new("git");
+    cmd.no_console()
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(Path::new(repo_path));
+    let output = cmd.output().map_err(AppError::from)?;
+    if !output.status.success() {
+        return Err(AppError::Other(format!(
+            "git worktree list failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    let mut occupancy = WorktreeOccupancy::default();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        if let Some(branch) = line.strip_prefix("branch refs/heads/") {
+            occupancy.branches.insert(branch.to_string());
+        } else if line == "detached" {
+            occupancy.any_detached = true;
+        }
+    }
+    Ok(occupancy)
+}
+
+/// Move `refs/heads/<name>` to `new` only if it still points at `expected_old`
+/// (compare-and-swap), so a concurrent update is never clobbered.
+fn advance_branch_ref(
+    repo_path: &str,
+    name: &str,
+    new: git2::Oid,
+    expected_old: git2::Oid,
+) -> Result<(), AppError> {
+    let refname = format!("refs/heads/{name}");
+    run_git(
+        repo_path,
+        &[
+            "update-ref",
+            &refname,
+            &new.to_string(),
+            &expected_old.to_string(),
+        ],
+    )
+}
+
+/// Fast-forward `refs/heads/<name>` from `upstream_ref` through git's own
+/// checks (see [`OtherBranchUpdate::Fetch`]).
+///
+/// The fetch is from this repository to itself, of an object it already has,
+/// so nothing in the user's configuration that governs transports, networks
+/// or side effects may change its outcome:
+/// - `protocol.file.allow` / `protocol.allow` / `GIT_ALLOW_PROTOCOL` could
+///   refuse the `file` transport (every branch would then be skipped);
+/// - a partial clone would lazily fetch missing objects from its promisor
+///   remote (`GIT_NO_LAZY_FETCH`, git 2.44+), and `fetch.bundleURI` downloads
+///   bundles before fetching;
+/// - prune, tags, submodule recursion, FETCH_HEAD, auto-gc/maintenance and the
+///   commit-graph write are disabled by flags, and the negotiation algorithm is
+///   pinned to `default` (a value every git accepts; 2.38+ rejects unknown
+///   ones);
+/// - no credential or terminal prompt can block (`GIT_TERMINAL_PROMPT=0`).
+///
+/// Hooks are honoured: the user's `reference-transaction` hook sees and may
+/// reject this ref update, as with `update-ref` or a plain `git fetch`; a
+/// rejection skips the branch (git's message is logged).
+fn fetch_fast_forward(repo_path: &str, name: &str, upstream_ref: &str) -> Result<(), AppError> {
+    let refspec = format!("{upstream_ref}:refs/heads/{name}");
+    let args = [
+        "-c",
+        "protocol.file.allow=always",
+        "-c",
+        "fetch.bundleURI=",
+        "-c",
+        "fetch.negotiationAlgorithm=default",
+        "fetch",
+        "--quiet",
+        "--no-tags",
+        "--no-prune",
+        "--no-write-fetch-head",
+        "--no-recurse-submodules",
+        "--no-auto-gc",
+        "--no-write-commit-graph",
+        ".",
+        &refspec,
+    ];
+    let dir = Path::new(repo_path);
+    if !dir.is_dir() {
+        return Err(AppError::NotFound(repo_path.to_string()));
+    }
+    let output = Command::new("git")
+        .no_console()
+        .args(args)
+        .current_dir(dir)
+        .env_remove("GIT_ALLOW_PROTOCOL")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_NO_LAZY_FETCH", "1")
+        .output()?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    Err(AppError::Other(if stderr.is_empty() {
+        "git fetch failed".to_string()
+    } else {
+        stderr
+    }))
+}
+
+/// A branch strictly behind its upstream with nothing unpushed.
+struct FastForwardPlan {
+    name: String,
+    upstream_ref: String,
+    local: git2::Oid,
+    remote: git2::Oid,
+}
+
 fn sync_local_branches(repo_path: &str) -> Result<SyncLocalBranchesResult, AppError> {
+    sync_local_branches_with(repo_path, other_branch_update(repo_path), || {
+        worktree_occupancy(repo_path)
+    })
+}
+
+/// `occupancy` is consulted only in [`OtherBranchUpdate::Conservative`] mode,
+/// and only when a branch other than the checked-out one needs to move.
+fn sync_local_branches_with(
+    repo_path: &str,
+    mode: OtherBranchUpdate,
+    occupancy: impl FnOnce() -> Result<WorktreeOccupancy, AppError>,
+) -> Result<SyncLocalBranchesResult, AppError> {
     let repo = crate::git_common::open_repo(Path::new(repo_path))?;
     let mut result = SyncLocalBranchesResult::default();
 
@@ -1024,9 +1209,8 @@ fn sync_local_branches(repo_path: &str) -> Result<SyncLocalBranchesResult, AppEr
         .and_then(|h| h.shorthand().ok().map(str::to_string));
 
     // Collect the plan first — mutating refs while iterating repo.branches()
-    // would invalidate the iterator. Each entry is a branch strictly behind
-    // its upstream with nothing unpushed (a safe fast-forward candidate).
-    let mut plans: Vec<(String, git2::Oid)> = Vec::new();
+    // would invalidate the iterator.
+    let mut plans: Vec<FastForwardPlan> = Vec::new();
     for (branch, _t) in repo
         .branches(Some(git2::BranchType::Local))
         .map_err(crate::git_common::to_app_err)?
@@ -1038,7 +1222,11 @@ fn sync_local_branches(repo_path: &str) -> Result<SyncLocalBranchesResult, AppEr
         let Ok(upstream) = branch.upstream() else {
             continue; // no upstream configured — nothing to sync
         };
-        let (Some(local), Some(remote)) = (branch.get().target(), upstream.get().target()) else {
+        let (Some(local), Some(remote), Some(upstream_ref)) = (
+            branch.get().target(),
+            upstream.get().target(),
+            upstream.get().name().ok().map(str::to_string),
+        ) else {
             continue;
         };
         if local == remote {
@@ -1054,28 +1242,67 @@ fn sync_local_branches(repo_path: &str) -> Result<SyncLocalBranchesResult, AppEr
             result.diverged.push(name); // diverged — never touch
             continue;
         }
-        plans.push((name, remote));
+        plans.push(FastForwardPlan {
+            name,
+            upstream_ref,
+            local,
+            remote,
+        });
     }
 
-    for (name, remote) in plans {
-        if head_branch.as_deref() == Some(name.as_str()) {
+    let mut occupancy = Some(occupancy);
+    // Resolved on first use: `None` until needed, then the listing or `None`
+    // when it failed (every other branch is then skipped, never forced).
+    let mut listing: Option<Option<WorktreeOccupancy>> = None;
+    for plan in plans {
+        let advanced = if head_branch.as_deref() == Some(plan.name.as_str()) {
             // The checked-out branch is only advanced via merge --ff-only, and
             // only with a clean tree; anything uncertain is skipped, not forced.
-            if working_tree_clean(repo_path) && run_git(repo_path, &["merge", "--ff-only"]).is_ok()
-            {
-                result.fast_forwarded.push(name);
-            } else {
-                result.skipped.push(name);
-            }
+            working_tree_clean(repo_path) && run_git(repo_path, &["merge", "--ff-only"]).is_ok()
         } else {
-            // Non-checked-out branch: advance its ref directly. Safe because the
-            // upstream strictly descends from the current tip (behind, ahead=0).
-            let refname = format!("refs/heads/{name}");
-            if run_git(repo_path, &["update-ref", &refname, &remote.to_string()]).is_ok() {
-                result.fast_forwarded.push(name);
-            } else {
-                result.skipped.push(name);
+            match mode {
+                OtherBranchUpdate::Fetch => {
+                    match fetch_fast_forward(repo_path, &plan.name, &plan.upstream_ref) {
+                        Ok(()) => true,
+                        Err(e) => {
+                            // Usually "refusing to fetch into branch … checked
+                            // out at …" (checked out, rebasing or bisecting), or
+                            // a `reference-transaction` hook's rejection.
+                            log::info!("sync branches: skipped {}: {e}", plan.name);
+                            false
+                        }
+                    }
+                }
+                OtherBranchUpdate::Conservative => {
+                    let listed = listing.get_or_insert_with(|| {
+                        occupancy.take().and_then(|list| match list() {
+                            Ok(list) => Some(list),
+                            Err(e) => {
+                                log::warn!("sync branches: {e}; skipping non-current branches");
+                                None
+                            }
+                        })
+                    });
+                    match listed {
+                        Some(list) if !list.any_detached && !list.branches.contains(&plan.name) => {
+                            match advance_branch_ref(repo_path, &plan.name, plan.remote, plan.local)
+                            {
+                                Ok(()) => true,
+                                Err(e) => {
+                                    log::info!("sync branches: skipped {}: {e}", plan.name);
+                                    false
+                                }
+                            }
+                        }
+                        _ => false,
+                    }
+                }
             }
+        };
+        if advanced {
+            result.fast_forwarded.push(plan.name);
+        } else {
+            result.skipped.push(plan.name);
         }
     }
 
@@ -2535,6 +2762,427 @@ mod tests {
             "feature"
         );
         assert_eq!(git_out(dir.path(), &["rev-parse", "feature"]), cs[1]);
+    }
+
+    /// Origin with `main` + `feature`, a clone at `work`, and `origin/feature`
+    /// one commit ahead of the local `feature` (#1590).
+    fn repo_with_feature_behind(r: &Path) -> std::path::PathBuf {
+        let origin = r.join("origin.git");
+        fs::create_dir(&origin).unwrap();
+        git(&origin, &["init", "--bare", "-b", "main"]);
+        let work = r.join("work");
+        fs::create_dir(&work).unwrap();
+        git(&work, &["init", "-b", "main"]);
+        // Windows runners set core.autocrlf=true globally; keep fixture text
+        // byte-exact in this repository and its linked worktrees.
+        git(&work, &["config", "core.autocrlf", "false"]);
+        git(
+            &work,
+            &["remote", "add", "origin", origin.to_str().unwrap()],
+        );
+        fs::write(work.join("a.txt"), "1\n").unwrap();
+        git(&work, &["add", "."]);
+        git(&work, &["commit", "-m", "c1"]);
+        git(&work, &["branch", "feature"]);
+        git(&work, &["push", "-u", "origin", "main", "feature"]);
+        let other = r.join("other");
+        git(
+            r,
+            &["clone", origin.to_str().unwrap(), other.to_str().unwrap()],
+        );
+        git(&other, &["checkout", "feature"]);
+        fs::write(other.join("a.txt"), "2\n").unwrap();
+        git(&other, &["commit", "-am", "c2"]);
+        git(&other, &["push", "origin", "feature"]);
+        git(&work, &["fetch", "origin"]);
+        work
+    }
+
+    #[test]
+    fn sync_skips_branch_checked_out_in_linked_worktree() {
+        for mode in SYNC_MODES {
+            let root = TempDir::new().unwrap();
+            let work = repo_with_feature_behind(root.path());
+            let wt = root.path().join("wt");
+            git(&work, &["worktree", "add", wt.to_str().unwrap(), "feature"]);
+            let before = git_out(&wt, &["rev-parse", "HEAD"]);
+
+            let res = sync_in(&work, mode);
+
+            assert_eq!(git_out(&wt, &["rev-parse", "HEAD"]), before);
+            assert_eq!(git_out(&wt, &["status", "--porcelain"]), "");
+            assert_eq!(fs::read_to_string(wt.join("a.txt")).unwrap(), "1\n");
+            assert!(
+                res.skipped.contains(&"feature".to_string()),
+                "{mode:?} {res:?}"
+            );
+            assert!(
+                !res.fast_forwarded.contains(&"feature".to_string()),
+                "{mode:?} {res:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn sync_run_from_a_linked_worktree_skips_the_main_worktrees_branch() {
+        for mode in SYNC_MODES {
+            let root = TempDir::new().unwrap();
+            let work = repo_with_feature_behind(root.path());
+            // The main worktree holds `feature`; sync is requested from a linked one.
+            git(&work, &["checkout", "feature"]);
+            let wt = root.path().join("wt");
+            git(
+                &work,
+                &[
+                    "worktree",
+                    "add",
+                    "-b",
+                    "scratch",
+                    wt.to_str().unwrap(),
+                    "main",
+                ],
+            );
+            let before = git_out(&work, &["rev-parse", "HEAD"]);
+
+            let res = sync_in(&wt, mode);
+
+            assert_eq!(git_out(&work, &["rev-parse", "HEAD"]), before);
+            assert!(
+                res.skipped.contains(&"feature".to_string()),
+                "{mode:?} {res:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn sync_still_fast_forwards_a_branch_checked_out_nowhere() {
+        for mode in SYNC_MODES {
+            let root = TempDir::new().unwrap();
+            let work = repo_with_feature_behind(root.path());
+            let wt = root.path().join("wt");
+            // A worktree on an unrelated branch must not block the sync.
+            git(
+                &work,
+                &[
+                    "worktree",
+                    "add",
+                    "-b",
+                    "scratch",
+                    wt.to_str().unwrap(),
+                    "main",
+                ],
+            );
+            let upstream = git_out(&work, &["rev-parse", "refs/remotes/origin/feature"]);
+
+            let res = sync_in(&work, mode);
+
+            assert_eq!(
+                git_out(&work, &["rev-parse", "feature"]),
+                upstream,
+                "{mode:?}"
+            );
+            assert_eq!(res.fast_forwarded, vec!["feature".to_string()], "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn advance_branch_ref_does_not_clobber_a_concurrent_update() {
+        let root = TempDir::new().unwrap();
+        let work = repo_with_feature_behind(root.path());
+        let p = work.to_str().unwrap();
+        let read = git2::Oid::from_str(&git_out(&work, &["rev-parse", "feature"])).unwrap();
+        let upstream = git2::Oid::from_str(&git_out(
+            &work,
+            &["rev-parse", "refs/remotes/origin/feature"],
+        ))
+        .unwrap();
+        // Someone commits to `feature` after we read its tip.
+        git(&work, &["checkout", "feature"]);
+        fs::write(work.join("b.txt"), "x\n").unwrap();
+        git(&work, &["add", "."]);
+        git(&work, &["commit", "-m", "concurrent"]);
+        git(&work, &["checkout", "main"]);
+        let raced = git_out(&work, &["rev-parse", "feature"]);
+
+        assert!(advance_branch_ref(p, "feature", upstream, read).is_err());
+        assert_eq!(git_out(&work, &["rev-parse", "feature"]), raced);
+        // With the right expectation the same call succeeds.
+        let current = git2::Oid::from_str(&raced).unwrap();
+        advance_branch_ref(p, "feature", upstream, current).unwrap();
+        assert_eq!(
+            git_out(&work, &["rev-parse", "feature"]),
+            upstream.to_string()
+        );
+    }
+
+    /// Both update strategies; `Conservative` is what older git gets.
+    const SYNC_MODES: [OtherBranchUpdate; 2] =
+        [OtherBranchUpdate::Fetch, OtherBranchUpdate::Conservative];
+
+    fn sync_in(dir: &Path, mode: OtherBranchUpdate) -> SyncLocalBranchesResult {
+        let p = dir.to_str().unwrap();
+        sync_local_branches_with(p, mode, || worktree_occupancy(p)).unwrap()
+    }
+
+    #[test]
+    fn production_sync_uses_fetch_on_this_hosts_git() {
+        // The fetch strategy's guarantees were verified on git >= 2.36; make
+        // sure the tests above exercise the production choice here too.
+        let root = TempDir::new().unwrap();
+        let work = repo_with_feature_behind(root.path());
+        assert_eq!(
+            other_branch_update(work.to_str().unwrap()),
+            OtherBranchUpdate::Fetch
+        );
+    }
+
+    #[test]
+    fn parses_git_version_strings() {
+        for (raw, want) in [
+            ("git version 2.56.0\n", Some((2, 56))),
+            ("git version 2.39.3 (Apple Git-146)", Some((2, 39))),
+            ("git version 2.45.1.windows.1", Some((2, 45))),
+            ("git version 2.36.0.rc2", Some((2, 36))),
+            ("git version 3.0", Some((3, 0))),
+            ("version 2.40.0", None),
+            ("git version", None),
+            ("", None),
+        ] {
+            assert_eq!(parse_git_version(raw), want, "{raw:?}");
+        }
+        assert!((2, 35) < FETCH_GUARDS_ALL_WORKTREES);
+        assert!((3, 0) >= FETCH_GUARDS_ALL_WORKTREES);
+    }
+
+    /// Worktree enumeration (older git only) failing must neither fail the
+    /// sync nor move a branch it could not prove free; the checked-out
+    /// branch's own `merge --ff-only` still runs.
+    #[test]
+    fn failed_worktree_listing_skips_other_branches_but_syncs_the_current_one() {
+        let root = TempDir::new().unwrap();
+        let work = repo_with_feature_behind(root.path());
+        let other = root.path().join("other");
+        git(&other, &["checkout", "main"]);
+        fs::write(other.join("m.txt"), "m\n").unwrap();
+        git(&other, &["add", "."]);
+        git(&other, &["commit", "-m", "m2"]);
+        git(&other, &["push", "origin", "main"]);
+        git(&work, &["fetch", "origin"]);
+        let feature_before = git_out(&work, &["rev-parse", "refs/heads/feature"]);
+        let main_upstream = git_out(&work, &["rev-parse", "refs/remotes/origin/main"]);
+
+        let res = sync_local_branches_with(
+            work.to_str().unwrap(),
+            OtherBranchUpdate::Conservative,
+            || Err(AppError::Other("worktree list unavailable".into())),
+        )
+        .unwrap();
+
+        assert_eq!(res.fast_forwarded, vec!["main".to_string()]);
+        assert_eq!(res.skipped, vec!["feature".to_string()]);
+        assert_eq!(git_out(&work, &["rev-parse", "HEAD"]), main_upstream);
+        assert_eq!(
+            git_out(&work, &["rev-parse", "refs/heads/feature"]),
+            feature_before
+        );
+    }
+
+    /// The graph can be opened below the repository root; `git fetch .` must
+    /// still name the repository, not the subdirectory.
+    #[test]
+    fn sync_from_a_subdirectory_fast_forwards_a_free_branch() {
+        for mode in SYNC_MODES {
+            let root = TempDir::new().unwrap();
+            let work = repo_with_feature_behind(root.path());
+            let sub = work.join("nested/dir");
+            fs::create_dir_all(&sub).unwrap();
+            let upstream = git_out(&work, &["rev-parse", "refs/remotes/origin/feature"]);
+
+            let res = sync_in(&sub, mode);
+
+            assert_eq!(res.fast_forwarded, vec!["feature".to_string()], "{mode:?}");
+            assert_eq!(
+                git_out(&work, &["rev-parse", "refs/heads/feature"]),
+                upstream,
+                "{mode:?}"
+            );
+        }
+    }
+
+    /// The local fetch must not depend on the user's transport policy: none
+    /// of it concerns moving a branch to an object the repository has.
+    #[test]
+    fn sync_ignores_transport_policy() {
+        for mode in SYNC_MODES {
+            let root = TempDir::new().unwrap();
+            let work = repo_with_feature_behind(root.path());
+            git(&work, &["config", "protocol.file.allow", "never"]);
+            git(&work, &["config", "protocol.allow", "never"]);
+            let upstream = git_out(&work, &["rev-parse", "refs/remotes/origin/feature"]);
+
+            let res = sync_in(&work, mode);
+
+            assert_eq!(res.fast_forwarded, vec!["feature".to_string()], "{mode:?}");
+            assert_eq!(
+                git_out(&work, &["rev-parse", "refs/heads/feature"]),
+                upstream,
+                "{mode:?}"
+            );
+        }
+    }
+
+    /// The user's `reference-transaction` hook is honoured in both modes, as
+    /// by `update-ref` and a plain `git fetch`: a rejection leaves the branch
+    /// where it was and reports it skipped.
+    #[cfg(unix)]
+    #[test]
+    fn sync_honours_a_rejecting_reference_transaction_hook() {
+        use std::os::unix::fs::PermissionsExt;
+        for mode in SYNC_MODES {
+            let root = TempDir::new().unwrap();
+            let work = repo_with_feature_behind(root.path());
+            let hook = work.join(".git/hooks/reference-transaction");
+            fs::create_dir_all(hook.parent().unwrap()).unwrap();
+            fs::write(
+                &hook,
+                "#!/bin/sh\nwhile read o n r; do\n  [ \"$1\" = prepared ] && [ \"$r\" = refs/heads/feature ] && { echo protected >&2; exit 1; }\ndone\nexit 0\n",
+            )
+            .unwrap();
+            fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+            let before = git_out(&work, &["rev-parse", "refs/heads/feature"]);
+
+            let res = sync_in(&work, mode);
+
+            assert!(res.fast_forwarded.is_empty(), "{mode:?}: {res:?}");
+            assert_eq!(res.skipped, vec!["feature".to_string()], "{mode:?}");
+            assert_eq!(
+                git_out(&work, &["rev-parse", "refs/heads/feature"]),
+                before,
+                "{mode:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn fetch_fast_forward_refuses_a_non_fast_forward() {
+        let root = TempDir::new().unwrap();
+        let work = repo_with_feature_behind(root.path());
+        // A commit lands on `feature` after the plan saw it strictly behind.
+        git(&work, &["checkout", "-q", "feature"]);
+        fs::write(work.join("b.txt"), "x\n").unwrap();
+        git(&work, &["add", "."]);
+        git(&work, &["commit", "-m", "concurrent"]);
+        git(&work, &["checkout", "-q", "main"]);
+        let raced = git_out(&work, &["rev-parse", "refs/heads/feature"]);
+
+        assert!(fetch_fast_forward(
+            work.to_str().unwrap(),
+            "feature",
+            "refs/remotes/origin/feature"
+        )
+        .is_err());
+        assert_eq!(git_out(&work, &["rev-parse", "refs/heads/feature"]), raced);
+    }
+
+    /// An operation that leaves `feature` in use while HEAD is detached.
+    #[derive(Clone, Copy, Debug)]
+    enum Busy {
+        Rebase,
+        Bisect,
+    }
+
+    /// Start `op` in `dir`, which has `feature` checked out.
+    fn start_busy(dir: &Path, op: Busy) {
+        match op {
+            Busy::Rebase => {
+                // git runs the sequence editor through the shell with the todo
+                // file appended, so this replaces the plan with a `break`.
+                let out = Command::new("git")
+                    .current_dir(dir)
+                    .env("GIT_SEQUENCE_EDITOR", "echo break >")
+                    .args(["rebase", "-i", "HEAD"])
+                    .output()
+                    .unwrap();
+                assert!(
+                    out.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
+            Busy::Bisect => {
+                git(dir, &["bisect", "start"]);
+                // What each bisect step does: detach at the commit to test.
+                git(dir, &["checkout", "-q", "--detach"]);
+            }
+        }
+        assert_eq!(git_out(dir, &["symbolic-ref", "-q", "HEAD"]), "");
+    }
+
+    fn finish_busy(dir: &Path, op: Busy) {
+        match op {
+            Busy::Rebase => git(dir, &["rebase", "--continue"]),
+            Busy::Bisect => git(dir, &["bisect", "reset"]),
+        }
+        assert_eq!(
+            git_out(dir, &["symbolic-ref", "-q", "HEAD"]),
+            "refs/heads/feature"
+        );
+    }
+
+    /// A branch being rebased or bisected — in a linked worktree or in the one
+    /// the sync runs from — must be skipped: moving it makes `git rebase
+    /// --continue` fail with "cannot lock ref" (#1590).
+    fn assert_busy_branch_is_skipped(linked: bool, op: Busy) {
+        for mode in SYNC_MODES {
+            let root = TempDir::new().unwrap();
+            let work = repo_with_feature_behind(root.path());
+            let busy = if linked {
+                let wt = root.path().join("wt");
+                git(&work, &["worktree", "add", wt.to_str().unwrap(), "feature"]);
+                wt
+            } else {
+                git(&work, &["checkout", "-q", "feature"]);
+                work.clone()
+            };
+            start_busy(&busy, op);
+            let before = git_out(&work, &["rev-parse", "refs/heads/feature"]);
+
+            let res = sync_in(&work, mode);
+
+            let case = format!("linked={linked} {op:?} {mode:?}");
+            assert_eq!(
+                git_out(&work, &["rev-parse", "refs/heads/feature"]),
+                before,
+                "{case}"
+            );
+            assert!(
+                res.skipped.contains(&"feature".to_string()),
+                "{case}: {res:?}"
+            );
+            assert!(res.fast_forwarded.is_empty(), "{case}: {res:?}");
+            finish_busy(&busy, op);
+            assert_eq!(git_out(&busy, &["rev-parse", "HEAD"]), before, "{case}");
+        }
+    }
+
+    #[test]
+    fn sync_skips_a_branch_being_rebased_in_a_linked_worktree() {
+        assert_busy_branch_is_skipped(true, Busy::Rebase);
+    }
+
+    #[test]
+    fn sync_skips_a_branch_being_rebased_in_the_current_worktree() {
+        assert_busy_branch_is_skipped(false, Busy::Rebase);
+    }
+
+    #[test]
+    fn sync_skips_a_branch_being_bisected_in_a_linked_worktree() {
+        assert_busy_branch_is_skipped(true, Busy::Bisect);
+    }
+
+    #[test]
+    fn sync_skips_a_branch_being_bisected_in_the_current_worktree() {
+        assert_busy_branch_is_skipped(false, Busy::Bisect);
     }
 
     /// Minimal single-threaded executor for the few async validation tests —

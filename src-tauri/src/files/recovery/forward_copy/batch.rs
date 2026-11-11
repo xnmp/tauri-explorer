@@ -1,5 +1,6 @@
 //! One execution boundary retains ordered receipts across later child failure.
 use super::{plan, PreparedCopy};
+use crate::wire_path::ToWire;
 use crate::{
     diagnostics::{panic_message, Warnings},
     error::AppError,
@@ -74,7 +75,7 @@ pub(in crate::files::recovery) fn execute_batch(
     // child is consumed so both success and unwind can invalidate aliases.
     let targets: Vec<_> = copies
         .iter()
-        .map(|copy| copy.presentation.to_string_lossy().into_owned())
+        .map(|copy| copy.presentation.to_wire())
         .collect();
     let physical: Vec<_> = copies.iter().map(PreparedCopy::physical_refresh).collect();
     let receipts = Receipts::new(copies.len());

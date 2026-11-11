@@ -125,6 +125,10 @@ pub fn validate_output_target(
     output_dir: &str,
     output_filename: &str,
 ) -> Result<PathBuf, AppError> {
+    // Phase 1 of #1592: plugin jobs take native text; non-UTF-8 is refused.
+    let output_dir = crate::wire_path::native_text(output_dir)?;
+    let output_filename = crate::wire_path::native_text(output_filename)?;
+    let (output_dir, output_filename) = (&*output_dir, &*output_filename);
     let output = PathBuf::from(output_dir);
     if !output.is_dir() {
         return Err(AppError::InvalidPath(format!(

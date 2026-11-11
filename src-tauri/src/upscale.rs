@@ -23,6 +23,7 @@ pub async fn start_upscale_job(
     api_key: String,
     upscale_factor: f64,
 ) -> Result<u64, AppError> {
+    let source_path = crate::wire_path::native_text(&source_path)?.into_owned();
     let source = PathBuf::from(&source_path);
     if !source.exists() {
         return Err(AppError::NotFound(source_path));

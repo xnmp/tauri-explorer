@@ -20,13 +20,24 @@ pub(crate) fn open_repo(path: &Path) -> Result<Repository, AppError> {
     .map_err(to_app_err)
 }
 
+/// Open the repository at a wire-spelled path (#1592): the path is decoded,
+/// never taken as literal text.
+pub(crate) fn open_repo_at(wire: &str) -> Result<Repository, AppError> {
+    open_repo(&crate::wire_path::decode(wire)?)
+}
+
+/// The native directory a wire-spelled repository path names.
+pub(crate) fn repo_dir(wire: &str) -> Result<std::borrow::Cow<'_, Path>, AppError> {
+    crate::wire_path::decode(wire)
+}
+
 /// Repo workdir as the canonical cache-key string: full path with any
 /// trailing separator stripped (git2's `workdir()` keeps one, while pane
 /// paths and the mock backend don't — the mismatch gave the same repo two
 /// cache identities across the frontend's repo-keyed caches, #369).
 pub(crate) fn workdir_key(repo: &Repository) -> Option<String> {
     repo.workdir().map(|wd| {
-        let mut s = wd.to_string_lossy().to_string();
+        let mut s = crate::wire_path::encode_path(wd).into_owned();
         while s.len() > 1 && (s.ends_with('/') || s.ends_with('\\')) {
             s.pop();
         }
@@ -57,6 +68,9 @@ pub(crate) struct LiteralRepoPath<'a> {
 /// libgit2 would otherwise panic on an absolute path (`Index::get_path`), and a
 /// non-normalised one silently names nothing in the index.
 pub(crate) fn literal_repo_path(raw: &str) -> Result<LiteralRepoPath<'_>, AppError> {
+    // Index paths are bytes git2 takes as text; phase 1 of #1592 refuses an
+    // escaped (non-UTF-8) path before any effect rather than naming another.
+    crate::wire_path::refuse_escaped(raw)?;
     let invalid = |why: &str| AppError::InvalidPath(format!("{why}: {raw:?}"));
     let (path, dir_only) = match raw.strip_suffix('/') {
         Some(stripped) => (stripped, true),

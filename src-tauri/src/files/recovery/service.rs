@@ -13,6 +13,7 @@ use super::{
     retirement::{Eligibility, Retirement},
 };
 use crate::error::AppError;
+use crate::wire_path::ToWire;
 use std::sync::Arc;
 
 #[path = "move_recovery.rs"]
@@ -541,7 +542,7 @@ fn retained_folders(intent: &DurableIntent, state: Option<&State>) -> Vec<String
                 .is_none_or(|step| step != Step::Removed)
         })
         .filter_map(|side| kind.root(side))
-        .map(|root| root.path.0.to_string_lossy().into_owned())
+        .map(|root| root.path.0.to_wire())
         .collect()
 }
 
@@ -557,13 +558,7 @@ fn item_in(
     RecoveryItem {
         id: intent.id.clone(),
         generation,
-        original_path: intent
-            .operation
-            .kind()
-            .listed_path()
-            .0
-            .to_string_lossy()
-            .into_owned(),
+        original_path: intent.operation.kind().listed_path().0.to_wire(),
         // The artifact container stays meaningful after restoration moves the
         // original home and retains the copy as `publication`.
         retained_path: folders.first().cloned(),

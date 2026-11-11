@@ -1,10 +1,7 @@
 //! Ordered copy intent and outcomes. No filesystem access or renderer state.
 use crate::{error::AppError, files::mutation::FileMutationReceipt};
 use serde::{Deserialize, Serialize};
-use std::{
-    path::{Component, Path},
-    sync::Arc,
-};
+use std::{path::Component, sync::Arc};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -41,8 +38,9 @@ impl Request {
         for (path, source) in
             std::iter::once((&destination, false)).chain(sources.iter().map(|path| (path, true)))
         {
-            let native = Path::new(path);
-            if path.contains('\0')
+            // Decode first; the structural checks run on the native path.
+            let native = crate::wire_path::decode(path)?;
+            if native.as_os_str().as_encoded_bytes().contains(&0)
                 || !native.is_absolute()
                 || (source && native.file_name().is_none())
                 || native
@@ -82,6 +80,8 @@ pub(crate) struct Decision {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Conflict {
+    /// Display text for the prompt (#1592): bytes that are not UTF-8 show as
+    /// U+FFFD. Never an identity; `source_path` is the wire identity.
     pub file_name: String,
     pub source_path: String,
     pub remaining: usize,

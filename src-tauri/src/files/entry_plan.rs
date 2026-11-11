@@ -1,6 +1,11 @@
 //! Owned entry requests. Path derivation is pure and shared by history admission,
 //! execution and refresh; the filesystem is inspected only by the worker.
+//!
+//! Every path and name arrives in wire form and is decoded here, before the
+//! structural checks run on the native value (#1592, ADR 0031).
 use crate::error::AppError;
+use crate::wire_path;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 pub(crate) struct EntryPlan {
@@ -12,6 +17,7 @@ pub(crate) struct EntryPlan {
 pub(super) enum Request {
     CreateDirectory,
     CreateEmptyFile,
+    /// `old_name` and `new_name` are canonical wire names for history.
     Rename {
         source: PathBuf,
         old_name: String,
@@ -36,17 +42,20 @@ impl EntryPlan {
     }
 
     fn create(parent: String, name: String, request: Request) -> Result<Self, AppError> {
+        let parent = wire_path::decode(&parent)?;
+        let name = wire_path::decode_name(&name)?;
         validate_entry_name(&name)?;
         Ok(Self {
             presentation: None,
-            target: Path::new(&parent).join(name),
+            target: parent.join(name),
             request,
         })
     }
 
     pub(crate) fn rename(path: String, new_name: String) -> Result<Self, AppError> {
-        validate_entry_name(&new_name)?;
-        let source = PathBuf::from(path);
+        let source = wire_path::decode(&path)?.into_owned();
+        let native_name = wire_path::decode_name(&new_name)?;
+        validate_entry_name(&native_name)?;
         let parent = source.parent().ok_or_else(|| {
             AppError::InvalidPath(format!(
                 "Cannot get parent directory of: {}",
@@ -55,11 +64,11 @@ impl EntryPlan {
         })?;
         let old_name = source
             .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
+            .map(|name| wire_path::encode(name).into_owned())
             .unwrap_or_default();
         Ok(Self {
             presentation: None,
-            target: parent.join(&new_name),
+            target: parent.join(&native_name),
             request: Request::Rename {
                 source,
                 old_name,
@@ -68,23 +77,23 @@ impl EntryPlan {
         })
     }
 
-    pub(crate) fn write_text(path: String, content: String) -> Self {
-        Self {
+    pub(crate) fn write_text(path: String, content: String) -> Result<Self, AppError> {
+        Ok(Self {
             presentation: None,
-            target: PathBuf::from(path),
+            target: wire_path::decode(&path)?.into_owned(),
             request: Request::WriteText { content },
-        }
+        })
     }
 
-    pub(crate) fn symlink(target: String, link: String) -> Self {
-        Self {
+    pub(crate) fn symlink(target: String, link: String) -> Result<Self, AppError> {
+        Ok(Self {
             presentation: None,
-            target: PathBuf::from(link),
+            target: wire_path::decode(&link)?.into_owned(),
             request: Request::Symlink {
-                target: PathBuf::from(target),
+                target: wire_path::decode(&target)?.into_owned(),
                 probe_target: None,
             },
-        }
+        })
     }
 
     pub(crate) fn affected_dirs(&self) -> Vec<String> {
@@ -93,7 +102,7 @@ impl EntryPlan {
             .parent()
             .into_iter()
             .chain(self.presentation.as_ref().and_then(|path| path.parent()))
-            .map(|path| path.to_string_lossy().into_owned())
+            .map(|path| wire_path::encode_path(path).into_owned())
             .collect();
         parents.sort_unstable();
         parents.dedup();
@@ -185,17 +194,26 @@ impl super::admission::Plan for EntryPlan {
     }
 }
 
-pub(super) fn validate_entry_name(name: &str) -> Result<(), AppError> {
-    if name.is_empty() {
+/// Structural checks on the decoded native name. Separators and dots are
+/// ASCII, so they are checked on bytes whatever the name's encoding.
+pub(super) fn validate_entry_name(name: impl AsRef<OsStr>) -> Result<(), AppError> {
+    let name = name.as_ref();
+    let bytes = name.as_encoded_bytes();
+    let display = || wire_path::lossy(&wire_path::encode(name)).into_owned();
+    if bytes.is_empty() {
         return Err(AppError::InvalidPath("Name cannot be empty".into()));
     }
-    if name.contains('/') || name.contains('\\') {
+    if bytes.iter().any(|byte| matches!(byte, b'/' | b'\\')) {
         return Err(AppError::InvalidPath(format!(
-            "Name cannot contain path separators: {name}"
+            "Name cannot contain path separators: {}",
+            display()
         )));
     }
-    if matches!(name, "." | "..") {
-        return Err(AppError::InvalidPath(format!("Invalid name: {name}")));
+    if matches!(bytes, b"." | b"..") {
+        return Err(AppError::InvalidPath(format!(
+            "Invalid name: {}",
+            display()
+        )));
     }
     Ok(())
 }

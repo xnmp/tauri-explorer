@@ -353,7 +353,7 @@ mod unix {
             for path in paths {
                 prepare_item(
                     preparation,
-                    Path::new(path),
+                    &crate::wire_path::decode(path)?,
                     random,
                     birth_of,
                     capture_of,

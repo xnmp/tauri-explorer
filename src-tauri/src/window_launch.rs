@@ -159,7 +159,9 @@ fn resolve_request(
         None => cwd,
     };
     LaunchRequest {
-        path: path.to_string_lossy().into_owned(),
+        // The single-instance plugin hands over native text (already lossy
+        // for non-UTF-8 arguments); encode the joined path once (ADR 0031).
+        path: crate::wire_path::encode_path(&path).into_owned(),
         new_tab: parsed.new_tab,
     }
 }

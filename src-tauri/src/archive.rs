@@ -1,5 +1,6 @@
 //! Archive operations (compress/extract) for Tauri commands.
 //! Issue: tauri-explorer-0xr, tauri-explorer-kez
+#![allow(clippy::disallowed_methods)] // Retire-when: #1638 closed (non-UTF-8 names, ADR 0031)
 
 use crate::error::AppError;
 use crate::file_history::{self, ForwardEffect, MutationOutcome, MutationReply};
@@ -808,7 +809,8 @@ fn level_under(entries: &[ZipEntryInfo], prefix: &[String]) -> BTreeMap<String, 
 }
 
 fn list_archive_contents_sync(archive_path: &str) -> Result<ArchiveListing, AppError> {
-    let path = Path::new(archive_path);
+    let path = crate::wire_path::decode(archive_path)?;
+    let path = path.as_ref();
     if !path.exists() {
         return Err(AppError::NotFound(archive_path.to_string()));
     }

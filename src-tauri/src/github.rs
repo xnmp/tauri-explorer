@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
-use crate::git_common::{open_repo, to_app_err};
+use crate::git_common::{open_repo_at, to_app_err};
 use crate::process_ext::NoConsole;
 
 /// One open pull request, as surfaced to the frontend. camelCase over IPC
@@ -673,7 +673,10 @@ fn run_gh_with_accepted_exit(
     fallback_error: &str,
 ) -> Result<String, AppError> {
     let mut command = Command::new("gh");
-    command.no_console().args(args).current_dir(repo_root);
+    command
+        .no_console()
+        .args(args)
+        .current_dir(crate::git_common::repo_dir(repo_root)?);
     let output = command.output().map_err(gh_command_error)?;
     if accepts_exit(output.status.success(), output.status.code()) {
         return Ok(String::from_utf8_lossy(&output.stdout).to_string());
@@ -717,7 +720,7 @@ fn accepts_gh_pr_checks_exit(success: bool, code: Option<i32>) -> bool {
 }
 
 fn github_repo_slug(repo_root: &str) -> Result<String, AppError> {
-    let repo = open_repo(Path::new(repo_root))?;
+    let repo = open_repo_at(repo_root)?;
     let url = remote_url(&repo)
         .ok_or_else(|| AppError::Other("This repository has no GitHub remote".to_string()))?;
     let (owner, name) = parse_github_remote(&url).ok_or_else(|| {
@@ -783,7 +786,7 @@ pub async fn git_failed_ci_check_log(
 /// The github.com issues page for the repo's selected remote (origin first),
 /// or `None` when it has no remote or the remote is not on github.com.
 fn git_issues_url_for_root(repo_root: &str) -> Result<Option<String>, AppError> {
-    let repo = open_repo(Path::new(repo_root))?;
+    let repo = open_repo_at(repo_root)?;
     Ok(remote_url(&repo)
         .and_then(|url| parse_github_remote(&url))
         .map(|(owner, name)| format!("https://github.com/{owner}/{name}/issues")))
@@ -805,7 +808,7 @@ pub async fn git_issues_url(repo_root: String) -> Result<Option<String>, AppErro
 #[tauri::command]
 pub async fn git_open_prs(repo_root: String) -> Result<Vec<PrInfo>, AppError> {
     tokio::task::spawn_blocking(move || {
-        let repo = open_repo(Path::new(&repo_root))?;
+        let repo = open_repo_at(&repo_root)?;
         let Some((remote, url)) = selected_remote(&repo) else {
             return Ok(Vec::new());
         };
@@ -1398,7 +1401,7 @@ fn execute_pr_action(
             body,
             base,
         } => {
-            let repo = open_repo(Path::new(repo_root))?;
+            let repo = open_repo_at(repo_root)?;
             if repo.head_detached().map_err(to_app_err)?
                 || repo
                     .head()
@@ -1462,7 +1465,7 @@ fn execute_pr_action(
     command
         .no_console()
         .args(&args)
-        .current_dir(repo_root)
+        .current_dir(crate::git_common::repo_dir(repo_root)?)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
@@ -1512,7 +1515,7 @@ pub struct PrContext {
 
 fn pr_context(repo_root: &str) -> Result<PrContext, AppError> {
     let repo_slug = github_repo_slug(repo_root)?;
-    let repo = open_repo(Path::new(repo_root))?;
+    let repo = open_repo_at(repo_root)?;
     let head_branch = if repo.head_detached().map_err(to_app_err)? {
         None
     } else {

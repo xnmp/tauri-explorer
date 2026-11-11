@@ -206,7 +206,7 @@ fn detached_tracker<'a>() -> ProgressTracker<'a> {
 #[tauri::command]
 pub async fn get_home_directory() -> Result<String, AppError> {
     dirs::home_dir()
-        .map(|p| p.to_string_lossy().to_string())
+        .map(|p| crate::wire_path::encode_path(&p).into_owned())
         .ok_or_else(|| AppError::NotFound("Home directory not found".to_string()))
 }
 
@@ -227,10 +227,13 @@ pub async fn create_empty_file(
 }
 
 /// True when renaming changes only case and both names refer to the same entry.
+/// `new_name` is a wire name; escapes have no case, so comparing lowercased
+/// wire spellings compares the valid text case-insensitively and the
+/// undecodable bytes exactly.
 fn is_case_only_rename(source: &Path, target: &Path, new_name: &str) -> bool {
     let same_name_ci = source
         .file_name()
-        .map(|name| name.to_string_lossy().to_lowercase() == new_name.to_lowercase())
+        .map(|name| crate::wire_path::encode(name).to_lowercase() == new_name.to_lowercase())
         .unwrap_or(false);
     same_name_ci && is_same_entry(source, target)
 }
@@ -256,9 +259,7 @@ pub(super) fn execute_entry_impl(plan: EntryPlan) -> Result<FileMutationReceipt,
     let (target, request, presentation) = plan.into_parts();
     let absent = || {
         if entry_exists(&target) {
-            Err(AppError::AlreadyExists(
-                target.to_string_lossy().into_owned(),
-            ))
+            Err(AppError::AlreadyExists(target.display().to_string()))
         } else {
             Ok(())
         }
@@ -267,7 +268,7 @@ pub(super) fn execute_entry_impl(plan: EntryPlan) -> Result<FileMutationReceipt,
         Request::CreateDirectory | Request::CreateEmptyFile => {
             let parent = target
                 .parent()
-                .ok_or_else(|| AppError::InvalidPath(target.to_string_lossy().into_owned()))?;
+                .ok_or_else(|| AppError::InvalidPath(target.display().to_string()))?;
             if !parent.exists() {
                 return Err(AppError::NotFound(format!(
                     "Parent directory does not exist: {}",
@@ -289,14 +290,12 @@ pub(super) fn execute_entry_impl(plan: EntryPlan) -> Result<FileMutationReceipt,
             source, new_name, ..
         } => {
             if !entry_exists(&source) {
-                return Err(AppError::NotFound(source.to_string_lossy().into_owned()));
+                return Err(AppError::NotFound(source.display().to_string()));
             }
             let target_exists = entry_exists(&target);
             let case_only = target_exists && is_case_only_rename(&source, &target, &new_name);
             if target_exists && !case_only {
-                return Err(AppError::AlreadyExists(
-                    target.to_string_lossy().into_owned(),
-                ));
+                return Err(AppError::AlreadyExists(target.display().to_string()));
             }
             if case_only {
                 fs::rename(&source, &target)?;
@@ -308,7 +307,7 @@ pub(super) fn execute_entry_impl(plan: EntryPlan) -> Result<FileMutationReceipt,
             absent()?;
             let parent = target
                 .parent()
-                .ok_or_else(|| AppError::InvalidPath(target.to_string_lossy().into_owned()))?;
+                .ok_or_else(|| AppError::InvalidPath(target.display().to_string()))?;
             StagedEntry::prepare(parent, |payload| {
                 let mut writer = fs::OpenOptions::new()
                     .write(true)
@@ -325,9 +324,7 @@ pub(super) fn execute_entry_impl(plan: EntryPlan) -> Result<FileMutationReceipt,
             probe_target,
         } => {
             if !entry_exists(probe_target.as_deref().unwrap_or(&link_target)) {
-                return Err(AppError::NotFound(
-                    link_target.to_string_lossy().into_owned(),
-                ));
+                return Err(AppError::NotFound(link_target.display().to_string()));
             }
             absent()?;
             #[cfg(unix)]
@@ -355,7 +352,7 @@ pub(super) fn execute_entry_impl(plan: EntryPlan) -> Result<FileMutationReceipt,
                         .is_some_and(|(requested, actual)| requested == actual)
                 });
         if same_parent {
-            receipt.path = presentation.to_string_lossy().into_owned();
+            receipt.path = crate::wire_path::encode_path(&presentation).into_owned();
             if let Some(entry) = &mut receipt.entry {
                 entry.path = receipt.path.clone();
             }
@@ -365,7 +362,20 @@ pub(super) fn execute_entry_impl(plan: EntryPlan) -> Result<FileMutationReceipt,
 }
 
 /// Generate a unique copy name like "name - Copy.ext" or "name - Copy (2).ext".
-fn generate_copy_name(dest_dir: &Path, source_name: &str, is_directory: bool) -> PathBuf {
+/// The name is composed on its wire spelling (whose `.` positions are the
+/// native ones) and decoded back, so undecodable bytes are kept exactly.
+fn generate_copy_name(
+    dest_dir: &Path,
+    source_name: &std::ffi::OsStr,
+    is_directory: bool,
+) -> PathBuf {
+    let source_name = crate::wire_path::encode(source_name);
+    let source_name = source_name.as_ref();
+    let join = |name: &str| {
+        dest_dir.join(
+            crate::wire_path::decode_name(name).expect("a composed wire name stays canonical"),
+        )
+    };
     // Only split off an extension when the dot isn't the leading character,
     // so dotfiles like ".bashrc" keep their full name as the base.
     let (base_name, extension) = if is_directory {
@@ -380,14 +390,14 @@ fn generate_copy_name(dest_dir: &Path, source_name: &str, is_directory: bool) ->
     };
 
     let copy_name = format!("{} - Copy{}", base_name, extension);
-    let target = dest_dir.join(&copy_name);
+    let target = join(&copy_name);
     if !entry_exists(&target) {
         return target;
     }
 
     for counter in 2..=1000 {
         let copy_name = format!("{} - Copy ({}){}", base_name, counter, extension);
-        let target = dest_dir.join(&copy_name);
+        let target = join(&copy_name);
         if !entry_exists(&target) {
             return target;
         }
@@ -398,7 +408,7 @@ fn generate_copy_name(dest_dir: &Path, source_name: &str, is_directory: bool) ->
     let pid = std::process::id();
     for counter in 0u64.. {
         let copy_name = format!("{} - Copy ({}-{}){}", base_name, pid, counter, extension);
-        let target = dest_dir.join(&copy_name);
+        let target = join(&copy_name);
         if !entry_exists(&target) {
             return target;
         }
@@ -468,9 +478,7 @@ pub(crate) fn copy_entry_tracked(
 ) -> Result<FileMutationReceipt, AppError> {
     tracker.check_cancelled()?;
     if !entry_exists(source_path) {
-        return Err(AppError::NotFound(
-            source_path.to_string_lossy().into_owned(),
-        ));
+        return Err(AppError::NotFound(source_path.display().to_string()));
     }
     if !dest_dir_path.is_dir() {
         return Err(AppError::NotFound(format!(
@@ -480,15 +488,14 @@ pub(crate) fn copy_entry_tracked(
     }
     let source_name = source_path
         .file_name()
-        .ok_or_else(|| AppError::InvalidPath("Invalid source path".into()))?
-        .to_string_lossy();
+        .ok_or_else(|| AppError::InvalidPath("Invalid source path".into()))?;
     reject_dir_into_itself(source_path, dest_dir_path)?;
     #[cfg(target_os = "linux")]
     validate_copy_observation(source_path, dest_dir_path, overwrite, observation)?;
     copy_entry_inner_with(
         source_path,
         dest_dir_path,
-        &source_name,
+        source_name,
         overwrite,
         observation,
         tracker,
@@ -533,7 +540,7 @@ fn validate_copy_observation(
 fn copy_entry_inner(
     source_path: &Path,
     dest_dir_path: &Path,
-    source_name: &str,
+    source_name: &std::ffi::OsStr,
     overwrite: Option<bool>,
     tracker: &mut ProgressTracker,
 ) -> Result<FileMutationReceipt, AppError> {
@@ -551,7 +558,7 @@ fn copy_entry_inner(
 fn copy_entry_inner_with(
     source_path: &Path,
     dest_dir_path: &Path,
-    source_name: &str,
+    source_name: &std::ffi::OsStr,
     overwrite: Option<bool>,
     observation: Option<&super::mutation::CopyObservation>,
     tracker: &mut ProgressTracker,
@@ -699,30 +706,31 @@ fn move_entry_with(
     overwrite: Option<bool>,
     move_entry: impl FnOnce(&Path, &Path, &Path) -> Result<Option<FileMutationRecovery>, AppError>,
 ) -> Result<FileMutationReceipt, AppError> {
-    let source_path = PathBuf::from(&source);
-    let dest_dir_path = PathBuf::from(&dest_dir);
+    let source_path = crate::wire_path::decode(&source)?.into_owned();
+    let dest_dir_path = crate::wire_path::decode(&dest_dir)?.into_owned();
 
     if !entry_exists(&source_path) {
         // Debug-format the raw string: multi-file DnD reports "path not
         // found" (#253) and any hidden characters (percent-encoding, CR/LF
         // from uri-list parsing) must be visible in the log.
         log::warn!("move_entry: source does not exist: {source:?} (dest_dir {dest_dir:?})");
-        return Err(AppError::NotFound(source.clone()));
+        return Err(AppError::NotFound(
+            crate::wire_path::lossy(&source).into_owned(),
+        ));
     }
 
     if !dest_dir_path.exists() {
         log::warn!("move_entry: dest dir does not exist: {dest_dir:?} (source {source:?})");
         return Err(AppError::NotFound(format!(
             "Destination directory does not exist: {}",
-            dest_dir
+            crate::wire_path::lossy(&dest_dir)
         )));
     }
 
     let source_name = source_path
         .file_name()
         .ok_or_else(|| AppError::InvalidPath("Invalid source path".to_string()))?
-        .to_string_lossy()
-        .to_string();
+        .to_owned();
 
     reject_dir_into_itself(&source_path, &dest_dir_path)?;
 
@@ -731,13 +739,12 @@ fn move_entry_with(
     let target_exists = entry_exists(&target);
     if target_exists {
         if !overwrite.unwrap_or(false) {
-            return Err(AppError::AlreadyExists(
-                target.to_string_lossy().into_owned(),
-            ));
+            return Err(AppError::AlreadyExists(target.display().to_string()));
         }
         if is_same_entry(&source_path, &target) {
             return Err(AppError::InvalidPath(format!(
-                "Source and destination are the same: {source}"
+                "Source and destination are the same: {}",
+                source_path.display()
             )));
         }
     }
@@ -754,7 +761,8 @@ fn move_entry_with(
         if let Some(recovery) = &mut recovery {
             // Both the committed destination and its displaced original may
             // be necessary for recovery after partial source removal.
-            recovery.displaced_path = Some(displaced.retain().to_string_lossy().into_owned());
+            recovery.displaced_path =
+                Some(crate::wire_path::encode_path(&displaced.retain()).into_owned());
         } else {
             displaced.discard();
         }
@@ -820,8 +828,8 @@ fn cross_device_move(
     // of the source before failing, so preserve the actual effect separately
     // from the complete requested Move and never expose a retryable error.
     Ok(cleanup(source).err().map(|error| FileMutationRecovery {
-        source_path: source.to_string_lossy().into_owned(),
-        destination_path: target.to_string_lossy().into_owned(),
+        source_path: crate::wire_path::encode_path(source).into_owned(),
+        destination_path: crate::wire_path::encode_path(target).into_owned(),
         error: error.to_string(),
         displaced_path: None,
     }))
@@ -852,7 +860,7 @@ pub async fn read_text_file(path: String, max_bytes: Option<u64>) -> Result<Stri
 }
 
 fn read_text_file_impl(path: String, max_bytes: Option<u64>) -> Result<String, AppError> {
-    let file_path = PathBuf::from(&path);
+    let file_path = crate::wire_path::decode(&path)?.into_owned();
     let limit = max_bytes.unwrap_or(1_048_576);
 
     let metadata = match fs::metadata(&file_path) {
@@ -936,7 +944,7 @@ pub async fn read_image_data_url(path: String, max_bytes: Option<u64>) -> Result
 fn read_image_data_url_impl(path: String, max_bytes: Option<u64>) -> Result<String, AppError> {
     use base64::Engine as _;
 
-    let file_path = PathBuf::from(&path);
+    let file_path = crate::wire_path::decode(&path)?.into_owned();
     let limit = max_bytes.unwrap_or(32 * 1024 * 1024);
 
     let metadata = match fs::metadata(&file_path) {
@@ -1018,7 +1026,7 @@ pub async fn write_text_file(
     path: String,
     content: String,
 ) -> Result<FileMutationReceipt, AppError> {
-    execute_entry(EntryPlan::write_text(path, content)).await
+    execute_entry(EntryPlan::write_text(path, content)?).await
 }
 
 /// Delete a file or directory permanently (not to trash).
@@ -1027,7 +1035,7 @@ pub async fn delete_entry_permanent(path: String) -> Result<(), AppError> {
 }
 
 pub(crate) fn delete_path(path: &str) -> Result<(), AppError> {
-    delete_native_path(Path::new(path))
+    delete_native_path(&crate::wire_path::decode(path)?)
 }
 
 pub(crate) fn delete_native_path(file_path: &Path) -> Result<(), AppError> {
@@ -1043,7 +1051,7 @@ pub(crate) fn delete_native_path(file_path: &Path) -> Result<(), AppError> {
 pub(crate) fn delete_path_receipt(
     path: &str,
 ) -> Result<super::trash_artifact::TrashSuccess, AppError> {
-    super::permanent_delete::delete(Path::new(path))
+    super::permanent_delete::delete(&crate::wire_path::decode(path)?)
 }
 
 /// Create a symbolic link.
@@ -1051,7 +1059,7 @@ pub async fn create_symlink(
     target_path: String,
     link_path: String,
 ) -> Result<FileMutationReceipt, AppError> {
-    execute_entry(EntryPlan::symlink(target_path, link_path)).await
+    execute_entry(EntryPlan::symlink(target_path, link_path)?).await
 }
 
 /// Estimate total file count and size for a list of paths.
@@ -1062,7 +1070,7 @@ pub async fn estimate_size(paths: Vec<String>) -> Result<SizeEstimate, AppError>
         let mut total_bytes: u64 = 0;
 
         for path_str in &paths {
-            let path = PathBuf::from(path_str);
+            let path = crate::wire_path::decode(path_str)?;
             if !entry_exists(&path) {
                 return Err(AppError::NotFound(path_str.clone()));
             }
@@ -1099,7 +1107,9 @@ pub async fn check_paths_exist(paths: Vec<String>, directory: Option<bool>) -> V
     run_blocking(move || {
         Ok(paths
             .iter()
-            .map(|p| path_matches_kind(Path::new(p), directory))
+            .map(|p| {
+                crate::wire_path::decode(p).is_ok_and(|path| path_matches_kind(&path, directory))
+            })
             .collect())
     })
     .await
@@ -1438,14 +1448,14 @@ mod tests {
     fn test_generate_copy_name() {
         let dir = tempdir().unwrap();
 
-        let name = generate_copy_name(dir.path(), "test.txt", false);
+        let name = generate_copy_name(dir.path(), "test.txt".as_ref(), false);
         assert_eq!(
             name.file_name().unwrap().to_str().unwrap(),
             "test - Copy.txt"
         );
 
         File::create(&name).unwrap();
-        let name2 = generate_copy_name(dir.path(), "test.txt", false);
+        let name2 = generate_copy_name(dir.path(), "test.txt".as_ref(), false);
         assert_eq!(
             name2.file_name().unwrap().to_str().unwrap(),
             "test - Copy (2).txt"
@@ -1456,14 +1466,14 @@ mod tests {
     fn test_generate_copy_name_dotfile() {
         let dir = tempdir().unwrap();
 
-        let name = generate_copy_name(dir.path(), ".bashrc", false);
+        let name = generate_copy_name(dir.path(), ".bashrc".as_ref(), false);
         assert_eq!(
             name.file_name().unwrap().to_str().unwrap(),
             ".bashrc - Copy"
         );
 
         File::create(&name).unwrap();
-        let name2 = generate_copy_name(dir.path(), ".bashrc", false);
+        let name2 = generate_copy_name(dir.path(), ".bashrc".as_ref(), false);
         assert_eq!(
             name2.file_name().unwrap().to_str().unwrap(),
             ".bashrc - Copy (2)"
@@ -1820,7 +1830,7 @@ mod tests {
         let flag = AtomicBool::new(true);
         let mut tracker =
             ProgressTracker::new(None, "copy-progress", "Copy cancelled", 0, 0, Some(&flag));
-        let err = copy_entry_inner(&src_dir, &dest_dir, "src", None, &mut tracker)
+        let err = copy_entry_inner(&src_dir, &dest_dir, "src".as_ref(), None, &mut tracker)
             .expect_err("cancelled copy must fail");
         assert!(err.to_string().contains("cancelled"));
         assert!(

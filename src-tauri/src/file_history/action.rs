@@ -71,14 +71,22 @@ fn validate(
         return Err("File history action is too large".into());
     }
     let path = |path: &str| -> Result<(), String> {
-        if path.is_empty() || path.contains('\0') || !Path::new(path).is_absolute() {
+        if path.is_empty()
+            || path.contains('\0')
+            || !Path::new(path).is_absolute()
+            || crate::wire_path::decode(path).is_err()
+        {
             Err("File history requires absolute paths without NUL bytes".into())
         } else {
             Ok(())
         }
     };
     let name = |name: &str| -> Result<(), String> {
-        if name.is_empty() || matches!(name, "." | "..") || name.contains(['/', '\\', '\0']) {
+        if name.is_empty()
+            || matches!(name, "." | "..")
+            || name.contains(['/', '\\', '\0'])
+            || crate::wire_path::decode_name(name).is_err()
+        {
             Err("Invalid file history entry name".into())
         } else {
             Ok(())
@@ -116,14 +124,18 @@ fn validate(
             }
             if publication
                 .as_ref()
-                .is_some_and(|entry| entry.path != Path::new(copied_path))
+                .is_some_and(|entry| crate::wire_path::encode_path(&entry.path) != *copied_path)
             {
                 return Err("Copy history path does not match its native publication".into());
             }
-            if publication
-                .as_ref()
-                .is_some_and(|entry| entry.path.parent() != Some(Path::new(parent_dir)))
-            {
+            if publication.as_ref().is_some_and(|entry| {
+                entry
+                    .path
+                    .parent()
+                    .map(crate::wire_path::encode_path)
+                    .as_deref()
+                    != Some(parent_dir.as_str())
+            }) {
                 return Err("Copy history parent does not match its native publication".into());
             }
         }
@@ -247,11 +259,7 @@ pub fn prepare_renderer(
 
 pub fn affected_dirs(action: &Action) -> Vec<String> {
     fn collect(action: &Action, dirs: &mut BTreeSet<String>) {
-        let parent = |path: &str| {
-            Path::new(path)
-                .parent()
-                .map(|parent| parent.to_string_lossy().into_owned())
-        };
+        let parent = |path: &str| crate::wire_path::parent(path).map(str::to_owned);
         match action {
             Action::Rename { path, .. } => {
                 if let Some(path) = parent(path) {
@@ -276,7 +284,7 @@ pub fn affected_dirs(action: &Action) -> Vec<String> {
                     publication
                         .as_ref()
                         .and_then(|entry| entry.path.parent())
-                        .map(|path| path.to_string_lossy().into_owned()),
+                        .map(|path| crate::wire_path::encode_path(path).into_owned()),
                 );
             }
             Action::Delete { paths, .. } => {

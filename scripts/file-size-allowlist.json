@@ -1,5 +1,5 @@
 {
-  "src/lib/components/ContextMenu.svelte": 1042,
+  "src/lib/components/ContextMenu.svelte": 1041,
   "src/lib/components/FileList.svelte": 842,
   "src/lib/components/FilesSidebarView.svelte": 869,
   "src/lib/components/GitGraphView.svelte": 837,

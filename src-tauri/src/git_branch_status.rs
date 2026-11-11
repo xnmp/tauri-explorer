@@ -20,14 +20,13 @@
 //! for one repository run single-flight, so reload bursts do not pile up.
 
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
 use std::sync::{Arc, LazyLock, Mutex};
 
 use git2::{BranchType, DiffOptions, Oid, Repository};
 use serde::Serialize;
 
 use crate::error::AppError;
-use crate::git_common::{open_repo, to_app_err};
+use crate::git_common::{open_repo_at, to_app_err};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -421,7 +420,7 @@ fn classify_cached(repo_path: &str, limits: ClassifyLimits) -> Result<BranchStat
     let _guard = lock
         .lock()
         .map_err(|_| AppError::Other("branch status lock poisoned".into()))?;
-    let repo = open_repo(Path::new(repo_path))?;
+    let repo = open_repo_at(repo_path)?;
     let signature = inputs_signature(&repo);
     if let Ok(cache) = RESULTS.lock() {
         if let Some((cached, result)) = cache.get(repo_path) {

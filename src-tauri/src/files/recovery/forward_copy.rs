@@ -5,6 +5,7 @@ use super::{
     model::{OperationSpec, ReplacementSpec},
     replacement_execution::ReplacementExecution,
 };
+use crate::wire_path::ToWire;
 use crate::{
     error::AppError,
     files::{
@@ -65,7 +66,7 @@ impl PreparedCopy {
             .0
             .parent()
             .filter(|parent| Some(*parent) != self.presentation.parent())
-            .map(|parent| parent.to_string_lossy().into_owned())
+            .map(|parent| parent.to_wire())
     }
 
     pub(super) fn execute(
@@ -147,7 +148,7 @@ impl PreparedCopy {
             .and_then(|directory| of_file(&directory.file).ok())
             == Some(parent_identity)
         {
-            receipt.path = target.to_string_lossy().into_owned();
+            receipt.path = target.to_wire();
             if let Some(entry) = &mut receipt.entry {
                 entry.path = receipt.path.clone();
             }
@@ -155,7 +156,7 @@ impl PreparedCopy {
         let mut refresh_dirs: Vec<String> = [committed.as_path(), Path::new(&receipt.path)]
             .into_iter()
             .filter_map(|path| path.parent())
-            .map(|parent| parent.to_string_lossy().into_owned())
+            .map(|parent| parent.to_wire())
             .collect();
         refresh_dirs.sort_unstable();
         refresh_dirs.dedup();

@@ -33,6 +33,8 @@
 //! The decision is a pure function of the WebKitGTK runtime version, the GPU
 //! driver, whether a GPU render node is usable, and the environment; only `apply` touches the process environment,
 //! and it must run before GTK/WebKit start.
+// Lossy text here is environment values and device-node names, never wire paths.
+#![allow(clippy::disallowed_methods)]
 
 /// Per-launch override: `shm`, `cpu`, `legacy` or `native`.
 pub(crate) const OVERRIDE_VAR: &str = "TAURI_EXPLORER_WEBKIT_RENDERER";

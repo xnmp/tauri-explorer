@@ -24,8 +24,8 @@ impl<O, C: FnMut() -> Result<(), AppError>> Work<O, C> {
             .parent()
             .ok_or_else(|| AppError::InvalidPath("Move target requires a parent".into()))?;
         let mut receipt = super::file_ops::move_entry_impl(
-            self.plan.source.to_string_lossy().into_owned(),
-            destination.to_string_lossy().into_owned(),
+            crate::wire_path::encode_path(&self.plan.source).into_owned(),
+            crate::wire_path::encode_path(destination).into_owned(),
             Some(self.plan.overwrite),
         )?;
         if let Some(presentation) = &self.plan.presentation {
@@ -37,7 +37,7 @@ impl<O, C: FnMut() -> Result<(), AppError>> Work<O, C> {
                 .as_deref()
                 == Some(destination)
             {
-                receipt.path = presentation.to_string_lossy().into_owned();
+                receipt.path = crate::wire_path::encode_path(presentation).into_owned();
                 if let Some(entry) = &mut receipt.entry {
                     entry.path = receipt.path.clone();
                 }

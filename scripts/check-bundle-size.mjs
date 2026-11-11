@@ -145,7 +145,15 @@ const STARTUP_RAW_BUDGET = 866_617;
 // restore load lazily (domain/trash-drop.ts via state/trash-location.ts); a
 // first cut that routed eagerly measured +758, and importing native-drop-paths
 // from the lazy route split it into its own startup chunk.
-const STARTUP_GZIP_BUDGET = 282_880;
+// Raised 282,880 -> 283,136 (+256) for #1592 (non-UTF-8 names): the fix alone
+// fit the cap exactly (dev 8f8b3c25 measured 282,690; the fix 282,880, +190),
+// but #1619's SCM rows landed from the same baseline and the combined graph on
+// dev c5cab48a measures 283,003. Eager by nature: every rendered name goes
+// through domain/wire-name.ts (display text), and inline rename, new folder and
+// terminal cwd sync convert typed text back to wire form. Importing the helper
+// from the lazy conflict dialog or the AI-rename plugin split it into its own
+// startup chunk (+300 / +95), so those stay on backend display text.
+const STARTUP_GZIP_BUDGET = 283_136;
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const clientDir = resolve(repoRoot, ".svelte-kit/output/client");

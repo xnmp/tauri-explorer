@@ -516,6 +516,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `path.ts` — path normalization/join/parent/relative helpers, including native parent/equality helpers that retain POSIX backslashes.
 - `paste-source.ts` — pure file-list Paste source selection: the app's own Copy/Cut while the system clipboard mirrors it (or, for Copy only, when it cannot be read), otherwise an external file list (#865).
 - `platform.ts` — isMac/isWindows/isLinux detection.
+- `wire-name.ts` — pure wire-name helpers (#1592, ADR 0031): `displayName` (escaped non-UTF-8 bytes → lossy display text), `toWireText` (escape typed U+EF80–U+EFFF), `renameRequest` (no-op when display text is unchanged). Contracts in `tests/domain/wire-name.test.ts` over `tests/fixtures/wire-path.json`.
 - `wsl.ts` — WSL path recognition.
 - `virtual-path.ts` — virtual (plugin-provided) path parsing, plus the eager `TRASH_PATH` / `isTrashPath` for the built-in Trash.
 - `trash.ts` — pure in-app Trash mapping (#863): `trash://` paths, trash wire entries → `FileEntry` with `trash` origin metadata, original-folder column text, source-issue and restore-outcome messages. Contracts in `tests/domain/trash.test.ts`.
@@ -737,6 +738,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `load_diagnostics/persist.rs` — record precedence (frontend beats native fallback; within a source settled beats late pending; re-checked against the file on disk), bounded in-memory session records, and one dedicated writer thread that also fills in the filesystem (time-bounded probe); `recent_slow_loads` reads disk on one reusable reader thread with a timeout.
 - `update_check.rs` — update check via GitHub releases (#185).
 - `warm_pool.rs` — native warm registry with label-scoped spawn reservations, bounded claims and committed activation.
+- `wire_path.rs` — canonical wire text for native paths (#1592, ADR 0031): bijective encode/decode (invalid bytes ↔ U+EF00+byte), wire path algebra (`parent`/`file_name`/`join`), lossy display text and `refuse_escaped` for surfaces without phase-1 support. The only sanctioned native↔text conversion (`clippy.toml`). Tests: `test_support/wire_path_test.rs` (vectors + proptests), `test_support/wire_path_fs_test.rs` (real-filesystem regressions, mounted from `files/mod.rs`).
 - `gemini.rs` — shared helpers for shelling out to `gemini` CLI.
 - `ai_organize.rs` — AI destination suggestions via Gemini (#158).
 - `ai_rename.rs` — AI rename suggestions via Gemini (#145).

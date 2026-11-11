@@ -17,7 +17,7 @@ use super::{
     WorkerCompletion,
 };
 use crate::{error::AppError, files, progress::ProgressTracker};
-use std::{fs, path::Path, sync::Arc};
+use std::{fs, sync::Arc};
 
 #[derive(Clone)]
 pub(crate) struct MoveWork {
@@ -47,8 +47,16 @@ impl Work for MoveWork {
         control: Arc<Control>,
         progress: Arc<dyn Fn(crate::progress::ByteProgress) + Send + Sync>,
     ) -> WorkerCompletion<FileMutationReceipt> {
-        let source = Path::new(&inspection.source);
-        let destination = Path::new(&inspection.destination);
+        let (source, destination) = match inspection.native() {
+            Ok(native) => native,
+            Err(error) => {
+                return WorkerCompletion {
+                    result: Err(error),
+                    warning: None,
+                }
+            }
+        };
+        let (source, destination) = (source.as_ref(), destination.as_ref());
         let name = match source.file_name() {
             Some(name) => name,
             None => {
@@ -95,9 +103,7 @@ impl Work for MoveWork {
             // retains the displaced original rather than discarding it.
             if !overwrite && fs::symlink_metadata(&target).is_ok() {
                 return WorkerCompletion {
-                    result: Err(AppError::AlreadyExists(
-                        target.to_string_lossy().into_owned(),
-                    )),
+                    result: Err(AppError::AlreadyExists(target.display().to_string())),
                     warning: None,
                 };
             }
@@ -158,7 +164,7 @@ impl Work for MoveWork {
 }
 
 fn inspect(source: String, destination: String, remaining: usize) -> Result<Inspection, AppError> {
-    let path = Path::new(&source);
+    let path = crate::wire_path::decode(&source)?;
     let name = path
         .file_name()
         .ok_or_else(|| AppError::InvalidPath("Move source has no name".into()))?;
@@ -171,7 +177,7 @@ fn inspect(source: String, destination: String, remaining: usize) -> Result<Insp
     )?;
     let physical_source = source_parent.join(name);
     let presentation = destination;
-    let destination = fs::canonicalize(&presentation)?;
+    let destination = fs::canonicalize(crate::wire_path::decode(&presentation)?)?;
     if !destination.is_dir() {
         return Err(AppError::InvalidPath(
             "Move destination is not a directory".into(),
@@ -197,7 +203,7 @@ fn inspect(source: String, destination: String, remaining: usize) -> Result<Insp
             let source_entry =
                 files::metadata_to_entry_with_git_repo_probe(&physical_source, &source_meta, false);
             Conflict {
-                file_name: name.to_string_lossy().into_owned(),
+                file_name: crate::wire_path::lossy(&crate::wire_path::encode(name)).into_owned(),
                 source_path: source.clone(),
                 remaining,
                 source_size: source_entry.size,
@@ -208,8 +214,8 @@ fn inspect(source: String, destination: String, remaining: usize) -> Result<Insp
         })
     };
     Ok(Inspection {
-        source: physical_source.to_string_lossy().into_owned(),
-        destination: destination.to_string_lossy().into_owned(),
+        source: crate::wire_path::encode_path(&physical_source).into_owned(),
+        destination: crate::wire_path::encode_path(&destination).into_owned(),
         presentation,
         conflict,
         bytes: if source_meta.is_dir() {
@@ -277,20 +283,7 @@ fn map_completion(
 /// Physical paths remain the recovery authority. Preserve the pane's spelling
 /// only while its alias still names the inspected destination directory.
 fn present(mut receipt: FileMutationReceipt, inspection: &Inspection) -> FileMutationReceipt {
-    if fs::canonicalize(&inspection.presentation).ok().as_deref()
-        != Some(Path::new(&inspection.destination))
-    {
-        return receipt;
-    }
-    if let Some(name) = Path::new(&receipt.path).file_name() {
-        receipt.path = Path::new(&inspection.presentation)
-            .join(name)
-            .to_string_lossy()
-            .into_owned();
-        if let Some(entry) = &mut receipt.entry {
-            entry.path = receipt.path.clone();
-        }
-    }
+    inspection.present(&mut receipt);
     receipt
 }
 

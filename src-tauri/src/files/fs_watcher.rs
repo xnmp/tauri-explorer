@@ -194,7 +194,7 @@ fn ensure_search_watch_cancellable<C: CacheInvalidation>(
     if cancelled.load(Ordering::Acquire) {
         return false;
     }
-    let path_string = path.to_string_lossy().to_string();
+    let path_string = crate::wire_path::encode_path(path).into_owned();
     let registration = {
         let Ok(watcher) = watcher.lock() else {
             return false;
@@ -223,8 +223,8 @@ pub(crate) fn is_search_cache_watched(path: &Path) -> bool {
         .get()
         .and_then(|watcher| watcher.lock().ok())
         .is_some_and(|watcher| {
-            let path = path.to_string_lossy().to_string();
-            watcher.covered(&path) && watcher.observer.search.healthy(Path::new(&path))
+            watcher.covered(&crate::wire_path::encode_path(path))
+                && watcher.observer.search.healthy(path)
         })
 }
 
@@ -238,8 +238,7 @@ pub(crate) fn mark_directory_watched_for_test(path: &Path) {
 }
 
 pub(crate) fn invalidate_directory_caches_for_change(path: &Path) {
-    let path_string = path.to_string_lossy();
-    invalidate_dir_cache_sync(&path_string);
+    invalidate_dir_cache_sync(&crate::wire_path::encode_path(path));
     invalidate_search_cache_for_change(path);
 }
 
@@ -248,9 +247,14 @@ pub(crate) fn invalidate_directory_caches_for_change(path: &Path) {
 /// through the existing cache invalidation and watcher scheduling boundary.
 pub(crate) fn publish_file_changes(paths: &[String]) {
     for path in paths {
-        let path = Path::new(path);
-        invalidate_directory_caches_for_change(path);
-        queue_directory_change(path, ChangeOrigin::Mutation);
+        // Wire spellings name native paths only through their decoding; a
+        // literal `Path::new` would re-escape an escaped name (#1592).
+        let Ok(path) = crate::wire_path::decode(path) else {
+            log::warn!("Skipping change publication for a non-canonical path: {path:?}");
+            continue;
+        };
+        invalidate_directory_caches_for_change(&path);
+        queue_directory_change(&path, ChangeOrigin::Mutation);
     }
 }
 
@@ -276,7 +280,7 @@ fn record_change(
         observed_at_ms,
     };
     pending
-        .entry(path.to_string_lossy().into_owned())
+        .entry(crate::wire_path::encode_path(path).into_owned())
         .and_modify(|previous| previous.merge(change))
         .or_insert(change);
 }
@@ -315,10 +319,10 @@ fn observation<C: CacheInvalidation>(mode: Mode, factory: Factory, cache: C) -> 
                     cache.changed(&path);
                 } else {
                     if names {
-                        invalidate_dir_cache_sync(&path.to_string_lossy());
+                        invalidate_dir_cache_sync(&crate::wire_path::encode_path(&path));
                         cache.changed(&path);
                     } else {
-                        invalidate_dir_cache_sync(&path.to_string_lossy());
+                        invalidate_dir_cache_sync(&crate::wire_path::encode_path(&path));
                     }
                     queue_directory_change(&path, ChangeOrigin::Watcher);
                 }
@@ -327,7 +331,7 @@ fn observation<C: CacheInvalidation>(mode: Mode, factory: Factory, cache: C) -> 
                 for root in roots {
                     cache.root(&root);
                     if mode == Mode::Direct {
-                        invalidate_dir_cache_sync(&root.to_string_lossy());
+                        invalidate_dir_cache_sync(&crate::wire_path::encode_path(&root));
                         queue_directory_change(&root, ChangeOrigin::Watcher);
                     }
                 }
@@ -338,7 +342,7 @@ fn observation<C: CacheInvalidation>(mode: Mode, factory: Factory, cache: C) -> 
                 for root in roots {
                     cache.root(&root);
                     if mode == Mode::Direct {
-                        invalidate_dir_cache_sync(&root.to_string_lossy());
+                        invalidate_dir_cache_sync(&crate::wire_path::encode_path(&root));
                     }
                 }
             }
@@ -381,25 +385,37 @@ impl<C: CacheInvalidation> NativeObserver<C> {
     }
 }
 
+/// Lease keys are canonical wire spellings (admission decodes each one
+/// first), so a failure here is an invariant breach reported as an error.
+fn native_path(path: &str) -> notify::Result<std::borrow::Cow<'_, Path>> {
+    crate::wire_path::decode(path).map_err(|error| notify::Error::generic(&error.to_string()))
+}
+
 impl<C: CacheInvalidation> Observer for NativeObserver<C> {
     fn healthy(&self, path: &str) -> bool {
-        self.direct.healthy(Path::new(path))
+        native_path(path).is_ok_and(|path| self.direct.healthy(&path))
     }
     fn watch(&mut self, path: &str) -> notify::Result<()> {
-        self.direct.add(Path::new(path), false)
+        self.direct.add(&native_path(path)?, false)
     }
     fn observe(&mut self, path: &str) -> notify::Result<()> {
-        self.direct.add(Path::new(path), true)
+        self.direct.add(&native_path(path)?, true)
     }
     fn unwatch(&mut self, path: &str) -> notify::Result<()> {
-        self.direct.remove(Path::new(path))
+        self.direct.remove(&native_path(path)?)
     }
     fn replace(&mut self, paths: &[String]) -> notify::Result<()> {
-        self.direct.reset(paths)
+        let roots = paths
+            .iter()
+            .map(|path| native_path(path).map(std::borrow::Cow::into_owned))
+            .collect::<notify::Result<Vec<_>>>()?;
+        self.direct.reset(roots)
     }
     fn uncovered(&mut self, path: &str) {
-        self.search.remove(Path::new(path));
-        self.cache.root(Path::new(path));
+        if let Ok(path) = native_path(path) {
+            self.search.remove(&path);
+            self.cache.root(&path);
+        }
     }
 }
 
@@ -536,15 +552,20 @@ async fn acquire_pending_directory(
         trace.enter(Phase::ResolvePath);
         let path = super::directory_identity::resolve(&path);
         trace.enter(Phase::WatchLock);
-        let result = with_watcher(|watcher| {
-            trace.enter(Phase::WatchRegister);
-            if observed {
-                watcher.observe(&owner, path)
-            } else {
-                watcher.acquire(&owner, path)
-            }
-        })
-        .map(|lease| PendingLease(Some(lease)));
+        // Admit only canonical wire spellings, so every lease key decodes.
+        let result = crate::wire_path::decode(&path)
+            .map(drop)
+            .and_then(|()| {
+                with_watcher(|watcher| {
+                    trace.enter(Phase::WatchRegister);
+                    if observed {
+                        watcher.observe(&owner, path)
+                    } else {
+                        watcher.acquire(&owner, path)
+                    }
+                })
+            })
+            .map(|lease| PendingLease(Some(lease)));
         let _ = send.send(result);
         // Also schedules retries if retirement raced a blocked registration.
         retire_owners();

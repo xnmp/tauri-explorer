@@ -1,6 +1,7 @@
 //! Native source identity is captured before frontend IPC channels can reorder.
 
 use crate::error::AppError;
+use crate::wire_path::ToWire;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -102,10 +103,10 @@ impl Source {
 
 fn matches(source: &Source, paths: &[PathBuf]) -> bool {
     matches_with(source, paths, cfg!(target_os = "windows"), |path| {
-        dunce::canonicalize(path)
-            .unwrap_or_else(|_| PathBuf::from(path))
-            .to_string_lossy()
-            .into_owned()
+        crate::wire_path::decode(path)
+            .ok()
+            .and_then(|native| dunce::canonicalize(native).ok())
+            .map_or_else(|| path.to_owned(), |native| native.as_path().to_wire())
     })
 }
 
@@ -134,10 +135,12 @@ fn matches_with(
                             && matches!(path.as_bytes().get(2), Some(b'\\' | b'/'))))
                         || path.split(['\\', '/']).any(|part| part == "..")
                 } else {
-                    !PathBuf::from(path).is_absolute()
-                        || PathBuf::from(path)
-                            .components()
-                            .any(|part| matches!(part, std::path::Component::ParentDir))
+                    crate::wire_path::decode(path).map_or(true, |native| {
+                        !native.is_absolute()
+                            || native
+                                .components()
+                                .any(|part| matches!(part, std::path::Component::ParentDir))
+                    })
                 }
         })
     {
@@ -158,10 +161,7 @@ fn matches_with(
         }
     };
     let mut expected: Vec<_> = source_paths.iter().map(|path| key(path)).collect();
-    let mut actual: Vec<_> = paths
-        .iter()
-        .map(|path| key(&path.to_string_lossy()))
-        .collect();
+    let mut actual: Vec<_> = paths.iter().map(|path| key(&path.to_wire())).collect();
     expected.sort();
     actual.sort();
     !expected.is_empty() && expected == actual
@@ -170,7 +170,7 @@ fn matches_with(
 fn receiver_paths(paths: &[PathBuf], windows: bool) -> bool {
     paths.iter().all(|path| {
         if windows {
-            let path = path.to_string_lossy().replace('\\', "/");
+            let path = path.to_wire().replace('\\', "/");
             if path.starts_with("//") {
                 path.split('/').filter(|part| !part.is_empty()).count() > 2
             } else {
@@ -178,9 +178,10 @@ fn receiver_paths(paths: &[PathBuf], windows: bool) -> bool {
                     .is_some_and(|tail| tail.split('/').any(|part| !part.is_empty() && part != "."))
             }
         } else {
-            path.to_string_lossy()
-                .chars()
-                .any(|character| character != '/')
+            path.as_os_str()
+                .as_encoded_bytes()
+                .iter()
+                .any(|&byte| byte != b'/')
         }
     })
 }
@@ -199,11 +200,11 @@ fn transport_keys(paths: &[PathBuf], windows: bool) -> Vec<String> {
     let mut keys: Vec<_> = paths
         .iter()
         .map(|path| {
-            let path = path.to_string_lossy();
+            let path = path.to_wire();
             if windows {
                 path.replace('\\', "/")
             } else {
-                path.into_owned()
+                path
             }
         })
         .collect();
@@ -446,10 +447,13 @@ impl Registry {
     }
     #[cfg(test)]
     fn begin(&mut self, token: u64, owner: String, source: Option<Source>) {
-        let transport = source
+        let transport: Vec<PathBuf> = source
             .as_ref()
             .map(|source| receiver_event_paths(&[], Some(source)))
-            .unwrap_or_default();
+            .unwrap_or_default()
+            .iter()
+            .map(|path| crate::wire_path::decode(path).unwrap().into_owned())
+            .collect();
         self.begin_prepared(
             token,
             owner,
@@ -624,7 +628,8 @@ pub struct Sessions {
 )]
 enum Event {
     Enter {
-        paths: Vec<PathBuf>,
+        /// Wire spellings (#1592); a `PathBuf` cannot serialize a non-UTF-8 name.
+        paths: Vec<String>,
         position: tauri::PhysicalPosition<f64>,
         source: Option<Source>,
         copy_modifier: Option<bool>,
@@ -639,7 +644,7 @@ enum Event {
         copy_modifier: Option<bool>,
     },
     Drop {
-        paths: Vec<PathBuf>,
+        paths: Vec<String>,
         position: tauri::PhysicalPosition<f64>,
         source: Option<Source>,
         copy_modifier: Option<bool>,
@@ -710,7 +715,7 @@ fn native_window_id(window: &tauri::Window) -> Option<usize> {
     }
 }
 
-fn receiver_event_paths(paths: &[PathBuf], source: Option<&Source>) -> Vec<PathBuf> {
+fn receiver_event_paths(paths: &[PathBuf], source: Option<&Source>) -> Vec<String> {
     // The native transport may resolve a Windows directory link. Once the
     // entire transport set is verified, carry original paths alongside source
     // metadata so the frontend's multiset admission preserves link identity.
@@ -720,11 +725,9 @@ fn receiver_event_paths(paths: &[PathBuf], source: Option<&Source>) -> Vec<PathB
                 .paths
                 .as_deref()
                 .unwrap_or(std::slice::from_ref(&source.path))
-                .iter()
-                .map(PathBuf::from)
-                .collect()
+                .to_vec()
         })
-        .unwrap_or_else(|| paths.to_vec())
+        .unwrap_or_else(|| paths.iter().map(|path| path.to_wire()).collect())
 }
 
 fn same_receiver_event(native: &wry::DragDropEvent, delivered: &tauri::DragDropEvent) -> bool {
@@ -984,11 +987,16 @@ async fn adopt_html5_file_drag(
 pub async fn start_file_drag(
     app: tauri::AppHandle,
     window: tauri::Window,
-    item: Vec<PathBuf>,
+    item: Vec<String>,
     image: String,
     source: Option<Source>,
     on_event: Channel<Completion>,
 ) -> Result<(), AppError> {
+    // Wire spellings name the native files only through their decoding.
+    let item = item
+        .iter()
+        .map(|path| crate::wire_path::decode(path).map(std::borrow::Cow::into_owned))
+        .collect::<Result<Vec<PathBuf>, _>>()?;
     if item.is_empty() || item.iter().any(|path| !path.is_absolute()) {
         return Err("Drag paths must be absolute and nonempty".into());
     }

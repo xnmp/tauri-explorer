@@ -19,7 +19,9 @@ use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
 use crate::error::AppError;
-use crate::git_common::{literal_repo_path, open_repo, to_app_err, workdir_key, LiteralRepoPath};
+use crate::git_common::{
+    literal_repo_path, open_repo, open_repo_at, to_app_err, workdir_key, LiteralRepoPath,
+};
 #[cfg(windows)]
 use crate::process_ext::output_cancellable;
 use crate::task_registry::TaskRegistry;
@@ -182,8 +184,12 @@ struct Classified {
 /// (`git add -N`). libgit2's status has no notion of one and reports it as a
 /// staged addition plus a worktree modification.
 fn is_intent_to_add(index: &git2::Index, path: &str) -> bool {
+    // `path` is a wire spelling; the index is keyed by native bytes (#1592).
+    let Ok(native) = crate::wire_path::decode(path) else {
+        return false;
+    };
     index
-        .get_path(Path::new(path), 0)
+        .get_path(&native, 0)
         .is_some_and(|e| e.flags_extended & git2::IndexEntryExtendedFlag::INTENT_TO_ADD.bits() != 0)
 }
 
@@ -213,6 +219,11 @@ fn status_detects_renames(repo: &Repository) -> bool {
     true
 }
 
+/// A libgit2 repo-relative path as a `/`-separated wire spelling (#1592).
+fn repo_relative(path: &Path) -> String {
+    crate::wire_path::encode_path(path).replace('\\', "/")
+}
+
 /// Classify one libgit2 status entry into SCM rows the way `git status`
 /// does, so the native path and the WSL porcelain-v2 path agree (#1619).
 /// `index` must be supplied for entries flagged `INDEX_NEW`.
@@ -225,8 +236,11 @@ fn classify(entry: &git2::StatusEntry<'_>, index: Option<&git2::Index>) -> Class
             .index_to_workdir()
             .and_then(|d| d.new_file().path())
             .or_else(|| entry.head_to_index().and_then(|d| d.new_file().path()))
-            .or_else(|| entry.path().ok().map(Path::new))
-            .map(|p| p.to_string_lossy().replace('\\', "/"));
+            .map(repo_relative)
+            .or_else(|| {
+                Some(crate::wire_path::encode_bytes(entry.path_bytes()).replace('\\', "/"))
+                    .filter(|path| !path.is_empty())
+            });
         if let Some(path) = path {
             out.merge = Some(GitFileEntry {
                 path,
@@ -247,8 +261,10 @@ fn classify(entry: &git2::StatusEntry<'_>, index: Option<&git2::Index>) -> Class
     // an unstaged deletion once the file is gone) with nothing staged —
     // porcelain v2 `.A` / `.D`. Its index entry is a placeholder, not content.
     if flags.contains(Status::INDEX_NEW) {
-        if let (Ok(p), Some(index)) = (entry.path(), index) {
-            if is_intent_to_add(index, p) {
+        // `path()` fails for a non-UTF-8 name; the bytes always exist (#1592).
+        let p = crate::wire_path::encode_bytes(entry.path_bytes());
+        if let Some(index) = index {
+            if is_intent_to_add(index, &p) {
                 let status = if flags.contains(Status::WT_DELETED) {
                     GitStatusCode::Deleted
                 } else {
@@ -268,7 +284,8 @@ fn classify(entry: &git2::StatusEntry<'_>, index: Option<&git2::Index>) -> Class
     // index has nothing for the path at all; after `git rm --cached` it holds
     // a staged deletion as well, and git lists both rows (`D.` and `?`).
     if flags.contains(Status::WT_NEW) {
-        if let Ok(p) = entry.path() {
+        let p = crate::wire_path::encode_bytes(entry.path_bytes());
+        if !p.is_empty() {
             out.untracked = Some(GitFileEntry {
                 path: p.replace('\\', "/"),
                 old_path: None,
@@ -284,14 +301,8 @@ fn classify(entry: &git2::StatusEntry<'_>, index: Option<&git2::Index>) -> Class
     if flags.intersects(index_flags) {
         let code = status_code(flags & index_flags).unwrap_or(GitStatusCode::Modified);
         if let Some(delta) = entry.head_to_index() {
-            let new_path = delta
-                .new_file()
-                .path()
-                .map(|p| p.to_string_lossy().replace('\\', "/"));
-            let old_path = delta
-                .old_file()
-                .path()
-                .map(|p| p.to_string_lossy().replace('\\', "/"));
+            let new_path = delta.new_file().path().map(repo_relative);
+            let old_path = delta.old_file().path().map(repo_relative);
             if let Some(path) = new_path.clone().or(old_path.clone()) {
                 let old_path = match (old_path, &new_path) {
                     (Some(op), Some(np)) if op == *np => None,
@@ -314,14 +325,8 @@ fn classify(entry: &git2::StatusEntry<'_>, index: Option<&git2::Index>) -> Class
     if flags.intersects(wt_flags) {
         let code = status_code(flags & wt_flags).unwrap_or(GitStatusCode::Modified);
         if let Some(delta) = entry.index_to_workdir() {
-            let new_path = delta
-                .new_file()
-                .path()
-                .map(|p| p.to_string_lossy().replace('\\', "/"));
-            let old_path = delta
-                .old_file()
-                .path()
-                .map(|p| p.to_string_lossy().replace('\\', "/"));
+            let new_path = delta.new_file().path().map(repo_relative);
+            let old_path = delta.old_file().path().map(repo_relative);
             if let Some(path) = new_path.clone().or(old_path.clone()) {
                 let old_path = match (old_path, &new_path) {
                     (Some(op), Some(np)) if op == *np => None,
@@ -382,7 +387,7 @@ fn content_changed(
                 .new_file()
                 .path()
                 .or_else(|| delta.old_file().path())
-                .map(|p| p.to_string_lossy().replace('\\', "/"))
+                .map(repo_relative)
             else {
                 continue;
             };
@@ -402,7 +407,7 @@ fn content_changed(
     let mut opts = DiffOptions::new();
     opts.ignore_filemode(true);
     for c in candidates {
-        opts.pathspec(c);
+        opts.pathspec(crate::wire_path::decode_bytes(c)?.into_owned());
     }
     // Candidates are literal file names from the status list (#1589).
     opts.disable_pathspec_match(true);
@@ -1038,7 +1043,7 @@ where
 #[tauri::command]
 pub async fn git_init(path: String) -> Result<String, AppError> {
     run_blocking(move |_cancel| {
-        let p = PathBuf::from(&path);
+        let p = crate::wire_path::decode(&path)?.into_owned();
         if let Ok(existing) = open_repo(&p) {
             if let Some(root) = workdir_key(&existing) {
                 return Ok(root);
@@ -1214,7 +1219,8 @@ fn add_to_gitignore(root: &Path, entry: &str) -> Result<String, AppError> {
 
 #[tauri::command]
 pub async fn git_add_to_gitignore(repo_root: String, entry: String) -> Result<String, AppError> {
-    run_blocking(move |_cancel| add_to_gitignore(Path::new(&repo_root), &entry)).await
+    run_blocking(move |_cancel| add_to_gitignore(&crate::git_common::repo_dir(&repo_root)?, &entry))
+        .await
 }
 
 /// Validate that every requested path is a repo-relative, currently-untracked
@@ -1233,7 +1239,8 @@ fn untracked_worktree_paths(
     let mut relative_paths = Vec::with_capacity(paths.len());
     let mut seen = HashSet::with_capacity(paths.len());
     for path in paths {
-        let relative = Path::new(path);
+        let native = crate::wire_path::native_text(path)?;
+        let relative = Path::new(&*native);
         if relative.as_os_str().is_empty()
             || relative.is_absolute()
             || relative.components().any(|component| {
@@ -1271,7 +1278,7 @@ fn untracked_worktree_paths(
 #[tauri::command]
 pub async fn git_archive_untracked(repo_path: String, paths: Vec<String>) -> Result<(), AppError> {
     run_blocking(move |_cancel| {
-        let repo = open_repo(Path::new(&repo_path))?;
+        let repo = open_repo_at(&repo_path)?;
         let (workdir, relative_paths) = untracked_worktree_paths(&repo, &paths)?;
         if relative_paths
             .iter()
@@ -1323,11 +1330,11 @@ pub async fn git_trash_untracked(repo_path: String, paths: Vec<String>) -> Resul
     // Closing the invoking renderer must not drop the continuation between them.
     tauri::async_runtime::spawn(async move {
         let absolute_paths = run_blocking(move |_cancel| {
-            let repo = open_repo(Path::new(&repo_path))?;
+            let repo = open_repo_at(&repo_path)?;
             let (workdir, relative_paths) = untracked_worktree_paths(&repo, &paths)?;
             Ok(relative_paths
                 .into_iter()
-                .map(|relative| workdir.join(relative).to_string_lossy().into_owned())
+                .map(|relative| crate::wire_path::encode_path(&workdir.join(relative)).into_owned())
                 .collect())
         })
         .await?;
@@ -1357,9 +1364,7 @@ fn discover_repo_root(path: &str) -> Option<String> {
             WslRepoRoot::Fallback => {}
         }
     }
-    open_repo(Path::new(path))
-        .ok()
-        .and_then(|repo| workdir_key(&repo))
+    open_repo_at(path).ok().and_then(|repo| workdir_key(&repo))
 }
 
 fn directory_scope(path: &str) -> Option<GitDirectoryScope> {
@@ -1378,7 +1383,7 @@ fn resolved_relative_directory(path: &str, repo_root: &str) -> Option<String> {
     let mut parts = Vec::new();
     for component in relative.components() {
         match component {
-            Component::Normal(part) => parts.push(part.to_string_lossy().into_owned()),
+            Component::Normal(part) => parts.push(crate::wire_path::encode(part).into_owned()),
             Component::CurDir => {}
             Component::Prefix(_) | Component::RootDir | Component::ParentDir => return None,
         }
@@ -1394,7 +1399,9 @@ fn scope_resolution_path(path: &str) -> PathBuf {
     if let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc(path) {
         return PathBuf::from(wsl_unc_from_linux(&distro, &linux_path));
     }
-    PathBuf::from(path)
+    crate::wire_path::decode(path)
+        .map(std::borrow::Cow::into_owned)
+        .unwrap_or_default()
 }
 
 #[tauri::command]
@@ -1435,8 +1442,7 @@ pub async fn git_status(
         if cancelled.load(Ordering::Relaxed) {
             return Err(AppError::Other("git status cancelled".into()));
         }
-        let p = PathBuf::from(&repo_path);
-        let result = match open_repo(&p) {
+        let result = match open_repo_at(&repo_path) {
             Ok(repo) => collect_status(&repo),
             Err(_) => Ok(map_non_repo()),
         };
@@ -1475,14 +1481,20 @@ fn stage_paths_with(
     let workdir = repo
         .workdir()
         .ok_or_else(|| AppError::Other("git: bare repository has no working tree".into()))?;
+    // Index paths are text to git2: decode each, refusing non-UTF-8 before
+    // any effect (#1592).
+    let paths = paths
+        .iter()
+        .map(|p| crate::wire_path::native_text(p))
+        .collect::<Result<Vec<_>, _>>()?;
     // Read, update and write under one `index.lock` (#1617), with the
     // repository's own case handling as `Repository::index()` gives it.
     crate::git_index_lock::with_locked_index_hooked(
         repo,
         crate::git_index_lock::IndexCase::Repository,
         |index| {
-            for p in paths {
-                let pp = Path::new(p);
+            for p in &paths {
+                let pp = Path::new(&**p);
                 // Deleted files: remove from index. Others: add.
                 let abs = workdir.join(pp);
                 // `symlink_metadata`: a dangling symlink is a real entry to stage.
@@ -1501,7 +1513,7 @@ fn stage_paths_with(
 #[tauri::command]
 pub async fn git_stage(repo_path: String, paths: Vec<String>) -> Result<(), AppError> {
     run_blocking(move |_cancel| {
-        let repo = open_repo(Path::new(&repo_path))?;
+        let repo = open_repo_at(&repo_path)?;
         stage_paths_inner(&repo, &paths)
     })
     .await
@@ -1510,7 +1522,7 @@ pub async fn git_stage(repo_path: String, paths: Vec<String>) -> Result<(), AppE
 #[tauri::command]
 pub async fn git_unstage(repo_path: String, paths: Vec<String>) -> Result<(), AppError> {
     run_blocking(move |_cancel| {
-        let repo = open_repo(Path::new(&repo_path))?;
+        let repo = open_repo_at(&repo_path)?;
         let tree = crate::git_index_reset::head_tree(&repo)?;
         crate::git_index_reset::reset_index_paths(&repo, tree.as_ref(), &paths)
     })
@@ -1521,7 +1533,7 @@ fn apply_patch_inner(repo_path: &str, patch: &str, action: GitPatchAction) -> Re
     // Open first so this has the same non-repository and bare-repository
     // boundary as the other SCM mutations; the workdir is the only safe cwd
     // for a repo-relative patch.
-    let repo = open_repo(Path::new(repo_path))?;
+    let repo = open_repo_at(repo_path)?;
     let workdir = repo
         .workdir()
         .ok_or_else(|| AppError::Other("git: bare repository has no working tree".into()))?;
@@ -1596,7 +1608,7 @@ pub async fn git_discard(
 ) -> Result<(), AppError> {
     let opts = options.unwrap_or_default();
     run_blocking(move |_cancel| {
-        let repo = open_repo(Path::new(&repo_path))?;
+        let repo = open_repo_at(&repo_path)?;
         crate::git_discard::discard_paths(&repo, &paths, opts.force)
     })
     .await
@@ -1634,14 +1646,21 @@ pub async fn git_diff(
         // through to libgit2 below.
         #[cfg(windows)]
         if let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc(&repo_path) {
-            if let Some(diff) = wsl_diff(&distro, &linux_path, &path, opts.staged) {
+            // WSL git takes text; escapes on Windows spell valid UTF-8.
+            if let Some(diff) = wsl_diff(
+                &distro,
+                &linux_path,
+                &crate::wire_path::lossy(&path),
+                opts.staged,
+            ) {
                 return Ok(diff);
             }
         }
 
-        let repo = open_repo(Path::new(&repo_path))?;
+        let repo = open_repo_at(&repo_path)?;
         let mut diff_opts = DiffOptions::new();
-        diff_opts.pathspec(&path);
+        // Repo-relative wire path → the index path's exact bytes (ADR 0031).
+        diff_opts.pathspec(crate::wire_path::decode_bytes(&path)?.into_owned());
         diff_opts.disable_pathspec_match(true);
         diff_opts.context_lines(3);
         // Same policy as the status list: on Windows a mode difference is an
@@ -1677,7 +1696,7 @@ pub async fn git_commit(
         return Err(AppError::Other("commit message cannot be empty".into()));
     }
     run_blocking(move |_cancel| {
-        let repo = open_repo(Path::new(&repo_path))?;
+        let repo = open_repo_at(&repo_path)?;
         let sig = match repo.signature() {
             Ok(s) => s,
             Err(_) => {
@@ -1793,6 +1812,72 @@ mod tests {
             fs::create_dir_all(parent).unwrap();
         }
         fs::write(p, contents).unwrap();
+    }
+
+    /// #1592: the SCM panel reports untracked and modified non-UTF-8 names at
+    /// their repo-relative wire spelling: the listed path minus the repo root.
+    // APFS rejects invalid UTF-8 filenames before the operation can run.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn scm_status_reports_raw_names_at_their_listing_relative_wire_paths() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = init_repo();
+        let tracked = dir.path().join(std::ffi::OsStr::from_bytes(b"old\xfe.txt"));
+        fs::write(&tracked, "v1").unwrap();
+        let repo = Repository::open(dir.path()).unwrap();
+        let mut index = repo.index().unwrap();
+        index
+            .add_all(["*"], git2::IndexAddOption::DEFAULT, None)
+            .unwrap();
+        index.write().unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let sig = repo.signature().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+            .unwrap();
+        fs::write(&tracked, "v2").unwrap();
+        let nested = dir.path().join(std::ffi::OsStr::from_bytes(b"dir\xfd"));
+        fs::create_dir(&nested).unwrap();
+        fs::write(
+            nested.join(std::ffi::OsStr::from_bytes(b"bad\xff.txt")),
+            "x",
+        )
+        .unwrap();
+        fs::write(nested.join("bad\u{FFFD}.txt"), "y").unwrap();
+        let root = crate::wire_path::encode_path(dir.path()).into_owned();
+        let listed: Vec<String> = [
+            crate::wire_path::encode_path(&nested).into_owned(),
+            root.clone(),
+        ]
+        .into_iter()
+        .flat_map(|directory| {
+            tauri::async_runtime::block_on(crate::files::dir_listing::read_directory(directory))
+                .unwrap()
+                .entries
+                .iter()
+                .filter(|entry| !matches!(entry.kind, crate::files::FileKind::Directory))
+                .map(|entry| entry.path[root.len() + 1..].to_owned())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+        let status = tauri::async_runtime::block_on(git_status(root.clone(), None)).unwrap();
+        // The reported wire path diffs exactly that file.
+        let diff =
+            tauri::async_runtime::block_on(git_diff(root, status.changes[0].path.clone(), None))
+                .unwrap();
+        assert!(diff.contains("-v1") && diff.contains("+v2"), "{diff}");
+        let mut untracked: Vec<String> = status.untracked.iter().map(|e| e.path.clone()).collect();
+        untracked.sort();
+        let changes: Vec<String> = status.changes.iter().map(|e| e.path.clone()).collect();
+        assert_eq!(
+            untracked,
+            vec!["dir\u{EFFD}/bad\u{EFFF}.txt", "dir\u{EFFD}/bad\u{FFFD}.txt"]
+        );
+        assert_eq!(changes, vec!["old\u{EFFE}.txt"]);
+        let mut reported = [untracked, changes].concat();
+        reported.sort();
+        let mut listed = listed;
+        listed.sort();
+        assert_eq!(reported, listed);
     }
 
     fn sync_status(path: &Path) -> GitStatusSummary {
@@ -3171,7 +3256,7 @@ mod tests {
         }
 
         // For comparison, time the libgit2 open + fallback too.
-        let repo = match open_repo(Path::new(&path)) {
+        let repo = match open_repo_at(&path) {
             Ok(r) => r,
             Err(e) => {
                 println!("wsl_diag_scm_status: libgit2 open failed for {path}: {e:?}");

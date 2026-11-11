@@ -391,7 +391,7 @@ fn wait_for_native_test_gate(path: &Path) {
     let gate = PathBuf::from(gate);
     let _ = std::fs::write(
         gate.with_extension("entered"),
-        path.to_string_lossy().as_bytes(),
+        path.as_os_str().as_encoded_bytes(),
     );
     let deadline = Instant::now() + Duration::from_secs(20);
     while !gate.exists() && Instant::now() < deadline {

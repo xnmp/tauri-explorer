@@ -255,10 +255,13 @@ fn settled_rename(action: Action, outcome: RenameResult) -> Execution {
             // A rename action always stores the forward target, even after Undo.
             // Bind the next direction to the admitted physical parent, not a
             // requested alias which could have changed during execution.
+            // `new_name` is a wire name: join it to the wire parent, never
+            // to the native one, or an escaped name is taken literally.
             let opposite = target
                 .parent()
-                .map(|parent| parent.join(new_name))
-                .and_then(|path| path.to_str().map(str::to_owned))
+                .map(|parent| {
+                    crate::wire_path::join(&crate::wire_path::encode_path(parent), new_name)
+                })
                 .map(|path| Action::Rename {
                     path,
                     old_name: old_name.clone(),

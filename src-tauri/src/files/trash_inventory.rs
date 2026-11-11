@@ -9,6 +9,7 @@
 use super::batch::{FileBatchOutcome, FileFailure};
 use super::trash_artifact::{RestoreRequest, TrashArtifact};
 use crate::error::AppError;
+use crate::wire_path::ToWire;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
@@ -206,7 +207,7 @@ fn windows_inventory() -> Inventory {
             Ok(trash::TrashItemSize::Bytes(bytes)) => ("file", bytes),
             Err(_) => ("file", 0),
         };
-        let original = item.original_path().to_string_lossy().into_owned();
+        let original = crate::wire_path::encode_path(&item.original_path()).into_owned();
         let id_bytes: Vec<u8> = parsing_name
             .iter()
             .flat_map(|unit| unit.to_le_bytes())
@@ -214,7 +215,7 @@ fn windows_inventory() -> Inventory {
         inventory.items.push(Item {
             entry: TrashEntry {
                 id: entry_id(&[&id_bytes]),
-                name: item.name.to_string_lossy().into_owned(),
+                name: crate::wire_path::encode(&item.name).into_owned(),
                 original_path: Some(original.clone()),
                 deleted_at: chrono::DateTime::from_timestamp(item.time_deleted, 0)
                     .map(|time| time.with_timezone(&chrono::Local).to_rfc3339()),
@@ -373,10 +374,10 @@ pub(crate) fn recorded_inventory(
                 // rename this one; show the name it will be restored under.
                 name: record
                     .and_then(|record| record.original.file_name())
-                    .unwrap_or(&name)
-                    .to_string_lossy()
+                    .map(crate::wire_path::encode)
+                    .unwrap_or_else(|| crate::wire_path::encode(&name))
                     .into_owned(),
-                original_path: record.map(|record| record.original.to_string_lossy().into_owned()),
+                original_path: record.map(|record| record.original.to_wire()),
                 deleted_at: record.map(|record| record.deleted_at.clone()),
                 kind: if metadata.is_dir() {
                     "directory"
@@ -395,7 +396,7 @@ pub(crate) fn recorded_inventory(
                     changed_nanos: metadata.ctime_nsec(),
                 }),
             restore: record.map(|record| Restorable {
-                key: record.original.to_string_lossy().into_owned(),
+                key: record.original.to_wire(),
                 destination: record.original.clone(),
                 artifact: Arc::new(TrashArtifact::Recorded {
                     trashed: record.trashed.clone(),
@@ -573,7 +574,7 @@ fn plan_restore_to_in(
             continue;
         };
         let target = destination.join(name);
-        let key = target.to_string_lossy().into_owned();
+        let key = target.to_wire();
         let checked = inside_trash(artifact, destination)
             .and_then(|()| same_volume(artifact, destination))
             .and_then(|()| restorable(&target))
@@ -590,7 +591,7 @@ fn plan_restore_to_in(
                 path: key,
                 error: format!(
                     "Another selected item named {} is being restored to {}. Restore them one at a time.",
-                    name.to_string_lossy(),
+                    Path::new(name).display(),
                     destination.display()
                 ),
             });
@@ -641,8 +642,8 @@ fn inside_trash(artifact: &TrashArtifact, destination: &Path) -> Result<(), Stri
         None => destination.components().any(|component| {
             component
                 .as_os_str()
-                .to_string_lossy()
-                .eq_ignore_ascii_case("$Recycle.Bin")
+                .as_encoded_bytes()
+                .eq_ignore_ascii_case(b"$Recycle.Bin")
         }),
     };
     if inside {
@@ -695,7 +696,7 @@ fn retarget(artifact: &TrashArtifact, target: &Path) -> Result<(String, TrashArt
             let resolved = super::freedesktop_trash::resolved_restore_path(target)
                 .map_err(|error| error.to_string())?;
             Ok((
-                resolved.to_string_lossy().into_owned(),
+                resolved.to_wire(),
                 TrashArtifact::Freedesktop {
                     root: root.clone(),
                     name: name.clone(),
@@ -715,7 +716,7 @@ fn retarget(artifact: &TrashArtifact, target: &Path) -> Result<(String, TrashArt
             deleted_at,
             ..
         } => Ok((
-            target.to_string_lossy().into_owned(),
+            target.to_wire(),
             TrashArtifact::Recorded {
                 trashed: trashed.clone(),
                 original: target.to_owned(),
@@ -727,9 +728,7 @@ fn retarget(artifact: &TrashArtifact, target: &Path) -> Result<(String, TrashArt
             },
         )),
         // The Shell restore publishes at the request path.
-        TrashArtifact::WindowsShell { .. } => {
-            Ok((target.to_string_lossy().into_owned(), artifact.clone()))
-        }
+        TrashArtifact::WindowsShell { .. } => Ok((target.to_wire(), artifact.clone())),
         #[allow(unreachable_patterns)]
         _ => Err("This trash item cannot be restored on this platform".into()),
     }

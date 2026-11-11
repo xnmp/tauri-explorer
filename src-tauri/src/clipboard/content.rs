@@ -3,7 +3,6 @@
 use super::backend::ClipboardReader;
 use crate::error::AppError;
 use std::io::{Cursor, Write};
-use std::path::Path;
 
 /// Image types a report accepts from the clipboard, in preference order.
 const REPORT_IMAGE_TYPES: [&str; 2] = ["image/png", "image/jpeg"];
@@ -79,10 +78,11 @@ pub(super) fn paste_image(
     directory: &str,
     now: chrono::DateTime<chrono::Local>,
 ) -> Result<String, AppError> {
+    // The destination is a wire path (ADR 0031): decode before any effect.
+    let dir = crate::wire_path::decode(directory)?;
     let data = reader.read_image_result("image/png")?.ok_or_else(|| {
         AppError::Other("No image data in clipboard. Copy an image and try again.".to_string())
     })?;
-    let dir = Path::new(directory);
     if !dir.is_dir() {
         return Err(AppError::InvalidPath(format!(
             "Not a directory: {directory}"
@@ -96,7 +96,7 @@ pub(super) fn paste_image(
         .map_err(|error| AppError::Other(format!("Invalid clipboard image: {error}")))?;
     let mut staged = tempfile::Builder::new()
         .prefix(".clipboard-image-")
-        .tempfile_in(dir)
+        .tempfile_in(&dir)
         .map_err(|error| {
             AppError::Other(format!(
                 "Failed to create image: {}",
@@ -120,7 +120,7 @@ pub(super) fn paste_image(
         match staged.persist_noclobber(&filepath) {
             Ok(_) => {
                 log::info!("Pasted clipboard image to: {}", filepath.display());
-                return Ok(filepath.to_string_lossy().to_string());
+                return Ok(crate::wire_path::encode_path(&filepath).into_owned());
             }
             Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
                 staged = error.file;

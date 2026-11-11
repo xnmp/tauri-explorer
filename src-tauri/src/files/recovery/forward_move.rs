@@ -12,6 +12,7 @@ use super::{
     move_model::{ArtifactPlan, MoveSpec, Strategy},
     resources::{Access, Request, Scope},
 };
+use crate::wire_path::ToWire;
 use crate::{
     error::AppError,
     files::{
@@ -388,7 +389,7 @@ impl PreparedMove {
             .and_then(|directory| of_file(&directory.file).ok())
             == Some(target_parent)
         {
-            receipt.path = presentation.to_string_lossy().into_owned();
+            receipt.path = presentation.to_wire();
             if let Some(entry) = &mut receipt.entry {
                 entry.path = receipt.path.clone();
             }
@@ -401,7 +402,7 @@ impl PreparedMove {
         ]
         .into_iter()
         .filter_map(Path::parent)
-        .map(|parent| parent.to_string_lossy().into_owned())
+        .map(|parent| parent.to_wire())
         .collect();
         refresh_dirs.sort_unstable();
         refresh_dirs.dedup();

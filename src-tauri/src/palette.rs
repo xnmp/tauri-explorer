@@ -78,7 +78,8 @@ fn to_hex(c: [u8; 3]) -> String {
 pub async fn extract_palette(path: String, count: u8) -> Result<Vec<String>, AppError> {
     let count = count.clamp(2, 12) as usize;
     tokio::task::spawn_blocking(move || {
-        crate::thumbnails::check_image_file_size(std::path::Path::new(&path))?;
+        let path = crate::wire_path::decode(&path)?;
+        crate::thumbnails::check_image_file_size(&path)?;
         let mut reader = image::ImageReader::open(&path)
             .map_err(|e| AppError::Other(format!("Failed to open image: {e}")))?
             .with_guessed_format()

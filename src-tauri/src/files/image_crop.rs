@@ -1,5 +1,6 @@
 //! Immutable image capture and validation. The renderer edits captured bytes,
 //! never a mutable asset URL. Save execution rechecks this exact source.
+#![allow(clippy::disallowed_methods)] // Retire-when: #1638 closed (non-UTF-8 names, ADR 0031)
 use crate::{error::AppError, image_crop};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::{Deserialize, Serialize};
@@ -219,6 +220,7 @@ pub(crate) async fn capture_image_crop(
     session_id: String,
     path: String,
 ) -> Result<Capture, AppError> {
+    let path = crate::wire_path::native_text(&path)?.into_owned();
     let owner = crate::renderer_owner::acquire_owner(&window, &session_id)?;
     super::worker::run_blocking_owned(owner, move || capture(PathBuf::from(path))).await
 }
@@ -265,7 +267,13 @@ impl SavePlan {
         }
     }
 
-    pub(crate) fn new(request: SaveRequest) -> Result<Self, AppError> {
+    pub(crate) fn new(mut request: SaveRequest) -> Result<Self, AppError> {
+        // Phase 1 of #1592: crops take native text paths and copy names,
+        // refusing non-UTF-8 before any probe.
+        request.path = crate::wire_path::native_text(&request.path)?.into_owned();
+        if let Destination::Copy { name } = &mut request.destination {
+            *name = crate::wire_path::native_text(name)?.into_owned();
+        }
         let source = PathBuf::from(&request.path);
         if !source.is_absolute() {
             return Err(AppError::InvalidPath(

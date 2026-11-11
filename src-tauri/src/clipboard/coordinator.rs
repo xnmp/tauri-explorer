@@ -142,6 +142,10 @@ impl FileClipboardCoordinator {
         if paths.is_empty() {
             return Err(AppError::InvalidPath("No paths to copy".into()));
         }
+        // Mirrors carry native bytes: admit only canonical wire spellings.
+        for path in &paths {
+            crate::wire_path::decode(path)?;
+        }
         if operation == ClipboardOperation::Cut {
             if let Some(reason) = self.backend.cut_unavailable_reason() {
                 return Err(AppError::Other(reason.into()));
@@ -208,6 +212,7 @@ impl FileClipboardCoordinator {
         };
         let operation = selection.operation;
         let new_path = entry_path(&entry).ok_or_else(missing_path)?.to_owned();
+        crate::wire_path::decode(&new_path)?;
         let Some(path_index) = self.paths.iter().position(|path| path == old_path) else {
             return Ok(None);
         };

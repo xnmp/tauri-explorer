@@ -126,7 +126,8 @@ async function loadViaBackend(
 
 /** The file itself: asset protocol, then the backend read. */
 async function loadOriginal(path: string, cacheBust: string, owner: PreviewImageOwner): Promise<PreviewImageLoad> {
-  if (!isTauri()) return loadViaBackend(path, owner, "original");
+  // The asset protocol would take a wire escape (ADR 0031) literally.
+  if (!isTauri() || /[\uEF80-\uEFFF]/.test(path)) return loadViaBackend(path, owner, "original");
   try {
     const url = await assetUrl(path, cacheBust);
     if (!owner.isCurrent()) return STALE;

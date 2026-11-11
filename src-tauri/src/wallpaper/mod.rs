@@ -1,5 +1,6 @@
 //! Set desktop wallpaper across macOS, Linux desktop environments, and Windows.
 //! Issue: tauri-explorer-mj32
+#![allow(clippy::disallowed_methods)] // Retire-when: #1638 closed (non-UTF-8 names, ADR 0031)
 
 // macOS: every display + every Space (#1441). Built on other hosts only for
 // tests, so its pure planning logic is checked everywhere.
@@ -409,6 +410,8 @@ pub struct WallpaperOutcome {
 /// Auto-detects the desktop environment and uses the appropriate tool.
 #[tauri::command]
 pub async fn set_as_wallpaper(path: String) -> Result<WallpaperOutcome, AppError> {
+    // Phase 1 of #1592: wallpaper backends take UTF-8 command arguments.
+    let path = crate::wire_path::native_text(&path)?.into_owned();
     tokio::task::spawn_blocking(move || set_as_wallpaper_sync(path))
         .await
         .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?

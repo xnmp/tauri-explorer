@@ -140,6 +140,18 @@ pub(super) fn parse(params: &Value) -> Result<ProcessRequest, AppError> {
             "Host process request exceeds its limits",
         ));
     }
+    // Phase 1 of #1592: a plugin may forward an escaped (non-UTF-8) wire path
+    // it was given; the child would receive a look-alike, so refuse it here.
+    if std::iter::once(request.program.as_str())
+        .chain(request.args.iter().map(String::as_str))
+        .chain(request.cwd.as_deref().and_then(|cwd| cwd.to_str()))
+        .any(crate::wire_path::has_escape)
+    {
+        return Err(refusal(
+            code::INVALID_REQUEST,
+            crate::wire_path::UNSUPPORTED_ENCODING,
+        ));
+    }
     Ok(request)
 }
 

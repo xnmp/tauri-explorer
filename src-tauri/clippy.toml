@@ -1,0 +1,7 @@
+# Paths are not text: a lossy conversion silently names a different file
+# (#1592). Convert native paths to and from IPC/`String` form only through
+# `crate::wire_path`; modules still pending migration carry a tagged allow.
+disallowed-methods = [
+  { path = "std::path::Path::to_string_lossy", reason = "lossy: use crate::wire_path::encode_path (identity) or wire_path::lossy (display), see ADR 0031" },
+  { path = "std::ffi::OsStr::to_string_lossy", reason = "lossy: use crate::wire_path::encode (identity) or wire_path::lossy (display), see ADR 0031" },
+]

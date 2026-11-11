@@ -13,10 +13,12 @@
 # each reused .deb against the refreshed index's hashes and downloads any that
 # do not match, so a stale or damaged cache costs time, never correctness.
 #
-# If every index refresh fails, the Ubuntu sources are pointed at
-# APT_FALLBACK_MIRROR (the canonical archive) and the refresh is retried within
-# the same bounds: the image's Azure mirror has been unreachable for hours at a
-# time, failing every Linux job in setup (#1647).
+# If every index refresh fails, the Ubuntu sources are pointed at each of
+# APT_FALLBACK_MIRRORS in turn (the canonical archive, then a mirror outside
+# ubuntu.com DNS) and the refresh is retried, APT_FALLBACK_ATTEMPTS per mirror:
+# the image's Azure mirror and archive.ubuntu.com have both been unreachable
+# from runners for hours, failing every Linux job in setup (#1647). Every
+# mirror's InRelease is still verified against the Ubuntu archive keyring.
 set -euo pipefail
 
 attempts=${APT_ATTEMPTS:-3}
@@ -24,7 +26,8 @@ attempt_timeout=${APT_ATTEMPT_TIMEOUT:-240}
 update_attempt_timeout=${APT_UPDATE_ATTEMPT_TIMEOUT:-120}
 packages=${APT_PACKAGES:-}
 archives=${APT_ARCHIVES:-}
-fallback_mirror=${APT_FALLBACK_MIRROR:-http://archive.ubuntu.com/ubuntu/}
+fallback_mirrors=${APT_FALLBACK_MIRRORS:-http://archive.ubuntu.com/ubuntu/ https://mirrors.edge.kernel.org/ubuntu/}
+fallback_attempts=${APT_FALLBACK_ATTEMPTS:-2}
 apt_etc=${APT_ETC_DIR:-/etc/apt}
 # Failure annotation level; a recoverable refresh failure only warns.
 fail_level=error
@@ -53,20 +56,20 @@ bounded() {
   return 1
 }
 
-# use_fallback_mirror: rewrite the image's mirror list and Azure archive URIs
-# to the canonical Ubuntu archive. Returns 1 when no source uses either, so a
-# failure unrelated to the mirror is not retried against another one.
-use_fallback_mirror() {
-  local files
-  files=$(grep -rlE 'mirror\+file:[^ ]*apt-mirrors\.txt|azure\.archive\.ubuntu\.com' \
-    "$apt_etc/sources.list" "$apt_etc/sources.list.d" 2>/dev/null || true)
+# use_mirror <from-regex> <to>: rewrite matching Ubuntu source URIs. Returns 1
+# when no source matches, so a failure unrelated to the mirror is not retried
+# against another one.
+use_mirror() {
+  local from=$1 to=$2 files
+  files=$(grep -rlE "$from" "$apt_etc/sources.list" "$apt_etc/sources.list.d" 2>/dev/null || true)
   [ -n "$files" ] || return 1
-  echo "::warning title=apt mirror fallback::switching Ubuntu sources to ${fallback_mirror}"
+  echo "::warning title=apt mirror fallback::switching Ubuntu sources to ${to}"
   # shellcheck disable=SC2086 # one path per line, none contain spaces.
-  sudo sed -i -E \
-    "s#mirror\+file:[^ ]*apt-mirrors\.txt|https?://azure\.archive\.ubuntu\.com/ubuntu/?#${fallback_mirror}#g" \
-    $files
+  sudo sed -i -E "s#${from}#${to}#g" $files
 }
+
+# Regex for the image's own mirror sources: its mirror list or Azure archive.
+image_mirror='mirror\+file:[^ ]*apt-mirrors\.txt|https?://azure\.archive\.ubuntu\.com/ubuntu/?'
 
 sha() { sha256sum | cut -c1-16; }
 
@@ -83,12 +86,20 @@ case ${1:-} in
     if attempt_timeout=$update_attempt_timeout bounded "apt index refresh" apt-get update; then
       exit 0
     fi
-    fail_level=error
-    if ! use_fallback_mirror; then
-      echo "::error title=apt index refresh failed::no Ubuntu mirror source to replace"
-      exit 1
-    fi
-    attempt_timeout=$update_attempt_timeout bounded "apt index refresh (fallback mirror)" apt-get update
+    from=$image_mirror
+    attempts=$fallback_attempts
+    for mirror in $fallback_mirrors; do
+      if ! use_mirror "$from" "$mirror"; then
+        echo "::error title=apt index refresh failed::no Ubuntu mirror source to replace"
+        exit 1
+      fi
+      if attempt_timeout=$update_attempt_timeout bounded "apt index refresh (${mirror})" apt-get update; then
+        exit 0
+      fi
+      from=$(sed 's/[.+?^$|()]/\\&/g' <<<"$mirror")
+    done
+    echo "::error title=apt index refresh failed::every Ubuntu mirror failed: image mirror ${fallback_mirrors}"
+    exit 1
     ;;
   key)
     require APT_PACKAGES

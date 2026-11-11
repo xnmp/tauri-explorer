@@ -51,7 +51,7 @@ exit "$status"`,
     `echo "apt-get $*" >> ${log}
 case " $* " in
   *" update "*)
-    if [ -n "\${UPDATE_FAILS:-}" ] && ! grep -rqs "http://archive.ubuntu.com/ubuntu/" "$APT_ETC_DIR"; then
+    if [ -n "\${UPDATE_FAILS:-}" ] && ! grep -rqsF "\${UPDATE_OK_MIRROR:-http://archive.ubuntu.com/ubuntu/}" "$APT_ETC_DIR"; then
       [ "$UPDATE_FAILS" = hang ] && sleep 30
       exit 100
     fi ;;
@@ -111,11 +111,39 @@ describe("apt.sh update", () => {
     const { status, calls, sources, stdout } = run("update", { UPDATE_FAILS: mode, APT_ATTEMPTS: "2" });
     expect(status).toBe(0);
     expect(updates(calls)).toHaveLength(3);
+    expect(sources).not.toContain("kernel.org");
     expect(sources).toContain("URIs: http://archive.ubuntu.com/ubuntu/\n");
     expect(sources).not.toContain("mirror+file");
     expect(stdout).toContain("::warning title=apt mirror fallback::");
     // The recovered mirror failure is a warning, not a failed step annotation.
     expect(stdout).not.toContain("::error");
+  });
+
+  it("moves on to a mirror outside ubuntu.com when the canonical archive fails too (#1647)", () => {
+    const { status, calls, sources, stdout } = run("update", {
+      UPDATE_FAILS: "fail",
+      UPDATE_OK_MIRROR: "https://mirrors.edge.kernel.org/ubuntu/",
+      APT_ATTEMPTS: "1",
+      APT_FALLBACK_ATTEMPTS: "2",
+    });
+    expect(status).toBe(0);
+    // 1 image-mirror attempt, 2 on the canonical archive, 1 on kernel.org.
+    expect(updates(calls)).toHaveLength(4);
+    expect(sources).toContain("URIs: https://mirrors.edge.kernel.org/ubuntu/\n");
+    expect(sources).not.toContain("archive.ubuntu.com");
+    expect(stdout).not.toContain("::error");
+  });
+
+  it("fails once every fallback mirror has failed", () => {
+    const { status, calls, stdout } = run("update", {
+      UPDATE_FAILS: "fail",
+      UPDATE_OK_MIRROR: "https://unreachable.invalid/",
+      APT_ATTEMPTS: "1",
+      APT_FALLBACK_ATTEMPTS: "1",
+    });
+    expect(status).not.toBe(0);
+    expect(updates(calls)).toHaveLength(3);
+    expect(stdout).toContain("::error title=apt index refresh failed::every Ubuntu mirror failed");
   });
 
   it("rewrites a direct Azure archive URI too", () => {

@@ -164,6 +164,21 @@ describe("git graph detail session", () => {
     expect(f.session.files.map(({ path }) => path)).toEqual(["kept.ts"]);
   });
 
+  it("a failed forced refresh still supersedes the initial scan it replaced", async () => {
+    const f = fixture();
+    const opening = f.session.select(commit(UNCOMMITTED_OID, 1));
+    const refreshing = f.session.refreshUncommittedFiles();
+    f.summaries[1].resolve({ ok: false, error: "scan failed" });
+    await expect(refreshing).resolves.toBe(false);
+    f.summaries[0].resolve({ ok: true, data: summary(["superseded.ts"]) });
+    await opening;
+    expect(f.session.files).toEqual([]);
+    const retry = f.session.refreshUncommittedFiles();
+    f.summaries[2].resolve({ ok: true, data: summary(["fresh.ts"]) });
+    await expect(retry).resolves.toBe(true);
+    expect(f.session.files.map(({ path }) => path)).toEqual(["fresh.ts"]);
+  });
+
   it("revokes settled and pending working diffs before a post-mutation refresh", async () => {
     const f = fixture();
     const opening = f.session.select(commit(UNCOMMITTED_OID, 1));

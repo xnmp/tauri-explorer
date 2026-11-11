@@ -346,6 +346,20 @@
     z-index: 10;
   }
 
+  /* Hairline column separator (#1644): centred in the 8px resize hit area so
+     the visible boundary is exactly where dragging resizes the column. */
+  .column-resize-handle::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 20%;
+    bottom: 20%;
+    width: 1px;
+    transform: translateX(-50%);
+    background: var(--layout-hairline, var(--divider));
+    pointer-events: none;
+  }
+
   .column-resize-handle:hover,
   .column-resize-handle.active {
     background: var(--accent);

@@ -344,7 +344,7 @@ async fn run_scenario(
             std::fs::write(&marker_path, format!("recovery cycle {cycle}"))
                 .map_err(|error| format!("failed to create watcher marker: {error}"))?;
             let repo_json = encode(&current_lease.repo_root)?;
-            let marker_path_json = encode(&marker_path.to_string_lossy())?;
+            let marker_path_json = encode(&crate::wire_path::encode_path(&marker_path))?;
             let receipt = wait_for_value(view, "repo-qualified watcher receipt", || {
                 format!(
                     "(() => {{ const changes = JSON.parse(document.documentElement.dataset.e2eGitChanges ?? '[]'); \
@@ -477,7 +477,7 @@ async fn acquire(view: &WebView, repository: &Path, token_prefix: &str) -> Harne
     let result = operation(
         view,
         "watch-acquire",
-        repository.to_string_lossy().as_ref(),
+        crate::wire_path::encode_path(repository).as_ref(),
         token_prefix,
     )
     .await?;

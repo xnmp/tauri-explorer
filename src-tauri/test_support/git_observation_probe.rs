@@ -46,7 +46,7 @@ pub(crate) fn record(repo_root: &str, event: &notify::Event) {
         paths: event
             .paths
             .iter()
-            .map(|path| path.to_string_lossy().into_owned())
+            .map(|path| crate::wire_path::encode_path(path).into_owned())
             .collect(),
     });
 }

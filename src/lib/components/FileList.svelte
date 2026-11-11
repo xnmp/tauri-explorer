@@ -23,6 +23,7 @@
   import { isImageFile } from "$lib/domain/file-types";
   import { parentDir, basename } from "$lib/domain/path";
   import { rectDimToCSS } from "$lib/domain/zoom";
+  import { pastDragThreshold } from "$lib/domain/pointer-drag";
   import { marqueeLayerTransforms } from "$lib/domain/marquee-rect";
   import InlineNewFolder from "./InlineNewFolder.svelte";
   import PluginFileView from "./PluginFileView.svelte";
@@ -288,15 +289,14 @@
     }
   }
 
-  // Where the last primary press began: a click released >= 5px away ended a
-  // pointer drag (the same threshold the drag composable uses), not a plain click.
+  // A release past the shared drag threshold must not become a plain click.
   let pressPoint: { x: number; y: number } | null = null;
   function rememberPress(event: PointerEvent) {
     pressPoint = { x: event.clientX, y: event.clientY };
     releaseCursorReveal();
   }
   const endedDrag = (event: MouseEvent) => marquee.dragJustEnded
-    || (pressPoint !== null && Math.hypot(event.clientX - pressPoint.x, event.clientY - pressPoint.y) >= 5);
+    || (pressPoint !== null && pastDragThreshold(pressPoint, { x: event.clientX, y: event.clientY }));
 
   function handleClick(entry: FileEntry, event: MouseEvent): void {
     const effect = clickSelectionEffect(event, paneId ?? "", windowTabsManager.activePaneId);

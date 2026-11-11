@@ -206,6 +206,7 @@ export function createGitGraphDetail(
       } else {
         text = await dependencies.commitDiff(repoPath, selected.oid, file.path);
       }
+      if (comparisonState.generation !== identity.generation || !isSlotCurrent(diffSlot.get(), token)) return null;
       settleDiff(token, identity, { ok: true, data: snapshotDiff(dependencies.parseDiff(text)) });
       return null;
     } catch (cause) {

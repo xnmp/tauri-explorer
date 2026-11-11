@@ -141,7 +141,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `TerminalPanel.svelte` — embedded xterm.js terminal panel (#139).
 - `StatusBar.svelte` — bottom status bar (selection count, size, path).
 - `TitleBar.svelte` — window title bar + tab strip host + window controls.
-- `WindowTabBar.svelte` — window tab strip (drag/reorder/tear-off).
+- `WindowTabBar.svelte` — window tab strip (drag/reorder/tear-off); executes the domain tab-drag reducer effects.
 - `JobsPanel.svelte` — background jobs viewer (Ctrl+J); Retry on failed jobs that carry `retry`.
 - `ToastOverlay.svelte` — stacked toast notifications.
 - `CrashNotice.svelte` — crash-report banner (#184).
@@ -174,7 +174,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-pr-session.svelte.ts` — mounted GitHub badge, PR detail and CI log requests; immutable snapshots, request-slot tokens (domain/request-slot.ts) and disposal.
 - `git-branch-status.svelte.ts` — newest-reload-only owner of the graph's trunk-aware branch-status badges (#1081); disposal and superseded reloads cannot publish.
 - `git-graph-branches.svelte.ts` — lazy branch/author metadata and cancellable merge-base jump owner; known-coverage fallback and query/popover request coordination.
-- `miller-columns.svelte.ts` — Miller columns' ancestor listings (#1642), lazy with the first MillerColumns mount: per-column request slots (a slow read never overwrites a newer one), bounded hidden-listing cache, one directory watch per shown column, watcher changes scheduled through refresh-manager, immediate re-reads after local mutations (#598), hide-empty flags per hidden-file setting.
+- `miller-columns.svelte.ts` — Miller columns' ancestor listings (#1642), lazy with the first MillerColumns mount: per-column request slots (a slow read never overwrites a newer one), bounded hidden-listing cache, one directory watch per shown column, listener/watch admission before fresh snapshots, revalidation after unwatched gaps, watcher changes scheduled through refresh-manager, immediate re-reads after local mutations (#598), revision-guarded hide-empty flags.
 - `slot-cell.svelte.ts` — reactive home for a `domain/request-slot` slot: untracked `get`/`set` for commands, tracked `view` for `$derived` getters, so commands never subscribe their caller and getters notify only on their own value (#1569).
 - `git-graph-actions.svelte.ts` — git-graph mutations (checkout, cherry-pick, merge, reset, branch/tag create/rename/delete, remote delete, pull offer, confirmed undo, F5 fetch) and the prompt/modal state they drive; every mutation ends in `refreshAfterGitMutation`.
 - `git-graph-expansion.svelte.ts` — the graph's single inline expansion (commit details XOR PR dropdown) with its measured heights.
@@ -477,6 +477,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## src/lib/domain/ — pure logic, no framework deps. Test + reuse here.
 
+- `pointer-drag.ts` — shared five-pixel press-to-drag threshold for tabs, files, sidebar items and click suppression.
+- `tab-drag.ts` — pure tab-drag lifecycle and effects, including session-qualified asynchronous detach settlement (#1642).
 - `src/lib/domain/job-presentation.ts` — validates optional job cost/reveal metadata and formats exact decimal money.
 - `src/lib/domain/job-reveal.ts` — pure pane choice, present-file selection, reveal routing and latest-click cancellation policy.
 

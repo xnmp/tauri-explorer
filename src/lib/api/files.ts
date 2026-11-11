@@ -80,12 +80,14 @@ async function afterFileMutation(
   }
 }
 
-function publishReadyDirectoryWatch(path: string): void {
-  if (!E2E_HOOKS_ENABLED || typeof document === "undefined") return;
-  const encoded = document.documentElement.dataset.e2eReadyDirectoryWatches;
-  const readyPaths: string[] = encoded ? JSON.parse(encoded) : [];
-  if (!readyPaths.includes(path)) readyPaths.push(path);
-  document.documentElement.dataset.e2eReadyDirectoryWatches = JSON.stringify(readyPaths);
+const readyDirectoryWatchLeases = E2E_HOOKS_ENABLED ? new Map<string, string>() : null;
+function publishReadyDirectoryWatch(lease: DirectoryWatchLease, acquired = true): void {
+  if (!readyDirectoryWatchLeases || typeof document === "undefined") return;
+  if (acquired) readyDirectoryWatchLeases.set(lease.id, lease.path);
+  else readyDirectoryWatchLeases.delete(lease.id);
+  document.documentElement.dataset.e2eReadyDirectoryWatches = JSON.stringify(
+    [...new Set(readyDirectoryWatchLeases.values())],
+  );
 }
 
 /**
@@ -457,7 +459,7 @@ export async function loadDirectory(
       throw new Error("Invalid native directory watch lease");
     }
     const data: ObservedDirectoryListing = { path: listed, entries, watch_lease: watchLease };
-    if (data.watch_lease) publishReadyDirectoryWatch(data.watch_lease.path);
+    if (data.watch_lease) publishReadyDirectoryWatch(data.watch_lease);
     if (settleListing) {
       trace?.phase("test-hold");
       await settleListing();
@@ -503,7 +505,7 @@ export interface DirectoryWatchLease { id: string; path: string }
 export async function watchDirectory(path: string): Promise<DirectoryWatchLease> {
   const sessionId = await getNativeResourceSession();
   const lease = await invoke<DirectoryWatchLease>("watch_directory", { path, sessionId });
-  publishReadyDirectoryWatch(lease.path);
+  publishReadyDirectoryWatch(lease);
   return lease;
 }
 
@@ -513,6 +515,7 @@ export async function watchDirectory(path: string): Promise<DirectoryWatchLease>
 export async function unwatchDirectory(lease: DirectoryWatchLease): Promise<void> {
   const sessionId = await getNativeResourceSession();
   await invoke("unwatch_directory", { leaseId: lease.id, sessionId });
+  publishReadyDirectoryWatch(lease, false);
 }
 
 // ===================

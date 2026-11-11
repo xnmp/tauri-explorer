@@ -135,7 +135,7 @@ describe("pointer bookmark drops", () => {
   it("does nothing when a file is dropped on empty Bookmarks space", async () => {
     const explorer = { currentPath: "/home/user", getSelectedEntries: () => [], refresh: vi.fn(), entryMeta: listed } as any;
     const drag = usePointerDrag({ getExplorer: () => explorer });
-    drag.handlePointerDown({ button: 0, preventDefault: vi.fn(), currentTarget: { querySelector: () => null } } as any, {
+    drag.handlePointerDown({ button: 0, clientX: 100, clientY: 100, preventDefault: vi.fn(), currentTarget: { querySelector: () => null } } as any, {
       path: "/home/user/report.txt", name: "report.txt", kind: "file",
     } as any, false);
 
@@ -150,7 +150,7 @@ describe("pointer bookmark drops", () => {
     state.pointerTarget = { type: "bookmark", path: "/home/user/Archive" };
     const explorer = { currentPath: "/home/user", getSelectedEntries: () => [], refresh: vi.fn(), entryMeta: listed } as any;
     const drag = usePointerDrag({ getExplorer: () => explorer });
-    drag.handlePointerDown({ button: 0, preventDefault: vi.fn(), currentTarget: { querySelector: () => null } } as any, {
+    drag.handlePointerDown({ button: 0, clientX: 100, clientY: 100, preventDefault: vi.fn(), currentTarget: { querySelector: () => null } } as any, {
       path: "/home/user/report.txt", name: "report.txt", kind: "file",
     } as any, false);
 
@@ -170,7 +170,7 @@ describe("pointer bookmark drops", () => {
     state.pointerTarget = { type: "bookmark", path: "/home/user/Archive" };
     const explorer = { currentPath: "/home/user", getSelectedEntries: () => [], refresh: vi.fn(), entryMeta: listed } as any;
     const drag = usePointerDrag({ getExplorer: () => explorer });
-    drag.handlePointerDown({ button: 0, preventDefault: vi.fn(), currentTarget: { querySelector: () => null } } as any, {
+    drag.handlePointerDown({ button: 0, clientX: 100, clientY: 100, preventDefault: vi.fn(), currentTarget: { querySelector: () => null } } as any, {
       path: "/home/user/Projects", name: "Projects", kind: "directory",
     } as any, false);
 
@@ -185,7 +185,7 @@ describe("pointer bookmark drops", () => {
     state.pointerTarget = { type: "bookmark", path: "/home/user/Downloads" };
     const explorer = { currentPath: "/home/user", getSelectedEntries: () => [], refresh: vi.fn(), entryMeta: listed } as any;
     const drag = usePointerDrag({ getExplorer: () => explorer });
-    drag.handlePointerDown({ button: 0, preventDefault: vi.fn(), currentTarget: { querySelector: () => null } } as any, {
+    drag.handlePointerDown({ button: 0, clientX: 100, clientY: 100, preventDefault: vi.fn(), currentTarget: { querySelector: () => null } } as any, {
       path: "/home/user/Projects", name: "Projects", kind: "directory",
     } as any, false);
 

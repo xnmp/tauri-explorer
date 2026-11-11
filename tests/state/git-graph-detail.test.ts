@@ -31,6 +31,7 @@ function fixture() {
   const workingDiffs: ReturnType<typeof deferred<ApiResult<string>>>[] = [];
   const commitDiffs: ReturnType<typeof deferred<string>>[] = [];
   const compareDiffs: ReturnType<typeof deferred<string>>[] = [];
+  const parseDiff = vi.fn(parseUnifiedDiff);
   const session = createGitGraphDetail("/repo", "detail-test", {
     commitFiles: vi.fn(() => { const d = deferred<CommitFile[]>(); commitFiles.push(d); return d.promise; }),
     compareFiles: vi.fn(() => { const d = deferred<CommitFile[]>(); compareFiles.push(d); return d.promise; }),
@@ -38,12 +39,24 @@ function fixture() {
     workingDiff: vi.fn(() => { const d = deferred<ApiResult<string>>(); workingDiffs.push(d); return d.promise; }),
     commitDiff: vi.fn(() => { const d = deferred<string>(); commitDiffs.push(d); return d.promise; }),
     compareDiff: vi.fn(() => { const d = deferred<string>(); compareDiffs.push(d); return d.promise; }),
-    parseDiff: parseUnifiedDiff,
+    parseDiff,
   });
-  return { session, commitFiles, compareFiles, summaries, workingDiffs, commitDiffs, compareDiffs };
+  return { session, commitFiles, compareFiles, summaries, workingDiffs, commitDiffs, compareDiffs, parseDiff };
 }
 
 describe("git graph detail session", () => {
+  it.each(["close", "closeDiff", "dispose"] as const)("skips parsing obsolete diffs after %s", async (end) => {
+    const f = fixture();
+    const select = f.session.select(commit("a", 1));
+    f.commitFiles[0].resolve([file("x")]);
+    await select;
+    const diff = f.session.toggleDiff(file("x"));
+    f.session[end]();
+    f.commitDiffs[0].resolve("obsolete diff");
+    await diff;
+    expect(f.parseDiff).not.toHaveBeenCalled();
+  });
+
   it("keeps only the newest selected commit files when responses reverse", async () => {
     const f = fixture();
     const old = f.session.select(commit("old", 1));

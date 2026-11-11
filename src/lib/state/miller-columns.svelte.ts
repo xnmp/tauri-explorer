@@ -12,7 +12,7 @@
  * callback declines a column that is no longer shown.
  */
 import { untrack } from "svelte";
-import { fetchDirectory, isDirectoryEmpty } from "$lib/api/files";
+import { loadDirectory, isDirectoryEmpty } from "$lib/api/files";
 import type { FileEntry } from "$lib/domain/file";
 import { parentDir } from "$lib/domain/path";
 import { beginSlot, idleSlot, isSlotCurrent, settleSlot, slotData, type Slot } from "$lib/domain/request-slot";
@@ -24,9 +24,10 @@ import { settingsStore } from "./settings.svelte";
 
 type Entries = readonly FileEntry[];
 interface Watch { update(path: string): Promise<void>; destroy(): Promise<void> }
+interface ColumnWatch { watch: Watch; ready: Promise<unknown> }
 
 export interface MillerColumnsDependencies {
-  list: typeof fetchDirectory;
+  list: (path: string) => ReturnType<typeof loadDirectory>;
   isEmpty: typeof isDirectoryEmpty;
   createWatch(): Watch;
   subscribe(callback: (change: DirectoryChange) => void): DirectorySubscription;
@@ -37,11 +38,11 @@ export interface MillerColumnsDependencies {
   includeHidden(): boolean;
 }
 
-/** Hidden listings kept for returning to a column; shown columns never count against it. */
+/** Limit retained listings while always preserving every shown column. */
 const MAX_CACHED_LISTINGS = 50;
 
 export function createMillerColumns(deps: MillerColumnsDependencies = {
-  list: fetchDirectory,
+  list: loadDirectory,
   isEmpty: isDirectoryEmpty,
   createWatch: createDirectoryWatch,
   subscribe: directoryEvents.subscribe,
@@ -56,11 +57,12 @@ export function createMillerColumns(deps: MillerColumnsDependencies = {
   const listings = new Map<string, Slot<Entries>>();
   let published = $state.raw<ReadonlyMap<string, Slot<Entries>>>(new Map());
   const shown = new Set<string>();
-  const watches = new Map<string, Watch>();
+  const watches = new Map<string, ColumnWatch>();
   // Shown columns with a scheduled watcher refresh that has not started yet.
   const dirty = new Set<string>();
   // Emptiness is cached per hidden-file visibility; a flip forgets it.
   let empty = $state.raw({ includeHidden: deps.includeHidden(), flags: new Map<string, boolean>() as ReadonlyMap<string, boolean> });
+  const probes = new Map<string, number>();
   const key = {};
   let tokens = 0;
   let disposed = false;
@@ -79,10 +81,18 @@ export function createMillerColumns(deps: MillerColumnsDependencies = {
   }
 
   async function load(path: string): Promise<void> {
+    const watching = watches.get(path);
+    if (!watching) return;
     const token = ++tokens;
     dirty.delete(path);
     listings.set(path, beginSlot(listings.get(path) ?? idleSlot(), undefined, token));
     publish();
+    // A scan before either admission could miss a write in the uncovered gap.
+    // Failed observation still permits an explicit fresh read, as before.
+    await watching.ready;
+    const admitted = listings.get(path);
+    if (disposed || !shown.has(path) || watches.get(path) !== watching
+      || !admitted || !isSlotCurrent(admitted, token)) return;
     let entries: Entries | null = null;
     try {
       const result = await deps.list(path);
@@ -111,30 +121,37 @@ export function createMillerColumns(deps: MillerColumnsDependencies = {
       if (wanted.has(path)) continue;
       shown.delete(path);
       deps.cancelScheduled(path, key);
-      void watches.get(path)?.destroy();
+      void watches.get(path)?.watch.destroy();
       watches.delete(path);
       // Its scheduled re-read was cancelled, so the cached copy is stale.
-      if (dirty.delete(path)) evict(path);
+      const slot = listings.get(path);
+      if (dirty.delete(path) || (slot && !slotData(slot))) evict(path);
     }
     for (const path of wanted) {
+      const entering = !shown.has(path);
       shown.add(path);
       if (!watches.has(path)) {
         const watch = deps.createWatch();
-        watches.set(path, watch);
-        void watch.update(path);
+        const ready = Promise.allSettled([subscription.ready(), watch.update(path)]);
+        watches.set(path, { watch, ready });
       }
       const slot = listings.get(path);
-      if (!slot || slot.kind === "idle" || slot.kind === "failed") void load(path);
+      if (entering) forgetEmptiness(path);
+      if (entering || !slot || slot.kind === "idle" || slot.kind === "failed") void load(path);
     }
   }
 
   function forgetEmptiness(path: string): void {
     const current = untrack(() => empty);
     const parent = parentDir(path);
-    if (!current.flags.has(path) && !current.flags.has(parent)) return;
+    const affected = (candidate: string) => candidate === path || candidate === parent || parentDir(candidate) === path;
+    for (const candidate of probes.keys()) {
+      if (affected(candidate)) probes.delete(candidate);
+    }
     const flags = new Map(current.flags);
-    flags.delete(path);
-    flags.delete(parent);
+    for (const candidate of flags.keys()) {
+      if (affected(candidate)) flags.delete(candidate);
+    }
     empty = { includeHidden: current.includeHidden, flags };
   }
 
@@ -167,14 +184,23 @@ export function createMillerColumns(deps: MillerColumnsDependencies = {
     const flags = known.includeHidden === includeHidden ? known.flags : new Map<string, boolean>();
     const targets = entries.filter((entry) => entry.kind === "directory" && !flags.has(entry.path));
     if (targets.length === 0) return;
+    const token = ++tokens;
+    for (const entry of targets) probes.set(entry.path, token);
     const results = await Promise.all(
-      targets.map(async (entry) => [entry.path, await deps.isEmpty(entry.path, includeHidden)] as const),
+      targets.map(async (entry) => {
+        try { return [entry.path, await deps.isEmpty(entry.path, includeHidden)] as const; }
+        catch { return [entry.path, undefined] as const; }
+      }),
     );
     // A probe made under the other hidden-file setting answers a different question.
     if (disposed || deps.includeHidden() !== includeHidden) return;
     const current = untrack(() => empty);
     const next = new Map(current.includeHidden === includeHidden ? current.flags : []);
-    for (const [path, isEmpty] of results) next.set(path, isEmpty);
+    for (const [path, isEmpty] of results) {
+      if (probes.get(path) !== token) continue;
+      probes.delete(path);
+      if (isEmpty !== undefined) next.set(path, isEmpty);
+    }
     empty = { includeHidden, flags: next };
   }
 
@@ -207,7 +233,8 @@ export function createMillerColumns(deps: MillerColumnsDependencies = {
       subscription.stop();
       stopLocal();
       for (const path of shown) deps.cancelScheduled(path, key);
-      for (const watch of watches.values()) void watch.destroy();
+      for (const { watch } of watches.values()) void watch.destroy();
+      probes.clear();
       watches.clear();
       shown.clear();
     },

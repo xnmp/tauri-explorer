@@ -13,7 +13,7 @@ import { dispatchFileDrop, admitFileDrop } from "$lib/state/dispatch-file-drop";
 import { internalDragPaths } from "$lib/domain/file-drop";
 import { isWindows } from "$lib/domain/platform";
 
-const THRESHOLD_PX = 5;
+import { pastDragThreshold } from "$lib/domain/pointer-drag";
 
 export function useSidebarDrag() {
   let dragActive = false;
@@ -53,11 +53,8 @@ export function useSidebarDrag() {
   }
 
   function onMouseMove(event: MouseEvent): void {
-    const dx = event.clientX - startX;
-    const dy = event.clientY - startY;
-
     if (!dragActive) {
-      if (Math.sqrt(dx * dx + dy * dy) < THRESHOLD_PX) return;
+      if (!pastDragThreshold({ x: startX, y: startY }, { x: event.clientX, y: event.clientY })) return;
       dragActive = true;
       dragState.start({ path: dragPath, name: dragName, kind: "directory", nativeCopyPolicy: "link" });
       ghostEl = createDragGhost(sourceEl, dragName);

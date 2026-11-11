@@ -94,9 +94,20 @@ pub(super) fn gnome_copied_files(uris: &[String]) -> String {
 mod tests {
     use super::*;
 
+    /// URI byte round trips do not require a filesystem that accepts the name.
+    #[cfg(unix)]
+    #[test]
+    fn raw_file_uri_bytes_round_trip_without_touching_the_filesystem() {
+        let wire = "/tmp/bad\u{EFFF}.txt".to_owned();
+        let uris = paths_to_uris(std::slice::from_ref(&wire));
+        assert_eq!(uris, ["file:///tmp/bad%FF.txt"]);
+        assert_eq!(parse_file_uris(&uris[0]), [wire]);
+    }
+
     /// #1592: a listed non-UTF-8 name exports its exact byte as `%FF`, and
     /// importing that URI yields the listed wire path, which opens the file.
-    #[cfg(unix)]
+    // APFS rejects invalid UTF-8 filenames before the operation can run.
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_listed_raw_name_round_trips_through_file_uris_exactly() {
         use std::os::unix::ffi::OsStrExt;

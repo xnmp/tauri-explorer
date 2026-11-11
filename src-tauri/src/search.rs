@@ -1420,7 +1420,8 @@ mod tests {
     /// #1592: Quick Open reports a non-UTF-8 file at the exact wire path the
     /// listing publishes, and that path opens the file rather than its lossy
     /// look-alike, which is reported separately.
-    #[cfg(unix)]
+    // APFS rejects invalid UTF-8 filenames before the operation can run.
+    #[cfg(target_os = "linux")]
     #[test]
     fn quick_open_reports_raw_names_at_their_listed_wire_paths() {
         use std::os::unix::ffi::OsStrExt;

@@ -442,7 +442,8 @@ mod tests {
 
     /// #1592: a match in a non-UTF-8 file reports the listing's wire path,
     /// and that path opens the matched file (not its lossy look-alike).
-    #[cfg(unix)]
+    // APFS rejects invalid UTF-8 filenames before the operation can run.
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_match_in_a_raw_name_reports_the_listed_wire_path() {
         use std::os::unix::ffi::OsStrExt;

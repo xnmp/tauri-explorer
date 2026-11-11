@@ -1816,7 +1816,8 @@ mod tests {
 
     /// #1592: the SCM panel reports untracked and modified non-UTF-8 names at
     /// their repo-relative wire spelling: the listed path minus the repo root.
-    #[cfg(unix)]
+    // APFS rejects invalid UTF-8 filenames before the operation can run.
+    #[cfg(target_os = "linux")]
     #[test]
     fn scm_status_reports_raw_names_at_their_listing_relative_wire_paths() {
         use std::os::unix::ffi::OsStrExt;

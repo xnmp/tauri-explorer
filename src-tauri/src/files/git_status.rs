@@ -541,7 +541,8 @@ mod tests {
     /// #1592: statuses inside a non-UTF-8 directory are keyed by the exact
     /// wire names the listing publishes, so a raw name and its lossy
     /// look-alike keep separate badges.
-    #[cfg(unix)]
+    // APFS rejects invalid UTF-8 filenames before the operation can run.
+    #[cfg(target_os = "linux")]
     #[test]
     fn raw_names_are_keyed_by_their_listed_wire_names() {
         use std::os::unix::ffi::OsStrExt;

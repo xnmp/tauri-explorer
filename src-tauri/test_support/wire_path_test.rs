@@ -56,6 +56,48 @@ fn fixed_vectors_encode_decode_and_display() {
     }
 }
 
+/// APFS rejects invalid UTF-8 filenames, but genuine reserved Unicode names
+/// still exercise escaped identities through the real listing and mutation.
+#[test]
+fn a_reserved_unicode_listing_renames_the_selected_file_not_its_wire_spelling() {
+    let root = tempfile::tempdir().unwrap();
+    let parent = root.path().join("dir\u{EFFF}");
+    std::fs::create_dir(&parent).unwrap();
+    let native = parent.join("bad\u{EF80}.txt");
+    let wire_name = "bad\u{EFEE}\u{EFBE}\u{EF80}.txt";
+    let bystander = parent.join(wire_name);
+    std::fs::write(&native, b"selected").unwrap();
+    std::fs::write(&bystander, b"bystander").unwrap();
+    let listing = tauri::async_runtime::block_on(crate::files::dir_listing::read_directory(
+        encode_path(&parent).into_owned(),
+    ))
+    .unwrap();
+    let selected = listing
+        .entries
+        .iter()
+        .find(|entry| entry.name == wire_name)
+        .unwrap();
+    assert_eq!(listing.entries.len(), 2);
+    assert_eq!(selected.size, 8);
+    assert_eq!(decode(&selected.path).unwrap().as_ref(), native);
+
+    let receipt = tauri::async_runtime::block_on(crate::files::file_ops::rename_entry(
+        selected.path.clone(),
+        "renamed.txt".into(),
+    ))
+    .unwrap();
+    assert_eq!(
+        decode(&receipt.path).unwrap().as_ref(),
+        parent.join("renamed.txt")
+    );
+    assert!(!native.exists());
+    assert_eq!(
+        std::fs::read(parent.join("renamed.txt")).unwrap(),
+        b"selected"
+    );
+    assert_eq!(std::fs::read(&bystander).unwrap(), b"bystander");
+}
+
 #[cfg(unix)]
 #[test]
 fn fixed_vectors_round_trip_through_native_paths() {

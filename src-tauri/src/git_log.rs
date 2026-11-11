@@ -1620,7 +1620,8 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
+    // APFS rejects invalid UTF-8 filenames before the operation can run.
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_raw_named_commit_file_is_reported_and_diffed_at_its_wire_path() {
         use std::os::unix::ffi::OsStrExt;

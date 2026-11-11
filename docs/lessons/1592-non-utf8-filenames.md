@@ -52,3 +52,10 @@ with the pathspec decode reverted; `tests/domain/terminal-command.test.ts`
 and the AI-suggestion case in `e2e/non-utf8-names.spec.ts` fail with their
 frontend fixes reverted. Remaining degraded
 surfaces are tracked in #1638.
+
+- **Unix APIs do not imply a byte-permissive filesystem.** APFS accepts only
+  valid UTF-8 names ([Apple APFS FAQ](https://developer.apple.com/library/archive/documentation/FileManagement/Conceptual/APFS_Guide/FAQ/FAQ.html)).
+  Real invalid-byte fixtures are Linux-only, matching the mutation/watcher
+  integration suite. Canonicality/property/URI tests remain portable; a real
+  reserved-Unicode listing/rename test runs on Linux, macOS and Windows and
+  keeps an actual wire-spelling look-alike beside the selected file.

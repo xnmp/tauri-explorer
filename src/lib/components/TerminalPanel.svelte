@@ -201,8 +201,11 @@
     // Inject a `cd`, clearing any half-typed prompt input first — the
     // automatic sync must win. The clear byte is shell-family-specific.
     injectCd: (path) => {
-      injectedCds.add(path);
-      terminalSession.write(buildCdSyncSequence(path, shellProfile));
+      const sequence = buildCdSyncSequence(path, shellProfile);
+      if (sequence) {
+        injectedCds.add(path);
+        terminalSession.write(sequence);
+      }
     },
     notifyQueued: () => toastStore.show("Terminal is running a command — will follow when it finishes", "info"),
     reportError: (message, err) => console.error(`[terminal] ${message}:`, err),

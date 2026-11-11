@@ -13,8 +13,9 @@ pub(super) fn parse_file_uris(text: &str) -> Vec<String> {
 }
 
 /// Minimal percent-decoding for file paths.
-/// Decodes to raw bytes first, then interprets the whole result as UTF-8 so
-/// multi-byte sequences (e.g. %C3%A9 -> é) aren't mangled byte-by-byte.
+/// Decodes to raw bytes first, then takes the wire spelling of the whole
+/// result, so multi-byte sequences (e.g. %C3%A9 -> é) stay text and invalid
+/// bytes (e.g. %FF) keep their exact value (#1592).
 fn percent_decode(input: &str) -> String {
     let mut bytes = Vec::with_capacity(input.len());
     let mut iter = input.bytes();
@@ -43,13 +44,16 @@ fn percent_decode(input: &str) -> String {
             bytes.push(b);
         }
     }
-    String::from_utf8(bytes).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
+    crate::wire_path::encode_bytes(&bytes).into_owned()
 }
 
-/// Percent-encode a file path for use in `file://` URIs.
+/// Percent-encode the native bytes of a wire path for a `file://` URI. The
+/// coordinator admits only canonical spellings, so decoding cannot fail.
 fn percent_encode_path(path: &str) -> String {
-    let mut result = String::with_capacity(path.len() * 2);
-    for b in path.bytes() {
+    let bytes =
+        crate::wire_path::decode_bytes(path).unwrap_or(std::borrow::Cow::Borrowed(path.as_bytes()));
+    let mut result = String::with_capacity(bytes.len() * 2);
+    for &b in bytes.iter() {
         match b {
             // Unreserved characters (RFC 3986) + '/' (path separator)
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
@@ -89,6 +93,52 @@ pub(super) fn gnome_copied_files(uris: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// URI byte round trips do not require a filesystem that accepts the name.
+    #[cfg(unix)]
+    #[test]
+    fn raw_file_uri_bytes_round_trip_without_touching_the_filesystem() {
+        let wire = "/tmp/bad\u{EFFF}.txt".to_owned();
+        let uris = paths_to_uris(std::slice::from_ref(&wire));
+        assert_eq!(uris, ["file:///tmp/bad%FF.txt"]);
+        assert_eq!(parse_file_uris(&uris[0]), [wire]);
+    }
+
+    /// #1592: a listed non-UTF-8 name exports its exact byte as `%FF`, and
+    /// importing that URI yields the listed wire path, which opens the file.
+    // APFS rejects invalid UTF-8 filenames before the operation can run.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_listed_raw_name_round_trips_through_file_uris_exactly() {
+        use std::os::unix::ffi::OsStrExt;
+        let root = tempfile::tempdir().unwrap();
+        let native = root
+            .path()
+            .join(std::ffi::OsStr::from_bytes(b"bad\xff.txt"));
+        std::fs::write(&native, b"raw bytes").unwrap();
+        std::fs::write(root.path().join("bad\u{FFFD}.txt"), b"bystander").unwrap();
+        let root_wire = crate::wire_path::encode_path(root.path()).into_owned();
+        let listing = tauri::async_runtime::block_on(crate::files::dir_listing::read_directory(
+            root_wire.clone(),
+        ))
+        .unwrap();
+        let mut listed: Vec<String> = listing.entries.iter().map(|e| e.path.clone()).collect();
+        listed.sort();
+        let uris = paths_to_uris(&listed);
+        let root_uri = format!("file://{}", percent_encode_path(&root_wire));
+        assert_eq!(
+            uris,
+            vec![
+                format!("{root_uri}/bad%FF.txt"),
+                format!("{root_uri}/bad%EF%BF%BD.txt"),
+            ]
+        );
+        assert_eq!(parse_file_uris(&uris.join("\n")), listed);
+        assert_eq!(parse_gnome_copied_files(&gnome_copied_files(&uris)), listed);
+        let imported = parse_file_uris(&uris[0]);
+        let opened = crate::wire_path::decode(&imported[0]).unwrap();
+        assert_eq!(std::fs::read(opened).unwrap(), b"raw bytes");
+    }
 
     #[test]
     fn parse_uri_list() {

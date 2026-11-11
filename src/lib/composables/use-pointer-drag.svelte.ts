@@ -43,7 +43,7 @@ export interface PointerDragDeps {
   isListed?: (path: string) => boolean;
 }
 
-const THRESHOLD_PX = 5;
+import { pastDragThreshold } from "$lib/domain/pointer-drag";
 const pathsForPlatform = pathComparison(isWindows);
 
 /**
@@ -126,12 +126,8 @@ export function usePointerDrag(deps: PointerDragDeps) {
   }
 
   function onMouseMove(event: MouseEvent): void {
-    const dx = event.clientX - startX;
-    const dy = event.clientY - startY;
-
     if (!dragActive) {
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist < THRESHOLD_PX) return;
+      if (!pastDragThreshold({ x: startX, y: startY }, { x: event.clientX, y: event.clientY })) return;
       if (!resolveDragSource()) { cleanup(false); return; }
       dragActive = true;
       dragState.start(entryData!);

@@ -19,7 +19,9 @@ use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
 use crate::error::AppError;
-use crate::git_common::{literal_repo_path, open_repo, to_app_err, workdir_key, LiteralRepoPath};
+use crate::git_common::{
+    literal_repo_path, open_repo, open_repo_at, to_app_err, workdir_key, LiteralRepoPath,
+};
 #[cfg(windows)]
 use crate::process_ext::output_cancellable;
 use crate::task_registry::TaskRegistry;
@@ -178,8 +180,54 @@ struct Classified {
     merge: Option<GitFileEntry>,
 }
 
-fn classify(entry: &git2::StatusEntry<'_>, workdir: &Path) -> Classified {
-    let _ = workdir; // reserved for future absolute-path mapping
+/// Whether the index entry at `path` is an intent-to-add placeholder
+/// (`git add -N`). libgit2's status has no notion of one and reports it as a
+/// staged addition plus a worktree modification.
+fn is_intent_to_add(index: &git2::Index, path: &str) -> bool {
+    // `path` is a wire spelling; the index is keyed by native bytes (#1592).
+    let Ok(native) = crate::wire_path::decode(path) else {
+        return false;
+    };
+    index
+        .get_path(&native, 0)
+        .is_some_and(|e| e.flags_extended & git2::IndexEntryExtendedFlag::INTENT_TO_ADD.bits() != 0)
+}
+
+/// Whether `git status` pairs staged renames in this repository:
+/// `status.renames`, falling back to `diff.renames`, default on. `copies`
+/// enables rename detection too (libgit2's status cannot report copies).
+fn status_detects_renames(repo: &Repository) -> bool {
+    let Ok(config) = repo.config() else {
+        return true;
+    };
+    for key in ["status.renames", "diff.renames"] {
+        let Ok(entry) = config.get_entry(key) else {
+            continue;
+        };
+        // A bare `renames` key (no `= value`) is boolean true in git.
+        if !entry.has_value() {
+            return true;
+        }
+        let value = String::from_utf8_lossy(entry.value_bytes())
+            .trim()
+            .to_ascii_lowercase();
+        if value == "copies" || value == "copy" {
+            return true;
+        }
+        return git2::Config::parse_bool(value).unwrap_or(true);
+    }
+    true
+}
+
+/// A libgit2 repo-relative path as a `/`-separated wire spelling (#1592).
+fn repo_relative(path: &Path) -> String {
+    crate::wire_path::encode_path(path).replace('\\', "/")
+}
+
+/// Classify one libgit2 status entry into SCM rows the way `git status`
+/// does, so the native path and the WSL porcelain-v2 path agree (#1619).
+/// `index` must be supplied for entries flagged `INDEX_NEW`.
+fn classify(entry: &git2::StatusEntry<'_>, index: Option<&git2::Index>) -> Classified {
     let flags = entry.status();
     let mut out = Classified::default();
 
@@ -188,8 +236,11 @@ fn classify(entry: &git2::StatusEntry<'_>, workdir: &Path) -> Classified {
             .index_to_workdir()
             .and_then(|d| d.new_file().path())
             .or_else(|| entry.head_to_index().and_then(|d| d.new_file().path()))
-            .or_else(|| entry.path().ok().map(Path::new))
-            .map(|p| p.to_string_lossy().replace('\\', "/"));
+            .map(repo_relative)
+            .or_else(|| {
+                Some(crate::wire_path::encode_bytes(entry.path_bytes()).replace('\\', "/"))
+                    .filter(|path| !path.is_empty())
+            });
         if let Some(path) = path {
             out.merge = Some(GitFileEntry {
                 path,
@@ -206,30 +257,52 @@ fn classify(entry: &git2::StatusEntry<'_>, workdir: &Path) -> Classified {
         | Status::INDEX_RENAMED
         | Status::INDEX_TYPECHANGE;
 
-    // Untracked: working tree has a new file AND the index has nothing for it.
-    if flags.contains(Status::WT_NEW) && !flags.intersects(index_flags) {
-        if let Ok(p) = entry.path() {
+    // Intent-to-add (`git add -N`): git lists it as an unstaged addition (or
+    // an unstaged deletion once the file is gone) with nothing staged —
+    // porcelain v2 `.A` / `.D`. Its index entry is a placeholder, not content.
+    if flags.contains(Status::INDEX_NEW) {
+        // `path()` fails for a non-UTF-8 name; the bytes always exist (#1592).
+        let p = crate::wire_path::encode_bytes(entry.path_bytes());
+        if let Some(index) = index {
+            if is_intent_to_add(index, &p) {
+                let status = if flags.contains(Status::WT_DELETED) {
+                    GitStatusCode::Deleted
+                } else {
+                    GitStatusCode::Added
+                };
+                out.worktree = Some(GitFileEntry {
+                    path: p.replace('\\', "/"),
+                    old_path: None,
+                    status,
+                });
+                return out;
+            }
+        }
+    }
+
+    // Untracked: the working tree has a file the index does not. Usually the
+    // index has nothing for the path at all; after `git rm --cached` it holds
+    // a staged deletion as well, and git lists both rows (`D.` and `?`).
+    if flags.contains(Status::WT_NEW) {
+        let p = crate::wire_path::encode_bytes(entry.path_bytes());
+        if !p.is_empty() {
             out.untracked = Some(GitFileEntry {
                 path: p.replace('\\', "/"),
                 old_path: None,
                 status: GitStatusCode::Untracked,
             });
         }
-        return out;
+        if !flags.intersects(index_flags) {
+            return out;
+        }
     }
 
     // Staged side (HEAD → index)
     if flags.intersects(index_flags) {
         let code = status_code(flags & index_flags).unwrap_or(GitStatusCode::Modified);
         if let Some(delta) = entry.head_to_index() {
-            let new_path = delta
-                .new_file()
-                .path()
-                .map(|p| p.to_string_lossy().replace('\\', "/"));
-            let old_path = delta
-                .old_file()
-                .path()
-                .map(|p| p.to_string_lossy().replace('\\', "/"));
+            let new_path = delta.new_file().path().map(repo_relative);
+            let old_path = delta.old_file().path().map(repo_relative);
             if let Some(path) = new_path.clone().or(old_path.clone()) {
                 let old_path = match (old_path, &new_path) {
                     (Some(op), Some(np)) if op == *np => None,
@@ -252,14 +325,8 @@ fn classify(entry: &git2::StatusEntry<'_>, workdir: &Path) -> Classified {
     if flags.intersects(wt_flags) {
         let code = status_code(flags & wt_flags).unwrap_or(GitStatusCode::Modified);
         if let Some(delta) = entry.index_to_workdir() {
-            let new_path = delta
-                .new_file()
-                .path()
-                .map(|p| p.to_string_lossy().replace('\\', "/"));
-            let old_path = delta
-                .old_file()
-                .path()
-                .map(|p| p.to_string_lossy().replace('\\', "/"));
+            let new_path = delta.new_file().path().map(repo_relative);
+            let old_path = delta.old_file().path().map(repo_relative);
             if let Some(path) = new_path.clone().or(old_path.clone()) {
                 let old_path = match (old_path, &new_path) {
                     (Some(op), Some(np)) if op == *np => None,
@@ -320,7 +387,7 @@ fn content_changed(
                 .new_file()
                 .path()
                 .or_else(|| delta.old_file().path())
-                .map(|p| p.to_string_lossy().replace('\\', "/"))
+                .map(repo_relative)
             else {
                 continue;
             };
@@ -340,7 +407,7 @@ fn content_changed(
     let mut opts = DiffOptions::new();
     opts.ignore_filemode(true);
     for c in candidates {
-        opts.pathspec(c);
+        opts.pathspec(crate::wire_path::decode_bytes(c)?.into_owned());
     }
     // Candidates are literal file names from the status list (#1589).
     opts.disable_pathspec_match(true);
@@ -380,14 +447,15 @@ fn collect_status_inner(
     repo: &Repository,
     hide_empty_diffs: bool,
 ) -> Result<GitStatusSummary, AppError> {
-    let workdir = repo
-        .workdir()
+    repo.workdir()
         .ok_or_else(|| AppError::Other("git: bare repository has no working tree".into()))?;
 
     let mut opts = StatusOptions::new();
     opts.include_untracked(true)
         .recurse_untracked_dirs(true)
-        .renames_head_to_index(true)
+        // Staged rename pairing follows the repository config, as `git
+        // status` (and so the WSL delegation) does (#1619).
+        .renames_head_to_index(status_detects_renames(repo))
         // No worktree rename pairing (#1605): `git status` does not pair an
         // unstaged delete with an untracked file either, and a merged row has
         // no correct action. Discarding "new.txt (renamed from old.txt)" sent
@@ -431,15 +499,20 @@ fn collect_status_inner(
         Err(e) => return Err(to_app_err(e)),
     }
 
+    // Intent-to-add detection reads the index, loaded only once some entry
+    // is new to it; `statuses()` has just refreshed it from disk.
+    let mut index: Option<git2::Index> = None;
     for entry in statuses.iter() {
-        let c = classify(&entry, workdir);
+        if index.is_none() && entry.status().contains(Status::INDEX_NEW) {
+            index = Some(repo.index().map_err(to_app_err)?);
+        }
+        let c = classify(&entry, index.as_ref());
         if let Some(m) = c.merge {
             summary.merge.push(m);
             continue;
         }
         if let Some(u) = c.untracked {
             summary.untracked.push(u);
-            continue;
         }
         if let Some(s) = c.staged {
             summary.staged.push(s);
@@ -564,10 +637,8 @@ fn push_v2_entry(p: &mut ParsedV2, xy: [u8; 2], path: String, orig: Option<Strin
             // git pairs worktree renames only for intent-to-add files. Split
             // the pair as `--no-renames` would, so no row is a rename whose
             // discard deletes the destination (#1605): the source is an
-            // unstaged deletion, the destination an unstaged addition. The
-            // libgit2 status reports the intent-to-add destination
-            // differently (staged Added plus a Modified change); that
-            // disagreement is #1619.
+            // unstaged deletion, the destination an unstaged addition — the
+            // rows the libgit2 status gives the same tree (#1619).
             if let (b'R', b'.', Some(orig)) = (y, x, orig) {
                 p.changes.push(GitFileEntry {
                     path: orig,
@@ -972,7 +1043,7 @@ where
 #[tauri::command]
 pub async fn git_init(path: String) -> Result<String, AppError> {
     run_blocking(move |_cancel| {
-        let p = PathBuf::from(&path);
+        let p = crate::wire_path::decode(&path)?.into_owned();
         if let Ok(existing) = open_repo(&p) {
             if let Some(root) = workdir_key(&existing) {
                 return Ok(root);
@@ -1148,7 +1219,8 @@ fn add_to_gitignore(root: &Path, entry: &str) -> Result<String, AppError> {
 
 #[tauri::command]
 pub async fn git_add_to_gitignore(repo_root: String, entry: String) -> Result<String, AppError> {
-    run_blocking(move |_cancel| add_to_gitignore(Path::new(&repo_root), &entry)).await
+    run_blocking(move |_cancel| add_to_gitignore(&crate::git_common::repo_dir(&repo_root)?, &entry))
+        .await
 }
 
 /// Validate that every requested path is a repo-relative, currently-untracked
@@ -1167,7 +1239,8 @@ fn untracked_worktree_paths(
     let mut relative_paths = Vec::with_capacity(paths.len());
     let mut seen = HashSet::with_capacity(paths.len());
     for path in paths {
-        let relative = Path::new(path);
+        let native = crate::wire_path::native_text(path)?;
+        let relative = Path::new(&*native);
         if relative.as_os_str().is_empty()
             || relative.is_absolute()
             || relative.components().any(|component| {
@@ -1205,7 +1278,7 @@ fn untracked_worktree_paths(
 #[tauri::command]
 pub async fn git_archive_untracked(repo_path: String, paths: Vec<String>) -> Result<(), AppError> {
     run_blocking(move |_cancel| {
-        let repo = open_repo(Path::new(&repo_path))?;
+        let repo = open_repo_at(&repo_path)?;
         let (workdir, relative_paths) = untracked_worktree_paths(&repo, &paths)?;
         if relative_paths
             .iter()
@@ -1257,11 +1330,11 @@ pub async fn git_trash_untracked(repo_path: String, paths: Vec<String>) -> Resul
     // Closing the invoking renderer must not drop the continuation between them.
     tauri::async_runtime::spawn(async move {
         let absolute_paths = run_blocking(move |_cancel| {
-            let repo = open_repo(Path::new(&repo_path))?;
+            let repo = open_repo_at(&repo_path)?;
             let (workdir, relative_paths) = untracked_worktree_paths(&repo, &paths)?;
             Ok(relative_paths
                 .into_iter()
-                .map(|relative| workdir.join(relative).to_string_lossy().into_owned())
+                .map(|relative| crate::wire_path::encode_path(&workdir.join(relative)).into_owned())
                 .collect())
         })
         .await?;
@@ -1291,9 +1364,7 @@ fn discover_repo_root(path: &str) -> Option<String> {
             WslRepoRoot::Fallback => {}
         }
     }
-    open_repo(Path::new(path))
-        .ok()
-        .and_then(|repo| workdir_key(&repo))
+    open_repo_at(path).ok().and_then(|repo| workdir_key(&repo))
 }
 
 fn directory_scope(path: &str) -> Option<GitDirectoryScope> {
@@ -1312,7 +1383,7 @@ fn resolved_relative_directory(path: &str, repo_root: &str) -> Option<String> {
     let mut parts = Vec::new();
     for component in relative.components() {
         match component {
-            Component::Normal(part) => parts.push(part.to_string_lossy().into_owned()),
+            Component::Normal(part) => parts.push(crate::wire_path::encode(part).into_owned()),
             Component::CurDir => {}
             Component::Prefix(_) | Component::RootDir | Component::ParentDir => return None,
         }
@@ -1328,7 +1399,9 @@ fn scope_resolution_path(path: &str) -> PathBuf {
     if let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc(path) {
         return PathBuf::from(wsl_unc_from_linux(&distro, &linux_path));
     }
-    PathBuf::from(path)
+    crate::wire_path::decode(path)
+        .map(std::borrow::Cow::into_owned)
+        .unwrap_or_default()
 }
 
 #[tauri::command]
@@ -1369,8 +1442,7 @@ pub async fn git_status(
         if cancelled.load(Ordering::Relaxed) {
             return Err(AppError::Other("git status cancelled".into()));
         }
-        let p = PathBuf::from(&repo_path);
-        let result = match open_repo(&p) {
+        let result = match open_repo_at(&repo_path) {
             Ok(repo) => collect_status(&repo),
             Err(_) => Ok(map_non_repo()),
         };
@@ -1396,29 +1468,52 @@ pub async fn cancel_git_status(task_id: u64) -> Result<(), AppError> {
 }
 
 fn stage_paths_inner(repo: &Repository, paths: &[String]) -> Result<(), AppError> {
-    let mut index = repo.index().map_err(to_app_err)?;
+    stage_paths_with(repo, paths, || {})
+}
+
+/// `before_write` runs after the index is updated in memory, before it is
+/// written: tests run a concurrent `git add` there (#1617).
+fn stage_paths_with(
+    repo: &Repository,
+    paths: &[String],
+    before_write: impl FnOnce(),
+) -> Result<(), AppError> {
     let workdir = repo
         .workdir()
         .ok_or_else(|| AppError::Other("git: bare repository has no working tree".into()))?;
-    for p in paths {
-        let pp = Path::new(p);
-        // Deleted files: remove from index. Others: add.
-        let abs = workdir.join(pp);
-        // `symlink_metadata`: a dangling symlink is a real entry to stage.
-        if abs.symlink_metadata().is_ok() {
-            index.add_path(pp).map_err(to_app_err)?;
-        } else {
-            index.remove_path(pp).map_err(to_app_err)?;
-        }
-    }
-    index.write().map_err(to_app_err)?;
-    Ok(())
+    // Index paths are text to git2: decode each, refusing non-UTF-8 before
+    // any effect (#1592).
+    let paths = paths
+        .iter()
+        .map(|p| crate::wire_path::native_text(p))
+        .collect::<Result<Vec<_>, _>>()?;
+    // Read, update and write under one `index.lock` (#1617), with the
+    // repository's own case handling as `Repository::index()` gives it.
+    crate::git_index_lock::with_locked_index_hooked(
+        repo,
+        crate::git_index_lock::IndexCase::Repository,
+        |index| {
+            for p in &paths {
+                let pp = Path::new(&**p);
+                // Deleted files: remove from index. Others: add.
+                let abs = workdir.join(pp);
+                // `symlink_metadata`: a dangling symlink is a real entry to stage.
+                if abs.symlink_metadata().is_ok() {
+                    index.add_path(pp).map_err(to_app_err)?;
+                } else {
+                    index.remove_path(pp).map_err(to_app_err)?;
+                }
+            }
+            Ok(((), crate::git_index_lock::IndexUpdate::Write))
+        },
+        before_write,
+    )
 }
 
 #[tauri::command]
 pub async fn git_stage(repo_path: String, paths: Vec<String>) -> Result<(), AppError> {
     run_blocking(move |_cancel| {
-        let repo = open_repo(Path::new(&repo_path))?;
+        let repo = open_repo_at(&repo_path)?;
         stage_paths_inner(&repo, &paths)
     })
     .await
@@ -1427,7 +1522,7 @@ pub async fn git_stage(repo_path: String, paths: Vec<String>) -> Result<(), AppE
 #[tauri::command]
 pub async fn git_unstage(repo_path: String, paths: Vec<String>) -> Result<(), AppError> {
     run_blocking(move |_cancel| {
-        let repo = open_repo(Path::new(&repo_path))?;
+        let repo = open_repo_at(&repo_path)?;
         let tree = crate::git_index_reset::head_tree(&repo)?;
         crate::git_index_reset::reset_index_paths(&repo, tree.as_ref(), &paths)
     })
@@ -1438,7 +1533,7 @@ fn apply_patch_inner(repo_path: &str, patch: &str, action: GitPatchAction) -> Re
     // Open first so this has the same non-repository and bare-repository
     // boundary as the other SCM mutations; the workdir is the only safe cwd
     // for a repo-relative patch.
-    let repo = open_repo(Path::new(repo_path))?;
+    let repo = open_repo_at(repo_path)?;
     let workdir = repo
         .workdir()
         .ok_or_else(|| AppError::Other("git: bare repository has no working tree".into()))?;
@@ -1513,7 +1608,7 @@ pub async fn git_discard(
 ) -> Result<(), AppError> {
     let opts = options.unwrap_or_default();
     run_blocking(move |_cancel| {
-        let repo = open_repo(Path::new(&repo_path))?;
+        let repo = open_repo_at(&repo_path)?;
         crate::git_discard::discard_paths(&repo, &paths, opts.force)
     })
     .await
@@ -1551,14 +1646,21 @@ pub async fn git_diff(
         // through to libgit2 below.
         #[cfg(windows)]
         if let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc(&repo_path) {
-            if let Some(diff) = wsl_diff(&distro, &linux_path, &path, opts.staged) {
+            // WSL git takes text; escapes on Windows spell valid UTF-8.
+            if let Some(diff) = wsl_diff(
+                &distro,
+                &linux_path,
+                &crate::wire_path::lossy(&path),
+                opts.staged,
+            ) {
                 return Ok(diff);
             }
         }
 
-        let repo = open_repo(Path::new(&repo_path))?;
+        let repo = open_repo_at(&repo_path)?;
         let mut diff_opts = DiffOptions::new();
-        diff_opts.pathspec(&path);
+        // Repo-relative wire path → the index path's exact bytes (ADR 0031).
+        diff_opts.pathspec(crate::wire_path::decode_bytes(&path)?.into_owned());
         diff_opts.disable_pathspec_match(true);
         diff_opts.context_lines(3);
         // Same policy as the status list: on Windows a mode difference is an
@@ -1594,7 +1696,7 @@ pub async fn git_commit(
         return Err(AppError::Other("commit message cannot be empty".into()));
     }
     run_blocking(move |_cancel| {
-        let repo = open_repo(Path::new(&repo_path))?;
+        let repo = open_repo_at(&repo_path)?;
         let sig = match repo.signature() {
             Ok(s) => s,
             Err(_) => {
@@ -1710,6 +1812,72 @@ mod tests {
             fs::create_dir_all(parent).unwrap();
         }
         fs::write(p, contents).unwrap();
+    }
+
+    /// #1592: the SCM panel reports untracked and modified non-UTF-8 names at
+    /// their repo-relative wire spelling: the listed path minus the repo root.
+    // APFS rejects invalid UTF-8 filenames before the operation can run.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn scm_status_reports_raw_names_at_their_listing_relative_wire_paths() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = init_repo();
+        let tracked = dir.path().join(std::ffi::OsStr::from_bytes(b"old\xfe.txt"));
+        fs::write(&tracked, "v1").unwrap();
+        let repo = Repository::open(dir.path()).unwrap();
+        let mut index = repo.index().unwrap();
+        index
+            .add_all(["*"], git2::IndexAddOption::DEFAULT, None)
+            .unwrap();
+        index.write().unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let sig = repo.signature().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+            .unwrap();
+        fs::write(&tracked, "v2").unwrap();
+        let nested = dir.path().join(std::ffi::OsStr::from_bytes(b"dir\xfd"));
+        fs::create_dir(&nested).unwrap();
+        fs::write(
+            nested.join(std::ffi::OsStr::from_bytes(b"bad\xff.txt")),
+            "x",
+        )
+        .unwrap();
+        fs::write(nested.join("bad\u{FFFD}.txt"), "y").unwrap();
+        let root = crate::wire_path::encode_path(dir.path()).into_owned();
+        let listed: Vec<String> = [
+            crate::wire_path::encode_path(&nested).into_owned(),
+            root.clone(),
+        ]
+        .into_iter()
+        .flat_map(|directory| {
+            tauri::async_runtime::block_on(crate::files::dir_listing::read_directory(directory))
+                .unwrap()
+                .entries
+                .iter()
+                .filter(|entry| !matches!(entry.kind, crate::files::FileKind::Directory))
+                .map(|entry| entry.path[root.len() + 1..].to_owned())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+        let status = tauri::async_runtime::block_on(git_status(root.clone(), None)).unwrap();
+        // The reported wire path diffs exactly that file.
+        let diff =
+            tauri::async_runtime::block_on(git_diff(root, status.changes[0].path.clone(), None))
+                .unwrap();
+        assert!(diff.contains("-v1") && diff.contains("+v2"), "{diff}");
+        let mut untracked: Vec<String> = status.untracked.iter().map(|e| e.path.clone()).collect();
+        untracked.sort();
+        let changes: Vec<String> = status.changes.iter().map(|e| e.path.clone()).collect();
+        assert_eq!(
+            untracked,
+            vec!["dir\u{EFFD}/bad\u{EFFF}.txt", "dir\u{EFFD}/bad\u{FFFD}.txt"]
+        );
+        assert_eq!(changes, vec!["old\u{EFFE}.txt"]);
+        let mut reported = [untracked, changes].concat();
+        reported.sort();
+        let mut listed = listed;
+        listed.sort();
+        assert_eq!(reported, listed);
     }
 
     fn sync_status(path: &Path) -> GitStatusSummary {
@@ -2276,6 +2444,46 @@ mod tests {
         assert_eq!(head.author().name(), Ok("Test"));
         assert_eq!(head.author().email(), Ok("t@x"));
         assert_eq!(head.committer().name(), Ok("Test User"));
+    }
+
+    /// A `git add` run while staging is between reading and writing the
+    /// index must never exit 0 and then vanish (#1617).
+    #[test]
+    fn a_concurrent_git_add_during_staging_is_never_silently_lost() {
+        let dir = init_repo();
+        write(dir.path(), "a.txt", "v1\n");
+        commit_all(dir.path(), "init");
+        write(dir.path(), "a.txt", "v2\n");
+        write(dir.path(), "concurrent.txt", "c\n");
+        let repo = Repository::open(dir.path()).unwrap();
+        let mut concurrent = None;
+        stage_paths_with(&repo, &["a.txt".into()], || {
+            concurrent = Some(
+                Command::new("git")
+                    .current_dir(dir.path())
+                    .args(["add", "concurrent.txt"])
+                    .output()
+                    .unwrap(),
+            );
+        })
+        .unwrap();
+        let concurrent = concurrent.unwrap();
+        let index = Repository::open(dir.path()).unwrap().index().unwrap();
+        assert!(
+            !concurrent.status.success()
+                || index.get_path(Path::new("concurrent.txt"), 0).is_some(),
+            "git add exited 0 but concurrent.txt was lost"
+        );
+        assert!(
+            String::from_utf8_lossy(&concurrent.stderr).contains("index.lock"),
+            "{concurrent:?}"
+        );
+        let a = index.get_path(Path::new("a.txt"), 0).unwrap();
+        assert_eq!(
+            a.id,
+            git2::Oid::hash_object(git2::ObjectType::Blob, b"v2\n").unwrap()
+        );
+        crate::git_index_lock::tests::assert_no_leftovers(&dir.path().join(".git"));
     }
 
     #[cfg(unix)]
@@ -3048,7 +3256,7 @@ mod tests {
         }
 
         // For comparison, time the libgit2 open + fallback too.
-        let repo = match open_repo(Path::new(&path)) {
+        let repo = match open_repo_at(&path) {
             Ok(r) => r,
             Err(e) => {
                 println!("wsl_diag_scm_status: libgit2 open failed for {path}: {e:?}");
@@ -3241,8 +3449,8 @@ mod tests {
         /// git pairs a worktree rename only for an intent-to-add file. The WSL
         /// path must split it like `--no-renames` so no row offers a discard
         /// that deletes `new.txt` while `old.txt` stays deleted (#1605). The
-        /// libgit2 status still lists `new.txt` differently (staged Added plus
-        /// a Modified change); that disagreement is tracked in #1619.
+        /// libgit2 path's identical rows are checked by
+        /// `intent_to_add_worktree_rename_splits_identically` (#1619).
         #[test]
         fn worktree_rename_of_intent_to_add_file_splits_into_delete_and_add() {
             let dir = init_repo();
@@ -3427,6 +3635,188 @@ mod tests {
             assert_eq!(sorted(&parsed.staged), sorted(&libgit2.staged));
             assert_eq!(sorted(&parsed.changes), sorted(&libgit2.changes));
             assert_eq!(sorted(&parsed.untracked), sorted(&libgit2.untracked));
+        }
+
+        /// Every row of a summary as `(bucket, path, old_path, status)`,
+        /// sorted, so the two status paths compare exactly.
+        fn rows(
+            s: &GitStatusSummary,
+        ) -> Vec<(&'static str, String, Option<String>, GitStatusCode)> {
+            let mut out = Vec::new();
+            for (bucket, entries) in [
+                ("staged", &s.staged),
+                ("changes", &s.changes),
+                ("untracked", &s.untracked),
+                ("merge", &s.merge),
+            ] {
+                for e in entries {
+                    out.push((bucket, e.path.clone(), e.old_path.clone(), e.status));
+                }
+            }
+            out.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
+            out
+        }
+
+        fn run_git(dir: &Path, args: &[&str]) {
+            let out = Command::new("git")
+                .current_dir(dir)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+
+        /// #1619: the native (libgit2) collector and the WSL path (real git's
+        /// porcelain v2 through `parse_status_v2`) must produce identical rows
+        /// for the same repository, and those rows must be git's own view.
+        fn assert_twin(dir: &Path, expected: &[(&'static str, &str, Option<&str>, GitStatusCode)]) {
+            let native = rows(&collect_status_inner(&open_repo(dir).unwrap(), false).unwrap());
+            let wsl = rows(&summary_from_v2(
+                parse_status_v2(&v2_bytes(dir)),
+                String::new(),
+                "clean".into(),
+            ));
+            let mut expected: Vec<_> = expected
+                .iter()
+                .map(|(b, p, o, s)| (*b, p.to_string(), o.map(str::to_string), *s))
+                .collect();
+            expected.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
+            assert_eq!(wsl, expected, "porcelain v2 rows differ from git's view");
+            assert_eq!(native, expected, "native rows differ from git's view");
+        }
+
+        fn twin_repo(files: &[&str]) -> TempDir {
+            let dir = init_repo();
+            for f in files {
+                write(dir.path(), f, &format!("{f} line one\n{f} line two\n"));
+            }
+            commit_all(dir.path(), "init");
+            dir
+        }
+
+        #[test]
+        fn intent_to_add_is_an_unstaged_addition_on_both_paths() {
+            let dir = twin_repo(&["a.txt"]);
+            write(dir.path(), "new.txt", "fresh\n");
+            run_git(dir.path(), &["add", "-N", "new.txt"]);
+            assert_twin(
+                dir.path(),
+                &[("changes", "new.txt", None, GitStatusCode::Added)],
+            );
+        }
+
+        /// Stage, the intent-to-add row's action, records its content.
+        #[test]
+        fn staging_an_intent_to_add_row_makes_it_a_staged_addition() {
+            let dir = twin_repo(&["a.txt"]);
+            write(dir.path(), "new.txt", "fresh\n");
+            run_git(dir.path(), &["add", "-N", "new.txt"]);
+            stage_paths_inner(&open_repo(dir.path()).unwrap(), &["new.txt".into()]).unwrap();
+            assert_twin(
+                dir.path(),
+                &[("staged", "new.txt", None, GitStatusCode::Added)],
+            );
+        }
+
+        #[test]
+        fn intent_to_add_removed_from_disk_is_an_unstaged_deletion() {
+            let dir = twin_repo(&["a.txt"]);
+            write(dir.path(), "new.txt", "fresh\n");
+            run_git(dir.path(), &["add", "-N", "new.txt"]);
+            fs::remove_file(dir.path().join("new.txt")).unwrap();
+            assert_twin(
+                dir.path(),
+                &[("changes", "new.txt", None, GitStatusCode::Deleted)],
+            );
+        }
+
+        #[test]
+        fn intent_to_add_worktree_rename_splits_identically() {
+            let dir = twin_repo(&["old.txt"]);
+            fs::rename(dir.path().join("old.txt"), dir.path().join("moved.txt")).unwrap();
+            run_git(dir.path(), &["add", "-N", "moved.txt"]);
+            assert_twin(
+                dir.path(),
+                &[
+                    ("changes", "old.txt", None, GitStatusCode::Deleted),
+                    ("changes", "moved.txt", None, GitStatusCode::Added),
+                ],
+            );
+        }
+
+        #[test]
+        fn rm_cached_is_a_staged_deletion_plus_an_untracked_file() {
+            let dir = twin_repo(&["a.txt", "b.txt"]);
+            run_git(dir.path(), &["rm", "-q", "--cached", "b.txt"]);
+            assert_twin(
+                dir.path(),
+                &[
+                    ("staged", "b.txt", None, GitStatusCode::Deleted),
+                    ("untracked", "b.txt", None, GitStatusCode::Untracked),
+                ],
+            );
+        }
+
+        #[test]
+        fn staged_renames_follow_status_and_diff_renames_config() {
+            let dir = twin_repo(&["a.txt", "b.txt"]);
+            run_git(dir.path(), &["mv", "a.txt", "renamed.txt"]);
+            let split = [
+                ("staged", "a.txt", None, GitStatusCode::Deleted),
+                ("staged", "renamed.txt", None, GitStatusCode::Added),
+            ];
+            let paired = [(
+                "staged",
+                "renamed.txt",
+                Some("a.txt"),
+                GitStatusCode::Renamed,
+            )];
+
+            // Default: renames detected.
+            assert_twin(dir.path(), &paired);
+            run_git(dir.path(), &["config", "status.renames", "false"]);
+            assert_twin(dir.path(), &split);
+            // status.renames falls back to diff.renames …
+            run_git(dir.path(), &["config", "--unset", "status.renames"]);
+            run_git(dir.path(), &["config", "diff.renames", "false"]);
+            assert_twin(dir.path(), &split);
+            // … and overrides it when set.
+            run_git(dir.path(), &["config", "status.renames", "true"]);
+            assert_twin(dir.path(), &paired);
+            run_git(dir.path(), &["config", "status.renames", "copies"]);
+            assert_twin(dir.path(), &paired);
+        }
+
+        #[test]
+        fn mixed_tree_rows_agree_on_both_paths() {
+            let dir = twin_repo(&["s.txt", "w.txt", "d.txt", "sw.txt"]);
+            write(dir.path(), "s.txt", "staged edit\n");
+            write(dir.path(), "sw.txt", "staged edit\n");
+            run_git(dir.path(), &["add", "s.txt", "sw.txt"]);
+            write(dir.path(), "sw.txt", "then unstaged edit\n");
+            write(dir.path(), "w.txt", "unstaged edit\n");
+            fs::remove_file(dir.path().join("d.txt")).unwrap();
+            write(dir.path(), "nested/dir/u.txt", "untracked\n");
+            assert_twin(
+                dir.path(),
+                &[
+                    ("staged", "s.txt", None, GitStatusCode::Modified),
+                    ("staged", "sw.txt", None, GitStatusCode::Modified),
+                    ("changes", "sw.txt", None, GitStatusCode::Modified),
+                    ("changes", "w.txt", None, GitStatusCode::Modified),
+                    ("changes", "d.txt", None, GitStatusCode::Deleted),
+                    (
+                        "untracked",
+                        "nested/dir/u.txt",
+                        None,
+                        GitStatusCode::Untracked,
+                    ),
+                ],
+            );
         }
 
         #[test]

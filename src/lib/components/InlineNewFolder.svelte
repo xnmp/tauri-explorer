@@ -25,6 +25,7 @@
 </script>
 
 <script lang="ts">
+  import { toWireText } from "$lib/domain/wire-name";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import FileIcon from "./FileIcon.svelte";
   import { tick } from "svelte";
@@ -83,7 +84,8 @@
     // Guard against double submission — Enter triggers confirm and the
     // resulting blur would otherwise call createFolder a second time.
     if (submitting) return;
-    const name = newFolderName.trim();
+    // Typed text becomes a wire name: reserved characters are escaped (#1592).
+    const name = toWireText(newFolderName.trim());
     if (!name) {
       explorer.cancelInlineNewFolder();
       return;

@@ -2,7 +2,10 @@ use super::*;
 use crate::files::{
     file_identity::version_from_metadata, native_directory::Directory, recovery::resources::Scope,
 };
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 fn publication(path: &Path) -> Arc<PublishedEntry> {
     let parent = Directory::open(path.parent().unwrap()).unwrap();

@@ -1,6 +1,6 @@
 //! One immutable move intent supplies both recovery claims and worker paths.
 use crate::error::AppError;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Component, PathBuf};
 
 pub(crate) struct MovePlan {
     pub(super) source: PathBuf,
@@ -16,10 +16,13 @@ impl MovePlan {
         destination: String,
         overwrite: bool,
     ) -> Result<Self, AppError> {
-        for path in [&source, &destination] {
-            let native = Path::new(path);
-            if path.len() > 128 * 1024
-                || path.contains('\0')
+        // Decode first; the structural checks run on the native paths.
+        let source = crate::wire_path::decode(&source)?.into_owned();
+        let destination = crate::wire_path::decode(&destination)?.into_owned();
+        for native in [&source, &destination] {
+            let bytes = native.as_os_str().as_encoded_bytes();
+            if bytes.len() > 128 * 1024
+                || bytes.contains(&0)
                 || !native.is_absolute()
                 || native
                     .components()
@@ -31,11 +34,10 @@ impl MovePlan {
                 ));
             }
         }
-        let source = PathBuf::from(source);
         let name = source
             .file_name()
             .ok_or_else(|| AppError::InvalidPath("Move source requires an entry name".into()))?;
-        let target = Path::new(&destination).join(name);
+        let target = destination.join(name);
         Ok(Self {
             source,
             target,
@@ -51,7 +53,7 @@ impl MovePlan {
             .chain(self.presentation.as_ref())
             .chain(self.original_source.as_ref())
             .filter_map(|path| path.parent())
-            .map(|path| path.to_string_lossy().into_owned())
+            .map(|path| crate::wire_path::encode_path(path).into_owned())
             .collect();
         dirs.sort_unstable();
         dirs.dedup();

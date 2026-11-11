@@ -54,7 +54,9 @@ pub async fn open_pdf_link(url: String) -> Result<(), AppError> {
 
 #[tauri::command]
 pub async fn read_pdf_bytes(path: String) -> Result<tauri::ipc::Response, AppError> {
-    let bytes = super::run_blocking(move || read_pdf(Path::new(&path), MAX_PDF_BYTES)).await?;
+    let bytes =
+        super::run_blocking(move || read_pdf(&crate::wire_path::decode(&path)?, MAX_PDF_BYTES))
+            .await?;
     Ok(tauri::ipc::Response::new(bytes))
 }
 

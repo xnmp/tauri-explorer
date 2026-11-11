@@ -128,7 +128,9 @@ mod platform {
         fn read_files(&mut self) -> Result<Vec<String>, AppError> {
             use clipboard_rs::Clipboard;
             // clipboard-rs reports an empty clipboard as "no files".
-            Ok(pasteboard()?.get_files().unwrap_or_default())
+            Ok(crate::clipboard::backend::wire_text_paths(
+                pasteboard()?.get_files().unwrap_or_default(),
+            ))
         }
 
         fn write_files(
@@ -137,13 +139,14 @@ mod platform {
             _operation: ClipboardOperation,
             token: &str,
         ) -> Result<(), AppError> {
-            if !valid_file_paths(paths) {
+            let native = crate::clipboard::backend::native_text_paths(paths)?;
+            if !valid_file_paths(&native) {
                 return Err(AppError::InvalidPath(
                     "Clipboard file paths must be nonempty, absolute and contain no NUL bytes"
                         .into(),
                 ));
             }
-            let (wrote_files, wrote_token) = write_pasteboard(paths, token);
+            let (wrote_files, wrote_token) = write_pasteboard(&native, token);
             if !wrote_files {
                 return Err(AppError::Other("Mac clipboard write failed".into()));
             }

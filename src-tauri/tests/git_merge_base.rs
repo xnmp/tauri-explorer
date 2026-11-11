@@ -42,7 +42,7 @@ async fn returns_real_ancestor_for_local_and_remote_branches_without_moving_head
     repo.reference("refs/heads/origin/right", root, true, "test")
         .unwrap();
     repo.set_head("refs/heads/left").unwrap();
-    let path = dir.path().to_string_lossy().to_string();
+    let path = dir.path().to_str().unwrap().to_owned();
     for target in ["refs/heads/right", "refs/remotes/origin/right"] {
         assert_eq!(
             git_merge_base(path.clone(), "refs/heads/left".into(), target.into())

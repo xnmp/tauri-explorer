@@ -27,7 +27,6 @@
 //! Every command runs under `spawn_blocking` and is cancellable through the
 //! shared `TaskRegistry`, mirroring `git.rs`.
 
-use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -35,7 +34,7 @@ use git2::{Oid, Repository, Sort};
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
-use crate::git_common::{open_repo, to_app_err};
+use crate::git_common::{open_repo_at, to_app_err};
 use crate::task_registry::TaskRegistry;
 
 static GIT_LOG_TASKS: TaskRegistry = TaskRegistry::new();
@@ -213,7 +212,9 @@ fn commit_touches_path(
     let tree = commit.tree().map_err(to_app_err)?;
     let parent_tree = commit.parent(0).ok().and_then(|parent| parent.tree().ok());
     let mut options = git2::DiffOptions::new();
-    options.pathspec(file_path).disable_pathspec_match(true);
+    options
+        .pathspec(crate::wire_path::decode_bytes(file_path)?.into_owned())
+        .disable_pathspec_match(true);
     let diff = repo
         .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), Some(&mut options))
         .map_err(to_app_err)?;
@@ -662,7 +663,7 @@ fn author_cache() -> &'static AuthorCache {
 #[tauri::command]
 pub async fn git_branch_authors(repo_path: String) -> Result<Vec<BranchAuthor>, AppError> {
     run_blocking(move |_cancelled| {
-        let repo = open_repo(Path::new(&repo_path))?;
+        let repo = open_repo_at(&repo_path)?;
         let branches = gather_branches(&repo);
         let sig = tips_signature(&branches);
         if let Ok(cache) = author_cache().lock() {
@@ -761,7 +762,7 @@ pub async fn git_log(
     run_blocking(move |cancelled| {
         log::debug!(target: "tauri_explorer_lib::native_watch_diagnostics",
             "git history requested: path={repo_path:?}");
-        let mut repo = open_repo(Path::new(&repo_path))?;
+        let mut repo = open_repo_at(&repo_path)?;
         // stash_foreach needs &mut; collect first, weave during page build.
         let mut stashes: Vec<(usize, String, git2::Oid)> = Vec::new();
         let _ = repo.stash_foreach(|idx, message, oid| {
@@ -782,7 +783,7 @@ pub async fn git_log(
 #[tauri::command]
 pub async fn git_refs(repo_path: String) -> Result<GitRefs, AppError> {
     run_blocking(move |_cancel| {
-        let repo = open_repo(Path::new(&repo_path))?;
+        let repo = open_repo_at(&repo_path)?;
         collect_refs(&repo)
     })
     .await
@@ -796,7 +797,7 @@ pub async fn git_merge_base(
     second_ref: String,
 ) -> Result<Option<String>, AppError> {
     run_blocking(move |_cancel| {
-        let repo = open_repo(Path::new(&repo_path))?;
+        let repo = open_repo_at(&repo_path)?;
         let resolve = |name: &str| -> Result<Oid, AppError> {
             if !name.starts_with("refs/heads/") && !name.starts_with("refs/remotes/") {
                 return Err(AppError::Other("Select a local or remote branch".into()));
@@ -849,7 +850,7 @@ fn diff_files(diff: &git2::Diff<'_>) -> Vec<CommitFile> {
                 .new_file()
                 .path()
                 .or_else(|| delta.old_file().path())
-                .map(|p| p.to_string_lossy().to_string())
+                .map(|p| crate::wire_path::encode_path(p).into_owned())
                 .unwrap_or_default();
             CommitFile {
                 path,
@@ -864,7 +865,7 @@ fn diff_files(diff: &git2::Diff<'_>) -> Vec<CommitFile> {
 #[tauri::command]
 pub async fn git_commit_files(repo_path: String, oid: String) -> Result<Vec<CommitFile>, AppError> {
     run_blocking(move |_cancel| {
-        let repo = open_repo(Path::new(&repo_path))?;
+        let repo = open_repo_at(&repo_path)?;
         let commit = repo
             .find_commit(Oid::from_str(&oid).map_err(|e| AppError::Other(e.to_string()))?)
             .map_err(|e| AppError::Other(format!("commit not found: {e}")))?;
@@ -901,7 +902,7 @@ pub async fn git_compare_commit_files(
     target_oid: String,
 ) -> Result<Vec<CommitFile>, AppError> {
     run_blocking(move |_cancel| {
-        let repo = open_repo(Path::new(&repo_path))?;
+        let repo = open_repo_at(&repo_path)?;
         commit_comparison_files(&repo, &base_oid, &target_oid)
     })
     .await
@@ -917,7 +918,7 @@ fn commit_file_diff(repo: &Repository, oid: &str, file_path: &str) -> Result<Str
     let tree = commit.tree().map_err(|e| AppError::Other(e.to_string()))?;
     let parent_tree = commit.parent(0).ok().and_then(|p| p.tree().ok());
     let mut opts = git2::DiffOptions::new();
-    opts.pathspec(file_path);
+    opts.pathspec(crate::wire_path::decode_bytes(file_path)?.into_owned());
     // Rename detection needs the whole diff; a pathspec-limited diff shows a
     // rename as delete+add. Acceptable: the detail panel labels renames from
     // git_commit_files, this view just shows content changes.
@@ -950,7 +951,7 @@ fn commit_comparison_file_diff(
     let base = commit_tree(repo, base_oid)?;
     let target = commit_tree(repo, target_oid)?;
     let mut opts = git2::DiffOptions::new();
-    opts.pathspec(file_path);
+    opts.pathspec(crate::wire_path::decode_bytes(file_path)?.into_owned());
     let diff = repo
         .diff_tree_to_tree(Some(&base), Some(&target), Some(&mut opts))
         .map_err(|e| AppError::Other(e.to_string()))?;
@@ -978,7 +979,7 @@ pub async fn git_commit_file_diff(
     file_path: String,
 ) -> Result<String, AppError> {
     run_blocking(move |_cancel| {
-        let repo = open_repo(Path::new(&repo_path))?;
+        let repo = open_repo_at(&repo_path)?;
         commit_file_diff(&repo, &oid, &file_path)
     })
     .await
@@ -992,7 +993,7 @@ pub async fn git_compare_commit_file_diff(
     file_path: String,
 ) -> Result<String, AppError> {
     run_blocking(move |_cancel| {
-        let repo = open_repo(Path::new(&repo_path))?;
+        let repo = open_repo_at(&repo_path)?;
         commit_comparison_file_diff(&repo, &base_oid, &target_oid, &file_path)
     })
     .await
@@ -1001,6 +1002,7 @@ pub async fn git_compare_commit_file_diff(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git_common::open_repo;
     use git2::Repository;
     use std::fs;
     use std::path::Path;
@@ -1616,6 +1618,57 @@ mod tests {
             sums.contains(&"main tip"),
             "local history missing: {sums:?}"
         );
+    }
+
+    // APFS rejects invalid UTF-8 filenames before the operation can run.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_raw_named_commit_file_is_reported_and_diffed_at_its_wire_path() {
+        use std::os::unix::ffi::OsStrExt;
+        let (dir, repo) = init_repo();
+        let raw = dir.path().join(std::ffi::OsStr::from_bytes(b"bad\xff.txt"));
+        fs::write(&raw, "v1\n").unwrap();
+        write(dir.path(), "bad\u{FFFD}.txt", "look-alike\n");
+        let first = commit(&repo, "first", &[]);
+        fs::write(&raw, "v2\n").unwrap();
+        let second = commit(&repo, "second", &[first]);
+        write(dir.path(), "bad\u{FFFD}.txt", "look-alike changed\n");
+        commit(&repo, "look-alike only", &[second]);
+        let root = crate::wire_path::encode_path(dir.path()).into_owned();
+        let files =
+            tauri::async_runtime::block_on(git_commit_files(root.clone(), second.to_string()))
+                .unwrap();
+        let paths: Vec<&str> = files.iter().map(|file| file.path.as_str()).collect();
+        assert_eq!(paths, ["bad\u{EFFF}.txt"]);
+        let diff = tauri::async_runtime::block_on(git_commit_file_diff(
+            root.clone(),
+            second.to_string(),
+            files[0].path.clone(),
+        ))
+        .unwrap();
+        assert!(diff.contains("-v1") && diff.contains("+v2"), "{diff}");
+        let compared = tauri::async_runtime::block_on(git_compare_commit_file_diff(
+            root.clone(),
+            first.to_string(),
+            second.to_string(),
+            files[0].path.clone(),
+        ))
+        .unwrap();
+        assert_eq!(compared, diff);
+        let history = tauri::async_runtime::block_on(git_log(
+            root,
+            Some(GitLogOptions {
+                file_path: Some(files[0].path.clone()),
+                ..Default::default()
+            }),
+        ))
+        .unwrap();
+        let summaries: Vec<&str> = history
+            .commits
+            .iter()
+            .map(|commit| commit.summary.as_str())
+            .collect();
+        assert_eq!(summaries, ["second", "first"]);
     }
 
     fn init_repo() -> (TempDir, Repository) {

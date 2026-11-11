@@ -137,11 +137,21 @@ pub async fn picker_respond(
     token: String,
     paths: Vec<String>,
     cancelled: bool,
-) {
+) -> Result<(), AppError> {
     // A picker can resolve only the request that created its own window.
     if window.label() != token {
-        return;
+        return Ok(());
     }
+    // Phase 1 of #1592: requesters receive native text paths or URIs, so a
+    // non-UTF-8 choice is refused before the request is resolved.
+    let paths = if cancelled {
+        paths
+    } else {
+        paths
+            .iter()
+            .map(|path| crate::wire_path::native_text(path).map(std::borrow::Cow::into_owned))
+            .collect::<Result<Vec<_>, _>>()?
+    };
     let handled = resolve(
         &token,
         if cancelled {
@@ -156,6 +166,7 @@ pub async fn picker_respond(
     }
     #[cfg(not(target_os = "linux"))]
     let _ = handled;
+    Ok(())
 }
 
 #[cfg(test)]

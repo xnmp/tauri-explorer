@@ -603,7 +603,7 @@ fn receiver_event_carries_drop_time_modifiers_independently_of_source_policy() {
     for copying in [false, true] {
         let event = Event::Drop {
             external_source: None,
-            paths: paths(),
+            paths: paths().iter().map(|path| path.to_wire()).collect(),
             position: tauri::PhysicalPosition { x: 20.0, y: 30.0 },
             source: Some(source()),
             copy_modifier: Some(copying),

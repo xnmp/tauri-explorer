@@ -4,6 +4,7 @@
 //! version, OS) under `<app log dir>/crashes/`. On the next launch the
 //! frontend calls `take_crash_report` and offers to open a pre-filled GitHub
 //! issue. Nothing is ever sent over the network by the app itself.
+#![allow(clippy::disallowed_methods)] // Retire-when: #1638 closed (non-UTF-8 names, ADR 0031)
 
 use crate::error::AppError;
 use serde::Serialize;

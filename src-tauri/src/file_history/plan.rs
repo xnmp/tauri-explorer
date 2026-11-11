@@ -2,7 +2,7 @@
 //! inspect this same owned plan instead of independently reconstructing paths.
 use super::model::{Action, Direction, Recovery};
 use crate::files::trash_artifact::RestoreRequest;
-use std::{collections::BTreeSet, path::Path};
+use std::collections::BTreeSet;
 
 pub(super) struct Prepared {
     direction: Direction,
@@ -46,7 +46,7 @@ impl Prepared {
                     Request::Trash(paths) => paths.iter().for_each(|path| add_parent(path)),
                     Request::TrashPublication(publication) => {
                         if let Some(path) = publication.path.parent() {
-                            directories.insert(path.to_string_lossy().into_owned());
+                            directories.insert(crate::wire_path::encode_path(path).into_owned());
                         }
                     }
                     Request::Restore(requests) => requests
@@ -211,21 +211,30 @@ fn request(action: &Action, direction: Direction) -> Result<Request, String> {
     }
 }
 
+// History paths are wire spellings; their structure is the native one.
 fn parent(path: &str) -> Result<String, String> {
-    Path::new(path)
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .map(|parent| parent.to_string_lossy().into_owned())
-        .ok_or_else(|| format!("Invalid file history path: {path}"))
+    crate::wire_path::parent(path)
+        .filter(|parent| !parent.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            format!(
+                "Invalid file history path: {}",
+                crate::wire_path::lossy(path)
+            )
+        })
 }
 
 fn file_name(path: &str) -> Result<String, String> {
-    Path::new(path)
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .ok_or_else(|| format!("Invalid file history path: {path}"))
+    crate::wire_path::file_name(path)
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            format!(
+                "Invalid file history path: {}",
+                crate::wire_path::lossy(path)
+            )
+        })
 }
 
 fn join(parent: &str, name: &str) -> String {
-    Path::new(parent).join(name).to_string_lossy().into_owned()
+    crate::wire_path::join(parent, name)
 }

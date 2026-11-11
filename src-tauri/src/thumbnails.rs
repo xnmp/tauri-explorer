@@ -100,7 +100,7 @@ fn generate_namespaced_cache_key(namespace: &[u8], path: &Path, size: u32) -> Op
     let modified_dur = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
     Some(cache_key_from_parts(
         namespace,
-        &path.to_string_lossy(),
+        &crate::wire_path::encode_path(path),
         modified_dur,
         metadata.len(),
         size,
@@ -171,8 +171,9 @@ fn write_file_atomic(dest: &Path, data: &[u8]) -> std::io::Result<()> {
     let file_name = dest
         .file_name()
         .ok_or_else(|| std::io::Error::other("Cache path has no file name"))?
-        .to_string_lossy()
-        .into_owned();
+        .to_str()
+        .ok_or_else(|| std::io::Error::other("Cache file name is not UTF-8"))?
+        .to_owned();
     let tmp = parent.join(format!(".{}.tmp-{}", file_name, std::process::id()));
     if let Err(e) = fs::write(&tmp, data) {
         let _ = fs::remove_file(&tmp);
@@ -796,7 +797,7 @@ fn get_thumbnail_data_sync(
     size: Option<u32>,
     quality: Option<u8>,
 ) -> Result<String, AppError> {
-    let source_path = PathBuf::from(&path);
+    let source_path = crate::wire_path::decode(&path)?.into_owned();
     let size = size.unwrap_or(THUMBNAIL_SIZE);
     let quality = quality.unwrap_or(80);
     validate_thumbnail_path(&source_path, &path)?;
@@ -879,7 +880,7 @@ fn get_micro_thumbnail_sync(
     prewarm_size: Option<u32>,
     prewarm_quality: Option<u8>,
 ) -> Result<String, AppError> {
-    let source_path = PathBuf::from(&path);
+    let source_path = crate::wire_path::decode(&path)?.into_owned();
     let full_size = prewarm_size.unwrap_or(THUMBNAIL_SIZE);
     let full_quality = prewarm_quality.unwrap_or(80);
     validate_thumbnail_path(&source_path, &path)?;
@@ -1017,9 +1018,7 @@ fn ffmpeg_fallback_candidates() -> Vec<PathBuf> {
             let packages = PathBuf::from(local).join(r"Microsoft\WinGet\Packages");
             if let Ok(pkg_dirs) = std::fs::read_dir(&packages) {
                 for pkg in pkg_dirs.flatten() {
-                    if !pkg
-                        .file_name()
-                        .to_string_lossy()
+                    if !crate::wire_path::encode(&pkg.file_name())
                         .to_lowercase()
                         .contains("ffmpeg")
                     {
@@ -1198,7 +1197,7 @@ fn get_video_thumbnail_data_sync(
     size: Option<u32>,
     quality: Option<u8>,
 ) -> Result<String, AppError> {
-    let source_path = PathBuf::from(&path);
+    let source_path = crate::wire_path::decode(&path)?.into_owned();
     let size = size.unwrap_or(THUMBNAIL_SIZE);
     let quality = quality.unwrap_or(80);
 
@@ -1306,7 +1305,7 @@ fn hash_mtime(hasher: &mut Sha256, path: &Path) {
 }
 
 fn get_folder_preview_sync(path: String) -> Result<FolderPreview, AppError> {
-    let dir = PathBuf::from(&path);
+    let dir = crate::wire_path::decode(&path)?.into_owned();
     if !dir.is_dir() {
         return Err(AppError::InvalidPath(format!("Not a directory: {}", path)));
     }
@@ -1328,10 +1327,10 @@ fn get_folder_preview_sync(path: String) -> Result<FolderPreview, AppError> {
     images.truncate(FOLDER_PREVIEW_MAX_IMAGES);
 
     let mut hasher = Sha256::new();
-    hasher.update(dir.to_string_lossy().as_bytes());
+    hasher.update(crate::wire_path::encode_path(&dir).as_bytes());
     hash_mtime(&mut hasher, &dir);
     for img in &images {
-        hasher.update(img.to_string_lossy().as_bytes());
+        hasher.update(crate::wire_path::encode_path(img).as_bytes());
         hash_mtime(&mut hasher, img);
     }
 
@@ -1339,7 +1338,7 @@ fn get_folder_preview_sync(path: String) -> Result<FolderPreview, AppError> {
         folder_path: path,
         image_paths: images
             .into_iter()
-            .map(|p| p.to_string_lossy().into_owned())
+            .map(|p| crate::wire_path::encode_path(&p).into_owned())
             .collect(),
         fingerprint: hex::encode(&hasher.finalize()[..8]),
     })

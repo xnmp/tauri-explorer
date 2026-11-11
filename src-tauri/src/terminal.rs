@@ -269,7 +269,8 @@ fn parse_osc7_payload(payload: &str) -> Option<String> {
     Some(percent_decode(&rest[slash..]))
 }
 
-/// Percent-decode a URI path, interpreting decoded bytes as UTF-8 (lossy).
+/// Percent-decode a URI path into its wire spelling, so a non-UTF-8 cwd the
+/// shell percent-encoded keeps its exact bytes (#1592).
 fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -285,7 +286,7 @@ fn percent_decode(s: &str) -> String {
         out.push(bytes[i]);
         i += 1;
     }
-    String::from_utf8_lossy(&out).into_owned()
+    crate::wire_path::encode_bytes(&out).into_owned()
 }
 
 fn hex_val(b: u8) -> Option<u8> {
@@ -590,7 +591,7 @@ fn prune_stale_zsh_shims(current: &std::path::Path, retention: std::time::Durati
     };
     for entry in entries.flatten() {
         let name = entry.file_name();
-        if name == current_name || !name.to_string_lossy().starts_with("zsh-shim-") {
+        if name == current_name || !name.as_encoded_bytes().starts_with(b"zsh-shim-") {
             continue;
         }
         let stale = entry
@@ -624,7 +625,7 @@ fn install_zsh_shim(cmd: &mut CommandBuilder, cache_root: Option<&std::path::Pat
     if let Ok(orig) = std::env::var("ZDOTDIR") {
         cmd.env("_TE_ORIG_ZDOTDIR", orig);
     }
-    let shim = shim.to_string_lossy().into_owned();
+    let shim = shim.into_os_string();
     cmd.env("_TE_SHIM_ZDOTDIR", &shim);
     cmd.env("ZDOTDIR", &shim);
 }
@@ -705,7 +706,7 @@ fn spawn_shell_with(
     #[cfg(unix)]
     let shell_basename = std::path::Path::new(&shell)
         .file_name()
-        .map(|s| s.to_string_lossy().into_owned())
+        .map(|s| crate::wire_path::lossy(&crate::wire_path::encode(s)).into_owned())
         .unwrap_or_default();
     // Windows + WSL folder (#378): cmd.exe refuses a UNC working directory
     // (falls back to C:\Windows) and PowerShell lands in ~, so a pane inside
@@ -727,8 +728,14 @@ fn spawn_shell_with(
     // The shell must not inherit renderer variables the app set for itself (#1079).
     crate::child_env::scrub_pty(&mut cmd);
     if wsl_target.is_none() {
-        if let Some(dir) = cwd.filter(|d| std::path::Path::new(d).is_dir()) {
-            cmd.cwd(dir);
+        // The cwd is a wire spelling; a non-canonical one starts at the
+        // shell's default directory instead.
+        if let Some(dir) = cwd
+            .as_deref()
+            .and_then(|dir| crate::wire_path::decode(dir).ok())
+            .filter(|dir| dir.is_dir())
+        {
+            cmd.cwd(dir.as_os_str());
         }
     }
     // zsh doesn't emit OSC 7 by default — install a shim that does. bash's

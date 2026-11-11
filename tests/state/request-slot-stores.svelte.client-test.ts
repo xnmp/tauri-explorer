@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { flushSync, untrack } from "svelte";
-import type { BranchAuthor, FailedCiCheck, FailedCiCheckLog, GitRefs, OpenPr } from "$lib/api/git-log";
+import type { BranchAuthor, CommitFile, FailedCiCheck, FailedCiCheckLog, GitRefs, OpenPr } from "$lib/api/git-log";
 import { createGitGraphBranches } from "$lib/state/git-graph-branches.svelte";
 import { createGitPrSession } from "$lib/state/git-pr-session.svelte";
+import { createGitGraphDetail } from "$lib/state/git-graph-detail.svelte";
+import { parseUnifiedDiff } from "$lib/domain/diff";
 
 // Client-compiled: effects run for real. Store commands must not subscribe the
 // effect that calls them, and each getter must notify only when its own value
@@ -245,5 +247,63 @@ describe("branch metadata reactivity", () => {
     await second;
     expect(f.session.mergeBaseResult).toEqual({ first: "a", second: "b", oid: "oid" });
     vi.restoreAllMocks();
+  });
+});
+
+function detailFixture() {
+  const commitFiles: ReturnType<typeof deferred<CommitFile[]>>[] = [];
+  const commitDiffs: ReturnType<typeof deferred<string>>[] = [];
+  const track = <T>(list: ReturnType<typeof deferred<T>>[]) => { const d = deferred<T>(); list.push(d); return d.promise; };
+  const unused = () => Promise.reject(new Error("unused"));
+  const session = createGitGraphDetail("/d", "detail-client", {
+    commitFiles: () => track(commitFiles), commitDiff: () => track(commitDiffs),
+    compareFiles: unused, summary: unused, workingDiff: unused, compareDiff: unused,
+    parseDiff: parseUnifiedDiff,
+  });
+  return { session, commitFiles, commitDiffs };
+}
+const graphCommit = (oid: string) => ({
+  oid, short_oid: oid, parents: [], author_name: "A", author_email: "a@b.test", author_time: 1, summary: oid,
+});
+
+describe("git graph detail reactivity", () => {
+  it("diff commands do not subscribe the effect that calls them", async () => {
+    const f = detailFixture();
+    const opening = f.session.select(graphCommit("c"));
+    f.commitFiles[0].resolve([{ path: "a.ts", status: "M" }]);
+    await opening;
+    const commands: [string, () => void][] = [
+      ["toggleDiff", () => void f.session.toggleDiff({ path: "a.ts", status: "M" })],
+      ["closeDiff", () => f.session.closeDiff()],
+    ];
+    for (const [name, command] of commands) {
+      const effect = runInEffect(command);
+      for (const d of f.commitDiffs) d.resolve("line");
+      await settle();
+      expect(effect.runs(), name).toBe(1);
+      effect.stop();
+    }
+    f.session.dispose();
+  });
+
+  it("getters notify when their value changes, not when a load begins", async () => {
+    const f = detailFixture();
+    const w = watch(f.session, ["files", "openDiff", "openDiffPath", "diffLoading", "diffError"]);
+    void f.session.select(graphCommit("c")); flushSync();
+    expect(w.counts.files).toBe(1); // still empty while the files load
+    f.commitFiles[0].resolve([{ path: "a.ts", status: "M" }]); await settle();
+    expect(w.counts.files).toBe(2);
+
+    void f.session.toggleDiff({ path: "a.ts", status: "M" }); flushSync();
+    expect(w.counts.diffLoading).toBe(2);
+    expect(w.counts.openDiffPath).toBe(2);
+    expect(w.counts.openDiff).toBe(1); // nothing to show yet
+    f.commitDiffs[0].resolve("line"); await settle();
+    expect(w.counts.openDiff).toBe(2);
+    expect(w.counts.diffLoading).toBe(3);
+    expect(w.counts.diffError).toBe(1);
+    expect(w.counts.files).toBe(2);
+    w.stop();
+    f.session.dispose();
   });
 });

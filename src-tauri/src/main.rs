@@ -13,14 +13,21 @@ fn main() {
     // Capture cwd immediately — before Tauri or any library changes it.
     let cwd = std::env::current_dir()
         .ok()
-        .map(|p| p.to_string_lossy().to_string());
+        .map(|p| tauri_explorer_lib::wire_text(&p));
 
     // Support `tauri-explorer [--new-tab] /some/path` (flags like
     // --file-chooser-portal are not paths). `--new-tab` only changes how a
     // running instance receives the launch (window_launch.rs); a first
     // process opens its window at the path either way (#1478).
-    let cli_path = tauri_explorer_lib::launch_args::parse(std::env::args().skip(1)).path;
-    let portal_mode = std::env::args().any(|a| a == "--file-chooser-portal");
+    // `args_os`: `args()` panics on a non-UTF-8 argument, and each argument
+    // becomes wire text exactly once (ADR 0031).
+    let cli_path = tauri_explorer_lib::launch_args::parse(
+        std::env::args_os()
+            .skip(1)
+            .map(|arg| tauri_explorer_lib::wire_text(std::path::Path::new(&arg))),
+    )
+    .path;
+    let portal_mode = std::env::args_os().any(|a| a == "--file-chooser-portal");
 
     // Launcher-artifact cwds are not useful launch locations: Finder/DMG on
     // macOS sets "/", and Start menu / Explorer on Windows set the app's own

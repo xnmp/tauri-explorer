@@ -26,7 +26,7 @@ impl DirectoryEffects {
     pub(crate) fn before_create(&self, directory: &std::path::Path) -> Result<(), AppError> {
         let mut state = self.0.lock().unwrap_or_else(|error| error.into_inner());
         for path in directory.parent().into_iter().chain(Some(directory)) {
-            let path = path.to_string_lossy();
+            let path = crate::wire_path::encode_path(path);
             if state.paths.contains(path.as_ref()) {
                 continue;
             }

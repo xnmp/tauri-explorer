@@ -144,7 +144,7 @@ fn inverse_rename_binds_the_next_direction_to_its_physical_parent() {
 }
 
 #[test]
-fn unrepresentable_rename_history_does_not_target_a_lossy_collision() {
+fn non_utf8_rename_history_targets_its_exact_directory_not_a_lossy_collision() {
     use std::os::unix::ffi::OsStringExt;
     tauri::async_runtime::block_on(async {
         let root = tempfile::tempdir().unwrap();
@@ -170,13 +170,23 @@ fn unrepresentable_rename_history_does_not_target_a_lossy_collision() {
         assert!(undo.error.is_none());
         assert!(undo.completed.is_some());
         assert!(undo.remaining.is_none());
-        assert!(undo.opposite.is_none());
-        assert!(undo
-            .warnings
-            .iter()
-            .any(|warning| warning.contains("native path")));
+        assert!(undo.warnings.is_empty(), "{:?}", undo.warnings);
         assert_eq!(fs::read(native.join("before")).unwrap(), b"owned");
         assert_eq!(fs::read(lossy.join("before")).unwrap(), b"unrelated");
+        // Redo is bound to the exact native directory (ADR 0031), even after
+        // the alias is repointed at the lossy look-alike.
+        let opposite = undo.opposite.expect("non-UTF-8 history keeps Redo");
+        let super::Action::Rename { path, .. } = &opposite else {
+            panic!("rename inverse expected");
+        };
+        assert_eq!(path, &crate::wire_path::encode_path(&native.join("after")));
+        fs::remove_file(&alias).unwrap();
+        std::os::unix::fs::symlink(&lossy, &alias).unwrap();
+        let redo = super::execution::execute(opposite, &operations, super::Direction::Redo).await;
+        assert!(redo.error.is_none());
+        assert_eq!(fs::read(native.join("after")).unwrap(), b"owned");
+        assert_eq!(fs::read(lossy.join("before")).unwrap(), b"unrelated");
+        assert!(!lossy.join("after").exists());
     });
 }
 

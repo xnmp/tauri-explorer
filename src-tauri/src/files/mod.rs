@@ -133,7 +133,7 @@ impl MountTable {
     pub(crate) fn mount_for(&self, path: &Path) -> Option<(String, std::path::PathBuf)> {
         let mount = self.0.resolve_by_path(path)?;
         Some((
-            mount.filesystem.to_string_lossy().into_owned(),
+            crate::wire_path::lossy(&crate::wire_path::encode(&mount.filesystem)).into_owned(),
             mount.mount_point.clone(),
         ))
     }
@@ -214,7 +214,7 @@ pub(crate) fn metadata_to_entry_with_git_repo_probe(
 ) -> FileEntry {
     let name = path
         .file_name()
-        .map(|n| n.to_string_lossy().to_string())
+        .map(|n| crate::wire_path::encode(n).into_owned())
         .unwrap_or_default();
 
     let is_symlink = sym_meta.file_type().is_symlink();
@@ -269,14 +269,14 @@ pub(crate) fn metadata_to_entry_with_git_repo_probe(
     let symlink_target = if is_symlink {
         fs::read_link(path)
             .ok()
-            .map(|t| t.to_string_lossy().to_string())
+            .map(|t| crate::wire_path::encode_path(&t).into_owned())
     } else {
         None
     };
 
     FileEntry {
         name,
-        path: path.to_string_lossy().to_string(),
+        path: crate::wire_path::encode_path(path).into_owned(),
         kind,
         size,
         modified,
@@ -308,7 +308,10 @@ pub(crate) fn fill_is_empty(entries: &mut [FileEntry]) {
         .par_iter_mut()
         .filter(|e| matches!(e.kind, FileKind::Directory) && e.is_empty.is_none())
         .for_each(|e| {
-            e.is_empty = Some(fs::read_dir(&e.path).is_ok_and(|mut d| d.next().is_none()));
+            e.is_empty = Some(
+                crate::wire_path::decode(&e.path)
+                    .is_ok_and(|path| fs::read_dir(path).is_ok_and(|mut d| d.next().is_none())),
+            );
         });
 }
 
@@ -328,3 +331,7 @@ pub(crate) fn model_file_identity(path: &std::path::Path) -> std::io::Result<Str
     let file = std::fs::File::open(path)?;
     serde_json::to_string(&file_identity::of_file(&file)?).map_err(std::io::Error::other)
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "../../test_support/wire_path_fs_test.rs"]
+mod wire_path_fs_test;

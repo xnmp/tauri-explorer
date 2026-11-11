@@ -11,6 +11,7 @@
 //! output name there, and only then is the result moved to the user's
 //! requested destination. Tool auto-approval is restricted to `edit_image`
 //! (no `--yolo`).
+#![allow(clippy::disallowed_methods)] // Retire-when: #1638 closed (non-UTF-8 names, ADR 0031)
 
 use crate::error::AppError;
 use crate::plugin_job;
@@ -87,6 +88,7 @@ pub async fn start_nano_banana_job(
     api_key: String,
     model: String,
 ) -> Result<u64, AppError> {
+    let source_path = crate::wire_path::native_text(&source_path)?.into_owned();
     let source = PathBuf::from(&source_path);
     if !source.exists() {
         return Err(AppError::NotFound(source_path));

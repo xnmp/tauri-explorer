@@ -12,7 +12,7 @@ fn listing_rejects_a_malformed_git_marker() {
 
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let listing = runtime
-        .block_on(read_directory(root.path().to_string_lossy().to_string()))
+        .block_on(read_directory(root.path().to_str().unwrap().to_owned()))
         .unwrap();
     let inbox = listing
         .entries

@@ -11,6 +11,7 @@
 //! reported as the local filesystem holding the link. Links are read only on
 //! local or in-memory mounts, never on the mount being diagnosed. Windows
 //! classifies the path as written. Runs on the persistence thread only.
+#![allow(clippy::disallowed_methods)] // Retire-when: #1638 closed (non-UTF-8 names, ADR 0031)
 use serde::{Deserialize, Serialize};
 #[cfg_attr(windows, allow(unused_imports))]
 use std::collections::VecDeque;

@@ -488,8 +488,8 @@ impl Observation {
             }
         }
     }
-    pub fn reset(&mut self, roots: &[String]) -> notify::Result<()> {
-        self.desired = roots.iter().map(PathBuf::from).collect();
+    pub fn reset(&mut self, roots: Vec<PathBuf>) -> notify::Result<()> {
+        self.desired = roots.into_iter().collect();
         self.source.fault();
         self.rebuild(Instant::now(), true)
     }

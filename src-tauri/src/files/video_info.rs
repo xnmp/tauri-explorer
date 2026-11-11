@@ -1,5 +1,6 @@
 //! Best-effort video codec identification and save-a-copy for previews the
 //! webview cannot decode. Probing reads bounded head/tail windows only.
+#![allow(clippy::disallowed_methods)] // Retire-when: #1638 closed (non-UTF-8 names, ADR 0031)
 use super::object_id::ObjectId;
 use crate::error::AppError;
 use serde::Serialize;
@@ -113,7 +114,8 @@ pub fn sniff(sample: &[u8]) -> VideoCodecInfo {
 }
 
 fn read_sample(path: &str) -> std::io::Result<Vec<u8>> {
-    let mut file = std::fs::File::open(path)?;
+    let native = crate::wire_path::decode(path).map_err(std::io::Error::other)?;
+    let mut file = std::fs::File::open(native)?;
     let len = file.metadata()?.len();
     let mut sample = Vec::new();
     file.by_ref().take(WINDOW).read_to_end(&mut sample)?;
@@ -150,6 +152,9 @@ pub async fn probe_video_codec(path: String) -> VideoCodecInfo {
 /// Before #1588 every alias did; now only that race does.
 #[tauri::command]
 pub async fn save_file_copy(source: String, destination: String) -> Result<(), AppError> {
+    // Phase 1 of #1592: refuse escaped (non-UTF-8) wire paths before any probe.
+    let source = crate::wire_path::native_text(&source)?.into_owned();
+    let destination = crate::wire_path::native_text(&destination)?.into_owned();
     tokio::task::spawn_blocking(move || {
         save_copy(
             Path::new(&source),

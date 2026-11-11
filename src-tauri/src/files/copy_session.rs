@@ -28,6 +28,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+/// Paths are wire spellings (#1592): `source`/`destination` of the resolved
+/// physical objects, `presentation` the pane's requested destination.
 pub(crate) struct Inspection {
     pub source: String,
     pub destination: String,
@@ -36,6 +38,45 @@ pub(crate) struct Inspection {
     pub bytes: u64,
     #[cfg(target_os = "linux")]
     pub observation: Option<super::mutation::CopyObservation>,
+}
+
+impl Inspection {
+    /// Native physical (source, destination directory).
+    pub(crate) fn native(
+        &self,
+    ) -> Result<
+        (
+            std::borrow::Cow<'_, std::path::Path>,
+            std::borrow::Cow<'_, std::path::Path>,
+        ),
+        AppError,
+    > {
+        Ok((
+            crate::wire_path::decode(&self.source)?,
+            crate::wire_path::decode(&self.destination)?,
+        ))
+    }
+
+    /// Re-spell a committed receipt under the pane's requested destination
+    /// while that alias still names the inspected directory. Physical paths
+    /// remain the recovery authority.
+    pub(crate) fn present(&self, receipt: &mut FileMutationReceipt) {
+        let (Ok(presentation), Ok(destination)) = (
+            crate::wire_path::decode(&self.presentation),
+            crate::wire_path::decode(&self.destination),
+        ) else {
+            return;
+        };
+        if std::fs::canonicalize(presentation).ok().as_deref() != Some(destination.as_ref()) {
+            return;
+        }
+        if let Some(name) = crate::wire_path::file_name(&receipt.path) {
+            receipt.path = crate::wire_path::join(&self.presentation, name);
+            if let Some(entry) = &mut receipt.entry {
+                entry.path = receipt.path.clone();
+            }
+        }
+    }
 }
 
 pub(crate) trait Work: Send + 'static {

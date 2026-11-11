@@ -330,7 +330,11 @@ pub async fn get_media_durations(paths: Vec<String>) -> Result<Vec<Option<f64>>,
     tokio::task::spawn_blocking(move || {
         paths
             .iter()
-            .map(|path| probe_duration(Path::new(path)))
+            .map(|path| {
+                crate::wire_path::decode(path)
+                    .ok()
+                    .and_then(|p| probe_duration(&p))
+            })
             .collect()
     })
     .await

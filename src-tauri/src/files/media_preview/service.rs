@@ -249,6 +249,7 @@ impl Service {
         path: String,
         allowed: impl Fn(&Path) -> bool + Send + 'static,
     ) -> Result<(), AppError> {
+        let path = crate::wire_path::decode(&path)?.into_owned();
         let lease = self.owned(token, owner)?;
         // Busy admission leaves a provisional capability available for retry.
         // Once transitioned, every accepted worker retains this permit.
@@ -273,6 +274,7 @@ impl Service {
         allowed: impl Fn(&Path) -> bool + Send + 'static,
         extractor: super::audio::Extractor,
     ) -> Result<bool, AppError> {
+        let path = crate::wire_path::decode(&path)?.into_owned();
         let lease = self.owned(token, owner)?;
         // A previous selection's decoder is still being killed: wait for it,
         // but never past this capability's own release.

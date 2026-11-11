@@ -4,6 +4,7 @@
   Issue: tauri-explorer-83z, tauri-explorer-1k9k
 -->
 <script lang="ts">
+  import { displayName } from "$lib/domain/wire-name";
   import { tick, type Snippet } from "svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { contextMenuStore } from "$lib/state/context-menu.svelte";
@@ -134,14 +135,12 @@
     const [entry] = explorer.getSelectedEntries();
     contextMenuStore.close();
     if (!entry) return;
-
     recordActioned();
-    try {
-      await navigator.clipboard.writeText(entry.path);
-      toastStore.clipboard("Copied path", false);
-    } catch {
-      toastStore.error("Could not copy path");
-    }
+    // The text clipboard carries display text, not the wire identity (#1592).
+    await navigator.clipboard.writeText(displayName(entry.path)).then(
+      () => toastStore.clipboard("Copied path", false),
+      () => toastStore.error("Could not copy path"),
+    );
   }
 
   async function handlePaste(): Promise<void> {

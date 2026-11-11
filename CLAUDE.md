@@ -315,6 +315,11 @@ SCM archive actions preserve each repo-relative path under `.archive/` and add
 
 ## Debugging
 
+External-filter discard tests must check index/worktree cleanliness with native
+Git. libgit2 does not run external clean filters, so its status can report a
+restored smudged file as modified when metadata forces a rehash. Force a stat
+cache miss in the fixture rather than relying on checkout timing (#1637).
+
 Cross-platform batch-worker tests must derive absolute paths from `tempfile`
 instead of Unix literals such as `/drive/a`. Windows treats those literals as
 root-relative, so batch admission rejects them before the behavior under test
@@ -451,6 +456,12 @@ failures; the mounted PR session refreshes badges and keeps duplicate submission
 blocked through that refresh. Browser screenshots simulate GitHub, while isolated
 Rust subprocess fixtures cover the production argv/cwd and CLI error boundary.
 See ADR 0005 and ADR 0006.
+
+PR CLI subprocess tests must execute the checked-in shell launcher, with their
+mutable response scripts read as shell input. Executing freshly written files
+can fail with Linux `ETXTBSY` while another thread's fork retains a writable
+descriptor. Keep the held-writer regression and do not retry mutations to mask
+fixture failures (#1626).
 
 GitHub PR mutations (#1082): keep `--repo github.com/owner/name` explicit. Pending work belongs to `git-pr-mutations.svelte.ts`, not a mounted graph session; Rust admission spans windows/worktrees of the same target. After gh starts, a failure may follow remote acceptance: invalidate badges, retain the uncertain warning, and require an explicit GitHub check before retrying (ADR 0006).
 

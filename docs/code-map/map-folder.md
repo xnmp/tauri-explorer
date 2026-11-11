@@ -141,7 +141,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `TerminalPanel.svelte` — embedded xterm.js terminal panel (#139).
 - `StatusBar.svelte` — bottom status bar (selection count, size, path).
 - `TitleBar.svelte` — window title bar + tab strip host + window controls.
-- `WindowTabBar.svelte` — window tab strip (drag/reorder/tear-off).
+- `WindowTabBar.svelte` — window tab strip (drag/reorder/tear-off); executes the domain tab-drag reducer effects.
 - `JobsPanel.svelte` — background jobs viewer (Ctrl+J); Retry on failed jobs that carry `retry`.
 - `ToastOverlay.svelte` — stacked toast notifications.
 - `CrashNotice.svelte` — crash-report banner (#184).
@@ -169,11 +169,12 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `lazy-dialog.svelte.ts` — per-host pending import ownership, retained constructors and demand-aware failure publication.
 
 - `git-graph-query.svelte.ts` — mounted history/pagination owner, including merge-base target paging; shared reloader, captured query/walk, partial log paint, page-zero cache and invocation-scoped cleanup.
-- `src/lib/state/git-graph-detail.svelte.ts` — Selected commit/comparison files, mutation refresh tokens and inline diff ownership.
+- `src/lib/state/git-graph-detail.svelte.ts` — Selected commit/comparison files, mutation refresh and inline diff ownership; files and the diff are request slots (domain/request-slot.ts, #1642).
 - `git-pr-mutations.svelte.ts` — repository-scoped pending PR mutation ownership and retained outcomes across graph mounts; uncertain retries require acknowledgement.
 - `git-pr-session.svelte.ts` — mounted GitHub badge, PR detail and CI log requests; immutable snapshots, request-slot tokens (domain/request-slot.ts) and disposal.
 - `git-branch-status.svelte.ts` — newest-reload-only owner of the graph's trunk-aware branch-status badges (#1081); disposal and superseded reloads cannot publish.
 - `git-graph-branches.svelte.ts` — lazy branch/author metadata and cancellable merge-base jump owner; known-coverage fallback and query/popover request coordination.
+- `miller-columns.svelte.ts` — Miller columns' ancestor listings (#1642), lazy with the first MillerColumns mount: per-column request slots (a slow read never overwrites a newer one), bounded hidden-listing cache, one directory watch per shown column, listener/watch admission before fresh snapshots, revalidation after unwatched gaps, watcher changes scheduled through refresh-manager, immediate re-reads after local mutations (#598), revision-guarded hide-empty flags.
 - `slot-cell.svelte.ts` — reactive home for a `domain/request-slot` slot: untracked `get`/`set` for commands, tracked `view` for `$derived` getters, so commands never subscribe their caller and getters notify only on their own value (#1569).
 - `git-graph-actions.svelte.ts` — git-graph mutations (checkout, cherry-pick, merge, reset, branch/tag create/rename/delete, remote delete, pull offer, confirmed undo, F5 fetch) and the prompt/modal state they drive; every mutation ends in `refreshAfterGitMutation`.
 - `git-graph-expansion.svelte.ts` — the graph's single inline expansion (commit details XOR PR dropdown) with its measured heights.
@@ -476,6 +477,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## src/lib/domain/ — pure logic, no framework deps. Test + reuse here.
 
+- `pointer-drag.ts` — shared five-pixel press-to-drag threshold for tabs, files, sidebar items and click suppression.
+- `tab-drag.ts` — pure tab-drag lifecycle and effects, including session-qualified asynchronous detach settlement (#1642).
 - `src/lib/domain/job-presentation.ts` — validates optional job cost/reveal metadata and formats exact decimal money.
 - `src/lib/domain/job-reveal.ts` — pure pane choice, present-file selection, reveal routing and latest-click cancellation policy.
 
@@ -516,6 +519,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `path.ts` — path normalization/join/parent/relative helpers, including native parent/equality helpers that retain POSIX backslashes.
 - `paste-source.ts` — pure file-list Paste source selection: the app's own Copy/Cut while the system clipboard mirrors it (or, for Copy only, when it cannot be read), otherwise an external file list (#865).
 - `platform.ts` — isMac/isWindows/isLinux detection.
+- `wire-name.ts` — pure wire-name helpers (#1592, ADR 0031): `displayName` (escaped non-UTF-8 bytes → lossy display text), `toWireText` (escape typed U+EF80–U+EFFF), `renameRequest` (no-op when display text is unchanged). Contracts in `tests/domain/wire-name.test.ts` over `tests/fixtures/wire-path.json`.
 - `wsl.ts` — WSL path recognition.
 - `virtual-path.ts` — virtual (plugin-provided) path parsing, plus the eager `TRASH_PATH` / `isTrashPath` for the built-in Trash.
 - `trash.ts` — pure in-app Trash mapping (#863): `trash://` paths, trash wire entries → `FileEntry` with `trash` origin metadata, original-folder column text, source-issue and restore-outcome messages. Contracts in `tests/domain/trash.test.ts`.
@@ -553,7 +557,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `commit-panel.ts` — pure state machine + derivations for the git-graph uncommitted-node inline commit panel: stage-status grouping, commit-button enablement/label, ephemeral message-editor transitions (#466).
 - `scm-tree.ts` — fold flat repo file list into a tree.
 - `scm-filter.ts` — fuzzy filter for the SCM sidebar's pending files (#517); `filterScmEntries`/`filterScmSummary` over `fuzzyScorePath`.
-- `scm-sidebar.ts` — SCM sidebar rules: status letter/class, row path split, visual row order for Up/Down (`visibleScmRowPaths`, `nextScmSelection`), commit admission (`canCommitScm`).
+- `scm-sidebar.ts` — SCM sidebar rules: status letter/class, row path split, visual row order for Up/Down (`visibleScmRowPaths`, `nextScmSelection`), commit admission (`canCommitScm`), Discard offers that skip intent-to-add rows (`canDiscardScmRow`, `discardableScmPaths`, #1619).
 - `diff.ts` — unified-diff parser (#55); `visibleDiffLines` / `diffSubtitle` for the preview diff view.
 - `css-tokens.ts` — parse a stylesheet's `--token` table and resolve `var()` the way the browser would, so a unit test can catch a `var(--undefined, fallback)` silently degrading (#499).
 - `file-batch-outcome.ts` — typed successful/failed path receipt and aggregate error formatting for best-effort file mutations.
@@ -737,6 +741,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `load_diagnostics/persist.rs` — record precedence (frontend beats native fallback; within a source settled beats late pending; re-checked against the file on disk), bounded in-memory session records, and one dedicated writer thread that also fills in the filesystem (time-bounded probe); `recent_slow_loads` reads disk on one reusable reader thread with a timeout.
 - `update_check.rs` — update check via GitHub releases (#185).
 - `warm_pool.rs` — native warm registry with label-scoped spawn reservations, bounded claims and committed activation.
+- `wire_path.rs` — canonical wire text for native paths (#1592, ADR 0031): bijective encode/decode (invalid bytes ↔ U+EF00+byte), wire path algebra (`parent`/`file_name`/`join`), lossy display text and `refuse_escaped` for surfaces without phase-1 support. The only sanctioned native↔text conversion (`clippy.toml`). Tests: `test_support/wire_path_test.rs` (vectors + proptests), `test_support/wire_path_fs_test.rs` (real-filesystem regressions, mounted from `files/mod.rs`).
 - `gemini.rs` — shared helpers for shelling out to `gemini` CLI.
 - `ai_organize.rs` — AI destination suggestions via Gemini (#158).
 - `ai_rename.rs` — AI rename suggestions via Gemini (#145).
@@ -772,7 +777,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git_watch/target.rs` — repository/private/shared-metadata discovery, non-overlapping watch roots, non-recursive parent coverage and metadata-only temporary-file filtering.
 - `git_actions.rs` — mutating git actions for commit-graph tab (VSCode parity); returns undo snapshots for branch/tag delete, branch rename, merge, and pull, and re-verifies refs/HEAD/clean-tree state before inverses (#513). Local-branch sync fast-forwards other branches via `git fetch .` on git ≥ 2.36 (refuses branches checked out/rebased/bisected in any worktree), else a conservative worktree-list + CAS fallback (#1590).
 - `git_common.rs` — shared git plumbing (used by git/git_log/git_actions), incl. `literal_repo_path`: the normalised repo-relative path check for SCM mutations, rejecting `.git` aliases everywhere (#1589); and `exact_case_index`, the index opened without `core.ignorecase` so mutations match paths exact-case.
-- `git_discard.rs` — `git_discard` core: validates and plans every path, then removes untracked ones (refusing any `.git` or ignored entry, #1615; Unix: through `files/contained_removal.rs`, #1618) before restoring tracked paths from HEAD with an exact-case index (unlinking a symlink first, #1604; refusing a non-empty directory in its place, #1606, or a file/symlink in a parent's place).
+- `git_discard.rs` — `git_discard` core: validates and plans every path, then removes untracked ones (refusing any `.git` or ignored entry, #1615; Unix: through `files/contained_removal.rs`, #1618) before restoring tracked paths from HEAD with an exact-case index, all under `index.lock` (#1617) (unlinking a symlink first, #1604; refusing a non-empty directory in its place, #1606, or a file/symlink in a parent's place).
+- `git_index_lock.rs` — `with_locked_index`: every libgit2 index writer (stage, unstage, discard) holds `index.lock` from read to write, editing a private mtime-preserving copy and renaming it over `index.lock` then `index`, so a concurrent git command fails instead of being silently overwritten (#1617); `IndexCase` picks exact-case or the repository's `core.ignorecase` lookups.
 - `git_index_reset.rs` — `git_unstage` core: literal-path, exact-case index reset matching `git --literal-pathspecs reset` (only differing entries rewritten, skip-worktree kept, binary-searched index; #1589); `index_differs_from_tree` is discard's staged-change check.
 - `github.rs` — `git_open_prs`: open GitHub PRs for the repo's remote, for graph PR badges (#449); TTL-cached, silent-degrade. `git_issues_url`: the remote's github.com issues page for the "Git: Open Issues in Browser" palette command (#1055).
 

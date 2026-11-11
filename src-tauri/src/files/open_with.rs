@@ -12,10 +12,10 @@ pub struct OpenWithApplication {
 }
 
 fn regular_file(path: &str) -> Result<PathBuf, AppError> {
-    let path = std::path::absolute(path)?;
+    let path = std::path::absolute(crate::wire_path::decode(path)?)?;
     let metadata = std::fs::metadata(&path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
-            AppError::NotFound(path.to_string_lossy().into_owned())
+            AppError::NotFound(path.display().to_string())
         } else {
             AppError::Io(error)
         }

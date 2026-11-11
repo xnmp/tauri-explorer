@@ -119,3 +119,28 @@ pub(super) trait ClipboardReader {
         Ok(self.read_image(media_type))
     }
 }
+
+/// Clipboards that carry Unicode paths (macOS, Windows) exchange the native
+/// spelling, while the app keeps wire spellings (#1592, ADR 0031). A wire
+/// path that cannot be spelled as native text is refused before any write.
+#[cfg(any(windows, target_os = "macos"))]
+pub(super) fn native_text_paths(paths: &[String]) -> Result<Vec<String>, AppError> {
+    paths
+        .iter()
+        .map(|path| {
+            crate::wire_path::decode_name(path)?
+                .to_str()
+                .map(str::to_owned)
+                .ok_or_else(|| AppError::InvalidPath(crate::wire_path::UNSUPPORTED_ENCODING.into()))
+        })
+        .collect()
+}
+
+/// Wire spellings of native text paths read from such a clipboard.
+#[cfg(any(windows, target_os = "macos"))]
+pub(super) fn wire_text_paths(paths: Vec<String>) -> Vec<String> {
+    paths
+        .into_iter()
+        .map(|path| crate::wire_path::encode_bytes(path.as_bytes()).into_owned())
+        .collect()
+}

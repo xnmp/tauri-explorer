@@ -20,13 +20,24 @@ pub(crate) fn open_repo(path: &Path) -> Result<Repository, AppError> {
     .map_err(to_app_err)
 }
 
+/// Open the repository at a wire-spelled path (#1592): the path is decoded,
+/// never taken as literal text.
+pub(crate) fn open_repo_at(wire: &str) -> Result<Repository, AppError> {
+    open_repo(&crate::wire_path::decode(wire)?)
+}
+
+/// The native directory a wire-spelled repository path names.
+pub(crate) fn repo_dir(wire: &str) -> Result<std::borrow::Cow<'_, Path>, AppError> {
+    crate::wire_path::decode(wire)
+}
+
 /// Repo workdir as the canonical cache-key string: full path with any
 /// trailing separator stripped (git2's `workdir()` keeps one, while pane
 /// paths and the mock backend don't — the mismatch gave the same repo two
 /// cache identities across the frontend's repo-keyed caches, #369).
 pub(crate) fn workdir_key(repo: &Repository) -> Option<String> {
     repo.workdir().map(|wd| {
-        let mut s = wd.to_string_lossy().to_string();
+        let mut s = crate::wire_path::encode_path(wd).into_owned();
         while s.len() > 1 && (s.ends_with('/') || s.ends_with('\\')) {
             s.pop();
         }
@@ -57,6 +68,9 @@ pub(crate) struct LiteralRepoPath<'a> {
 /// libgit2 would otherwise panic on an absolute path (`Index::get_path`), and a
 /// non-normalised one silently names nothing in the index.
 pub(crate) fn literal_repo_path(raw: &str) -> Result<LiteralRepoPath<'_>, AppError> {
+    // Index paths are bytes git2 takes as text; phase 1 of #1592 refuses an
+    // escaped (non-UTF-8) path before any effect rather than naming another.
+    crate::wire_path::refuse_escaped(raw)?;
     let invalid = |why: &str| AppError::InvalidPath(format!("{why}: {raw:?}"));
     let (path, dir_only) = match raw.strip_suffix('/') {
         Some(stripped) => (stripped, true),
@@ -119,19 +133,6 @@ fn names_git_metadata(segment: &str) -> bool {
     };
     let before_stream = rest.split(':').next().unwrap_or_default();
     before_stream.bytes().all(|b| b == b'.' || b == b' ')
-}
-
-/// The repository's index, opened so that every lookup, removal and insertion
-/// is exact-case.
-///
-/// `Repository::index()` inherits `core.ignorecase`; libgit2 then finds,
-/// removes and replaces entries without regard to case, so working on `A`
-/// silently touched a tracked `a` (#1589 review). git itself matches literal
-/// paths case-sensitively and only folds case when talking to the filesystem.
-/// An index opened by path has no owning repository and so no ignore-case
-/// capability; `write` still sorts and writes it exactly as git expects.
-pub(crate) fn exact_case_index(repo: &Repository) -> Result<git2::Index, AppError> {
-    git2::Index::open(&repo.path().join("index")).map_err(to_app_err)
 }
 
 #[cfg(test)]

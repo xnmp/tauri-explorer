@@ -8,7 +8,6 @@ use crate::{
     },
     platform, renderer_owner,
 };
-use std::path::Path;
 use tauri::Manager;
 
 fn delete_effect(outcome: &FileBatchOutcome, permanent: bool) -> ForwardEffect {
@@ -152,10 +151,11 @@ pub(crate) async fn restore_trash_items_to(
     destination: String,
 ) -> Result<MutationReply<FileBatchOutcome>, AppError> {
     let owner = renderer_owner::acquire_owner(&window, &session_id)?;
+    let native_destination = crate::wire_path::decode(&destination)?.into_owned();
     let runtime = admission::runtime(&window)?;
     file_history::run_forward(owner, false, vec![destination.clone()], async move {
         restore_outcome(
-            crate::files::trash_inventory::restore_to(ids, destination.into(), &runtime).await,
+            crate::files::trash_inventory::restore_to(ids, native_destination, &runtime).await,
         )
     })
     .await
@@ -234,10 +234,10 @@ pub(crate) async fn delete_trash_items(
     .await
 }
 
+/// The wire parent of a wire path (its structure is the native one).
 fn parent(path: &str) -> Vec<String> {
-    Path::new(path)
-        .parent()
-        .map(|path| path.to_string_lossy().into_owned())
+    crate::wire_path::parent(path)
+        .map(str::to_owned)
         .into_iter()
         .collect()
 }
@@ -257,8 +257,8 @@ pub(crate) fn copy_inverse(receipt: &FileMutationReceipt) -> Option<Action> {
     }
     let publication = receipt.publication.as_ref()?;
     Some(Action::Copy {
-        copied_path: publication.path.to_string_lossy().into_owned(),
-        parent_dir: publication.path.parent()?.to_string_lossy().into_owned(),
+        copied_path: crate::wire_path::encode_path(&publication.path).into_owned(),
+        parent_dir: crate::wire_path::encode_path(publication.path.parent()?).into_owned(),
         restore_supported: platform::TRASH_RESTORE_SUPPORTED,
         recovery: Recovery::Capture,
         publication: Some(publication.clone()),
@@ -317,7 +317,7 @@ pub(crate) fn copy_session_outcome(
         if let ItemOutcome::Succeeded { receipt } = item {
             affected.extend(parent(&receipt.path));
             if let Some(publication) = &receipt.publication {
-                affected.extend(parent(&publication.path.to_string_lossy()));
+                affected.extend(parent(&crate::wire_path::encode_path(&publication.path)));
             }
             if let Some(action) = copy_inverse(receipt) {
                 actions.push(action);
@@ -524,13 +524,7 @@ async fn entry_outcome(
     runtime: &admission::Runtime,
 ) -> MutationOutcome<FileMutationReceipt> {
     let outcome = crate::files::entry_execution::execute(plan, runtime).await;
-    let relocated = if outcome.completion.result.is_ok() {
-        outcome.rename.as_ref().and_then(|(old, new)| {
-            (old != new).then(|| (outcome.target.with_file_name(old), outcome.target.clone()))
-        })
-    } else {
-        None
-    };
+    let relocated = outcome.relocation();
     let mut settled = settle_entry(outcome);
     if let Some((source, target)) = relocated {
         if let Err(error) =
@@ -552,19 +546,15 @@ fn settle_entry(
     outcome: crate::files::entry_execution::Outcome,
 ) -> MutationOutcome<FileMutationReceipt> {
     let changed = admission::changed(&outcome.completion.result);
-    let mut warning = outcome.completion.warning;
+    let warning = outcome.completion.warning;
     let effect = if outcome.completion.result.is_ok() {
         match outcome.rename {
             Some((old, new)) if old == new => ForwardEffect::Unchanged,
-            Some((old, new)) => match outcome.target.to_str() {
-                Some(path) => rename_effect(path.to_owned(), old, new),
-                None => {
-                    let mut warnings: crate::diagnostics::Warnings = warning.into_iter().collect();
-                    warnings.push("Rename completed, but its native path cannot be represented in history; Undo is unavailable");
-                    warning = Some(warnings.into_vec().join("\n"));
-                    ForwardEffect::Changed(None)
-                }
-            },
+            Some((old, new)) => rename_effect(
+                crate::wire_path::encode_path(&outcome.target).into_owned(),
+                old,
+                new,
+            ),
             None => ForwardEffect::Changed(None),
         }
     } else if changed {
@@ -741,7 +731,7 @@ pub(crate) async fn write_text_file(
     path: String,
     content: String,
 ) -> Result<MutationReply<FileMutationReceipt>, AppError> {
-    entry(window, session_id, EntryPlan::write_text(path, content)).await
+    entry(window, session_id, EntryPlan::write_text(path, content)?).await
 }
 
 #[tauri::command]
@@ -754,7 +744,7 @@ pub(crate) async fn create_symlink(
     entry(
         window,
         session_id,
-        EntryPlan::symlink(target_path, link_path),
+        EntryPlan::symlink(target_path, link_path)?,
     )
     .await
 }

@@ -1,6 +1,10 @@
 //! Tauri Explorer app entry point.
 //! Issue: tauri-explorer-nv2y, tauri-explorer-hgt6, tauri-explorer-im3m, tauri-explorer-bo8l, tauri-explorer-yclf
 
+// Test fixtures spell UTF-8 temp paths as strings; the lossy-path ban
+// (clippy.toml, #1592) is enforced on production code by the non-test build.
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
+
 pub(crate) mod ai;
 mod ai_organize;
 mod ai_rename;
@@ -30,6 +34,7 @@ mod git_avatar;
 pub mod git_branch_status;
 mod git_common;
 mod git_discard;
+mod git_index_lock;
 mod git_index_reset;
 pub mod git_log;
 #[cfg(all(target_os = "linux", feature = "e2e-renderer-recovery"))]
@@ -104,6 +109,7 @@ mod terminal;
 mod thumbnails;
 mod wallpaper;
 mod warm_pool;
+mod wire_path;
 
 #[cfg(all(target_os = "windows", feature = "e2e-webview2-attach"))]
 fn e2e_webview2_browser_args() -> String {
@@ -134,15 +140,18 @@ fn window_title(path: &std::path::Path, home: &std::path::Path) -> String {
     if path.as_os_str().is_empty() {
         return "Tauri Explorer".to_string();
     }
+    // `path` is a wire path (#1592): its display text replaces escaped bytes.
+    let shown =
+        |text: &std::ffi::OsStr| wire_path::lossy(text.to_str().unwrap_or_default()).into_owned();
     let display = if path == home {
         "~".to_string()
     } else if path.parent().is_none() || path == std::path::Path::new("/") {
-        path.to_string_lossy().to_string()
+        shown(path.as_os_str())
     } else {
         path.file_name()
-            .map(|name| name.to_string_lossy().to_string())
+            .map(shown)
             .filter(|name| !name.is_empty())
-            .unwrap_or_else(|| path.to_string_lossy().to_string())
+            .unwrap_or_else(|| shown(path.as_os_str()))
     };
     format!("{display} - Tauri Explorer")
 }
@@ -170,6 +179,12 @@ pub(crate) fn init_test_logger() {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// Wire text (ADR 0031) for a native path handed to the frontend before any
+/// command runs, such as the launch working directory (#1592).
+pub fn wire_text(path: &std::path::Path) -> String {
+    wire_path::encode_path(path).into_owned()
+}
+
 pub fn run(launch_dir: Option<String>) {
     run_with_process_entry(launch_dir, std::time::Instant::now());
 }
@@ -195,10 +210,9 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
     #[cfg(target_os = "linux")]
     let jsc_plan = jsc_workaround::apply(webkit_renderer::runtime_version());
 
-    let home_dir = dirs::home_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("/"))
-        .to_string_lossy()
-        .to_string();
+    let home_dir =
+        wire_path::encode_path(&dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/")))
+            .into_owned();
     let launch_cwd = launch_dir.unwrap_or_else(|| home_dir.clone());
     let initial_window_title = window_title(
         std::path::Path::new(&launch_cwd),

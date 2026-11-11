@@ -1016,3 +1016,43 @@ fn issue_1593_flush_path_publishes_under_a_continuous_event_stream() {
     assert_eq!(ready[0].1.first_event, next);
     assert!(map.is_empty());
 }
+
+/// #1592: a native event inside a non-UTF-8 directory is queued under the
+/// exact wire key the listing published for that directory, so the renderer
+/// refreshes the folder it is showing rather than its lossy look-alike.
+#[cfg(target_os = "linux")]
+#[test]
+fn native_events_in_a_raw_directory_queue_under_its_listed_wire_key() {
+    use std::os::unix::ffi::OsStrExt;
+    let root = tempfile::tempdir().unwrap();
+    let raw = root.path().join(std::ffi::OsStr::from_bytes(b"dir\xfe"));
+    std::fs::create_dir(&raw).unwrap();
+    std::fs::create_dir(root.path().join("dir\u{FFFD}")).unwrap();
+    let listed = tauri::async_runtime::block_on(super::super::dir_listing::read_directory(
+        crate::wire_path::encode_path(root.path()).into_owned(),
+    ))
+    .unwrap()
+    .entries
+    .iter()
+    .find(|entry| entry.name == "dir\u{EFFE}")
+    .unwrap()
+    .path
+    .clone();
+    let lookalike = crate::wire_path::encode_path(&root.path().join("dir\u{FFFD}")).into_owned();
+    let observer =
+        NativeObserver::with_cache(GlobalSearchCache, |_| Box::new(native_watcher) as Factory);
+    let mut watches = DirectoryWatches::new(observer);
+    let owner = Owner::default();
+    let _lease = watches.acquire(&owner, listed.clone()).unwrap();
+    std::fs::write(raw.join("created.txt"), "event").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let queued = loop {
+        let keys: Vec<String> = pending_changes().lock().unwrap().keys().cloned().collect();
+        if keys.contains(&listed) || Instant::now() > deadline {
+            break keys;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert!(queued.contains(&listed), "{queued:?}");
+    assert!(!queued.contains(&lookalike), "{queued:?}");
+}

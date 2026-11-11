@@ -12,6 +12,7 @@ import type { ExplorerInstance } from "$lib/state/explorer.svelte";
 import { dialogStore } from "$lib/state/dialogs.svelte";
 import { renameSuggestionStore } from "$lib/state/rename-suggestion.svelte";
 import { findNextWordBoundary, findPrevWordBoundary } from "$lib/domain/word-boundary";
+import { displayName, renameRequest } from "$lib/domain/wire-name";
 
 export function useInlineRename(getExplorer: () => ExplorerInstance) {
   const captureFocusReturn = getFileListFocusReturn();
@@ -25,7 +26,8 @@ export function useInlineRename(getExplorer: () => ExplorerInstance) {
 
   function focusAndSelect(entry: FileEntry) {
     const session = dialogStore.fileOperationSession;
-    editedName = entry.name;
+    // Edit display text; `entry.name` is the wire identity (#1592).
+    const shown = (editedName = displayName(entry.name));
     renameError = null;
     // Ask the (optional) AI provider for a Tab-autocomplete suggestion.
     // Best-effort and non-blocking; no-op when no provider is registered.
@@ -34,7 +36,7 @@ export function useInlineRename(getExplorer: () => ExplorerInstance) {
       if (dialogStore.fileOperationSession !== session) return;
       renameInputRef?.focus();
       if (entry.kind === "file") {
-        const lastDot = entry.name.lastIndexOf(".");
+        const lastDot = shown.lastIndexOf(".");
         if (lastDot > 0) {
           renameInputRef?.setSelectionRange(0, lastDot);
         } else {
@@ -53,7 +55,8 @@ export function useInlineRename(getExplorer: () => ExplorerInstance) {
       renameError = "Name cannot be empty";
       return false;
     }
-    if (trimmed === currentName) {
+    const request = renameRequest(currentName, trimmed);
+    if (!request) {
       dialogStore.cancelRename();
       return true;
     }
@@ -62,7 +65,7 @@ export function useInlineRename(getExplorer: () => ExplorerInstance) {
     submission = session;
     renameError = null;
     try {
-      const result = await getExplorer().rename(trimmed);
+      const result = await getExplorer().rename(request);
       if (result && dialogStore.fileOperationSession === session) renameError = result;
       else if (!result && dialogStore.fileOperationSession === null) renameSuggestionStore.clear();
       return !result && (dialogStore.fileOperationSession === null || dialogStore.fileOperationSession === session);
@@ -86,7 +89,9 @@ export function useInlineRename(getExplorer: () => ExplorerInstance) {
   /** Fill the input with the AI suggestion (Tab / hint click). Returns the
    *  accepted name, or null when there is no suggestion for this entry. */
   function acceptSuggestion(entry: FileEntry): string | null {
-    const suggested = renameSuggestionStore.suggestionFor(entry.path);
+    // The rename box holds display text; the provider sees wire names and
+    // may echo their escapes (ADR 0031).
+    const suggested = displayName(renameSuggestionStore.suggestionFor(entry.path) ?? "");
     if (!suggested || suggested === editedName) return null;
     editedName = suggested;
     tick().then(() => {
@@ -145,7 +150,7 @@ export function useInlineRename(getExplorer: () => ExplorerInstance) {
   }
 
   function handleRenameBlur(currentName: string) {
-    if (editedName.trim() && editedName.trim() !== currentName) {
+    if (editedName.trim() && renameRequest(currentName, editedName.trim())) {
       confirmRename(currentName);
     } else {
       cancelRename();

@@ -5,6 +5,8 @@
  */
 
 import { toShellPath, type ShellProfile } from "./terminal-shell";
+import { displayName } from "./wire-name";
+
 
 /** POSIX single-quote: safe for any bytes except the quote itself, which is
  *  closed-escaped-reopened ('\''). */
@@ -59,7 +61,11 @@ export function buildCdCommand(path: string, profile: ShellProfile): string {
  */
 export function buildCdSyncSequence(path: string, profile: ShellProfile): string {
   const clearLine = profile.kind === "posix" ? "\x15" : "\x1b";
-  return clearLine + buildCdCommand(path, profile);
+  // The shell needs text (ADR 0031): "" (no sync) rather than a cd to the
+  // lossy look-alike of a folder whose name is not valid text (an escaped
+  // path whose display text gained U+FFFD; over-refusing is safe).
+  const text = displayName(path);
+  return text !== path && text.includes("\uFFFD") ? "" : clearLine + buildCdCommand(text, profile);
 }
 
 /**
@@ -69,8 +75,11 @@ export function buildCdSyncSequence(path: string, profile: ShellProfile): string
  * carriage return — nothing executes without the user pressing Enter.
  */
 export function buildPathsInsertion(paths: string[], profile: ShellProfile): string {
+  // Display text: shown at the prompt, never run without Enter.
   const quoted = paths.map((p) =>
-    profile.kind === "posix" ? shellSingleQuote(toShellPath(p, profile)) : `"${p}"`,
+    profile.kind === "posix"
+      ? shellSingleQuote(toShellPath(displayName(p), profile))
+      : `"${displayName(p)}"`,
   );
   return quoted.join(" ") + " ";
 }

@@ -100,7 +100,9 @@ impl<'a> ProgressTracker<'a> {
                 job_id: self.job_id,
                 bytes_done: self.bytes_done,
                 bytes_total: self.bytes_total,
-                current_file: current_file.to_string_lossy().to_string(),
+                // Display text for the progress toast, not a path identity (#1592).
+                current_file: crate::wire_path::lossy(&crate::wire_path::encode_path(current_file))
+                    .into_owned(),
             };
             if let Some(reporter) = self.reporter {
                 reporter(progress);

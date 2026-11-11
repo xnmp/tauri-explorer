@@ -103,3 +103,21 @@ export function canCommitScm(input: {
   if (input.amend) return true;
   return input.message.trim().length > 0 && input.staged > 0;
 }
+
+/** Whether a row offers Discard (Remove for untracked files). A Changes row
+ *  reported as Added is an intent-to-add file (`git add -N`): git's status,
+ *  and both status paths since #1619, list it as an unstaged addition with
+ *  nothing staged. Its index entry differs from HEAD, so the backend refuses
+ *  to discard it as a staged change (git's own restore would empty the file);
+ *  Stage is its action. Staged and conflicted rows have no Discard. */
+export function canDiscardScmRow(kind: ScmSectionKind, row: Pick<GitFileEntry, "status">): boolean {
+  if (kind === "untracked") return true;
+  if (kind !== "changes") return false;
+  return row.status !== "Added";
+}
+
+/** The paths a folder's Discard/Remove sends: only its discardable rows, so
+ *  one intent-to-add file cannot get the whole folder batch refused. */
+export function discardableScmPaths(kind: ScmSectionKind, rows: readonly GitFileEntry[]): string[] {
+  return rows.filter((row) => canDiscardScmRow(kind, row)).map((row) => row.path);
+}

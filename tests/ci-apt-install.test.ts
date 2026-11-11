@@ -50,6 +50,11 @@ exit "$status"`,
     "apt-get",
     `echo "apt-get $*" >> ${log}
 case " $* " in
+  *" update "*)
+    if [ -n "\${UPDATE_FAILS:-}" ] && ! grep -rqsF "\${UPDATE_OK_MIRROR:-http://archive.ubuntu.com/ubuntu/}" "$APT_ETC_DIR"; then
+      [ "$UPDATE_FAILS" = hang ] && sleep 30
+      exit 100
+    fi ;;
   *" -s install "*) printf '%s\\n' "\${SIM_PLAN:-Inst libfoo (1.0 Ubuntu:24.04 [amd64])}" ;;
   *" install "*)
     n=$(grep -c ' install ' ${log} || true)
@@ -63,6 +68,10 @@ case " $* " in
 esac`,
   );
   const archives = join(root, "archives");
+  const etc = join(root, "etc-apt");
+  mkdirSync(join(etc, "sources.list.d"), { recursive: true });
+  const sources = join(etc, "sources.list.d", "ubuntu.sources");
+  writeFileSync(sources, env.SOURCES ?? "Types: deb\nURIs: mirror+file:/etc/apt/apt-mirrors.txt\nSuites: noble noble-updates\n");
   const result = spawnSync("bash", [SCRIPT, command], {
     encoding: "utf8",
     timeout: 60_000,
@@ -73,6 +82,7 @@ esac`,
       APT_ARCHIVES_STUB: archives,
       APT_ATTEMPT_TIMEOUT: "1",
       APT_UPDATE_ATTEMPT_TIMEOUT: "1",
+      APT_ETC_DIR: etc,
       ...env,
     },
   });
@@ -83,8 +93,79 @@ esac`,
       return [];
     }
   })();
-  return { ...result, calls, archives };
+  return { ...result, calls, archives, sources: readFileSync(sources, "utf8") };
 }
+
+describe("apt.sh update", () => {
+  const updates = (calls: string[]) => calls.filter((c) => / update$/.test(c));
+
+  it("leaves the image's mirror alone when the refresh succeeds", () => {
+    const { status, calls, sources, stdout } = run("update");
+    expect(status).toBe(0);
+    expect(updates(calls)).toHaveLength(1);
+    expect(sources).toContain("mirror+file:/etc/apt/apt-mirrors.txt");
+    expect(stdout).not.toContain("fallback");
+  });
+
+  it.each(["fail", "hang"])("falls back to the canonical archive when the mirror refresh %ss (#1647)", (mode) => {
+    const { status, calls, sources, stdout } = run("update", { UPDATE_FAILS: mode, APT_ATTEMPTS: "2" });
+    expect(status).toBe(0);
+    expect(updates(calls)).toHaveLength(3);
+    expect(sources).not.toContain("kernel.org");
+    expect(sources).toContain("URIs: http://archive.ubuntu.com/ubuntu/\n");
+    expect(sources).not.toContain("mirror+file");
+    expect(stdout).toContain("::warning title=apt mirror fallback::");
+    // The recovered mirror failure is a warning, not a failed step annotation.
+    expect(stdout).not.toContain("::error");
+  });
+
+  it("moves on to a mirror outside ubuntu.com when the canonical archive fails too (#1647)", () => {
+    const { status, calls, sources, stdout } = run("update", {
+      UPDATE_FAILS: "fail",
+      UPDATE_OK_MIRROR: "https://mirrors.edge.kernel.org/ubuntu/",
+      APT_ATTEMPTS: "1",
+      APT_FALLBACK_ATTEMPTS: "2",
+    });
+    expect(status).toBe(0);
+    // 1 image-mirror attempt, 2 on the canonical archive, 1 on kernel.org.
+    expect(updates(calls)).toHaveLength(4);
+    expect(sources).toContain("URIs: https://mirrors.edge.kernel.org/ubuntu/\n");
+    expect(sources).not.toContain("archive.ubuntu.com");
+    expect(stdout).not.toContain("::error");
+  });
+
+  it("fails once every fallback mirror has failed", () => {
+    const { status, calls, stdout } = run("update", {
+      UPDATE_FAILS: "fail",
+      UPDATE_OK_MIRROR: "https://unreachable.invalid/",
+      APT_ATTEMPTS: "1",
+      APT_FALLBACK_ATTEMPTS: "1",
+    });
+    expect(status).not.toBe(0);
+    expect(updates(calls)).toHaveLength(3);
+    expect(stdout).toContain("::error title=apt index refresh failed::every Ubuntu mirror failed");
+  });
+
+  it("rewrites a direct Azure archive URI too", () => {
+    const { status, sources } = run("update", {
+      UPDATE_FAILS: "fail",
+      SOURCES: "deb http://azure.archive.ubuntu.com/ubuntu/ noble main\n",
+    });
+    expect(status).toBe(0);
+    expect(sources).toBe("deb http://archive.ubuntu.com/ubuntu/ noble main\n");
+  });
+
+  it("fails without retrying elsewhere when no source uses the image mirror", () => {
+    const { status, calls, stdout } = run("update", {
+      UPDATE_FAILS: "fail",
+      APT_ATTEMPTS: "1",
+      SOURCES: "deb http://example.invalid/ubuntu noble main\n",
+    });
+    expect(status).not.toBe(0);
+    expect(updates(calls)).toHaveLength(1);
+    expect(stdout).toContain("::error title=apt index refresh failed::");
+  });
+});
 
 describe("apt.sh install", () => {
   it("installs into the cache directory and keeps the downloaded .debs", () => {

@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)] // Retire-when: #1638 closed (non-UTF-8 names, ADR 0031)
 use super::{
     model::*,
     rules::*,
@@ -901,6 +902,12 @@ impl Store {
         generation(caller)?;
         if !identity(op) || inputs.is_empty() || inputs.len() > 8 {
             return Err(reject("capture requires 1–8 inputs and a valid operation"));
+        }
+        // Phase 1 of #1592: plugin services take decoded text and refuse inputs
+        // whose native names are not text, before any operation state is touched.
+        let mut inputs = inputs;
+        for input in &mut inputs {
+            input.path = crate::wire_path::native_text(&input.path)?.into_owned();
         }
         let spec = encode(&inputs)?;
         let cached = self.transaction(|tx| {

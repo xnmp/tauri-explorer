@@ -51,7 +51,7 @@ fn pending() -> &'static PendingMap {
 
 /// True when this process was started as the portal backend service.
 pub fn is_portal_mode() -> bool {
-    std::env::args().any(|a| a == "--file-chooser-portal")
+    std::env::args_os().any(|a| a == "--file-chooser-portal")
 }
 
 /// Frontend → backend: the picker window's verdict.

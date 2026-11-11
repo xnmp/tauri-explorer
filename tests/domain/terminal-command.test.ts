@@ -130,3 +130,29 @@ describe("buildPathsInsertion (#265)", () => {
     expect(buildPathsInsertion(["C:\\x"], CMD)).not.toContain("\r");
   });
 });
+
+// ADR 0031 (#1592): pane paths are wire paths. A non-UTF-8 byte arrives as
+// U+EF00+byte; a genuine U+EF80–U+EFFF character as the escapes of its bytes.
+describe("wire paths typed into the shell", () => {
+  const RAW = "/tmp/dir"; // native bytes "/tmp/dir\xff"
+  const ACCENTED = "/tmp/caf"; // "café" spelled as escapes
+  const RESERVED = "/tmp/"; // a genuine U+EF80 name
+
+  it("never cds into the lossy look-alike of a folder whose name is not text", () => {
+    expect(buildCdSyncSequence(RAW, POSIX)).toBe("");
+    expect(buildCdSyncSequence(RAW, CMD)).toBe("");
+  });
+
+  it("cds with the exact text of every escaped name that is text", () => {
+    expect(buildCdSyncSequence(ACCENTED, POSIX)).toBe("\x15cd '/tmp/café'\r");
+    expect(buildCdSyncSequence(RESERVED, POWERSHELL)).toBe('\x1bcd "/tmp/"\r');
+  });
+
+  it("keeps a genuine U+FFFD name that has no escapes", () => {
+    expect(buildCdSyncSequence("/tmp/�", POSIX)).toBe("\x15cd '/tmp/�'\r");
+  });
+
+  it("inserts display text, never the reserved escape characters", () => {
+    expect(buildPathsInsertion([ACCENTED, RAW], POSIX)).toBe("'/tmp/café' '/tmp/dir�' ");
+  });
+});

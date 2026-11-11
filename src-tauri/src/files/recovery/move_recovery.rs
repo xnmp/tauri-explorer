@@ -13,6 +13,7 @@ use super::{
     DurableOperation, Eligibility, Exits, RecoveryChoice, RecoverySnapshot, Request, Retirement,
 };
 use crate::error::AppError;
+use crate::wire_path::ToWire;
 use std::sync::Arc;
 
 /// A move whose capability preflight has not finished never started: only its
@@ -76,7 +77,7 @@ fn unresolved_probe(operation: &DurableOperation) -> Option<String> {
         .iter()
         .position(|step| !matches!(step, Step::Planned | Step::Absent | Step::Removed { .. }))?;
     let probes = operation.intent().operation.kind().probes();
-    Some(probes.get(index)?.path.0.to_string_lossy().into_owned())
+    Some(probes.get(index)?.path.0.to_wire())
 }
 
 pub(super) fn reconcile(

@@ -7,7 +7,24 @@ pub(crate) struct Outcome {
     pub completion: WorkerCompletion<FileMutationReceipt>,
     pub affected: Vec<String>,
     pub target: PathBuf,
+    /// Wire names (old, new) of a planned rename.
     pub rename: Option<(String, String)>,
+}
+
+impl Outcome {
+    /// Native (source, target) of a successful rename that changed the name.
+    /// The recorded names are wire names, so the source leaf is decoded.
+    pub(crate) fn relocation(&self) -> Option<(PathBuf, PathBuf)> {
+        if self.completion.result.is_err() {
+            return None;
+        }
+        let (old, new) = self.rename.as_ref()?;
+        if old == new {
+            return None;
+        }
+        let old = crate::wire_path::decode_name(old).ok()?;
+        Some((self.target.with_file_name(old), self.target.clone()))
+    }
 }
 
 struct Work<O> {

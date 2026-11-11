@@ -1,5 +1,6 @@
 //! System-level commands: native launch context, window theme, log paths.
 //! Extracted from lib.rs so the entry point is pure wiring.
+#![allow(clippy::disallowed_methods)] // Retire-when: #1638 closed (non-UTF-8 names, ADR 0031)
 
 use std::ffi::OsString;
 #[cfg(any(target_os = "linux", target_os = "macos"))]

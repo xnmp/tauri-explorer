@@ -7,6 +7,7 @@
 //! it is stuck. Untraced listings carry an empty [`TraceHandle`] whose
 //! operations are no-ops; traced listings pay one registry insert/remove,
 //! a handful of span pushes and two relaxed atomic stores per entry.
+#![allow(clippy::disallowed_methods)] // Retire-when: #1638 closed (non-UTF-8 names, ADR 0031)
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;

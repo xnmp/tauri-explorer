@@ -18,7 +18,6 @@
 //! the graph and SCM after the call resolves (success or error).
 
 use std::collections::HashSet;
-use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -101,7 +100,7 @@ fn run_git(repo_path: &str, args: &[&str]) -> Result<(), AppError> {
 /// `GIT_EDITOR=true` for `rebase --continue`, so git never blocks waiting on
 /// an interactive editor in a headless/desktop context.
 fn run_git_with_env(repo_path: &str, args: &[&str], envs: &[(&str, &str)]) -> Result<(), AppError> {
-    let dir = Path::new(repo_path);
+    let dir = crate::git_common::repo_dir(repo_path)?;
     if !dir.is_dir() {
         return Err(AppError::NotFound(repo_path.to_string()));
     }
@@ -163,7 +162,7 @@ fn run_git_network_sync_after_output<F>(
 where
     F: FnOnce(),
 {
-    let dir = Path::new(repo_path);
+    let dir = crate::git_common::repo_dir(repo_path)?;
     if !dir.is_dir() {
         return Err(AppError::NotFound(repo_path.to_string()));
     }
@@ -235,7 +234,7 @@ async fn run_git_network(
 /// Match `git fetch --all`'s configured-remote eligibility while allowing the
 /// eligible remotes to be fetched in separate atomic transactions (ADR 0006).
 fn fetch_all_eligible_remotes(repo_path: &str) -> Result<Vec<String>, AppError> {
-    let repo = crate::git_common::open_repo(Path::new(repo_path))?;
+    let repo = crate::git_common::open_repo_at(repo_path)?;
     let remotes = repo.remotes().map_err(crate::git_common::to_app_err)?;
     let config = repo.config().map_err(crate::git_common::to_app_err)?;
     let config_bool = |key: &str| match config.get_bool(key) {
@@ -329,7 +328,7 @@ async fn run_git_env_async(
 }
 
 fn ref_target(repo_path: &str, ref_name: &str, label: &str) -> Result<String, AppError> {
-    let repo = crate::git_common::open_repo(Path::new(repo_path))?;
+    let repo = crate::git_common::open_repo_at(repo_path)?;
     let reference = repo
         .find_reference(ref_name)
         .map_err(|_| AppError::Other(format!("{label} does not exist")))?;
@@ -340,7 +339,7 @@ fn ref_target(repo_path: &str, ref_name: &str, label: &str) -> Result<String, Ap
 }
 
 fn raw_ref_target(repo_path: &str, ref_name: &str, label: &str) -> Result<String, AppError> {
-    let repo = crate::git_common::open_repo(Path::new(repo_path))?;
+    let repo = crate::git_common::open_repo_at(repo_path)?;
     let reference = repo
         .find_reference(ref_name)
         .map_err(|_| AppError::Other(format!("{label} does not exist")))?;
@@ -351,7 +350,7 @@ fn raw_ref_target(repo_path: &str, ref_name: &str, label: &str) -> Result<String
 }
 
 fn head_snapshot(repo_path: &str) -> Result<(String, Option<String>), AppError> {
-    let repo = crate::git_common::open_repo(Path::new(repo_path))?;
+    let repo = crate::git_common::open_repo_at(repo_path)?;
     let head = repo.head().map_err(crate::git_common::to_app_err)?;
     let oid = head
         .target()
@@ -368,7 +367,7 @@ fn working_tree_is_clean(repo_path: &str) -> Result<bool, AppError> {
     let status = Command::new("git")
         .no_console()
         .args(["status", "--porcelain", "--untracked-files=normal"])
-        .current_dir(repo_path)
+        .current_dir(crate::git_common::repo_dir(repo_path)?)
         .output()
         .map_err(AppError::from)?;
     if !status.status.success() {
@@ -381,7 +380,7 @@ fn working_tree_matches_commit(repo_path: &str, oid: &str) -> Result<bool, AppEr
     let diff = Command::new("git")
         .no_console()
         .args(["diff", "--quiet", oid, "--"])
-        .current_dir(repo_path)
+        .current_dir(crate::git_common::repo_dir(repo_path)?)
         .status()
         .map_err(AppError::from)?;
     if !matches!(diff.code(), Some(0 | 1)) {
@@ -390,7 +389,7 @@ fn working_tree_matches_commit(repo_path: &str, oid: &str) -> Result<bool, AppEr
     let untracked = Command::new("git")
         .no_console()
         .args(["ls-files", "--others", "--exclude-standard"])
-        .current_dir(repo_path)
+        .current_dir(crate::git_common::repo_dir(repo_path)?)
         .output()
         .map_err(AppError::from)?;
     if !untracked.status.success() {
@@ -761,7 +760,7 @@ pub async fn git_branch_behind_upstream(
 ) -> Result<Option<usize>, AppError> {
     validate_arg("branch name", &name)?;
     tokio::task::spawn_blocking(move || {
-        let repo = crate::git_common::open_repo(Path::new(&repo_path))?;
+        let repo = crate::git_common::open_repo_at(&repo_path)?;
         let branch = repo
             .find_branch(&name, git2::BranchType::Local)
             .map_err(crate::git_common::to_app_err)?;
@@ -861,7 +860,7 @@ pub async fn git_undo(repo_path: String, action: GitUndoAction) -> Result<(), Ap
         GitUndoAction::BranchDelete { name, target } => {
             validate_arg("branch name", &name)?;
             validate_arg("commit", &target)?;
-            let repo = crate::git_common::open_repo(Path::new(&repo_path))?;
+            let repo = crate::git_common::open_repo_at(&repo_path)?;
             if repo.find_reference(&format!("refs/heads/{name}")).is_ok() {
                 return Err(AppError::Other(format!(
                     "branch '{name}' already exists; undo is no longer safe"
@@ -872,7 +871,7 @@ pub async fn git_undo(repo_path: String, action: GitUndoAction) -> Result<(), Ap
         GitUndoAction::TagDelete { name, target } => {
             validate_arg("tag name", &name)?;
             validate_arg("commit", &target)?;
-            let repo = crate::git_common::open_repo(Path::new(&repo_path))?;
+            let repo = crate::git_common::open_repo_at(&repo_path)?;
             if repo.find_reference(&format!("refs/tags/{name}")).is_ok() {
                 return Err(AppError::Other(format!(
                     "tag '{name}' already exists; undo is no longer safe"
@@ -897,7 +896,7 @@ pub async fn git_undo(repo_path: String, action: GitUndoAction) -> Result<(), Ap
             validate_arg("old branch name", &old_name)?;
             validate_arg("new branch name", &new_name)?;
             validate_arg("commit", &target)?;
-            let repo = crate::git_common::open_repo(Path::new(&repo_path))?;
+            let repo = crate::git_common::open_repo_at(&repo_path)?;
             if repo
                 .find_reference(&format!("refs/heads/{old_name}"))
                 .is_ok()
@@ -971,7 +970,7 @@ pub async fn git_checkout_tracking(
     validate_arg("remote", &remote)?;
     validate_arg("branch name", &name)?;
     tokio::task::spawn_blocking(move || {
-        let local_exists = crate::git_common::open_repo(Path::new(&repo_path))
+        let local_exists = crate::git_common::open_repo_at(&repo_path)
             .ok()
             .and_then(|repo| {
                 repo.find_branch(&name, git2::BranchType::Local)
@@ -1008,10 +1007,13 @@ pub struct SyncLocalBranchesResult {
 
 /// True when `git status --porcelain` is empty (clean working tree/index).
 fn working_tree_clean(repo_path: &str) -> bool {
+    let Ok(dir) = crate::git_common::repo_dir(repo_path) else {
+        return false;
+    };
     let mut cmd = Command::new("git");
     cmd.no_console()
         .args(["status", "--porcelain"])
-        .current_dir(Path::new(repo_path));
+        .current_dir(dir);
     cmd.output()
         .map(|o| o.status.success() && o.stdout.is_empty())
         .unwrap_or(false)
@@ -1050,9 +1052,10 @@ fn parse_git_version(output: &str) -> Option<(u32, u32)> {
 
 fn other_branch_update(repo_path: &str) -> OtherBranchUpdate {
     let mut cmd = Command::new("git");
-    cmd.no_console()
-        .arg("version")
-        .current_dir(Path::new(repo_path));
+    cmd.no_console().arg("version");
+    if let Ok(dir) = crate::git_common::repo_dir(repo_path) {
+        cmd.current_dir(dir);
+    }
     let version = cmd
         .output()
         .ok()
@@ -1076,7 +1079,7 @@ fn worktree_occupancy(repo_path: &str) -> Result<WorktreeOccupancy, AppError> {
     let mut cmd = Command::new("git");
     cmd.no_console()
         .args(["worktree", "list", "--porcelain"])
-        .current_dir(Path::new(repo_path));
+        .current_dir(crate::git_common::repo_dir(repo_path)?);
     let output = cmd.output().map_err(AppError::from)?;
     if !output.status.success() {
         return Err(AppError::Other(format!(
@@ -1155,7 +1158,7 @@ fn fetch_fast_forward(repo_path: &str, name: &str, upstream_ref: &str) -> Result
         ".",
         &refspec,
     ];
-    let dir = Path::new(repo_path);
+    let dir = crate::git_common::repo_dir(repo_path)?;
     if !dir.is_dir() {
         return Err(AppError::NotFound(repo_path.to_string()));
     }
@@ -1199,7 +1202,7 @@ fn sync_local_branches_with(
     mode: OtherBranchUpdate,
     occupancy: impl FnOnce() -> Result<WorktreeOccupancy, AppError>,
 ) -> Result<SyncLocalBranchesResult, AppError> {
-    let repo = crate::git_common::open_repo(Path::new(repo_path))?;
+    let repo = crate::git_common::open_repo_at(repo_path)?;
     let mut result = SyncLocalBranchesResult::default();
 
     let head_branch = repo
@@ -1326,6 +1329,7 @@ pub async fn git_sync_local_branches(
 mod tests {
     use super::*;
     use std::fs;
+    use std::path::Path;
     use std::sync::atomic::Ordering;
     use std::time::{Duration, Instant};
     use tempfile::TempDir;

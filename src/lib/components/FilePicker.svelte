@@ -13,6 +13,7 @@
   import { fetchDirectory, verifyPathsExist } from "$lib/api/files";
   import { getHomeDirectory } from "$lib/api/environment";
   import { pickerRespond } from "$lib/api/system";
+  import { extractError } from "$lib/api/common";
   import type { FileEntry } from "$lib/domain/file";
   import FileIcon from "./FileIcon.svelte";
   import PickerQuickOpen from "./PickerQuickOpen.svelte";
@@ -219,7 +220,7 @@
     }
     await flushSharedHistory();
     if (revision !== intentRevision) return;
-    await pickerRespond(info.token, paths, false);
+    await pickerRespond(info.token, paths, false).catch((error) => toastStore.error(extractError(error)));
   }
 
   async function confirm(): Promise<void> {
@@ -235,7 +236,7 @@
 
   async function cancel(): Promise<void> {
     intentRevision++;
-    await pickerRespond(info.token, [], true);
+    await pickerRespond(info.token, [], true).catch(() => {});
   }
 
   function handleKeydown(event: KeyboardEvent): void {

@@ -55,7 +55,7 @@ fn bench_scan_fixtures(c: &mut Criterion) {
             path.is_dir()
                 && path
                     .file_name()
-                    .is_some_and(|name| name.to_string_lossy().starts_with("files-"))
+                    .is_some_and(|name| name.as_encoded_bytes().starts_with(b"files-"))
         })
         .collect();
     folders.sort_by_key(|path| fs::read_dir(path).map(|it| it.count()).unwrap_or(0));
@@ -63,7 +63,7 @@ fn bench_scan_fixtures(c: &mut Criterion) {
     let mut group = c.benchmark_group("scan_directory_parallel/fixture");
     group.sample_size(10);
     for folder in folders {
-        let name = folder.file_name().unwrap().to_string_lossy().into_owned();
+        let name = folder.file_name().unwrap().display().to_string();
         group.bench_function(name, |b| {
             b.iter(|| {
                 scan_directory_parallel(std::hint::black_box(&folder))

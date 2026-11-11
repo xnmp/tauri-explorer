@@ -30,6 +30,8 @@
 //! Like the `WEBKIT_*` renderer variables, it is also inherited by processes
 //! the app launches (terminal shells, Open With, plugin jobs); for those it
 //! only affects other JSC-based programs, and only on this WebKitGTK series.
+// Lossy text here is environment values and /proc names, never file paths.
+#![allow(clippy::disallowed_methods)]
 
 /// The JSC option that disables the DFG (and therefore FTL) tier.
 const DFG_VAR: &str = "JSC_useDFGJIT";

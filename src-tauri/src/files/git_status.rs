@@ -8,7 +8,6 @@ use serde::Serialize;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::ffi::OsStr;
-use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -99,7 +98,8 @@ fn parse_porcelain_z(stdout: &[u8]) -> Vec<(String, GitFileStatus)> {
             continue;
         }
         let xy = &field[0..2];
-        let path = String::from_utf8_lossy(&field[3..]).to_string();
+        // Paths are raw bytes: their wire spelling equals the listing's (#1592).
+        let path = crate::wire_path::encode_bytes(&field[3..]).into_owned();
         // Rename/copy entries carry the original path as the next field.
         if xy.contains(&b'R') || xy.contains(&b'C') {
             let _ = fields.next();
@@ -109,6 +109,23 @@ fn parse_porcelain_z(stdout: &[u8]) -> Vec<(String, GitFileStatus)> {
         }
     }
     out
+}
+
+/// The browsed directory's repo-relative prefix from `rev-parse
+/// --is-inside-work-tree --show-prefix` (stdout `true\n<prefix>\n`), as a wire
+/// spelling, or `None` inside a `.git` directory. The prefix is raw bytes.
+fn work_tree_prefix(stdout: &[u8]) -> Option<String> {
+    let mut lines = stdout.split(|byte| *byte == b'\n');
+    if lines
+        .next()
+        .map(|line| line.strip_suffix(b"\r").unwrap_or(line))
+        != Some(b"true")
+    {
+        return None;
+    }
+    let prefix = lines.next().unwrap_or_default();
+    let prefix = prefix.strip_suffix(b"\r").unwrap_or(prefix);
+    Some(crate::wire_path::encode_bytes(prefix).into_owned())
 }
 
 /// Truncate stderr for logging, matching the quickfind diagnostics pattern
@@ -192,17 +209,15 @@ fn get_git_status_wsl(
     let rev_parse_ms = rev_parse_start.elapsed().as_millis();
 
     let prefix = match output {
-        Ok(o) if o.status.success() => {
-            let stdout = String::from_utf8_lossy(&o.stdout);
-            let mut lines = stdout.lines();
-            if lines.next() != Some("true") {
+        Ok(o) if o.status.success() => match work_tree_prefix(&o.stdout) {
+            Some(prefix) => prefix,
+            None => {
                 log::debug!(
                     "gitstat: {path} (wsl {distro}:{linux_path}) is inside a .git dir, not the work tree"
                 );
                 return Ok(Some(not_a_repo()));
             }
-            lines.next().unwrap_or("").to_string()
-        }
+        },
         Ok(o) => {
             // Native Linux git has no dubious-ownership problem, so a clean
             // "not a git repository" here is authoritative — reporting it now
@@ -297,7 +312,10 @@ fn get_git_status_sync_with_program(
     if cancelled.load(Ordering::Relaxed) {
         return Err(AppError::Other("git badge status cancelled".into()));
     }
-    let dir = Path::new(path);
+    let Ok(dir) = crate::wire_path::decode(path) else {
+        return Ok(not_a_repo());
+    };
+    let dir = dir.as_ref();
     if !dir.exists() || !dir.is_dir() {
         return Ok(not_a_repo());
     }
@@ -338,17 +356,14 @@ fn get_git_status_sync_with_program(
 
     let prefix = match output {
         Ok(o) if o.status.success() => {
-            let stdout = String::from_utf8_lossy(&o.stdout);
-            let mut lines = stdout.lines();
-            if lines.next() != Some("true") {
+            let prefix = work_tree_prefix(&o.stdout);
+            if prefix.is_none() {
                 // Inside .git dir, not the work tree: a genuine (if unusual)
                 // case, not a failure — debug only to avoid spamming logs for
                 // the common "just not a repo" outcome below.
                 log::debug!("gitstat: {path} is inside a .git dir, not the work tree");
-                None
-            } else {
-                Some(lines.next().unwrap_or("").to_string())
             }
+            prefix
         }
         Ok(o) => {
             // This is the critical line for diagnosing WSL 9P flakiness: it
@@ -458,6 +473,7 @@ pub async fn cancel_get_git_status(task_id: u64) -> Result<(), AppError> {
 mod tests {
     use super::*;
     use std::fs;
+    use std::path::Path;
     use tempfile::TempDir;
 
     fn git(dir: &Path, args: &[&str]) {
@@ -520,6 +536,48 @@ mod tests {
         ));
         // root.txt lives outside the browsed dir and must not leak in.
         assert!(!resp.statuses.contains_key("root.txt"));
+    }
+
+    /// #1592: statuses inside a non-UTF-8 directory are keyed by the exact
+    /// wire names the listing publishes, so a raw name and its lossy
+    /// look-alike keep separate badges.
+    #[cfg(unix)]
+    #[test]
+    fn raw_names_are_keyed_by_their_listed_wire_names() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = init_repo();
+        // A tracked file keeps git from collapsing the directory to one entry.
+        let browsed = dir.path().join(std::ffi::OsStr::from_bytes(b"dir\xfe"));
+        fs::create_dir(&browsed).unwrap();
+        fs::write(browsed.join("keep.txt"), "v1\n").unwrap();
+        git(dir.path(), &["add", "-A"]);
+        git(dir.path(), &["commit", "-m", "init"]);
+        fs::write(
+            browsed.join(std::ffi::OsStr::from_bytes(b"bad\xff.txt")),
+            "x\n",
+        )
+        .unwrap();
+        fs::write(browsed.join("bad\u{FFFD}.txt"), "y\n").unwrap();
+        let wire = crate::wire_path::encode_path(&browsed).into_owned();
+        let mut listed: Vec<String> =
+            tauri::async_runtime::block_on(crate::files::dir_listing::read_directory(wire.clone()))
+                .unwrap()
+                .entries
+                .iter()
+                .map(|entry| entry.name.clone())
+                .filter(|name| name != "keep.txt")
+                .collect();
+        listed.sort();
+        let resp = get_git_status_sync(&wire, &AtomicBool::new(false)).unwrap();
+        assert!(resp.is_git_repo);
+        let mut keys: Vec<String> = resp.statuses.keys().cloned().collect();
+        keys.sort();
+        assert_eq!(keys, listed);
+        assert_eq!(keys, vec!["bad\u{EFFF}.txt", "bad\u{FFFD}.txt"]);
+        assert!(resp
+            .statuses
+            .values()
+            .all(|status| matches!(status, GitFileStatus::Untracked)));
     }
 
     #[test]

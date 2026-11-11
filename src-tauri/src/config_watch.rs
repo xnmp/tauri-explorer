@@ -18,6 +18,7 @@
 //!   layer (`write_atomic` renames a temp file over the destination, exactly
 //!   as a careful editor does). The frontend already knows what it last wrote
 //!   and whether a write is in flight, so it decides; here we just report.
+#![allow(clippy::disallowed_methods)] // Retire-when: #1638 closed (non-UTF-8 names, ADR 0031)
 
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;

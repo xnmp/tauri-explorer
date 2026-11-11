@@ -13,7 +13,7 @@ use crate::{
         trash_artifact::TrashSuccess,
     },
 };
-use std::{collections::HashSet, io, path::Path, sync::Arc};
+use std::{collections::HashSet, io, sync::Arc};
 
 pub(crate) type PreparedSelection = prepared_selection::PreparedSelection<Box<Prepared>>;
 
@@ -141,13 +141,13 @@ fn observe_sources(
     )?;
     let mut observed = Vec::with_capacity(paths.len());
     for path in paths {
-        // A publication carries native authority even when its display key
-        // cannot represent the physical filename as UTF-8.
-        observed.push(
-            selection.observe(
-                publication.map_or_else(|| Path::new(path), |entry| entry.path.as_path()),
-            )?,
-        );
+        // A publication carries native authority; any other key is the wire
+        // spelling of the requested path (#1592).
+        let native = match publication {
+            Some(entry) => std::borrow::Cow::Borrowed(entry.path.as_path()),
+            None => crate::wire_path::decode(path)?,
+        };
+        observed.push(selection.observe(&native)?);
     }
     Ok(observed)
 }

@@ -39,15 +39,15 @@ pub(crate) fn invalidate_dir_cache_sync(path: &str) {
 pub async fn is_directory_empty(path: String, include_hidden: bool) -> Result<bool, AppError> {
     // read_dir is blocking work; keep it off the async executor.
     super::run_blocking(move || {
-        let dir_path = PathBuf::from(&path);
+        let Ok(dir_path) = crate::wire_path::decode(&path) else {
+            return Ok(false);
+        };
         let read = match fs::read_dir(&dir_path) {
             Ok(r) => r,
             Err(_) => return Ok(false),
         };
         for entry in read.flatten() {
-            let name = entry.file_name();
-            let name_str = name.to_string_lossy();
-            if !include_hidden && name_str.starts_with('.') {
+            if !include_hidden && entry.file_name().as_encoded_bytes().first() == Some(&b'.') {
                 continue;
             }
             return Ok(false);
@@ -97,7 +97,7 @@ where
         Lookup::Miss(permit) => permit,
     };
 
-    let dir_path = PathBuf::from(&path);
+    let dir_path = crate::wire_path::decode(&path)?.into_owned();
 
     // jwalk + per-entry stat calls are blocking work; keep them off the async
     // executor. `is_empty` is left unresolved (`None`) here: probing it costs one
@@ -245,7 +245,7 @@ fn scan_directory_traced(dir_path: &PathBuf, trace: &TraceHandle) -> ScanResult 
 /// `is_git_repo` only decorates folder icons, so listings skip that optional
 /// per-entry probe there while preserving it for local directories.
 fn should_probe_git_repos(dir_path: &Path) -> bool {
-    let path = dir_path.to_string_lossy();
+    let path = crate::wire_path::encode_path(dir_path);
     !(path.starts_with("\\\\") || path.starts_with("//"))
 }
 
@@ -377,7 +377,7 @@ async fn list_directory_for_lease(
 ) -> Result<DirectoryListing, AppError> {
     let started_at = Instant::now();
     log::info!("navigation list_directory_fresh requested: path={path:?}");
-    let dir_path = PathBuf::from(&path);
+    let dir_path = crate::wire_path::decode(&path)?.into_owned();
 
     #[cfg(debug_assertions)]
     let t_scan_start = Instant::now();

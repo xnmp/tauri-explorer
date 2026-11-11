@@ -1,6 +1,7 @@
 //! External application launching: open files, image viewers, terminals.
 
 use std::fs;
+#[cfg(not(windows))]
 use std::path::PathBuf;
 
 use super::run_blocking;
@@ -168,14 +169,21 @@ fn spawn_editor(
     // editor. Absolutize so the path argument can never look like an option
     // (std::path::absolute keeps symlinks intact and avoids \\?\ on Windows).
     let file_path = std::path::absolute(file_path)?;
+    // `path:line` as native bytes: a lossy `display()` would name a different
+    // file for a non-UTF-8 path (#1592).
+    let at_line = || {
+        let mut argument = file_path.as_os_str().to_owned();
+        argument.push(format!(":{line}"));
+        argument
+    };
     match editor.format {
         LineFormat::GotoColon => scrubbed(editor.binary)
             .arg("--goto")
-            .arg(format!("{}:{}", file_path.display(), line))
+            .arg(at_line())
             .spawn()
             .map(reap_in_background),
         LineFormat::PathColon => scrubbed(editor.binary)
-            .arg(format!("{}:{}", file_path.display(), line))
+            .arg(at_line())
             .spawn()
             .map(reap_in_background),
         LineFormat::PlusLine => scrubbed(editor.binary)
@@ -201,7 +209,7 @@ pub async fn open_file_at_line(path: String, line: u32) -> Result<(), AppError> 
 }
 
 fn open_file_at_line_blocking(path: String, line: u32) -> Result<(), AppError> {
-    let file_path = PathBuf::from(&path);
+    let file_path = crate::wire_path::decode(&path)?.into_owned();
     if fs::symlink_metadata(&file_path).is_err() {
         return Err(AppError::NotFound(path));
     }
@@ -238,7 +246,7 @@ pub async fn open_file(path: String) -> Result<(), AppError> {
 }
 
 fn open_file_blocking(path: String) -> Result<(), AppError> {
-    let file_path = PathBuf::from(&path);
+    let file_path = crate::wire_path::decode(&path)?.into_owned();
 
     if fs::symlink_metadata(&file_path).is_err() {
         return Err(AppError::NotFound(path));
@@ -265,7 +273,7 @@ fn open_file_blocking(path: String) -> Result<(), AppError> {
 /// Open a file with a specified application.
 #[tauri::command]
 pub async fn open_file_with(path: String, app: String) -> Result<(), AppError> {
-    let file_path = PathBuf::from(&path);
+    let file_path = crate::wire_path::decode(&path)?.into_owned();
 
     if fs::symlink_metadata(&file_path).is_err() {
         return Err(AppError::NotFound(path));
@@ -310,7 +318,7 @@ pub async fn open_image_with_siblings(path: String) -> Result<(), AppError> {
 }
 
 fn open_image_with_siblings_blocking(path: String) -> Result<(), AppError> {
-    let file_path = PathBuf::from(&path);
+    let file_path = crate::wire_path::decode(&path)?.into_owned();
     if fs::symlink_metadata(&file_path).is_err() {
         return Err(AppError::NotFound(path));
     }
@@ -432,7 +440,6 @@ fn try_spawn_terminal(term: &str, dir: &std::path::Path) -> bool {
             .and_then(|s| s.to_str())
             .unwrap_or(term)
             .to_lowercase();
-        let dir_str = dir.to_string_lossy();
         match base.as_str() {
             "wezterm" | "wezterm-gui" => {
                 cmd.args(["start", "--cwd"]).arg(dir);
@@ -450,7 +457,9 @@ fn try_spawn_terminal(term: &str, dir: &std::path::Path) -> bool {
                 cmd.arg("--workdir").arg(dir);
             }
             "gnome-terminal" | "xfce4-terminal" | "tilix" | "terminator" | "ghostty" => {
-                cmd.arg(format!("--working-directory={}", dir_str));
+                let mut argument = std::ffi::OsString::from("--working-directory=");
+                argument.push(dir.as_os_str());
+                cmd.arg(argument);
             }
             _ => {}
         }
@@ -467,7 +476,7 @@ pub async fn open_in_terminal(path: String, terminal: Option<String>) -> Result<
 }
 
 fn open_in_terminal_blocking(path: String, terminal: Option<String>) -> Result<(), AppError> {
-    let dir_path = PathBuf::from(&path);
+    let dir_path = crate::wire_path::decode(&path)?.into_owned();
 
     if fs::symlink_metadata(&dir_path).is_err() {
         return Err(AppError::NotFound(path));

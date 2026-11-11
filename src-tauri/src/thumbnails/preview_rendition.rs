@@ -425,7 +425,9 @@ pub(crate) fn resolve_preview_image(
 ) -> Result<(PreviewImageSource, Resolution), AppError> {
     let max_edge = max_edge.clamp(MIN_MAX_EDGE, MAX_MAX_EDGE);
     if !source.is_file() {
-        return Err(AppError::NotFound(source.to_string_lossy().into_owned()));
+        return Err(AppError::NotFound(
+            crate::wire_path::encode_path(source).into_owned(),
+        ));
     }
     if !has_rendition_extension(source) {
         return Ok((PreviewImageSource::Original, Resolution::Original));
@@ -433,7 +435,7 @@ pub(crate) fn resolve_preview_image(
     let cache_key = generate_namespaced_cache_key(CACHE_NAMESPACE, source, max_edge)
         .ok_or_else(|| AppError::Other(format!("Failed to generate cache key for: {source:?}")))?;
     let rendition = |path: PathBuf| PreviewImageSource::Rendition {
-        path: path.to_string_lossy().into_owned(),
+        path: crate::wire_path::encode_path(&path).into_owned(),
     };
 
     with_inflight_lock(&cache_key, || {
@@ -454,7 +456,7 @@ fn get_preview_image_sync(path: String, max_edge: u32) -> Result<PreviewImageSou
     let cache_dir = get_cache_dir()
         .map(|dir| rendition_cache_dir(&dir))
         .ok_or_else(|| AppError::Other("Failed to get cache directory".into()))?;
-    let source = PathBuf::from(&path);
+    let source = crate::wire_path::decode(&path)?.into_owned();
     let started = Instant::now();
     let (answer, resolution) = resolve_preview_image(&source, max_edge, &cache_dir)?;
     let elapsed = started.elapsed();

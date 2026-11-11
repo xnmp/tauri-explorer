@@ -96,7 +96,7 @@ fn planned_creates_publish_their_exact_paths_and_contents() {
         ),
         (
             "text.txt",
-            EntryPlan::write_text(native(&root.path().join("text.txt")), text.clone()),
+            EntryPlan::write_text(native(&root.path().join("text.txt")), text.clone()).unwrap(),
         ),
     ];
     assert_eq!(
@@ -136,7 +136,7 @@ fn a_collision_after_planning_preserves_bytes_and_creates_no_history_effect() {
                 EntryPlan::create_directory(native(root.path()), "target".into()).unwrap()
             }
             "empty" => EntryPlan::create_empty_file(native(root.path()), "target".into()).unwrap(),
-            "text" => EntryPlan::write_text(native(&target), "new bytes".into()),
+            "text" => EntryPlan::write_text(native(&target), "new bytes".into()).unwrap(),
             _ => EntryPlan::rename(native(&source), "target".into()).unwrap(),
         };
         fs::write(&target, b"arrived after planning").unwrap();
@@ -162,7 +162,7 @@ fn planned_symlink_refreshes_its_parent_and_preserves_target_and_collisions() {
     fs::create_dir(root.path().join("source")).unwrap();
     fs::create_dir(root.path().join("destination")).unwrap();
     fs::write(&target, b"linked bytes").unwrap();
-    let plan = EntryPlan::symlink(native(&target), native(&link));
+    let plan = EntryPlan::symlink(native(&target), native(&link)).unwrap();
     assert!(!link.exists());
     let result = tauri::async_runtime::block_on(entry_outcome(plan));
     assert_eq!(result.result.unwrap().path, native(&link));
@@ -171,10 +171,9 @@ fn planned_symlink_refreshes_its_parent_and_preserves_target_and_collisions() {
     assert_eq!(fs::read_link(&link).unwrap(), target);
     assert_eq!(fs::read(&link).unwrap(), b"linked bytes");
 
-    let result = tauri::async_runtime::block_on(entry_outcome(EntryPlan::symlink(
-        native(&target),
-        native(&link),
-    )));
+    let result = tauri::async_runtime::block_on(entry_outcome(
+        EntryPlan::symlink(native(&target), native(&link)).unwrap(),
+    ));
     assert!(matches!(result.result, Err(AppError::AlreadyExists(_))));
     assert!(matches!(result.effect, ForwardEffect::Unchanged));
     assert!(result.affected.is_empty());
@@ -459,7 +458,7 @@ mod recovery_admission {
                     "empty" => {
                         EntryPlan::create_empty_file(native(root.path()), kind.into()).unwrap()
                     }
-                    "text" => EntryPlan::write_text(native(&target), "new bytes".into()),
+                    "text" => EntryPlan::write_text(native(&target), "new bytes".into()).unwrap(),
                     _ => EntryPlan::rename(native(&source), kind.into()).unwrap(),
                 };
                 let held = runtime.admit(writing(&target)).await.unwrap();
@@ -543,7 +542,7 @@ mod recovery_admission {
             let link = root.path().join("link");
             fs::write(&target, b"target bytes").unwrap();
             let held = runtime.admit(writing(&target)).await.unwrap();
-            let plan = || EntryPlan::symlink(native(&target), native(&link));
+            let plan = || EntryPlan::symlink(native(&target), native(&link)).unwrap();
             assert!(entry_outcome(plan(), &runtime).await.result.is_err());
             assert!(fs::symlink_metadata(&link).is_err());
             held.finish().unwrap();
@@ -588,8 +587,10 @@ mod recovery_admission {
                     "symlink" => EntryPlan::symlink(
                         native(&original.join("source")),
                         native(&alias.join("new")),
-                    ),
-                    _ => EntryPlan::write_text(native(&alias.join("new")), "owned bytes".into()),
+                    )
+                    .unwrap(),
+                    _ => EntryPlan::write_text(native(&alias.join("new")), "owned bytes".into())
+                        .unwrap(),
                 };
                 let (competitor, old_alias) = (runtime.clone(), root.path().join("old-alias"));
                 let (alias_path, other_path) = (alias.clone(), other.clone());
@@ -608,7 +609,7 @@ mod recovery_admission {
                         // owns the captured destination rather than following this alias.
                         fs::rename(&alias_path, old_alias).unwrap();
                         let replaced = entry_outcome(
-                            EntryPlan::symlink(native(&other_path), native(&alias_path)),
+                            EntryPlan::symlink(native(&other_path), native(&alias_path)).unwrap(),
                             &competitor,
                         )
                         .await;
@@ -657,7 +658,7 @@ mod recovery_admission {
             let target = outer.join("source");
             let link = root.path().join("new-link");
             let (competitor, aliases) = (runtime.clone(), [inner.clone(), outer.clone()]);
-            let plan = EntryPlan::symlink(native(&target), native(&link));
+            let plan = EntryPlan::symlink(native(&target), native(&link)).unwrap();
             let outcome = admission::admitted_execute(plan, &runtime, |plan, owner| async move {
                 for alias in &aliases {
                     let changed = entry_outcome(
@@ -717,7 +718,7 @@ mod recovery_admission {
     }
 
     #[test]
-    fn non_utf8_rename_keeps_the_receipt_without_lossy_history_authority() {
+    fn non_utf8_rename_records_history_at_its_exact_wire_path() {
         use std::os::unix::ffi::OsStringExt;
         tauri::async_runtime::block_on(async {
             let root = tempfile::tempdir().unwrap();
@@ -735,8 +736,11 @@ mod recovery_admission {
             .await;
             assert_eq!(result.result.unwrap().path, native(&alias.join("after")));
             assert_eq!(fs::read(physical.join("after")).unwrap(), b"owned");
-            assert!(matches!(result.effect, ForwardEffect::Changed(None)));
-            assert!(result.warning.unwrap().contains("native path"));
+            let ForwardEffect::Changed(Some(Action::Rename { path, .. })) = result.effect else {
+                panic!("non-UTF-8 rename keeps history authority (ADR 0031)");
+            };
+            assert_eq!(path, crate::wire_path::encode_path(&physical.join("after")));
+            assert!(result.warning.is_none(), "{:?}", result.warning);
         });
     }
 
@@ -747,7 +751,7 @@ mod recovery_admission {
             let storage = root.path().join("recovery");
             let runtime = Runtime::new(storage.clone());
             let target = root.path().join("created");
-            let plan = EntryPlan::write_text(native(&target), "confirmed bytes".into());
+            let plan = EntryPlan::write_text(native(&target), "confirmed bytes".into()).unwrap();
             let outcome = admission::admitted_execute(plan, &runtime, |plan, owner| async move {
                 let outcome = execute_owned(plan, owner).await;
                 // Real namespace substitution makes the coordinator reject settlement.

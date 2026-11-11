@@ -104,7 +104,7 @@ fn lstat(path: &Path) -> Result<Option<Metadata>, AppError> {
 /// A repo-relative path as the user sees it: `/`-separated on every platform.
 fn shown(rel: &Path) -> String {
     rel.components()
-        .map(|c| c.as_os_str().to_string_lossy())
+        .map(|c| crate::wire_path::encode(c.as_os_str()))
         .collect::<Vec<_>>()
         .join("/")
 }

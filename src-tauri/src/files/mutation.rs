@@ -96,9 +96,14 @@ impl FileMutationRecovery {
         let retained = self
             .displaced_path
             .as_ref()
-            .map(|path| format!(" The previous destination is retained at {path}."))
+            .map(|path| {
+                format!(
+                    " The previous destination is retained at {}.",
+                    crate::wire_path::lossy(path)
+                )
+            })
             .unwrap_or_default();
-        format!("Files were copied to {}, but removing {} did not finish: {}. Inspect both locations before continuing.{retained}", self.destination_path, self.source_path, self.error)
+        format!("Files were copied to {}, but removing {} did not finish: {}. Inspect both locations before continuing.{retained}", crate::wire_path::lossy(&self.destination_path), crate::wire_path::lossy(&self.source_path), self.error)
     }
 }
 
@@ -123,7 +128,7 @@ impl FileMutationReceipt {
             })
             .ok();
         Self {
-            path: path.to_string_lossy().into_owned(),
+            path: crate::wire_path::encode_path(path).into_owned(),
             entry,
             recovery: None,
             replacement: None,

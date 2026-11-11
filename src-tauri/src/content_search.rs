@@ -8,7 +8,6 @@ use grep_searcher::sinks::UTF8;
 use grep_searcher::{BinaryDetection, MmapChoice, SearcherBuilder};
 use ignore::{WalkBuilder, WalkState};
 use serde::Serialize;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc};
 use tauri::{AppHandle, Emitter};
@@ -76,7 +75,7 @@ pub async fn start_content_search(
     regex_mode: bool,
     max_results: usize,
 ) -> Result<u64, AppError> {
-    let root_path = PathBuf::from(&root);
+    let root_path = crate::wire_path::decode(&root)?.into_owned();
 
     if !root_path.exists() {
         return Err(AppError::NotFound(root));
@@ -119,7 +118,9 @@ pub async fn start_content_search(
     // Spawn search in background thread
     std::thread::spawn(move || {
         let result = perform_content_search(
-            &app,
+            |event| {
+                let _ = app.emit("content-search-results", event);
+            },
             search_id,
             matcher,
             &root_path,
@@ -245,7 +246,7 @@ fn collect_line_matches(
 }
 
 fn perform_content_search(
-    app: &AppHandle,
+    emit: impl Fn(ContentSearchEvent),
     search_id: u64,
     matcher: Arc<RegexMatcher>,
     root_path: &std::path::Path,
@@ -340,15 +341,16 @@ fn perform_content_search(
                 );
 
                 if !file_matches.is_empty() {
-                    let relative_path = path
-                        .strip_prefix(&root_path)
-                        .map(|p| p.to_string_lossy().to_string())
-                        .unwrap_or_else(|_| path.to_string_lossy().to_string());
+                    // Result paths are wire spellings, equal to the listing's.
+                    let relative_path = crate::wire_path::encode_path(
+                        path.strip_prefix(&root_path).unwrap_or(path),
+                    )
+                    .into_owned();
 
                     total_matches.fetch_add(file_matches.len(), Ordering::Relaxed);
 
                     let _ = tx.send(ContentSearchResult {
-                        path: path.to_string_lossy().to_string(),
+                        path: crate::wire_path::encode_path(path).into_owned(),
                         relative_path,
                         matches: file_matches,
                     });
@@ -378,17 +380,14 @@ fn perform_content_search(
         };
 
         if should_flush && !pending_results.is_empty() {
-            let _ = app.emit(
-                "content-search-results",
-                ContentSearchEvent {
-                    search_id,
-                    results: std::mem::take(&mut pending_results),
-                    done: false,
-                    files_searched: files_searched.load(Ordering::Relaxed),
-                    total_matches: total_matches.load(Ordering::Relaxed),
-                    error: None,
-                },
-            );
+            emit(ContentSearchEvent {
+                search_id,
+                results: std::mem::take(&mut pending_results),
+                done: false,
+                files_searched: files_searched.load(Ordering::Relaxed),
+                total_matches: total_matches.load(Ordering::Relaxed),
+                error: None,
+            });
             last_emit = std::time::Instant::now();
             batch_interval = steady_interval;
         }
@@ -400,17 +399,14 @@ fn perform_content_search(
 
     // Emit final results
     if !cancelled.load(Ordering::Relaxed) {
-        let _ = app.emit(
-            "content-search-results",
-            ContentSearchEvent {
-                search_id,
-                results: pending_results,
-                done: true,
-                files_searched: files_searched.load(Ordering::Relaxed),
-                total_matches: total_matches.load(Ordering::Relaxed),
-                error: None,
-            },
-        );
+        emit(ContentSearchEvent {
+            search_id,
+            results: pending_results,
+            done: true,
+            files_searched: files_searched.load(Ordering::Relaxed),
+            total_matches: total_matches.load(Ordering::Relaxed),
+            error: None,
+        });
     }
 
     Ok(())
@@ -443,6 +439,56 @@ pub async fn cancel_content_search(search_id: u64) -> Result<(), AppError> {
 mod tests {
     use super::*;
     use grep_matcher::Matcher;
+
+    /// #1592: a match in a non-UTF-8 file reports the listing's wire path,
+    /// and that path opens the matched file (not its lossy look-alike).
+    #[cfg(unix)]
+    #[test]
+    fn a_match_in_a_raw_name_reports_the_listed_wire_path() {
+        use std::os::unix::ffi::OsStrExt;
+        let root = tempdir().unwrap();
+        let dir = root.path().join(std::ffi::OsStr::from_bytes(b"dir\xfe"));
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(
+            dir.join(std::ffi::OsStr::from_bytes(b"bad\xff.txt")),
+            "needle raw",
+        )
+        .unwrap();
+        std::fs::write(dir.join("bad\u{FFFD}.txt"), "bystander").unwrap();
+        let dir_wire = crate::wire_path::encode_path(&dir).into_owned();
+        let listed =
+            tauri::async_runtime::block_on(crate::files::dir_listing::read_directory(dir_wire))
+                .unwrap()
+                .entries
+                .iter()
+                .find(|entry| entry.name == "bad\u{EFFF}.txt")
+                .unwrap()
+                .path
+                .clone();
+        let events = std::sync::Mutex::new(Vec::new());
+        perform_content_search(
+            |event| events.lock().unwrap().push(event),
+            1,
+            Arc::new(RegexMatcher::new("needle").unwrap()),
+            root.path(),
+            10,
+            &Arc::new(AtomicBool::new(false)),
+        )
+        .unwrap();
+        let results: Vec<_> = events
+            .into_inner()
+            .unwrap()
+            .into_iter()
+            .flat_map(|event| event.results)
+            .map(|result| (result.path, result.relative_path))
+            .collect();
+        assert_eq!(
+            results,
+            vec![(listed.clone(), "dir\u{EFFE}/bad\u{EFFF}.txt".to_owned())]
+        );
+        let opened = crate::wire_path::decode(&listed).unwrap();
+        assert_eq!(std::fs::read(opened).unwrap(), b"needle raw");
+    }
     use std::fs::File;
     use std::io::Write;
     use tempfile::tempdir;

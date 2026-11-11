@@ -23,6 +23,7 @@ pub async fn get_image_resolution(path: String) -> Option<ImageResolution> {
     tauri::async_runtime::spawn_blocking(move || {
         // The worker owns admission even if its async caller disappears.
         let _permit = permit;
+        let path = crate::wire_path::decode(&path).ok()?;
         let metadata = std::fs::metadata(&path).ok()?;
         if !metadata.is_file() {
             return None;

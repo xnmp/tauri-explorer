@@ -630,16 +630,19 @@ pub(super) fn restore(
 #[path = "../../../test_support/trash_restoration_admission.rs"]
 mod tests;
 
-// Copy history intentionally keys its native publication by the physical path's
-// display projection. A trusted exact artifact preserves the actual native path;
-// ordinary deletion aliases still resolve and must match that artifact.
+// History keys a native publication by its wire spelling. A trusted exact
+// artifact preserves the actual native path; ordinary deletion aliases still
+// resolve and must match that artifact. Batch admission has already rejected
+// a non-canonical spelling, so the empty fallback cannot match any artifact.
 fn target_request_path(request: &RestoreRequest) -> PathBuf {
     match request.artifact.as_ref() {
         TrashArtifact::Freedesktop { original_path, .. }
-            if request.path == original_path.to_string_lossy() =>
+            if request.path == crate::wire_path::encode_path(original_path) =>
         {
             original_path.clone()
         }
-        _ => PathBuf::from(&request.path),
+        _ => crate::wire_path::decode(&request.path)
+            .map(std::borrow::Cow::into_owned)
+            .unwrap_or_default(),
     }
 }

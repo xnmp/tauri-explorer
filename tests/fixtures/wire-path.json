@@ -1,0 +1,38 @@
+{
+  "comment": "Shared wire-path vectors (#1592, ADR 0031). `bytes` is the native name in hex; `wire` its canonical wire form; `display` the lossy display text. Consumed by src-tauri/test_support/wire_path_test.rs and tests/domain/wire-name.test.ts.",
+  "vectors": [
+    { "label": "ascii", "bytes": "612e747874", "wire": "a.txt", "display": "a.txt" },
+    { "label": "valid non-ASCII", "bytes": "c3a9e282ac", "wire": "é€", "display": "é€" },
+    { "label": "just below the reserved block (U+EF7F)", "bytes": "eebdbf", "wire": "", "display": "" },
+    { "label": "just above the reserved block (U+F000)", "bytes": "ef8080", "wire": "", "display": "" },
+    { "label": "lone 0x80 at start", "bytes": "8061", "wire": "a", "display": "�a" },
+    { "label": "lone 0xFF in the middle", "bytes": "626164ff2e747874", "wire": "bad.txt", "display": "bad�.txt" },
+    { "label": "lone 0xFE at end", "bytes": "61fe", "wire": "a", "display": "a�" },
+    { "label": "lone 0xEE before ASCII", "bytes": "ee61", "wire": "a", "display": "�a" },
+    { "label": "truncated E2 82", "bytes": "61e28262", "wire": "ab", "display": "a�b" },
+    { "label": "truncated E2 82 at end", "bytes": "e282", "wire": "", "display": "�" },
+    { "label": "overlong C0 AF", "bytes": "c0af", "wire": "", "display": "��" },
+    { "label": "overlong E0 80 AF", "bytes": "e080af", "wire": "", "display": "���" },
+    { "label": "encoded surrogate ED A0 80", "bytes": "eda080", "wire": "", "display": "���" },
+    { "label": "encoded surrogate ED BF BF", "bytes": "edbfbf", "wire": "", "display": "���" },
+    { "label": "above U+10FFFF F4 90 80 80", "bytes": "f4908080", "wire": "", "display": "����" },
+    { "label": "never-valid F5 F6 FF", "bytes": "f5f6ff", "wire": "", "display": "���" },
+    { "label": "genuine U+EF80", "bytes": "eebe80", "wire": "", "display": "" },
+    { "label": "genuine U+EFFF", "bytes": "eebfbf", "wire": "", "display": "" },
+    { "label": "genuine U+EF80 between invalid bytes", "bytes": "ffeebe80fe", "wire": "", "display": "��" },
+    { "label": "path with escaped directory and file", "bytes": "2f746d702f64ff2f66fe2e747874", "wire": "/tmp/d/f.txt", "display": "/tmp/d�/f�.txt" }
+  ],
+  "nonCanonical": [
+    { "label": "escaped é (valid UTF-8 C3 A9)", "wire": "" },
+    { "label": "escaped € (valid UTF-8 E2 82 AC)", "wire": "" },
+    { "label": "escaped é inside a name", "wire": "ab.txt" },
+    { "label": "escaped U+0080 (C2 80)", "wire": "" }
+  ],
+  "rename": [
+    { "label": "unchanged display text is a no-op", "current": "bad.txt", "typed": "bad�.txt", "request": "" },
+    { "label": "edited name is sent as valid text", "current": "bad.txt", "typed": "good.txt", "request": "good.txt" },
+    { "label": "a typed reserved character is escaped", "current": "a.txt", "typed": "x.txt", "request": "x.txt" },
+    { "label": "unchanged ordinary name is a no-op", "current": "a.txt", "typed": "a.txt", "request": "" },
+    { "label": "typing the look-alike of an escaped name is a no-op", "current": "", "typed": "�", "request": "" }
+  ]
+}

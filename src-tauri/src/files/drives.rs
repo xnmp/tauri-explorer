@@ -7,6 +7,7 @@
 //! are read via PowerShell `Win32_LogicalDisk` (no winapi dependency, and unlike
 //! `Get-Volume` it includes Google Drive File Stream), and Google Drive / WSL
 //! mounts are surfaced as their own `Cloud` kind so the sidebar can group them.
+#![allow(clippy::disallowed_methods)] // Retire-when: #1638 closed (non-UTF-8 names, ADR 0031)
 
 use serde::{Deserialize, Serialize};
 

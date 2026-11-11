@@ -3,6 +3,7 @@
 //!
 //! Provides Tauri commands for reading/writing JSON config files
 //! in the app's config directory (~/.config/tauri-explorer/ on Linux).
+#![allow(clippy::disallowed_methods)] // Retire-when: #1638 closed (non-UTF-8 names, ADR 0031)
 
 use crate::error::AppError;
 use std::fs;

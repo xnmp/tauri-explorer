@@ -1,5 +1,6 @@
 //! Common image producer contract: immutable input, durable attempt, exact
 //! staged evidence before no-replace publication, and durable terminal status.
+#![allow(clippy::disallowed_methods)] // Retire-when: #1638 closed (non-UTF-8 names, ADR 0031)
 use crate::installed_plugins::provenance as trace;
 use crate::{error::AppError, plugin_job};
 use serde_json::Value;

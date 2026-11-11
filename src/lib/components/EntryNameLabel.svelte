@@ -5,6 +5,8 @@
   name looks the same.
 -->
 <script lang="ts">
+  import { displayName } from "$lib/domain/wire-name";
+
   interface Props {
     name: string;
     variant: "details" | "list" | "tiles";
@@ -17,10 +19,12 @@
   }
 
   let { name, variant, placeholder = false, bold = false, text, tooltip }: Props = $props();
+  // `name` is the wire identity; bytes that are not UTF-8 show as U+FFFD (#1592).
+  const shown = $derived(displayName(name));
 </script>
 
 {#if placeholder}
-  <span class="name-tiles rename-placeholder" aria-hidden="true">{name}</span>
+  <span class="name-tiles rename-placeholder" aria-hidden="true">{shown}</span>
 {:else}
   <span
     class="entry-name"
@@ -28,8 +32,8 @@
     class:name-details={variant === "details"}
     class:name-list={variant === "list"}
     class:name-tiles={variant === "tiles"}
-    title={tooltip ?? (variant === "tiles" ? name : undefined)}
-  >{text || name}</span>
+    title={tooltip ?? (variant === "tiles" ? shown : undefined)}
+  >{text || shown}</span>
 {/if}
 
 <style>

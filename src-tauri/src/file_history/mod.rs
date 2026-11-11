@@ -265,26 +265,17 @@ impl execution::Operations for NativeOperations {
             }
         };
         let mut outcome = entry_execution::execute(plan, &self.runtime).await;
-        if outcome.completion.result.is_ok() {
-            if let Some((old, new)) = &outcome.rename {
-                if old != new {
-                    let source = outcome.target.with_file_name(old);
-                    let target = outcome.target.clone();
-                    if let Err(error) =
-                        crate::installed_plugins::provenance::relocate_after_rename(source, target)
-                            .await
-                    {
-                        let warning = format!(
-                            "Rename completed, but Trace could not update its locator: {error}"
-                        );
-                        log::warn!("{warning}");
-                        outcome.completion.warning =
-                            Some(match outcome.completion.warning.take() {
-                                Some(previous) => format!("{previous}\n{warning}"),
-                                None => warning,
-                            });
-                    }
-                }
+        if let Some((source, target)) = outcome.relocation() {
+            if let Err(error) =
+                crate::installed_plugins::provenance::relocate_after_rename(source, target).await
+            {
+                let warning =
+                    format!("Rename completed, but Trace could not update its locator: {error}");
+                log::warn!("{warning}");
+                outcome.completion.warning = Some(match outcome.completion.warning.take() {
+                    Some(previous) => format!("{previous}\n{warning}"),
+                    None => warning,
+                });
             }
         }
         let changed = admission::changed(&outcome.completion.result);
@@ -397,6 +388,28 @@ pub async fn file_history_execute(
     })
     .await
     .map_err(|error| AppError::Other(format!("Native file history task failed: {error}")))
+}
+
+/// Run one recorded action natively, as Undo or Redo does, returning the
+/// error or the opposite action history would record. Cross-module filesystem
+/// regressions (#1592) use it to drive real history execution.
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) async fn execute_natively_for_test(
+    action: Action,
+    runtime: admission::Runtime,
+    undo: bool,
+) -> Result<Option<Action>, String> {
+    let operations = NativeOperations { runtime };
+    let direction = if undo {
+        Direction::Undo
+    } else {
+        Direction::Redo
+    };
+    let result = execution::execute(action, &operations, direction).await;
+    match result.error {
+        Some(error) => Err(error),
+        None => Ok(result.opposite),
+    }
 }
 
 #[cfg(test)]

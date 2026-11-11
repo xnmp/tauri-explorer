@@ -430,6 +430,9 @@ pub async fn plugin_job_dismiss(job_key: String) -> Result<Value, AppError> {
 
 #[tauri::command]
 pub async fn install_plugin(app: tauri::AppHandle, path: String) -> Result<Value, AppError> {
+    // Phase 1 of #1592: a package path that is not valid text is refused; the
+    // decoded text (never the wire string) names the package.
+    let path = crate::wire_path::native_text(&path)?.into_owned();
     let result = tauri::async_runtime::spawn_blocking(move || {
         serde_json::to_value(install_path(Path::new(&path))?)
             .map_err(|error| AppError::Other(error.to_string()))

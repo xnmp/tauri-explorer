@@ -22,7 +22,10 @@ pub(super) fn sweep_stale_temp(dir: &Path, min_age: std::time::Duration) {
         return;
     };
     for entry in entries.filter_map(std::result::Result::ok) {
-        let stale = entry.file_name().to_string_lossy().starts_with(TEMP_PREFIX)
+        let stale = entry
+            .file_name()
+            .as_encoded_bytes()
+            .starts_with(TEMP_PREFIX.as_bytes())
             && entry
                 .metadata()
                 .ok()

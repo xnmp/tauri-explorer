@@ -104,7 +104,7 @@ impl ClipboardBackend for WindowsFileClipboard {
     /// A clipboard that another process keeps open is a failed read, not
     /// "no files"; a clipboard without `CF_HDROP` offers no files.
     fn read_files(&mut self) -> Result<Vec<String>, AppError> {
-        native::read_file_list()
+        native::read_file_list().map(super::backend::wire_text_paths)
     }
 
     /// A `CF_HDROP` file drop list with Copy semantics, so Explorer and other
@@ -116,7 +116,8 @@ impl ClipboardBackend for WindowsFileClipboard {
         _operation: ClipboardOperation,
         token: &str,
     ) -> Result<(), AppError> {
-        native::write_file_list(&drop_files(paths)?, TOKEN_FORMAT, token.as_bytes())?;
+        let paths = super::backend::native_text_paths(paths)?;
+        native::write_file_list(&drop_files(&paths)?, TOKEN_FORMAT, token.as_bytes())?;
         let before = native::sequence_number();
         let read_back = native::read_format(TOKEN_FORMAT);
         let after = native::sequence_number();

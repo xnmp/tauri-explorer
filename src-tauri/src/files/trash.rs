@@ -7,10 +7,8 @@ use super::trash_artifact::RestoreRequest;
 #[cfg(target_os = "windows")]
 use super::trash_artifact::TrashSuccess;
 use crate::error::AppError;
-#[cfg(not(target_os = "linux"))]
-use std::path::Path;
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Arc;
 
 /// UNC locations have no Recycle Bin. Other paths use the platform trash API.
@@ -27,7 +25,7 @@ fn trash_or_remove(path: &Path) -> Result<(), AppError> {
 
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]
 fn trash_path(path: &str) -> Result<(), AppError> {
-    let pathbuf = PathBuf::from(path);
+    let pathbuf = crate::wire_path::decode(path)?.into_owned();
     // lstat preserves broken symlinks and reports actual permission/IO errors.
     std::fs::symlink_metadata(&pathbuf)?;
     // Record where the item landed so the in-app Trash can restore it (#863).
@@ -78,7 +76,8 @@ pub(crate) async fn run_batch(plan: BatchPlan) -> Result<FileBatchOutcome, AppEr
             plan,
             super::windows_restore::StaApartment::new,
             |apartment, path| {
-                if super::is_network_share(Path::new(path)) {
+                let native = crate::wire_path::decode(path)?;
+                if super::is_network_share(&native) {
                     super::file_ops::delete_path(path)?;
                     Ok(TrashSuccess {
                         publication: None,
@@ -86,7 +85,7 @@ pub(crate) async fn run_batch(plan: BatchPlan) -> Result<FileBatchOutcome, AppEr
                         warning: Some("Permanently deleted from a network share, which has no Recycle Bin; Undo is unavailable for this item".into()),
                     })
                 } else {
-                    super::windows_restore::delete_item(apartment, Path::new(path))
+                    super::windows_restore::delete_item(apartment, &native)
                 }
             },
         )
@@ -230,7 +229,9 @@ pub(crate) async fn trash_publication(
     publication: Arc<PublishedEntry>,
     runtime: &Runtime,
 ) -> Result<FileBatchOutcome, AppError> {
-    let paths = Arc::new(vec![publication.path.to_string_lossy().into_owned()]);
+    let paths = Arc::new(vec![
+        crate::wire_path::encode_path(&publication.path).into_owned()
+    ]);
     let plan = BatchPlan::new(paths.as_ref().clone()).map_err(AppError::InvalidPath)?;
     #[cfg(target_os = "linux")]
     {

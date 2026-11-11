@@ -468,11 +468,8 @@ fn stream_find(
         .no_console();
     // Grep-able record of the exact command line being spawned.
     let cmd_desc = {
-        let prog = cmd.get_program().to_string_lossy().to_string();
-        let args: Vec<String> = cmd
-            .get_args()
-            .map(|a| a.to_string_lossy().to_string())
-            .collect();
+        let prog = cmd.get_program().display().to_string();
+        let args: Vec<String> = cmd.get_args().map(|a| a.display().to_string()).collect();
         format!("{prog} {}", args.join(" "))
     };
     log::info!("quickfind: stream_find spawn: {cmd_desc}");
@@ -497,13 +494,29 @@ fn stream_find(
     let mut parsed = 0usize;
     let mut unparsed = 0usize;
     if let Some(out) = child.stdout.take() {
-        for line in std::io::BufReader::new(out).lines() {
+        let mut reader = std::io::BufReader::new(out);
+        let mut raw = Vec::new();
+        loop {
             if stop() {
                 let _ = child.kill();
                 break;
             }
-            let Ok(line) = line else { break };
-            if let Some((is_dir, rel)) = parse_find_line(&line) {
+            raw.clear();
+            match reader.read_until(b'\n', &mut raw) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+            if raw.last() == Some(&b'\n') {
+                raw.pop();
+            }
+            // One non-UTF-8 name must not end the whole walk (#1592). Linux
+            // names cannot cross the Windows boundary exactly until phase 4
+            // of #1592, so such a line is skipped rather than misnamed.
+            let Ok(line) = std::str::from_utf8(&raw) else {
+                unparsed += 1;
+                continue;
+            };
+            if let Some((is_dir, rel)) = parse_find_line(line) {
                 parsed += 1;
                 on_line(is_dir, rel);
             } else {
@@ -641,7 +654,7 @@ fn walk_passes(
     // failure (wsl.exe missing, no find) fall through to the jwalk passes.
     #[cfg(windows)]
     {
-        let root_str = root.to_string_lossy();
+        let root_str = crate::wire_path::encode_path(root);
         match crate::wsl::parse_wsl_unc(&root_str) {
             Some((distro, linux_path)) => {
                 log::info!(
@@ -680,7 +693,7 @@ fn walk_passes(
         .parallelism(parallelism.clone())
         .process_read_dir(move |_depth, _path, _state, children| {
             for e in children.iter_mut().flatten() {
-                let name = e.file_name().to_string_lossy().to_string();
+                let name = crate::wire_path::encode(e.file_name());
                 if is_hard_skip(&name) {
                     e.read_children = None;
                 } else if is_deferred(&name) {
@@ -701,15 +714,18 @@ fn walk_passes(
         let Ok(rel) = path.strip_prefix(root) else {
             return;
         };
+        // Names and relative paths are wire spellings (#1592).
         let name = path
             .file_name()
-            .map(|n| n.to_string_lossy().to_string())
+            .map(|n| crate::wire_path::encode(n).into_owned())
             .unwrap_or_default();
         if name.starts_with('.') {
             return; // hidden entries the walker didn't already filter
         }
         on_entry(Walked {
-            relative_path: normalize_rel_separators(rel.to_string_lossy().to_string()),
+            relative_path: normalize_rel_separators(
+                crate::wire_path::encode_path(rel).into_owned(),
+            ),
             name,
             is_dir: entry.file_type().is_dir(),
             deferred,
@@ -750,7 +766,7 @@ fn walk_passes(
             .parallelism(parallelism.clone())
             .process_read_dir(|_depth, _path, _state, children| {
                 for e in children.iter_mut().flatten() {
-                    if is_hard_skip(&e.file_name().to_string_lossy()) {
+                    if is_hard_skip(&crate::wire_path::encode(e.file_name())) {
                         e.read_children = None;
                     }
                 }
@@ -1026,7 +1042,7 @@ fn fuzzy_search_sync(
     limit: usize,
     filter: Option<SearchFilter>,
 ) -> Result<SearchResponse, AppError> {
-    let root_path = PathBuf::from(&root);
+    let root_path = crate::wire_path::decode(&root)?.into_owned();
 
     if !root_path.exists() {
         return Err(AppError::NotFound(root));
@@ -1064,10 +1080,9 @@ fn fuzzy_search_sync(
         .take(limit)
         .map(|(score, idx)| {
             let entry = &entries[idx];
-            let full_path = root_path.join(&entry.relative_path);
             SearchResult {
                 name: entry.name.clone(),
-                path: full_path.to_string_lossy().to_string(),
+                path: crate::wire_path::join(&root, &entry.relative_path),
                 relative_path: entry.relative_path.clone(),
                 score,
                 kind: if entry.is_dir {
@@ -1117,7 +1132,7 @@ async fn start_streaming_search_with_sink<S: SearchResultsSink>(
     limit: usize,
     boost_prefix: Option<String>,
 ) -> Result<u64, AppError> {
-    let root_path = PathBuf::from(&root);
+    let root_path = crate::wire_path::decode(&root)?.into_owned();
 
     // Stat off the calling thread — a dead network mount can hang here.
     let (exists, is_dir) = {
@@ -1143,7 +1158,11 @@ async fn start_streaming_search_with_sink<S: SearchResultsSink>(
     log::info!("quickfind: start_streaming_search query={query:?} root={root:?}");
     let (search_id, cancelled) = SEARCHES.start();
 
-    let boost_path = boost_prefix.map(PathBuf::from);
+    let boost_path = boost_prefix
+        .as_deref()
+        .map(crate::wire_path::decode)
+        .transpose()?
+        .map(std::borrow::Cow::into_owned);
 
     // Spawn search in background thread
     std::thread::spawn(move || {
@@ -1339,7 +1358,8 @@ fn process_batch<S: SearchResultsSink>(
         .iter()
         .filter_map(|entry| {
             let score = score_entry(entry, query_lower, pattern, matcher)?;
-            let full_path = root_path.join(&entry.relative_path);
+            // The relative path is a wire spelling under the native root.
+            let full_path = root_path.join(crate::wire_path::decode(&entry.relative_path).ok()?);
             // Boost results under the priority prefix (e.g. CWD) — but never a
             // build artifact, which the CWD boost would lift back above the
             // source files the penalty exists to protect (#393).
@@ -1351,7 +1371,7 @@ fn process_batch<S: SearchResultsSink>(
             };
             Some(SearchResult {
                 name: entry.name.clone(),
-                path: full_path.to_string_lossy().to_string(),
+                path: crate::wire_path::encode_path(&full_path).into_owned(),
                 relative_path: entry.relative_path.clone(),
                 score: boosted_score,
                 kind: if entry.is_dir {
@@ -1396,6 +1416,59 @@ mod tests {
     use super::*;
     use std::fs::{self, File};
     use tempfile::tempdir;
+
+    /// #1592: Quick Open reports a non-UTF-8 file at the exact wire path the
+    /// listing publishes, and that path opens the file rather than its lossy
+    /// look-alike, which is reported separately.
+    #[cfg(unix)]
+    #[test]
+    fn quick_open_reports_raw_names_at_their_listed_wire_paths() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = tempdir().unwrap();
+        let root = visible_root(&dir);
+        let nested = root.join(std::ffi::OsStr::from_bytes(b"dir\xfe"));
+        fs::create_dir(&nested).unwrap();
+        fs::write(
+            nested.join(std::ffi::OsStr::from_bytes(b"bad\xff.txt")),
+            "raw",
+        )
+        .unwrap();
+        fs::write(nested.join("bad\u{FFFD}.txt"), "bystander").unwrap();
+        let nested_wire = crate::wire_path::encode_path(&nested).into_owned();
+        let mut listed: Vec<String> =
+            tauri::async_runtime::block_on(crate::files::dir_listing::read_directory(nested_wire))
+                .unwrap()
+                .entries
+                .iter()
+                .map(|entry| entry.path.clone())
+                .collect();
+        listed.sort();
+        let root_wire = crate::wire_path::encode_path(&root).into_owned();
+        let response = fuzzy_search_sync("bad".into(), root_wire, 10, None).unwrap();
+        let mut found: Vec<(String, String, String)> = response
+            .results
+            .into_iter()
+            .map(|result| (result.path, result.name, result.relative_path))
+            .collect();
+        found.sort();
+        assert_eq!(
+            found,
+            vec![
+                (
+                    listed[0].clone(),
+                    "bad\u{EFFF}.txt".to_owned(),
+                    "dir\u{EFFE}/bad\u{EFFF}.txt".to_owned()
+                ),
+                (
+                    listed[1].clone(),
+                    "bad\u{FFFD}.txt".to_owned(),
+                    "dir\u{EFFE}/bad\u{FFFD}.txt".to_owned()
+                ),
+            ]
+        );
+        let opened = crate::wire_path::decode(&found[0].0).unwrap();
+        assert_eq!(fs::read(opened).unwrap(), b"raw");
+    }
 
     #[test]
     fn shared_cache_command_lock_recovers_after_a_sibling_panicked_holding_it() {

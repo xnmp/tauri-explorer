@@ -321,30 +321,30 @@ fn read_item(
 ) -> Result<Item, String> {
     let mut file = info
         .open_file(info_file)
-        .map_err(|error| format!("{}: {error}", info_file.to_string_lossy()))?;
+        .map_err(|error| format!("{}: {error}", info_file.display()))?;
     let stat = file
         .metadata()
-        .map_err(|error| format!("{}: {error}", info_file.to_string_lossy()))?;
+        .map_err(|error| format!("{}: {error}", info_file.display()))?;
     if !stat.is_file() {
-        return Err(format!("{} is not a file", info_file.to_string_lossy()));
+        return Err(format!("{} is not a file", info_file.display()));
     }
     let mut bytes = Vec::new();
     Read::by_ref(&mut file)
         .take(MAX_INFO_BYTES + 1)
         .read_to_end(&mut bytes)
-        .map_err(|error| format!("{}: {error}", info_file.to_string_lossy()))?;
+        .map_err(|error| format!("{}: {error}", info_file.display()))?;
     if bytes.len() as u64 > MAX_INFO_BYTES {
-        return Err(format!("{} is too large", info_file.to_string_lossy()));
+        return Err(format!("{} is too large", info_file.display()));
     }
     let parsed = parse_trash_info(&bytes)
-        .ok_or_else(|| format!("{} has malformed metadata", info_file.to_string_lossy()))?;
+        .ok_or_else(|| format!("{} has malformed metadata", info_file.display()))?;
     let original = match (&source.topdir, parsed.path.is_absolute()) {
         (_, true) => parsed.path,
         (Some(topdir), false) => topdir.join(parsed.path),
         (None, false) => {
             return Err(format!(
                 "{} records a relative path in the home trash",
-                info_file.to_string_lossy()
+                info_file.display()
             ))
         }
     };
@@ -355,24 +355,21 @@ fn read_item(
     {
         return Err(format!(
             "{} records an invalid original path",
-            info_file.to_string_lossy()
+            info_file.display()
         ));
     }
     let payload = version_at(files, &name).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
-            format!(
-                "{} has no matching file in the trash",
-                info_file.to_string_lossy()
-            )
+            format!("{} has no matching file in the trash", info_file.display())
         } else {
-            format!("{}: {error}", name.to_string_lossy())
+            format!("{}: {error}", std::path::Path::new(&name).display())
         }
     })?;
     // Restoration compares the request against the resolved original path.
     let resolved = super::resolved_restore_path(&original).unwrap_or_else(|_| original.clone());
     let display_name = original
         .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
+        .map(|name| crate::wire_path::encode(name).into_owned())
         .unwrap_or_default();
     let entry = TrashEntry {
         id: super::super::trash_inventory::entry_id(&[
@@ -383,7 +380,7 @@ fn read_item(
             &stat.ctime_nsec().to_le_bytes(),
         ]),
         name: display_name,
-        original_path: Some(original.to_string_lossy().into_owned()),
+        original_path: Some(crate::wire_path::encode_path(&original).into_owned()),
         deleted_at: parsed.deleted_at,
         kind: if payload.directory {
             "directory"
@@ -405,7 +402,7 @@ fn read_item(
         entry,
         native_deletion: None,
         restore: Some(Restorable {
-            key: original.to_string_lossy().into_owned(),
+            key: crate::wire_path::encode_path(&original).into_owned(),
             destination: original,
             artifact: Arc::new(artifact),
         }),

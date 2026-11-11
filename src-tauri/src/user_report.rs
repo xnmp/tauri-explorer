@@ -1301,7 +1301,8 @@ pub(crate) fn attachment_from_clipboard_files(
     if paths.len() != 1 {
         return Err(fail("Copy one video file to attach from clipboard"));
     }
-    let path = std::path::Path::new(&paths[0]);
+    let path =
+        crate::wire_path::decode(&paths[0]).map_err(|_| fail("Unsupported clipboard file name"))?;
     let media_type = clipboard_video_media_type(&paths[0])
         .ok_or_else(|| fail("Unsupported clipboard file. Copy an MP4, WebM, or MOV video."))?;
     if !path.is_file() {
@@ -1309,7 +1310,7 @@ pub(crate) fn attachment_from_clipboard_files(
             "Unsupported clipboard file: select a regular video file",
         ));
     }
-    let file = std::fs::File::open(path).map_err(|_| fail("Could not read clipboard video"))?;
+    let file = std::fs::File::open(&path).map_err(|_| fail("Could not read clipboard video"))?;
     let size = file
         .metadata()
         .map_err(|_| fail("Could not read clipboard video"))?
@@ -1327,11 +1328,12 @@ pub(crate) fn attachment_from_clipboard_files(
     if bytes.len() > MAX_ATTACHMENT_BYTES {
         return Err(too_large());
     }
+    // The attachment name is display text, so escaped bytes become U+FFFD.
     let name = path
         .file_name()
-        .and_then(|name| name.to_str())
+        .map(|name| crate::wire_path::lossy(&crate::wire_path::encode(name)).into_owned())
         .ok_or_else(|| fail("Clipboard video has an invalid filename"))?;
-    attachment_from_image_bytes(name.into(), media_type, bytes)
+    attachment_from_image_bytes(name, media_type, bytes)
 }
 
 #[cfg(test)]

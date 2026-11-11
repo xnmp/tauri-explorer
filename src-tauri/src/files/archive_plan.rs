@@ -4,6 +4,7 @@
 //! its result is handed to the plan. Everything here is pure: admission,
 //! execution and refresh therefore cannot disagree about which paths an
 //! archive operation owns.
+#![allow(clippy::disallowed_methods)] // Retire-when: #1638 closed (non-UTF-8 names, ADR 0031)
 use crate::error::AppError;
 use std::{
     collections::HashSet,
@@ -16,6 +17,10 @@ const MAX_SOURCES: usize = 32_768;
 const MAX_PATH_BYTES: usize = 8 * 1024 * 1024;
 
 fn validate(path: &str) -> Result<PathBuf, AppError> {
+    // Phase 1 of #1592: archives take native text paths, refusing non-UTF-8
+    // before any probe.
+    let path = crate::wire_path::native_text(path)?;
+    let path = &*path;
     let native = Path::new(path);
     if path.len() > 128 * 1024
         || path.contains('\0')

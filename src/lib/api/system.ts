@@ -9,17 +9,14 @@
 import { invoke, extractError, type ApiResult } from "./common";
 
 /** File-picker portal window → backend: deliver the user's choice.
- *  `paths` are absolute filesystem paths; `cancelled` aborts the request. */
+ *  `paths` are absolute wire paths; `cancelled` aborts the request. Rejects
+ *  when the backend refuses a name it cannot hand to the requester (#1592). */
 export async function pickerRespond(
   token: string,
   paths: string[],
   cancelled: boolean,
 ): Promise<void> {
-  try {
-    await invoke("picker_respond", { token, paths, cancelled });
-  } catch {
-    // Browser/mock mode — the e2e mock records the call instead.
-  }
+  await invoke("picker_respond", { token, paths, cancelled });
 }
 
 export async function setWindowTheme(theme: "light" | "dark"): Promise<void> {

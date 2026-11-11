@@ -2,7 +2,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::error::AppError;
-use crate::git_common::{open_repo, workdir_key};
+use crate::git_common::{open_repo_at, workdir_key};
 
 #[derive(Clone, Debug)]
 pub(super) struct Target {
@@ -14,7 +14,7 @@ pub(super) struct Target {
 
 impl Target {
     pub fn resolve(path: &str) -> Result<Self, AppError> {
-        let repo = open_repo(Path::new(path))?;
+        let repo = open_repo_at(path)?;
         let workdir = repo
             .workdir()
             .ok_or_else(|| AppError::Other("git: bare repo cannot be watched".into()))?;
@@ -30,7 +30,7 @@ impl Target {
         Ok(Self {
             key: workdir_key(&repo)
                 .ok_or_else(|| AppError::Other("git: missing workdir".into()))?,
-            source: workdir.to_string_lossy().into_owned(),
+            source: crate::wire_path::encode_path(workdir).into_owned(),
             roots,
             metadata,
         })
@@ -54,8 +54,8 @@ impl Target {
             {
                 return false;
             }
-            let temporary =
-                path.to_string_lossy().ends_with(".lock") || path.to_string_lossy().ends_with('~');
+            let name = path.as_os_str().as_encoded_bytes();
+            let temporary = name.ends_with(b".lock") || name.ends_with(b"~");
             !temporary || !self.metadata.iter().any(|root| path.starts_with(root))
         })
     }

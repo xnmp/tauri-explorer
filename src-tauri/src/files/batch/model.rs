@@ -1,10 +1,11 @@
-//! Pure batch admission and outcome projection. Paths retain their IPC spelling.
+//! Pure batch admission and outcome projection. Paths retain their IPC (wire)
+//! spelling; admission decodes each one and validates the native path.
 use super::receipts::ItemState;
 use crate::files::trash_artifact::{TrashArtifact, TrashSuccess};
 use serde::Serialize;
 use std::{
     collections::{BTreeMap, HashSet},
-    path::{Component, Path},
+    path::Component,
     sync::Arc,
 };
 
@@ -26,15 +27,20 @@ impl BatchPlan {
             return Err("File batch exceeds its path count or size limit".into());
         }
         for path in &paths {
-            let native = Path::new(path);
-            if path.contains('\0')
+            // Decode first: a non-canonical spelling never reaches an executor,
+            // and the structural checks below run on the native path.
+            let native = crate::wire_path::decode(path).map_err(|error| error.to_string())?;
+            if native.as_os_str().as_encoded_bytes().contains(&0)
                 || !native.is_absolute()
                 || native.file_name().is_none()
                 || native
                     .components()
                     .any(|part| matches!(part, Component::ParentDir))
             {
-                return Err(format!("File batch requires absolute non-root paths without parent traversal or NUL bytes: {path}"));
+                return Err(format!(
+                    "File batch requires absolute non-root paths without parent traversal or NUL bytes: {}",
+                    crate::wire_path::lossy(path)
+                ));
             }
         }
         let mut seen = HashSet::new();
@@ -49,7 +55,7 @@ impl BatchPlan {
             // Component ordering places a selected ancestor immediately before
             // its first selected descendant. Hashing every ancestor prefix would
             // make admission quadratic for deeply nested input paths.
-            let mut native: Vec<_> = paths.iter().map(Path::new).collect();
+            let mut native: Vec<_> = paths.iter().map(std::path::Path::new).collect();
             native.sort_unstable();
             for pair in native.windows(2) {
                 if pair[0] == pair[1] {

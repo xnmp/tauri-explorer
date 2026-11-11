@@ -5,7 +5,7 @@ use crate::{
     files::{self, file_ops, mutation::FileMutationReceipt, WorkerCompletion},
     progress::ProgressTracker,
 };
-use std::{fs, path::Path, sync::Arc};
+use std::{fs, sync::Arc};
 
 #[derive(Clone)]
 pub(crate) struct NativeWork {
@@ -47,7 +47,7 @@ impl Work for NativeWork {
 }
 
 fn inspect(source: String, destination: String, remaining: usize) -> Result<Inspection, AppError> {
-    let path = Path::new(&source);
+    let path = crate::wire_path::decode(&source)?;
     let name = path
         .file_name()
         .ok_or_else(|| AppError::InvalidPath("Copy source has no name".into()))?;
@@ -59,7 +59,7 @@ fn inspect(source: String, destination: String, remaining: usize) -> Result<Insp
     )?;
     let physical_source = source_parent.join(name);
     let presentation = destination;
-    let destination = fs::canonicalize(&presentation)?;
+    let destination = fs::canonicalize(crate::wire_path::decode(&presentation)?)?;
     if !destination.is_dir() {
         return Err(AppError::InvalidPath(
             "Copy destination is not a directory".into(),
@@ -91,7 +91,7 @@ fn inspect(source: String, destination: String, remaining: usize) -> Result<Insp
             let source_entry =
                 files::metadata_to_entry_with_git_repo_probe(&physical_source, &source_meta, false);
             Conflict {
-                file_name: name.to_string_lossy().into_owned(),
+                file_name: crate::wire_path::lossy(&crate::wire_path::encode(name)).into_owned(),
                 source_path: source.clone(),
                 remaining,
                 source_size: source_entry.size,
@@ -102,8 +102,8 @@ fn inspect(source: String, destination: String, remaining: usize) -> Result<Insp
         })
     };
     Ok(Inspection {
-        source: physical_source.to_string_lossy().into_owned(),
-        destination: destination.to_string_lossy().into_owned(),
+        source: crate::wire_path::encode_path(&physical_source).into_owned(),
+        destination: crate::wire_path::encode_path(&destination).into_owned(),
         presentation,
         conflict,
         bytes: if source_meta.is_dir() {
@@ -134,8 +134,8 @@ impl CopyWork {
             Some(self.control.cancelled.cancellation_flag()),
         )
         .report_to(self.progress.as_ref());
-        let source = Path::new(&self.inspection.source);
-        let destination = Path::new(&self.inspection.destination);
+        let (source, destination) = self.inspection.native()?;
+        let (source, destination) = (source.as_ref(), destination.as_ref());
         #[cfg(target_os = "linux")]
         let result = {
             file_ops::copy_entry_tracked(
@@ -166,21 +166,7 @@ impl CopyWork {
         result.map(|mut receipt| {
             // Preserve pane aliases only while they still name the inspected
             // directory. Native inverse keys remain physical on publication.
-            if fs::canonicalize(&self.inspection.presentation)
-                .ok()
-                .as_deref()
-                == Some(destination)
-            {
-                if let Some(name) = Path::new(&receipt.path).file_name() {
-                    receipt.path = Path::new(&self.inspection.presentation)
-                        .join(name)
-                        .to_string_lossy()
-                        .into_owned();
-                    if let Some(entry) = &mut receipt.entry {
-                        entry.path = receipt.path.clone();
-                    }
-                }
-            }
+            self.inspection.present(&mut receipt);
             receipt
         })
     }

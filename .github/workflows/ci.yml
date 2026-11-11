@@ -1202,7 +1202,7 @@ jobs:
       # Refreshed before the cache probe so the hashed apt versions are the
       # ones a miss installs. Bounded like the install (#1371).
       - name: Refresh apt package index
-        timeout-minutes: 8
+        timeout-minutes: 16
         run: .github/actions/tauri-linux-deps/apt.sh update
 
       - name: Test-result cache key

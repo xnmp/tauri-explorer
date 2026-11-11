@@ -16,8 +16,6 @@
   import { usePersistedPanelWidth } from "$lib/composables/use-panel-resize.svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
-  import { fetchDirectory, isDirectoryEmpty } from "$lib/api/files";
-  import { createDirectoryWatch } from "$lib/state/directory-watch";
   import FileIcon from "./FileIcon.svelte";
   import EntryName from "./EntryName.svelte";
   import { createHtml5FileDrag } from "$lib/state/html5-file-drag.svelte";
@@ -27,12 +25,9 @@
   import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
   import { isCopyModifier, usesPointerDrag, usesHtml5Drag } from "$lib/domain/platform";
   import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
-  import { parentDir } from "$lib/domain/path";
-  import { subscribeToLocalFileChanges } from "$lib/state/file-events";
+  import type { MillerColumns as MillerColumnListings } from "$lib/state/miller-columns.svelte";
   import type { FileEntry } from "$lib/domain/file";
   import { isSystemHidden } from "$lib/domain/file";
-  import { isTauri } from "$lib/api/common";
-  import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
   const panelId = $props.id();
 
@@ -52,199 +47,64 @@
     return { destroy };
   }
 
-  interface MillerColumn {
-    path: string;
-    name: string;
-    entries: FileEntry[];
-    loading: boolean;
-    activeChildPath: string | null;
-  }
+  // Ancestor listings, their cache, watches and refresh live in the state layer
+  // (#1642). It loads with the first mount; listings are asynchronous anyway,
+  // so the columns (and their reserved width) still appear on the first frame.
+  let listings = $state.raw<MillerColumnListings | null>(null);
+  onMount(() => {
+    let mounted = true;
+    void import("$lib/state/miller-columns.svelte").then(({ createMillerColumns }) => {
+      if (mounted) listings = createMillerColumns();
+    });
+    return () => {
+      mounted = false;
+      listings?.dispose();
+    };
+  });
 
-  // Cache stores raw (unfiltered) directory entries; filtering is derived reactively.
-  // Bounded: oldest non-visible directories are evicted beyond MAX_RAW_CACHE.
-  const MAX_RAW_CACHE = 50;
-  const rawCache = new Map<string, FileEntry[]>();
-
-  function cacheRawEntries(path: string, entries: FileEntry[]): void {
-    // Re-insert to refresh recency (Map preserves insertion order)
-    rawCache.delete(path);
-    rawCache.set(path, entries);
-    if (rawCache.size <= MAX_RAW_CACHE) return;
-    for (const key of rawCache.keys()) {
-      if (rawCache.size <= MAX_RAW_CACHE) break;
-      if (rawColumns.some((col) => col.path === key)) continue;
-      rawCache.delete(key);
-    }
-  }
-  let rawColumns = $state<MillerColumn[]>([]);
-  const watchedPaths = new Map<string, ReturnType<typeof createDirectoryWatch>>();
-
-  // Cache of `path -> isEmpty` keyed by the (path, showHidden) combination.
-  // Repopulated when showHidden changes via clearEmptyCache().
-  let emptyCache = $state(new Map<string, boolean>());
-  let emptyCacheKey = "";
-
-  function filterEntries(entries: FileEntry[], columnPath: string, activeChildPath: string | null): FileEntry[] {
+  function filterEntries(entries: readonly FileEntry[], columnPath: string, activeChildPath: string | null): FileEntry[] {
     const hideEmpty = settingsStore.millerHideEmpty;
     return entries.filter((e) => {
       if (e.kind !== "directory") return false;
       if (!settingsStore.showHidden && (e.name.startsWith(".") || e.name.startsWith("~$") || isSystemHidden(e.name))) return false;
       if (!settingsStore.showManuallyHidden && manualHiddenStore.isHidden(columnPath, e.name)) return false;
-      if (hideEmpty && e.path !== activeChildPath) {
-        const known = emptyCache.get(e.path);
-        if (known === true) return false;
-      }
+      if (hideEmpty && e.path !== activeChildPath && listings?.isEmpty(e.path) === true) return false;
       return true;
     });
   }
 
-  // Derive displayed columns reactively so showHidden changes take effect immediately.
-  const columns = $derived(
-    rawColumns.map((col) => ({ ...col, entries: filterEntries(col.entries, col.path, col.activeChildPath) })),
-  );
-
-  $effect(() => {
-    const key = `${settingsStore.showHidden ? 1 : 0}`;
-    if (key !== emptyCacheKey) {
-      emptyCacheKey = key;
-      emptyCache = new Map();
-    }
-  });
-
-  async function ensureEmptyFlags(entries: FileEntry[]): Promise<void> {
-    const includeHidden = settingsStore.showHidden;
-    const targets = entries.filter((e) => e.kind === "directory" && !emptyCache.has(e.path));
-    if (targets.length === 0) return;
-    const results = await Promise.all(
-      targets.map(async (e) => [e.path, await isDirectoryEmpty(e.path, includeHidden)] as const),
-    );
-    const next = new Map(emptyCache);
-    for (const [p, empty] of results) next.set(p, empty);
-    emptyCache = next;
-  }
-
-  $effect(() => {
+  // Ancestor crumbs (everything except the current directory), nearest `layers`.
+  const visible = $derived.by(() => {
     const crumbs = explorer.breadcrumbs;
-    const currentPath = explorer.currentPath;
     const layers = explorer.millerLayers;
-    if (layers === 0 || crumbs.length <= 1) {
-      rawColumns = [];
-      for (const watch of watchedPaths.values()) void watch.destroy();
-      watchedPaths.clear();
-      return;
-    }
-
-    // Ancestor crumbs (everything except current directory)
+    if (layers === 0 || crumbs.length <= 1) return [];
     const ancestorCrumbs = crumbs.slice(0, -1);
-    const startIdx = Math.max(0, ancestorCrumbs.length - layers);
-    const visible = ancestorCrumbs.slice(startIdx);
-
-    const newColumns: MillerColumn[] = visible.map((crumb, i) => {
-      const nextPath = i < visible.length - 1
-        ? visible[i + 1].path
-        : currentPath;
-      return {
-        path: crumb.path,
-        name: crumb.name,
-        entries: rawCache.get(crumb.path) || [],
-        loading: !rawCache.has(crumb.path),
-        activeChildPath: nextPath,
-      };
-    });
-
-    rawColumns = newColumns;
-
-    untrack(() => {
-      const desiredPaths = new Set(newColumns.map((c) => c.path));
-      for (const [path, watch] of watchedPaths) {
-        if (!desiredPaths.has(path)) {
-          void watch.destroy();
-          watchedPaths.delete(path);
-        }
-      }
-      for (const col of newColumns) {
-        if (!watchedPaths.has(col.path)) {
-          const watch = createDirectoryWatch();
-          watchedPaths.set(col.path, watch);
-          void watch.update(col.path);
-        }
-        if (!rawCache.has(col.path)) {
-          loadColumn(col.path);
-        }
-      }
-    });
+    return ancestorCrumbs.slice(Math.max(0, ancestorCrumbs.length - layers)).map((crumb, i, all) => ({
+      path: crumb.path,
+      name: crumb.name,
+      activeChildPath: i < all.length - 1 ? all[i + 1].path : explorer.currentPath,
+    }));
   });
 
-  async function loadColumn(path: string): Promise<void> {
-    const result = await fetchDirectory(path);
-    if (result.ok) {
-      const entries = [...result.data.entries]
-        .sort((a: FileEntry, b: FileEntry) => a.name.localeCompare(b.name));
-      cacheRawEntries(path, entries);
-      rawColumns = rawColumns.map((col) =>
-        col.path === path ? { ...col, entries, loading: false } : col
-      );
-      if (settingsStore.millerHideEmpty) {
-        ensureEmptyFlags(entries);
-      }
-    }
-  }
+  // Derive displayed columns reactively so showHidden changes take effect immediately.
+  const columns = $derived(visible.map((col) => {
+    const entries = listings?.entries(col.path);
+    return {
+      ...col,
+      entries: entries ? filterEntries(entries, col.path, col.activeChildPath) : [],
+      loading: entries === undefined,
+    };
+  }));
+
+  $effect(() => {
+    const paths = visible.map((col) => col.path);
+    listings?.show(paths);
+  });
 
   // When the hide-empty toggle is flipped on while columns are already loaded,
   // back-fill emptiness flags for whatever's currently visible.
   $effect(() => {
-    if (!settingsStore.millerHideEmpty) return;
-    untrack(() => {
-      for (const col of rawColumns) {
-        ensureEmptyFlags(col.entries);
-      }
-    });
-  });
-
-  function invalidateColumn(path: string): void {
-    // Invalidate empty cache for the changed dir and its parent.
-    const next = new Map(emptyCache);
-    next.delete(path);
-    const parent = parentDir(path);
-    if (parent !== path) next.delete(parent);
-    if (next.size !== emptyCache.size) emptyCache = next;
-
-    if (!rawCache.has(path)) return;
-    rawCache.delete(path);
-    if (rawColumns.some((col) => col.path === path)) {
-      void loadColumn(path);
-    }
-  }
-
-  // Filesystem watchers cover external changes; local file operations publish
-  // the same affected directories so this cache does not wait for a watcher.
-  onMount(() => {
-    let unlisten: UnlistenFn | undefined;
-    let disposed = false;
-    const unsubscribeLocalChanges = subscribeToLocalFileChanges((affectedDirs) => {
-      for (const path of affectedDirs) invalidateColumn(path);
-    });
-    if (isTauri()) void listen<{ path: string }>("directory-changed", (event) => {
-      invalidateColumn(event.payload.path);
-    }).then((fn) => {
-      // If the component was destroyed before registration resolved,
-      // unlisten immediately instead of leaking the listener.
-      if (disposed) {
-        fn();
-        return;
-      }
-      unlisten = fn;
-    }).catch(error => console.error("Miller directory listener failed:", error));
-
-    return () => {
-      disposed = true;
-      unlisten?.();
-      unsubscribeLocalChanges();
-      for (const [path, watch] of watchedPaths) {
-        void watch.destroy();
-      }
-      watchedPaths.clear();
-    };
+    if (settingsStore.millerHideEmpty && listings) untrack(() => listings!.probeEmptyFlags());
   });
 
   function handleClick(entry: FileEntry): void {

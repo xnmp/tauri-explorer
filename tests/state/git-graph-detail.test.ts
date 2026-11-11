@@ -31,6 +31,7 @@ function fixture() {
   const workingDiffs: ReturnType<typeof deferred<ApiResult<string>>>[] = [];
   const commitDiffs: ReturnType<typeof deferred<string>>[] = [];
   const compareDiffs: ReturnType<typeof deferred<string>>[] = [];
+  const parseDiff = vi.fn(parseUnifiedDiff);
   const session = createGitGraphDetail("/repo", "detail-test", {
     commitFiles: vi.fn(() => { const d = deferred<CommitFile[]>(); commitFiles.push(d); return d.promise; }),
     compareFiles: vi.fn(() => { const d = deferred<CommitFile[]>(); compareFiles.push(d); return d.promise; }),
@@ -38,12 +39,24 @@ function fixture() {
     workingDiff: vi.fn(() => { const d = deferred<ApiResult<string>>(); workingDiffs.push(d); return d.promise; }),
     commitDiff: vi.fn(() => { const d = deferred<string>(); commitDiffs.push(d); return d.promise; }),
     compareDiff: vi.fn(() => { const d = deferred<string>(); compareDiffs.push(d); return d.promise; }),
-    parseDiff: parseUnifiedDiff,
+    parseDiff,
   });
-  return { session, commitFiles, compareFiles, summaries, workingDiffs, commitDiffs, compareDiffs };
+  return { session, commitFiles, compareFiles, summaries, workingDiffs, commitDiffs, compareDiffs, parseDiff };
 }
 
 describe("git graph detail session", () => {
+  it.each(["close", "closeDiff", "dispose"] as const)("skips parsing obsolete diffs after %s", async (end) => {
+    const f = fixture();
+    const select = f.session.select(commit("a", 1));
+    f.commitFiles[0].resolve([file("x")]);
+    await select;
+    const diff = f.session.toggleDiff(file("x"));
+    f.session[end]();
+    f.commitDiffs[0].resolve("obsolete diff");
+    await diff;
+    expect(f.parseDiff).not.toHaveBeenCalled();
+  });
+
   it("keeps only the newest selected commit files when responses reverse", async () => {
     const f = fixture();
     const old = f.session.select(commit("old", 1));
@@ -162,6 +175,21 @@ describe("git graph detail session", () => {
     f.summaries[2].reject(new Error("transport failed"));
     await expect(rejected).resolves.toBe(false);
     expect(f.session.files.map(({ path }) => path)).toEqual(["kept.ts"]);
+  });
+
+  it("a failed forced refresh still supersedes the initial scan it replaced", async () => {
+    const f = fixture();
+    const opening = f.session.select(commit(UNCOMMITTED_OID, 1));
+    const refreshing = f.session.refreshUncommittedFiles();
+    f.summaries[1].resolve({ ok: false, error: "scan failed" });
+    await expect(refreshing).resolves.toBe(false);
+    f.summaries[0].resolve({ ok: true, data: summary(["superseded.ts"]) });
+    await opening;
+    expect(f.session.files).toEqual([]);
+    const retry = f.session.refreshUncommittedFiles();
+    f.summaries[2].resolve({ ok: true, data: summary(["fresh.ts"]) });
+    await expect(retry).resolves.toBe(true);
+    expect(f.session.files.map(({ path }) => path)).toEqual(["fresh.ts"]);
   });
 
   it("revokes settled and pending working diffs before a post-mutation refresh", async () => {

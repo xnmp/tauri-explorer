@@ -100,7 +100,7 @@ backend for E2E/browser).
 - Linux paint mode (#1057): `src-tauri/src/webkit_renderer.rs` chooses WebKitGTK renderer env vars at process start. Disabling the DMABuf renderer/compositing (the old NVIDIA Wayland Error 71 workaround) forces non-composited CPU repaints; NVIDIA keeps compositing via `WEBKIT_DMABUF_RENDERER_FORCE_SHM`, other GPUs use WebKit defaults.
 - Linux renderer GC aborts (#1026): `src-tauri/src/jsc_workaround.rs` disables JSC's DFG tier on WebKitGTK 2.52, whose WebContent process otherwise aborts in the collector shortly after launch (the Linux native smoke's "page crash or hang").
 - Renderer-loss recovery (macOS #942, Linux #1138): Wry's terminate hook (macOS) or WebKitGTK's `web-process-terminated` via the `renderer_owner::termination_recovery` plugin (Linux) → `renderer_owner::on_renderer_terminated` retires the generation, then `src-tauri/src/renderer_owner/reload.rs` reloads the last committed document with `rendererRecovery=1` under a per-window budget (parked warm windows are retired via `warm_pool.rs`). `domain/window-launch-plan.ts` makes that document restore its own persisted tabs and withholds one-shot launch requests (`warm`, `focusAddressBar`, `viewMode`); `state/page-foreground.ts` opens its foreground gate, and the reload ends the lost document's label-scoped terminals. A WebKitGTK `terminated-by-api` teardown is retired but never reloaded; Windows only retires.
-- `state/directory-watch.ts` — generic ordered path-lease owner plus the directory adapter used by FolderThumbnail, MillerColumns and drives; teardown retains exact release identity and drains late acquisition.
+- `state/directory-watch.ts` — generic ordered path-lease owner plus the directory adapter used by FolderThumbnail, Miller columns (`state/miller-columns.svelte.ts`) and drives; teardown retains exact release identity and drains late acquisition.
 - `src-tauri/src/files/directory_watches.rs` — pure directory lease/retirement policy with injected OS observation; shares registrations and retries/rebuilds failed forced cleanup without granting cache coverage to retired owners.
 
 - `state/directory-listing.ts` — `createDirectoryListing`: serialized complete snapshots, latest-request supersession and late observation-lease disposal; no listing event listener
@@ -173,7 +173,7 @@ backend for E2E/browser).
 
 - `state/repo-root-cache.svelte.ts` — bounded shared root probes for tab labels and Git warming, invalidated by existing file/Git buses.
 
-- `components/WindowTabBar.svelte` — tab strip UI, drag-reorder, tear-off
+- `components/WindowTabBar.svelte` — tab strip UI, drag-reorder, tear-off; `domain/tab-drag.ts` owns press/drag/detach transitions and session guards, using the shared `domain/pointer-drag.ts` threshold
 - `state/window-tabs.svelte.ts` — `windowTabsManager`: tab list, layout, active pane, persistence orchestration; incarnation-bound transfer leases and native-close allocation guard
 - `state/pane-sessions.ts` — reserves restored pane identities without opening inactive directories; activation materializes explorers, all removal paths share cleanup including SCM/commit/graph handoff stores
 - `state/pane-activation.ts` — focused-first restoration with cancellable post-paint batches; `PaneLayoutView` leaves unmaterialized subtrees as placeholders without truncating saved layouts
@@ -377,9 +377,9 @@ backend for E2E/browser).
 
 ## Miller columns
 
-- `components/MillerColumns.svelte` — multi-column cascading browser
+- `components/MillerColumns.svelte` — multi-column cascading browser; computes the shown ancestor columns and filters their entries
+- `state/miller-columns.svelte.ts` — ancestor listings (lazy-loaded on first mount, #1642): request slot per column, bounded cache of hidden listings, a watch per shown column, watcher changes through `requestRefresh` (WHEN), local mutations (`subscribeToLocalFileChanges`) re-read the shown column immediately (#598). Reads use the fresh `loadDirectory` snapshot API, including reentry after an unwatched gap; emptiness probes are revision guarded. Coverage: `tests/state/miller-columns.test.ts`, `e2e/miller-columns*.spec.ts`, `e2e-tauri/specs/miller-column-freshness.spec.ts`.
 - `state/commands/view-commands.ts` — `view.toggleMillerColumns`, millerLayers0-3
-- reuses `explorer.svelte.ts` per-column listing + `directory-listing.ts`
 - FLOW: each column is a listing of the selected dir in the prior column; layer count is a view command/setting.
 - ISLAND (#434): in island mode with no sidebar the ACTIVE pane's columns are hoisted to a left island in `+page.svelte` (`millerAsLeftIsland`); `ExplorerPane.svelte` suppresses the inline copy via the same `settingsStore.islandMode` derived so they render exactly once (a divergent per-platform check double-mounted them).
 

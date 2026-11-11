@@ -20,6 +20,7 @@
   import { getZoomFactor } from "$lib/domain/zoom";
   import { openNewWindow } from "$lib/state/commands/shared";
   import { showTabStrip } from "$lib/domain/titlebar";
+  import { stepTabDrag, TAB_DRAG_IDLE, type TabDrag, type TabDragEffect, type TabDragEvent } from "$lib/domain/tab-drag";
   import NamedFolderIcon from "./NamedFolderIcon.svelte";
   import type { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
@@ -128,24 +129,23 @@
   let fileDropTargetTabId = $state<string | null>(null);
   let draggingTabId = $state<string | null>(null);
 
-  let tabPtr: {
-    tabId: string;
+  /** Resources one press-to-release session acquires; its identity is the session. */
+  interface DragSession {
     dragId: string | null;
     transfer: TabTransfer | null;
-    startX: number;
-    startY: number;
-    active: boolean;
     ghost: HTMLElement | null;
-    /** Chrome-style live detach (#176): once the drag leaves the strip, the
-     *  tab becomes a real window that follows the cursor until release. */
-    detachedWin: WebviewWindow | null;
-    detaching: boolean;
     followRaf: number;
-  } | null = null;
+  }
+  // The lifecycle (pressed → dragging → detaching → detached, #176) is the
+  // domain reducer's; this component runs the effect each transition names.
+  let drag: TabDrag<DragSession, WebviewWindow> = TAB_DRAG_IDLE;
+  function send(event: TabDragEvent<DragSession, WebviewWindow>): TabDragEffect {
+    const step = stepTabDrag(drag, event);
+    drag = step.drag;
+    return step.effect;
+  }
 
   const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-  /** How far below the strip the pointer must travel before detaching. */
-  const DETACH_THRESHOLD_PX = 36;
   let suppressNextClick = false;
 
   function handleTabMouseDown(event: MouseEvent, tabId: string): void {
@@ -153,18 +153,8 @@
     if ((event.target as HTMLElement).closest(".tab-close")) return; // close btn owns its clicks
     if (renamingTabId === tabId) return; // rename input owns the pointer
     cancelTabDrag();
-    tabPtr = {
-      tabId,
-      dragId: null,
-      transfer: null,
-      startX: event.clientX,
-      startY: event.clientY,
-      active: false,
-      ghost: null,
-      detachedWin: null,
-      detaching: false,
-      followRaf: 0,
-    };
+    const session: DragSession = { dragId: null, transfer: null, ghost: null, followRaf: 0 };
+    send({ type: "press", session, tabId, at: { x: event.clientX, y: event.clientY } });
     window.addEventListener("mousemove", onTabMouseMove, true);
     window.addEventListener("mouseup", onTabMouseUp, true);
     window.addEventListener("keydown", onTabDragKey, true);
@@ -194,70 +184,63 @@
     return !!(document.elementFromPoint(x, y) as HTMLElement | null)?.closest?.(".tab-area");
   }
 
+  /** The press became a drag: acquire the transfer and show the ghost. */
+  function activateTabDrag(): boolean {
+    if (drag.kind !== "dragging") return false;
+    const { session, tabId } = drag;
+    session.transfer = windowTabsManager.beginTabTransfer(tabId);
+    if (!session.transfer) return false;
+    session.dragId = tabDragState.start({
+      sourceWindow: windowTabsManager.windowLabel,
+      tabId,
+      snapshot: session.transfer.snapshot,
+    });
+    if (!session.dragId) return false;
+    draggingTabId = tabId;
+    session.ghost = makeTabGhost(tabId);
+    return true;
+  }
+
   function onTabMouseMove(event: MouseEvent): void {
-    if (!tabPtr) return;
-    if (!tabPtr.active) {
-      if (Math.hypot(event.clientX - tabPtr.startX, event.clientY - tabPtr.startY) < 5) return;
-      const transfer = windowTabsManager.beginTabTransfer(tabPtr.tabId);
-      if (!transfer) { cancelTabDrag(); return; }
-      tabPtr.transfer = transfer;
-      tabPtr.dragId = tabDragState.start({
-        sourceWindow: windowTabsManager.windowLabel,
-        tabId: tabPtr.tabId,
-        snapshot: transfer.snapshot,
-      });
-      if (!tabPtr.dragId) { cancelTabDrag(); return; }
-      tabPtr.active = true;
-      draggingTabId = tabPtr.tabId;
-      tabPtr.ghost = makeTabGhost(tabPtr.tabId);
-    }
-
-    // A detached window follows the cursor until release (#176).
-    if (tabPtr.detachedWin) {
-      followDetachedWindow(event);
-      return;
-    }
-    if (tabPtr.detaching) return; // window creation in flight
-
-    // Chrome-style detach: once the pointer leaves the strip by more than the
-    // threshold, the tab becomes a real window immediately (Tauri only — the
+    const at = { x: event.clientX, y: event.clientY };
+    // Chrome-style detach leaves the strip as a real window (Tauri only — the
     // browser E2E environment keeps the ghost-until-release behavior).
-    if (
-      isTauri &&
-      !tabAreaAtPoint(event.clientX, event.clientY) &&
-      Math.abs(event.clientY - tabPtr.startY) > DETACH_THRESHOLD_PX
-    ) {
-      void detachIntoWindow(event).catch(() => {});
-      return;
+    const move = () => send({ type: "move", at, outsideStrip: drag.kind === "dragging" && isTauri && !tabAreaAtPoint(at.x, at.y) });
+    let effect = move();
+    if (effect === "activate") {
+      if (!activateTabDrag()) { cancelTabDrag(); return; }
+      effect = move();
     }
-
-    const zoom = getZoomFactor();
-    tabPtr.ghost!.style.left = `${event.clientX / zoom + 12}px`;
-    tabPtr.ghost!.style.top = `${event.clientY / zoom + 12}px`;
-    const over = tabAtPoint(event.clientX, event.clientY);
-    dropTargetTabId = over && over !== tabPtr.tabId ? over : null;
+    if (effect === "follow") followDetachedWindow(event);
+    else if (effect === "detach") void detachIntoWindow(event).catch(() => {});
+    else if (effect === "hover" && drag.kind === "dragging") {
+      const zoom = getZoomFactor();
+      drag.session.ghost!.style.left = `${at.x / zoom + 12}px`;
+      drag.session.ghost!.style.top = `${at.y / zoom + 12}px`;
+      const over = tabAtPoint(at.x, at.y);
+      dropTargetTabId = over && over !== drag.tabId ? over : null;
+    }
   }
 
   /** Detach the dragged tab into a real window at the cursor (#176).
    *  A single-tab window moves itself natively instead (exactly Chrome). */
   async function detachIntoWindow(event: MouseEvent): Promise<void> {
-    if (!tabPtr) return;
-    const ptr = tabPtr;
-    ptr.detaching = true;
-    ptr.ghost?.remove();
-    ptr.ghost = null;
+    if (drag.kind !== "detaching") return;
+    const session = drag.session;
+    session.ghost?.remove();
+    session.ghost = null;
+    let child: WebviewWindow | null = null;
 
     const pending = tabDragState.read();
-    if (!pending || pending.id !== ptr.dragId || pending.sourceWindow !== windowTabsManager.windowLabel) {
-      ptr.detaching = false;
-      ptr.transfer?.cancel();
-      if (tabPtr === ptr) cancelTabDrag();
+    if (!pending || pending.id !== session.dragId || pending.sourceWindow !== windowTabsManager.windowLabel) {
+      session.transfer?.cancel();
+      settleDetach(session, null);
       return;
     }
 
     // Dragging the only tab = move the whole window, natively.
     if (windowTabsManager.totalTabCount === 1) {
-      ptr.detaching = false;
+      session.transfer?.cancel();
       cancelTabDrag();
       try {
         const { getCurrentWindow } = await import("@tauri-apps/api/window");
@@ -275,52 +258,62 @@
         y: event.screenY * dpr,
       });
       if (!win || win.kind !== "fresh") return;
-      ptr.transfer?.complete();
-      tabDragState.clear(ptr.dragId);
-      // A released or replaced pointer cannot acquire this child for following.
-      if (tabPtr === ptr) ptr.detachedWin = win.window;
+      session.transfer?.complete();
+      tabDragState.clear(session.dragId);
+      child = win.window;
     } finally {
-      ptr.transfer?.cancel();
-      ptr.detaching = false;
-      if (tabPtr === ptr && !ptr.detachedWin) cancelTabDrag();
+      session.transfer?.cancel();
+      // A released or replaced session cannot acquire this child for following.
+      settleDetach(session, child);
     }
+  }
+
+  function settleDetach(session: DragSession, child: WebviewWindow | null): void {
+    const from = drag;
+    if (send({ type: "detached", session, window: child }) === "end") endTabDrag(from, false);
   }
 
   /** rAF-throttled reposition of the detached window under the cursor. */
   function followDetachedWindow(event: MouseEvent): void {
-    if (!tabPtr?.detachedWin) return;
-    if (tabPtr.followRaf) return;
-    const ptr = tabPtr;
-    const child = ptr.detachedWin;
+    if (drag.kind !== "detached" || drag.session.followRaf) return;
+    const { session, window: child } = drag;
+    const following = () => drag.kind === "detached" && drag.session === session;
     const { screenX, screenY } = event;
-    ptr.followRaf = requestAnimationFrame(() => {
-      ptr.followRaf = 0;
-      if (tabPtr !== ptr || ptr.detachedWin !== child) return;
+    session.followRaf = requestAnimationFrame(() => {
+      session.followRaf = 0;
+      if (!following()) return;
       const dpr = window.devicePixelRatio || 1;
       void import("@tauri-apps/api/dpi").then(({ PhysicalPosition }) => {
-        if (tabPtr !== ptr || ptr.detachedWin !== child) return;
-        return child?.setPosition(new PhysicalPosition(Math.round(screenX * dpr - 120), Math.round(screenY * dpr - 16)));
+        if (!following()) return;
+        return child.setPosition(new PhysicalPosition(Math.round(screenX * dpr - 120), Math.round(screenY * dpr - 16)));
       }).catch(() => {});
     });
   }
 
   /** Tear down an in-flight drag without any drop action. */
   function cancelTabDrag(): void {
+    const from = drag;
+    send({ type: "cancel" });
     // An accepted native operation retains its lease until its own settlement.
-    if (tabPtr && !tabPtr.detaching) tabPtr.transfer?.cancel();
-    tabDragState.clear(tabPtr?.dragId);
-    if (tabPtr?.followRaf) cancelAnimationFrame(tabPtr.followRaf);
-    tabPtr?.ghost?.remove();
-    tabPtr = null;
+    endTabDrag(from, from.kind !== "detaching");
+  }
+
+  function endTabDrag(from: TabDrag<DragSession, WebviewWindow>, cancelTransfer: boolean): void {
+    const session = from.kind === "idle" ? null : from.session;
+    if (cancelTransfer) session?.transfer?.cancel();
+    tabDragState.clear(session?.dragId);
+    if (session?.followRaf) cancelAnimationFrame(session.followRaf);
+    session?.ghost?.remove();
     draggingTabId = null;
     dropTargetTabId = null;
     removeTabDragListeners();
   }
 
   async function onTabMouseUp(event: MouseEvent): Promise<void> {
-    if (!tabPtr) return;
-    const ptr = tabPtr;
-    tabPtr = null;
+    const from = drag;
+    const effect = send({ type: "release" });
+    if (from.kind === "idle") return;
+    const ptr = from.session;
     removeTabDragListeners();
     if (ptr.followRaf) cancelAnimationFrame(ptr.followRaf);
     ptr.ghost?.remove();
@@ -330,12 +323,12 @@
     const pending = tabDragState.read();
     tabDragState.clear(ptr.dragId);
 
-    if (!ptr.active) return; // a plain click — the tab's onclick switches tabs
+    if (effect === "click") return; // a plain click — the tab's onclick switches tabs
 
     // Already detached into a live window (#176): the tab moved when the
     // window was created; release just ends the follow and focuses it.
-    if (ptr.detachedWin || ptr.detaching) {
-      void ptr.detachedWin?.setFocus().catch(() => {});
+    if (effect === "focus") {
+      if (from.kind === "detached") void from.window.setFocus().catch(() => {});
       return;
     }
 
@@ -346,10 +339,10 @@
       // 1) Released over the tab strip in THIS window → reorder.
       if (tabAreaAtPoint(event.clientX, event.clientY)) {
         const overId = tabAtPoint(event.clientX, event.clientY);
-        if (overId && overId !== ptr.tabId) {
-          const from = tabs.findIndex((t) => t.id === ptr.tabId);
+        if (overId && overId !== from.tabId) {
+          const fromIndex = tabs.findIndex((t) => t.id === from.tabId);
           const to = tabs.findIndex((t) => t.id === overId);
-          if (from >= 0 && to >= 0) windowTabsManager.reorderTabs(from, to);
+          if (fromIndex >= 0 && to >= 0) windowTabsManager.reorderTabs(fromIndex, to);
         }
         return;
       }
@@ -381,7 +374,7 @@
   }
 
   function onTabDragKey(event: KeyboardEvent): void {
-    if (event.key === "Escape" && tabPtr) {
+    if (event.key === "Escape" && drag.kind !== "idle") {
       // If already detached the window simply stops following (it exists now).
       cancelTabDrag();
     }

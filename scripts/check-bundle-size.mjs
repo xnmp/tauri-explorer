@@ -153,7 +153,12 @@ const STARTUP_RAW_BUDGET = 866_617;
 // terminal cwd sync convert typed text back to wire form. Importing the helper
 // from the lazy conflict dialog or the AI-rename plugin split it into its own
 // startup chunk (+300 / +95), so those stay on backend display text.
-const STARTUP_GZIP_BUDGET = 283_136;
+// Raised 283,136 -> 283,648 (+512) for #1642. The explicit tab-drag reducer
+// and shared pointer threshold must be available synchronously for the first
+// gesture; together with the Miller freshness fixes the graph measures
+// 283,383 bytes gzip (dev #1641: 283,003, +380). Miller listing state and Git
+// detail loading remain lazy. The raw-byte budget is unchanged.
+const STARTUP_GZIP_BUDGET = 283_648;
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const clientDir = resolve(repoRoot, ".svelte-kit/output/client");

@@ -2,6 +2,27 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.24.2 — 2026-11-11
+
+### Fixed
+
+- Files whose names are not valid UTF-8 can be listed, opened, renamed,
+  copied, moved, deleted and undone exactly, instead of failing or redirecting
+  a delete to another file; features not yet migrated refuse such names before
+  making any change (#1592).
+- Discard runs smudge filter drivers, so Git LFS files are restored as content
+  rather than pointer text (#1616).
+- Unstage and other index writers no longer drop a concurrent staging command
+  (#1617).
+- Git status rows match `git status` for intent-to-add, `rm --cached` and
+  `status.renames` (#1619).
+- Details view headers show hairline separators between columns (#1644).
+
+### Changed
+
+- Miller column listings and tab dragging were restructured for stability
+  (#1642).
+
 ## v1.24.1 — 2026-11-10
 
 ### Fixed

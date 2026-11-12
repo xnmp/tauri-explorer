@@ -95,4 +95,42 @@ test.describe("Island / panel layout (#434)", () => {
     // while the island hoist keyed off the broader island mode.
     await expect(page.locator(".miller-columns")).toHaveCount(1);
   });
+
+  test("the terminal floats on its own island in island mode (#1651)", async ({ page }) => {
+    await page.goto(HOME_URL);
+    await waitForEntries(page);
+    await withSettings(page, { layoutTheme: "floating-islands" });
+    await expect(page.locator("html")).toHaveAttribute("data-layout-base", "floating-islands");
+
+    await page.keyboard.press("Alt+m"); await page.keyboard.press("t");
+    const terminal = page.locator(".terminal-panel");
+    await expect(terminal).toBeVisible();
+
+    const geometry = await page.evaluate(() => {
+      const term = document.querySelector<HTMLElement>(".terminal-panel")!;
+      const panes = document.querySelector<HTMLElement>("[data-region='panes']")!;
+      const style = getComputedStyle(term);
+      return {
+        radius: parseFloat(style.borderTopLeftRadius),
+        shadow: style.boxShadow,
+        term: term.getBoundingClientRect().toJSON(),
+        panes: panes.getBoundingClientRect().toJSON(),
+        viewport: document.documentElement.clientWidth,
+      };
+    });
+    // Rounded and lifted like the other islands...
+    expect(geometry.radius).toBeGreaterThan(0);
+    expect(geometry.shadow).not.toBe("none");
+    // ...inset from the window edges, with a visible gap under the panes
+    // rather than butting against them.
+    expect(geometry.term.left).toBeGreaterThan(0);
+    expect(geometry.term.right).toBeLessThan(geometry.viewport);
+    expect(geometry.term.top - geometry.panes.bottom).toBeGreaterThanOrEqual(4);
+
+    await page.screenshot({
+      path: "screenshots/fix/1651-terminal-should-match-theme-colours/terminal-island.png",
+      animations: "disabled",
+    });
+  });
 });
+

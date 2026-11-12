@@ -85,19 +85,26 @@
     if (term && terminalPanelStore.consumeFocus()) term.focus();
   }
 
-  /** Resolve a CSS variable to a computed color, inside the theme cascade. */
+  /** Sentinel computed color meaning "theme variable did not resolve". */
+  const UNRESOLVED_COLOR = "rgb(1, 2, 3)";
+
+  /**
+   * Resolve a CSS variable to a computed color, inside the theme cascade.
+   * "" when the variable is unset or is not a color (e.g. a gradient): the
+   * probe then inherits its wrapper's sentinel color instead.
+   */
   function resolveThemeColor(varName: string): string {
     if (!panelEl) return "";
+    const wrapper = document.createElement("span");
+    wrapper.style.display = "none";
+    wrapper.style.color = UNRESOLVED_COLOR;
     const probe = document.createElement("span");
     probe.style.color = `var(${varName})`;
-    probe.style.display = "none";
-    panelEl.appendChild(probe);
+    wrapper.appendChild(probe);
+    panelEl.appendChild(wrapper);
     const color = getComputedStyle(probe).color;
-    probe.remove();
-    // An unset variable computes to the inherited color; treat the probe's
-    // default sentinel as "unset" by checking the raw variable exists.
-    const raw = getComputedStyle(panelEl).getPropertyValue(varName).trim();
-    return raw ? color : "";
+    wrapper.remove();
+    return color === UNRESOLVED_COLOR ? "" : color;
   }
 
   async function spawnShell(restart = false): Promise<void> {

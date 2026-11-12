@@ -5098,6 +5098,26 @@ fn model_issue_1405_counterexample() {
     m.quiesce()
         .unwrap_or_else(|cause| panic!("quiesce: {cause}"));
 }
+/// Shrunk counterexample from a Windows `Rust platforms` dev-push run
+/// (2026-11-12): a bound spool reservation whose provider completed before
+/// the consumer acquired its reply, then swept.
+#[test]
+fn model_bound_spool_complete_acquire_sweep_counterexample() {
+    use Command::*;
+    let mut m = Machine::new();
+    for command in [
+        Admit(0, false),
+        SpoolReserve(0, true, false),
+        ProviderComplete(0),
+        Acquire(0),
+        Sweep,
+    ] {
+        m.apply(command)
+            .unwrap_or_else(|cause| panic!("at={command:?}: {cause}"));
+    }
+    m.quiesce()
+        .unwrap_or_else(|cause| panic!("quiesce: {cause}"));
+}
 #[test]
 fn model_standalone_unbound_spool_does_not_revive_settled_execution() {
     let mut m = Machine::new();

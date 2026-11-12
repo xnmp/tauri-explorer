@@ -629,7 +629,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `terminal-input-queue.ts` — the terminal's one input queue: strings and promises (paste reads, insertions) in call order, held until the terminal has an id, sent through an ordered writer with gap-free `terminal_write` sequence numbers; unsent input never crosses to a successor stream (#882).
 - `terminal-paste.ts` — per-platform paste source order with injected browser/native readers, and xterm-equivalent paste bytes (CR line endings, bracketed paste) (#732, #882).
 - `terminal-shell.ts` — shell dialect profile + WSL↔Windows path translation (#409/#418).
-- `terminal-theme.ts` — map CSS theme vars → xterm.js theme.
+- `terminal-theme.ts` — map CSS theme vars → xterm.js theme (pane-surface background, ANSI palette from status colours or `--terminal-*` overrides).
 - `content-search.ts` — `ContentMatch`/`ContentSearchResult` types for ripgrep results; re-exported by `api/search.ts`.
 - `crash-report.ts` — pure crash-dedupe + log-tail→markdown helpers behind `api/crash.ts`.
 - `user-report.ts` — report contracts and pure prefilled-GitHub fallback URL builder.

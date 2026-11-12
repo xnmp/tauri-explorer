@@ -2,6 +2,15 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.24.3 — 2026-11-12
+
+### Fixed
+
+- The terminal matches the active theme: its background is the same surface
+  as the file panes, and its ANSI colours follow the theme's status and accent
+  colours (black and white stay readable on light themes). In island mode it
+  floats on its own island (#1651).
+
 ## v1.24.2 — 2026-11-11
 
 ### Fixed

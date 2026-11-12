@@ -189,6 +189,52 @@ test.describe("Terminal panel", () => {
     await expect.poll(readBg).not.toBe(initialBg);
   });
 
+  test("terminal matches the theme: pane surface background and status-colored ANSI (#1651)", async ({ page }) => {
+    await page.keyboard.press("Alt+m"); await page.keyboard.press("t");
+    const panel = page.locator(".terminal-panel");
+    await expect(panel).toBeVisible();
+
+    // Resolve the theme's own colors through the browser, so the oracle is
+    // the active theme rather than a transcribed palette.
+    const colors = await panel.evaluate((el) => {
+      const resolve = (value: string) => {
+        const probe = document.createElement("span");
+        probe.style.color = value;
+        el.appendChild(probe);
+        const color = getComputedStyle(probe).color;
+        probe.remove();
+        return color;
+      };
+      return {
+        panel: getComputedStyle(el).backgroundColor,
+        solid: resolve("var(--background-solid)"),
+        critical: resolve("var(--system-critical)"),
+        accent: resolve("var(--accent)"),
+      };
+    });
+    // The card surface sits over the base, so the terminal is no longer the
+    // bare window color that read as a different panel.
+    expect(colors.panel).not.toBe(colors.solid);
+
+    // xterm's DOM renderer emits its palette as `.xterm-fg-N { color: #hex }`.
+    const ansi = (index: number) =>
+      page.evaluate((i) => {
+        const sheet = [...document.querySelectorAll("style")]
+          .find((s) => s.textContent?.includes(".xterm-fg-1 "))?.textContent ?? "";
+        // Opaque colors are written as #rrggbbaa; compare the rgb part.
+        return sheet.match(new RegExp(`\\.xterm-fg-${i} \\{ color: (#[0-9a-f]{6})`, "i"))?.[1]?.toLowerCase() ?? "";
+      }, index);
+    const hex = (rgb: string) =>
+      "#" + (rgb.match(/\d+/g) ?? []).slice(0, 3).map((n) => Number(n).toString(16).padStart(2, "0")).join("");
+    await expect.poll(() => ansi(1)).toBe(hex(colors.critical));
+    await expect.poll(() => ansi(4)).toBe(hex(colors.accent));
+
+    await page.screenshot({
+      path: "screenshots/fix/1651-terminal-should-match-theme-colours/terminal-theme-colours.png",
+      animations: "disabled",
+    });
+  });
+
   test("xterm colors follow a theme switch committed in the picker (#261)", async ({ page }) => {
     await page.keyboard.press("Alt+m"); await page.keyboard.press("t");
     await expect(page.locator(".terminal-panel")).toBeVisible();

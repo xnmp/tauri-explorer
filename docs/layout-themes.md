@@ -117,7 +117,7 @@ names are internal and change without notice; `data-region` names do not.
 | `preview` | Preview panel wrapper | |
 | `preview-body` | Preview panel content | `data-fullscreen` while fullscreen |
 | `scm` | Source control panel | `data-island` when floating |
-| `terminal` | Terminal panel | |
+| `terminal` | Terminal panel (counter-zoomed, #419: scale lengths by `var(--app-zoom)`) | |
 | `status-bar` | Status bar | |
 
 Root (`<html>`) attributes describe the window and can scope rules:

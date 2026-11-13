@@ -28,8 +28,6 @@
   import { getBookmarkDropHint, getEffectiveDragKind } from "$lib/domain/bookmark-drop-feedback";
   import { isExplorerFileTransfer } from "$lib/domain/file-drop";
   import NamedFolderIcon from "./NamedFolderIcon.svelte";
-  import RecentCountMenu from "./RecentCountMenu.svelte";
-  import SidebarSectionMenu from "./SidebarSectionMenu.svelte";
 
   const recentDrag = createHtml5FileDrag(() => {}, "link");
   const sidebarDrag = usesPointerDrag ? useSidebarDrag() : null;
@@ -470,11 +468,13 @@
     {/if}
 
     {#if bookmarksMenuPos}
-      <SidebarSectionMenu position={bookmarksMenuPos} onclose={() => bookmarksMenuPos = null}>
-        <button class="section-menu-item" role="menuitem" onclick={restoreDefaultFolders} disabled={hiddenSystemFolders.size === 0}>
-          Restore default folders
-        </button>
-      </SidebarSectionMenu>
+      {#await import("./SidebarSectionMenu.svelte") then { default: SidebarSectionMenu }}
+        <SidebarSectionMenu position={bookmarksMenuPos} onclose={() => bookmarksMenuPos = null}>
+          <button class="section-menu-item" role="menuitem" onclick={restoreDefaultFolders} disabled={hiddenSystemFolders.size === 0}>
+            Restore default folders
+          </button>
+        </SidebarSectionMenu>
+      {/await}
     {/if}
   </div>
 
@@ -613,7 +613,7 @@
       {/if}
 
       {#if recentMenuPos}
-        <RecentCountMenu position={recentMenuPos} onclose={() => recentMenuPos = null} />
+        {#await import("./RecentCountMenu.svelte") then { default: Menu }}<Menu position={recentMenuPos} onclose={() => recentMenuPos = null} />{/await}
       {/if}
     </div>
   {/if}

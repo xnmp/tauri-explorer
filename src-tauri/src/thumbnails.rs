@@ -598,9 +598,11 @@ fn decode_avif_bytes(bytes: &[u8]) -> Result<image::DynamicImage, AppError> {
             let maximum = (1u32 << meta.depth) - 1;
             let samples: Vec<u16> = frame
                 .pixels
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|sample| {
-                    let value = u32::from(u16::from_ne_bytes([sample[0], sample[1]]));
+                    let value = u32::from(u16::from_ne_bytes(*sample));
                     ((value * 65_535 + maximum / 2) / maximum) as u16
                 })
                 .collect();

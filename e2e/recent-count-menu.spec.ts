@@ -4,7 +4,10 @@ import { waitForEntries } from "./helpers";
 // #1661: right-clicking the sidebar Recent heading chooses how many recent
 // locations it lists, and the choice persists as the shared setting.
 const now = new Date("2026-10-01T12:00:00Z");
-const paths = Array.from({ length: 8 }, (_, i) => `/home/user/Documents/project/r${i}`);
+// Existing mock directories: the sidebar prunes missing recent paths shortly
+// after mount, which would change the list underneath the assertions.
+const project = "/home/user/Documents/project";
+const paths = ["/home/user/Archive", project, ...["assets", "assets/fonts", "assets/images", "config", "docs", "lib"].map((dir) => `${project}/${dir}`)];
 
 test("Recent header context menu changes the number of listed recent locations", async ({ page }) => {
   await page.clock.setFixedTime(now);
@@ -39,4 +42,15 @@ test("Recent header context menu changes the number of listed recent locations",
   await page.reload();
   await waitForEntries(page);
   await expect(items).toHaveCount(8);
+});
+
+test("Bookmarks header context menu still offers to restore default folders", async ({ page }) => {
+  await page.goto("/?path=/home/user");
+  await waitForEntries(page);
+  await page.locator('.section-header:has(> span:text-is("Bookmarks"))').click({ button: "right" });
+  const restore = page.getByRole("menuitem", { name: "Restore default folders" });
+  await expect(restore).toBeVisible();
+  await expect(restore).toBeDisabled();
+  await page.locator(".section-menu-backdrop").click({ position: { x: 600, y: 300 } });
+  await expect(restore).toBeHidden();
 });

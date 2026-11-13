@@ -18,7 +18,6 @@
   import { frecencyStore } from "$lib/state/frecency.svelte";
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
-  import { recentItemsCountChoices } from "$lib/domain/settings-numbers";
   import { basename, directoryKey } from "$lib/domain/path";
   import { buildQuickAccessFolders } from "$lib/domain/quick-access";
   import { loadPersisted, savePersisted } from "$lib/state/persisted";
@@ -29,6 +28,8 @@
   import { getBookmarkDropHint, getEffectiveDragKind } from "$lib/domain/bookmark-drop-feedback";
   import { isExplorerFileTransfer } from "$lib/domain/file-drop";
   import NamedFolderIcon from "./NamedFolderIcon.svelte";
+  import RecentCountMenu from "./RecentCountMenu.svelte";
+  import SidebarSectionMenu from "./SidebarSectionMenu.svelte";
 
   const recentDrag = createHtml5FileDrag(() => {}, "link");
   const sidebarDrag = usesPointerDrag ? useSidebarDrag() : null;
@@ -204,11 +205,6 @@
   function onRecentHeaderContextMenu(event: MouseEvent) {
     event.preventDefault();
     recentMenuPos = { x: event.clientX, y: event.clientY };
-  }
-
-  function chooseRecentCount(count: number) {
-    settingsStore.setRecentItemsCount(count);
-    recentMenuPos = null;
   }
 
   const quickAccessFolders = $derived(
@@ -474,23 +470,11 @@
     {/if}
 
     {#if bookmarksMenuPos}
-      <div
-        class="section-menu-backdrop"
-        onclick={() => bookmarksMenuPos = null}
-        oncontextmenu={(e) => { e.preventDefault(); bookmarksMenuPos = null; }}
-        onkeydown={(e) => { if (e.key === 'Escape') bookmarksMenuPos = null; }}
-        role="presentation"
-      ></div>
-      <div class="section-menu" style="left: {bookmarksMenuPos.x}px; top: {bookmarksMenuPos.y}px;" role="menu">
-        <button
-          class="section-menu-item"
-          role="menuitem"
-          onclick={restoreDefaultFolders}
-          disabled={hiddenSystemFolders.size === 0}
-        >
+      <SidebarSectionMenu position={bookmarksMenuPos} onclose={() => bookmarksMenuPos = null}>
+        <button class="section-menu-item" role="menuitem" onclick={restoreDefaultFolders} disabled={hiddenSystemFolders.size === 0}>
           Restore default folders
         </button>
-      </div>
+      </SidebarSectionMenu>
     {/if}
   </div>
 
@@ -629,34 +613,7 @@
       {/if}
 
       {#if recentMenuPos}
-        <div
-          class="section-menu-backdrop"
-          onclick={() => recentMenuPos = null}
-          oncontextmenu={(e) => { e.preventDefault(); recentMenuPos = null; }}
-          onkeydown={(e) => { if (e.key === 'Escape') recentMenuPos = null; }}
-          role="presentation"
-        ></div>
-        <div class="section-menu recent-count-menu" style="left: {recentMenuPos.x}px; top: {recentMenuPos.y}px;" role="menu" aria-label="Recent items to show">
-          <div class="section-menu-label">Show recent items</div>
-          {#each recentItemsCountChoices(settingsStore.recentItemsCount) as count (count)}
-            {@const checked = count === settingsStore.recentItemsCount}
-            <button
-              class="section-menu-item section-menu-radio"
-              role="menuitemradio"
-              aria-checked={checked}
-              onclick={() => chooseRecentCount(count)}
-            >
-              <span class="section-menu-check" aria-hidden="true">
-                {#if checked}
-                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                    <path d="M2.5 6.25L5 8.75L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                  </svg>
-                {/if}
-              </span>
-              {count}
-            </button>
-          {/each}
-        </div>
+        <RecentCountMenu position={recentMenuPos} onclose={() => recentMenuPos = null} />
       {/if}
     </div>
   {/if}
@@ -871,62 +828,5 @@
   .bookmark-drop-target:global(.drop-target) {
     background: var(--subtle-fill-secondary);
     box-shadow: inset 0 0 0 2px var(--accent);
-  }
-
-  .section-menu-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 99;
-  }
-
-  .section-menu {
-    position: fixed;
-    z-index: 100;
-    min-width: 180px;
-    padding: 4px;
-    background: var(--background-card, var(--background-solid));
-    border: 1px solid var(--divider);
-    border-radius: var(--radius-md, 6px);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
-  }
-
-  .section-menu-item {
-    display: block;
-    width: 100%;
-    padding: 6px 10px;
-    background: transparent;
-    border: none;
-    border-radius: var(--radius-sm);
-    font-family: inherit;
-    font-size: 13px;
-    color: var(--text-primary);
-    text-align: left;
-    cursor: pointer;
-  }
-
-  .section-menu-item:hover:not(:disabled) {
-    background: var(--subtle-fill-secondary);
-  }
-
-  .section-menu-label {
-    padding: 4px 10px 2px;
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--text-tertiary);
-  }
-  .section-menu-radio {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .section-menu-check {
-    display: inline-flex;
-    width: 12px;
-    height: 12px;
-    color: var(--accent-text, var(--accent));
-  }
-  .section-menu-item:disabled {
-    color: var(--text-tertiary);
-    cursor: default;
   }
 </style>

@@ -91,6 +91,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `CaretPicker.svelte` — subdirectory dropdown from a breadcrumb separator caret.
 - `Sidebar.svelte` — activity-bar + hosts registered sidebar views.
 - `FilesSidebarView.svelte` — Files sidebar: bookmarks, recent, drives tree.
+- `RecentCountMenu.svelte` — Recent header context menu choosing the sidebar recent-item count (#1661; choices from `domain/settings-numbers.ts`).
+- `SidebarSectionMenu.svelte` — shared backdrop/popup shell for sidebar section-header context menus (Bookmarks, Recent).
 - `ScmSidebarView.svelte` — Source Control sidebar panel (#54).
 - `scm/ScmSection.svelte` — one SCM section (Merge/Staged/Changes/Untracked): collapsible header + flat list or folder tree rows with hover actions (history, stage/unstage, discard/remove, archive, Trash, .gitignore).
 - `scm/ScmCommitPanel.svelte` — branch line + flat/tree toggle, commit message (Enter commits, Ctrl/Cmd+Enter amends), Amend toggle, Commit button.

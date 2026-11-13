@@ -144,16 +144,16 @@ fn unix_time_ms() -> u64 {
         .unwrap_or(u64::MAX)
 }
 
-fn is_test_watched(_path: &Path) -> bool {
-    #[cfg(test)]
-    if TEST_WATCHED_PATHS
+#[cfg(test)]
+fn is_test_watched(path: &Path) -> bool {
+    TEST_WATCHED_PATHS
         .get_or_init(|| Mutex::new(std::collections::HashSet::new()))
         .lock()
-        .is_ok_and(|paths| paths.contains(_path))
-    {
-        return true;
-    }
+        .is_ok_and(|paths| paths.contains(path))
+}
 
+#[cfg(not(test))]
+fn is_test_watched(_path: &Path) -> bool {
     false
 }
 

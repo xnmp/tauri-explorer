@@ -18,6 +18,7 @@
   import { frecencyStore } from "$lib/state/frecency.svelte";
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import { recentItemsCountChoices } from "$lib/domain/settings-numbers";
   import { basename, directoryKey } from "$lib/domain/path";
   import { buildQuickAccessFolders } from "$lib/domain/quick-access";
   import { loadPersisted, savePersisted } from "$lib/state/persisted";
@@ -195,6 +196,19 @@
     hiddenSystemFolders = new Set();
     savePersisted("explorer-hidden-system-folders", []);
     bookmarksMenuPos = null;
+  }
+
+  // Context menu on the Recent header choosing how many entries it lists (#1661).
+  let recentMenuPos = $state<{ x: number; y: number } | null>(null);
+
+  function onRecentHeaderContextMenu(event: MouseEvent) {
+    event.preventDefault();
+    recentMenuPos = { x: event.clientX, y: event.clientY };
+  }
+
+  function chooseRecentCount(count: number) {
+    settingsStore.setRecentItemsCount(count);
+    recentMenuPos = null;
   }
 
   const quickAccessFolders = $derived(
@@ -568,6 +582,7 @@
       <button
         data-region="sidebar-section-header" class="section-header"
         onclick={() => recentExpanded = !recentExpanded}
+        oncontextmenu={onRecentHeaderContextMenu}
         aria-expanded={recentExpanded}
       >
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none" class="chevron" class:expanded={recentExpanded}>
@@ -609,6 +624,37 @@
                 </svg>
               </button>
             </div>
+          {/each}
+        </div>
+      {/if}
+
+      {#if recentMenuPos}
+        <div
+          class="section-menu-backdrop"
+          onclick={() => recentMenuPos = null}
+          oncontextmenu={(e) => { e.preventDefault(); recentMenuPos = null; }}
+          onkeydown={(e) => { if (e.key === 'Escape') recentMenuPos = null; }}
+          role="presentation"
+        ></div>
+        <div class="section-menu recent-count-menu" style="left: {recentMenuPos.x}px; top: {recentMenuPos.y}px;" role="menu" aria-label="Recent items to show">
+          <div class="section-menu-label">Show recent items</div>
+          {#each recentItemsCountChoices(settingsStore.recentItemsCount) as count (count)}
+            {@const checked = count === settingsStore.recentItemsCount}
+            <button
+              class="section-menu-item section-menu-radio"
+              role="menuitemradio"
+              aria-checked={checked}
+              onclick={() => chooseRecentCount(count)}
+            >
+              <span class="section-menu-check" aria-hidden="true">
+                {#if checked}
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                    <path d="M2.5 6.25L5 8.75L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                {/if}
+              </span>
+              {count}
+            </button>
           {/each}
         </div>
       {/if}
@@ -862,6 +908,23 @@
     background: var(--subtle-fill-secondary);
   }
 
+  .section-menu-label {
+    padding: 4px 10px 2px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-tertiary);
+  }
+  .section-menu-radio {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .section-menu-check {
+    display: inline-flex;
+    width: 12px;
+    height: 12px;
+    color: var(--accent-text, var(--accent));
+  }
   .section-menu-item:disabled {
     color: var(--text-tertiary);
     cursor: default;

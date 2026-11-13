@@ -58,12 +58,10 @@ pub(crate) fn check_image_file_size(path: &Path) -> Result<(), AppError> {
 }
 
 /// Supported image extensions for thumbnail generation.
-/// AVIF decodes via image's avif-native (dav1d), gated behind the optional
-/// `avif` cargo feature (see Cargo.toml). Enabled by the Arch PKGBUILD.
-#[cfg(feature = "avif")]
+/// AVIF decodes through the bundled `explorer_avif` decoder (the same one the
+/// preview pane and crop editor use), so every build supports it; the optional
+/// `avif` cargo feature only adds image's dav1d decoder (#1659).
 const SUPPORTED_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "bmp", "icns", "avif"];
-#[cfg(not(feature = "avif"))]
-const SUPPORTED_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "bmp", "icns"];
 
 /// Supported video extensions for frame-extraction thumbnails (requires ffmpeg).
 const SUPPORTED_VIDEO_EXTENSIONS: &[&str] = &[
@@ -563,6 +561,57 @@ fn is_icns(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+fn is_avif(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("avif"))
+}
+
+/// First frame of an AVIF through the bundled decoder, oriented and with
+/// 10/12-bit samples rescaled to the full 16-bit range. Release builds do not
+/// enable image's dav1d-backed decoder, so `ImageReader` cannot open AVIF there.
+fn decode_avif(path: &Path) -> Result<image::DynamicImage, AppError> {
+    let bytes = fs::read(path)?;
+    decode_avif_bytes(&bytes)
+}
+
+fn decode_avif_bytes(bytes: &[u8]) -> Result<image::DynamicImage, AppError> {
+    let failure = |e: String| AppError::Other(format!("Failed to decode AVIF: {e}"));
+    let frame = explorer_avif::decode_frame(bytes, 0).map_err(failure)?;
+    let meta = frame.metadata;
+    if meta.width == 0
+        || meta.height == 0
+        || meta.width > MAX_IMAGE_DIM
+        || meta.height > MAX_IMAGE_DIM
+    {
+        return Err(failure(format!(
+            "unsupported dimensions {}x{}",
+            meta.width, meta.height
+        )));
+    }
+    let invalid = || failure("decoded buffer does not match its dimensions".into());
+    match meta.depth {
+        8 => image::RgbaImage::from_raw(meta.width, meta.height, frame.pixels)
+            .map(image::DynamicImage::ImageRgba8)
+            .ok_or_else(invalid),
+        10 | 12 | 16 => {
+            let maximum = (1u32 << meta.depth) - 1;
+            let samples: Vec<u16> = frame
+                .pixels
+                .chunks_exact(2)
+                .map(|sample| {
+                    let value = u32::from(u16::from_ne_bytes([sample[0], sample[1]]));
+                    ((value * 65_535 + maximum / 2) / maximum) as u16
+                })
+                .collect();
+            image::ImageBuffer::<image::Rgba<u16>, _>::from_raw(meta.width, meta.height, samples)
+                .map(image::DynamicImage::ImageRgba16)
+                .ok_or_else(invalid)
+        }
+        depth => Err(failure(format!("unsupported sample depth {depth}"))),
+    }
+}
+
 /// rust-icns classifies combined monochrome+alpha images as masks, excluding
 /// valid standalone representations from available_icons(). Pure alpha masks
 /// remain excluded; each complete image type is returned only once.
@@ -768,6 +817,9 @@ fn decode_image_ungated(path: &Path, target_size: u32) -> Result<image::DynamicI
     }
     if is_icns(path) {
         return decode_icns(path);
+    }
+    if is_avif(path) {
+        return decode_avif(path);
     }
     let mut reader = ImageReader::open(path)?.with_guessed_format()?;
     reader.limits(decode_limits());
@@ -1738,7 +1790,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "avif")]
     fn avif_is_supported_and_decodes() {
         assert!(is_supported_image(Path::new("photo.avif")));
         assert!(is_supported_image(Path::new("PHOTO.AVIF")));
@@ -1753,6 +1804,32 @@ mod tests {
             pixel[0] > 200 && pixel[1] < 60 && pixel[2] < 60,
             "expected red center pixel, got {pixel:?}"
         );
+    }
+
+    /// #1659: release builds lack image's dav1d decoder, so AVIF thumbnails
+    /// must come from the bundled decoder and match the preview pane's frame.
+    #[test]
+    fn avif_thumbnail_uses_bundled_decoder_with_orientation_and_high_depth() {
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("test_support/fixtures");
+        let oriented = fixtures.join("image-crop-oriented.avif");
+        let img = decode_image_timed(&oriented, 64)
+            .0
+            .expect("oriented AVIF must decode");
+        let expected = explorer_avif::decode_frame(&fs::read(&oriented).unwrap(), 0).unwrap();
+        assert_eq!((img.width(), img.height()), (8, 12));
+        assert_eq!(img.to_rgba8().as_raw(), &expected.pixels);
+
+        let deep = fixtures.join("image-crop-sixteen-bit.avif");
+        let img = decode_image_timed(&deep, 64)
+            .0
+            .expect("high bit-depth AVIF must decode");
+        assert!(matches!(img, image::DynamicImage::ImageRgba16(_)));
+        assert!(img.width() > 0 && img.height() > 0);
+
+        let dir = tempfile::tempdir().unwrap();
+        let bogus = dir.path().join("broken.avif");
+        fs::write(&bogus, b"not an avif").unwrap();
+        assert!(decode_image_timed(&bogus, 64).0.is_err());
     }
 
     #[test]

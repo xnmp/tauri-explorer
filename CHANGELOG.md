@@ -2,6 +2,20 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.25.0 — 2026-11-13
+
+### Added
+
+- Right-click the sidebar Recent heading to choose how many recent locations
+  it lists (3, 5, 10, 15 or 20); the choice is the same setting as in the
+  Settings dialog (#1661).
+
+### Fixed
+
+- AVIF files get thumbnails in every build, decoded by the same bundled
+  decoder the preview pane uses, instead of only builds with the optional
+  dav1d feature (#1659).
+
 ## v1.24.3 — 2026-11-12
 
 ### Fixed

@@ -3932,7 +3932,39 @@ impl Machine {
             self.cancel_preparation(slot)?;
         }
         for op in self.operations.borrow_mut().iter_mut() {
-            if !op.removed && op.spool_phase <= 17 && op.paid_success {
+            if !op.removed && op.spool_phase <= 17 && op.host_released {
+                // Acquisition release ends every bound reservation's custody
+                // in the same commit (`release_operation_spools_in`). The
+                // delivered original came from another reply, so a late
+                // writer that has not yet recorded its completion identity
+                // (the commit between checkpoints 10 and 11) must be refused,
+                // never revived into a second result for a settled operation.
+                if let Some(writer) = &op.writer {
+                    let mut refused = false;
+                    for point in op.spool_phase..=17 {
+                        match writer.phase(point) {
+                            Ok(()) => {}
+                            Err(error)
+                                if error
+                                    .to_string()
+                                    .contains("host output reservation was cancelled") =>
+                            {
+                                refused = true;
+                                break;
+                            }
+                            Err(error) => {
+                                return Err(fail(format!("late bound reply failed: {error}")))
+                            }
+                        }
+                    }
+                    if !refused && op.spool_phase <= 11 {
+                        return Err(fail(
+                            "acquisition release left a bound host reservation writable",
+                        ));
+                    }
+                    op.spool_phase = 30;
+                }
+            } else if !op.removed && op.spool_phase <= 17 && op.paid_success {
                 if let Some(writer) = &op.writer {
                     for point in op.spool_phase..=17 {
                         checked(writer.phase(point))?;
@@ -5097,6 +5129,39 @@ fn model_issue_1405_counterexample() {
     }
     m.quiesce()
         .unwrap_or_else(|cause| panic!("quiesce: {cause}"));
+}
+/// Shrunk counterexample from a Windows `Rust platforms` dev-push run
+/// (2026-11-12). A bound CLI reservation is still waiting for its reply when
+/// the provider seals the original through its stage, the consumer acquires
+/// it and the sweep's reconciliation releases the admission. That release
+/// ends the bound reservation's custody in the same commit, so quiescence
+/// must observe the late writer being refused rather than expect it to
+/// complete (`docs/lessons/ai-ops-bound-spool-sweep.md`).
+#[test]
+fn model_acquisition_release_cancels_pending_bound_spool_writer() {
+    use Command::*;
+    let mut m = Machine::new();
+    for command in [
+        Admit(0, false),
+        SpoolReserve(0, true, false),
+        ProviderComplete(0),
+        Acquire(0),
+        Sweep,
+    ] {
+        m.apply(command)
+            .unwrap_or_else(|cause| panic!("at={command:?}: {cause}"));
+    }
+    m.quiesce()
+        .unwrap_or_else(|cause| panic!("quiesce: {cause}"));
+    let ops = m.operations.borrow();
+    assert!(
+        ops[0].host_released,
+        "the trace must reach acquisition release"
+    );
+    assert_eq!(
+        ops[0].spool_phase, 30,
+        "the late bound writer must be refused, not completed"
+    );
 }
 #[test]
 fn model_standalone_unbound_spool_does_not_revive_settled_execution() {

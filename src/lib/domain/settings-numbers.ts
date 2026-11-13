@@ -40,3 +40,15 @@ export function clampNumericSetting(key: NumericSettingKey, value: number): numb
   const clamped = Math.min(rule.max, Math.max(rule.min, value));
   return rule.integer ? Math.round(clamped) : clamped;
 }
+
+/** Presets offered by the sidebar Recent header's context menu (#1661).
+ * Zero is excluded: hiding the section removes the header that hosts this
+ * menu, so it stays a Settings-dialog choice. A custom saved count within the
+ * valid range is kept in the list so the current value can be shown checked. */
+export const RECENT_ITEMS_COUNT_PRESETS = [3, 5, 10, 15, 20] as const;
+
+export function recentItemsCountChoices(current: number): number[] {
+  const choices = new Set<number>(RECENT_ITEMS_COUNT_PRESETS);
+  if (current > 0 && isValidNumericSetting(NUMERIC_SETTINGS.recentItemsCount, current)) choices.add(current);
+  return [...choices].sort((a, b) => a - b);
+}

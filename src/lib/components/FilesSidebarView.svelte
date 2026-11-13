@@ -197,6 +197,14 @@
     bookmarksMenuPos = null;
   }
 
+  // Context menu on the Recent header choosing how many entries it lists (#1661).
+  let recentMenuPos = $state<{ x: number; y: number } | null>(null);
+
+  function onRecentHeaderContextMenu(event: MouseEvent) {
+    event.preventDefault();
+    recentMenuPos = { x: event.clientX, y: event.clientY };
+  }
+
   const quickAccessFolders = $derived(
     allSystemFolders.filter((f) => !hiddenSystemFolders.has(f.name))
   );
@@ -460,23 +468,13 @@
     {/if}
 
     {#if bookmarksMenuPos}
-      <div
-        class="section-menu-backdrop"
-        onclick={() => bookmarksMenuPos = null}
-        oncontextmenu={(e) => { e.preventDefault(); bookmarksMenuPos = null; }}
-        onkeydown={(e) => { if (e.key === 'Escape') bookmarksMenuPos = null; }}
-        role="presentation"
-      ></div>
-      <div class="section-menu" style="left: {bookmarksMenuPos.x}px; top: {bookmarksMenuPos.y}px;" role="menu">
-        <button
-          class="section-menu-item"
-          role="menuitem"
-          onclick={restoreDefaultFolders}
-          disabled={hiddenSystemFolders.size === 0}
-        >
-          Restore default folders
-        </button>
-      </div>
+      {#await import("./SidebarSectionMenu.svelte") then { default: SidebarSectionMenu }}
+        <SidebarSectionMenu position={bookmarksMenuPos} onclose={() => bookmarksMenuPos = null}>
+          <button class="section-menu-item" role="menuitem" onclick={restoreDefaultFolders} disabled={hiddenSystemFolders.size === 0}>
+            Restore default folders
+          </button>
+        </SidebarSectionMenu>
+      {/await}
     {/if}
   </div>
 
@@ -568,6 +566,7 @@
       <button
         data-region="sidebar-section-header" class="section-header"
         onclick={() => recentExpanded = !recentExpanded}
+        oncontextmenu={onRecentHeaderContextMenu}
         aria-expanded={recentExpanded}
       >
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none" class="chevron" class:expanded={recentExpanded}>
@@ -611,6 +610,10 @@
             </div>
           {/each}
         </div>
+      {/if}
+
+      {#if recentMenuPos}
+        {#await import("./RecentCountMenu.svelte") then { default: Menu }}<Menu position={recentMenuPos} onclose={() => recentMenuPos = null} />{/await}
       {/if}
     </div>
   {/if}
@@ -825,45 +828,5 @@
   .bookmark-drop-target:global(.drop-target) {
     background: var(--subtle-fill-secondary);
     box-shadow: inset 0 0 0 2px var(--accent);
-  }
-
-  .section-menu-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 99;
-  }
-
-  .section-menu {
-    position: fixed;
-    z-index: 100;
-    min-width: 180px;
-    padding: 4px;
-    background: var(--background-card, var(--background-solid));
-    border: 1px solid var(--divider);
-    border-radius: var(--radius-md, 6px);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
-  }
-
-  .section-menu-item {
-    display: block;
-    width: 100%;
-    padding: 6px 10px;
-    background: transparent;
-    border: none;
-    border-radius: var(--radius-sm);
-    font-family: inherit;
-    font-size: 13px;
-    color: var(--text-primary);
-    text-align: left;
-    cursor: pointer;
-  }
-
-  .section-menu-item:hover:not(:disabled) {
-    background: var(--subtle-fill-secondary);
-  }
-
-  .section-menu-item:disabled {
-    color: var(--text-tertiary);
-    cursor: default;
   }
 </style>

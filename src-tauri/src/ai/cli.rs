@@ -530,21 +530,16 @@ fn search_bins() -> Vec<PathBuf> {
         .collect()
 }
 fn executable_file(path: &Path) -> bool {
-    let Ok(metadata) = std::fs::metadata(path) else {
-        return false;
-    };
-    if !metadata.is_file() {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        metadata.permissions().mode() & 0o111 != 0
-    }
-    #[cfg(not(unix))]
-    {
-        true
-    }
+    std::fs::metadata(path).is_ok_and(|metadata| metadata.is_file() && has_exec_bits(&metadata))
+}
+#[cfg(unix)]
+fn has_exec_bits(metadata: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    metadata.permissions().mode() & 0o111 != 0
+}
+#[cfg(not(unix))]
+fn has_exec_bits(_metadata: &std::fs::Metadata) -> bool {
+    true
 }
 /// Resolves the configured absolute path, else discovers the CLI. On Windows,
 /// npm installs `codex.cmd`/`claude.cmd` shims; std runs those through cmd.exe

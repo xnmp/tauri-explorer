@@ -78,3 +78,40 @@ test("language settings remain keyboard operable and fit a narrow viewport", asy
   const bounds = await page.locator(".language-models").evaluate(element => ({ left: element.getBoundingClientRect().left, right: element.getBoundingClientRect().right, width: element.scrollWidth, clientWidth: element.clientWidth }));
   expect(bounds.left).toBeGreaterThanOrEqual(0); expect(bounds.right).toBeLessThanOrEqual(320); expect(bounds.width).toBeLessThanOrEqual(bounds.clientWidth);
 });
+
+test("language settings use the dialog's shared control chrome, not native widgets (#1658)", async ({ page }) => {
+  await openSettings(page);
+  await expect(page.getByLabel("Enable language models", { exact: true })).toBeVisible();
+  const section = page.locator(".language-models");
+  const chrome = await section.evaluate(root => {
+    const style = (el: Element) => getComputedStyle(el);
+    const selects = [...root.querySelectorAll("select")].map(el => ({ cls: el.className, appearance: style(el).appearance, height: el.getBoundingClientRect().height }));
+    const inputs = [...root.querySelectorAll("input:not([type=checkbox])")].map(el => ({ cls: el.className, height: el.getBoundingClientRect().height, radius: style(el).borderTopLeftRadius }));
+    const buttons = [...root.querySelectorAll("button")].map(el => el.className);
+    const checkboxes = [...root.querySelectorAll("input[type=checkbox]")].map(el => ({ appearance: style(el).appearance, width: el.getBoundingClientRect().width }));
+    const reference = document.querySelector(".color-theme-select");
+    return { selects, inputs, buttons, checkboxes, referenceRadius: reference ? style(reference).borderTopLeftRadius : null };
+  });
+  expect(chrome.selects.length).toBeGreaterThan(0);
+  for (const select of chrome.selects) {
+    expect(select.cls).toContain("settings-select");
+    expect(select.appearance).toBe("none");
+  }
+  expect(chrome.inputs.length).toBeGreaterThan(0);
+  for (const input of chrome.inputs) {
+    expect(input.cls).toContain("settings-input");
+    expect(input.radius).toBe(chrome.referenceRadius);
+  }
+  // Text fields and dropdowns share one height so the form reads as a single grid.
+  const heights = new Set([...chrome.selects, ...chrome.inputs].map(control => Math.round(control.height)));
+  expect(heights.size).toBe(1);
+  expect(chrome.buttons.length).toBeGreaterThan(0);
+  for (const cls of chrome.buttons) expect(cls).toContain("settings-button");
+  expect(chrome.checkboxes.length).toBeGreaterThan(0);
+  for (const checkbox of chrome.checkboxes) {
+    expect(checkbox.appearance).toBe("none");
+    expect(checkbox.width).toBeGreaterThanOrEqual(36);
+  }
+  await expect(page.getByRole("button", { name: "Save language models", exact: true })).toHaveClass(/primary/);
+  await expect(page.getByRole("button", { name: "Delete profile", exact: true })).toHaveClass(/danger/);
+});

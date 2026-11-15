@@ -58,6 +58,21 @@ describe("Playwright container pin", () => {
     expect(String(impact.env.CONTAINER_BUN_VERSION)).toBe(String(ci.env.CONTAINER_BUN_VERSION));
   });
 
+  // The Tiles scroll perf guard runs Playwright outside ci.yml. Ubuntu 26.04
+  // runner hosts are unsupported by Playwright, so it uses the same image.
+  it("runs the Tiles scroll perf guard in the same image, with container bun and no browser install", () => {
+    const perf = parse(readFileSync(new URL("../.github/workflows/perf.yml", import.meta.url), "utf8"));
+    const job = perf.jobs["tiles-scroll-perf"];
+    expect(job.container.image).toBe(ci.jobs.chromium.container.image);
+    expect(String(perf.env.CONTAINER_BUN_VERSION)).toBe(String(ci.env.CONTAINER_BUN_VERSION));
+    const steps = job.steps as { uses?: string; run?: string }[];
+    expect(steps.some((s) => s.run?.includes('test "$(bun --version)" = "$CONTAINER_BUN_VERSION"'))).toBe(true);
+    for (const step of steps) {
+      expect(step.run ?? "").not.toMatch(/playwright install|apt-get|install-deps/);
+      expect(step.uses ?? "").not.toMatch(/setup-bun/);
+    }
+  });
+
   describe("container bun", () => {
     const pinned = String(ci.env.CONTAINER_BUN_VERSION);
 

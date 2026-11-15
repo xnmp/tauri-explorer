@@ -64,6 +64,12 @@ before the test-result probe (the hashed candidate versions) and passes
 `update-index: "false"`. `bounded` runs `sudo timeout …`, never
 `timeout sudo …`: the runners' `use_pty` sudo shields its command from
 timeout's group signal, orphaning apt/dpkg with the lock held (#1520).
+`ubuntu-latest` moves between Ubuntu releases (24.04 → 26.04 in Nov 2026),
+and packages get renamed: write a renamed package as `new|old`
+(`webkitgtk-webdriver|webkit2gtk-driver`), and `apt.sh` installs the first
+alternative with a candidate, so one list works on both images while GitHub
+rolls the new one out. The 26.04 image also uses uutils' multicall coreutils,
+so a copied `/usr/bin/sleep` needs `argv0: "sleep"` to run (#1666).
 Contracts: `tests/ci-apt-install.test.ts`.
 
 # Browser jobs in the Playwright container (#1367)

@@ -46,6 +46,17 @@ exit "$status"`,
   );
   const lock = join(root, "lock-frontend");
   stub("dpkg", `echo "dpkg $*" >> ${log}`);
+  // apt-cache policy: a candidate only for the packages listed in CANDIDATES.
+  stub(
+    "apt-cache",
+    `echo "apt-cache $*" >> ${log}
+[ "$1" = policy ] || exit 0
+echo "$2:"
+case " \${CANDIDATES:-} " in
+  *" $2 "*) echo "  Installed: (none)"; echo "  Candidate: 1.0-1" ;;
+  *) echo "  Installed: (none)"; echo "  Candidate: (none)" ;;
+esac`,
+  );
   stub(
     "apt-get",
     `echo "apt-get $*" >> ${log}
@@ -209,6 +220,45 @@ describe("apt.sh install", () => {
   });
 });
 
+// ubuntu-latest moved to 26.04, which ships WebKitWebDriver as
+// webkitgtk-webdriver; 24.04 only has webkit2gtk-driver. Smoke failed at
+// apt.sh key with "no installation candidate" until lists could name both.
+describe("apt.sh package alternatives", () => {
+  const ALTS = "libfoo webkitgtk-webdriver|webkit2gtk-driver nasm";
+  const installed = (calls: string[]) => calls.find((c) => / install /.test(c) && !/ -s /.test(c));
+
+  it("installs the first alternative with a candidate (Ubuntu 26.04)", () => {
+    const { status, calls } = run("install", { APT_PACKAGES: ALTS, CANDIDATES: "webkitgtk-webdriver webkit2gtk-driver" });
+    expect(status).toBe(0);
+    expect(installed(calls)).toMatch(/ libfoo webkitgtk-webdriver nasm$/);
+  });
+
+  it("falls back to a later alternative on an image without the first (Ubuntu 24.04)", () => {
+    const { status, calls } = run("install", { APT_PACKAGES: ALTS, CANDIDATES: "webkit2gtk-driver" });
+    expect(status).toBe(0);
+    expect(installed(calls)).toMatch(/ libfoo webkit2gtk-driver nasm$/);
+  });
+
+  it("resolves alternatives before simulating the install plan for the cache key", () => {
+    const { status, calls } = run("key", { APT_PACKAGES: ALTS, CANDIDATES: "webkit2gtk-driver" });
+    expect(status).toBe(0);
+    expect(calls.find((c) => / -s install /.test(c))).toBe("apt-get -s install libfoo webkit2gtk-driver nasm");
+  });
+
+  it("fails in setup, naming every alternative, when none can be installed", () => {
+    const { status, calls, stderr } = run("key", { APT_PACKAGES: ALTS, CANDIDATES: "" });
+    expect(status).not.toBe(0);
+    expect(stderr).toContain("::error title=apt package unavailable::no install candidate for any of: webkitgtk-webdriver, webkit2gtk-driver");
+    expect(calls.some((c) => c.startsWith("apt-get"))).toBe(false);
+  });
+
+  it("does not query candidates for plain package names", () => {
+    const { status, calls } = run("install");
+    expect(status).toBe(0);
+    expect(calls.some((c) => c.startsWith("apt-cache"))).toBe(false);
+  });
+});
+
 describe("apt.sh key", () => {
   const key = (env: Record<string, string> = {}) => {
     const { status, stdout } = run("key", { ImageOS: "ubuntu24", ...env });
@@ -254,6 +304,14 @@ describe("workflows", () => {
       expect(step["timeout-minutes"]).toBeGreaterThan(0);
       // Named as an install so ci-auto-rerun treats a failure as setup.
       expect(step.name).toMatch(/\binstall\b/i);
+    }
+  });
+
+  it.each(WORKFLOWS)("%s names WebKitWebDriver by both its 26.04 and 24.04 packages", (workflow) => {
+    for (const step of steps(workflow).filter((s) => s.uses === ACTION)) {
+      const packages = (step.with?.packages ?? "").split(/\s+/);
+      expect(packages).not.toContain("webkit2gtk-driver");
+      expect(packages).not.toContain("webkitgtk-webdriver");
     }
   });
 

@@ -24,7 +24,12 @@ it.skipIf(process.platform !== "linux")("identifies the manifest binary within i
     binary, binarySha256: createHash("sha256").update(bytes).digest("hex"), binaryBytes: bytes.length,
   }));
   const children = [[binary, profile], [otherBinary, profile], [binary, `${profile}-other`]].map(([executable, config]) => {
+    // Ubuntu 26.04's /usr/bin/sleep is uutils' multicall binary, which picks
+    // its utility from argv[0]: a copy named qualified-app exited at once and
+    // left nothing for exactApplicationPid to find. /proc/<pid>/exe still
+    // names the copy, which is what the selector matches.
     const child = spawn(executable, ["60"], {
+      argv0: "sleep",
       env: { ...process.env, XDG_CONFIG_HOME: config }, stdio: "ignore",
     });
     return { child, exited: once(child, "exit") };

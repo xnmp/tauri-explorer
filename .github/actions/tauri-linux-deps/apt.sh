@@ -8,6 +8,12 @@
 #   apt.sh key      print the cache key and restore prefix (GITHUB_OUTPUT lines)
 #   apt.sh install  install APT_PACKAGES, reusing the .debs in APT_ARCHIVES
 #
+# A package written as `a|b` installs the first alternative that has an
+# install candidate in the refreshed index. Runner images rename packages
+# between Ubuntu releases (24.04's webkit2gtk-driver is 26.04's
+# webkitgtk-webdriver), and `ubuntu-latest` can resolve to either image while
+# GitHub rolls a new one out, so one list has to install on both.
+#
 # Every apt command runs in attempts of APT_ATTEMPT_TIMEOUT seconds (index
 # refreshes APT_UPDATE_ATTEMPT_TIMEOUT), at most APT_ATTEMPTS times, so a stalled mirror fails in this setup step. apt checks
 # each reused .deb against the refreshed index's hashes and downloads any that
@@ -73,6 +79,38 @@ image_mirror='mirror\+file:[^ ]*apt-mirrors\.txt|https?://azure\.archive\.ubuntu
 
 sha() { sha256sum | cut -c1-16; }
 
+# has_candidate <package>: the refreshed index can install it.
+has_candidate() {
+  apt-cache policy "$1" 2>/dev/null | grep -qE '^ *Candidate: [^(]'
+}
+
+# resolve_packages: APT_PACKAGES with each `a|b` replaced by the first
+# alternative that has a candidate. Fails, naming every alternative, when none
+# does, so a renamed package is reported in this setup step.
+resolve_packages() {
+  local token alt chosen alts resolved=()
+  for token in $packages; do
+    if [[ $token != *"|"* ]]; then
+      resolved+=("$token")
+      continue
+    fi
+    chosen=
+    IFS='|' read -ra alts <<<"$token"
+    for alt in "${alts[@]}"; do
+      if [ -n "$alt" ] && has_candidate "$alt"; then
+        chosen=$alt
+        break
+      fi
+    done
+    if [ -z "$chosen" ]; then
+      echo "::error title=apt package unavailable::no install candidate for any of: ${token//|/, }" >&2
+      return 1
+    fi
+    resolved+=("$chosen")
+  done
+  echo "${resolved[*]}"
+}
+
 require() {
   if [ -z "${!1:-}" ]; then
     echo "::error::$1 is required" >&2
@@ -103,6 +141,7 @@ case ${1:-} in
     ;;
   key)
     require APT_PACKAGES
+    packages=$(resolve_packages)
     # The package list names the cache; the simulated install (exact versions
     # this runner image and index still need) picks its revision, so an image
     # or archive update saves a new entry that a restore prefix still seeds.
@@ -116,6 +155,7 @@ case ${1:-} in
   install)
     require APT_PACKAGES
     require APT_ARCHIVES
+    packages=$(resolve_packages)
     # Create the cache path as the runner: a root-owned ~/.cache would break
     # later tools that write there (the Tauri bundler's ~/.cache/tauri).
     mkdir -p "$archives"

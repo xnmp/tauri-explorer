@@ -47,6 +47,8 @@ exit "$status"`,
   const lock = join(root, "lock-frontend");
   stub("dpkg", `echo "dpkg $*" >> ${log}`);
   // apt-cache policy: a candidate only for the packages listed in CANDIDATES.
+  // Like apt, it keeps writing (the version table) after the Candidate line,
+  // so a reader that stops early under pipefail sees SIGPIPE (141).
   stub(
     "apt-cache",
     `echo "apt-cache $*" >> ${log}
@@ -55,7 +57,10 @@ echo "$2:"
 case " \${CANDIDATES:-} " in
   *" $2 "*) echo "  Installed: (none)"; echo "  Candidate: 1.0-1" ;;
   *) echo "  Installed: (none)"; echo "  Candidate: (none)" ;;
-esac`,
+esac
+sleep 0.2
+echo "  Version table:"
+echo "     1.0-1 500"`,
   );
   stub(
     "apt-get",

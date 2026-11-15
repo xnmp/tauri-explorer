@@ -9,13 +9,19 @@ things broke without any change in the repository:
    and has dropped the transitional `webkit2gtk-driver`. 24.04 has only the old
    name, and the image rollout can give a job either image. `apt.sh` now
    accepts `a|b` alternatives and installs the first with a candidate. Package
-   lists name `webkitgtk-webdriver|webkit2gtk-driver`.
+   lists name `webkitgtk-webdriver|webkit2gtk-driver`. The first version of
+   the candidate probe piped `apt-cache policy` into `grep -q`. Under the
+   script's `pipefail`, that pipeline returns 141 (SIGPIPE) when grep exits
+   early, so every alternative looked unavailable. Capture the output first.
+   The test stub keeps writing after its Candidate line, as apt does, so the
+   piped form fails the contract tests.
 2. **Scheduled `frontend` unit tests** failed in
    `tests/qualification/native-process-manifest.test.ts` ("expected one exact
-   test application, found 0"). 26.04's `/usr/bin/sleep` is uutils' multicall
-   binary, which dispatches on `argv[0]`, so a copy named `qualified-app`
-   exited immediately. The fixture now spawns it with `argv0: "sleep"`.
-   `/proc/<pid>/exe` still names the copy, which is what the selector matches.
+   test application, found 0"). The fixture copied `/usr/bin/sleep` under
+   another name. On 26.04 that is uutils' multicall coreutils, and the
+   renamed copy did not keep running, even with `argv0: "sleep"`. The fixture
+   now hard-links (or copies) the Node binary running the tests and runs a
+   timer with `-e`, which does not depend on its name.
 
 To check whether a failure is caused by the image, look for `resolute` (or the
 new release codename) in the apt index output, and compare it with the last

@@ -79,9 +79,13 @@ image_mirror='mirror\+file:[^ ]*apt-mirrors\.txt|https?://azure\.archive\.ubuntu
 
 sha() { sha256sum | cut -c1-16; }
 
-# has_candidate <package>: the refreshed index can install it.
+# has_candidate <package>: the refreshed index can install it. Capture the
+# output before matching: under pipefail, `apt-cache policy | grep -q` fails
+# with SIGPIPE (141) once grep exits on its first match.
 has_candidate() {
-  apt-cache policy "$1" 2>/dev/null | grep -qE '^ *Candidate: [^(]'
+  local policy
+  policy=$(apt-cache policy "$1" 2>/dev/null) || return 1
+  [[ $policy =~ Candidate:\ [^\(] ]]
 }
 
 # resolve_packages: APT_PACKAGES with each `a|b` replaced by the first
@@ -104,6 +108,7 @@ resolve_packages() {
     done
     if [ -z "$chosen" ]; then
       echo "::error title=apt package unavailable::no install candidate for any of: ${token//|/, }" >&2
+      for alt in "${alts[@]}"; do apt-cache policy "$alt" >&2 || true; done
       return 1
     fi
     resolved+=("$chosen")

@@ -68,8 +68,10 @@ timeout's group signal, orphaning apt/dpkg with the lock held (#1520).
 and packages get renamed: write a renamed package as `new|old`
 (`webkitgtk-webdriver|webkit2gtk-driver`), and `apt.sh` installs the first
 alternative with a candidate, so one list works on both images while GitHub
-rolls the new one out. The 26.04 image also uses uutils' multicall coreutils,
-so a copied `/usr/bin/sleep` needs `argv0: "sleep"` to run (#1666).
+rolls the new one out. Probe candidates from captured output, never
+`apt-cache … | grep -q`, which returns SIGPIPE (141) under pipefail. The 26.04
+image's `/usr/bin/sleep` is uutils coreutils and does not run under another
+name, so process fixtures link the Node binary instead (#1666).
 Contracts: `tests/ci-apt-install.test.ts`.
 
 # Browser jobs in the Playwright container (#1367)

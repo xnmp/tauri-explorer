@@ -16,7 +16,12 @@ it.skipIf(process.platform !== "linux")("identifies the manifest binary within i
   const manifest = path.join(directory, "build.json");
   const profile = path.join(directory, "profile");
   fs.mkdirSync(path.dirname(otherBinary));
-  for (const target of [binary, otherBinary]) fs.copyFileSync("/usr/bin/sleep", target);
+  // Ubuntu 26.04's /usr/bin/sleep is uutils' multicall coreutils, whose copy
+  // named qualified-app exited at once and left nothing to find. Node runs
+  // the same way under any name; a hard link avoids copying its binary.
+  for (const target of [binary, otherBinary]) {
+    try { fs.linkSync(process.execPath, target); } catch { fs.copyFileSync(process.execPath, target); }
+  }
   const bytes = fs.readFileSync(binary);
   fs.writeFileSync(manifest, JSON.stringify({
     schemaVersion: 1, sourceCommit: "candidate", profile: "debug-custom-protocol-e2e-hooks",
@@ -24,12 +29,7 @@ it.skipIf(process.platform !== "linux")("identifies the manifest binary within i
     binary, binarySha256: createHash("sha256").update(bytes).digest("hex"), binaryBytes: bytes.length,
   }));
   const children = [[binary, profile], [otherBinary, profile], [binary, `${profile}-other`]].map(([executable, config]) => {
-    // Ubuntu 26.04's /usr/bin/sleep is uutils' multicall binary, which picks
-    // its utility from argv[0]: a copy named qualified-app exited at once and
-    // left nothing for exactApplicationPid to find. /proc/<pid>/exe still
-    // names the copy, which is what the selector matches.
-    const child = spawn(executable, ["60"], {
-      argv0: "sleep",
+    const child = spawn(executable, ["-e", "setTimeout(() => {}, 60_000)"], {
       env: { ...process.env, XDG_CONFIG_HOME: config }, stdio: "ignore",
     });
     return { child, exited: once(child, "exit") };

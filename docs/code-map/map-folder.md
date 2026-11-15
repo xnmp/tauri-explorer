@@ -126,6 +126,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `settings/LayoutThemeSetting.svelte` — Settings → Appearance → Layout: selector, Open folder (layouts), Reset to Default, fallback reason (#1306).
 - `settings/ThumbnailSettings.svelte` — Settings → Appearance thumbnail rows: Tiles Thumbnail Size and the Details/List row-thumbnails toggle (#1465).
 - `settings/settings-select.css` — shared Settings dropdown styling (`.settings-select`).
+- `settings/settings-form.css` — stacked-field Settings chrome (`.settings-form`, `.settings-field`, `.settings-input`, `.settings-group`, visible-checkbox `.settings-switch`, `.settings-button.primary`) used by the Language models editor (#1658).
 - `settings/settings-button.css` — shared Settings/Plugins row button chrome (`.settings-button`, destructive `.settings-button.danger`); immediate hover (#1529).
 - `PluginsDialog.svelte`, `PluginSettings.svelte` — lazy Plugins configuration surface; installed packages, contribution toggles and descriptor-driven settings, using shared modal ownership and viewport/zoom bounds.
 - `KeybindingsSettings.svelte` — keybinding customization UI in settings.

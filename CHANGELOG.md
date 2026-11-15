@@ -2,6 +2,14 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.25.1 — 2026-11-15
+
+### Fixed
+
+- Settings → AI → Language models now uses the same dropdowns, text fields,
+  switches and buttons as the rest of Settings instead of the platform's
+  native widgets, which looked out of place on Linux (#1658).
+
 ## v1.25.0 — 2026-11-13
 
 ### Added

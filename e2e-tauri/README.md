@@ -17,7 +17,8 @@ A smoke suite that launches the built Tauri binary and drives it via WebDriver. 
 cargo install tauri-driver --locked
 
 # Linux only: WebKitWebDriver
-sudo apt-get install -y webkit2gtk-driver
+# (Ubuntu 26.04+ / Debian 13+: webkitgtk-webdriver; older: webkit2gtk-driver)
+sudo apt-get install -y webkitgtk-webdriver || sudo apt-get install -y webkit2gtk-driver
 
 # Windows only: download msedgedriver matching the installed WebView2 runtime
 # and set TAURI_NATIVE_DRIVER to its full path.

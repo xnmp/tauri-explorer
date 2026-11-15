@@ -1,0 +1,180 @@
+/*
+ * Settings form chrome for multi-field editors (Settings → AI → Language
+ * models). Stacked fields share the control fill/stroke/radius of
+ * `.settings-select` and `.settings-button`, so these editors match the
+ * dialog's row controls instead of the platform's native widgets (#1658).
+ * Pointer highlights stay immediate (#503).
+ */
+.settings-form {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.settings-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.settings-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  line-height: 18px;
+  padding: 6px 10px;
+  color: var(--text-primary);
+  background: var(--control-fill);
+  border: 1px solid var(--control-stroke);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  outline: none;
+}
+
+.settings-input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.settings-input:hover:not(:disabled) {
+  background-color: var(--control-fill-secondary);
+}
+
+.settings-input:focus {
+  border-color: var(--accent);
+}
+
+.settings-input:disabled {
+  opacity: 0.5;
+}
+
+/* Full-width stacked dropdown: `.settings-select` chrome at field height. */
+.settings-form .settings-select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  line-height: 18px;
+  font-weight: 400;
+}
+
+.settings-form .settings-select:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* A grouped card of fields, matching the dialog's divider language. */
+.settings-group {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  margin: 0;
+  padding: 14px 16px 16px;
+  background: var(--control-fill-tertiary, transparent);
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-md, var(--radius-sm));
+}
+
+.settings-group > legend {
+  padding: 0 6px;
+  margin-left: -6px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.settings-help {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* A label + description on the left with its switch on the right. */
+.settings-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+/* The Settings switch drawn on a real, visible checkbox. */
+.settings-switch {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  flex: 0 0 auto;
+  width: 40px;
+  height: 22px;
+  margin: 0;
+  background: var(--control-fill-secondary);
+  border: 1px solid var(--control-stroke);
+  border-radius: 11px;
+  cursor: pointer;
+}
+
+.settings-switch::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  transition: transform var(--transition-fast);
+}
+
+.settings-switch:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.settings-switch:checked::before {
+  transform: translateX(18px);
+  background: var(--text-on-accent);
+}
+
+.settings-switch:focus-visible {
+  outline: 2px solid var(--focus-stroke-outer);
+  outline-offset: 2px;
+}
+
+.settings-switch:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* The section's primary commit action. */
+.settings-button.primary {
+  color: var(--text-on-accent);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.settings-button.primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 88%, var(--text-primary));
+}
+
+.settings-button.primary:active:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 78%, var(--text-primary));
+}

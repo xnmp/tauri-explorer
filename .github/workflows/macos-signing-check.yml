@@ -30,6 +30,10 @@ jobs:
         with:
           targets: aarch64-apple-darwin
 
+      # Own key prefix: this runs on dev (the default branch), whose caches main
+      # can restore. Sharing release.yml's macOS-cargo-tauri-* key would let
+      # this run seed the release job's tauri-cli binary, which
+      # `cargo install … || true` then never upgrades.
       - name: Cache cargo registry and tauri-cli
         uses: actions/cache@v6
         with:
@@ -37,8 +41,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             ~/.cargo/bin/cargo-tauri
-          key: ${{ runner.os }}-cargo-tauri-${{ hashFiles('src-tauri/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-tauri-
+          key: signing-check-${{ runner.os }}-cargo-tauri-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: signing-check-${{ runner.os }}-cargo-tauri-
 
       - name: Install tauri-cli
         shell: bash
@@ -50,6 +54,7 @@ jobs:
 
       - name: Build, sign and notarize Tauri app
         shell: bash
+        timeout-minutes: 75
         env:
           REQUIRE_SIGNING: "1"
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}

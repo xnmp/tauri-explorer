@@ -345,6 +345,9 @@ entries. Remove the variable afterwards. Locally, run the suite directly
 through `scripts/macos-release-build.sh`, which owns Developer ID signing,
 notarization of the `.app` and DMG, and the verification that gates them (the
 Tauri CLI only warns when it skips notarization). The `APPLE_*` secrets are
-all-or-none: none builds an unsigned DMG with a warning, a partial set fails.
+all-or-none: none builds an unsigned DMG with a warning (an error once the
+repository variable `MACOS_REQUIRE_SIGNING` is 1), a partial set fails. The
+check workflow uses its own cache key so a dev run cannot seed the release
+job's cached tauri-cli binary.
 The script runs under macOS's stock bash 3.2 (no `mapfile`). Runbook and
 secret list: `docs/macos-signing.md`.

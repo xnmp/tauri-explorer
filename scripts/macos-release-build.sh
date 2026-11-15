@@ -133,13 +133,29 @@ notarize_and_staple() {
     [[ -n "$submission_id" ]] && xcrun notarytool log "$submission_id" "${notary_auth[@]}" || true
     fail "Notarization of $artifact finished with status '${status:-unknown}'"
   fi
-  xcrun stapler staple "$artifact"
-  xcrun stapler validate "$artifact"
+  staple "$artifact"
+}
+
+# Apple's ticket CDN can briefly answer "Record not found" (error 65) right
+# after a submission is accepted, so stapling retries before failing. Stapling
+# is idempotent; Tauri ignores its own .app staple result, so the .app is
+# stapled here too.
+staple() {
+  local artifact=$1 attempt
+  for attempt in 1 2 3 4 5; do
+    if xcrun stapler staple "$artifact" && xcrun stapler validate "$artifact"; then
+      return 0
+    fi
+    echo "Stapling $artifact failed (attempt $attempt/5); retrying in 30s"
+    sleep 30
+  done
+  fail "Could not staple a notarization ticket to $artifact; rerun the job if notarization was accepted"
 }
 
 app=$(only_match '*.app' "$bundle_dir/macos")
 dmg=$(only_match '*.dmg' "$bundle_dir/dmg")
 
+staple "$app"
 verify_app "$app"
 
 # Notarize the outermost container too, so the downloaded DMG itself carries a

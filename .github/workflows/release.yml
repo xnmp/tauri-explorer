@@ -128,11 +128,14 @@ jobs:
 
       # Developer ID signing + notarization of the .app and DMG (#1671). The
       # script fails closed once credentials exist; with none it builds an
-      # unsigned DMG and warns. Setup and renewal: docs/macos-signing.md.
+      # unsigned DMG and warns, unless the repository variable
+      # MACOS_REQUIRE_SIGNING is 1. Setup and renewal: docs/macos-signing.md.
       - name: Build, sign and notarize Tauri app (macOS)
         if: runner.os == 'macOS'
         shell: bash
+        timeout-minutes: 120
         env:
+          REQUIRE_SIGNING: ${{ vars.MACOS_REQUIRE_SIGNING }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}

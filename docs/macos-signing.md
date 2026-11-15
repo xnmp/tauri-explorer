@@ -26,7 +26,7 @@ downloaded copy without `xattr` (#1671).
 | --- | --- |
 | `APPLE_CERTIFICATE` | `base64 -i DeveloperID.p12` (one line) |
 | `APPLE_CERTIFICATE_PASSWORD` | the `.p12` export password |
-| `APPLE_SIGNING_IDENTITY` | `Developer ID Application: <Name> (<TEAMID>)`, exactly as `security find-identity -v -p codesigning` prints it |
+| `APPLE_SIGNING_IDENTITY` | `Developer ID Application: <Name> (<TEAMID>)` as `security find-identity -v -p codesigning` prints it, without the surrounding quotes |
 | `APPLE_API_ISSUER` | App Store Connect → Users and Access → Integrations → Team Keys: the Issuer ID |
 | `APPLE_API_KEY` | that key's Key ID |
 | `APPLE_API_PRIVATE_KEY` | the full contents of `AuthKey_<KeyID>.p8`, including the BEGIN/END lines |
@@ -35,12 +35,29 @@ downloaded copy without `xattr` (#1671).
 
 1. Enrol in the Apple Developer Program (individual is fine; the certificate
    then shows your personal name in Gatekeeper dialogs).
-2. On a Mac, in Xcode → Settings → Accounts → Manage Certificates, add a
-   **Developer ID Application** certificate (or create a CSR in Keychain Access
-   and upload it at developer.apple.com → Certificates). Only the Account Holder
-   can create Developer ID certificates.
-3. In Keychain Access, export that certificate *with its private key* as a
-   `.p12` and set a password.
+2. Create the **Developer ID Application** certificate. Only the Account
+   Holder can. No Mac is needed: generate the key and CSR with OpenSSL, upload
+   the CSR at developer.apple.com → Certificates → + → Developer ID Application
+   (G2 Sub-CA), and download the `.cer`:
+   ```bash
+   openssl genrsa -out devid.key 2048
+   openssl req -new -key devid.key -out devid.csr \
+     -subj "/emailAddress=<apple-id-email>/CN=<Your Name>/C=<country code>"
+   ```
+   (On a Mac, Xcode → Settings → Accounts → Manage Certificates does the same.)
+3. Bundle the certificate, its private key and Apple's intermediate into a
+   password-protected `.p12`. `-legacy` keeps the encryption that older
+   `security import` versions accept:
+   ```bash
+   curl -fsSLO https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+   openssl x509 -inform DER -in developerID_application.cer -out devid.pem
+   openssl x509 -inform DER -in DeveloperIDG2CA.cer -out g2ca.pem
+   openssl pkcs12 -export -legacy -inkey devid.key -in devid.pem \
+     -certfile g2ca.pem -out DeveloperID.p12
+   openssl x509 -in devid.pem -noout -subject   # CN = the signing identity
+   ```
+   Keep `devid.key` / `DeveloperID.p12` somewhere safe and offline; anyone
+   holding them can sign software as you.
 4. In App Store Connect, create a Team API key with the **Developer** role and
    download the `.p8` (it can be downloaded only once).
 5. Add the six secrets:
@@ -52,12 +69,20 @@ downloaded copy without `xattr` (#1671).
    gh secret set APPLE_API_KEY
    gh secret set APPLE_API_PRIVATE_KEY < AuthKey_XXXXXXXXXX.p8
    ```
-6. Run `gh workflow run macos-signing-check.yml --ref dev`, wait for it to pass,
-   then download the `notarized-dmg` artifact *through a browser* on a Mac
-   (so it is quarantined) and open it: it should launch with at most the
-   standard "downloaded from the Internet" confirmation.
-7. After the first signed release, remove the `xattr` instructions from
-   `README.md`, `website/app.js` and `docs/alpha-testing.md`.
+6. Run `gh workflow run macos-signing-check.yml --ref dev` and wait for it to
+   pass. Its `spctl` checks are Gatekeeper's own assessment on a real Mac
+   runner. For hands-on confirmation, have someone with a Mac download the
+   `notarized-dmg` artifact *through a browser* (so it is quarantined) and open
+   it: it should launch with at most the standard "downloaded from the
+   Internet" confirmation.
+7. After the first signed release, set the repository variable
+   `gh variable set MACOS_REQUIRE_SIGNING --body 1` so a later release fails
+   rather than shipping unsigned if the secrets go missing, and remove the
+   `xattr` instructions from `README.md`, `website/app.js` and
+   `docs/alpha-testing.md`.
+
+A failed staple after an accepted notarization is retried five times; if the
+job still fails there, rerun it. Apple's ticket CDN can lag the acceptance.
 
 ## Maintenance
 

@@ -26,3 +26,9 @@ things broke without any change in the repository:
 To check whether a failure is caused by the image, look for `resolute` (or the
 new release codename) in the apt index output, and compare it with the last
 green run's image.
+
+Follow-up: `perf.yml`'s Tiles Scroll Perf job ran `npx playwright install
+--with-deps chromium` on the host, and Playwright refuses 26.04 hosts ("does not
+support chromium on ubuntu26.04-x64"). It now runs in the same digest-pinned
+Playwright container as ci.yml's browser jobs, with the container bun pin.
+`tests/ci-playwright-container.test.ts` holds it to that image.

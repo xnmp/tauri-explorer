@@ -72,6 +72,8 @@ rolls the new one out. Probe candidates from captured output, never
 `apt-cache … | grep -q`, which returns SIGPIPE (141) under pipefail. The 26.04
 image's `/usr/bin/sleep` is uutils coreutils and does not run under another
 name, so process fixtures link the Node binary instead (#1666).
+Playwright refuses 26.04 hosts outright, so every Playwright job, including
+perf.yml's Tiles guard, runs in the pinned Playwright container.
 Contracts: `tests/ci-apt-install.test.ts`.
 
 # Browser jobs in the Playwright container (#1367)

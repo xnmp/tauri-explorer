@@ -319,10 +319,21 @@ fn source_session(html: &[u8]) -> Option<String> {
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '-'))
     .then(|| session.to_owned())
 }
+/// The HTML flavour exists only to carry the session marker to this process,
+/// yet GTK offers it to every receiver. HTML-first receivers (Obsidian, rich
+/// text editors) would paste the private URN instead of importing the dropped
+/// files, so each receiver gets an empty fragment, which they treat as absent
+/// (#1656). The app's own DOM drop targets read the marker only through
+/// WebKit's same-origin custom pasteboard copy, never this flavour, and native
+/// routing uses the session bound here.
+fn consume_source_html(html: &[u8]) -> Option<(String, &'static [u8])> {
+    source_session(html).map(|session| (session, &b""[..]))
+}
 fn source_data(owner: &str, context: usize, data: &gtk::SelectionData) {
     let target = data.target().name();
     if target == "text/html" && (1..=64 * 1024).contains(&data.length()) {
-        if let Some(session) = source_session(&data.data()) {
+        if let Some((session, exported)) = consume_source_html(&data.data()) {
+            data.set(&data.target(), 8, exported);
             let outcome = VIEWS.with(|views| {
                 views.borrow_mut().get_mut(owner).and_then(|tracker| {
                     let observed = tracker
@@ -390,7 +401,7 @@ fn source_data(owner: &str, context: usize, data: &gtk::SelectionData) {
 
 #[cfg(test)]
 mod tests {
-    use super::{source_session, token_for_window, Lifecycle};
+    use super::{consume_source_html, source_session, token_for_window, Lifecycle};
     #[test]
     fn pooled_ipc_window_uses_newest_context_across_all_source_owners() {
         assert_eq!(
@@ -417,6 +428,18 @@ mod tests {
             source_session(format!("urn:tauri-explorer:drag:{}", "x".repeat(129)).as_bytes()),
             None
         );
+    }
+    #[test]
+    fn session_marker_is_read_but_never_exported_to_receivers() {
+        let (session, exported) = consume_source_html(
+            br#"<span style="color: black">urn:tauri-explorer:drag:abc-123</span>"#,
+        )
+        .expect("WebKit-serialized carrier");
+        assert_eq!(session, "abc-123");
+        assert!(exported.is_empty(), "receivers must not see the URN");
+        // HTML that is not a valid carrier is left as WebKit produced it.
+        assert_eq!(consume_source_html(b"<b>notes</b>"), None);
+        assert_eq!(consume_source_html(b"urn:tauri-explorer:drag:a/b"), None);
     }
     #[test]
     fn old_context_and_old_renderer_completion_cannot_retire_replacement() {

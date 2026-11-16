@@ -33,12 +33,14 @@ import { findHookLeaks } from "./release-hook-leaks.mjs";
 // Recalibrated 239,791 -> 237,844 when gzip became hash-normalized (#1372):
 // dev 81b6246d measured 86,649 bytes as emitted and 84,702 normalized, and
 // the cap keeps the same 153,142 bytes of headroom.
-const BUDGET_GZIP_BYTES = 237_844;
+// Doubled all three byte budgets at the user's request (#1701) to provide
+// sustained headroom instead of repeatedly making small cap increases.
+const BUDGET_GZIP_BYTES = 475_688;
 
 // Full static entry closure at ea256aaf, measured before #680's lazy mock
 // split. Guard both parse input (raw bytes, relevant to local Tauri assets)
 // and transfer size. Splitting a large chunk must not evade the startup cap.
-const STARTUP_RAW_BUDGET = 866_617;
+const STARTUP_RAW_BUDGET = 1_733_234;
 // Raised 277,378 -> 278_400 for #994 (Details Resolution column). dev measured
 // 277,120 (258 bytes of headroom); the column's header, row cell, queue and
 // keyboard-reveal handler add ~814 bytes gzip (277,934 total; 278,112 after merging later dev work). Lazy-loading the
@@ -158,7 +160,7 @@ const STARTUP_RAW_BUDGET = 866_617;
 // gesture; together with the Miller freshness fixes the graph measures
 // 283,383 bytes gzip (dev #1641: 283,003, +380). Miller listing state and Git
 // detail loading remain lazy. The raw-byte budget is unchanged.
-const STARTUP_GZIP_BUDGET = 283_648;
+const STARTUP_GZIP_BUDGET = 567_296;
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const clientDir = resolve(repoRoot, ".svelte-kit/output/client");

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { dedupeFrontendCrash } from "../../src/lib/domain/crash-report";
+import { dedupeFrontendCrash, isBenignBrowserError } from "../../src/lib/domain/crash-report";
 
 describe("dedupeFrontendCrash", () => {
   it("records a first-seen message and remembers it", () => {
@@ -60,5 +60,27 @@ describe("crash report titles and drafts (#1684)", () => {
     const { crashDraftUpdate } = await import("../../src/lib/domain/crash-report-draft");
     expect(crashDraftUpdate({ title: "  " }, "panic: boom")).toEqual({ title: "Crash: boom", kind: "bug" });
     expect(crashDraftUpdate({ title: "My draft" }, "panic: boom")).toBeNull();
+  });
+});
+
+describe("isBenignBrowserError", () => {
+  it.each([
+    "ResizeObserver loop completed with undelivered notifications.",
+    "ResizeObserver loop completed with undelivered notifications",
+    "  ResizeObserver loop limit exceeded  ",
+  ])("accepts %j", (m) => expect(isBenignBrowserError(m)).toBe(true));
+
+  it.each([
+    null,
+    undefined,
+    "",
+    "ResizeObserver is not defined",
+    "Uncaught Error: ResizeObserver loop completed with undelivered notifications and then crashed",
+    "resizeobserver loop",
+    "boom",
+  ])("rejects %j", (m) => expect(isBenignBrowserError(m)).toBe(false));
+
+  it("handles an extremely long message", () => {
+    expect(isBenignBrowserError("x".repeat(1_000_000))).toBe(false);
   });
 });

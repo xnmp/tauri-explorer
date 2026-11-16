@@ -38,4 +38,31 @@ describe("global webview error handlers", () => {
 
     expect(commands()).toContain("record_frontend_crash");
   });
+
+  it.each([
+    "ResizeObserver loop completed with undelivered notifications.",
+    "ResizeObserver loop completed with undelivered notifications",
+    "ResizeObserver loop limit exceeded",
+  ])("ignores the benign browser notice %j", async (message) => {
+    const window = await installedWindow();
+
+    dispatch(window, "error", { message, filename: "app.js" });
+
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("still records an error whose text only mentions ResizeObserver", async () => {
+    const window = await installedWindow();
+
+    dispatch(window, "error", { message: "ResizeObserver is not defined", error: new Error("x") });
+
+    expect(commands()).toContain("record_frontend_crash");
+  });
+
+  it("does not throw on an error event without a message", async () => {
+    const window = await installedWindow();
+
+    expect(() => dispatch(window, "error", {})).not.toThrow();
+    expect(commands()).toContain("record_frontend_crash");
+  });
 });

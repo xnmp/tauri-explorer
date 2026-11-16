@@ -291,6 +291,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         .manage(window_launch::Requests::default())
         .manage(window_launch::FocusHistory::default())
         .manage(native_file_drag::Sessions::default())
+        .manage(update_check::SelfUpdateJob::default())
         .manage(system::StartupClock {
             started: t_start,
             epoch_ms: t_start_epoch_ms,
@@ -321,6 +322,9 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         // `target="_blank"` and Ctrl/Shift-clicked http(s)/mailto/tel links (Markdown
         // preview, plugin UIs) in the system browser. Wry drops them otherwise.
         .plugin(tauri_plugin_opener::init())
+        // Signed self-update (#1679). Driven only from Rust (`update_check`),
+        // so no `updater:*` capability is granted to the webviews.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .on_window_event(|window, event| {
             native_file_drag::on_window_event(window, event);
             window_launch::on_window_event(window, event);
@@ -368,7 +372,8 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             crash_report::open_external_url,
             palette::extract_palette,
             config::write_theme_file,
-            update_check::check_for_update,
+            update_check::prepare_update,
+            update_check::install_update,
             log_startup_timing,
             log_startup_progress,
             // Trash operations

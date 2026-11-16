@@ -200,17 +200,29 @@ export const systemCommands: Record<string, CommandHandler> = {
     };
   },
 
-  // Update check (#185): a newer release is simulated when the e2e test
-  // sets localStorage.mockUpdateAvailable before load.
-  check_for_update: () =>
-    localStorage.getItem(MOCK_LOCAL_KEYS.updateAvailable) === "1"
-      ? {
-          version: "9.9.9",
-          url:
-            localStorage.getItem(MOCK_LOCAL_KEYS.updateUrl) ??
-            "https://github.com/xnmp/tauri-explorer/releases/tag/v9.9.9",
-        }
-      : null,
+  // Update check (#185, #1679): a newer release is simulated when the e2e
+  // test sets localStorage.mockUpdateAvailable before load. It is reported as
+  // downloaded only for a self-updatable install with autoInstall requested.
+  prepare_update: (args) => {
+    const autoInstall = args?.autoInstall === true;
+    localStorage.setItem(MOCK_LOCAL_KEYS.updateAutoInstallArg, String(autoInstall));
+    if (localStorage.getItem(MOCK_LOCAL_KEYS.updateAvailable) !== "1") return null;
+    const ready = autoInstall && localStorage.getItem(MOCK_LOCAL_KEYS.updateSelfUpdatable) === "1";
+    return {
+      version: "9.9.9",
+      url:
+        localStorage.getItem(MOCK_LOCAL_KEYS.updateUrl) ??
+        "https://github.com/xnmp/tauri-explorer/releases/tag/v9.9.9",
+      ready,
+    };
+  },
+  install_update: () => {
+    if (localStorage.getItem(MOCK_LOCAL_KEYS.updateInstalled) === "fail") {
+      throw new Error("Update install failed: authentication was cancelled");
+    }
+    localStorage.setItem(MOCK_LOCAL_KEYS.updateInstalled, "1");
+    return null;
+  },
 
   // Pre-warmed window pool: no pool outside Tauri — spawn is always refused
   // and claims always miss, so openNewWindow takes the fresh-window path.

@@ -345,6 +345,12 @@
             <SettingToggle checked={settingsStore.tabTitleGitRoot} onchange={() => settingsStore.update({ tabTitleGitRoot: !settingsStore.tabTitleGitRoot })} />
           </SettingRow>
 
+          <SettingRow label="Install Updates Automatically"
+            description="Download new versions in the background and offer to restart into them. When off, or when a system package manager owns the install, you are only notified."
+            hidden={!matchesSearch(...rows.autoUpdate)}>
+            <SettingToggle data-testid="auto-update-toggle" checked={settingsStore.autoUpdate} onchange={() => settingsStore.update({ autoUpdate: !settingsStore.autoUpdate })} />
+          </SettingRow>
+
           <SettingRow label="New Pane Layout"
             description="How the New Pane command places panes: dwindle splits along the longer axis (Hyprland-style), or always right/down"
             hidden={!matchesSearch(...rows.defaultPaneLayout)}>

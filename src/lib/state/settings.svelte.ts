@@ -119,6 +119,7 @@ export interface Settings {
   autoEnterSingleSubdir: boolean; // when entering a dir with exactly one visible subdir (and nothing else), descend into it recursively
   ffmpegPath: string; // explicit path to ffmpeg binary for video/audio thumbnails (empty = auto-detect)
   tabTitleGitRoot: boolean; // when the folder is inside a git repo, show the repo root name + git icon in the tab title (default on, #471)
+  autoUpdate: boolean; // download signed updates in the background and offer a restart; off = notify only (default on, #1679)
   settingsVersion: number; // schema stamp on the persisted blob; drives one-shot migrations when a default flips (#506)
   warmWindow: boolean; // keep a hidden pre-warmed window pooled so Ctrl+N is near-instant
   terminalFollowsExplorer: boolean; // auto-cd the embedded terminal when the active pane navigates (#149)
@@ -198,6 +199,7 @@ const DEFAULT_SETTINGS: Settings = {
   autoEnterSingleSubdir: false,
   ffmpegPath: "",
   tabTitleGitRoot: true,
+  autoUpdate: true,
   warmWindow: true,
   terminalFollowsExplorer: true,
   explorerFollowsTerminal: true,
@@ -703,6 +705,9 @@ function createSettingsStore() {
     },
     get tabTitleGitRoot() {
       return settings.tabTitleGitRoot;
+    },
+    get autoUpdate() {
+      return settings.autoUpdate;
     },
     get warmWindow() {
       return settings.warmWindow;

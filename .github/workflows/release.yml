@@ -124,6 +124,12 @@ jobs:
       - name: Build Tauri app
         if: runner.os != 'macOS'
         shell: bash
+        # linuxdeploy (AppImage) runs `strip` on the binary unless NO_STRIP is
+        # set, which would discard the symbol table Cargo's
+        # `strip = "debuginfo"` keeps for readable panic backtraces (#1682).
+        # Only linuxdeploy reads it; the Windows build ignores it.
+        env:
+          NO_STRIP: "true"
         run: cargo tauri build ${{ matrix.tauri-args }}
 
       # Developer ID signing + notarization of the .app and DMG (#1671). The

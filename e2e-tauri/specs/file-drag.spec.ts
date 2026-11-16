@@ -91,9 +91,16 @@ async function drag(source: Entry, destination: Entry, options: { copy?: boolean
       }
     }).observe(document.body, { childList: true, subtree: true });
   }, folder ? springPeekSelector(folder) : "");
+  // XTest moves in X window pixels; element locations are CSS pixels. At a GTK
+  // scale other than 1 they differ by devicePixelRatio, and a harness that fed
+  // CSS pixels straight through could never drive a scaled display (#1704).
+  const scale = await browser.execute(() => window.devicePixelRatio);
+  const expectedScale = process.env.TAURI_DND_EXPECTED_SCALE;
+  if (expectedScale) assert.equal(scale, Number(expectedScale), "the app did not run at the requested GTK scale");
+  const device = (css: number) => String(Math.round(css * scale));
   execFileSync("python3", [fileURLToPath(new URL("../helpers/native-drag.py", import.meta.url)),
-    String(Math.round(from.x + 65)), String(Math.round(from.y + 12)),
-    String(Math.round(to.x + 65)), String(Math.round(to.y + 12)),
+    device(from.x + 65), device(from.y + 12),
+    device(to.x + 65), device(to.y + 12),
     ...(options.copy ? ["--copy"] : []),
     ...(options.cancel ? ["--cancel"] : []),
     ...(options.copyAfterStart ? ["--copy-after-start"] : []),

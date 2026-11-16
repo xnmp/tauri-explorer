@@ -17,15 +17,71 @@
   import { settingsStore } from "$lib/state/settings.svelte";
   import { getCommandShortcut } from "$lib/state/commands.svelte";
   import { tabDragState, windowAtScreenPos, sendTabToWindow } from "$lib/state/tab-transfer";
-  import { getZoomFactor } from "$lib/domain/zoom";
+  import { clientToCSSRelative, getZoomFactor } from "$lib/domain/zoom";
   import { openNewWindow } from "$lib/state/commands/shared";
   import { showTabStrip } from "$lib/domain/titlebar";
   import { stepTabDrag, TAB_DRAG_IDLE, type TabDrag, type TabDragEffect, type TabDragEvent } from "$lib/domain/tab-drag";
+  import { tabStripLayout, tabEdgeScrollSpeed, TAB_MAX_WIDTH, TAB_GAP } from "$lib/domain/tab-strip";
+  import WindowTabPicker from "./WindowTabPicker.svelte";
+  import "./window-tab-bar.css";
   import NamedFolderIcon from "./NamedFolderIcon.svelte";
   import type { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
   const tabs = $derived(windowTabsManager.tabs);
   const activeTabId = $derived(windowTabsManager.activeTabId);
+  let renamingTabId = $state<string | null>(null);
+
+  let tabViewport: HTMLDivElement | undefined = $state();
+  let tabSpaceWidth = $state(0);
+  let tabViewportWidth = $state(0);
+  let tabScrollLeft = $state(0);
+  const stripLayout = $derived(tabStripLayout(tabs.length, tabSpaceWidth, Math.min(renamingTabId ? 180 : 120, tabSpaceWidth || 120)));
+  const showScrollButtons = $derived(stripLayout.overflowing && tabSpaceWidth >= 240);
+  let pickerButton: HTMLButtonElement | undefined = $state();
+  let pickerOpen = $state(false);
+  const pickerItems = $derived(tabs.map(tab => ({
+    id: tab.id, title: windowTabsManager.getTabTitle(tab), path: windowTabsManager.getTabTooltip(tab),
+  })));
+
+  function closePicker(restoreFocus = false): void {
+    pickerOpen = false;
+    if (restoreFocus) pickerButton?.focus();
+  }
+
+  // Activation/layout changes reveal the selected tab. Manual browsing does
+  // not retrigger this effect, so wheel/arrow/drag scrolling stays user-owned.
+  $effect(() => {
+    const id = activeTabId;
+    const geometry = [stripLayout.activeWidth, stripLayout.inactiveWidth, tabViewportWidth];
+    void geometry;
+    let cancelled = false;
+    void tick().then(() => {
+      if (!cancelled && activeTabId === id) revealActiveTab();
+    });
+    return () => { cancelled = true; };
+  });
+
+  function revealActiveTab(): void {
+    if (!tabViewport) return;
+    const selected = Array.from(tabViewport.querySelectorAll<HTMLElement>(".tab"))
+      .find(tab => tab.dataset.tabId === activeTabId);
+    if (!selected) return;
+    const tab = selected.getBoundingClientRect();
+    const view = tabViewport.getBoundingClientRect();
+    if (tab.left < view.left) tabViewport.scrollLeft += clientToCSSRelative(tab.left, view.left);
+    else if (tab.right > view.right) tabViewport.scrollLeft += clientToCSSRelative(tab.right, view.right);
+  }
+
+  function scrollTabs(direction: number): void {
+    if (tabViewport) tabViewport.scrollLeft += direction * Math.max(120, tabViewport.clientWidth * 0.8);
+  }
+
+  function handleTabWheel(event: WheelEvent): void {
+    if (!tabViewport || event.ctrlKey || event.metaKey || !stripLayout.overflowing) return;
+    const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? tabViewport.clientWidth : 1;
+    tabViewport.scrollLeft += (Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY) * unit;
+    event.preventDefault();
+  }
 
   // When "git root in tab title" is on, resolve each tab's repo root (cached in
   // the manager). Runs here because the async work needs a component owner; the
@@ -51,6 +107,9 @@
 
   function handleTabClick(tabId: string): void {
     windowTabsManager.setActiveTab(tabId);
+    // Selecting the current tab is still an explicit reveal request, even
+    // when its ID did not change after the user browsed elsewhere in the strip.
+    void tick().then(() => { if (activeTabId === tabId) revealActiveTab(); });
   }
 
   function handleTabClose(event: MouseEvent, tabId: string): void {
@@ -84,13 +143,13 @@
   }
 
   // ── Inline rename (#228): multi-pane tabs only ──
-  let renamingTabId = $state<string | null>(null);
   let renameValue = $state("");
 
   function startRename(tabId: string): void {
     if (!windowTabsManager.canRenameTab(tabId)) return;
     const tab = tabs.find((t) => t.id === tabId);
     if (!tab) return;
+    windowTabsManager.setActiveTab(tabId);
     renamingTabId = tabId;
     renameValue = windowTabsManager.getTabTitle(tab);
     void tick().then(() => {
@@ -135,6 +194,8 @@
     transfer: TabTransfer | null;
     ghost: HTMLElement | null;
     followRaf: number;
+    scrollRaf: number;
+    pointer: { x: number; y: number } | null;
   }
   // The lifecycle (pressed → dragging → detaching → detached, #176) is the
   // domain reducer's; this component runs the effect each transition names.
@@ -153,7 +214,7 @@
     if ((event.target as HTMLElement).closest(".tab-close")) return; // close btn owns its clicks
     if (renamingTabId === tabId) return; // rename input owns the pointer
     cancelTabDrag();
-    const session: DragSession = { dragId: null, transfer: null, ghost: null, followRaf: 0 };
+    const session: DragSession = { dragId: null, transfer: null, ghost: null, followRaf: 0, scrollRaf: 0, pointer: null };
     send({ type: "press", session, tabId, at: { x: event.clientX, y: event.clientY } });
     window.addEventListener("mousemove", onTabMouseMove, true);
     window.addEventListener("mouseup", onTabMouseUp, true);
@@ -217,9 +278,42 @@
       const zoom = getZoomFactor();
       drag.session.ghost!.style.left = `${at.x / zoom + 12}px`;
       drag.session.ghost!.style.top = `${at.y / zoom + 12}px`;
+      drag.session.pointer = at;
+      startEdgeScroll(drag.session);
       const over = tabAtPoint(at.x, at.y);
       dropTargetTabId = over && over !== drag.tabId ? over : null;
     }
+  }
+
+  function startEdgeScroll(session: DragSession): void {
+    if (session.scrollRaf || !tabViewport) return;
+    let previous: number | null = null;
+    let desiredScroll = tabViewport.scrollLeft;
+    let appliedScroll = desiredScroll;
+    const step = (now: number) => {
+      session.scrollRaf = 0;
+      if (drag.kind !== "dragging" || drag.session !== session || !session.pointer || !tabViewport) return;
+      const { x, y } = session.pointer;
+      const rect = tabViewport.getBoundingClientRect();
+      if (y < rect.top || y > rect.bottom) return;
+      const speed = tabEdgeScrollSpeed(clientToCSSRelative(x, rect.left), tabViewport.clientWidth);
+      if (!speed) return;
+      const elapsed = previous === null ? 0 : Math.max(0, Math.min(32, now - previous));
+      if (tabViewport.scrollLeft !== appliedScroll) desiredScroll = tabViewport.scrollLeft;
+      const maximum = tabViewport.scrollWidth - tabViewport.clientWidth;
+      desiredScroll = Math.max(0, Math.min(maximum, desiredScroll + speed * elapsed / 1000));
+      tabViewport.scrollLeft = desiredScroll;
+      appliedScroll = tabViewport.scrollLeft;
+      previous = now;
+      const over = tabAtPoint(x, y);
+      dropTargetTabId = over && over !== drag.tabId ? over : null;
+      // The first frame can have zero elapsed time and engines may round a
+      // fractional scroll delta away. Continue until the actual edge, rather
+      // than treating one unchanged scrollLeft as the end of the gesture.
+      const canScroll = speed < 0 ? desiredScroll > 0 : desiredScroll < maximum;
+      if (canScroll) session.scrollRaf = requestAnimationFrame(step);
+    };
+    session.scrollRaf = requestAnimationFrame(step);
   }
 
   /** Detach the dragged tab into a real window at the cursor (#176).
@@ -227,6 +321,8 @@
   async function detachIntoWindow(event: MouseEvent): Promise<void> {
     if (drag.kind !== "detaching") return;
     const session = drag.session;
+    if (session.scrollRaf) cancelAnimationFrame(session.scrollRaf);
+    session.scrollRaf = 0;
     session.ghost?.remove();
     session.ghost = null;
     let child: WebviewWindow | null = null;
@@ -303,6 +399,7 @@
     if (cancelTransfer) session?.transfer?.cancel();
     tabDragState.clear(session?.dragId);
     if (session?.followRaf) cancelAnimationFrame(session.followRaf);
+    if (session?.scrollRaf) cancelAnimationFrame(session.scrollRaf);
     session?.ghost?.remove();
     draggingTabId = null;
     dropTargetTabId = null;
@@ -316,6 +413,7 @@
     const ptr = from.session;
     removeTabDragListeners();
     if (ptr.followRaf) cancelAnimationFrame(ptr.followRaf);
+    if (ptr.scrollRaf) cancelAnimationFrame(ptr.scrollRaf);
     ptr.ghost?.remove();
     dropTargetTabId = null;
     draggingTabId = null;
@@ -426,6 +524,11 @@
   <!-- Drag handlers only — keyboard interaction lives on the tabs. -->
   <!-- svelte-ignore a11y_interactive_supports_focus -->
   <div class="tab-area" data-region="tab-strip">
+    <div class="tab-scroll-group" bind:clientWidth={tabSpaceWidth} style:width={`${tabs.length * (TAB_MAX_WIDTH + TAB_GAP) - TAB_GAP}px`}>
+      {#if showScrollButtons}
+        <button class="tab-scroll-btn" aria-label="Scroll tabs left" disabled={tabScrollLeft < 1} onclick={() => scrollTabs(-1)}>‹</button>
+      {/if}
+      <div class="tab-viewport" bind:this={tabViewport} bind:clientWidth={tabViewportWidth} onscroll={() => { tabScrollLeft = tabViewport?.scrollLeft ?? 0; }} onwheel={handleTabWheel}>
     <!-- A tablist owns only tabs; the new-tab button sits beside it (#785). -->
     <div class="tab-list" role="tablist" aria-label="Tabs">
     {#each tabs as tab (tab.id)}
@@ -434,14 +537,20 @@
         class="tab"
         data-region="tab"
         class:active={tab.id === activeTabId}
+        class:compact={tab.id !== activeTabId && stripLayout.iconOnly}
+        class:narrow={tab.id === activeTabId && stripLayout.activeWidth < 90}
+        style:width={`${tab.id === activeTabId ? stripLayout.activeWidth : stripLayout.inactiveWidth}px`}
         class:drag-over={dropTargetTabId === tab.id}
         class:file-drop-target={fileDropTargetTabId === tab.id}
         class:dragging={draggingTabId === tab.id}
         in:slide={{ axis: "x", duration: reducedMotion.current ? 0 : 180 }}
         out:slide={{ axis: "x", duration: reducedMotion.current ? 0 : 120 }}
+        onintroend={() => { if (tab.id === activeTabId) revealActiveTab(); }}
+        onoutroend={revealActiveTab}
         role="tab"
         tabindex="0"
         aria-selected={tab.id === activeTabId}
+        aria-label={`${windowTabsManager.getTabTitle(tab)} — ${windowTabsManager.getTabTooltip(tab)}`}
         data-tab-id={tab.id}
         onmousedown={(e) => handleTabMouseDown(e, tab.id)}
         onclick={() => { if (suppressNextClick) { suppressNextClick = false; return; } handleTabClick(tab.id); }}
@@ -533,6 +642,11 @@
       </div>
     {/each}
     </div>
+      </div>
+      {#if showScrollButtons}
+        <button class="tab-scroll-btn" aria-label="Scroll tabs right" disabled={tabScrollLeft + tabViewportWidth >= stripLayout.totalWidth - 1} onclick={() => scrollTabs(1)}>›</button>
+      {/if}
+    </div>
 
     <button
       class="new-tab-btn"
@@ -549,407 +663,11 @@
         />
       </svg>
     </button>
+    <button class="tab-picker-btn" bind:this={pickerButton} aria-label="Search open tabs" title="Search open tabs" aria-expanded={pickerOpen} aria-haspopup="listbox" onclick={() => { pickerOpen = !pickerOpen; }}>
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
+    </button>
+    {#if pickerOpen && pickerButton}
+      <WindowTabPicker items={pickerItems} {activeTabId} anchorEl={pickerButton} onSelect={handleTabClick} onClose={closePicker} />
+    {/if}
   </div>
 {/if}
-
-<style>
-  .tab-area {
-    display: flex;
-    align-items: flex-end;
-    height: 34px;
-    flex-shrink: 0;
-    padding-left: 12px;
-    gap: 1px;
-    overflow-x: auto;
-    scrollbar-width: none;
-    -ms-overflow-style: none;
-    position: relative;
-    /* No background of its own: the titlebar owns the strip surface. Painting
-       a second (semi-transparent) layer here made the tabbed section a
-       different shade from the tabless remainder of the bar (#238). */
-    background: transparent;
-  }
-
-  .tab-list {
-    display: flex;
-    align-items: flex-end;
-    gap: 1px;
-    height: 100%;
-    flex-shrink: 0;
-  }
-
-  .tab-area::-webkit-scrollbar {
-    display: none;
-  }
-
-  .tab {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    height: 30px;
-    padding: 0 5px 0 12px;
-    /* Subtle-but-visible fill: --background was undefined outside the tahoe
-       theme, leaving unfocused tabs transparent and indistinct (#238). */
-    background: var(--control-fill-tertiary);
-    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
-    font-size: 12px;
-    font-weight: var(--font-weight-medium);
-    letter-spacing: -0.01em;
-    color: var(--text-secondary);
-    cursor: pointer;
-    flex-shrink: 0;
-    max-width: 220px;
-    position: relative;
-    border: none;
-    border-top: 2px solid var(--surface-stroke, rgba(0, 0, 0, 0.1));
-    opacity: 1;
-    transform-origin: bottom center;
-    overflow: hidden;
-  }
-
-  /* Subtle gradient overlay for depth */
-  .tab::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: 6px 6px 0 0;
-    background: linear-gradient(
-      180deg,
-      var(--control-fill-tertiary) 0%,
-      transparent 100%
-    );
-    opacity: 0;
-    pointer-events: none;
-  }
-
-  /* Tab separator */
-  .tab::after {
-    content: "";
-    position: absolute;
-    right: 0;
-    top: 8px;
-    bottom: 8px;
-    width: 1px;
-    background: var(--divider);
-    opacity: 0.5;
-  }
-
-  /* Chrome-style hover: an inset rounded pill instead of a full-height
-     rectangle, so the highlight never butts into the active tab's fillet
-     flare at the strip base (#235). Repurposes the ::before overlay as the
-     pill; the active tab keeps its gradient ::before untouched. */
-  .tab:hover:not(.active)::before {
-    opacity: 1;
-    inset: 4px 2px 3px 2px;
-    border-radius: var(--radius-sm);
-    background: var(--control-fill-secondary);
-  }
-
-  .tab:hover {
-    color: var(--text-primary);
-    border-color: var(--surface-stroke);
-  }
-
-  /* The active tab is fused to the pane — hover must not lift or restyle it.
-     No background override: .tab:hover doesn't set one, and redeclaring it
-     here would drop the hairline stroke layers from .tab.active. */
-  .tab.active:hover {
-    color: var(--text-primary);
-    transform: none;
-  }
-
-  .tab:hover::after,
-  .tab.active::after,
-  .tab:last-of-type::after {
-    opacity: 0;
-  }
-
-  .tab.dragging {
-    opacity: 0.5;
-  }
-
-  .tab.drag-over {
-    border-color: var(--accent);
-    background: var(--subtle-fill-secondary);
-  }
-
-  .tab.file-drop-target,
-  .tab:global(.drop-target) {
-    border-color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 15%, var(--background-card));
-    box-shadow:
-      0 0 0 1px var(--accent),
-      0 0 8px color-mix(in srgb, var(--accent) 40%, transparent);
-    opacity: 1;
-    transform: translateY(-1px);
-  }
-
-  .tab.active {
-    --fillet: 14px;
-    /* --background-card is translucent in every theme; painted straight over
-       the titlebar's own card layer it composites into a DIFFERENT color
-       than the pane below (and reads as see-through, #243). Layering it
-       over --background-solid reproduces the pane's effective surface
-       opaquely, so the tab both fuses with the pane and stands apart from
-       inactive tabs.
-       The top two layers are the hairline side strokes (#243): drawn as
-       background strips rather than an inset box-shadow so they can END at
-       the fillet tangent point, --fillet above the base — a full-height
-       stroke would cut a chord through the fillet's flare curve, doubling
-       the hairline at the bottom corners (#268). The fillet's own ring
-       continues the stroke tangentially from there. */
-    background:
-      linear-gradient(var(--surface-stroke), var(--surface-stroke)) left top /
-        1px calc(100% - var(--fillet)) no-repeat,
-      linear-gradient(var(--surface-stroke), var(--surface-stroke)) right top /
-        1px calc(100% - var(--fillet)) no-repeat,
-      linear-gradient(var(--background-card), var(--background-card)),
-      var(--background-solid);
-    color: var(--text-primary);
-    font-weight: var(--font-weight-semibold);
-    border-top: 2px solid var(--accent);
-    /* No lift and no drop shadow: the tab's base must FUSE with the pane
-       surface below it (Chrome-style) — any translateY or shadow reads as
-       a seam at the junction. */
-    transform: none;
-    z-index: 2;
-    opacity: 1;
-    /* Fillets render outside the tab box; text clipping is handled by
-       .tab-title's own overflow. */
-    overflow: visible;
-  }
-
-  /* Chrome-style fillets (#157): concave quarter-circles that flare the
-     active tab's base into the pane surface below it. Each is a square
-     hanging off the tab's bottom corner, filled with the tab's surface
-     colour except for a transparent circle anchored at the square's top
-     outer corner — so the tab's vertical edge bends smoothly outward and
-     meets the pane tangentially instead of at 90°. z-index above the
-     strip's baseline ::after so the line terminates AT the curve. */
-  /* --fillet is inherited from .tab.active, which uses it to end its side
-     hairlines at the tangent point. */
-  .tab-fillet {
-    position: absolute;
-    /* 1px oversize on the tab-facing and base-facing sides: the stroke ring
-       sits OUTSIDE the flare curve (radius fillet…fillet+1) so it lines up
-       with the tab's inset side hairline and the titlebar's outset baseline
-       hairline (#360); the box must include that 1px or the ring clips at
-       both tangent points. The circle stays anchored at the original corner. */
-    bottom: -1px;
-    width: calc(var(--fillet) + 1px);
-    height: calc(var(--fillet) + 1px);
-    pointer-events: none;
-    z-index: 3;
-  }
-
-  /* Two stacked radial layers per fillet: translucent card over solid — the
-     same opaque composite as the active tab — while the concave circle stays
-     transparent in BOTH layers so the titlebar shows through (#243). */
-  /* Stroke ring stops (#410): a SOLID 1px core (fillet → fillet+1) with a
-     0.5px feather each side. The previous ramp-up/ramp-down peaked at a
-     single radius, so at fractional device positions (tab x depends on the
-     accumulated widths of the tabs before it) the antialiased ring never
-     reached full opacity and read as a 1px gap — RHS only "some of the
-     time" because the phase shifts with tab layout. */
-  .tab-fillet.left {
-    left: calc(-1 * var(--fillet));
-    background:
-      radial-gradient(
-        circle var(--fillet) at 0 0,
-        transparent calc(var(--fillet) - 0.5px),
-        var(--surface-stroke) var(--fillet),
-        var(--surface-stroke) calc(var(--fillet) + 1px),
-        transparent calc(var(--fillet) + 1.5px)
-      ),
-      radial-gradient(
-        circle var(--fillet) at 0 0,
-        transparent calc(var(--fillet) - 0.5px),
-        var(--background-card) var(--fillet)
-      ),
-      radial-gradient(
-        circle var(--fillet) at 0 0,
-        transparent calc(var(--fillet) - 0.5px),
-        var(--background-solid) var(--fillet)
-      );
-  }
-
-  .tab-fillet.right {
-    right: calc(-1 * var(--fillet));
-    background:
-      radial-gradient(
-        circle var(--fillet) at 100% 0,
-        transparent calc(var(--fillet) - 0.5px),
-        var(--surface-stroke) var(--fillet),
-        var(--surface-stroke) calc(var(--fillet) + 1px),
-        transparent calc(var(--fillet) + 1.5px)
-      ),
-      radial-gradient(
-        circle var(--fillet) at 100% 0,
-        transparent calc(var(--fillet) - 0.5px),
-        var(--background-card) var(--fillet)
-      ),
-      radial-gradient(
-        circle var(--fillet) at 100% 0,
-        transparent calc(var(--fillet) - 0.5px),
-        var(--background-solid) var(--fillet)
-      );
-  }
-
-  .tab.active::before {
-    opacity: 0.3;
-  }
-
-  .tab-icon {
-    flex-shrink: 0;
-  }
-
-  /* Dynamic folder icon color using CSS filter - adapts to theme accent */
-  .tab-icon path {
-    fill: var(--accent);
-    opacity: 0.85;
-  }
-
-  .tab:hover .tab-icon,
-  .tab:hover :global(.tab-icon-special) {
-    transform: scale(1.05);
-  }
-
-  /* A special folder's pack icon (#1499) is FileIcon in a wrapper span. */
-  .tab :global(.tab-icon-special) { display: inline-flex; flex-shrink: 0; }
-
-  .tab:hover .tab-icon path {
-    opacity: 1;
-  }
-
-  .tab.active .tab-icon path {
-    opacity: 1;
-  }
-
-  .tab-title {
-    display: flex;
-    align-items: baseline;
-    gap: 3px;
-    max-width: 150px;
-    min-width: 0;
-    overflow: hidden;
-    white-space: nowrap;
-  }
-
-  .tab-rename-input {
-    width: 130px;
-    padding: 2px 6px;
-    background: var(--control-fill, rgba(0, 0, 0, 0.2));
-    border: 1px solid var(--accent);
-    border-radius: 4px;
-    font-family: inherit;
-    font-size: 12px;
-    color: var(--text-primary);
-    outline: none;
-  }
-
-  /* Repo name is context: dimmed, and it's the first thing to shrink/ellipsize
-     (high flex-shrink) so the current folder stays readable. */
-  .tab-repo {
-    flex: 0 1 auto;
-    flex-shrink: 999;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    opacity: 0.6;
-  }
-
-  .tab-sep {
-    flex: 0 0 auto;
-    opacity: 0.5;
-  }
-
-  /* Current folder: shrinks only after the repo has fully collapsed. */
-  .tab-cwd {
-    flex: 0 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  /* Git icon uses stroked shapes in the accent colour (override the folder
-     icon's fill rule, which would otherwise fill the branch glyph). */
-  .tab-icon-git {
-    color: var(--accent-text, var(--accent));
-    opacity: 0.85;
-  }
-
-  .tab-icon-git path,
-  .tab-icon-git circle {
-    fill: none;
-    stroke: currentColor;
-  }
-
-  .tab:hover .tab-icon-git,
-  .tab.active .tab-icon-git {
-    opacity: 1;
-  }
-
-  .tab-close {
-    /* Counteract the tab's 8px gap: the x sits closer to the title than
-       the icon/title spacing, so the tab doesn't read as padded-out (#363). */
-    margin-left: -4px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 18px;
-    height: 18px;
-    background: transparent;
-    border: none;
-    border-radius: 4px;
-    color: var(--text-tertiary);
-    cursor: pointer;
-    transform: scale(0.85);
-    opacity: 0;
-    flex-shrink: 0;
-  }
-
-  .tab:hover .tab-close,
-  .tab.active .tab-close {
-    opacity: 1;
-    transform: scale(1);
-  }
-
-  .tab-close:hover {
-    background: var(--control-fill-secondary);
-    color: var(--text-primary);
-    transform: scale(1.1);
-  }
-
-  .tab-close:active {
-    transform: scale(0.95);
-  }
-
-  .new-tab-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 30px;
-    height: 30px;
-    margin-bottom: 2px;
-    margin-left: 4px;
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: 6px;
-    color: var(--text-tertiary);
-    cursor: pointer;
-    transition: transform var(--transition-normal);
-    flex-shrink: 0;
-  }
-
-  .new-tab-btn:hover {
-    background: var(--control-fill-secondary);
-    border-color: var(--surface-stroke);
-    color: var(--text-primary);
-    transform: rotate(90deg);
-  }
-
-  .new-tab-btn:active {
-    transform: rotate(90deg) scale(0.9);
-  }
-
-</style>

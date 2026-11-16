@@ -161,11 +161,13 @@
 
   .spacer {
     flex: 1;
+    min-width: 32px;
     height: 100%;
   }
 
   .window-controls {
     display: flex;
+    flex-shrink: 0;
     align-self: center;
     height: 100%;
     margin-left: 4px;
@@ -202,6 +204,11 @@
   .control-btn:focus-visible {
     outline: 2px solid var(--focus-stroke-outer);
     outline-offset: -2px;
+  }
+
+  @media (max-width: 500px) {
+    .control-btn { width: 28px; }
+    .spacer { min-width: 16px; }
   }
 
 </style>

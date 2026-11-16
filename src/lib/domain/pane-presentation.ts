@@ -38,7 +38,7 @@ export function panePresentation(root: PaneNode, viewport: PaneSize, divider: nu
 }
 
 export interface PaneCreation { sourceId: string; paneId: string; splitId: string; direction: 'row' | 'column'; first: boolean }
-const sameLayout = (a: PaneNode, b: PaneNode): boolean => a.type === b.type && a.id === b.id
+export const sameLayout = (a: PaneNode, b: PaneNode): boolean => a.type === b.type && a.id === b.id
   && (a.type === 'leaf' || (b.type === 'split' && a.direction === b.direction && a.ratio === b.ratio
     && sameLayout(a.first, b.first) && sameLayout(a.second, b.second)));
 

@@ -1,14 +1,20 @@
-import { paneCreation, type PaneCreation } from '$lib/domain/pane-presentation';
+import { paneCreation, sameLayout, type PaneCreation } from '$lib/domain/pane-presentation';
 import type { PaneNode, LeafRect } from '$lib/domain/pane-layout';
+import { stablePaneFrame, visiblePaneRect, type PaneInsets } from '$lib/domain/pane-motion';
 
 export const PANE_CREATION_MS = 220;
 interface Frame { element: HTMLElement; rect: LeafRect; clip: string }
 type Snapshot = Map<string, Frame>;
 
+function clipInsets(clip: string): PaneInsets {
+  const values = clip.match(/^inset\(([^)]+)\)$/)?.[1].split(/\s+/).map(parseFloat) ?? [0];
+  const [top, right = top, bottom = top, left = right] = values;
+  return [top, right, bottom, left];
+}
+
 /** Carry a still-opening ancestor's visible region into a nested entrance. */
 function inheritedInset(source: Frame, target: LeafRect): number[] {
-  const values = source.clip.match(/^inset\(([^)]+)\)$/)?.[1].split(/\s+/).map(parseFloat) ?? [0];
-  const [top, right = top, bottom = top, left = right] = values;
+  const [top, right, bottom, left] = clipInsets(source.clip);
   return [
     top > 0 ? Math.max(0, source.rect.y + top - target.y) : 0,
     right > 0 ? Math.max(0, target.x + target.w - (source.rect.x + source.rect.w - right)) : 0,
@@ -16,11 +22,11 @@ function inheritedInset(source: Frame, target: LeafRect): number[] {
     left > 0 ? Math.max(0, source.rect.x + left - target.x) : 0,
   ];
 }
-const inset = (values: number[]) => `inset(${values.map(value => `${value}px`).join(' ')})`;
+const inset = (values: readonly number[]) => `inset(${values.map(value => `${value}px`).join(' ')})`;
 
 /** One cancellable, presentation-only animation lifetime per retained tab.
- * Live pane frames resize without scaling their content; the incoming pane is
- * already at its final bounds and is uncovered by the moving split edge. */
+ * File-view dimensions stay fixed while the visible boundary moves through
+ * clipping. The live layout settles once, on completion or cancellation. */
 export function createPaneCreationMotion(root: () => HTMLElement | undefined, reduced: () => boolean) {
   let previous: PaneNode | undefined;
   let pending: { creation: PaneCreation; before: Snapshot; width: number; height: number } | undefined;
@@ -47,6 +53,9 @@ export function createPaneCreationMotion(root: () => HTMLElement | undefined, re
     return { frames, width, height };
   }
   function prepare(next: PaneNode, shown: boolean) {
+    // Focus updates can re-publish the same tree. They must not settle an
+    // admitted press before its click-owned selection has run.
+    if (shown && previous && sameLayout(previous, next)) return;
     const creation = shown && !reduced() ? paneCreation(previous, next) : undefined;
     // Capture the currently displayed (possibly interrupted) frame before
     // cancelling its effects. A replacement starts from what the user saw.
@@ -79,14 +88,18 @@ export function createPaneCreationMotion(root: () => HTMLElement | undefined, re
       const a = old.rect, b = frame.rect;
       if (key.startsWith('pane:')) {
         if (Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y), Math.abs(a.w - b.w), Math.abs(a.h - b.h)) < .1 && old.clip === 'none') continue;
-        animate(frame.element, [{ ...bounds(a), clipPath: old.clip === 'none' ? 'inset(0px)' : old.clip }, { ...bounds(b), clipPath: 'inset(0px)' }]);
+        const plan = stablePaneFrame(a, clipInsets(old.clip), b);
+        // Keep left/top positioning: pane-hosted fixed overlays must retain
+        // their window coordinate space, which a parent transform would change.
+        animate(frame.element, [{ ...bounds(plan.from), clipPath: inset(plan.fromClip) }, { ...bounds(plan.to), clipPath: inset(plan.toClip) }]);
       } else {
         animate(frame.element, [{ transform: `translate(${a.x - b.x}px, ${a.y - b.y}px)`, width: `${a.w}px`, height: `${a.h}px`, clipPath: old.clip === 'none' ? 'inset(0px)' : old.clip }, { transform: 'translate(0px, 0px)', width: `${b.w}px`, height: `${b.h}px`, clipPath: 'inset(0px)' }]);
       }
     }
     const horizontal = creation.direction === 'row';
-    const start = horizontal ? source.rect.x : source.rect.y;
-    const extent = horizontal ? source.rect.w : source.rect.h;
+    const visible = visiblePaneRect(source.rect, clipInsets(source.clip));
+    const start = horizontal ? visible.x : visible.y;
+    const extent = horizontal ? visible.w : visible.h;
     const edge = creation.first ? start - (horizontal ? divider.rect.w : divider.rect.h) : start + extent;
     const end = horizontal ? divider.rect.x : divider.rect.y;
     const delta = edge - end;
@@ -104,5 +117,7 @@ export function createPaneCreationMotion(root: () => HTMLElement | undefined, re
     dividerClip[horizontal ? 3 : 2] = 0;
     animate(divider.element, [{ transform: horizontal ? `translateX(${delta}px)` : `translateY(${delta}px)`, clipPath: inset(dividerClip) }, { transform: 'translate(0px, 0px)', clipPath: 'inset(0px)' }]);
   }
-  return { prepare, play, finish };
+  function pause() { for (const animation of animations) animation.pause(); }
+  function resume() { for (const animation of animations) if (animation.playState === 'paused') animation.play(); }
+  return { prepare, play, finish, pause, resume };
 }

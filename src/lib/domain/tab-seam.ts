@@ -122,22 +122,40 @@ function outline(c: TabContour, offset: number): Outline {
 }
 
 /**
- * The closed silhouette (tab plus fillets), grown by `offset`, closed one
- * pixel below the base so it covers the whole strip down to its bottom edge.
+ * The closed silhouette (tab plus fillets), grown by `offset`, closed `below`
+ * pixels under the base (by default one, so it covers the strip down to its
+ * bottom edge).
  */
-export function tabSilhouettePath(c: TabContour, offset = 0): string {
+export function tabSilhouettePath(c: TabContour, offset = 0, below = 1): string {
   const { start, end, body } = outline(c, offset);
-  const below = Math.max(start.y, c.base) + 1;
-  return `M${n(start.x)} ${n(start.y)}${body}L${n(end.x)} ${n(below)}L${n(start.x)} ${n(below)}Z`;
+  const bottom = Math.max(start.y, c.base) + Math.max(0, num(below));
+  return `M${n(start.x)} ${n(start.y)}${body}L${n(end.x)} ${n(bottom)}L${n(start.x)} ${n(bottom)}Z`;
 }
 
-/** The strip shade: the whole title bar minus the active tab's silhouette,
- *  shrunk by half a pixel so the shade runs under the tab's soft edge. */
-export function stripShadePath(width: number, height: number, c: TabContour | null): string {
+/** Counter-clockwise rectangle (on screen, y down): winding opposite to the silhouette. */
+const ccwRect = (left: number, right: number, height: number): string =>
+  right > left ? `M${n(left)} 0V${n(height)}H${n(right)}V0Z` : "";
+
+/**
+ * The strip shade (fill-rule nonzero): the whole title bar minus the active
+ * tab's silhouette, shrunk by half a pixel so the shade runs under the tab's
+ * soft edge. The hole only opens inside the tab viewport (`view`): beside it
+ * the strip is drawn twice over, so a tab scrolled under the scroll buttons
+ * stays shaded there exactly where the scroller clips it.
+ */
+export function stripShadePath(
+  width: number,
+  height: number,
+  c: TabContour | null,
+  view?: { readonly left: number; readonly right: number } | null,
+): string {
   const w = nonNegative(width);
   const h = nonNegative(height);
-  const strip = `M0 0H${n(w)}V${n(h)}H0Z`;
-  return c ? `${strip}${tabSilhouettePath(c, -0.5)}` : strip;
+  if (!c) return ccwRect(0, w, h);
+  const left = Math.min(w, Math.max(0, num(view?.left ?? 0)));
+  const right = Math.max(left, Math.min(w, num(view?.right ?? w, w)));
+  const outside = ccwRect(0, left, h) + ccwRect(right, w, h);
+  return `${outside}${outside}${ccwRect(left, right, h)}${tabSilhouettePath(c, -0.5)}`;
 }
 
 export interface TabEdge {
@@ -227,6 +245,49 @@ export function tabKeyShadow(c: TabContour, light: typeof TAB_LIGHT = TAB_LIGHT)
     blur: light.blur,
     liftBlur: light.liftBlur,
   };
+}
+
+export interface TabSeamRow {
+  readonly left: number;
+  readonly right: number;
+}
+
+/**
+ * Where an island opens its top edge under the tab: the hole's overlap with
+ * the island's straight top edge (its rounded corners keep their outline),
+ * or null when they do not meet.
+ */
+export function seamRowFor(hole: TabHole, island: IslandEdge): TabSeamRow | null {
+  const radius = Math.min(nonNegative(island.radius), (island.right - island.left) / 2);
+  const left = Math.max(hole.left, island.left + radius);
+  const right = Math.min(hole.right, island.right - radius);
+  return right > left ? { left, right } : null;
+}
+
+/**
+ * The island the tab stands on, whose surface it wears: the one under most
+ * of the tab's hole. Ties keep the earlier island.
+ */
+export function islandUnder<T extends IslandEdge>(islands: readonly T[], hole: TabHole): T | null {
+  let best: T | null = null;
+  let most = 0;
+  for (const island of islands) {
+    const overlap = Math.min(hole.right, island.right) - Math.max(hole.left, island.left);
+    if (overlap > most) { best = island; most = overlap; }
+  }
+  return best;
+}
+
+/**
+ * The tab's painted fill: its silhouette ending on the base, plus the seam
+ * rows it reaches down into, `depth` pixels deep.
+ */
+export function tabFillPath(c: TabContour, rows: readonly TabSeamRow[], depth: number): string {
+  const d = Math.max(0, num(depth));
+  const seams = d > 0
+    ? rows.map((row) => `M${n(row.left)} ${n(c.base)}H${n(row.right)}V${n(c.base + d)}H${n(row.left)}Z`).join("")
+    : "";
+  return `${tabSilhouettePath(c, 0, 0)}${seams}`;
 }
 
 /** Pick the island whose top edge spans `x` on the strip base, if any. */

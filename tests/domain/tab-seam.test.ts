@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  TAB_FILLET, TAB_LIGHT, islandAt, stripShadePath, tabContour, tabEdgePath, tabHoleFor, tabKeyShadow, tabSilhouettePath,
+  TAB_FILLET, TAB_LIGHT, islandAt, islandUnder, seamRowFor, tabFillPath, stripShadePath, tabContour, tabEdgePath, tabHoleFor, tabKeyShadow, tabSilhouettePath,
 } from "$lib/domain/tab-seam";
 
 /** Endpoints of every segment (M/L/A/H/V/Z) plus each arc's radius. */
@@ -94,12 +94,28 @@ describe("tab silhouette", () => {
     expect(Math.max(...xs) - Math.min(...xs)).toBeLessThan(1);
   });
 
-  it("the strip shade is the whole bar minus the shrunken tab", () => {
-    expect(stripShadePath(800, 38, null)).toBe("M0 0H800V38H0Z");
-    const d = stripShadePath(800, 38, c);
-    expect(d.startsWith("M0 0H800V38H0Z")).toBe(true);
-    expect(d.slice("M0 0H800V38H0Z".length)).toBe(tabSilhouettePath(c, -0.5));
-    expect(stripShadePath(Number.NaN, -1, null)).toBe("M0 0H0V0H0Z");
+  it("the strip shade is the whole bar minus the shrunken tab, opened only inside the viewport", () => {
+    expect(stripShadePath(800, 38, null)).toBe("M0 0V38H800V0Z");
+    const d = stripShadePath(800, 38, c, { left: 20, right: 600 });
+    // Strip beside the viewport drawn twice, so the clockwise silhouette
+    // (winding +1) cannot cancel it under nonzero filling; once inside it.
+    expect(d).toBe(
+      "M0 0V38H20V0ZM600 0V38H800V0Z".repeat(2) + "M20 0V38H600V0Z" + tabSilhouettePath(c, -0.5),
+    );
+    expect(stripShadePath(800, 38, c)).toBe("M0 0V38H800V0Z" + tabSilhouettePath(c, -0.5));
+    expect(stripShadePath(Number.NaN, -1, null)).toBe("");
+  });
+
+  it("orients the silhouette opposite to the strip so it cuts a hole", () => {
+    // Shoelace sign: the strip rectangle and the tab must wind in opposite directions.
+    const area = (d: string) => {
+      const { points } = walk(d);
+      return points.reduce((sum, p, i) => {
+        const q = points[(i + 1) % points.length];
+        return sum + (p.x * q.y - q.x * p.y);
+      }, 0);
+    };
+    expect(Math.sign(area("M0 0V38H800V0Z"))).toBe(-Math.sign(area(tabSilhouettePath(c, -0.5))));
   });
 });
 
@@ -147,5 +163,35 @@ describe("tabKeyShadow", () => {
     expect(shadow.dy).toBeGreaterThan(0);
     expect(shadow.silhouette).toBe(tabSilhouettePath(c, 0));
     expect(shadow.liftBlur).toBe(TAB_LIGHT.liftBlur);
+  });
+});
+
+describe("seams and fill", () => {
+  const c = tabContour(box, 14, 14);
+  const hole = tabHoleFor(box, 14)!;
+
+  it("opens only the island's straight top edge under the hole", () => {
+    expect(seamRowFor(hole, { left: 6, right: 246, radius: 14 })).toEqual({ left: 86, right: 232 });
+    expect(seamRowFor(hole, { left: 254, right: 900, radius: 14 })).toEqual({ left: 268, right: 314 });
+    expect(seamRowFor(hole, { left: 310, right: 900, radius: 14 })).toBeNull();
+    expect(seamRowFor({ left: 120, right: 120 }, { left: 0, right: 900, radius: 14 })).toBeNull();
+  });
+
+  it("wears the surface of the island under most of the tab", () => {
+    const sidebar = { left: 6, right: 246, radius: 14 };
+    const panes = { left: 254, right: 900, radius: 14 };
+    expect(islandUnder([sidebar, panes], hole)).toBe(sidebar);
+    expect(islandUnder([sidebar, panes], { left: 230, right: 470 })).toBe(panes);
+    expect(islandUnder([sidebar], { left: 300, right: 400 })).toBeNull();
+    expect(islandUnder([], hole)).toBeNull();
+  });
+
+  it("fills the silhouette down to the base and reaches into each seam row", () => {
+    const d = tabFillPath(c, [{ left: 86, right: 232 }], 2);
+    expect(d.startsWith(tabSilhouettePath(c, 0, 0))).toBe(true);
+    const { points } = walk(d);
+    expect(Math.max(...points.map(p => p.y))).toBe(40);
+    expect(points).toContainEqual({ x: 232, y: 40 });
+    expect(tabFillPath(c, [{ left: 86, right: 232 }], Number.NaN)).toBe(tabSilhouettePath(c, 0, 0));
   });
 });

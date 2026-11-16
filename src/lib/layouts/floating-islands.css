@@ -11,6 +11,15 @@
  * Native window material is a separate capability ([data-native-backdrop]):
  * with it the islands are translucent over the OS material; without it they
  * are opaque over a themed depth gradient, so the layout works everywhere.
+ *
+ * The active tab owns the window (#1734): the strip is shaded except for the
+ * tab and its fillets, which wear the surface of the island the tab stands
+ * on; that island opens its top edge under the tab, which reaches down into
+ * it, so tab and island are one surface. Surfaces are flat (no per-box sheen)
+ * so the joins cannot show. The hole, key shadow and edge
+ * highlight are inline SVG in the title bar ([data-region="tab-key-shadow"],
+ * [data-region="tab-edge"]) kept in step by composables/tab-seam-marks.ts;
+ * this file only colours them. Light comes from the top left.
  */
 
 :root[data-layout-base="floating-islands"] {
@@ -21,60 +30,116 @@
   --layout-inset: 0 6px 6px 6px;
   --layout-radius: 14px;
   --layout-border: 1px solid var(--surface-stroke);
+  /* Shadows fall down and to the right, away from the top-left light. */
   --layout-shadow:
     inset 0 0.5px 0 rgba(255, 255, 255, 0.09),
     inset 0 -0.5px 0 rgba(0, 0, 0, 0.2),
-    0 1px 3px rgba(0, 0, 0, 0.15),
-    0 4px 12px rgba(0, 0, 0, 0.2),
-    0 12px 32px rgba(0, 0, 0, 0.15);
-  /* Island material. Colour themes tune it through --vibrancy-island-card. */
-  --islands-surface:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.04) 0%, transparent 40%, rgba(0, 0, 0, 0.02) 100%),
-    color-mix(in srgb, var(--vibrancy-island-card, var(--background-card)) 98%, transparent);
+    0.5px 1px 3px rgba(0, 0, 0, 0.15),
+    2px 4px 12px rgba(0, 0, 0, 0.2),
+    5px 12px 32px rgba(0, 0, 0, 0.15);
+  /* Island material: a panel colour over a base colour, both flat, so the
+     active tab (inline SVG fill) can wear exactly the same surface. Colour
+     themes tune it through --vibrancy-island-card. */
+  --islands-fill-base: transparent;
+  --islands-fill: color-mix(in srgb, var(--vibrancy-island-card, var(--background-card)) 98%, transparent);
   /* Material weight encodes hierarchy: structural surfaces (sidebar) sit
      heavier, receded toward the backdrop, so content islands read as the
      lighter, foreground material. */
+  --islands-structural-fill-base: transparent;
+  --islands-structural-fill: color-mix(in srgb, var(--vibrancy-island-card, var(--background-card)) 72%, transparent);
+  --islands-surface: linear-gradient(var(--islands-fill), var(--islands-fill)), var(--islands-fill-base);
   --islands-structural:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0%, transparent 40%, rgba(0, 0, 0, 0.03) 100%),
-    color-mix(in srgb, var(--vibrancy-island-card, var(--background-card)) 72%, transparent);
-  --islands-filter: blur(12px) brightness(1.08) saturate(1.2);
-}
-
-/* Translucent surfaces go frosty/solid when the user asks for it. */
-@media (prefers-reduced-transparency: reduce) {
-  :root[data-layout-base="floating-islands"] {
-    --islands-filter: none;
-    --islands-surface: linear-gradient(var(--background-card), var(--background-card)), var(--background-solid);
-    --islands-structural: linear-gradient(var(--background-card), var(--background-card)), var(--background-solid);
-  }
+    linear-gradient(var(--islands-structural-fill), var(--islands-structural-fill)), var(--islands-structural-fill-base);
+  /* The strip around the tabs: the theme base, deepened and nudged toward
+     the accent, so each palette keeps its own strip. Painted by the
+     [data-region="tab-key-shadow"] layer everywhere but under the active tab. */
+  --islands-strip-shade-color: color-mix(
+    in srgb,
+    color-mix(in srgb, var(--background-solid) 90%, var(--accent)) 80%,
+    black
+  );
+  --islands-strip-shade: color-mix(in srgb, var(--islands-strip-shade-color) 62%, transparent);
+  --islands-tab-key: rgba(0, 0, 0, 0.32);
+  --islands-tab-lift: rgba(0, 0, 0, 0.14);
+  /* The tab's edge highlight: a solid 1px core tinted with the accent,
+     continuing the islands' border. */
+  --islands-tab-edge: color-mix(in srgb, var(--accent) 45%, var(--text-primary) 20%);
 }
 
 /* Windows Mica/Acrylic (#382): islands use the theme's dark solid colour at
    the Backdrop Opacity slider's strength, dark enough not to wash out and
    translucent enough that the material shows through the whole UI. */
 :root[data-layout-base="floating-islands"][data-win-backdrop] {
-  --islands-surface:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.04) 0%, transparent 40%, rgba(0, 0, 0, 0.02) 100%),
-    color-mix(in srgb, var(--background-solid) calc(var(--win-backdrop-strength, 0.85) * 100%), transparent);
-  --islands-structural:
+  --islands-fill: color-mix(in srgb, var(--background-solid) calc(var(--win-backdrop-strength, 0.85) * 100%), transparent);
+  --islands-structural-fill:
     color-mix(in srgb, var(--background-solid) calc(var(--win-backdrop-strength, 0.85) * 88%), transparent);
 }
 
-/* Without native material: opaque islands (blur over an opaque backdrop is
-   wasted GPU) over a quiet depth gradient, a whisper of the accent falling
-   from the top, so islands still read as floating above a lit surface. */
+/* macOS material (#1733, #1734): the theme contract. Each coverage is the
+   share of the material a surface hides in total: the window body's tint,
+   then a content or structural island stacked on it. Alphas compound, so an
+   island's own alpha is derived from the body's:
+     island alpha = 1 - (1 - coverage) / (1 - body coverage).
+   Light defaults reproduce the earlier alphas exactly (body 0.15; islands
+   98% and sidebar 72% of the theme's panel colour). Dark themes get their
+   own lighter set, so the wallpaper still shows: body 0.3, islands 0.35 over
+   the base lifted 10% toward white, strip shade 50%. docs/layout-themes.md. */
+:root[data-layout-base="floating-islands"][data-macos-material] {
+  --islands-body-l: var(--island-body-coverage, 0.15);
+  --islands-body-d: var(--island-body-coverage-dark, 0.3);
+  --islands-alpha-l: calc(1 - (1 - var(--island-coverage, 0.983)) / (1 - var(--islands-body-l)));
+  --islands-alpha-d: calc(1 - (1 - var(--island-coverage-dark, 0.545)) / (1 - var(--islands-body-d)));
+  --islands-structural-alpha-l: calc(1 - (1 - var(--island-structural-coverage, 0.762)) / (1 - var(--islands-body-l)));
+  --islands-structural-alpha-d: calc(1 - (1 - var(--island-structural-coverage-dark, 0.48)) / (1 - var(--islands-body-d)));
+  --islands-panel-l: var(--island-surface, var(--vibrancy-island-card, var(--background-card)));
+  --islands-panel-d: var(--island-surface, color-mix(in srgb, var(--background-solid) 90%, white));
+  /* The window body: the theme base nudged toward the accent. The active tab
+     and its fillets show it through the strip. A theme's own tint wins. */
+  --islands-body-color: color-mix(in srgb, var(--background-solid) 94%, var(--accent));
+  --layout-app-surface: var(
+    --vibrancy-tint,
+    light-dark(
+      color-mix(in srgb, var(--islands-body-color) calc(var(--islands-body-l) * 100%), transparent),
+      color-mix(in srgb, var(--islands-body-color) calc(var(--islands-body-d) * 100%), transparent)
+    )
+  );
+  --islands-fill: light-dark(
+    color-mix(in srgb, var(--islands-panel-l) calc(var(--islands-alpha-l) * 100%), transparent),
+    color-mix(in srgb, var(--islands-panel-d) calc(var(--islands-alpha-d) * 100%), transparent)
+  );
+  --islands-structural-fill: light-dark(
+      color-mix(in srgb, var(--islands-panel-l) calc(var(--islands-structural-alpha-l) * 100%), transparent),
+      color-mix(in srgb, var(--islands-panel-d) calc(var(--islands-structural-alpha-d) * 100%), transparent)
+    );
+  --islands-strip-shade: light-dark(
+    color-mix(in srgb, var(--islands-strip-shade-color) 35%, transparent),
+    color-mix(in srgb, var(--islands-strip-shade-color) 50%, transparent)
+  );
+}
+
+/* Translucent surfaces go solid when the user asks for it. The selectors
+   match the material rules' specificity, or they would never apply. */
+@media (prefers-reduced-transparency: reduce) {
+  :root[data-layout-base="floating-islands"],
+  :root[data-layout-base="floating-islands"][data-macos-material],
+  :root[data-layout-base="floating-islands"][data-win-backdrop] {
+    --layout-app-surface: var(--background-solid);
+    --islands-fill-base: var(--background-solid);
+    --islands-fill: var(--background-card);
+    --islands-structural-fill-base: var(--background-solid);
+    --islands-structural-fill: var(--background-card);
+    --islands-strip-shade: var(--islands-strip-shade-color);
+  }
+}
+
+/* Without native material: opaque islands over a quiet depth gradient, a
+   whisper of the accent falling from the top, so islands still read as
+   floating above a lit surface. */
 :root[data-layout-base="floating-islands"]:not([data-native-backdrop]) {
-  --islands-filter: none;
-  --islands-surface:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.04) 0%, transparent 40%, rgba(0, 0, 0, 0.02) 100%),
-    linear-gradient(var(--background-card), var(--background-card)),
-    var(--background-solid);
-  --islands-structural:
-    linear-gradient(
-      var(--background-card-secondary, var(--background-card)),
-      var(--background-card-secondary, var(--background-card))
-    ),
-    var(--background-solid);
+  --islands-fill-base: var(--background-solid);
+  --islands-fill: var(--background-card);
+  --islands-structural-fill-base: var(--background-solid);
+  --islands-structural-fill: var(--background-card-secondary, var(--background-card));
 }
 
 :root[data-layout-base="floating-islands"]:not([data-native-backdrop]) body {
@@ -99,10 +164,13 @@
   display: none;
 }
 
-/* Title bar and tabs: the strip floats above the islands. */
+/* Title bar and tabs: the strip floats above the islands. Its own fill stays
+   transparent (a lighter wedge showed in the corner pockets under the
+   material); the shade layer paints it, minus the active tab's hole. */
 :root[data-layout-base="floating-islands"] [data-region="titlebar"] {
   position: relative;
   z-index: 2;
+  background: transparent;
   box-shadow: none;
 }
 
@@ -110,60 +178,146 @@
   display: none;
 }
 
+/* No tab strip (a single tab without window controls): the bar is all strip. */
+:root[data-layout-base="floating-islands"] [data-region="titlebar"]:not(:has([data-region="tab-strip"])) {
+  background: var(--islands-strip-shade);
+}
+
+:root[data-layout-base="floating-islands"] [data-region="tab-key-shadow"] .strip-shade {
+  fill: var(--islands-strip-shade);
+}
+
+:root[data-layout-base="floating-islands"] [data-tab-island="content"] .tab-fill-base {
+  fill: var(--islands-fill-base);
+}
+
+:root[data-layout-base="floating-islands"] [data-tab-island="content"] .tab-fill-panel {
+  fill: var(--islands-fill);
+}
+
+:root[data-layout-base="floating-islands"] [data-tab-island="structural"] .tab-fill-base {
+  fill: var(--islands-structural-fill-base);
+}
+
+:root[data-layout-base="floating-islands"] [data-tab-island="structural"] .tab-fill-panel {
+  fill: var(--islands-structural-fill);
+}
+
+:root[data-layout-base="floating-islands"] [data-tab-island="none"] .tab-fill {
+  display: none;
+}
+
+:root[data-layout-base="floating-islands"] [data-region="tab-key-shadow"] .tab-key {
+  fill: var(--islands-tab-key);
+}
+
+:root[data-layout-base="floating-islands"] [data-region="tab-key-shadow"] .tab-lift {
+  fill: var(--islands-tab-lift);
+}
+
+:root[data-layout-base="floating-islands"] [data-region="tab-edge"] .tab-edge-stroke {
+  stroke-width: 1px;
+}
+
+:root[data-layout-base="floating-islands"] [data-region="tab-edge"] .tab-edge-stop {
+  stop-color: var(--islands-tab-edge);
+}
+
+/* A tab's corner radius never exceeds half its (sliding) width. */
 :root[data-layout-base="floating-islands"] [data-region="tab"] {
-  border-radius: var(--layout-radius) var(--layout-radius) 0 0;
+  --rt: min(var(--layout-radius), calc(var(--tab-width, 220px) * var(--tab-slide) / 2));
+  border-radius: var(--rt) var(--rt) 0 0;
 }
 
 :root[data-layout-base="floating-islands"] [data-region="tab-strip"]::after {
   display: none;
 }
 
-/* The active tab is painted in island material and fused to the island
-   below. The material is a multi-layer background, not a colour, so the
-   concave fillet curve is carved out with a mask; the stroke ring rides on
-   top as its own layer, continuing the tab's 0.5px outline (#361). */
+/* Inactive tabs sit dimmed on the strip itself, with no fill of their own
+   (the active tab's fillets reach over their bottom corners); their titles
+   keep 70% of the primary text colour so pale themes stay readable. */
+:root[data-layout-base="floating-islands"] [data-region="tab"]:not([aria-selected="true"]) {
+  color: color-mix(in srgb, var(--text-primary) 70%, transparent);
+  background: transparent;
+  border-top-color: transparent;
+}
+
+/* No separator beside the active tab: its fillet takes that corner. */
+:root[data-layout-base="floating-islands"] [data-region="tab"]:has(+ [data-region="tab"][aria-selected="true"])::after {
+  opacity: 0;
+}
+
+/* The active tab is a hole in the strip: it, its fillets and the window body
+   are one surface. Nothing paints over it; its outline is the edge layer.
+   It clips its own content, as the fillets paint nothing. */
 :root[data-layout-base="floating-islands"] [data-region="tab"][aria-selected="true"] {
-  background: var(--islands-surface);
+  background: transparent;
   border: none;
-  border-top: 2px solid var(--accent);
-  box-shadow:
-    inset 0 0.5px 0 var(--surface-stroke),
-    0 0 0 0.5px var(--surface-stroke);
+  box-shadow: none;
   transform: none;
+  overflow: hidden;
 }
 
-:root[data-layout-base="floating-islands"] [data-region="tab-fillet"][data-side="left"] {
-  background:
-    radial-gradient(
-      circle var(--fillet) at 0 0,
-      transparent calc(var(--fillet) - 0.25px),
-      var(--surface-stroke) calc(var(--fillet) + 0.5px),
-      transparent calc(var(--fillet) + 1.25px)
-    ),
-    var(--islands-surface);
-  -webkit-mask: radial-gradient(circle var(--fillet) at 0 0, transparent calc(var(--fillet) - 0.5px), #000 var(--fillet));
-  mask: radial-gradient(circle var(--fillet) at 0 0, transparent calc(var(--fillet) - 0.5px), #000 var(--fillet));
+:root[data-layout-base="floating-islands"] [data-region="tab"][aria-selected="true"]::before {
+  display: none;
 }
 
-:root[data-layout-base="floating-islands"] [data-region="tab-fillet"][data-side="right"] {
-  background:
-    radial-gradient(
-      circle var(--fillet) at 100% 0,
-      transparent calc(var(--fillet) - 0.25px),
-      var(--surface-stroke) calc(var(--fillet) + 0.5px),
-      transparent calc(var(--fillet) + 1.25px)
-    ),
-    var(--islands-surface);
-  -webkit-mask: radial-gradient(circle var(--fillet) at 100% 0, transparent calc(var(--fillet) - 0.5px), #000 var(--fillet));
-  mask: radial-gradient(circle var(--fillet) at 100% 0, transparent calc(var(--fillet) - 0.5px), #000 var(--fillet));
+/* The fillets paint nothing here (the tab fill path draws their flare), but
+   stay laid out: the marks read their width as the resolved --fillet. The
+   tab bar's scoped fillet backgrounds outrank a layout override, and their
+   1px ring column overlaps the tab, so hide the boxes instead. */
+:root[data-layout-base="floating-islands"] [data-region="tab-fillet"] {
+  visibility: hidden;
+}
+
+/* Seam extents change every frame of a tab slide: registered as
+   non-inherited so updating them restyles the island alone, never the file
+   list inside it. */
+@property --tab-seam-left {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --tab-seam-right {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --tab-seam-depth {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 2px;
+}
+
+/* The island the tab stands on opens its top edge under the tab and fillets
+   (border, inset highlight and the shadow above it), so the tab runs into
+   the island. The notch is all it clips: the polygon reaches far past the
+   island, so overlays inside it are never cut. A fullscreen preview covers
+   the window and keeps its whole box. The seam follows a sliding tab every
+   frame: will-change gives the island its own layer so a moving notch only
+   re-clips it (WebKit otherwise repaints the whole island, ~45ms a frame in
+   software). Opacity, unlike transform, does not make the island the
+   containing block of fixed overlays. */
+:root[data-layout-base="floating-islands"]:not([data-preview-fullscreen]) [data-tab-seam] {
+  will-change: opacity;
+  clip-path: polygon(
+    -100vw -100vh,
+    var(--tab-seam-left) -100vh,
+    var(--tab-seam-left) var(--tab-seam-depth, 2px),
+    var(--tab-seam-right) var(--tab-seam-depth, 2px),
+    var(--tab-seam-right) -100vh,
+    calc(100% + 100vw) -100vh,
+    calc(100% + 100vw) calc(100% + 100vh),
+    -100vw calc(100% + 100vh)
+  );
 }
 
 /* Structural island: the sidebar. Radius, border and shadow come from the
    --layout-* variables above; its painted body steps aside. */
 :root[data-layout-base="floating-islands"] [data-region="sidebar"] {
   background: var(--islands-structural);
-  backdrop-filter: var(--islands-filter);
-  -webkit-backdrop-filter: var(--islands-filter);
 }
 
 :root[data-layout-base="floating-islands"] [data-region="sidebar-body"] {
@@ -186,8 +340,6 @@
    the container steps aside. */
 :root[data-layout-base="floating-islands"] [data-region="panes"] {
   background: var(--islands-surface);
-  backdrop-filter: var(--islands-filter);
-  -webkit-backdrop-filter: var(--islands-filter);
 }
 
 :root[data-layout-base="floating-islands"] [data-region="panes"][data-split] {
@@ -211,8 +363,6 @@
   background: var(--islands-surface);
   border: var(--layout-border);
   box-shadow: var(--layout-shadow);
-  backdrop-filter: var(--islands-filter);
-  -webkit-backdrop-filter: var(--islands-filter);
   overflow: hidden;
 }
 
@@ -243,8 +393,6 @@
   border: var(--layout-border);
   background: var(--islands-surface);
   box-shadow: var(--layout-shadow);
-  backdrop-filter: var(--islands-filter);
-  -webkit-backdrop-filter: var(--islands-filter);
 }
 
 /* Preview island. Fullscreen stays opaque (#391). */
@@ -280,4 +428,19 @@
   border-radius: calc(var(--layout-radius) * var(--app-zoom, 1));
   box-shadow: var(--layout-shadow);
   overflow: hidden;
+}
+
+/* The main area clips sideways only, so island shadows are not cut flat at
+   the status bar's top edge (#1734). min-height: 0 keeps a long listing
+   from growing the area, now that its block axis no longer clips, and
+   pushing the islands past the window bottom. With the status bar shown,
+   the islands keep a 4px bottom inset above it. */
+:root[data-layout-base="floating-islands"] [data-region="main"] {
+  overflow-x: clip;
+  overflow-y: visible;
+  min-height: 0;
+}
+
+:root[data-layout-base="floating-islands"] [data-region="app"]:has(> [data-region="status-bar"]) [data-region="main"] {
+  padding-bottom: 4px;
 }

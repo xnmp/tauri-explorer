@@ -14,6 +14,8 @@
   import { isMac } from "$lib/domain/platform";
   import * as titlebar from "$lib/domain/titlebar";
   import { observeWindowChrome } from "$lib/state/window-chrome";
+  import { layoutStore } from "$lib/state/layout.svelte";
+  import { useTabSeam } from "$lib/composables/use-tab-seam.svelte";
   import WindowTabBar from "./WindowTabBar.svelte";
 
   const tabStripVisible = $derived(
@@ -43,6 +45,12 @@
   }
 
   let isMaximized = $state(false);
+  let titlebarEl: HTMLDivElement | undefined = $state();
+
+  // Floating Islands: the active tab owns the window (#1734). Its hole in the
+  // strip shade, key shadow and edge highlight are the inline SVG layers
+  // below, kept in step with the strip by the lazily loaded seam marks.
+  useTabSeam(() => titlebarEl, () => [windowTabsManager.tabs, windowTabsManager.activeTabId, tabStripVisible]);
 
   onMount(() => {
     if (!appWindow) return;
@@ -76,9 +84,60 @@
 
 {#if showTitleBar}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="titlebar" data-region="titlebar" class:integrated={isMac && settingsStore.integratedTitleBar} onmousedown={handleDragStart}>
+  <div class="titlebar" data-region="titlebar" bind:this={titlebarEl} class:integrated={isMac && settingsStore.integratedTitleBar} onmousedown={handleDragStart}>
+    {#if layoutStore.islands}
+      <!-- Strip shade with the active tab's hole, then the tab's lift and key
+           shadow (light from the top left), cut out under the tab itself. -->
+      <svg class="tab-seam-layer" data-region="tab-key-shadow" aria-hidden="true">
+        <defs>
+          <filter id="tab-lift-blur" x="-20%" y="-60%" width="140%" height="220%">
+            <feGaussianBlur class="tab-lift-blur" stdDeviation="3" />
+          </filter>
+          <filter id="tab-key-blur" x="-20%" y="-60%" width="140%" height="220%">
+            <feGaussianBlur class="tab-key-blur" stdDeviation="2.5" />
+          </filter>
+          <clipPath id="tab-shadow-view"><rect class="tab-view-clip" x="0" y="0" width="0" height="0" /></clipPath>
+          <clipPath id="tab-shadow-cut"><path class="tab-cutout" clip-rule="evenodd" /></clipPath>
+          <clipPath id="tab-fill-view">
+            <rect class="tab-view-clip" x="0" y="0" width="0" height="0" />
+            <rect class="tab-below-clip" x="-4096" y="0" width="8192" height="4096" />
+          </clipPath>
+        </defs>
+        <path class="strip-shade" />
+        <!-- The tab wears its island's surface: base layer, then panel layer. -->
+        <g class="tab-fill" clip-path="url(#tab-fill-view)">
+          <path class="tab-fill-base" />
+          <path class="tab-fill-panel" />
+        </g>
+        <g class="tab-shadows" clip-path="url(#tab-shadow-view)">
+          <g clip-path="url(#tab-shadow-cut)">
+            <path class="tab-lift" filter="url(#tab-lift-blur)" />
+            <path class="tab-key" filter="url(#tab-key-blur)" />
+          </g>
+        </g>
+      </svg>
+    {/if}
     {#if windowTabsManager.activeTab}
       <WindowTabBar />
+    {/if}
+    {#if layoutStore.islands}
+      <!-- One stroke over the tab, its fillets and the island top edges,
+           fading out through the islands' rounded corners. -->
+      <svg class="tab-seam-layer tab-edge-layer" data-region="tab-edge" aria-hidden="true">
+        <defs>
+          <linearGradient id="tab-edge-fade" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="1" y2="0">
+            <stop class="tab-edge-stop" offset="0" stop-opacity="0" />
+            <stop class="tab-edge-stop" offset="0.1" />
+            <stop class="tab-edge-stop" offset="0.9" />
+            <stop class="tab-edge-stop" offset="1" stop-opacity="0" />
+          </linearGradient>
+          <clipPath id="tab-edge-view">
+            <rect class="tab-view-clip" x="0" y="0" width="0" height="0" />
+            <rect class="tab-below-clip" x="-4096" y="0" width="8192" height="4096" />
+          </clipPath>
+        </defs>
+        <path class="tab-edge-stroke" fill="none" stroke="url(#tab-edge-fade)" clip-path="url(#tab-edge-view)" />
+      </svg>
     {/if}
     <div class="spacer"></div>
 
@@ -153,6 +212,26 @@
     );
     opacity: 0.4;
     pointer-events: none;
+  }
+
+  /* Tab seam layers (#1734): drawn in title bar CSS pixels, colours from the
+     layout stylesheet. The edge rides above the tabs and runs along the
+     islands' top edges below the bar. */
+  .tab-seam-layer {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+    pointer-events: none;
+    z-index: 0;
+    /* Own layer: the paths change every frame of a tab slide, and WebKit
+       otherwise repaints everything under the strip each time. */
+    will-change: opacity;
+  }
+
+  .tab-edge-layer {
+    z-index: 3;
   }
 
   .titlebar.integrated {

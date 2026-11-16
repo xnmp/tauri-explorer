@@ -33,6 +33,7 @@
   let renamingTabId = $state<string | null>(null);
 
   let tabViewport: HTMLDivElement | undefined = $state();
+  let tabScrollGroup: HTMLDivElement | undefined = $state();
   let tabSpaceWidth = $state(0);
   let tabViewportWidth = $state(0);
   let tabScrollLeft = $state(0);
@@ -48,6 +49,15 @@
     pickerOpen = false;
     if (restoreFocus) pickerButton?.focus();
   }
+
+  // A new or closed tab changes the room the strip may take. bind:clientWidth
+  // reports it a frame late, so the first frame of a new tab's slide was laid
+  // out for the old count: every tab narrowed for one frame, then snapped
+  // back. Measure synchronously after the DOM update instead (#1734).
+  $effect(() => {
+    void tabs.length;
+    if (tabScrollGroup) tabSpaceWidth = tabScrollGroup.clientWidth;
+  });
 
   // Activation/layout changes reveal the selected tab. Manual browsing does
   // not retrigger this effect, so wheel/arrow/drag scrolling stays user-owned.
@@ -530,7 +540,7 @@
   <!-- Drag handlers only — keyboard interaction lives on the tabs. -->
   <!-- svelte-ignore a11y_interactive_supports_focus -->
   <div class="tab-area" data-region="tab-strip">
-    <div class="tab-scroll-group" bind:clientWidth={tabSpaceWidth} style:width={`${tabs.length * (TAB_MAX_WIDTH + TAB_GAP) - TAB_GAP}px`}>
+    <div class="tab-scroll-group" bind:this={tabScrollGroup} bind:clientWidth={tabSpaceWidth} style:width={`${tabs.length * (TAB_MAX_WIDTH + TAB_GAP) - TAB_GAP}px`}>
       {#if showScrollButtons}
         <button class="tab-scroll-btn" aria-label="Scroll tabs left" disabled={tabScrollLeft < 1} onclick={() => scrollTabs(-1)}>‹</button>
       {/if}

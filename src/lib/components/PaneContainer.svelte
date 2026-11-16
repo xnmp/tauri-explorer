@@ -85,7 +85,7 @@
       style:min-width="{minimum?.width ?? 0}px"
       style:min-height="{minimum?.height ?? 0}px">
       <PaneLayoutView node={tab.layout} geometry={shown ? geometry : undefined}
-        minima={shown ? minima : undefined} {dividers} />
+        minima={shown ? minima : undefined} {dividers} {shown} />
     </div>
   {/each}
 </div>

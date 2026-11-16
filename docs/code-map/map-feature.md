@@ -188,14 +188,16 @@ backend for E2E/browser).
 - `state/window-close.ts` — common titlebar, last-tab and native-close lifecycle; blocks transfer admission until destruction or recovery
 - `state/window-chrome.ts` — native titlebar maximize observation with one in-flight read and owned late subscription cleanup
 - `state/warm-activation.ts`, `state/warm-window.ts`, `state/page-foreground.ts` (parked pages defer drive feeds and recovery until activation commits, #931), `api/warm-pool.ts`, `src-tauri/src/warm_pool.rs` — acknowledged warm-window activation, owned native reservations and expiring abandoned claims; `e2e-tauri/specs/warm-window-lifetime.spec.ts` and `e2e-tauri/diagnostics/warm-claim.ts` retain process evidence if native claim expiry loses the WebDriver session (#781)
-- FLOW: each layout leaf identifies one pane session. `PaneLayoutView` keys its `ExplorerPane` by the owned explorer and injects it explicitly; the component captures it for the mount lifetime. Cross-window tab drag serializes a `TabSnapshot` via `sendTabToWindow` → listener claims it. Persistence via localStorage, validated before resource allocation.
+- FLOW: each layout leaf identifies one pane session. `PaneLayoutView` keeps flat hosts keyed by pane ID and keys each `ExplorerPane` by its owned explorer; splitting or closing no longer remounts surviving panes. Cross-window tab drag serializes a `TabSnapshot` via `sendTabToWindow` → listener claims it. Persistence via localStorage, validated before resource allocation.
 
 ## Workspaces & split panes
 
 - `components/PaneContainer.svelte`, `components/PaneLayoutView.svelte`, `components/ExplorerPane.svelte` — pane tree render + focus
 - `domain/window-tab-order.ts`, `domain/closed-panes.ts` — tab-strip index rules and the closed-pane/closed-tab restore stack rules used by `windowTabsManager`
 - `domain/pane-layout.ts` — binary split-tree ops and directional neighbor policy (`splitLeaf`, `removeLeaf`, `leafSiblingContext`, `paneInDirection`, `reinsertLeaf`)
-- `domain/pane-viewport.ts` → `state/pane-viewport.svelte.ts` — pure constrained canvas geometry and window-owned measurements shared by rendering, focus and dwindle; the rendered canvas size comes from the measurement-free minimum plus CSS fill, never from frame-late measurements (#1061); saved ratios remain preferences
+- `domain/pane-viewport.ts` → `state/pane-viewport.svelte.ts` — pure constrained canvas geometry and window-owned measurements for focus and dwindle; the rendered canvas size comes from the measurement-free minimum plus CSS fill (#1061); saved ratios remain preferences
+- `domain/pane-presentation.ts` → `components/PaneLayoutView.svelte` — flat, identity-stable pane placement and bounded readiness placeholders. `composables/use-pane-canvas-size.svelte.ts` synchronously measures the CSS-filled canvas before paint; absolute leaf/divider frames use the same `paneGeometryFromMinima` calculation as interaction geometry, without its deferred measurement (#1703).
+- `state/pane-creation-motion.ts` → `composables/use-pane-creation-motion.svelte.ts` — 220ms anchored creation reveals, interruption clipping and reduced-motion/input/resize cancellation; `e2e/pane-creation-motion.spec.ts` verifies live geometry, DOM/scroll/selection continuity, deep layouts and hit testing (#1703).
 - `composables/use-inline-panel-width.svelte.ts` — inline SCM/Miller mounts reserve tokenized width contributions; hidden/hoisted surfaces release them without changing saved layout
 - `composables/use-pane-dividers.svelte.ts` — container-owned pointer/keyboard resizing, captured geometry and cancellation; `PaneContainer` locally reveals the active pane when the canvas overflows
 - `state/workspaces.svelte.ts` — saved workspace layouts (`workspacesStore`)

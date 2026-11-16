@@ -62,6 +62,14 @@ export function preferredSplitRatio(ratio: number): number {
 export function paneGeometry(root: PaneNode, viewport: PaneSize, divider = 6, inlineWidths: ReadonlyMap<string, number> = new Map()): PaneGeometry {
   const gap = nonnegative(divider);
   const minima = paneMinima(root, gap, inlineWidths);
+  return paneGeometryFromMinima(root, viewport, gap, minima);
+}
+
+/** Presentation can reuse the already-derived minima. The absolutely placed
+ * panes never size their canvas, so synchronous ResizeObserver measurements
+ * cannot feed back into its CSS size (#1703). */
+export function paneGeometryFromMinima(root: PaneNode, viewport: PaneSize, divider: number, minima: ReadonlyMap<string, PaneSize>): PaneGeometry {
+  const gap = nonnegative(divider);
   const minimum = minima.get(root.id)!;
   const width = Math.max(nonnegative(viewport.width), minimum.width);
   const height = Math.max(nonnegative(viewport.height), minimum.height);

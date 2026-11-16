@@ -179,7 +179,7 @@ const DEFAULT_SETTINGS: Settings = {
   showManuallyHidden: false,
   showScmPanel: false,
   enableTerminal: true,
-  enableGitGraph: true,
+  enableGitGraph: false, // experimental: opt-in via Settings → Experimental (#1675)
   f5SyncsLocalBranches: false,
   scmTreeView: false,
   quickOpenDebug: false,

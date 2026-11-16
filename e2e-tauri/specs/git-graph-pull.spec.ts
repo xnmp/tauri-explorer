@@ -24,7 +24,7 @@ import { browser, $, expect } from "@wdio/globals";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { navigateTo, domTexts } from "./helpers";
+import { navigateTo, domTexts, setSettingToggle } from "./helpers";
 import { createNativeFixtureDirectory } from "../native-qualification";
 
 const baseDir = fs.realpathSync(createNativeFixtureDirectory("tauri-explorer-e2e-gitgraph-"));
@@ -97,6 +97,7 @@ describe("git graph fetch/refresh against real git (#432)", () => {
 
   it("F5 fetches a remote commit and it appears in the graph", async () => {
     await navigateTo(localDir);
+    await setSettingToggle("Git Commit Graph", true); // opt-in experimental flag (#1675)
 
     // Open the commit graph via the command palette (robust under Xvfb, where
     // some Alt-chord shortcuts are unreliable).

@@ -3,7 +3,7 @@ import { browser, $, $$, expect } from "@wdio/globals";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { navigateTo, domText, domTexts } from "./helpers";
+import { navigateTo, domText, domTexts, setSettingToggle } from "./helpers";
 import { directoryKey } from "../../src/lib/domain/path";
 import { createNativeFixtureDirectory } from "../native-qualification";
 
@@ -53,15 +53,8 @@ describe("native graph cache lifetime", () => {
     // never render (#447; seen on CI after git-author-avatar, #1057).
     await navigateTo(cacheRoot);
     await $(".file-list").waitForExist({ timeout: 15_000 });
-    await browser.keys(["Control", ","]);
-    await $(".settings-dialog .settings-search").waitForDisplayed();
-    await $(".settings-dialog .settings-search").setValue("Git Status Indicators");
-    const setting = $("//div[contains(@class,'setting-row')][.//span[normalize-space()='Git Status Indicators']]");
-    const checkbox = setting.$("input[type=checkbox]");
-    if (await checkbox.isSelected()) await setting.$(".toggle-slider").click();
-    await expect(checkbox).not.toBeSelected();
-    await $("button[aria-label='Close settings']").click();
-    await $(".settings-dialog").waitForDisplayed({ reverse: true });
+    await setSettingToggle("Git Status Indicators", false);
+    await setSettingToggle("Git Commit Graph", true);
   });
   it("reopening a hidden graph includes an external commit in a path containing a delimiter", async () => {
     await navigateTo(repository);

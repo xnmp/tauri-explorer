@@ -4,8 +4,13 @@
  * lanes/edges and refs decoration, and the tab closes back to the explorer.
  */
 import { test, expect } from "./fixtures";
-import { applySettingsAndReload, waitForEntries } from "./helpers";
+import { applySettingsAndReload, waitForEntries, seedSettings } from "./helpers";
 import { MOCK_LOCAL_KEYS } from "../src/lib/api/mock-control";
+
+// The commit graph is an opt-in experimental feature (#1675).
+test.beforeEach(async ({ page }) => {
+  await seedSettings(page, { enableGitGraph: true });
+});
 
 async function openGraphViaPalette(page: import("@playwright/test").Page, expectGraph = true) {
   await page.keyboard.press("Control+Shift+p");

@@ -1,8 +1,13 @@
 import { test, expect } from "./fixtures";
 import { seedSettings, waitForEntries } from "./helpers";
 
+// The commit graph is an opt-in experimental feature (#1675).
+test.beforeEach(async ({ page }) => {
+  await seedSettings(page, { enableGitGraph: true });
+});
+
 test("covered scroll delivery preserves tag actions while new movement dismisses them", async ({ page }) => {
-  await seedSettings(page, { zoomLevel: 150 }, { replace: true });
+  await seedSettings(page, { zoomLevel: 150, enableGitGraph: true }, { replace: true });
   await page.setViewportSize({ width: 900, height: 800 });
   await page.goto("/?path=/home/user/Documents/project");
   await waitForEntries(page);

@@ -20,6 +20,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `+page.svelte` — app root. Global keyboard shortcuts, store init, layout composition (TitleBar > toolbar > Sidebar + PaneContainer > StatusBar), overlay dialogs. Open for global shortcut wiring / top-level layout.
 - `+layout.ts` — SvelteKit adapter-static SPA config (prerender/ssr flags). Rarely touched.
 - `src/hooks.client.ts` — SPA client entry; installs global crash/error handlers before the app mounts (catches early init errors).
+- `src/app.d.ts` — ambient type augmentation: adds `autocorrect` to `svelte/elements` `HTMLTextareaAttributes` (Svelte types it only for `<input>`); guarded by `tests/text-input-autocorrect.test.ts` (#1726).
 
 ## src/lib/components/ — Svelte 5 UI. Views, dialogs, panels, item chrome.
 

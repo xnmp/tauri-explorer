@@ -14,7 +14,7 @@
       <div>
         <h2 id="plugins-title">Plugins</h2>
       </div>
-      <input class="plugins-search" aria-label="Filter plugins" placeholder="Filter plugins…" bind:value={query} data-autofocus />
+      <input autocorrect="off" autocapitalize="none" spellcheck="false" class="plugins-search" aria-label="Filter plugins" placeholder="Filter plugins…" bind:value={query} data-autofocus />
       <button class="close-btn" onclick={onClose} aria-label="Close plugins">×</button>
     </header>
     <div class="dialog-content">

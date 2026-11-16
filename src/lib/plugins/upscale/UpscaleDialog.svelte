@@ -129,6 +129,9 @@ import { checkPathsExist } from "$lib/api/files";
         <div class="prompt-field">
           <label for="upscale-output" class="prompt-label">Output filename</label>
           <input
+            autocorrect="off"
+            autocapitalize="none"
+            spellcheck="false"
             id="upscale-output"
             type="text"
             class="prompt-input"

@@ -41,7 +41,7 @@
         <fieldset class="settings-group" disabled={$controller.saving || $controller.dirty || $controller.conflict}>
           <legend>API key</legend>
           <p class="settings-help">{http.hasCredential ? "Credential present" : "No credential available"}. Saved keys are never read back. Environment values are resolved by the backend.</p>
-          <label class="settings-field">Replacement API key <input class="settings-input" type="password" autocomplete="new-password" bind:value={replacementKey} placeholder="Enter a new key to store securely" /></label>
+          <label class="settings-field">Replacement API key <input autocorrect="off" autocapitalize="none" spellcheck="false" class="settings-input" type="password" autocomplete="new-password" bind:value={replacementKey} placeholder="Enter a new key to store securely" /></label>
           <div class="settings-actions"><button class="settings-button" disabled={!replacementKey.trim()} onclick={replaceKey}>Replace API key</button><button class="settings-button danger" disabled={http.credential.kind === "none"} onclick={() => { replacementKey = ""; void controller.credential(http.id, null); }}>Clear credential</button></div>
         </fieldset>
       {/if}

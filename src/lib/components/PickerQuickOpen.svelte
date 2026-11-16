@@ -93,6 +93,9 @@
 <Modal {open} onClose={close} align="top" label="Quick Open" onkeydown={handleKeydown}>
   <div class="modal-card picker-quick-open" data-testid="picker-quick-open">
     <input
+      autocorrect="off"
+      autocapitalize="none"
+      spellcheck="false"
       type="text"
       placeholder={directoriesOnly ? "Find recent folders…" : "Find recent files and folders…"}
       aria-label="Quick Open"

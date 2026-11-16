@@ -90,6 +90,9 @@
       <div class="search-container">
         <span class="search-prefix">&gt;</span>
         <input
+          autocorrect="off"
+          autocapitalize="none"
+          spellcheck="false"
           type="text"
           class="search-input"
           placeholder={config.title}

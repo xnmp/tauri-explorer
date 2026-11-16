@@ -88,6 +88,40 @@ describe("userReportFallbackUrl", () => {
   });
 });
 
+describe("userReportFallbackUrl diagnostics (#1684)", () => {
+  const crash = { kind: "crash-report" as const, text: "panic: boom\nlocation: src/lib.rs:1:1" };
+
+  it("carries approved diagnostics in a collapsed literal block when they fit", () => {
+    const fallback = userReportFallbackUrl({ kind: "bug", title: "Crash: boom", body: "It crashed", diagnostics: [crash] });
+    const body = new URL(fallback!).searchParams.get("body")!;
+    expect(body.startsWith("It crashed\n\n<details><summary>Crash report</summary>")).toBe(true);
+    expect(body).toContain("```text\npanic: boom\nlocation: src/lib.rs:1:1\n```");
+  });
+
+  it("drops diagnostics, never the reporter's words, when the URL would be too long", () => {
+    const fallback = userReportFallbackUrl({
+      kind: "bug",
+      title: "Crash: boom",
+      body: "It crashed",
+      diagnostics: [{ kind: "crash-report", text: "frame\n".repeat(2000) }],
+    });
+    expect(fallback).not.toBeNull();
+    expect(new URL(fallback!).searchParams.get("body")).toBe("It crashed");
+  });
+
+  it("keeps the earlier section when only one fits", () => {
+    const fallback = userReportFallbackUrl({
+      kind: "bug",
+      title: "Crash",
+      body: "",
+      diagnostics: [crash, { kind: "slow-loads", text: "/x\n".repeat(3000) }],
+    });
+    const body = new URL(fallback!).searchParams.get("body")!;
+    expect(body).toContain("Crash report");
+    expect(body).not.toContain("Slow folder-load diagnostics");
+  });
+});
+
 describe("userReportAttachmentFailureMessage", () => {
   it.each([
     ["attachment_uploader_unavailable" as const, "Could not reach an attachment uploader"],

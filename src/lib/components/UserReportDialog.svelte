@@ -9,9 +9,17 @@
   import {
     fitSlowLoadsForReport,
     selectReportableSlowLoads,
-    slowLoadReportBudget,
     type SlowLoadRecord,
   } from "$lib/domain/load-diagnostics";
+  import {
+    budgetAfter,
+    fitTextForReport,
+    MIN_REPORT_DIAGNOSTIC_UNITS,
+    reportDiagnosticsBudget,
+    sectionBudget,
+    type ReportDiagnostic,
+  } from "$lib/domain/report-diagnostics";
+  import { crashReportStore } from "$lib/state/crash-report.svelte";
   import {
     MAX_USER_REPORT_CONTACT_UNITS,
     MAX_USER_REPORT_DESCRIPTION_UNITS,
@@ -52,20 +60,32 @@
     userReportDraftStore.clipboardAttachmentData !== null
       && attachments.some((attachment) => attachment.data === userReportDraftStore.clipboardAttachmentData),
   );
+  // Diagnostic sections share the room the description leaves, in send
+  // order, so each preview is exactly what the relay receives.
+  const diagnosticsBudget = $derived(reportDiagnosticsBudget(textDraft.body, textDraft.contact));
+  // The crash the notice handed over (#1684): first, since its head (error,
+  // location, innermost frames) is the most useful text in a crash report.
+  let includeCrash = $state(true);
+  const attachedCrash = $derived(crashReportStore.attached);
+  const crashText = $derived(
+    attachedCrash ? fitTextForReport(attachedCrash.contents, sectionBudget(diagnosticsBudget)) : "",
+  );
+  const offerCrash = $derived(crashText.length > 0);
   // Slow folder-load diagnostics (#1022): recorded locally when a folder
   // load stalls past 5 s, offered here for bug reports, shown verbatim.
   let slowLoads = $state.raw<SlowLoadRecord[]>([]);
   let includeSlowLoads = $state(true);
   const reportableSlowLoads = $derived(selectReportableSlowLoads(slowLoads, Date.now()));
-  // Fitted to the room the description leaves, so the preview is exactly
-  // what the relay receives.
-  const fittedSlowLoads = $derived(fitSlowLoadsForReport(
-    reportableSlowLoads,
-    slowLoadReportBudget(textDraft.body, textDraft.contact),
+  const slowLoadBudget = $derived(sectionBudget(
+    budgetAfter(diagnosticsBudget, offerCrash && includeCrash ? crashText : ""),
   ));
+  const fittedSlowLoads = $derived(fitSlowLoadsForReport(reportableSlowLoads, slowLoadBudget));
   const slowLoadText = $derived(fittedSlowLoads.text);
   const includedSlowLoads = $derived(fittedSlowLoads.included);
-  const offerSlowLoads = $derived(textDraft.kind === "bug" && slowLoadText.length > 0);
+  const offerSlowLoads = $derived(
+    textDraft.kind === "bug" && slowLoadText.length > 0 && slowLoadBudget >= MIN_REPORT_DIAGNOSTIC_UNITS,
+  );
+  const includesDiagnostics = $derived((offerCrash && includeCrash) || (offerSlowLoads && includeSlowLoads));
 
   $effect(() => {
     if (!open) return;
@@ -124,8 +144,12 @@
       kind: textDraft.kind,
       contact: textDraft.contact,
       attachments: [...attachments],
-      ...(offerSlowLoads && includeSlowLoads ? { diagnostics: slowLoadText } : {}),
     };
+    const diagnostics: ReportDiagnostic[] = [
+      ...(offerCrash && includeCrash ? [{ kind: "crash-report" as const, text: crashText }] : []),
+      ...(offerSlowLoads && includeSlowLoads ? [{ kind: "slow-loads" as const, text: slowLoadText }] : []),
+    ];
+    if (diagnostics.length > 0) draft.diagnostics = diagnostics;
     const useGitHubToken = userReportRoute(reportTokenStore.state, attachments.length) === "github-token";
     const submission = userReportDraftStore.beginSubmission();
     if (!submission) return;
@@ -144,6 +168,7 @@
     try {
       const issue = await submitUserReport(draft, useGitHubToken);
       userReportDraftStore.finishSubmission(submission, true);
+      crashReportStore.detach();
       retirePendingToast();
       toastStore.show("Report submitted", "success", {
         duration: 6000,
@@ -333,6 +358,24 @@
       {/if}
     </section>
 
+    {#if offerCrash && attachedCrash}
+      <section class="diagnostics" aria-label="Crash report">
+        <label class="diagnostics-toggle">
+          <input type="checkbox" bind:checked={includeCrash} disabled={submitting} />
+          <span>Include the crash report</span>
+        </label>
+        <p class="attachment-hint">
+          Saved on this computer when Tauri Explorer crashed (<code>{attachedCrash.fileName}</code>):
+          the error, where in the code it happened, the app version and your system details. It can
+          contain folder paths, which will be public in the issue.
+        </p>
+        <details>
+          <summary>Show what will be sent</summary>
+          <pre class="diagnostics-preview">{crashText}</pre>
+        </details>
+      </section>
+    {/if}
+
     {#if offerSlowLoads}
       <section class="diagnostics" aria-label="Slow folder-load diagnostics">
         <label class="diagnostics-toggle">
@@ -357,7 +400,7 @@
     <p class="report-disclosure">
       Submitting creates a public GitHub issue. {routeNotice} Your description, optional contact details,
       app and OS version, and any images and videos will be public. Attachments are uploaded to public hosting.
-      Local logs are not attached automatically{offerSlowLoads && includeSlowLoads ? "; the slow folder-load diagnostics above are" : ""}.
+      Local logs are not attached automatically{includesDiagnostics ? "; the diagnostics you included above are" : ""}.
     </p>
 
     <footer>

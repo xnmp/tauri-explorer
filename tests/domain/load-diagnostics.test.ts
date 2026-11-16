@@ -344,12 +344,6 @@ describe("auto-enter and report budget", () => {
     expect(formatSlowLoadsForReport([record])).toContain("1. /local/remote/deeper (auto-entered from /local)");
   });
 
-  it("leaves diagnostics only the room the relay body has left", async () => {
-    const { slowLoadReportBudget, MAX_SLOW_LOAD_REPORT_UNITS } = await import("$lib/domain/load-diagnostics");
-    expect(slowLoadReportBudget("")).toBe(MAX_SLOW_LOAD_REPORT_UNITS);
-    expect(slowLoadReportBudget("d".repeat(4000), "@me")).toBe(8500 - 600 - 4000 - 3);
-    expect(slowLoadReportBudget("d".repeat(8000), "c".repeat(100))).toBe(0);
-  });
 });
 
 describe("record wire contract", () => {

@@ -491,21 +491,6 @@ export function formatSlowLoadsForReport(records: readonly SlowLoadRecord[], max
   return fitSlowLoadsForReport(records, maxUnits).text;
 }
 
-/** The relay's body ceiling (`maxRelayBodyUnits` in the relay contract). */
-const MAX_RELAY_BODY_UNITS = 8500;
-/** Conservative allowance for the contact line, environment block and the
- *  collapsed-section wrapper that `user_report.rs` adds around diagnostics. */
-const REPORT_BODY_OVERHEAD_UNITS = 600;
-
-/**
- * Units left for diagnostics after the reporter's own text, so the preview
- * shows exactly what the native side will send (it would otherwise truncate).
- */
-export function slowLoadReportBudget(description: string, contact = ""): number {
-  const left = MAX_RELAY_BODY_UNITS - REPORT_BODY_OVERHEAD_UNITS - description.trim().length - contact.trim().length;
-  return Math.max(0, Math.min(MAX_SLOW_LOAD_REPORT_UNITS, left));
-}
-
 /** Newest-first records captured within `maxAgeMs`, at most `limit`. */
 export function selectReportableSlowLoads(
   records: readonly SlowLoadRecord[],

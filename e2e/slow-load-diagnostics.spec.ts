@@ -50,8 +50,10 @@ test("a folder load stuck past 5 s produces a diagnostic naming the slow phase",
   await dialog.getByRole("button", { name: "Submit" }).click();
   await expect(page.locator(".toast.success")).toContainText("Issue #5470");
   const submitted = await page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? "null"), MOCK_LOCAL_KEYS.submittedReport);
-  expect(submitted.diagnostics).toContain("/home/user/Documents");
-  expect(submitted.diagnostics).toContain("stuck in: native");
+  expect(submitted.diagnostics).toHaveLength(1);
+  expect(submitted.diagnostics[0].kind).toBe("slow-loads");
+  expect(submitted.diagnostics[0].text).toContain("/home/user/Documents");
+  expect(submitted.diagnostics[0].text).toContain("stuck in: native");
 });
 
 test("unchecking the diagnostics keeps them out of the report", async ({ page }) => {

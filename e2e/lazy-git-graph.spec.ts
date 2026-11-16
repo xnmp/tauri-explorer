@@ -1,5 +1,10 @@
 import { expect, test } from "./fixtures";
-import { waitForEntries } from "./helpers";
+import { waitForEntries, seedSettings } from "./helpers";
+
+// The commit graph is an opt-in experimental feature (#1675).
+test.beforeEach(async ({ page }) => {
+  await seedSettings(page, { enableGitGraph: true });
+});
 
 test("file browsing does not request the graph view and a failed first open remains recoverable", async ({ page }) => {
   let graphRequests = 0;

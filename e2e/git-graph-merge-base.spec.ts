@@ -49,6 +49,12 @@ test('a remote branch participates in the fork-point jump', async ({ page }) => 
 
 import type { MockControl } from '../src/lib/api/mock-control';
 import type { Page } from './fixtures';
+import { seedSettings } from "./helpers";
+
+// The commit graph is an opt-in experimental feature (#1675).
+test.beforeEach(async ({ page }) => {
+  await seedSettings(page, { enableGitGraph: true });
+});
 async function startDelayedJump(page: Page) {
   await page.goto('/?path=/home/user/Documents/project');
   await waitForEntries(page);

@@ -250,3 +250,23 @@ export async function navigateTo(dir: string, resolved = dir): Promise<void> {
     );
   }
 }
+
+/**
+ * Set a boolean setting through the real Settings dialog. Native settings
+ * persist in the profile, so specs that need a non-default value (for example
+ * the opt-in commit graph, #1675) set it explicitly rather than assuming it.
+ */
+export async function setSettingToggle(label: string, enabled: boolean): Promise<void> {
+  await browser.keys(["Control", ","]);
+  const search = $(".settings-dialog .settings-search");
+  await search.waitForDisplayed();
+  await search.setValue(label);
+  const setting = $(`//div[contains(@class,'setting-row')][.//span[normalize-space()='${label}']]`);
+  const checkbox = setting.$("input[type=checkbox]");
+  if ((await checkbox.isSelected()) !== enabled) await setting.$(".toggle-slider").click();
+  await browser.waitUntil(async () => (await checkbox.isSelected()) === enabled, {
+    timeout: 5_000, timeoutMsg: `setting "${label}" never became ${enabled ? "enabled" : "disabled"}`,
+  });
+  await $("button[aria-label='Close settings']").click();
+  await $(".settings-dialog").waitForDisplayed({ reverse: true });
+}

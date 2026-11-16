@@ -2,8 +2,13 @@
  * another history walk. The optional capture is taken after the same restored
  * rows the assertion observes, so the evidence cannot drift from the test. */
 import { expect, test } from "./fixtures";
-import { waitForEntries } from "./helpers";
+import { waitForEntries, seedSettings } from "./helpers";
 import type { MockControl } from "../src/lib/api/mock-control";
+
+// The commit graph is an opt-in experimental feature (#1675).
+test.beforeEach(async ({ page }) => {
+  await seedSettings(page, { enableGitGraph: true });
+});
 
 const evidencePath = process.env.CAPTURE_EVIDENCE
   ? "evidence/ac-2-cached-graph-rows.png"

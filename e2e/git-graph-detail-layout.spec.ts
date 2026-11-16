@@ -1,12 +1,17 @@
 import { test, expect, type Page, type Locator } from "./fixtures";
 import { seedSettings, waitForEntries } from "./helpers";
 
+// The commit graph is an opt-in experimental feature (#1675).
+test.beforeEach(async ({ page }) => {
+  await seedSettings(page, { enableGitGraph: true });
+});
+
 const RESIZE_LOOP = "ResizeObserver loop completed with undelivered notifications";
 
 async function openGraph(page: Page, zoom: number, width: number) {
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
-  await seedSettings(page, { zoomLevel: zoom }, { replace: true });
+  await seedSettings(page, { zoomLevel: zoom, enableGitGraph: true }, { replace: true });
   await page.setViewportSize({ width, height: 720 });
   await page.goto("/?path=/home/user/Documents/project");
   await waitForEntries(page);

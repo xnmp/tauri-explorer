@@ -1,5 +1,10 @@
 import { test, expect } from "./fixtures";
-import { waitForEntries } from "./helpers";
+import { waitForEntries, seedSettings } from "./helpers";
+
+// The commit graph is an opt-in experimental feature (#1675).
+test.beforeEach(async ({ page }) => {
+  await seedSettings(page, { enableGitGraph: true });
+});
 
 const repo = "/home/user/Documents/project";
 async function graph(page: import("@playwright/test").Page) {

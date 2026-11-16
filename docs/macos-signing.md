@@ -22,14 +22,14 @@ downloaded copy without `xattr` (#1671).
 
 ## Repository secrets
 
-| Secret | Value |
-| --- | --- |
-| `APPLE_CERTIFICATE` | `base64 -i DeveloperID.p12` (one line) |
-| `APPLE_CERTIFICATE_PASSWORD` | the `.p12` export password |
-| `APPLE_SIGNING_IDENTITY` | `Developer ID Application: <Name> (<TEAMID>)` as `security find-identity -v -p codesigning` prints it, without the surrounding quotes |
-| `APPLE_API_ISSUER` | App Store Connect → Users and Access → Integrations → Team Keys: the Issuer ID |
-| `APPLE_API_KEY` | that key's Key ID |
-| `APPLE_API_PRIVATE_KEY` | the full contents of `AuthKey_<KeyID>.p8`, including the BEGIN/END lines |
+| Secret                       | Value                                                                                                                                 |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `APPLE_CERTIFICATE`          | `base64 -i DeveloperID.p12` (one line)                                                                                                |
+| `APPLE_CERTIFICATE_PASSWORD` | the `.p12` export password                                                                                                            |
+| `APPLE_SIGNING_IDENTITY`     | `Developer ID Application: <Name> (<TEAMID>)` as `security find-identity -v -p codesigning` prints it, without the surrounding quotes |
+| `APPLE_API_ISSUER`           | App Store Connect → Users and Access → Integrations → Team Keys: the Issuer ID                                                        |
+| `APPLE_API_KEY`              | that key's Key ID                                                                                                                     |
+| `APPLE_API_PRIVATE_KEY`      | the full contents of `AuthKey_<KeyID>.p8`, including the BEGIN/END lines                                                              |
 
 ## One-time setup
 
@@ -86,7 +86,10 @@ job still fails there, rerun it. Apple's ticket CDN can lag the acceptance.
 
 ## Maintenance
 
-- Developer ID certificates last five years; the membership renews yearly.
+- Check the certificate's expiry (`openssl x509 -in devid.pem -noout -enddate`;
+  the first one, issued 2026-11-16, expires 2027-12-15); the membership
+  renews yearly. Apps signed before expiry keep launching because notarization
+  timestamps the signature.
   A lapsed membership stops new notarizations, but already-notarized releases
   keep working. Rotate by replacing `APPLE_CERTIFICATE`,
   `APPLE_CERTIFICATE_PASSWORD` and `APPLE_SIGNING_IDENTITY`, then rerun the

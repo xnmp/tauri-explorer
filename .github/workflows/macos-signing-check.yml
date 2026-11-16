@@ -7,6 +7,10 @@ name: macOS signing check
 
 on:
   workflow_dispatch:
+  # TEMPORARY: workflow_dispatch only works once this file is on dev; this
+  # trigger qualifies PR #1672 before merge. Remove before merging.
+  push:
+    branches: [chore/macos-notarized-releases]
 
 permissions:
   contents: read

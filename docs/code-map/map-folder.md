@@ -352,6 +352,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `open-history-access.svelte.ts` — startup-light seam for the open history (#1525): registers the `api/open.ts` `onFileLaunched` listener, lazy-loads the store on first launch/mutation/read, reactive `lastOpenedAt` for FileItem and the "opened" sort.
 - `open-history.svelte.ts` — shared file open history for Details "Date opened" (#1525, loaded lazily): records successful launches, lazy tolerant load, BroadcastChannel publication, coalesced saves that replay unsaved changes over the stored document.
 - `settings.svelte.ts` — global settings store (toggles, defaults). Very hot for feature flags. `reloadFromDisk()` adopts external settings.json edits (#599).
+- `settings-input.ts` — Pure persisted-settings input contract: normalization against defaults, enum/numeric validation, unknown-key carry-through, size bound (split from settings.svelte.ts, #1679).
 - `settings-toggles.ts` — `TOGGLE_SETTINGS` metadata and `generateToggleCommands` for the command palette (split from settings.svelte.ts, #1523).
 - `icon-theme.svelte.ts` — transient icon-pack preview and reactive resolution against saved settings and applied color-theme CSS revisions; previews never persist.
 - `window-size.svelte.ts` — reactive `window.innerWidth`/`innerHeight` tracker (`windowSizeStore`); `+page.svelte` syncs on mount/resize. Feeds preview-pane auto-dock (#467).

@@ -7,6 +7,5 @@
   "src/lib/components/WindowTabBar.svelte": 955,
   "src/lib/domain/git-graph.ts": 1114,
   "src/lib/state/explorer.svelte.ts": 1421,
-  "src/lib/state/settings.svelte.ts": 807,
   "src/lib/state/window-tabs.svelte.ts": 1368
 }

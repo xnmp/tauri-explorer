@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Tip: use **Command Palette → "Report Issue"** in the app. It includes your OS and app version when you submit, and can attach images you choose. The issue and images are public; logs are not attached automatically.
+        Tip: use **Command Palette (Ctrl+Shift+P) → "Report Issue"** in the app. It fills in your app version, OS, webview version, desktop session and install method, and can attach screenshots or a short video. No GitHub account needed. The issue and attachments are public; logs are never attached automatically.
   - type: textarea
     id: what-happened
     attributes:
@@ -14,12 +14,21 @@ body:
       placeholder: "Dragged a folder onto the sidebar and…"
     validations:
       required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Optional, but the fastest way to a fix.
+      placeholder: |
+        1. Open a folder with 5,000 images
+        2. Switch to Tiles view
+        3. Scroll quickly to the bottom
   - type: input
     id: version
     attributes:
       label: App version
-      description: The release or installer filename you downloaded
-      placeholder: "v1.11.1"
+      description: Command Palette → "About" shows it (or the installer filename you downloaded).
+      placeholder: "v1.25.2"
     validations:
       required: true
   - type: dropdown
@@ -27,15 +36,28 @@ body:
     attributes:
       label: Operating system
       options:
-        - Linux (X11)
         - Linux (Wayland)
-        - Windows
+        - Linux (X11)
+        - Linux (WSL)
+        - Windows 11
+        - Windows 10
         - macOS
     validations:
       required: true
   - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Copy the list from Command Palette → "About" (distro, webview version, session, install method). If the app won't open, tell us your distro or OS version and how you installed it (AppImage, .deb, .rpm, AUR, .dmg, .msi, setup.exe).
+      render: text
+  - type: textarea
     id: logs
     attributes:
       label: Logs / crash report
-      description: If the app crashed, the next launch offers a locally saved crash report — paste it here.
+      description: |
+        If the app crashed, the next launch offers a locally saved crash report. Otherwise, Command Palette → "Open Logs Folder", or look in:
+        - Linux: `~/.local/share/io.github.xnmp.tauri-explorer/logs/`
+        - macOS: `~/Library/Logs/io.github.xnmp.tauri-explorer/`
+        - Windows: `%LOCALAPPDATA%\io.github.xnmp.tauri-explorer\logs\`
+        Lines marked `[WARN]` or `[ERROR]` near the time of the problem are the useful ones. Check them for paths you'd rather not share before pasting.
       render: text

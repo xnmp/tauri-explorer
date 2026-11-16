@@ -23,6 +23,15 @@ test("About shows the running app version and supports dismissal/reopening @smok
   await expect(palette).toBeHidden();
   await expect(about).toBeVisible();
   await expect(about.getByText("Version 0.0.0-mock", { exact: true })).toBeVisible();
+  // #1683: the backend's environment facts are listed as label/value pairs.
+  const environment = about.getByRole("definition");
+  await expect(about.getByRole("term")).toHaveText(["OS", "Webview", "Session", "Install"]);
+  await expect(environment).toHaveText([
+    "Mock Linux (x86_64)",
+    "WebKitGTK 0.0.0-mock",
+    "wayland, MockDesktop",
+    "source build",
+  ]);
   await page.screenshot({ path: "evidence/ac-2-about-version.png", animations: "disabled" });
   await page.keyboard.press("Escape");
   await expect(about).toBeHidden();

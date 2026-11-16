@@ -2,6 +2,24 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.25.2 — 2026-11-16
+
+### Changed
+
+- The macOS DMG is now signed with a Developer ID and notarized by Apple, so
+  it opens like any other downloaded app; the `xattr` quarantine workaround
+  is no longer needed (#1671). macOS asks once more for Finder access the
+  first time Delete moves files to the Trash, and any Full Disk Access granted
+  to an earlier, unsigned version must be granted again.
+- The Git Commit Graph is now opt-in: enable it in Settings → Experimental
+  (#1675).
+
+### Fixed
+
+- Dragging files into apps that read the drag's HTML first, such as
+  Obsidian, inserts the files instead of a `urn:tauri-explorer:drag:…`
+  token (Linux, #1656).
+
 ## v1.25.1 — 2026-11-15
 
 ### Fixed

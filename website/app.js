@@ -152,9 +152,8 @@ ${shot("details-view.png", "The real thing: details view, git status column, bre
 </div>
 <h2>macOS (Apple Silicon)</h2>
 <div class="dl-row"><a class="dl-btn" data-dl="mac" href="${DL.mac}">.dmg</a></div>
-<p class="note">Binaries aren't code-signed yet. Windows may show a SmartScreen
-warning. On macOS, clear quarantine on the installed app with
-<code>xattr -r -d com.apple.quarantine /Applications/tauri-explorer.app</code>.
+<p class="note">The macOS build is signed and notarized by Apple. Windows
+binaries aren't code-signed yet and may show a SmartScreen warning.
 You can also build from source with <code>bun</code> + <code>cargo</code>.</p>
 `,
     },

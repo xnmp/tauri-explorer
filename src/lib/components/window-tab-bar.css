@@ -1,6 +1,24 @@
 /* Window tab strip chrome; scoped to its single .tab-area owner (#1705). */
+
+/* Enter/exit progress of a sliding tab (domain/tab-slide.ts, #1734).
+   Registered so the slide's keyframes interpolate it smoothly; 1 at rest. */
+@property --tab-slide {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 1;
+}
   .tab-area .tab-scroll-group { display: flex; flex: 0 1 auto; min-width: 0; height: 100%; align-items: flex-end; }
-  .tab-area .tab-viewport { flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+  /* The scroller clips at its padding box, but the active tab's fillets and
+     their ring hang TAB_BLEED outside it (#1734): pad the viewport by that
+     much (and 1px below for the ring), and while the tabs fit cancel the
+     padding with negative margins so the layout is unchanged. Overflowing,
+     the padding stays and scrolled tabs pass under the scroll buttons. */
+  .tab-area .tab-viewport {
+    flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none;
+    padding: 0 var(--tab-bleed, 0px) 1px;
+    margin-bottom: -1px;
+  }
+  .tab-area .tab-viewport.bleed { margin-inline: calc(-1 * var(--tab-bleed, 0px)); }
   .tab-area .tab-viewport::-webkit-scrollbar { display: none; }
   .tab-area .tab-scroll-btn, .tab-area .tab-picker-btn {
     display: flex; align-items: center; justify-content: center; flex: none;
@@ -14,7 +32,7 @@
   .tab-area .tab-scroll-btn:disabled { opacity: 0.35; cursor: default; }
   .tab-area .tab.compact { padding: 0; justify-content: center; gap: 0; }
   .tab-area .tab.compact .tab-title, .tab-area .tab.compact .tab-close { display: none; }
-  .tab-area .tab.active.narrow { padding: 0 6px; gap: 0; }
+  .tab-area .tab.active.narrow { padding: 0 calc(6px * var(--tab-slide)); gap: 0; }
   .tab-area .tab.active.narrow .tab-icon, .tab-area .tab.active.narrow .tab-icon-special, .tab-area .tab.active.narrow .tab-close { display: none; }
   .tab-area {
     display: flex;
@@ -51,7 +69,10 @@
     align-items: center;
     gap: 8px;
     height: 30px;
-    padding: 0 5px 0 12px;
+    /* Padding grows with a sliding tab so it starts from nothing (#1734). */
+    padding: 0 calc(5px * var(--tab-slide)) 0 calc(12px * var(--tab-slide));
+    /* Content fades in once the growing tab has room for it. */
+    --tab-content-alpha: clamp(0, calc(var(--tab-slide) * 2.5 - 1), 1);
     /* Subtle-but-visible fill: --background was undefined outside the tahoe
        theme, leaving unfocused tabs transparent and indistinct (#238). */
     background: var(--control-fill-tertiary);
@@ -61,7 +82,12 @@
     letter-spacing: -0.01em;
     color: var(--text-secondary);
     cursor: pointer;
-    flex-shrink: 0;
+    /* The strip publishes each tab's width as --tab-width; the width itself
+       stays auto, because WebKit ignores an animated width on a flex item
+       sized explicitly (#1734). min-width: 0 lets the 100-tab strip shrink
+       tabs below their content. */
+    flex: 0 0 var(--tab-width, auto);
+    min-width: 0;
     max-width: 220px;
     position: relative;
     border: none;
@@ -149,7 +175,8 @@
   }
 
   .tab-area .tab.active {
-    --fillet: 14px;
+    /* Fillets grow with a sliding tab, so its first frames have no spikes. */
+    --fillet: calc(14px * var(--tab-slide));
     /* --background-card is translucent in every theme; painted straight over
        the titlebar's own card layer it composites into a DIFFERENT color
        than the pane below (and reads as see-through, #243). Layering it
@@ -267,6 +294,13 @@
     flex-shrink: 0;
   }
 
+  .tab-area .tab > .tab-icon,
+  .tab-area .tab > .tab-icon-special,
+  .tab-area .tab > .tab-title,
+  .tab-area .tab > .tab-rename-input {
+    opacity: var(--tab-content-alpha);
+  }
+
   /* Dynamic folder icon color using CSS filter - adapts to theme accent */
   .tab-area svg.tab-icon path {
     fill: var(--accent);
@@ -377,7 +411,7 @@
 
   .tab-area .tab:hover .tab-close,
   .tab-area .tab.active .tab-close {
-    opacity: 1;
+    opacity: var(--tab-content-alpha);
     transform: scale(1);
   }
 

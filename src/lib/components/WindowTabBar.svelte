@@ -10,18 +10,19 @@
 <script lang="ts">
   import { tick, onDestroy } from "svelte";
   import { dragState } from "$lib/state/drag.svelte";
-  import { slide } from "svelte/transition";
+  import { cubicOut } from "svelte/easing";
   import { MediaQuery } from "svelte/reactivity";
   import { windowTabsManager, type TabTransfer } from "$lib/state/window-tabs.svelte";
   import { dropIntoDirectory } from "$lib/composables/use-dom-directory-drop";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { getCommandShortcut } from "$lib/state/commands.svelte";
   import { tabDragState, windowAtScreenPos, sendTabToWindow } from "$lib/state/tab-transfer";
-  import { clientToCSSRelative, getZoomFactor } from "$lib/domain/zoom";
+  import { clientToCSSRelative, cssToRect, getZoomFactor, rectDimToCSS } from "$lib/domain/zoom";
   import { openNewWindow } from "$lib/state/commands/shared";
   import { showTabStrip } from "$lib/domain/titlebar";
   import { stepTabDrag, TAB_DRAG_IDLE, type TabDrag, type TabDragEffect, type TabDragEvent } from "$lib/domain/tab-drag";
-  import { tabStripLayout, tabEdgeScrollSpeed, TAB_MAX_WIDTH, TAB_GAP } from "$lib/domain/tab-strip";
+  import { tabStripLayout, tabEdgeScrollSpeed, tabRevealDelta, TAB_MAX_WIDTH, TAB_GAP, TAB_BLEED } from "$lib/domain/tab-strip";
+  import { tabSlideCss, TAB_SLIDE_IN_MS, TAB_SLIDE_OUT_MS } from "$lib/domain/tab-slide";
   import WindowTabPicker from "./WindowTabPicker.svelte";
   import "./window-tab-bar.css";
   import NamedFolderIcon from "./NamedFolderIcon.svelte";
@@ -66,10 +67,15 @@
     const selected = Array.from(tabViewport.querySelectorAll<HTMLElement>(".tab"))
       .find(tab => tab.dataset.tabId === activeTabId);
     if (!selected) return;
-    const tab = selected.getBoundingClientRect();
-    const view = tabViewport.getBoundingClientRect();
-    if (tab.left < view.left) tabViewport.scrollLeft += clientToCSSRelative(tab.left, view.left);
-    else if (tab.right > view.right) tabViewport.scrollLeft += clientToCSSRelative(tab.right, view.right);
+    // Leave room for the active tab's fillets, which hang outside its box.
+    const delta = tabRevealDelta(selected.getBoundingClientRect(), tabViewport.getBoundingClientRect(), cssToRect(TAB_BLEED));
+    if (delta) tabViewport.scrollLeft += rectDimToCSS(delta);
+  }
+
+  /** Tab enter/exit: grow the flex basis from the live --tab-width, never
+   *  clipping the fillets (domain/tab-slide.ts, #1734). */
+  function tabSlide(_node: HTMLElement, { duration }: { duration: number }) {
+    return { duration, easing: cubicOut, css: (t: number) => tabSlideCss(t, "var(--tab-width)", TAB_BLEED) };
   }
 
   function scrollTabs(direction: number): void {
@@ -528,7 +534,7 @@
       {#if showScrollButtons}
         <button class="tab-scroll-btn" aria-label="Scroll tabs left" disabled={tabScrollLeft < 1} onclick={() => scrollTabs(-1)}>‹</button>
       {/if}
-      <div class="tab-viewport" bind:this={tabViewport} bind:clientWidth={tabViewportWidth} onscroll={() => { tabScrollLeft = tabViewport?.scrollLeft ?? 0; }} onwheel={handleTabWheel}>
+      <div class="tab-viewport" class:bleed={!stripLayout.overflowing} style:--tab-bleed={`${TAB_BLEED}px`} bind:this={tabViewport} bind:clientWidth={tabViewportWidth} onscroll={() => { tabScrollLeft = tabViewport?.scrollLeft ?? 0; }} onwheel={handleTabWheel}>
     <!-- A tablist owns only tabs; the new-tab button sits beside it (#785). -->
     <div class="tab-list" role="tablist" aria-label="Tabs">
     {#each tabs as tab (tab.id)}
@@ -539,12 +545,12 @@
         class:active={tab.id === activeTabId}
         class:compact={tab.id !== activeTabId && stripLayout.iconOnly}
         class:narrow={tab.id === activeTabId && stripLayout.activeWidth < 90}
-        style:width={`${tab.id === activeTabId ? stripLayout.activeWidth : stripLayout.inactiveWidth}px`}
+        style:--tab-width={`${tab.id === activeTabId ? stripLayout.activeWidth : stripLayout.inactiveWidth}px`}
         class:drag-over={dropTargetTabId === tab.id}
         class:file-drop-target={fileDropTargetTabId === tab.id}
         class:dragging={draggingTabId === tab.id}
-        in:slide={{ axis: "x", duration: reducedMotion.current ? 0 : 180 }}
-        out:slide={{ axis: "x", duration: reducedMotion.current ? 0 : 120 }}
+        in:tabSlide={{ duration: reducedMotion.current ? 0 : TAB_SLIDE_IN_MS }}
+        out:tabSlide={{ duration: reducedMotion.current ? 0 : TAB_SLIDE_OUT_MS }}
         onintroend={() => { if (tab.id === activeTabId) revealActiveTab(); }}
         onoutroend={revealActiveTab}
         role="tab"
@@ -644,7 +650,7 @@
     </div>
       </div>
       {#if showScrollButtons}
-        <button class="tab-scroll-btn" aria-label="Scroll tabs right" disabled={tabScrollLeft + tabViewportWidth >= stripLayout.totalWidth - 1} onclick={() => scrollTabs(1)}>›</button>
+        <button class="tab-scroll-btn" aria-label="Scroll tabs right" disabled={tabScrollLeft + tabViewportWidth >= stripLayout.totalWidth + 2 * TAB_BLEED - 1} onclick={() => scrollTabs(1)}>›</button>
       {/if}
     </div>
 

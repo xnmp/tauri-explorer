@@ -16,6 +16,15 @@ Absolutely positioned leaves cannot size the observed canvas, preventing a
 measurement feedback loop. Preserve focused-first restoration pruning: a
 64-pane workspace initially needs six placeholders, not 63.
 
+Clip the layout canvas's child overflow as well. During a resize, stale
+absolute pane bounds otherwise add workspace gutters; updating those bounds
+then removes the gutters and resizes an ancestor during deeper observer
+delivery. WebKit reports an undelivered ResizeObserver notification. Genuine
+workspace overflow comes from the parent pane tree's minimum size, so
+`overflow: clip` removes that feedback without hiding dense-layout scrolling.
+The regression listens for actual page errors: adding a shallow probe observer
+changes delivery depth and can accidentally mask this particular feedback.
+
 Interrupted reveals need spatial clipping as well as interpolated rectangles.
 Splitting a still-opening incoming pane on the perpendicular axis otherwise
 lets its descendant paint and receive clicks ahead of the ancestor divider.

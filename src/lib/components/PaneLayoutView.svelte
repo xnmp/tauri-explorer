@@ -1,6 +1,6 @@
 <!--
   PaneLayoutView — flat, identity-stable renderer of a split tree (#1703).
-  CSS resolves constrained bounds in the same layout pass as viewport changes.
+  The CSS-sized canvas publishes presentation bounds before paint on resize.
   The split tree still owns layout; pane DOM is keyed independently of ancestry.
 -->
 <script lang="ts">
@@ -83,6 +83,10 @@
     flex: 1;
     min-width: 0;
     min-height: 0;
+    /* Stale absolute bounds must not create workspace gutters before the
+       synchronous size delivery settles. Genuine overflow is the parent
+       pane-tree's minimum size; clip adds no inner scroll container. */
+    overflow: clip;
   }
 
   .pane-frame {

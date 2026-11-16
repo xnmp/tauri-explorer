@@ -172,6 +172,31 @@ test('deep restored splits keep their last pane sized and reachable', async ({ p
   expect(await page.locator('.pane-container').evaluate(el => el.scrollLeft)).toBeGreaterThan(0);
 });
 
+test('opening preview keeps the pane canvas contained without observer feedback', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/?path=/home/user/Pictures');
+  await page.locator('.entry-item').first().waitFor();
+  await page.evaluate(async () => {
+    // @ts-expect-error Vite serves the application module.
+    const { settingsStore } = await import('/src/lib/state/settings.svelte.ts');
+    settingsStore.update({ showPreviewPane: true });
+  });
+  await page.locator('.entry-item[data-path="/home/user/Pictures/photo1.jpg"]').click();
+  await expect(page.locator('.preview-pane')).toBeVisible();
+  // A probe ResizeObserver would change delivery depth and can mask the very
+  // feedback this test checks. Let the real observers settle without one.
+  await page.evaluate(() => new Promise<void>(resolve => {
+    requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  }));
+  const overflow = await page.locator('.pane-container').evaluate(workspace => ({
+    horizontal: workspace.scrollWidth - workspace.clientWidth, vertical: workspace.scrollHeight - workspace.clientHeight,
+  }));
+  expect(overflow.horizontal).toBeLessThanOrEqual(1);
+  expect(overflow.vertical).toBeLessThanOrEqual(1);
+  expect(errors).toEqual([]);
+});
+
 test('capture anchored reveal before, during and after creation', async ({ page }) => {
   test.skip(!process.env.CAPTURE_EVIDENCE, 'Opt-in visual acceptance evidence');
   await page.setViewportSize({ width: 1200, height: 800 });

@@ -76,12 +76,64 @@ for (const mode of ['details', 'list', 'tiles']) {
     // beyond the reveal clip and belong to the new pane underneath it.
     await source.getByText('folder-00000', { exact: true }).click();
     await expect(source).toHaveClass(/\bactive\b/);
-    expect(await page.evaluate(() => document.getAnimations().filter(a => ((a.effect as KeyframeEffect)?.target as HTMLElement)?.dataset?.paneMotion).length)).toBe(0);
     await page.keyboard.press('Control+End');
+    expect(await page.evaluate(() => document.getAnimations().filter(a => ((a.effect as KeyframeEffect)?.target as HTMLElement)?.dataset?.paneMotion).length)).toBe(0);
     await expect(source.locator('.entry-item[data-index="4999"]')).toBeVisible();
     await expect(source.locator('.entry-item[data-index="4999"]')).toBeInViewport();
     await expect(source.locator('.entry-item[data-index="4999"]')).toHaveClass(/selected/);
   });
+
+  for (const modified of [false, true]) {
+    test(`a held ${mode} file press keeps its target until the ${modified ? 'Ctrl-click' : 'click'} completes`, async ({ page }) => {
+      await page.setViewportSize({ width: 1600, height: 1000 });
+      await page.goto(`/?path=/perf/huge-5000&viewMode=${mode}`);
+      await page.locator('.entry-item').first().waitFor();
+      const press = await page.evaluate(async () => {
+        // @ts-expect-error Vite serves the application module.
+        const { windowTabsManager: manager } = await import('/src/lib/state/window-tabs.svelte.ts');
+        // @ts-expect-error Vite serves the browser runtime.
+        const { tick } = await import('/node_modules/svelte/src/index-client.js');
+        const sourceId = manager.activePaneId;
+        manager.splitPane('right');
+        await tick();
+        const animations = document.getAnimations().filter(a => ((a.effect as KeyframeEffect)?.target as HTMLElement)?.dataset?.paneMotion);
+        animations.forEach(a => { a.pause(); a.currentTime = 55; });
+        await Promise.all(animations.map(a => a.ready));
+        const source = document.querySelector<HTMLElement>(`.explorer-pane[data-pane-id="${sourceId}"]`)!;
+        const rect = source.getBoundingClientRect();
+        const x = Math.round(rect.left + rect.width * .57);
+        // Press a genuinely visible row beyond the source's final split edge.
+        // Settling between down/up would hand this point to the new pane.
+        for (const row of source.querySelectorAll<HTMLElement>('.entry-item')) {
+          if (row.getAttribute('aria-selected') === 'true') continue;
+          const box = row.getBoundingClientRect();
+          // WebKit truncates native input coordinates; validate the actual
+          // integer point, safely below a tile's separate peek control.
+          const y = Math.floor(box.bottom - Math.min(8, box.height / 3));
+          if (x <= box.left || x >= box.right || y < 90 || y > innerHeight - 50) continue;
+          const hit = document.elementFromPoint(x, y);
+          if (hit?.closest('.entry-item') !== row || hit.closest('button, input, a')) continue;
+          (window as any).__heldPressAnimations = animations;
+          return { sourceId, x, y, path: row.dataset.path!, width: rect.width };
+        }
+        throw new Error('No visible file press beyond the final pane boundary');
+      });
+      await page.mouse.move(press.x, press.y);
+      await page.evaluate(() => (window as any).__heldPressAnimations.forEach((a: Animation) => a.play()));
+      await page.mouse.down();
+      if (modified) await page.keyboard.down('Control');
+      // Deliberately outlast the natural 220 ms finish while the button is held.
+      await page.waitForTimeout(300);
+      const source = page.locator(`.explorer-pane[data-pane-id="${press.sourceId}"]`);
+      expect((await source.boundingBox())!.width).toBeCloseTo(press.width, 0);
+      await page.mouse.up();
+      if (modified) await page.keyboard.up('Control');
+      await expect(source.locator(`.entry-item[data-path="${press.path}"]`).first()).toHaveAttribute('aria-selected', 'true');
+      await expect(source).toHaveClass(/\bactive\b/);
+      await expect.poll(async () => (await source.boundingBox())!.width).toBeLessThan(press.width * .6);
+      expect(await page.evaluate(() => document.getAnimations().filter(a => ((a.effect as KeyframeEffect)?.target as HTMLElement)?.dataset?.paneMotion).length)).toBe(0);
+    });
+  }
 
   test(`capture stable ${mode} pane reveal`, async ({ page }) => {
     test.skip(!process.env.CAPTURE_EVIDENCE, 'Opt-in visual acceptance evidence');

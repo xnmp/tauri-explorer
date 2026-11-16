@@ -1,5 +1,6 @@
 import { onDestroy, onMount, untrack } from 'svelte';
 import type { PaneNode } from '$lib/domain/pane-layout';
+import { isModifierKey } from '$lib/domain/keyboard';
 import { createPaneCreationMotion } from '$lib/state/pane-creation-motion';
 
 export function usePaneCreationMotion(deps: { root(): HTMLElement | undefined; layout(): PaneNode; shown(): boolean }) {
@@ -23,22 +24,36 @@ export function usePaneCreationMotion(deps: { root(): HTMLElement | undefined; l
       size = next;
     });
     observer.observe(root);
-    const dividerInput = (event: Event) => {
+    const holdPointer = (event: PointerEvent) => {
       if ((event.target as Element).closest('.pane-divider')) motion.finish();
+      else motion.pause();
     };
-    root.addEventListener('pointerdown', dividerInput, true);
-    root.addEventListener('keydown', dividerInput, true);
+    const keyboardInput = (event: KeyboardEvent) => {
+      if (!isModifierKey(event.key)) motion.finish();
+    };
+    // Resume before stopped events too. Playing schedules a future frame;
+    // it does not resize the held content during the release/click dispatch.
+    const releases = ['pointerup', 'click', 'auxclick', 'contextmenu'];
+    const completions = ['dblclick', 'dragend', 'drop'];
+    root.addEventListener('pointerdown', holdPointer, true);
     const scrollport = root.closest('.pane-container');
     scrollport?.addEventListener('scroll', motion.finish);
     preference?.addEventListener('change', motion.finish);
     window.addEventListener('blur', motion.finish);
+    window.addEventListener('keydown', keyboardInput, true);
+    for (const type of releases) window.addEventListener(type, motion.resume, true);
+    for (const type of completions) window.addEventListener(type, motion.finish);
+    window.addEventListener('pointercancel', motion.finish, true);
     return () => {
       observer.disconnect();
-      root.removeEventListener('pointerdown', dividerInput, true);
-      root.removeEventListener('keydown', dividerInput, true);
+      root.removeEventListener('pointerdown', holdPointer, true);
       scrollport?.removeEventListener('scroll', motion.finish);
       preference?.removeEventListener('change', motion.finish);
       window.removeEventListener('blur', motion.finish);
+      window.removeEventListener('keydown', keyboardInput, true);
+      for (const type of releases) window.removeEventListener(type, motion.resume, true);
+      for (const type of completions) window.removeEventListener(type, motion.finish);
+      window.removeEventListener('pointercancel', motion.finish, true);
     };
   });
   onDestroy(motion.finish);

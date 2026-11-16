@@ -1,4 +1,4 @@
-import { paneCreation, type PaneCreation } from '$lib/domain/pane-presentation';
+import { paneCreation, sameLayout, type PaneCreation } from '$lib/domain/pane-presentation';
 import type { PaneNode, LeafRect } from '$lib/domain/pane-layout';
 import { stablePaneFrame, visiblePaneRect, type PaneInsets } from '$lib/domain/pane-motion';
 
@@ -53,6 +53,9 @@ export function createPaneCreationMotion(root: () => HTMLElement | undefined, re
     return { frames, width, height };
   }
   function prepare(next: PaneNode, shown: boolean) {
+    // Focus updates can re-publish the same tree. They must not settle an
+    // admitted press before its click-owned selection has run.
+    if (shown && previous && sameLayout(previous, next)) return;
     const creation = shown && !reduced() ? paneCreation(previous, next) : undefined;
     // Capture the currently displayed (possibly interrupted) frame before
     // cancelling its effects. A replacement starts from what the user saw.
@@ -114,5 +117,7 @@ export function createPaneCreationMotion(root: () => HTMLElement | undefined, re
     dividerClip[horizontal ? 3 : 2] = 0;
     animate(divider.element, [{ transform: horizontal ? `translateX(${delta}px)` : `translateY(${delta}px)`, clipPath: inset(dividerClip) }, { transform: 'translate(0px, 0px)', clipPath: 'inset(0px)' }]);
   }
-  return { prepare, play, finish };
+  function pause() { for (const animation of animations) animation.pause(); }
+  function resume() { for (const animation of animations) if (animation.playState === 'paused') animation.play(); }
+  return { prepare, play, finish, pause, resume };
 }

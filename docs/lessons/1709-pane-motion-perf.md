@@ -25,6 +25,25 @@ retained DOM/scroll, input and final-entry viewport intersection are covered.
 Click a visible filename in these tests: a held wide Details row's center can
 be beyond the clip, and `toHaveClass(/active/)` also matches `inactive`.
 
+The full regression caught a real input consequence of deferred settlement:
+a visible row can receive a press beyond the pane's final edge. Activating
+that pane re-publishes its tree; cancelling the animation on that notification
+shrinks the pane before release, so the click lands in a divider or another
+pane. Ignore structurally unchanged layouts and pause presentation during a
+pointer press. Resume on release instead of settling after the first click,
+which would invalidate the next press of a native double-click. Capture release
+events so stopped propagation and releases outside the pane cannot strand
+paused effects. Non-modifier keyboard input settles before the target's
+navigation handler; a Ctrl/Shift press must not invalidate a held file gesture.
+Real 300 ms held-press regressions fail without this contract in all three
+views; selection, double-click navigation and browser drag carriers exercise
+the complete gesture outcomes.
+
+Use integer physical test points away from separate controls. WebKit truncated
+a fractional tile-row point onto its adjacent peek button while
+`elementFromPoint` at the fractional coordinate reported the row. Native event
+logging confirmed the button correctly expanded without selecting the row.
+
 Independent warm-reveal measurements (three trials per view, same headless
 software-compositor host) recorded source resize deliveries 5/5/3 → 0/0/0 for
 Details/List/Tiles, with one settlement. Median Tiles main-thread work fell

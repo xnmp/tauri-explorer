@@ -473,7 +473,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-window-lifecycle.ts` — window lifecycle (focus/close/resize) handlers.
 - `use-pane-dividers.svelte.ts` — single captured divider gesture per workspace; pointer/keyboard adapter with geometry and lifetime validation.
 - `use-pane-canvas-size.svelte.ts` — synchronous before-paint presentation sizing of the CSS-filled canvas; absolute pane frames cannot feed back into its ResizeObserver (#1703).
-- `use-pane-creation-motion.svelte.ts` — Svelte pre/post-update animation binding; reduced-motion, resize, scroll, divider input and teardown cancellation (#1703).
+- `use-pane-creation-motion.svelte.ts` — Svelte pre/post-update animation binding; pointer-gesture pause/release, keyboard settlement, reduced-motion, resize, scroll, divider input and teardown cancellation (#1703, #1709).
 - `use-inline-panel-width.svelte.ts` — mount-owned contribution of visible inline accessories to the pane viewport.
 - `use-panel-resize.svelte.ts` — localStorage width preference adapter for Sidebar, SCM, Miller and Git columns.
 - `use-git-graph-menu.svelte.ts` — git-graph commit menu / references disclosure anchor: cursor or trigger positioning under zoom, viewport clamp, captured scroller position and focus (#1082).

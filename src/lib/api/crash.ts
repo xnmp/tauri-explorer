@@ -5,7 +5,7 @@
  * as crash files so the next-launch notice can offer them exactly like a Rust
  * crash. Unhandled promise rejections are only logged: the app keeps running,
  * so the "crashed last time" notice would be false (#1056). Nothing leaves the
- * machine unless the user opens the pre-filled GitHub issue themselves.
+ * machine unless the user submits it through Report Issue (#1684).
  */
 
 import { invoke } from "./common";
@@ -15,10 +15,6 @@ export interface CrashReport {
   fileName: string;
   contents: string;
 }
-
-const REPO_ISSUES_URL = "https://github.com/xnmp/tauri-explorer/issues/new";
-/** GitHub caps URLs around 8k; leave headroom for encoding expansion. */
-const MAX_BODY_CHARS = 4000;
 
 /** Fetch-and-consume the newest unseen crash report, if any. */
 export function takeCrashReport(): Promise<CrashReport | null> {
@@ -38,26 +34,17 @@ function recordFrontendCrash(message: string, stack?: string): Promise<void> {
   return invoke<void>("record_frontend_crash", { message, stack: stack ?? null });
 }
 
-/** Build the pre-filled GitHub issue URL for a crash report. */
-export function crashIssueUrl(report: CrashReport): string {
-  const firstPanicLine =
-    report.contents
-      .split("\n")
-      .find((line) => line.startsWith("panic: "))
-      ?.slice("panic: ".length) ?? "unknown";
-  const title = `Crash: ${firstPanicLine.slice(0, 80)}`;
-  const truncated =
-    report.contents.length > MAX_BODY_CHARS
-      ? `${report.contents.slice(0, MAX_BODY_CHARS)}\n… (truncated — full report in ${report.fileName})`
-      : report.contents;
-  const body = `The app crashed. Crash report (\`${report.fileName}\`):\n\n\`\`\`\n${truncated}\n\`\`\`\n`;
-  return `${REPO_ISSUES_URL}?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`;
+export interface EnvironmentField {
+  label: string;
+  value: string;
 }
 
 export interface AppInfo {
   version: string;
   os: string;
   arch: string;
+  /** Labelled environment facts (distro, webview, session, install; #1683). */
+  environment?: EnvironmentField[];
 }
 
 export function getAppInfo(): Promise<AppInfo> {

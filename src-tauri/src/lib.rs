@@ -26,6 +26,7 @@ mod shared_history;
 // pub: criterion benches (src-tauri/benches/) call into
 // files::dir_listing::{scan_directory_parallel, sort_entries} directly.
 mod durable_dir;
+mod environment;
 pub mod files;
 mod gemini;
 pub mod git;
@@ -178,6 +179,14 @@ pub(crate) fn init_test_logger() {
     log::set_max_level(log::LevelFilter::Debug);
 }
 
+/// Process-exit cleanup: cancel AI CLI children and settle installed-plugin
+/// mutations. Runs on `RunEvent::Exit`, and from the updater's Windows
+/// install path, which exits the process without that event (#1679).
+pub(crate) fn release_process_resources() {
+    ai::cancel_all();
+    installed_plugins::shutdown();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// Wire text (ADR 0031) for a native path handed to the frontend before any
 /// command runs, such as the launch working directory (#1592).
@@ -291,6 +300,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         .manage(window_launch::Requests::default())
         .manage(window_launch::FocusHistory::default())
         .manage(native_file_drag::Sessions::default())
+        .manage(update_check::SelfUpdateJob::default())
         .manage(system::StartupClock {
             started: t_start,
             epoch_ms: t_start_epoch_ms,
@@ -321,6 +331,9 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         // `target="_blank"` and Ctrl/Shift-clicked http(s)/mailto/tel links (Markdown
         // preview, plugin UIs) in the system browser. Wry drops them otherwise.
         .plugin(tauri_plugin_opener::init())
+        // Signed self-update (#1679). Driven only from Rust (`update_check`),
+        // so no `updater:*` capability is granted to the webviews.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .on_window_event(|window, event| {
             native_file_drag::on_window_event(window, event);
             window_launch::on_window_event(window, event);
@@ -368,7 +381,8 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             crash_report::open_external_url,
             palette::extract_palette,
             config::write_theme_file,
-            update_check::check_for_update,
+            update_check::prepare_update,
+            update_check::install_update,
             log_startup_timing,
             log_startup_progress,
             // Trash operations
@@ -600,6 +614,11 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
                 renderer_plan.reason,
             );
             #[cfg(target_os = "linux")]
+            environment::record_renderer(format!("{:?}", renderer_plan.mode));
+            // Off the startup path: one self-describing `Environment:` log
+            // line, and the cached summary reports and crash files use (#1683).
+            environment::spawn_startup_probe();
+            #[cfg(target_os = "linux")]
             log::info!("Renderer(jsc): {jsc_plan:?}");
             // Before any window: the asset scope must serve Preview renditions
             // from the cache (its `$HOME/**/*` glob skips dot-dirs, #1054).
@@ -783,7 +802,9 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
         .run(|app, event| {
-            if matches!(&event,tauri::RunEvent::Exit){ai::cancel_all();installed_plugins::shutdown();}
+            if matches!(&event, tauri::RunEvent::Exit) {
+                release_process_resources();
+            }
             // Portal mode has no persistent window: closing the last picker
             // must not exit the service. Only its idle policy exits it, through
             // an explicit `exit(code)` (#1427).

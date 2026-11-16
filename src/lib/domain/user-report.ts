@@ -1,3 +1,4 @@
+import type { ReportDiagnostic } from "./report-diagnostics";
 export type UserReportKind = "bug" | "feature";
 
 const USER_REPORT_IMAGE_TYPES = [
@@ -85,9 +86,10 @@ export interface UserReportDraft {
   kind: UserReportKind;
   contact?: string;
   attachments?: UserReportAttachment[];
-  /** Reporter-approved slow folder-load diagnostics (#1022), shown verbatim
-   *  in the dialog before submission. Not persisted with the text draft. */
-  diagnostics?: string;
+  /** Reporter-approved diagnostic sections (slow folder loads #1022, crash
+   *  report #1684), shown verbatim in the dialog before submission. Not
+   *  persisted with the text draft. */
+  diagnostics?: ReportDiagnostic[];
 }
 
 export interface SubmittedUserReport {
@@ -188,11 +190,34 @@ export function userReportFallbackUrl(draft: UserReportDraft): string | null {
     description,
     contact ? `How to reach me: ${contact}` : "",
   ].filter(Boolean).join("\n\n");
-  return boundedGitHubIssueUrl(
-    title,
-    body,
-    draft.kind === "bug" ? "bug" : "enhancement",
-  );
+  const labels = draft.kind === "bug" ? "bug" : "enhancement";
+  // Approved diagnostics ride along when they fit (a crash report is the
+  // whole point of a crash-initiated report, #1684); the reporter's own
+  // words always take precedence over them.
+  const diagnostics = (draft.diagnostics ?? [])
+    .map(({ kind, text }) => fallbackDiagnosticBlock(kind, stripControls(text).trim()))
+    .filter(Boolean);
+  for (let keep = diagnostics.length; keep > 0; keep--) {
+    const url = boundedGitHubIssueUrl(
+      title,
+      [body, ...diagnostics.slice(0, keep)].filter(Boolean).join("\n\n"),
+      labels,
+    );
+    if (url) return url;
+  }
+  return boundedGitHubIssueUrl(title, body, labels);
+}
+
+const FALLBACK_DIAGNOSTIC_HEADINGS: Record<ReportDiagnostic["kind"], string> = {
+  "crash-report": "Crash report",
+  "slow-loads": "Slow folder-load diagnostics",
+};
+
+function fallbackDiagnosticBlock(kind: ReportDiagnostic["kind"], text: string): string {
+  if (!text) return "";
+  const longestRun = Math.max(2, ...(text.match(/`+/g) ?? []).map((run) => run.length));
+  const fence = "`".repeat(longestRun + 1);
+  return `<details><summary>${FALLBACK_DIAGNOSTIC_HEADINGS[kind]}</summary>\n\n${fence}text\n${text}\n${fence}\n\n</details>`;
 }
 
 /** Validate the decoded bytes at the draft admission seam, before displaying or submitting them. */

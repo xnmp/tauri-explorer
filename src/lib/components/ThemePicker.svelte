@@ -139,6 +139,16 @@
           scrollToSelected();
         }
         break;
+      case "PageDown":
+      case "PageUp":
+        event.preventDefault();
+        if (filteredThemes.length > 0) {
+          const step = event.key === "PageDown" ? 5 : -5;
+          selectedIndex = Math.max(0, Math.min(selectedIndex + step, filteredThemes.length - 1));
+          mouseMoved = false;
+          scrollToSelected();
+        }
+        break;
       case "Enter":
         event.preventDefault();
         if (filteredThemes[selectedIndex]) commit(filteredThemes[selectedIndex].id);

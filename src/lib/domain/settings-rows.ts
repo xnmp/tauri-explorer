@@ -34,6 +34,7 @@ export const SETTINGS_ROWS = {
   folderPeekCarets: ["Show Folder Peek Carets", "Show expand carets beside folders in Details and List. Off: a single click on a folder expands or collapses it"],
   autoEnterSingleSubdir: ["Auto-Enter Single Subfolder", "When a folder contains only one subfolder (and nothing else), descend into it automatically"],
   tabTitleGitRoot: ["Git Repo Root in Tab Title", "When the folder is inside a git repository, show the repo's root folder name in the tab title"],
+  autoUpdate: ["Install Updates Automatically", "Download new versions in the background and offer to restart into them", "auto update upgrade release version"],
   defaultPaneLayout: ["New Pane Layout", "How the New Pane command places panes: dwindle splits along the longer axis (Hyprland-style), or always right/down", "split", "pane"],
   showManuallyHidden: ["Show Manually Hidden Items", "Reveal items hidden via the right-click Hide action (shown dimmed)"],
   gitStatus: ["Git Status Indicators", "Show modified/untracked indicators for files in git repositories"],
@@ -77,7 +78,7 @@ export function settingsSectionRows(platform: { isMac: boolean; isWindows: boole
   ];
   const navBar = [r.navBack, r.navForward, r.navUp, r.navRefresh];
   const behavior = [
-    r.showHidden, r.millerHideEmpty, r.yaziNavigation, r.folderPeek, r.folderPeekCarets, r.autoEnterSingleSubdir, r.tabTitleGitRoot, r.defaultPaneLayout, r.showManuallyHidden,
+    r.showHidden, r.millerHideEmpty, r.yaziNavigation, r.folderPeek, r.folderPeekCarets, r.autoEnterSingleSubdir, r.tabTitleGitRoot, r.autoUpdate, r.defaultPaneLayout, r.showManuallyHidden,
     r.gitStatus, r.f5SyncsLocalBranches, r.recentItems, r.recycleBin, r.quickOpenDebug, r.warmWindow, r.confirmDelete,
     r.backgroundOpacity, r.backgroundImage, r.wallpaperBlur, r.terminalApp,
     r.previewFontSize, r.showPreviewInfo, r.ffmpegPath,

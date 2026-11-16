@@ -7,7 +7,8 @@ pkgver=1.5.0
 pkgrel=1
 pkgdesc="A keyboard-first file manager: fuzzy quick-open, ripgrep content search, a command palette for every action"
 install=tauri-explorer-bin.install
-options=('!debug')
+# '!strip': keep the symbol table release backtraces need (#1682).
+options=('!debug' '!strip')
 arch=('x86_64')
 url="https://github.com/xnmp/tauri-explorer"
 license=('MIT')

@@ -2,6 +2,36 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.26.0 — 2026-11-16
+
+### Added
+
+- Signed self-update: supported installs (Windows installers, the macOS app
+  and AppImage) download, verify and install updates, then restart on
+  request. Toggle it in Settings → Behavior → Install Updates Automatically;
+  package-manager, Arch and Nix installs stay notify-only (#1679).
+- Crashes are reported through the Report Issue dialog and relay, with the
+  crash attached as an opt-in, previewed section; no GitHub account needed
+  (#1684).
+- Reports, crash files, the log and the About dialog include environment
+  details: OS version, webview engine and version, session type and install
+  kind (#1683).
+- Crowded window tabs compress, and a tab search finds open tabs (#1705).
+- New panes open with an anchored reveal animation, and file entries glide
+  into their new layout when a pane splits (#1703, #1718).
+- Page Up and Page Down move the theme picker's selection five rows (#1716).
+
+### Fixed
+
+- Release crash backtraces keep function names instead of `<unknown>`
+  (#1682).
+- Opening a pane in a large folder stays responsive during its reveal
+  (#1709).
+- Drag-and-drop hover, spring peek and drop targets land under the cursor on
+  scaled Linux displays (#1704).
+- Miller columns stay inline in split panes under Floating Islands instead of
+  jumping between islands as focus moves (#1699).
+
 ## v1.25.2 — 2026-11-16
 
 ### Changed

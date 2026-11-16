@@ -133,33 +133,22 @@ describe("resolveDropTarget", () => {
     expect(result).toBeNull();
   });
 
-  it("adjusts coordinates for zoom level and devicePixelRatio", async () => {
+  // Native drop positions arrive in CSS viewport pixels: native_file_drag
+  // converts Wry's per-platform unit in Rust (#1704). Dividing by
+  // devicePixelRatio again hit-tested at cursor / scale on HiDPI displays.
+  it.each([1, 1.25, 2])("hit-tests native positions unchanged at devicePixelRatio %s and any zoom", async dpr => {
     const el = makeElement("content");
     const mockFn = vi.fn().mockReturnValue(el);
-    vi.stubGlobal("document", { elementFromPoint: mockFn });
-    vi.stubGlobal("window", { devicePixelRatio: 2 });
-
+    vi.stubGlobal("document", { elementFromPoint: mockFn, documentElement: { style: { zoom: "140%" } } });
+    vi.stubGlobal("window", { devicePixelRatio: dpr });
     const settings = await import("$lib/state/settings.svelte");
-    (settings.settingsStore as any).zoomLevel = 150;
+    (settings.settingsStore as any).zoomLevel = 140;
 
-    // 300 / 2 (dpr) = 150, 450 / 2 = 225 (no zoom division for elementFromPoint)
-    resolveDropTarget({ x: 300, y: 450 });
-    expect(mockFn).toHaveBeenCalledWith(150, 225);
+    resolveDropTarget({ x: 306, y: 155 });
+    highlightTarget({ x: 306, y: 155 });
+    expect(mockFn.mock.calls).toEqual([[306, 155], [306, 155]]);
 
     (settings.settingsStore as any).zoomLevel = 100;
-  });
-
-  it("uses dpr=1 when window is undefined", async () => {
-    const el = makeElement("content");
-    const mockFn = vi.fn().mockReturnValue(el);
-    vi.stubGlobal("document", { elementFromPoint: mockFn });
-    vi.stubGlobal("window", { devicePixelRatio: 1 });
-
-    const settings = await import("$lib/state/settings.svelte");
-    (settings.settingsStore as any).zoomLevel = 100;
-
-    resolveDropTarget({ x: 300, y: 450 });
-    expect(mockFn).toHaveBeenCalledWith(300, 450);
   });
 });
 

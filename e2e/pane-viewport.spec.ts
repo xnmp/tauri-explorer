@@ -205,7 +205,7 @@ test("workspace scroll cancels a queued divider frame before it can change a sav
   await page.setViewportSize({ width: 1400, height: 500 });
   await restore(page);
   await focus(page, "viewport-0");
-  const divider = page.locator(".pane-tree > .pane-split > .pane-divider");
+  const divider = page.locator(".pane-tree .pane-split > .pane-divider").first();
   const handle = (await divider.boundingBox())!;
   // The tall root divider spans offscreen rows; press its visible top section.
   const viewport = (await page.locator(".pane-container").boundingBox())!;

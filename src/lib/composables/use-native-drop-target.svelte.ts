@@ -1,9 +1,11 @@
 /**
  * Position-based drop target detection.
  *
- * Two coordinate spaces:
- * - onDragDropEvent (Tauri): physical pixels → divide by DPR once
- * - PointerEvent.clientX/Y: client pixels → use directly for hit testing
+ * Both input spaces are CSS viewport pixels and are hit-tested directly:
+ * - native drop events: `native_file_drag` converts Wry's per-platform unit
+ *   once in Rust (#1704); dividing by devicePixelRatio here put the hit
+ *   point at cursor / scale on scaled Linux and macOS displays.
+ * - PointerEvent.clientX/Y.
  */
 
 import { getZoomFactor } from "$lib/domain/zoom";
@@ -33,13 +35,6 @@ let highlightRevision = 0;
 function notifyBookmarkDropTarget(isBookmarkTarget: boolean): void {
   if (typeof document === "undefined" || typeof document.dispatchEvent !== "function" || typeof CustomEvent === "undefined") return;
   document.dispatchEvent(new CustomEvent("explorer-bookmark-drop-target", { detail: { isBookmarkTarget } }));
-}
-
-// Tauri onDragDropEvent gives physical pixels. elementFromPoint in
-// WebKitGTK expects viewport coordinates (DPR-adjusted, no zoom).
-function adjustForHitTest(pos: { x: number; y: number }): { x: number; y: number } {
-  const dpr = typeof window !== "undefined" ? window.devicePixelRatio : 1;
-  return { x: pos.x / dpr, y: pos.y / dpr };
 }
 
 export function adjustForPointerZoom(pos: { x: number; y: number }): { x: number; y: number } {
@@ -214,13 +209,12 @@ export function captureDropDestination(element: Element | null, fallbackExplorer
     && sameTarget(resolveDropTargetFromElement(element));
 }
 
-/** The element under an onDragDropEvent position (physical pixels). */
+/** The element under a native drop-event position (CSS viewport pixels). */
 export function elementAtNativePosition(position: { x: number; y: number }): Element | null {
-  const adjusted = adjustForHitTest(position);
-  return document.elementFromPoint(adjusted.x, adjusted.y);
+  return document.elementFromPoint(position.x, position.y);
 }
 
-/** Resolve drop target from onDragDropEvent position (physical pixels). */
+/** Resolve drop target from a native drop-event position (CSS viewport pixels). */
 export function resolveDropTarget(position: { x: number; y: number }): DropTargetResult {
   return resolveDropTargetFromElement(elementAtNativePosition(position));
 }
@@ -235,10 +229,9 @@ export function resolveDropTargetAtPoint(x: number, y: number): DropTargetResult
   return resolveDropTargetFromElement(elementAtPoint(x, y));
 }
 
-/** Highlight target from onDragDropEvent position (physical pixels). */
+/** Highlight target from a native drop-event position (CSS viewport pixels). */
 export function highlightTarget(position: { x: number; y: number }): void {
-  const adjusted = adjustForHitTest(position);
-  highlightAtCoords(adjusted.x, adjusted.y);
+  highlightAtCoords(position.x, position.y);
 }
 
 /** Highlight target from pointer event coordinates (CSS viewport pixels). */

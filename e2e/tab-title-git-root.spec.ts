@@ -28,6 +28,7 @@ test.describe("Git repo root in tab title", () => {
     await expect(page.locator(".tab-repo").first()).toHaveText("project");
     await expect(page.locator(".tab-cwd").first()).toHaveText("src");
     await expect(page.locator(".tab-icon-git").first()).toBeVisible();
+    await expect(page.locator(".tab-icon-git path").first()).toHaveCSS("fill", "none");
   });
 
   test("shows just the repo name (no folder part) at the repo root by default", async ({ page }) => {

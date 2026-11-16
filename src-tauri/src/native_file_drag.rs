@@ -377,10 +377,7 @@ impl Registry {
     ) {
         let native = event.clone();
         let receiver = window.to_string();
-        let position = |(x, y): (i32, i32)| tauri::PhysicalPosition {
-            x: x as f64,
-            y: y as f64,
-        };
+        let position = |(x, y): (i32, i32)| NativePoint { x, y };
         #[cfg(target_os = "linux")]
         let external_source = wry::drag_drop_snapshot::source_is_local().map(|local| !local);
         #[cfg(not(target_os = "linux"))]
@@ -620,17 +617,67 @@ pub struct Sessions {
     sequence: AtomicU64,
 }
 
+/// A drop position as Wry reported it. Its unit differs by platform: WebKitGTK
+/// `drag-motion` gives widget coordinates and WKWebView `draggingLocation`
+/// view points (both logical, i.e. CSS viewport pixels), while WebView2 gives
+/// physical client pixels. Wry and Tauri label all three `PhysicalPosition`;
+/// a renderer that divided every platform by `devicePixelRatio` hit-tested at
+/// cursor / scale on scaled Linux and macOS displays (#1704).
+/// Not `Serialize` in production: only a converted `ViewportPoint` event can
+/// reach the renderer. Tests serialize registry output for its other fields.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(test, derive(Serialize))]
+struct NativePoint {
+    x: i32,
+    y: i32,
+}
+
+/// CSS viewport pixels: the space `document.elementFromPoint` takes. Root CSS
+/// zoom does not enter it — WebKitGTK, WKWebView and WebView2 all hit-test
+/// viewport coordinates under `documentElement.style.zoom`.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+struct ViewportPoint {
+    x: f64,
+    y: f64,
+}
+
+/// Physical pixels per CSS pixel in Wry's drop coordinates on this platform.
+/// Only WebView2 reports physical pixels; the others are already logical.
+fn native_pixels_per_css(window_scale_factor: impl FnOnce() -> f64) -> f64 {
+    if cfg!(target_os = "windows") {
+        let scale = window_scale_factor();
+        if scale.is_finite() && scale > 0.0 {
+            scale
+        } else {
+            1.0
+        }
+    } else {
+        1.0
+    }
+}
+
+impl NativePoint {
+    fn to_viewport(self, native_pixels_per_css: f64) -> ViewportPoint {
+        ViewportPoint {
+            x: f64::from(self.x) / native_pixels_per_css,
+            y: f64::from(self.y) / native_pixels_per_css,
+        }
+    }
+}
+
+/// Positions are captured in Wry's platform unit (`NativePoint`) and become
+/// `ViewportPoint`s once, at emission, where the window's scale is known.
 #[derive(Clone, Serialize)]
 #[serde(
     tag = "type",
     rename_all = "lowercase",
     rename_all_fields = "camelCase"
 )]
-enum Event {
+enum Event<Point = NativePoint> {
     Enter {
         /// Wire spellings (#1592); a `PathBuf` cannot serialize a non-UTF-8 name.
         paths: Vec<String>,
-        position: tauri::PhysicalPosition<f64>,
+        position: Point,
         source: Option<Source>,
         copy_modifier: Option<bool>,
         observed_at: f64,
@@ -640,12 +687,12 @@ enum Event {
         external_source: Option<bool>,
     },
     Over {
-        position: tauri::PhysicalPosition<f64>,
+        position: Point,
         copy_modifier: Option<bool>,
     },
     Drop {
         paths: Vec<String>,
-        position: tauri::PhysicalPosition<f64>,
+        position: Point,
         source: Option<Source>,
         copy_modifier: Option<bool>,
         observed_at: f64,
@@ -655,6 +702,60 @@ enum Event {
         external_source: Option<bool>,
     },
     Leave,
+}
+
+impl Event<NativePoint> {
+    fn into_viewport(self, native_pixels_per_css: f64) -> Event<ViewportPoint> {
+        let viewport = |point: NativePoint| point.to_viewport(native_pixels_per_css);
+        match self {
+            Event::Enter {
+                paths,
+                position,
+                source,
+                copy_modifier,
+                observed_at,
+                observation_clock,
+                completed_gesture_sequence,
+                external_source,
+            } => Event::Enter {
+                paths,
+                position: viewport(position),
+                source,
+                copy_modifier,
+                observed_at,
+                observation_clock,
+                completed_gesture_sequence,
+                external_source,
+            },
+            Event::Over {
+                position,
+                copy_modifier,
+            } => Event::Over {
+                position: viewport(position),
+                copy_modifier,
+            },
+            Event::Drop {
+                paths,
+                position,
+                source,
+                copy_modifier,
+                observed_at,
+                observation_clock,
+                completed_gesture_sequence,
+                external_source,
+            } => Event::Drop {
+                paths,
+                position: viewport(position),
+                source,
+                copy_modifier,
+                observed_at,
+                observation_clock,
+                completed_gesture_sequence,
+                external_source,
+            },
+            Event::Leave => Event::Leave,
+        }
+    }
 }
 
 // Copy intent and source identity are snapshotted at the platform callback,
@@ -769,6 +870,8 @@ pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
     }
     drop(registry);
     if let Some(event) = captured {
+        let scale = native_pixels_per_css(|| window.scale_factor().unwrap_or(1.0));
+        let event = event.into_viewport(scale);
         let _ = window.emit_to(
             tauri::EventTarget::Webview {
                 label: window.label().into(),

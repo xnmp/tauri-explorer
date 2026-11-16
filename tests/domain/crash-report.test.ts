@@ -41,3 +41,24 @@ describe("dedupeFrontendCrash", () => {
     expect(second.record).toBe(false);
   });
 });
+
+describe("crash report titles and drafts (#1684)", () => {
+  it("titles a report after the panic line", async () => {
+    const { crashReportTitle } = await import("../../src/lib/domain/crash-report-draft");
+    expect(crashReportTitle("os: linux\npanic: index out of bounds\nlocation: x")).toBe(
+      "Crash: index out of bounds",
+    );
+    expect(crashReportTitle("no panic line at all")).toBe("Crash: unknown error");
+    expect(crashReportTitle("")).toBe("Crash: unknown error");
+    const long = crashReportTitle(`panic: ${"x".repeat(500)}`);
+    expect(long.length).toBeLessThanOrEqual("Crash: ".length + 80);
+    expect(long.endsWith("…")).toBe(true);
+    expect(crashReportTitle("panic: a\tb\r\nc")).toBe("Crash: a b");
+  });
+
+  it("fills an empty draft but never overwrites the reporter's own", async () => {
+    const { crashDraftUpdate } = await import("../../src/lib/domain/crash-report-draft");
+    expect(crashDraftUpdate({ title: "  " }, "panic: boom")).toEqual({ title: "Crash: boom", kind: "bug" });
+    expect(crashDraftUpdate({ title: "My draft" }, "panic: boom")).toBeNull();
+  });
+});

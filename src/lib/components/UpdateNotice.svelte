@@ -1,35 +1,30 @@
 <!--
-  Update notice banner (#185). After startup settles, checks (at most once a
-  day) whether a newer GitHub release exists and offers to open it.
+  Update notice (#185, #1679), loaded by `UpdateCheck` once the daily check is
+  due. Checks for a newer release on mount. With automatic updates on and a
+  self-updatable install, the backend has already downloaded it: offer a
+  restart into it. Otherwise offer to open the release page.
 -->
 <script lang="ts">
   import { onMount } from "svelte";
   import "./modal.css";
-  import {
-    checkForUpdate,
-    markUpdateChecked,
-    shouldCheckForUpdate,
-    type UpdateInfo,
-  } from "$lib/api/update";
+  import { installUpdate, prepareUpdate, type UpdateOffer } from "$lib/api/update";
+  import { markUpdateChecked } from "$lib/api/update-throttle";
   import { openExternalUrl } from "$lib/api/crash";
-  import "./modal.css";
+  import { extractError } from "$lib/api/common";
+  import { settingsStore } from "$lib/state/settings.svelte";
+  import { toastStore } from "$lib/state/toast.svelte";
+  import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 
-  /** Delay so the check never competes with startup work. */
-  const STARTUP_DELAY_MS = 5000;
-
-  let update = $state<UpdateInfo | null>(null);
+  let update = $state<UpdateOffer | null>(null);
+  let installing = $state(false);
 
   onMount(() => {
-    const timer = setTimeout(() => {
-      if (!shouldCheckForUpdate()) return;
-      markUpdateChecked();
-      checkForUpdate()
-        .then((u) => (update = u))
-        .catch(() => {
-          // Offline or rate-limited — try again another day.
-        });
-    }, STARTUP_DELAY_MS);
-    return () => clearTimeout(timer);
+    markUpdateChecked();
+    prepareUpdate(settingsStore.autoUpdate)
+      .then((u) => (update = u))
+      .catch(() => {
+        // Offline or rate-limited — try again another day.
+      });
   });
 
   function viewRelease(): void {
@@ -37,15 +32,40 @@
     void openExternalUrl(update.url).catch(() => {});
     update = null;
   }
+
+  async function restartNow(): Promise<void> {
+    installing = true;
+    // A restart skips the windows' close handlers; store the open tabs now
+    // so the relaunched app restores them (writes are otherwise coalesced).
+    windowTabsManager.save();
+    try {
+      // Resolves only if the relaunch is deferred to the normal exit path;
+      // on Windows the installer takes over the process.
+      await installUpdate();
+    } catch (error) {
+      installing = false;
+      toastStore.error(`Could not install the update: ${extractError(error)}`);
+    }
+  }
 </script>
 
 {#if update}
-  <div class="update-notice modal-card" role="status" data-testid="update-notice">
-    <span>Tauri Explorer {update.version} is available.</span>
-    <div class="update-actions dialog-actions">
-      <button type="button" class="btn primary" onclick={viewRelease}>View release</button>
-      <button type="button" class="btn secondary" onclick={() => (update = null)}>Dismiss</button>
-    </div>
+  <div class="update-notice modal-card" role="status" data-testid="update-notice" data-ready={update.ready}>
+    {#if update.ready}
+      <span>Tauri Explorer {update.version} is ready to install.</span>
+      <div class="update-actions dialog-actions">
+        <button type="button" class="btn primary" onclick={restartNow} disabled={installing}>
+          {installing ? "Restarting…" : "Restart now"}
+        </button>
+        <button type="button" class="btn secondary" onclick={() => (update = null)} disabled={installing}>Later</button>
+      </div>
+    {:else}
+      <span>Tauri Explorer {update.version} is available.</span>
+      <div class="update-actions dialog-actions">
+        <button type="button" class="btn primary" onclick={viewRelease}>View release</button>
+        <button type="button" class="btn secondary" onclick={() => (update = null)}>Dismiss</button>
+      </div>
+    {/if}
   </div>
 {/if}
 

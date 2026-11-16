@@ -84,7 +84,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `ExplorerPane.svelte` — one pane: navigation bar + FileList + preview; owns pane-scoped context.
 - `PanelResizeHandle.svelte` — shared focusable Sidebar/SCM/Miller separator with pointer capture wiring and keyboard range semantics.
 - `PaneContainer.svelte` — owns the scrollable active workspace (CSS-filled canvas with a script minimum, #1061) and one divider input lifetime; keeps recently active tabs mounted as hidden, inert `.pane-tree.retained` layers (#1173).
-- `PaneLayoutView.svelte` — declarative split-tree renderer: saved ratios flex over CSS minima (#1061), measured geometry for focusable separators (#228).
+- `PaneLayoutView.svelte` — flat pane hosts keyed independently of split ancestry, bounded restoration placeholders, and focusable split dividers; anchored creation reveals (#1703).
 - `NavigationBar.svelte` — per-pane back/fwd/up + breadcrumb strip + address bar.
 - `NavigationHistoryMenu.svelte` — full back/forward history dropdown.
 - `BreadcrumbAutocomplete.svelte` — editable address bar with directory autocomplete.
@@ -144,11 +144,14 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `TerminalPanel.svelte` — embedded xterm.js terminal panel (#139).
 - `StatusBar.svelte` — bottom status bar (selection count, size, path).
 - `TitleBar.svelte` — window title bar + tab strip host + window controls.
-- `WindowTabBar.svelte` — window tab strip (drag/reorder/tear-off); executes the domain tab-drag reducer effects.
+- `WindowTabBar.svelte` — compressed window tab strip, active-tab reveal and edge scrolling; executes the domain tab-drag reducer effects.
+- `WindowTabPicker.svelte` — searchable all-tabs combobox with full pane paths, keyboard selection and anchored positioning.
+- `window-tab-bar.css` — tab strip chrome scoped to `.tab-area`, including compression and persistent controls.
 - `JobsPanel.svelte` — background jobs viewer (Ctrl+J); Retry on failed jobs that carry `retry`.
 - `ToastOverlay.svelte` — stacked toast notifications.
-- `CrashNotice.svelte` — crash-report banner (#184).
-- `UpdateNotice.svelte` — update-available banner (#185).
+- `CrashNotice.svelte` — crash-report banner (#184); Report… lazily loads `state/crash-reporting.ts` to open Report Issue with the crash attached (#1684).
+- `UpdateCheck.svelte` — startup host for the update check (#185, #1679): after a 5 s delay, when the once-a-day throttle allows, lazy-loads `UpdateNotice` (keeps the update IPC out of the startup bundle).
+- `UpdateNotice.svelte` — update banner: checks on mount; a self-update the backend already downloaded offers "Restart now" (flushes tab state, then `installUpdate`), otherwise "View release". Follows the `autoUpdate` setting.
 - `AnimatedBackground.svelte` — canvas background animation host.
 - `sidebar-view-registry.ts` — maps sidebar-view ids (owned by `state/sidebar-views.svelte.ts`) to their icon + Svelte component.
 
@@ -242,6 +245,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `panel-resize.ts` — fixed/live automatic width preference adapter over the scalar gesture owner.
 - `scalar-resize.ts` — captured scalar drafts, frame identity, durable retirement and external-source supersession.
 - `pane-resize.ts` — owns captured divider geometry, one coalesced pointer frame, and cancellation on release, blur or component retirement.
+- `pane-creation-motion.ts` — per-tab cancellable anchored reveal; captures live bounds/clips, holds frame dimensions stable until settlement (publishing the held width as `--pane-content-hold-x`), carries ancestor clipping into interrupted nested splits, and pauses/finishes entry reflows with the reveal (#1703, #1709, #1718).
+- `entry-reflow-motion.ts` — DOM adapter for file-entry FLIP: measure painted entry positions by path, run a synchronous mutation, glide visible moved entries with `entry-reflow` animations tracked in a live registry; reads a pane's content hold, honours a view's `data-entry-reflow-off` (open Folder Peek panels) (#1718).
 - `pane-watch.ts` — per-pane observed navigation tickets, lease commit/rollback, pending-change replay and refresh admission.
 - `directory-events.ts` — shared native directory event subscription with explicit readiness, retry and late-listener retirement.
 - `pane-lineage.svelte.ts` — lazy per-pane entry lineage (#1431): the applicable contribution, debounced `changed` reloads, the 400ms first-paint hold, 300ms held arrivals and the `projectLineage` grouping; counts cycle fallbacks.
@@ -299,6 +304,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `dialogs.svelte.ts` — global dialog open/close state (rename/delete/etc); boolean overlays live in one reactive set keyed by the overlay registry (see below).
 - `src/lib/domain/overlays.ts` — boolean overlay registry (#1565): id tuple + pure open/close/toggle/closeAll/any over an immutable set. Add a payload-free dialog by adding one id.
 - `report-token.svelte.ts` — saved-GitHub-report-token state (configured/absent/unavailable) with save/clear through the write-only native commands (#1455).
+- `crash-report.svelte.ts` — session holder for the launch's crash file: offered by the notice, then attached to Report Issue until a report is submitted (#1684).
+- `crash-reporting.ts` — on-demand crash → report draft + dialog orchestration, kept out of the startup bundle (#1684).
 - `user-report-draft.svelte.ts` — debounced localStorage text drafts, window-lifetime image selections, and exclusive Report Issue submission ownership; accepted reports clear only the unchanged draft they submitted.
 - `context-menu.svelte.ts` — context menu open state + position.
 - `context-menu-items.svelte.ts` — registry for plugin-provided context-menu items.
@@ -351,6 +358,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `open-history-access.svelte.ts` — startup-light seam for the open history (#1525): registers the `api/open.ts` `onFileLaunched` listener, lazy-loads the store on first launch/mutation/read, reactive `lastOpenedAt` for FileItem and the "opened" sort.
 - `open-history.svelte.ts` — shared file open history for Details "Date opened" (#1525, loaded lazily): records successful launches, lazy tolerant load, BroadcastChannel publication, coalesced saves that replay unsaved changes over the stored document.
 - `settings.svelte.ts` — global settings store (toggles, defaults). Very hot for feature flags. `reloadFromDisk()` adopts external settings.json edits (#599).
+- `settings-input.ts` — Pure persisted-settings input contract: normalization against defaults, enum/numeric validation, unknown-key carry-through, size bound (split from settings.svelte.ts, #1679).
 - `settings-toggles.ts` — `TOGGLE_SETTINGS` metadata and `generateToggleCommands` for the command palette (split from settings.svelte.ts, #1523).
 - `icon-theme.svelte.ts` — transient icon-pack preview and reactive resolution against saved settings and applied color-theme CSS revisions; previews never persist.
 - `window-size.svelte.ts` — reactive `window.innerWidth`/`innerHeight` tracker (`windowSizeStore`); `+page.svelte` syncs on mount/resize. Feeds preview-pane auto-dock (#467).
@@ -429,7 +437,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `ai-rename.ts` — AI rename suggestion IPC (#145).
 - `crash.ts` — crash-report capture bridge (#184).
 - `user-report.ts` — typed `submit_user_report` IPC wrapper (`useGitHubToken` route flag) and the write-only report-token commands (#1455).
-- `update.ts` — GitHub-release update check (once/day throttle, #185).
+- `update.ts` — `prepareUpdate(autoInstall)` / `installUpdate` (#185, #1679).
+- `update-throttle.ts` — once-a-day update-check throttle (localStorage), split out so the startup bundle omits the update IPC.
 - `warm-pool.ts` — warm-window pool IPC wrappers.
 - `open.ts` — open files in the default/chosen app, image viewer (with siblings), or a terminal.
 - `trash.ts` — `list_trash` / `restore_trash_items` IPC for the in-app Trash; restore is a native mutation reply keyed by opaque entry IDs.
@@ -464,6 +473,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-file-watchers.ts` — subscribe file-change/event listeners.
 - `use-window-lifecycle.ts` — window lifecycle (focus/close/resize) handlers.
 - `use-pane-dividers.svelte.ts` — single captured divider gesture per workspace; pointer/keyboard adapter with geometry and lifetime validation.
+- `use-pane-canvas-size.svelte.ts` — synchronous before-paint presentation sizing of the CSS-filled canvas; absolute pane frames cannot feed back into its ResizeObserver (#1703).
+- `use-file-view-width.svelte.ts` — FileList's layout width from a hold-excluding probe inside ResizeObserver delivery; commits width and paint-only inset together, wrapping a held reveal's reflow in the entry FLIP (#1061, #1718).
+- `use-pane-creation-motion.svelte.ts` — Svelte pre/post-update animation binding; pointer-gesture pause/release, keyboard settlement, reduced-motion, resize, scroll, divider input and teardown cancellation (#1703, #1709).
 - `use-inline-panel-width.svelte.ts` — mount-owned contribution of visible inline accessories to the pane viewport.
 - `use-panel-resize.svelte.ts` — localStorage width preference adapter for Sidebar, SCM, Miller and Git columns.
 - `use-git-graph-menu.svelte.ts` — git-graph commit menu / references disclosure anchor: cursor or trigger positioning under zoom, viewport clamp, captured scroller position and focus (#1082).
@@ -481,6 +493,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 ## src/lib/domain/ — pure logic, no framework deps. Test + reuse here.
 
 - `pointer-drag.ts` — shared five-pixel press-to-drag threshold for tabs, files, sidebar items and click suppression.
+- `tab-strip.ts` — pure Chrome-style tab sizing, full-path tab filtering and drag edge-scroll speed.
 - `tab-drag.ts` — pure tab-drag lifecycle and effects, including session-qualified asynchronous detach settlement (#1642).
 - `src/lib/domain/job-presentation.ts` — validates optional job cost/reveal metadata and formats exact decimal money.
 - `src/lib/domain/job-reveal.ts` — pure pane choice, present-file selection, reveal routing and latest-click cancellation policy.
@@ -587,6 +600,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `scroll-moves-handle.ts` — which scrolls end a panel drag: the document's, an ancestor's or a synced scroller's, never an unrelated list's.
 - `pane-viewport.ts` — pure descendant minima (`paneMinima` sizes the rendered canvas and split children without measurement), canvas placement, active-pane reveal and keyboard divider policy.
 - `pane-layout.ts` — pane split-tree pure logic (#228); `focusAfterClosing`/`reinsertLeaf` for closing and restoring panes (#229).
+- `pane-presentation.ts` — flat constrained placement with readiness pruning and pure single-leaf-creation policy, independent of renderer ancestry (#1703).
+- `pane-motion.ts` — pure stable-size reveal plan and clipped visible rectangles, reveal timing and the held extent the file view treats as paint-only room; preserves interruption geometry (#1709, #1718).
+- `entry-reflow.ts` — pure FLIP plan for entries keyed by path across one reflow: glide offsets for painted entries, none for newly mounted or departed ones (#1718).
 - `window-tab-order.ts` — tab-strip index arithmetic: insertion after the active tab, Ctrl+Tab wrapping, drag reordering.
 - `closed-panes.ts` — bounded closed-pane stack, pane-vs-tab restore precedence, repeated last-tab close detection (#229).
 - `tab-title.ts` — VS Code-style tab title disambiguation.
@@ -596,6 +612,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `settings-migration.ts` — versioned one-shot migrations for the persisted settings blob; `migrateSettings` + the append-only ledger (#506).
 - `layout-theme.ts` — layout-theme catalog (#1306): built-ins, leading-comment metadata, user-file validation, resolution/fallback reasons, row-height parsing.
 - `layout-theme-ids.ts` — eager built-in layout ids and the legacy Floating Islands → `layoutTheme` mapping used by settings migration.
+- `miller-placement.ts` — `millerHoistedToIsland`: whether Miller columns hoist to the left island (island layout, no sidebar, single-pane tab only); shared by `+page.svelte` and `ExplorerPane.svelte` (#434, #1699).
 - `settings-numbers.ts` — Numeric preference consumer contracts shared by persisted validation and interactive setters.
 - `folder-preview.ts` — folder preview image selection (#146).
 - `src/lib/domain/preview-kind.ts` — single file-preview precedence classifier and hold-image policy, shared by dispatch and viewer presentation.
@@ -634,7 +651,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `terminal-shell.ts` — shell dialect profile + WSL↔Windows path translation (#409/#418).
 - `terminal-theme.ts` — map CSS theme vars → xterm.js theme (pane-surface background, ANSI palette from status colours or `--terminal-*` overrides).
 - `content-search.ts` — `ContentMatch`/`ContentSearchResult` types for ripgrep results; re-exported by `api/search.ts`.
-- `crash-report.ts` — pure crash-dedupe + log-tail→markdown helpers behind `api/crash.ts`.
+- `crash-report.ts` — pure crash-dedupe helper behind `api/crash.ts`.
+- `crash-report-draft.ts` — pure crash → report title/draft update (#1684), loaded only when reporting.
+- `report-diagnostics.ts` — Report Issue diagnostic sections (kinds mirror `user_report.rs` `DiagnosticKind`), shared relay budget and head-keeping text fitting (#1022, #1684).
 - `user-report.ts` — report contracts and pure prefilled-GitHub fallback URL builder.
 - `user-report-route.ts` — pure report route (saved GitHub token for text-only reports, relay otherwise), route notice and token validation (#1455).
 - `git-warm.ts` — pure scheduler: when (and whether) to warm git-graph/SCM caches after a pane settles.
@@ -735,6 +754,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `portal.rs` — xdg-desktop-portal FileChooser backend (Linux); holds the process per request and executes the idle policy's timers, bus-name release and exit (#1427).
 - `portal/idle.rs` — pure idle-exit policy for the D-Bus-activated portal: request holds, generation-checked idle timers, open-window postponement, release-name-then-exit, replaced-executable fast exit (#1427).
 - `crash_report.rs` — local crash capture (#184).
+- `environment.rs` — environment summary (distro, webview engine/version, Linux renderer mode and session, install category) probed once off the startup path; feeds `get_app_info`/About, the user-report environment block (budgeted within the relay ceiling), crash-file headers and one `Environment:` log line (#1683). Tests: `src-tauri/test_support/environment_test.rs`.
 - `load_diagnostics/mod.rs` — slow directory-load records (#1022): merges the frontend record with the native trace and blocker and hands it to `persist.rs`; culprit naming (including an IPC-reply gap after a settled native command); `begin_listing` arms the fallback for watched listings.
 - `load_diagnostics/fallback.rs` — native-only record for a watched listing still in flight after 7 s, settled with its outcome when the listing finishes; background refreshes are never armed.
 - `load_diagnostics/reply.rs` — `encoded_reply`: encodes a listing reply inside the command under its trace, timing the encoding as the `serialize` phase, and settles the trace.
@@ -742,7 +762,10 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `load_diagnostics/filesystem.rs` — filesystem type/category for a path from the mount table (Linux mountinfo, macOS `getfsstat(MNT_NOWAIT)`, Windows UNC/`GetDriveTypeW`), after resolving symlinks that live on local mounts only; never stats the possibly hung directory.
 - `load_diagnostics/store.rs` — bounded rotating JSON records under `<app log dir>/slow-loads/` (newest 20, replace by trace ID).
 - `load_diagnostics/persist.rs` — record precedence (frontend beats native fallback; within a source settled beats late pending; re-checked against the file on disk), bounded in-memory session records, and one dedicated writer thread that also fills in the filesystem (time-bounded probe); `recent_slow_loads` reads disk on one reusable reader thread with a timeout.
-- `update_check.rs` — update check via GitHub releases (#185).
+- `update_check.rs` — `prepare_update` / `install_update` (#185, #1679): signed self-update when `autoUpdate` is on and the install is eligible, falling back to the GitHub-releases notify-only notice. Runbook: `docs/auto-update.md`.
+- `update_check/eligibility.rs` — pure policy: which installs may replace themselves (Windows NSIS/MSI, installed macOS `.app`, an AppImage running from its own writable image); deb/rpm, unbundled, Arch and Nix installs stay notify-only.
+- `update_check/self_update.rs` — one process-wide `SelfUpdateJob` (managed state): check + download + verify via `tauri-plugin-updater` (read timeout; Windows `on_before_exit` runs `release_process_resources`), hold the bytes until restart, install off the async runtime, then `request_restart`; gathers the install facts (bundle type, own writable AppImage, `.app` location).
+- `update_check/restart_fds.rs` — Linux: marks every descriptor above stderr close-on-exec before the update relaunch, so the new process does not inherit (and pin) the old AppImage's FUSE mount.
 - `warm_pool.rs` — native warm registry with label-scoped spawn reservations, bounded claims and committed activation.
 - `wire_path.rs` — canonical wire text for native paths (#1592, ADR 0031): bijective encode/decode (invalid bytes ↔ U+EF00+byte), wire path algebra (`parent`/`file_name`/`join`), lossy display text and `refuse_escaped` for surfaces without phase-1 support. The only sanctioned native↔text conversion (`clippy.toml`). Tests: `test_support/wire_path_test.rs` (vectors + proptests), `test_support/wire_path_fs_test.rs` (real-filesystem regressions, mounted from `files/mod.rs`).
 - `gemini.rs` — shared helpers for shelling out to `gemini` CLI.
@@ -1048,6 +1071,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `e2e/impact-coverage.ts` — opt-in (`E2E_COVERAGE=1`) per-test coverage collector wired as an auto fixture in `e2e/fixtures.ts`; covers every page, context and popup a test opens. `tests/e2e-fixture-imports.test.ts` keeps every spec on the shared fixtures so none escapes it.
 - `scripts/version-only.mjs` — recognises a release version bump (only `version` in package.json/tauri.conf.json, `[package] version` in Cargo.toml, local-crate versions in Cargo.lock, `pkgver` in PKGBUILD, plus CHANGELOG.md) by structured per-format comparison; anything else, malformed or added/deleted files are not version-only. Selectors then run e2e NONE, rust NONE and only text-related unit tests; contracts in `tests/version-only.test.ts` (#1367).
 - `scripts/ci-jobs.mjs` — `report`: ci.yml gate jobs print each upstream shard's result and the step a failed/cancelled one stopped at (Actions API, diagnostics only); `auto-rerun`: decides whether `.github/workflows/ci-auto-rerun.yml` re-runs a failed first attempt (only install/setup-step failures, once). Contracts in `tests/ci-jobs.test.ts` (#1367).
+- `scripts/updater-manifest.mjs` — builds the signed self-update `latest.json` from the release assets and their `.sig` files (bundle-specific platform keys only; fails closed on any missing asset/signature or a signature that does not verify against `plugins.updater.pubkey`); run by `release.yml`, contracts in `tests/updater-manifest.test.ts` (#1679). `src-tauri/tauri.updater.conf.json` is the `--config` overlay release builds pass to enable `createUpdaterArtifacts`.
 - `scripts/release-ci-gate.mjs` — run by `.github/workflows/release.yml` before tagging/building: requires a dev commit with the released tree to have a successful dev-push CI run and `smoke (ubuntu-latest)`, waiting for in-progress runs; contracts in `tests/release-ci-gate.test.ts` (#1367).
 - `scripts/perf-fixtures.mjs` — deterministic flat large-folder fixtures (1k/10k/100k/500k sparse files, mixed names/sizes/mtimes, `manifest.json`) in a temp root outside the repo; `create`/`remove` (#983, `docs/performance.md`).
 - `scripts/perf-real-app.mjs` — end-to-end folder-open and navigation timings (n/median/p95) against a real binary through tauri-driver under Xvfb with private XDG dirs; in-page MutationObserver + animation-frame marks, no app instrumentation (#983, `docs/performance.md`); `--scenarios memory` samples per-process RSS/PSS and anonymous memory by allocator, with retained/live-per-entry budget flags (#1416).

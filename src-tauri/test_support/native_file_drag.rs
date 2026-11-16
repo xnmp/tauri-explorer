@@ -1440,3 +1440,37 @@ fn delayed_uri_reply_keeps_the_first_receiver_motion_token_after_ipc_window_reus
     ));
     assert_eq!(snapshot::source_token(), None);
 }
+
+/// #1704: Wry reports logical drop coordinates on WebKitGTK and WKWebView and
+/// physical ones on WebView2, all labelled physical. The emitted event must
+/// carry CSS viewport pixels on every platform, whatever the display scale.
+#[test]
+fn emitted_drop_positions_are_css_viewport_pixels() {
+    let scale = super::native_pixels_per_css(|| 2.0);
+    let expected = if cfg!(target_os = "windows") {
+        2.0
+    } else {
+        1.0
+    };
+    assert_eq!(scale, expected);
+    for invalid in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+        assert_eq!(super::native_pixels_per_css(|| invalid), 1.0);
+    }
+
+    let over = super::Event::Over {
+        position: super::NativePoint { x: 612, y: 310 },
+        copy_modifier: None,
+    }
+    .into_viewport(scale);
+    let wire = serde_json::to_value(&over).unwrap();
+    let (x, y) = if cfg!(target_os = "windows") {
+        (306.0, 155.0)
+    } else {
+        (612.0, 310.0)
+    };
+    assert_eq!(wire["position"], serde_json::json!({ "x": x, "y": y }));
+
+    // Fractional Windows scales divide exactly rather than rounding.
+    let point = super::NativePoint { x: 500, y: 250 }.to_viewport(1.25);
+    assert_eq!((point.x, point.y), (400.0, 200.0));
+}

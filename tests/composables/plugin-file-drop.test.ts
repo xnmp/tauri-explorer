@@ -89,7 +89,8 @@ describe("plugin native file drops", () => {
     await nativeDrop([...paths].reverse(), { x: 300, y: 450 });
     expect(handler).toHaveBeenCalledExactlyOnceWith(paths, "pane");
     expect(transfer).not.toHaveBeenCalled(); expect(dragState.current).toBeNull();
-    expect(document.elementFromPoint).toHaveBeenCalledWith(150, 225);
+    // Native positions are CSS viewport pixels at any devicePixelRatio (#1704).
+    expect(document.elementFromPoint).toHaveBeenCalledWith(300, 450);
   });
 
   it.each([[paths[0]], [paths[0], "/unrelated.png"], [paths[0], paths[0]]].map(incoming => [incoming]))("does not substitute an incomplete or mismatched native set: %j", async incoming => {

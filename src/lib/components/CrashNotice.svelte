@@ -1,30 +1,31 @@
 <!--
-  Crash notice banner (#184). Shown once after a crash: offers to open a
-  pre-filled GitHub issue with the local crash report, or dismiss.
+  Crash notice banner (#184). Shown once after a crash: offers to report it
+  through the Report Issue dialog (#1684), where the crash file is a
+  previewed, opt-in section sent through the relay (no GitHub account
+  needed), or to dismiss it.
 -->
 <script lang="ts">
   import { onMount } from "svelte";
-  import {
-    takeCrashReport,
-    crashIssueUrl,
-    openExternalUrl,
-    type CrashReport,
-  } from "$lib/api/crash";
+  import { takeCrashReport } from "$lib/api/crash";
+  import { crashReportStore } from "$lib/state/crash-report.svelte";
 
-  let report = $state<CrashReport | null>(null);
+  const report = $derived(crashReportStore.offered);
 
   onMount(() => {
     takeCrashReport()
-      .then((r) => (report = r))
+      .then((r) => crashReportStore.offer(r))
       .catch(() => {
         // Crash lookup failing must never break startup.
       });
   });
 
-  function reportOnGitHub(): void {
-    if (!report) return;
-    void openExternalUrl(crashIssueUrl(report)).catch(() => {});
-    report = null;
+  // Lazy: the report draft store stays out of the startup bundle.
+  function reportCrash(): void {
+    void import("$lib/state/crash-reporting")
+      .then(({ reportOfferedCrash }) => reportOfferedCrash())
+      .catch(() => {
+        // Keep the offer visible rather than losing the crash on a failed load.
+      });
   }
 </script>
 
@@ -35,8 +36,8 @@
       <code>{report.fileName}</code> — nothing was sent anywhere.
     </span>
     <div class="crash-actions">
-      <button class="crash-report-btn" onclick={reportOnGitHub}>Report on GitHub</button>
-      <button class="crash-dismiss-btn" onclick={() => (report = null)}>Dismiss</button>
+      <button class="crash-report-btn" onclick={reportCrash}>Report…</button>
+      <button class="crash-dismiss-btn" onclick={() => crashReportStore.dismiss()}>Dismiss</button>
     </div>
   </div>
 {/if}

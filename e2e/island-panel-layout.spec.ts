@@ -96,6 +96,40 @@ test.describe("Island / panel layout (#434)", () => {
     await expect(page.locator(".miller-columns")).toHaveCount(1);
   });
 
+  test("split panes keep their Miller columns inline across focus changes (#1699)", async ({ page }) => {
+    await page.goto(HOME_URL);
+    await waitForEntries(page);
+    await withSettings(page, { layoutTheme: "floating-islands", showSidebar: false, millerLayers: 1 });
+    await page.locator('.entry-item[data-path="/home/user/Pictures"]').dblclick();
+    // A single pane hoists its columns to the left island.
+    await expect(page.locator(".miller-island .miller-columns")).toHaveCount(1);
+
+    // Split: the new pane (seeded at /home: no ancestor column) is active. The first
+    // pane's columns must sit inside that pane, not on a window-level island.
+    await page.keyboard.press("Control+\\");
+    const panes = page.locator(".pane-tree:not(.retained) .explorer-pane");
+    await expect(panes).toHaveCount(2);
+    await expect(panes.nth(1)).toHaveClass(/active/);
+    await expect(page.locator(".miller-island")).toHaveCount(0);
+    await expect(panes.nth(0).locator(".miller-columns")).toHaveCount(1);
+
+    // Focusing the first pane must not move its columns or reflow the split
+    // (previously they jumped out to a full-height left island).
+    const leftBefore = await panes.nth(0).boundingBox();
+    await panes.nth(0).locator(".file-list").click({ position: { x: 5, y: 5 } });
+    await expect(panes.nth(0)).toHaveClass(/active/);
+    await expect(page.locator(".miller-island")).toHaveCount(0);
+    await expect(panes.nth(0).locator(".miller-columns")).toHaveCount(1);
+    expect(await panes.nth(0).boundingBox()).toEqual(leftBefore);
+    await page.screenshot({ path: "screenshots/fix/miller-islands-split-panes/split-panes-inline-miller.png", animations: "disabled" });
+
+    // Closing back to one pane hoists again.
+    await page.keyboard.press("Control+\\");
+    await expect(panes).toHaveCount(1);
+    await expect(page.locator(".miller-island .miller-columns")).toHaveCount(1);
+    await expect(page.locator(".explorer-pane .miller-columns")).toHaveCount(0);
+  });
+
   test("the terminal floats on its own island in island mode (#1651)", async ({ page }) => {
     await page.goto(HOME_URL);
     await waitForEntries(page);

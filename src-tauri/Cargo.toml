@@ -1,6 +1,6 @@
 [package]
 name = "tauri-explorer"
-version = "1.25.2"
+version = "1.26.0"
 description = "A keyboard-first file manager: fuzzy quick-open, ripgrep content search, a command palette for every action"
 authors = ["xnmp"]
 license = "MIT"
@@ -98,6 +98,7 @@ libc = "0.2.183"
 log = "0.4"
 tauri-plugin-log = "2"
 ureq = { version = "3.3.0", default-features = false, features = ["rustls", "json"] }
+tauri-plugin-updater = "2.14.1"
 
 [features]
 # Creates durable copy and move recovery records (Linux only). Opt-in until the
@@ -179,11 +180,13 @@ plist = "1.8"
 
 # Thin LTO + single codegen unit: measurable wins for the CPU-bound stacks
 # (image decode, ripgrep, fuzzy matching, zip) at an acceptable release build
-# cost; strip drops debug symbols from the shipped binary.
+# cost. strip = "debuginfo" drops DWARF but keeps the symbol table, so
+# release panic backtraces name their functions (#1682); "symbols" left
+# every frame "<unknown>".
 [profile.release]
 lto = "thin"
 codegen-units = 1
-strip = "symbols"
+strip = "debuginfo"
 
 # Compile dependencies optimized even in dev builds. The content-search stack
 # (regex, grep-searcher, ignore) is 10-50x slower at opt-level 0, which made

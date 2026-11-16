@@ -46,16 +46,16 @@ fn write_crash_report(crash_dir: &Path, info: &std::panic::PanicHookInfo) -> std
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
+    // Cache read only: probing inside a panic hook could re-enter the probe.
     let report = format!(
         "tauri-explorer {} crash report\n\
-         os: {} ({})\n\
+         {}\n\
          time: {} (unix)\n\
          panic: {}\n\
          location: {}\n\n\
          backtrace:\n{}\n",
         env!("CARGO_PKG_VERSION"),
-        std::env::consts::OS,
-        std::env::consts::ARCH,
+        crate::environment::crash_header(),
         epoch_secs,
         message,
         location,
@@ -255,15 +255,14 @@ pub async fn record_frontend_crash(
         };
         let report = format!(
             "tauri-explorer {} crash report\n\
-             os: {} ({})\n\
+             {}\n\
              time: {} (unix)\n\
              source: frontend (webview)\n\
              panic: {}\n\
              location: webview\n\n\
              backtrace:\n{}\n",
             env!("CARGO_PKG_VERSION"),
-            std::env::consts::OS,
-            std::env::consts::ARCH,
+            crate::environment::render_crash_lines(crate::environment::summary()),
             epoch_secs,
             message,
             backtrace

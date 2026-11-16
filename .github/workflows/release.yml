@@ -63,19 +63,26 @@ jobs:
             artifact-name: linux-bundles
             artifact-paths: |
               src-tauri/target/release/bundle/deb/*.deb
+              src-tauri/target/release/bundle/deb/*.deb.sig
               src-tauri/target/release/bundle/rpm/*.rpm
+              src-tauri/target/release/bundle/rpm/*.rpm.sig
               src-tauri/target/release/bundle/appimage/*.AppImage
+              src-tauri/target/release/bundle/appimage/*.AppImage.sig
           - os: macos-latest
             artifact-name: macos-arm64-bundles
             rust-target: aarch64-apple-darwin
             tauri-args: --target aarch64-apple-darwin
             artifact-paths: |
               src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+              src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz
+              src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
           - os: windows-latest
             artifact-name: windows-bundles
             artifact-paths: |
               src-tauri/target/release/bundle/msi/*.msi
+              src-tauri/target/release/bundle/msi/*.msi.sig
               src-tauri/target/release/bundle/nsis/*-setup.exe
+              src-tauri/target/release/bundle/nsis/*-setup.exe.sig
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -121,10 +128,31 @@ jobs:
         shell: bash
         run: bun install --frozen-lockfile
 
+      # Self-update signatures (#1679, docs/auto-update.md). Installed apps
+      # trust only this key's public half (tauri.conf.json plugins.updater),
+      # so a release without it would strand every self-updating install.
+      - name: Require the updater signing key
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [[ -z "$TAURI_SIGNING_PRIVATE_KEY" ]]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY is not configured (docs/auto-update.md)"
+            exit 1
+          fi
+
       - name: Build Tauri app
         if: runner.os != 'macOS'
         shell: bash
-        run: cargo tauri build ${{ matrix.tauri-args }}
+        # linuxdeploy (AppImage) runs `strip` on the binary unless NO_STRIP is
+        # set, which would discard the symbol table Cargo's
+        # `strip = "debuginfo"` keeps for readable panic backtraces (#1682).
+        # Only linuxdeploy reads it; the Windows build ignores it.
+        env:
+          NO_STRIP: "true"
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: cargo tauri build ${{ matrix.tauri-args }} --config src-tauri/tauri.updater.conf.json
 
       # Developer ID signing + notarization of the .app and DMG (#1671). The
       # script fails closed once credentials exist; with none it builds an
@@ -142,7 +170,9 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
-        run: scripts/macos-release-build.sh ${{ matrix.rust-target }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: scripts/macos-release-build.sh ${{ matrix.rust-target }} --config src-tauri/tauri.updater.conf.json
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
@@ -228,15 +258,44 @@ jobs:
           Path('release-notes.md').write_text(body.strip() + '\n')
           PY
 
+      # The macOS updater archive is named after the product only; give it
+      # the versioned release-asset name its manifest entry points at.
+      - name: Version the macOS updater archive
+        shell: bash
+        env:
+          VERSION: ${{ needs.version-check.outputs.version }}
+        run: |
+          set -euo pipefail
+          version=${VERSION#v}
+          mapfile -d '' -t archives < <(find artifacts -type f -name '*.app.tar.gz' -print0)
+          if (( ${#archives[@]} != 1 )); then
+            echo "::error::Expected exactly one macOS updater archive; found ${#archives[@]}"
+            exit 1
+          fi
+          dir=$(dirname "${archives[0]}")
+          target="$dir/tauri-explorer_${version}_aarch64.app.tar.gz"
+          mv "${archives[0]}" "$target"
+          mv "${archives[0]}.sig" "$target.sig"
+
+      - name: Build updater manifest
+        env:
+          VERSION: ${{ needs.version-check.outputs.version }}
+        run: >-
+          node scripts/updater-manifest.mjs --tag "$VERSION" --dir artifacts
+          --notes release-notes.md --repo "$GITHUB_REPOSITORY" --out latest.json
+
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.version-check.outputs.version }}
         run: |
+          # latest.json drives self-update (#1679); the signatures it embeds
+          # are also published beside each signed bundle.
           mapfile -t assets < <(find artifacts -type f \( \
             -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \
-            -o -name '*.dmg' \
-            -o -name '*.msi' -o -name '*-setup.exe' \))
+            -o -name '*.dmg' -o -name '*.app.tar.gz' \
+            -o -name '*.msi' -o -name '*-setup.exe' -o -name '*.sig' \))
+          assets+=(latest.json)
           gh release create "$VERSION" \
             --title "$VERSION" \
             --target "$GITHUB_SHA" \

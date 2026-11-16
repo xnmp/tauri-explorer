@@ -75,11 +75,15 @@ downloaded copy without `xattr` (#1671).
    `notarized-dmg` artifact *through a browser* (so it is quarantined) and open
    it: it should launch with at most the standard "downloaded from the
    Internet" confirmation.
-7. After the first signed release, set the repository variable
-   `gh variable set MACOS_REQUIRE_SIGNING --body 1` so a later release fails
-   rather than shipping unsigned if the secrets go missing, and remove the
-   `xattr` instructions from `README.md`, `website/app.js` and
-   `docs/alpha-testing.md`.
+7. Set the repository variable `gh variable set MACOS_REQUIRE_SIGNING --body 1`
+   so a release fails rather than shipping unsigned if the secrets go missing.
+   (Done 2026-11-16; v1.25.2 was the first notarized release, and the `xattr`
+   install instructions were removed with it.)
+
+A first notarization for a new team can stay "In Progress" for an hour or
+more, and a runner network drop during that wait fails the build even though
+Apple keeps processing. Rerun the job once Apple reports the submission
+Accepted; later submissions usually finish in minutes.
 
 A failed staple after an accepted notarization is retried five times; if the
 job still fails there, rerun it. Apple's ticket CDN can lag the acceptance.

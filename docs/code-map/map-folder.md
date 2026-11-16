@@ -147,7 +147,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `WindowTabBar.svelte` — window tab strip (drag/reorder/tear-off); executes the domain tab-drag reducer effects.
 - `JobsPanel.svelte` — background jobs viewer (Ctrl+J); Retry on failed jobs that carry `retry`.
 - `ToastOverlay.svelte` — stacked toast notifications.
-- `CrashNotice.svelte` — crash-report banner (#184).
+- `CrashNotice.svelte` — crash-report banner (#184); Report… lazily loads `state/crash-reporting.ts` to open Report Issue with the crash attached (#1684).
 - `UpdateCheck.svelte` — startup host for the update check (#185, #1679): after a 5 s delay, when the once-a-day throttle allows, lazy-loads `UpdateNotice` (keeps the update IPC out of the startup bundle).
 - `UpdateNotice.svelte` — update banner: checks on mount; a self-update the backend already downloaded offers "Restart now" (flushes tab state, then `installUpdate`), otherwise "View release". Follows the `autoUpdate` setting.
 - `AnimatedBackground.svelte` — canvas background animation host.
@@ -300,6 +300,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `dialogs.svelte.ts` — global dialog open/close state (rename/delete/etc); boolean overlays live in one reactive set keyed by the overlay registry (see below).
 - `src/lib/domain/overlays.ts` — boolean overlay registry (#1565): id tuple + pure open/close/toggle/closeAll/any over an immutable set. Add a payload-free dialog by adding one id.
 - `report-token.svelte.ts` — saved-GitHub-report-token state (configured/absent/unavailable) with save/clear through the write-only native commands (#1455).
+- `crash-report.svelte.ts` — session holder for the launch's crash file: offered by the notice, then attached to Report Issue until a report is submitted (#1684).
+- `crash-reporting.ts` — on-demand crash → report draft + dialog orchestration, kept out of the startup bundle (#1684).
 - `user-report-draft.svelte.ts` — debounced localStorage text drafts, window-lifetime image selections, and exclusive Report Issue submission ownership; accepted reports clear only the unchanged draft they submitted.
 - `context-menu.svelte.ts` — context menu open state + position.
 - `context-menu-items.svelte.ts` — registry for plugin-provided context-menu items.
@@ -637,7 +639,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `terminal-shell.ts` — shell dialect profile + WSL↔Windows path translation (#409/#418).
 - `terminal-theme.ts` — map CSS theme vars → xterm.js theme (pane-surface background, ANSI palette from status colours or `--terminal-*` overrides).
 - `content-search.ts` — `ContentMatch`/`ContentSearchResult` types for ripgrep results; re-exported by `api/search.ts`.
-- `crash-report.ts` — pure crash-dedupe + log-tail→markdown helpers behind `api/crash.ts`.
+- `crash-report.ts` — pure crash-dedupe helper behind `api/crash.ts`.
+- `crash-report-draft.ts` — pure crash → report title/draft update (#1684), loaded only when reporting.
+- `report-diagnostics.ts` — Report Issue diagnostic sections (kinds mirror `user_report.rs` `DiagnosticKind`), shared relay budget and head-keeping text fitting (#1022, #1684).
 - `user-report.ts` — report contracts and pure prefilled-GitHub fallback URL builder.
 - `user-report-route.ts` — pure report route (saved GitHub token for text-only reports, relay otherwise), route notice and token validation (#1455).
 - `git-warm.ts` — pure scheduler: when (and whether) to warm git-graph/SCM caches after a pane settles.

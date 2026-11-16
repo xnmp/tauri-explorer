@@ -180,6 +180,31 @@ impl Serialize for SubmitReportError {
     }
 }
 
+/// A reporter-approved diagnostic section, shown verbatim in the dialog before
+/// sending (#1022, #1684). The kind selects the section's heading, so the
+/// renderer cannot title a block arbitrarily.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum DiagnosticKind {
+    CrashReport,
+    SlowLoads,
+}
+
+impl DiagnosticKind {
+    fn summary(self) -> &'static str {
+        match self {
+            DiagnosticKind::CrashReport => "Crash report",
+            DiagnosticKind::SlowLoads => "Slow folder-load diagnostics",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct ReportDiagnostic {
+    pub kind: DiagnosticKind,
+    pub text: String,
+}
+
 pub struct Environment<'a> {
     pub version: &'a str,
     /// Labelled facts from `crate::environment` (#1683), rendered in order.
@@ -189,6 +214,11 @@ pub struct Environment<'a> {
 const MAX_REPORT_DESCRIPTION_UNITS: usize = 8000;
 /// The relay's body ceiling (`maxRelayBodyUnits` in the relay contract).
 const MAX_RELAY_BODY_UNITS: usize = 8500;
+/// Cap on the environment block, so the dialog's fixed overhead allowance
+/// (`REPORT_BODY_OVERHEAD_UNITS` in domain/report-diagnostics.ts, 600) always
+/// covers it plus the contact label and separators. A typical block is about
+/// 250 units; lower-priority lines drop first past the cap.
+const MAX_ENVIRONMENT_UNITS: usize = 480;
 /// Slow folder-load diagnostics the reporter chose to include (#1022).
 const MAX_DIAGNOSTICS_UNITS: usize = 6000;
 /// Below this remaining budget a diagnostics section would be too truncated
@@ -244,10 +274,13 @@ pub fn assemble_issue_body(
         .collect::<Vec<_>>()
         .join("\n\n");
     // The environment block takes what the relay ceiling leaves after the
-    // reporter's own words; lower-priority lines drop first (#1683).
+    // reporter's own words, up to its own cap; lower-priority lines drop
+    // first (#1683).
     const RULE: &str = "---\n";
     let separator = if head.is_empty() { 0 } else { 2 };
-    let budget = MAX_RELAY_BODY_UNITS.saturating_sub(units(&head) + separator + units(RULE));
+    let budget = MAX_RELAY_BODY_UNITS
+        .saturating_sub(units(&head) + separator + units(RULE))
+        .min(MAX_ENVIRONMENT_UNITS);
     let environment = format!(
         "{RULE}{}",
         crate::environment::render_report_lines(environment.version, environment.fields, budget)
@@ -263,29 +296,34 @@ fn units(value: &str) -> usize {
     value.encode_utf16().count()
 }
 
-/// Append the reporter-approved slow-load diagnostics (#1022) after the
-/// environment block, inside a collapsed section and a code fence so paths
-/// render literally. The relay body limit is never exceeded: the section is
-/// truncated at a line boundary to the remaining budget, or omitted when too
-/// little remains. This is not a log tail (#595): the dialog shows exactly
-/// these records, each captured when a load stalled, and the reporter can
-/// exclude them.
-fn append_diagnostics(body: String, diagnostics: Option<&str>) -> String {
-    let Some(diagnostics) = diagnostics
-        .map(sanitize)
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-    else {
+/// Append the reporter-approved diagnostic sections (#1022, #1684) after the
+/// environment block, in the order given, each in its own collapsed section
+/// and code fence so paths render literally. The relay body limit is never
+/// exceeded: a section is truncated at a line boundary to the remaining
+/// budget, or omitted when too little remains, so earlier sections take
+/// precedence. This is not a log tail (#595): the dialog shows exactly this
+/// text and the reporter can exclude each section.
+fn append_diagnostics(body: String, diagnostics: &[ReportDiagnostic]) -> String {
+    diagnostics.iter().fold(body, |body, diagnostic| {
+        append_diagnostic_section(body, diagnostic.kind, &diagnostic.text)
+    })
+}
+
+fn append_diagnostic_section(body: String, kind: DiagnosticKind, text: &str) -> String {
+    let diagnostics = sanitize(text).trim().to_owned();
+    if diagnostics.is_empty() {
         return body;
-    };
+    }
     let longest_backtick_run = diagnostics
         .split(|character| character != '`')
         .map(str::len)
         .max()
         .unwrap_or(0);
     let fence = "`".repeat(longest_backtick_run.max(2) + 1);
-    let open =
-        format!("\n\n<details><summary>Slow folder-load diagnostics</summary>\n\n{fence}text\n");
+    let open = format!(
+        "\n\n<details><summary>{}</summary>\n\n{fence}text\n",
+        kind.summary()
+    );
     let close = format!("\n{fence}\n\n</details>");
     let overhead = units(&body) + units(&open) + units(&close);
     let Some(budget) = MAX_RELAY_BODY_UNITS
@@ -306,12 +344,20 @@ fn append_diagnostics(body: String, diagnostics: Option<&str>) -> String {
     format!("{body}{open}{fitted}{close}")
 }
 
-fn validate_diagnostics(diagnostics: Option<&str>) -> Result<(), SubmitReportError> {
-    if diagnostics.is_some_and(|value| units(value) > MAX_DIAGNOSTICS_UNITS) {
-        return Err(SubmitReportError::new(
-            "malformed_input",
-            "Diagnostics must be at most 6000 characters",
-        ));
+fn validate_diagnostics(diagnostics: &[ReportDiagnostic]) -> Result<(), SubmitReportError> {
+    let malformed = |message: &str| Err(SubmitReportError::new("malformed_input", message));
+    if diagnostics
+        .iter()
+        .any(|diagnostic| units(&diagnostic.text) > MAX_DIAGNOSTICS_UNITS)
+    {
+        return malformed("Diagnostics must be at most 6000 characters per section");
+    }
+    let mut kinds: Vec<DiagnosticKind> = diagnostics.iter().map(|d| d.kind).collect();
+    let count = kinds.len();
+    kinds.sort_by_key(|kind| kind.summary());
+    kinds.dedup();
+    if kinds.len() != count {
+        return malformed("Each diagnostic section may be included once");
     }
     Ok(())
 }
@@ -597,11 +643,12 @@ pub async fn submit_user_report(
     kind: String,
     contact: Option<String>,
     attachments: Option<Vec<ReportAttachment>>,
-    diagnostics: Option<String>,
+    diagnostics: Option<Vec<ReportDiagnostic>>,
     use_github_token: Option<bool>,
 ) -> Result<SubmittedUserReport, SubmitReportError> {
     validate_draft(&title, &body, &kind, contact.as_deref())?;
-    validate_diagnostics(diagnostics.as_deref())?;
+    let diagnostics = diagnostics.unwrap_or_default();
+    validate_diagnostics(&diagnostics)?;
     let attachments = attachments.unwrap_or_default();
     validate_attachments(&attachments)?;
     let use_github_token = use_github_token.unwrap_or(false);
@@ -626,7 +673,7 @@ pub async fn submit_user_report(
                 fields: &fields,
             },
         ),
-        diagnostics.as_deref(),
+        &diagnostics,
     );
     let title = title.trim().replace(['\n', '\r'], " ");
     if use_github_token {
@@ -658,8 +705,8 @@ mod tests {
     }
 
     use super::{
-        append_diagnostics, truncate_utf16, units, validate_diagnostics, MAX_DIAGNOSTICS_UNITS,
-        MAX_RELAY_BODY_UNITS,
+        append_diagnostics, truncate_utf16, units, validate_diagnostics, DiagnosticKind,
+        ReportDiagnostic, MAX_DIAGNOSTICS_UNITS, MAX_RELAY_BODY_UNITS, MIN_DIAGNOSTICS_UNITS,
     };
     use super::{
         assemble_issue_body, attachment_from_image_bytes, map_transport_error, relay_error_kind,
@@ -1238,22 +1285,22 @@ mod tests {
         let base = assemble_issue_body("It hangs", None, &environment());
         let body = append_diagnostics(
             base.clone(),
-            Some("1. /mnt/nas/photos — 7.4 s, still pending\n   stuck in: native read-dir"),
+            &slow("1. /mnt/nas/photos — 7.4 s, still pending\n   stuck in: native read-dir"),
         );
         assert!(body.starts_with(&base));
         assert!(body.contains("<details><summary>Slow folder-load diagnostics</summary>"));
         assert!(body.contains("```text\n1. /mnt/nas/photos"));
         assert!(body.ends_with("```\n\n</details>"));
         // Nothing approved, nothing appended.
-        assert_eq!(append_diagnostics(base.clone(), None), base);
-        assert_eq!(append_diagnostics(base.clone(), Some("  \n ")), base);
+        assert_eq!(append_diagnostics(base.clone(), &[]), base);
+        assert_eq!(append_diagnostics(base.clone(), &slow("  \n ")), base);
     }
 
     #[test]
     fn a_path_containing_backticks_cannot_close_the_fence() {
         let body = append_diagnostics(
             assemble_issue_body("", None, &environment()),
-            Some("1. /tmp/```weird````dir — 6.0 s"),
+            &slow("1. /tmp/```weird````dir — 6.0 s"),
         );
         assert!(body.contains("`````text\n1. /tmp/```weird````dir"));
     }
@@ -1264,11 +1311,11 @@ mod tests {
             .map(|n| format!("{n}. /very/long/path/{}\n", "x".repeat(10)))
             .collect();
         let diagnostics = truncate_utf16(&lines, MAX_DIAGNOSTICS_UNITS);
-        validate_diagnostics(Some(&diagnostics)).unwrap();
+        validate_diagnostics(&slow(&diagnostics)).unwrap();
         for description in ["", "short", &"d".repeat(4000), &"🐛".repeat(3900)] {
             let body = append_diagnostics(
                 assemble_issue_body(description, Some("@me"), &environment()),
-                Some(&diagnostics),
+                &slow(&diagnostics),
             );
             assert!(units(&body) <= MAX_RELAY_BODY_UNITS, "{}", units(&body));
             assert!(body.contains(description));
@@ -1288,7 +1335,7 @@ mod tests {
             Some(&"c".repeat(MAX_CONTACT_UNITS)),
             &environment(),
         );
-        let with = append_diagnostics(full.clone(), Some(&diagnostics));
+        let with = append_diagnostics(full.clone(), &slow(&diagnostics));
         assert!(with.starts_with(&full));
         assert!(units(&with) <= MAX_RELAY_BODY_UNITS);
         // With too little room left the section is omitted, not mangled.
@@ -1296,19 +1343,153 @@ mod tests {
             "{full}{}",
             "y".repeat(MAX_RELAY_BODY_UNITS - units(&full) - 150)
         );
-        assert!(append_diagnostics(crowded.clone(), Some(&diagnostics)) == crowded);
+        assert!(append_diagnostics(crowded.clone(), &slow(&diagnostics)) == crowded);
+    }
+
+    fn slow(text: &str) -> Vec<ReportDiagnostic> {
+        vec![ReportDiagnostic {
+            kind: DiagnosticKind::SlowLoads,
+            text: text.to_owned(),
+        }]
+    }
+
+    fn crash(text: &str) -> ReportDiagnostic {
+        ReportDiagnostic {
+            kind: DiagnosticKind::CrashReport,
+            text: text.to_owned(),
+        }
+    }
+
+    #[test]
+    fn crash_report_gets_its_own_section_ahead_of_slow_loads() {
+        let base = assemble_issue_body("It crashed", None, &environment());
+        let mut sections = vec![crash("panic: boom\nlocation: src/lib.rs:1:1")];
+        sections.extend(slow("1. /mnt/nas — 7.4 s"));
+        let body = append_diagnostics(base.clone(), &sections);
+        let crash_at = body.find("<summary>Crash report</summary>").unwrap();
+        let slow_at = body
+            .find("<summary>Slow folder-load diagnostics</summary>")
+            .unwrap();
+        assert!(crash_at < slow_at, "sections keep the order given");
+        assert!(body.contains("```text\npanic: boom\nlocation: src/lib.rs:1:1\n```"));
+    }
+
+    /// `REPORT_BODY_OVERHEAD_UNITS` and `REPORT_DIAGNOSTIC_WRAPPER_UNITS` in
+    /// domain/report-diagnostics.ts.
+    const FRONTEND_OVERHEAD_UNITS: usize = 600;
+    const FRONTEND_WRAPPER_UNITS: usize = 100;
+
+    /// The dialog fits each section with its own fixed allowances
+    /// (`report-diagnostics.ts`) and previews the result. Whatever the
+    /// environment, description and contact, the native body must then carry
+    /// that text untruncated, or the preview would not be what is sent.
+    #[test]
+    fn dialog_fitted_sections_are_never_cut_further() {
+        let long = |label: &'static str| crate::environment::EnvironmentField {
+            label,
+            value: "v".repeat(100),
+        };
+        let fields = [
+            long("OS"),
+            long("Webview"),
+            long("Renderer"),
+            long("Session"),
+            long("Install"),
+            long("Display scale"),
+        ];
+        let environment = Environment {
+            version: "9999.9999.9999-very-long-prerelease-tag",
+            fields: &fields,
+        };
+        // Line-structured text of exactly `len` units (frontend fitting
+        // keeps whole lines, so any length up to the budget is possible).
+        let text = |len: usize| -> String {
+            let mut out = "frame: some::rust::function_name\n".repeat(len / 33 + 1);
+            out.truncate(len - 1);
+            out + "x"
+        };
+        let contact = "c".repeat(MAX_CONTACT_UNITS);
+        for description_len in [0, 1, 1000, 4000, 7000, 7590] {
+            let description = "d".repeat(description_len);
+            let budget = MAX_RELAY_BODY_UNITS
+                .saturating_sub(FRONTEND_OVERHEAD_UNITS + description_len + contact.len());
+            let crash_len =
+                MAX_DIAGNOSTICS_UNITS.min(budget.saturating_sub(FRONTEND_WRAPPER_UNITS));
+            if crash_len < MIN_DIAGNOSTICS_UNITS {
+                continue;
+            }
+            let crash_text = text(crash_len);
+            let remaining = budget - crash_len - FRONTEND_WRAPPER_UNITS;
+            let slow_len =
+                MAX_DIAGNOSTICS_UNITS.min(remaining.saturating_sub(FRONTEND_WRAPPER_UNITS));
+            let mut sections = vec![crash(&crash_text)];
+            if slow_len >= MIN_DIAGNOSTICS_UNITS {
+                sections.extend(slow(&text(slow_len)));
+            }
+            let base = assemble_issue_body(&description, Some(&contact), &environment);
+            let body = append_diagnostics(base, &sections);
+            assert!(units(&body) <= MAX_RELAY_BODY_UNITS);
+            assert!(
+                !body.contains("(truncated to fit the report)"),
+                "description {description_len}: native side cut a previewed section"
+            );
+            for section in &sections {
+                assert!(
+                    body.contains(&section.text),
+                    "description {description_len}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn earlier_sections_take_precedence_when_the_budget_runs_out() {
+        let base = assemble_issue_body(&"d".repeat(4000), None, &environment());
+        let big = (0..400)
+            .map(|n| format!("frame {n}: some::rust::function_name\n"))
+            .collect::<String>();
+        let big = truncate_utf16(&big, MAX_DIAGNOSTICS_UNITS);
+        let mut sections = vec![crash(&big)];
+        sections.extend(slow("1. /mnt/nas — 7.4 s"));
+        let body = append_diagnostics(base, &sections);
+        assert!(units(&body) <= MAX_RELAY_BODY_UNITS);
+        assert!(body.contains("<summary>Crash report</summary>"));
+        assert!(body.contains("(truncated to fit the report)"));
+        assert!(
+            !body.contains("Slow folder-load diagnostics"),
+            "no room left"
+        );
+    }
+
+    #[test]
+    fn diagnostic_sections_deserialize_by_kind_and_reject_duplicates() {
+        let parsed: Vec<ReportDiagnostic> = serde_json::from_str(
+            r#"[{"kind":"crash-report","text":"a"},{"kind":"slow-loads","text":"b"}]"#,
+        )
+        .unwrap();
+        assert_eq!(parsed[0].kind, DiagnosticKind::CrashReport);
+        validate_diagnostics(&parsed).unwrap();
+        assert!(serde_json::from_str::<Vec<ReportDiagnostic>>(
+            r#"[{"kind":"<script>","text":"a"}]"#
+        )
+        .is_err());
+        let twice = [crash("a"), crash("b")];
+        assert_eq!(
+            validate_diagnostics(&twice).unwrap_err().kind,
+            "malformed_input"
+        );
     }
 
     #[test]
     fn oversized_or_control_laden_diagnostics_are_handled_at_the_boundary() {
         assert_eq!(
-            validate_diagnostics(Some(&"x".repeat(MAX_DIAGNOSTICS_UNITS + 1)))
+            validate_diagnostics(&slow(&"x".repeat(MAX_DIAGNOSTICS_UNITS + 1)))
                 .unwrap_err()
                 .kind,
             "malformed_input"
         );
-        validate_diagnostics(None).unwrap();
-        let body = append_diagnostics(String::from("base"), Some("a\u{0}b\u{7}c"));
+        validate_diagnostics(&[]).unwrap();
+        let body = append_diagnostics(String::from("base"), &slow("a\u{0}b\u{7}c"));
         assert!(body.contains("abc"));
     }
 }

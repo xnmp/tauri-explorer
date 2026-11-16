@@ -381,7 +381,7 @@ backend for E2E/browser).
 - `state/miller-columns.svelte.ts` — ancestor listings (lazy-loaded on first mount, #1642): request slot per column, bounded cache of hidden listings, a watch per shown column, watcher changes through `requestRefresh` (WHEN), local mutations (`subscribeToLocalFileChanges`) re-read the shown column immediately (#598). Reads use the fresh `loadDirectory` snapshot API, including reentry after an unwatched gap; emptiness probes are revision guarded. Coverage: `tests/state/miller-columns.test.ts`, `e2e/miller-columns*.spec.ts`, `e2e-tauri/specs/miller-column-freshness.spec.ts`.
 - `state/commands/view-commands.ts` — `view.toggleMillerColumns`, millerLayers0-3
 - FLOW: each column is a listing of the selected dir in the prior column; layer count is a view command/setting.
-- ISLAND (#434): in island mode with no sidebar the ACTIVE pane's columns are hoisted to a left island in `+page.svelte` (`millerAsLeftIsland`); `ExplorerPane.svelte` suppresses the inline copy via the same `settingsStore.islandMode` derived so they render exactly once (a divergent per-platform check double-mounted them).
+- ISLAND (#434, #1699): in island mode with no sidebar a SINGLE-pane tab's columns are hoisted to a left island in `+page.svelte` (`millerAsLeftIsland`); split panes keep theirs inline so focus never moves them. Both `+page.svelte` and `ExplorerPane.svelte` read `domain/miller-placement.ts` `millerHoistedToIsland` so they render exactly once (a divergent per-platform check double-mounted them). Tests: `tests/domain/miller-placement.test.ts`, `e2e/island-panel-layout.spec.ts`.
 
 ## Git status badges
 

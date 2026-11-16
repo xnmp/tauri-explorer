@@ -33,6 +33,7 @@
   import StatusBar from "$lib/components/StatusBar.svelte";
   import AnimatedBackground from "$lib/components/AnimatedBackground.svelte";
   import MillerColumns from "$lib/components/MillerColumns.svelte";
+  import { millerHoistedToIsland } from "$lib/domain/miller-placement";
 
   // First milestone: the app bundle has parsed and begun executing. The gap
   // from boot t0 to here is the JS download+parse cost the lazy-loading targets.
@@ -44,11 +45,16 @@
   const leftExplorer = $derived(windowTabsManager.getActiveExplorer());
   const launchHomePath = resolveLaunchHomePath();
 
-  // The island arrangement belongs to the applied layout theme (#1306), so
-  // the in-pane miller suppression (ExplorerPane) keys off the exact same
-  // condition — a divergent copy once double-mounted the columns (#434).
+  // The island arrangement belongs to the applied layout theme (#1306). The
+  // in-pane copy (ExplorerPane) reads the same `millerHoistedToIsland`
+  // predicate — a divergent copy once double-mounted the columns (#434).
+  // Split tabs keep their columns inline so focus never moves them (#1699).
   const millerAsLeftIsland = $derived(
-    layoutStore.islands && !settingsStore.showSidebar && (leftExplorer?.millerLayers ?? 0) > 0
+    millerHoistedToIsland({
+      islands: layoutStore.islands,
+      showSidebar: settingsStore.showSidebar,
+      multiPane: windowTabsManager.dualPaneEnabled,
+    }) && (leftExplorer?.millerLayers ?? 0) > 0
   );
 
   /** Convert a filesystem path to a URL usable in src/background-image. */

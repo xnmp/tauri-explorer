@@ -6,7 +6,7 @@ const dialog = (page: Page) => page.getByRole("dialog", { name: "Pane test dialo
 const draft = (page: Page) => page.getByLabel("Dialog draft", { exact: true });
 const pane = (page: Page, index: number) => page.locator(".explorer-pane").nth(index);
 
-async function install(page: Page, direction: "right" | "down" = "right") {
+async function install(page: Page, direction: "right" | "down" | null = "right") {
   await page.evaluate(async direction => {
     // @ts-expect-error Vite serves test source modules.
     const { windowTabsManager: manager } = await import("/src/lib/state/window-tabs.svelte.ts");
@@ -14,7 +14,7 @@ async function install(page: Page, direction: "right" | "down" = "right") {
     const { createPluginContext } = await import("/src/lib/plugins/api.ts");
     // @ts-expect-error Vite serves test source modules.
     const component = (await import("/src/test-support/modal/PaneTestDialog.svelte")).default;
-    manager.splitPane(direction);
+    if (direction) manager.splitPane(direction);
     const context = createPluginContext("pane-dialog-test");
     context.ctx.registerDialog({ id: "test.pane", component });
     const [a, b] = manager.activePaneIds;
@@ -132,7 +132,8 @@ for (const mode of modes) {
         settingsStore.update({ layoutTheme: "floating-islands", showSidebar: false });
         manager.getActiveExplorer().setMillerLayers(2);
       });
-      await install(page);
+      // Only a single-pane tab hoists its columns (#1699).
+      await install(page, null);
       const columns = page.locator(".miller-island .miller-columns");
       await expect(columns).toHaveAttribute("inert", "");
       const before = await pane(page, 0).locator(".content").getAttribute("data-current-path");

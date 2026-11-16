@@ -26,6 +26,7 @@ mod shared_history;
 // pub: criterion benches (src-tauri/benches/) call into
 // files::dir_listing::{scan_directory_parallel, sort_entries} directly.
 mod durable_dir;
+mod environment;
 pub mod files;
 mod gemini;
 pub mod git;
@@ -599,6 +600,11 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
                 renderer_plan.unset,
                 renderer_plan.reason,
             );
+            #[cfg(target_os = "linux")]
+            environment::record_renderer(format!("{:?}", renderer_plan.mode));
+            // Off the startup path: one self-describing `Environment:` log
+            // line, and the cached summary reports and crash files use (#1683).
+            environment::spawn_startup_probe();
             #[cfg(target_os = "linux")]
             log::info!("Renderer(jsc): {jsc_plan:?}");
             // Before any window: the asset scope must serve Preview renditions

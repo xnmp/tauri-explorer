@@ -54,10 +54,17 @@ export function crashIssueUrl(report: CrashReport): string {
   return `${REPO_ISSUES_URL}?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`;
 }
 
+export interface EnvironmentField {
+  label: string;
+  value: string;
+}
+
 export interface AppInfo {
   version: string;
   os: string;
   arch: string;
+  /** Labelled environment facts (distro, webview, session, install; #1683). */
+  environment?: EnvironmentField[];
 }
 
 export function getAppInfo(): Promise<AppInfo> {

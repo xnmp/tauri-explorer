@@ -182,8 +182,8 @@ impl Serialize for SubmitReportError {
 
 pub struct Environment<'a> {
     pub version: &'a str,
-    pub os: &'a str,
-    pub arch: &'a str,
+    /// Labelled facts from `crate::environment` (#1683), rendered in order.
+    pub fields: &'a [crate::environment::EnvironmentField],
 }
 
 const MAX_REPORT_DESCRIPTION_UNITS: usize = 8000;
@@ -238,23 +238,24 @@ pub fn assemble_issue_body(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(|value| format!("How to reach the reporter: {value}"));
-    let environment = format!(
-        "---\n- Tauri Explorer: v{}\n- OS: {} ({})",
-        truncate_utf16(&sanitize(environment.version), 100),
-        truncate_utf16(&sanitize(environment.os), 100),
-        truncate_utf16(&sanitize(environment.arch), 100)
-    );
-    let suffix = contact
-        .iter()
-        .chain(std::iter::once(&environment))
-        .map(String::as_str)
+    let head = std::iter::once(description.trim())
+        .chain(contact.as_deref())
+        .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
         .join("\n\n");
-    let description = description.trim();
-    if description.is_empty() {
-        suffix
+    // The environment block takes what the relay ceiling leaves after the
+    // reporter's own words; lower-priority lines drop first (#1683).
+    const RULE: &str = "---\n";
+    let separator = if head.is_empty() { 0 } else { 2 };
+    let budget = MAX_RELAY_BODY_UNITS.saturating_sub(units(&head) + separator + units(RULE));
+    let environment = format!(
+        "{RULE}{}",
+        crate::environment::render_report_lines(environment.version, environment.fields, budget)
+    );
+    if head.is_empty() {
+        environment
     } else {
-        format!("{description}\n\n{suffix}")
+        format!("{head}\n\n{environment}")
     }
 }
 
@@ -574,8 +575,23 @@ fn send_report(
         })
 }
 
+/// Scale factor of the focused window (the one the report was written in),
+/// falling back to any window. Parked warm windows are hidden, never focused.
+fn report_window_scale(app: &tauri::AppHandle) -> Option<f64> {
+    use tauri::Manager;
+    let windows = app.webview_windows();
+    windows
+        .values()
+        .find(|window| window.is_focused().unwrap_or(false))
+        .or_else(|| windows.values().next())
+        .and_then(|window| window.scale_factor().ok())
+}
+
+// The arguments are the renderer's IPC contract; `app` is injected by Tauri.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn submit_user_report(
+    app: tauri::AppHandle,
     title: String,
     body: String,
     kind: String,
@@ -597,15 +613,17 @@ pub async fn submit_user_report(
             "Reports with attachments are sent through the report service, not your GitHub token",
         ));
     }
-    let info = crate::system::get_app_info().await;
+    let mut fields = crate::environment::summary().to_vec();
+    fields.extend(crate::environment::display_scale_field(
+        report_window_scale(&app),
+    ));
     let assembled = append_diagnostics(
         assemble_issue_body(
             &body,
             contact.as_deref(),
             &Environment {
-                version: &info.version,
-                os: &info.os,
-                arch: &info.arch,
+                version: env!("CARGO_PKG_VERSION"),
+                fields: &fields,
             },
         ),
         diagnostics.as_deref(),
@@ -632,6 +650,13 @@ pub async fn submit_user_report(
 
 #[cfg(test)]
 mod tests {
+    fn os_field(value: &str) -> [crate::environment::EnvironmentField; 1] {
+        [crate::environment::EnvironmentField {
+            label: "OS",
+            value: value.to_owned(),
+        }]
+    }
+
     use super::{
         append_diagnostics, truncate_utf16, units, validate_diagnostics, MAX_DIAGNOSTICS_UNITS,
         MAX_RELAY_BODY_UNITS,
@@ -810,8 +835,7 @@ mod tests {
             Some("@reporter"),
             &Environment {
                 version: "1.7.0",
-                os: "linux",
-                arch: "x86_64",
+                fields: &os_field("linux (x86_64)"),
             },
         );
         assert!(body.contains("It freezes on café/🐛 paths."));
@@ -830,8 +854,7 @@ mod tests {
             Some("@reporter"),
             &Environment {
                 version: "1.7.0",
-                os: "linux",
-                arch: "x86_64",
+                fields: &os_field("linux (x86_64)"),
             },
         );
         // The real guard is structural: `assemble_issue_body` has no log-tail
@@ -855,8 +878,7 @@ mod tests {
             None,
             &Environment {
                 version: "1.7.0",
-                os: "macos",
-                arch: "aarch64",
+                fields: &os_field("macos (aarch64)"),
             },
         );
         assert!(!body.contains("How to reach"));
@@ -871,8 +893,7 @@ mod tests {
             None,
             &Environment {
                 version: "1.7.0",
-                os: "linux",
-                arch: "x86_64",
+                fields: &os_field("linux (x86_64)"),
             },
         );
 
@@ -888,8 +909,7 @@ mod tests {
             Some("@reporter"),
             &Environment {
                 version: "1.7.0",
-                os: "linux",
-                arch: "x86_64",
+                fields: &os_field("linux (x86_64)"),
             },
         );
         assert!(body.encode_utf16().count() <= contract_limit("maxRelayBodyUnits"));
@@ -897,25 +917,46 @@ mod tests {
         assert!(body.contains("How to reach the reporter: @reporter"));
         assert!(body.ends_with("- Tauri Explorer: v1.7.0\n- OS: linux (x86_64)"));
 
+        // Every probe at its cap: the block must yield to the relay ceiling.
+        let long_fields: Vec<_> = [
+            "OS",
+            "Webview",
+            "Renderer",
+            "Session",
+            "Install",
+            "Display scale",
+        ]
+        .into_iter()
+        .map(|label| crate::environment::EnvironmentField {
+            label,
+            value: "o".repeat(100),
+        })
+        .collect();
         let full = assemble_issue_body(
             &"x".repeat(MAX_REPORT_DESCRIPTION_UNITS),
             Some(&"c".repeat(MAX_CONTACT_UNITS)),
             &Environment {
                 version: &"v".repeat(100),
-                os: &"o".repeat(100),
-                arch: &"a".repeat(100),
+                fields: &long_fields,
             },
         );
         assert!(full.starts_with(&"x".repeat(MAX_REPORT_DESCRIPTION_UNITS)));
         assert!(full.encode_utf16().count() <= contract_limit("maxRelayBodyUnits"));
+        assert!(
+            full.contains("- Tauri Explorer: v"),
+            "highest-priority line kept"
+        );
+        assert!(
+            full.contains("- OS: "),
+            "OS kept before lower-priority lines"
+        );
 
         let sanitized = assemble_issue_body(
             "safe\u{0}text\u{7}\nsecond line",
             None,
             &Environment {
                 version: "1.7.0",
-                os: "linux",
-                arch: "x86_64",
+                fields: &os_field("linux (x86_64)"),
             },
         );
         assert!(sanitized.contains("safetext\nsecond line"));
@@ -1179,10 +1220,11 @@ mod tests {
     }
 
     fn environment() -> Environment<'static> {
+        static FIELDS: std::sync::OnceLock<[crate::environment::EnvironmentField; 1]> =
+            std::sync::OnceLock::new();
         Environment {
             version: "1.11.3",
-            os: "linux",
-            arch: "x86_64",
+            fields: FIELDS.get_or_init(|| os_field("linux (x86_64)")),
         }
     }
 

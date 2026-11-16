@@ -30,6 +30,14 @@
       {:else if failed}Unable to load version information.
       {:else}Loading version…{/if}
     </p>
+    {#if info?.environment?.length}
+      <dl class="environment" aria-label="Environment">
+        {#each info.environment as field (field.label)}
+          <dt>{field.label}</dt>
+          <dd>{field.value}</dd>
+        {/each}
+      </dl>
+    {/if}
     <div class="dialog-actions">
       <button class="btn secondary" data-autofocus onclick={onClose}>Close</button>
     </div>
@@ -41,5 +49,24 @@
     margin: 0;
     color: var(--text-primary);
     font-variant-numeric: tabular-nums;
+  }
+
+  .environment {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: 4px 12px;
+    margin: 8px 0 0;
+    font-size: 12px;
+    user-select: text;
+  }
+
+  .environment dt {
+    color: var(--text-secondary);
+  }
+
+  .environment dd {
+    margin: 0;
+    color: var(--text-primary);
+    overflow-wrap: anywhere;
   }
 </style>

@@ -328,5 +328,10 @@ export const systemCommands: Record<string, CommandHandler> = {
       .map(([k, css]) => ({ filename: k.slice("layouts/".length), css, error: null })),
   ensure_layouts_dir: () => "/home/user/.config/tauri-explorer/layouts",
 
-  get_app_info: () => ({ version: "0.0.0-mock", os: "linux", arch: "x86_64" }),
+  get_app_info: () => ({ version: "0.0.0-mock", os: "linux", arch: "x86_64", environment: [
+    { label: "OS", value: "Mock Linux (x86_64)" },
+    { label: "Webview", value: "WebKitGTK 0.0.0-mock" },
+    { label: "Session", value: "wayland, MockDesktop" },
+    { label: "Install", value: "source build" },
+  ] }),
 };

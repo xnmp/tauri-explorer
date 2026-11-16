@@ -416,6 +416,8 @@ pub struct AppInfo {
     pub version: String,
     pub os: String,
     pub arch: String,
+    /// Labelled environment facts (distro, webview, session, install; #1683).
+    pub environment: Vec<crate::environment::EnvironmentField>,
 }
 
 /// Version/platform info for the bug-report template and about surfaces.
@@ -425,6 +427,7 @@ pub async fn get_app_info() -> AppInfo {
         version: env!("CARGO_PKG_VERSION").to_string(),
         os: std::env::consts::OS.to_string(),
         arch: std::env::consts::ARCH.to_string(),
+        environment: crate::environment::summary().to_vec(),
     }
 }
 

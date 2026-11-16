@@ -88,6 +88,8 @@ for (const mode of ['details', 'list', 'tiles']) {
       await page.setViewportSize({ width: 1600, height: 1000 });
       await page.goto(`/?path=/perf/huge-5000&viewMode=${mode}`);
       await page.locator('.entry-item').first().waitFor();
+      // Let the initial ResizeObserver delivery initialize List's virtualized viewport before freezing it.
+      await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
       const press = await page.evaluate(async () => {
         // @ts-expect-error Vite serves the application module.
         const { windowTabsManager: manager } = await import('/src/lib/state/window-tabs.svelte.ts');

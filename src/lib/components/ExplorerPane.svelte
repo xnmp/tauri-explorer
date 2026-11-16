@@ -30,6 +30,7 @@ import ScmPanel from "./ScmPanel.svelte";
   import { gitRepoRoot } from "$lib/api/git";
 import { nextRemovableRoot } from "$lib/domain/drives";
   import { isVirtualPath } from "$lib/domain/virtual-path";
+  import { millerHoistedToIsland } from "$lib/domain/miller-placement";
   import { explainTrashedOpen } from "$lib/state/trash-provider";
 
   interface Props {
@@ -225,12 +226,17 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   const isActive = $derived(windowTabsManager.activePaneId === paneId);
   const dualPaneEnabled = $derived(windowTabsManager.dualPaneEnabled);
 
-  // Miller columns are hoisted to the left island (rendered by +page.svelte)
-  // only in island mode with no sidebar, and only for the active pane (the
-  // island shows the active explorer). When hoisted, suppress the inline copy
-  // so the columns render exactly once (#434). Mirrors `millerAsLeftIsland`.
-  const millerHoistedToIsland = $derived(
-    layoutStore.islands && !settingsStore.showSidebar && isActive,
+  // A single-pane tab in island mode with no sidebar hoists its Miller
+  // columns to the left island (rendered by +page.svelte); suppress the
+  // inline copy so they render exactly once (#434). Split panes keep theirs
+  // inline (#1699). `isActive` only guards the transient frame before the
+  // active pane id follows a tab switch.
+  const millerHoisted = $derived(
+    isActive && millerHoistedToIsland({
+      islands: layoutStore.islands,
+      showSidebar: settingsStore.showSidebar,
+      multiPane: dualPaneEnabled,
+    }),
   );
   const isInactive = $derived(dualPaneEnabled && !isActive);
   const showActiveBorder = $derived(dualPaneEnabled && isActive);
@@ -401,11 +407,11 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     <NavigationBar explorer={paneExplorer} {paneId} />
     <div class="pane-content">
       <!-- Miller columns render inline UNLESS they are hoisted to the left
-           island (island mode + no sidebar, active pane only). The hoist
-           condition here must mirror `millerAsLeftIsland` in +page.svelte,
-           keyed off the single `layoutStore.islands` arrangement — not one platform's flag —
-           or the columns double-mount inline AND as the island (#434). -->
-      {#if paneExplorer.millerLayers > 0 && !millerHoistedToIsland}
+           island (island mode + no sidebar, single-pane tab only). Both this
+           and `millerAsLeftIsland` in +page.svelte read `millerHoistedToIsland`
+           (domain/miller-placement.ts), or the columns double-mount inline AND
+           as the island (#434) or jump with pane focus (#1699). -->
+      {#if paneExplorer.millerLayers > 0 && !millerHoisted}
         <MillerColumns explorer={paneExplorer} {paneId} {reserveInlineWidth} />
       {/if}
       <!-- SCM panel sits between the Miller columns and the file list (#227);

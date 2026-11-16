@@ -98,12 +98,22 @@ for (const mode of ['details', 'list', 'tiles']) {
         const sourceId = manager.activePaneId;
         manager.splitPane('right');
         await tick();
-        // The first rendered frame starts the source's entry reflow (#1718).
-        // A real press pauses it with the reveal; freeze both before aiming.
-        await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-        const animations = document.getAnimations().filter(a => a.id === 'entry-reflow'
-          || ((a.effect as KeyframeEffect)?.target as HTMLElement)?.dataset?.paneMotion);
-        animations.forEach(a => { a.pause(); a.currentTime = 55; });
+        const panes = document.getAnimations().filter(a => ((a.effect as KeyframeEffect)?.target as HTMLElement)?.dataset?.paneMotion);
+        panes.forEach(a => { a.pause(); a.currentTime = 55; });
+        // The reveal's first rendering starts the source's entry reflow inside
+        // ResizeObserver delivery (#1718); a later observer on the same probe
+        // runs right after it. A real press pauses both; freeze both to aim.
+        const probe = document.querySelector(`.explorer-pane[data-pane-id="${sourceId}"] .layout-probe`)!;
+        const reflows = await new Promise<Animation[]>(resolve => {
+          const observer = new ResizeObserver(() => {
+            observer.disconnect();
+            const started = document.getAnimations().filter(a => a.id === 'entry-reflow');
+            started.forEach(a => { a.pause(); a.currentTime = 55; });
+            resolve(started);
+          });
+          observer.observe(probe);
+        });
+        const animations = [...panes, ...reflows];
         await Promise.all(animations.map(a => a.ready));
         const source = document.querySelector<HTMLElement>(`.explorer-pane[data-pane-id="${sourceId}"]`)!;
         const rect = source.getBoundingClientRect();

@@ -246,7 +246,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `scalar-resize.ts` — captured scalar drafts, frame identity, durable retirement and external-source supersession.
 - `pane-resize.ts` — owns captured divider geometry, one coalesced pointer frame, and cancellation on release, blur or component retirement.
 - `pane-creation-motion.ts` — per-tab cancellable anchored reveal; captures live bounds/clips, holds frame dimensions stable until settlement (publishing the held width as `--pane-content-hold-x`), carries ancestor clipping into interrupted nested splits, and pauses/finishes entry reflows with the reveal (#1703, #1709, #1718).
-- `entry-reflow-motion.ts` — DOM adapter for file-entry FLIP: measure painted entry positions by path, run a synchronous mutation, glide moved entries with `entry-reflow` animations; reads a pane's content hold (#1718).
+- `entry-reflow-motion.ts` — DOM adapter for file-entry FLIP: measure painted entry positions by path, run a synchronous mutation, glide visible moved entries with `entry-reflow` animations tracked in a live registry; reads a pane's content hold, honours a view's `data-entry-reflow-off` (open Folder Peek panels) (#1718).
 - `pane-watch.ts` — per-pane observed navigation tickets, lease commit/rollback, pending-change replay and refresh admission.
 - `directory-events.ts` — shared native directory event subscription with explicit readiness, retry and late-listener retirement.
 - `pane-lineage.svelte.ts` — lazy per-pane entry lineage (#1431): the applicable contribution, debounced `changed` reloads, the 400ms first-paint hold, 300ms held arrivals and the `projectLineage` grouping; counts cycle fallbacks.

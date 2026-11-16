@@ -133,12 +133,29 @@ async function freezeReflow(page: Page, placement: 'left' | 'right') {
   return page.evaluate(async placement => {
     // @ts-expect-error Vite serves the application module.
     const { windowTabsManager: manager } = await import('/src/lib/state/window-tabs.svelte.ts');
+    // @ts-expect-error Vite serves Svelte's browser runtime.
+    const { tick } = await import('/node_modules/svelte/src/index-client.js');
     const sourceId = manager.activePaneId;
+    // Entry reflows start inside the ResizeObserver delivery of the reveal's
+    // first rendering. A later observer on the same probe runs right after it,
+    // before slow first frames (headless WebKit) can outlast the 220 ms.
+    const probe = document.querySelector(`.explorer-pane[data-pane-id="${sourceId}"] .layout-probe`)!;
     manager.splitPane(placement);
-    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-    const animations = document.getAnimations().filter(animation => animation.id === 'entry-reflow'
-      || ((animation.effect as KeyframeEffect)?.target as HTMLElement)?.dataset?.paneMotion);
-    for (const animation of animations) { animation.pause(); animation.currentTime = 0; }
+    await tick();
+    const panes = document.getAnimations().filter(animation => ((animation.effect as KeyframeEffect)?.target as HTMLElement)?.dataset?.paneMotion);
+    for (const animation of panes) { animation.pause(); animation.currentTime = 0; }
+    // Created after FileList's observer, so its first delivery follows the
+    // one that reflowed (observers deliver in creation order).
+    const reflows = await new Promise<Animation[]>(resolve => {
+      const observer = new ResizeObserver(() => {
+        observer.disconnect();
+        const started = document.getAnimations().filter(animation => animation.id === 'entry-reflow');
+        for (const animation of started) { animation.pause(); animation.currentTime = 0; }
+        resolve(started);
+      });
+      observer.observe(probe);
+    });
+    const animations = [...panes, ...reflows];
     (window as any).__splitAnimations = animations;
     return { sourceId, reflows: animations.filter(animation => animation.id === 'entry-reflow').length };
   }, placement);
@@ -189,6 +206,46 @@ for (const [view, peek] of [['tiles', true], ['tiles', false], ['list', false]] 
     });
   }
 }
+
+test('a split source at 130% root zoom starts its glide exactly where entries were painted', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await page.goto('/?path=/perf/huge-5000&viewMode=tiles');
+  await page.locator('.entry-item').first().waitFor();
+  await page.evaluate(() => { document.documentElement.style.zoom = '130%'; });
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  const sourceId = (await page.locator('.explorer-pane').getAttribute('data-pane-id'))!;
+  const original = await entryPositions(page, sourceId);
+  expect((await freezeReflow(page, 'right')).reflows).toBeGreaterThan(0);
+  expect(maxOffset(original, await entryPositions(page, sourceId))).toBeLessThan(1);
+  await seek(page, 219.9);
+  const ending = await entryPositions(page, sourceId);
+  await seek(page, 220);
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  expect(maxOffset(ending, await entryPositions(page, sourceId))).toBeLessThan(1.5);
+});
+
+test('open Folder Peek panels reflow on the first frame without displaced glides', async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 800 });
+  await page.goto('/?path=/perf/huge-5000&viewMode=tiles');
+  await page.locator('.entry-item').first().waitFor();
+  await page.locator('.tile-caret').first().click();
+  await expect(page.locator('.tile-panels-view .tiles-scroller.banded')).toBeVisible();
+  const sourceId = (await page.locator('.explorer-pane').getAttribute('data-pane-id'))!;
+  // The panel's own opening motion (150 ms) must finish before the split.
+  let previous: Positions = {};
+  await expect.poll(async () => {
+    const now = await entryPositions(page, sourceId);
+    const settled = Object.keys(now).length > 0 && maxOffset(previous, now) < .5 && Object.keys(previous).length > 0;
+    previous = now;
+    return settled;
+  }, { intervals: [100] }).toBe(true);
+  expect((await freezeReflow(page, 'right')).reflows).toBe(0);
+  // Entries are already in their final layout, so the settle moves nothing.
+  const start = await entryPositions(page, sourceId);
+  await seek(page, 220);
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  expect(maxOffset(start, await entryPositions(page, sourceId))).toBeLessThan(1.5);
+});
 
 test('a scrolled source keeps entries painted on the reveal\'s first frame', async ({ page }) => {
   await page.setViewportSize({ width: 1400, height: 800 });

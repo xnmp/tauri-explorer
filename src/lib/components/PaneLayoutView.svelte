@@ -20,13 +20,15 @@
   let canvas = $state<HTMLElement>();
   const size = usePaneCanvasSize(() => canvas);
   const layout = $derived(panePresentation(node, size.current, layoutStore.paneDividerSize, minima, windowTabsManager.isPaneReady));
-  usePaneCreationMotion({ root: () => canvas, layout: () => node, shown: () => shown });
+  const motion = usePaneCreationMotion({ root: () => canvas, layout: () => node, shown: () => shown });
 </script>
 
 <div class="pane-layout" bind:this={canvas}>
   {#each layout.panes as pane (pane.id)}
     {@const explorer = windowTabsManager.getExplorer(pane.id)}
-    <div class="pane-frame" id={`pane-region-${pane.id}`} data-pane-motion={`pane:${pane.id}`} style={pane.style}>
+    <!-- --pane-content-hold-x: domain/pane-motion PANE_CONTENT_HOLD_X (#1718). -->
+    <div class="pane-frame" id={`pane-region-${pane.id}`} data-pane-motion={`pane:${pane.id}`} style={pane.style}
+      style:--pane-content-hold-x={motion.heldWidth(pane.id)}>
       {#if explorer}
         {#key explorer}
           <ExplorerPane paneId={pane.id} {explorer} />

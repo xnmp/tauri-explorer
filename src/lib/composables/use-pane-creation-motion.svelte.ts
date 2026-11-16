@@ -57,4 +57,5 @@ export function usePaneCreationMotion(deps: { root(): HTMLElement | undefined; l
     };
   });
   onDestroy(motion.finish);
+  return { heldWidth: motion.heldWidth };
 }

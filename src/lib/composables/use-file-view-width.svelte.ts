@@ -10,7 +10,7 @@
  */
 import { flushSync } from "svelte";
 import { PANE_CREATION_EASING, PANE_CREATION_MS } from "$lib/domain/pane-motion";
-import { contentHold, reflowEntries, reflowTiming } from "$lib/state/entry-reflow-motion";
+import { contentHold, finishEntryReflows, hasEntryReflows, reflowEntries, reflowTiming } from "$lib/state/entry-reflow-motion";
 
 export function useFileViewWidth(deps: {
   content: () => HTMLElement | null;
@@ -33,7 +33,13 @@ export function useFileViewWidth(deps: {
         const timing = width > 0 && next > 0 && next !== width
           ? reflowTiming(content, { duration: PANE_CREATION_MS, easing: PANE_CREATION_EASING }) : undefined;
         if (timing) reflowEntries(content, commit, timing);
-        else commit();
+        else {
+          // An unheld reflow (e.g. the new pane closed mid-reveal) would leave
+          // running glides offset from the new layout. Sub-pixel release
+          // rounding is not a reflow: leave an ending glide alone.
+          if (Math.abs(next - width) >= 1 && hasEntryReflows(content)) finishEntryReflows(content);
+          commit();
+        }
       }
       deps.onresize(content);
     });

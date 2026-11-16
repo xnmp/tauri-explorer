@@ -13,10 +13,17 @@ so element identity cannot be the key).
   saw the old column count squeezed into the narrow width, and the first frame
   showed overlapping tiles. FileList commits the view inset as state in the same
   `flushSync` as the width, after measuring. Only the probe reads the var.
-- **Release holds synchronously.** `animation.finished` rejects asynchronously
-  on cancel; releasing the hold there can strip the hold a re-split just set on
-  the same frame. `settleFrames()` clears every hold in the same task, and a
-  late release only clears a hold its own animation still owns.
+- **The hold is rendered state, never an imperative style write.** The pane
+  frame's inline style belongs to Svelte (`style={pane.style}`), which rewrites
+  `cssText` whenever the placement string changes, e.g. when a new pane's width
+  lease clamps the split ratio without changing the layout tree. A
+  `setProperty` hold would vanish mid-reveal. The motion keeps holds in a
+  `SvelteMap` that PaneLayoutView renders with a `style:` directive.
+- **Release holds in the same flush.** `animation.finished` rejects
+  asynchronously on cancel; releasing the hold there can strip the hold a
+  re-split just set on the same pane. `settleFrames()` clears every hold
+  synchronously, and a late release only clears a hold its own animation still
+  owns.
 - **A re-layout does not cancel glides; an interruption does.** `prepare`
   settles frames only, so a pane split again mid-glide continues from its
   painted entries (the FLIP measures transforms). Input, blur, scroll, divider
@@ -28,10 +35,26 @@ so element identity cannot be the key).
 - **Details is excluded.** Its rows don't flow with width; insetting them only
   shortened their hit area during the reveal (held presses beyond the final
   edge missed). Only Tiles/List receive the inset.
-- **Tests must freeze both animation kinds.** Entry reflows start in the first
-  rendered frame's ResizeObserver delivery, after `tick()`. Wait two frames,
-  then pause animations with `id === 'entry-reflow'` as well as `paneMotion`
-  targets, or a target chosen from a frozen frame keeps moving.
-- Folder Peek Tiles sizes panels from VirtualList's own probe, which observes
-  later in the same delivery. With panels open, panel geometry settles at the
-  first frame rather than gliding.
+- **Tests must freeze both animation kinds** (`id === 'entry-reflow'` as well
+  as `paneMotion` targets), or a target chosen from a frozen frame keeps moving.
+- Not covered: vertical splits in List with Folder Peek (ListColumnsView flows
+  by height and only the held width is published) still reflow at settle.
+- **Open Folder Peek panels opt out** (`data-entry-reflow-off`). Panels size
+  from VirtualList's own probe, which delivers after FileList's FLIP has
+  measured, so their entries would start their glide displaced. With panels
+  open, the reflow happens at once on the first frame.
+- **Only a held reflow glides,** and only entries visible before or after it.
+  Running glides are tracked in a registry, so the motion's per-keydown
+  `finish()` costs nothing when idle (no `getAnimations({subtree})` style
+  flush). An unheld reflow of at least 1 px (the new pane closing mid-reveal)
+  cancels running glides; sub-pixel release rounding leaves them alone.
+- **Glide offsets go through `rectDimToCSS`.** Rect deltas are post-zoom
+  viewport pixels on every engine; `translate` is in CSS pixels (the doubled
+  scale of `fixedFrom*` applies only to `position: fixed` overlays). The
+  130% zoom spec passes in Chromium and WebKit.
+- **WebKit tests must catch the glide in the same delivery.** Headless
+  WebKit's first frames after a split can outlast 220 ms, so waiting two
+  animation frames finds the glides already finished. Pause the pane
+  animations after `tick()`, then observe the source's `.layout-probe` with a
+  new ResizeObserver: observers deliver in creation order, so its first
+  callback runs right after FileList's reflow; pause the glides there.

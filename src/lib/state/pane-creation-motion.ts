@@ -1,6 +1,7 @@
 import { paneCreation, sameLayout, type PaneCreation } from '$lib/domain/pane-presentation';
 import type { PaneNode, LeafRect } from '$lib/domain/pane-layout';
-import { PANE_CONTENT_HOLD_X, PANE_CREATION_EASING, PANE_CREATION_MS, stablePaneFrame, visiblePaneRect, type PaneInsets } from '$lib/domain/pane-motion';
+import { SvelteMap } from 'svelte/reactivity';
+import { PANE_CREATION_EASING, PANE_CREATION_MS, stablePaneFrame, visiblePaneRect, type PaneInsets } from '$lib/domain/pane-motion';
 import { finishEntryReflows, pauseEntryReflows, resumeEntryReflows } from './entry-reflow-motion';
 
 interface Frame { element: HTMLElement; rect: LeafRect; clip: string }
@@ -33,12 +34,17 @@ export function createPaneCreationMotion(root: () => HTMLElement | undefined, re
   let previous: PaneNode | undefined;
   let pending: { creation: PaneCreation; before: Snapshot; width: number; height: number } | undefined;
   const animations = new Set<Animation>();
-  /** Held frames and the animation that owns each hold. */
-  const holds = new Map<HTMLElement, Animation>();
+  /** Held frames' extra width by pane id, rendered by PaneLayoutView as
+   * `--pane-content-hold-x` (domain PANE_CONTENT_HOLD_X). The frame's inline
+   * style belongs to Svelte, which rewrites it whenever the pane's placement
+   * string changes, so the hold must be rendered state, never set directly. */
+  const heldWidths = new SvelteMap<string, number>();
+  /** The animation that owns each pane's hold. */
+  const holds = new Map<string, Animation>();
 
-  function releaseHold(element: HTMLElement) {
-    holds.delete(element);
-    element.style.removeProperty(PANE_CONTENT_HOLD_X);
+  function releaseHold(pane: string) {
+    holds.delete(pane);
+    heldWidths.delete(pane);
   }
   /** Settle every frame now. Holds go in the same task as their animations, so
    * no rendering opportunity sees a settled frame that still claims a hold. */
@@ -46,7 +52,7 @@ export function createPaneCreationMotion(root: () => HTMLElement | undefined, re
     pending = undefined;
     for (const animation of animations) animation.cancel();
     animations.clear();
-    for (const element of [...holds.keys()]) releaseHold(element);
+    for (const pane of [...holds.keys()]) releaseHold(pane);
   }
   /** An interruption also settles the entries' reflow. A re-layout alone does
    * not: a pane split again mid-glide continues from its painted entries. */
@@ -82,19 +88,19 @@ export function createPaneCreationMotion(root: () => HTMLElement | undefined, re
     previous = shown ? next : undefined;
     if (creation && snapshot) pending = { creation, before: snapshot.frames, width: snapshot.width, height: snapshot.height };
   }
-  function animate(element: HTMLElement, keyframes: Keyframe[], heldWidth = 0) {
+  function animate(element: HTMLElement, keyframes: Keyframe[], hold?: { pane: string; width: number }) {
     const animation = element.animate(keyframes, { duration: PANE_CREATION_MS, easing: PANE_CREATION_EASING, fill: 'both' });
     animations.add(animation);
-    if (heldWidth > .5) {
-      element.style.setProperty(PANE_CONTENT_HOLD_X, `${heldWidth}px`);
-      holds.set(element, animation);
+    if (hold && hold.width > .5) {
+      heldWidths.set(hold.pane, hold.width);
+      holds.set(hold.pane, animation);
     }
     // Cancellation settles synchronously (settleFrames); this late callback
     // must not release a newer animation's hold on the same frame.
     const release = () => {
       animations.delete(animation);
       animation.cancel();
-      if (holds.get(element) === animation) releaseHold(element);
+      if (hold && holds.get(hold.pane) === animation) releaseHold(hold.pane);
     };
     void animation.finished.then(release, release);
   }
@@ -119,7 +125,7 @@ export function createPaneCreationMotion(root: () => HTMLElement | undefined, re
         const plan = stablePaneFrame(a, clipInsets(old.clip), b);
         // Keep left/top positioning: pane-hosted fixed overlays must retain
         // their window coordinate space, which a parent transform would change.
-        animate(frame.element, [{ ...bounds(plan.from), clipPath: inset(plan.fromClip) }, { ...bounds(plan.to), clipPath: inset(plan.toClip) }], plan.held.w);
+        animate(frame.element, [{ ...bounds(plan.from), clipPath: inset(plan.fromClip) }, { ...bounds(plan.to), clipPath: inset(plan.toClip) }], { pane: key.slice('pane:'.length), width: plan.held.w });
       } else {
         animate(frame.element, [{ transform: `translate(${a.x - b.x}px, ${a.y - b.y}px)`, width: `${a.w}px`, height: `${a.h}px`, clipPath: old.clip === 'none' ? 'inset(0px)' : old.clip }, { transform: 'translate(0px, 0px)', width: `${b.w}px`, height: `${b.h}px`, clipPath: 'inset(0px)' }]);
       }
@@ -155,5 +161,10 @@ export function createPaneCreationMotion(root: () => HTMLElement | undefined, re
     const canvas = root();
     if (canvas) resumeEntryReflows(canvas);
   }
-  return { prepare, play, finish, pause, resume };
+  /** CSS value for a pane frame's `--pane-content-hold-x`, if it is held. */
+  const heldWidth = (pane: string): string | undefined => {
+    const width = heldWidths.get(pane);
+    return width === undefined ? undefined : `${width}px`;
+  };
+  return { prepare, play, finish, pause, resume, heldWidth };
 }

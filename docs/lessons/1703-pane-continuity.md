@@ -6,6 +6,13 @@ scroll position and row DOM still reset. Flat pane hosts keyed by pane ID keep
 the same DOM through split/close operations; the split tree remains the layout
 model and separator geometry still uses its constraints.
 
+Stable DOM also retains the original row's browser focus after logical focus
+moves to the new pane. If the next command palette captures that stale row,
+closing it reactivates the original pane before executing the selected command.
+Clear focus when it still belongs to an inactive explorer pane; do not force
+DOM focus into the new pane. The palette regression verifies that a subsequent
+view command changes the new pane while the original retains its view.
+
 Recursive CSS custom properties were not a safe way to flatten the geometry:
 browser substitution expanded shared expressions repeatedly and collapsed the
 last panes of a deep chain. Reuse the existing numeric domain geometry instead.

@@ -1,4 +1,5 @@
 import { test, expect, type Page } from './fixtures';
+import { runPaletteCommand } from './helpers';
 
 async function freezeSplit(page: Page, placement: 'left' | 'right' | 'up' | 'down') {
   return page.evaluate(async placement => {
@@ -195,6 +196,20 @@ test('opening preview keeps the pane canvas contained without observer feedback'
   expect(overflow.horizontal).toBeLessThanOrEqual(1);
   expect(overflow.vertical).toBeLessThanOrEqual(1);
   expect(errors).toEqual([]);
+});
+
+test('a palette command after a split still acts on the newly active pane', async ({ page }) => {
+  await page.goto('/?path=/home/user/Documents&viewMode=details');
+  await page.locator('.entry-item').first().click();
+  const originalId = await page.locator('.explorer-pane').getAttribute('data-pane-id');
+  await runPaletteCommand(page, 'Split Pane Right');
+  await expect(page.locator('.explorer-pane')).toHaveCount(2);
+  const incoming = page.locator(`.explorer-pane:not([data-pane-id="${originalId}"])`);
+  await expect(incoming).toHaveClass(/active/);
+  await runPaletteCommand(page, 'Tiles View');
+  await expect(incoming.locator('.tiles-view')).toBeVisible();
+  await expect(page.locator(`.explorer-pane[data-pane-id="${originalId}"] .details-view`)).toBeVisible();
+  await expect(incoming).toHaveClass(/active/);
 });
 
 test('capture anchored reveal before, during and after creation', async ({ page }) => {

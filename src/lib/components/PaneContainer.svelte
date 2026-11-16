@@ -40,11 +40,16 @@
   });
   $effect(() => {
     instance;
+    const activePaneId = windowTabsManager.activePaneId;
     untrack(dividers.cancel);
-    // Unmounting used to drop focus with the old tree. A retained tree is
-    // inert; do not depend on each engine's inert focus fixup (#1173).
+    // Retained DOM must not keep an obsolete input owner. In particular, a
+    // launcher opened after splitting must not capture the original row and
+    // reactivate its pane on close (#1703). Pane focus remains manager state;
+    // clearing stale DOM focus does not force focus into the new pane.
     const focused = document.activeElement;
-    if (focused instanceof HTMLElement && focused.closest(".pane-tree.retained")) focused.blur();
+    const owner = focused?.closest<HTMLElement>(".explorer-pane");
+    if (focused instanceof HTMLElement && (focused.closest(".pane-tree.retained")
+      || (owner && owner.dataset.paneId !== activePaneId))) focused.blur();
   });
   $effect(() => { geometry; dividers.reconcile(); });
   $effect(() => {

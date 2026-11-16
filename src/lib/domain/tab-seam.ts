@@ -1,0 +1,235 @@
+/**
+ * Geometry of the Floating Islands active tab (#1734): the hole it cuts in
+ * the strip shade, the outline its edge highlight strokes, and the key shadow
+ * it casts. Pure: every length is a CSS pixel in the title bar's coordinate
+ * space (x right, y down), and `base` is the strip base, where the tabs end
+ * and the islands' top edges begin.
+ *
+ * The silhouette is the tab box with rounded top corners plus two concave
+ * fillets: true quarter circles tangent to the tab side and to the base.
+ * `offset` grows (positive) or shrinks (negative) the silhouette along its
+ * normal: the edge stroke's centre line sits half a stroke inside it, so the
+ * stroke continues the islands' 1px inside border, and the strip shade's hole
+ * is half a pixel smaller, so the shade runs under the tab's anti-aliased edge.
+ */
+
+/** Concave fillet radius of a fully open active tab. */
+export const TAB_FILLET = 14;
+
+/** Depth of the seam an island under the tab cuts into its top edge:
+ *  its 1px border plus the half-pixel inset highlight below it. */
+export const TAB_SEAM_DEPTH = 2;
+
+/** Where the light comes from: the top left, so shadows fall down-right. */
+export const TAB_LIGHT = { dx: 1.5, dy: 2, blur: 2.5, liftBlur: 3 } as const;
+
+export interface TabBox {
+  readonly left: number;
+  readonly width: number;
+  readonly top: number;
+  readonly base: number;
+}
+
+/** Horizontal extent the active tab claims in the strip, fillets included. */
+export interface TabHole {
+  readonly left: number;
+  readonly right: number;
+}
+
+export interface TabContour {
+  readonly left: number;
+  readonly right: number;
+  readonly top: number;
+  readonly base: number;
+  /** Top-corner radius, narrowed to fit the tab. */
+  readonly radius: number;
+  /** Concave fillet radius, narrowed to fit the tab's height. */
+  readonly fillet: number;
+}
+
+/** An island whose top edge meets the strip base under a fillet foot. */
+export interface IslandEdge {
+  readonly left: number;
+  readonly right: number;
+  readonly radius: number;
+}
+
+const num = (value: number, fallback = 0): number => (Number.isFinite(value) ? value : fallback);
+const nonNegative = (value: number): number => Math.max(0, num(value));
+/** Short, stable path numbers: 3 decimals is far below a device pixel. */
+const n = (value: number): string => String(Math.round(value * 1000) / 1000);
+
+/**
+ * The strip region the active tab owns, or null when there is no tab. A tab
+ * that is just starting its slide-in (zero width) keeps a zero-width hole at
+ * its position, so the title bar never loses its hole mark for a frame.
+ */
+export function tabHoleFor(
+  tab: { readonly left: number; readonly width: number } | null | undefined,
+  fillet: number,
+): TabHole | null {
+  if (!tab || !Number.isFinite(tab.left)) return null;
+  const width = nonNegative(tab.width);
+  if (width === 0) return { left: tab.left, right: tab.left };
+  const flare = nonNegative(fillet);
+  return { left: tab.left - flare, right: tab.left + width + flare };
+}
+
+/** The tab's contour, with radii narrowed so a narrow or short tab keeps a valid shape. */
+export function tabContour(tab: TabBox, radius: number, fillet: number): TabContour {
+  const left = num(tab.left);
+  const width = nonNegative(tab.width);
+  const base = num(tab.base);
+  const top = Math.min(num(tab.top, base), base);
+  const height = base - top;
+  const flare = Math.min(nonNegative(fillet), height);
+  const corner = Math.min(nonNegative(radius), width / 2, height - flare);
+  return { left, right: left + width, top, base, radius: Math.max(0, corner), fillet: flare };
+}
+
+interface Outline {
+  /** Left fillet foot, on the base line. */
+  readonly start: { x: number; y: number };
+  readonly end: { x: number; y: number };
+  /** Path segments after the starting point. */
+  readonly body: string;
+}
+
+/** The silhouette boundary from the left fillet foot over the tab to the right foot. */
+function outline(c: TabContour, offset: number): Outline {
+  const o = num(offset);
+  const f = c.fillet;
+  let xl = c.left - o;
+  let xr = c.right + o;
+  if (xr < xl) xl = xr = (c.left + c.right) / 2;
+  const top = Math.min(c.top - o, c.base - f);
+  const corner = Math.max(0, Math.min(c.radius + o, (xr - xl) / 2, c.base - f - top));
+  const ring = Math.max(0, f - o);
+  const footY = c.base - f + ring;
+  const parts: string[] = [];
+  const fillet = (x: number, y: number) =>
+    parts.push(ring > 0 ? `A${n(ring)} ${n(ring)} 0 0 0 ${n(x)} ${n(y)}` : `L${n(x)} ${n(y)}`);
+  const arc = (x: number, y: number) =>
+    parts.push(corner > 0 ? `A${n(corner)} ${n(corner)} 0 0 1 ${n(x)} ${n(y)}` : `L${n(x)} ${n(y)}`);
+  fillet(xl, c.base - f);
+  parts.push(`L${n(xl)} ${n(top + corner)}`);
+  arc(xl + corner, top);
+  parts.push(`L${n(xr - corner)} ${n(top)}`);
+  arc(xr, top + corner);
+  parts.push(`L${n(xr)} ${n(c.base - f)}`);
+  fillet(c.right + f, footY);
+  return { start: { x: c.left - f, y: footY }, end: { x: c.right + f, y: footY }, body: parts.join("") };
+}
+
+/**
+ * The closed silhouette (tab plus fillets), grown by `offset`, closed one
+ * pixel below the base so it covers the whole strip down to its bottom edge.
+ */
+export function tabSilhouettePath(c: TabContour, offset = 0): string {
+  const { start, end, body } = outline(c, offset);
+  const below = Math.max(start.y, c.base) + 1;
+  return `M${n(start.x)} ${n(start.y)}${body}L${n(end.x)} ${n(below)}L${n(start.x)} ${n(below)}Z`;
+}
+
+/** The strip shade: the whole title bar minus the active tab's silhouette,
+ *  shrunk by half a pixel so the shade runs under the tab's soft edge. */
+export function stripShadePath(width: number, height: number, c: TabContour | null): string {
+  const w = nonNegative(width);
+  const h = nonNegative(height);
+  const strip = `M0 0H${n(w)}V${n(h)}H0Z`;
+  return c ? `${strip}${tabSilhouettePath(c, -0.5)}` : strip;
+}
+
+export interface TabEdge {
+  /** Open path for a 1px stroke: island top, tab outline, island top. */
+  readonly d: string;
+  /** Horizontal extent of the stroke; it fades to nothing at both ends. */
+  readonly from: number;
+  readonly to: number;
+  /** Where the stroke reaches full strength, measured inward from each end. */
+  readonly fadeIn: number;
+  readonly fadeOut: number;
+}
+
+/** How far the stroke runs along the base when no island meets a foot. */
+const LOOSE_REACH = 2;
+
+/**
+ * The edge highlight: one stroke along the island top edge, up the fillet,
+ * over the tab and back down, continuing the islands' 1px inside border and
+ * fading out through each island's rounded top corner.
+ */
+export function tabEdgePath(
+  c: TabContour,
+  islands: { readonly left?: IslandEdge | null; readonly right?: IslandEdge | null } = {},
+): TabEdge {
+  const { start, end, body } = outline(c, -0.5);
+  const y = start.y;
+  const leftIsland = islands.left && islands.left.left < start.x ? islands.left : null;
+  const rightIsland = islands.right && islands.right.right > end.x ? islands.right : null;
+  const parts: string[] = [];
+  let from: number;
+  let fadeIn: number;
+  if (leftIsland) {
+    const r = Math.min(nonNegative(leftIsland.radius), start.x - leftIsland.left);
+    from = leftIsland.left;
+    fadeIn = Math.max(r, 1);
+    if (r > 0.5) {
+      parts.push(`M${n(leftIsland.left + 0.5)} ${n(c.base + r)}`);
+      parts.push(`A${n(r - 0.5)} ${n(r - 0.5)} 0 0 1 ${n(leftIsland.left + r)} ${n(y)}`);
+    } else parts.push(`M${n(leftIsland.left)} ${n(y)}`);
+    parts.push(`L${n(start.x)} ${n(y)}`);
+  } else {
+    const reach = LOOSE_REACH * Math.max(c.fillet, 1);
+    from = start.x - reach;
+    fadeIn = reach;
+    parts.push(`M${n(from)} ${n(y)}L${n(start.x)} ${n(y)}`);
+  }
+  parts.push(body);
+  let to: number;
+  let fadeOut: number;
+  if (rightIsland) {
+    const r = Math.min(nonNegative(rightIsland.radius), rightIsland.right - end.x);
+    to = rightIsland.right;
+    fadeOut = Math.max(r, 1);
+    if (r > 0.5) {
+      parts.push(`L${n(rightIsland.right - r)} ${n(y)}`);
+      parts.push(`A${n(r - 0.5)} ${n(r - 0.5)} 0 0 1 ${n(rightIsland.right - 0.5)} ${n(c.base + r)}`);
+    } else parts.push(`L${n(rightIsland.right)} ${n(y)}`);
+  } else {
+    const reach = LOOSE_REACH * Math.max(c.fillet, 1);
+    to = end.x + reach;
+    fadeOut = reach;
+    parts.push(`L${n(to)} ${n(y)}`);
+  }
+  return { d: parts.join(""), from, to, fadeIn, fadeOut };
+}
+
+export interface TabKeyShadow {
+  /** The tab silhouette: the shadow's shape and its cut-out. */
+  readonly silhouette: string;
+  readonly dx: number;
+  readonly dy: number;
+  readonly blur: number;
+  readonly liftBlur: number;
+}
+
+/**
+ * The key shadow the tab casts on the strip: its own silhouette, offset away
+ * from the top-left light and blurred, with the silhouette itself cut out so
+ * nothing darkens the translucent tab. A fainter, centred lift sits under it.
+ */
+export function tabKeyShadow(c: TabContour, light: typeof TAB_LIGHT = TAB_LIGHT): TabKeyShadow {
+  return {
+    silhouette: tabSilhouettePath(c, 0),
+    dx: light.dx,
+    dy: light.dy,
+    blur: light.blur,
+    liftBlur: light.liftBlur,
+  };
+}
+
+/** Pick the island whose top edge spans `x` on the strip base, if any. */
+export function islandAt(islands: readonly IslandEdge[], x: number): IslandEdge | null {
+  return islands.find((island) => island.left <= x && x <= island.right) ?? null;
+}

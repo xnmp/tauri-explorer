@@ -3,6 +3,9 @@ export const TAB_MAX_WIDTH = 220;
 export const TAB_MIN_WIDTH = 32;
 export const TAB_ACTIVE_MIN_WIDTH = 120;
 export const TAB_GAP = 1;
+/** Room the tab viewport keeps beside its tabs so the active tab's fillets
+ *  (14px) and their 1px ring are never clipped by the scroller (#1734). */
+export const TAB_BLEED = 15;
 
 export function tabStripLayout(count: number, availableWidth: number, activeMinimum = TAB_ACTIVE_MIN_WIDTH) {
   const size = Number.isFinite(count) ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(count))) : 0;
@@ -40,5 +43,26 @@ export function tabEdgeScrollSpeed(pointer: number, width: number): number {
   const edge = Math.min(24, width / 3);
   if (pointer < edge) return -360 * (1 - pointer / edge);
   if (pointer > width - edge) return 360 * (1 - (width - pointer) / edge);
+  return 0;
+}
+
+/**
+ * Scroll delta that reveals a tab inside the tab viewport, leaving up to
+ * `bleed` of room on the near side so its fillets stay visible. The room
+ * shrinks when the tab nearly fills the viewport; a tab wider than the
+ * viewport aligns its leading edge.
+ */
+export function tabRevealDelta(
+  tab: { readonly left: number; readonly right: number },
+  view: { readonly left: number; readonly right: number },
+  bleed = TAB_BLEED,
+): number {
+  const values = [tab.left, tab.right, view.left, view.right];
+  if (!values.every(Number.isFinite)) return 0;
+  const tabWidth = Math.max(0, tab.right - tab.left);
+  const viewWidth = Math.max(0, view.right - view.left);
+  const room = Math.max(0, Math.min(Number.isFinite(bleed) ? bleed : 0, (viewWidth - tabWidth) / 2));
+  if (tab.left < view.left + room || tabWidth > viewWidth) return tab.left - (view.left + room);
+  if (tab.right > view.right - room) return tab.right - (view.right - room);
   return 0;
 }

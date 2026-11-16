@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { filterOpenTabs, tabEdgeScrollSpeed, tabStripLayout } from '$lib/domain/tab-strip';
+import { filterOpenTabs, tabEdgeScrollSpeed, tabRevealDelta, tabStripLayout, TAB_BLEED } from '$lib/domain/tab-strip';
 
 describe('Chrome tab sizing', () => {
   it('caps comfortable tabs and gives crowded inactive tabs space back to the active label', () => {
@@ -79,5 +79,22 @@ describe('tab drag edge scrolling', () => {
     expect(tabEdgeScrollSpeed(0, 0)).toBe(0);
     expect(tabEdgeScrollSpeed(NaN, 300)).toBe(0);
     expect(tabEdgeScrollSpeed(4, 9)).toBe(0);
+  });
+});
+
+describe('tabRevealDelta', () => {
+  const view = { left: 0, right: 300 };
+  it('leaves fillet room on the side it scrolls toward', () => {
+    expect(tabRevealDelta({ left: -50, right: 70 }, view)).toBe(-50 - TAB_BLEED);
+    expect(tabRevealDelta({ left: 250, right: 370 }, view)).toBe(70 + TAB_BLEED);
+    expect(tabRevealDelta({ left: 20, right: 140 }, view)).toBe(0);
+  });
+  it('narrows the room when the tab nearly fills the viewport, and aligns an oversized tab', () => {
+    expect(tabRevealDelta({ left: 10, right: 290 }, view)).toBe(0);
+    expect(tabRevealDelta({ left: 400, right: 690 }, view)).toBe(400 - 5);
+    expect(tabRevealDelta({ left: 40, right: 400 }, view)).toBe(40);
+  });
+  it('ignores malformed geometry', () => {
+    expect(tabRevealDelta({ left: Number.NaN, right: 3 }, view)).toBe(0);
   });
 });

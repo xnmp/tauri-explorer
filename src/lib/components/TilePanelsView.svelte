@@ -168,7 +168,10 @@
   {/if}
 {/snippet}
 
+<!-- Open panels take their width from VirtualList's later observer: an entry
+     reflow measured in FileList's delivery would start displaced (#1718). -->
 <TileSurface class="tiles-view tile-panels-view" fill {layout} bind:element={rootEl} data-columns={columns}
+  data-entry-reflow-off={banded ? "" : undefined}
   style="--tile-caret-top: {layout.paddingTop + layout.displaySize - 17}px"
   onpointerover={hover} onpointerleave={() => tiles.setHot(null)}>
   <VirtualList

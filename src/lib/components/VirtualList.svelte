@@ -33,8 +33,9 @@
     scrollToIndex?: (index: number) => void;
     /** Scroll to an absolute offset (CSS px); the rendered window follows synchronously. */
     scrollToOffset?: (top: number) => void;
-    /** Reports the scrollport's inner width (fractional CSS px, excluding padding
-     *  and a scrollbar) and its client height, within ResizeObserver delivery and
+    /** Reports the item layout width (fractional CSS px, excluding padding, a
+     *  scrollbar and any `--virtual-content-inset-end`) and the scrollport's
+     *  client height, within ResizeObserver delivery and
      *  so before paint (#1061). Size changes of the content never trigger it. */
     onviewportsize?: (size: { width: number; height: number }) => void;
     /** Extra class(es) for the scroll viewport (e.g. "list-view" so marquee /
@@ -257,11 +258,16 @@
   .virtual-canvas {
     position: relative;
     flex-shrink: 0;
+    /* Hosts can narrow the item layout without narrowing the scrollport:
+       items lay out in the remaining width and may paint into the inset
+       (FileList maps a held pane reveal here, #1718). */
+    margin-right: var(--virtual-content-inset-end, 0px);
   }
 
   .virtual-probe {
     height: 0;
     pointer-events: none;
+    margin-right: var(--virtual-content-inset-end, 0px);
   }
 
   .virtual-item {

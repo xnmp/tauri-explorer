@@ -245,7 +245,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `panel-resize.ts` — fixed/live automatic width preference adapter over the scalar gesture owner.
 - `scalar-resize.ts` — captured scalar drafts, frame identity, durable retirement and external-source supersession.
 - `pane-resize.ts` — owns captured divider geometry, one coalesced pointer frame, and cancellation on release, blur or component retirement.
-- `pane-creation-motion.ts` — per-tab cancellable anchored reveal; captures live bounds/clips, holds content dimensions stable until settlement and carries ancestor clipping into interrupted nested splits (#1703, #1709).
+- `pane-creation-motion.ts` — per-tab cancellable anchored reveal; captures live bounds/clips, holds frame dimensions stable until settlement (publishing the held width as `--pane-content-hold-x`), carries ancestor clipping into interrupted nested splits, and pauses/finishes entry reflows with the reveal (#1703, #1709, #1718).
+- `entry-reflow-motion.ts` — DOM adapter for file-entry FLIP: measure painted entry positions by path, run a synchronous mutation, glide visible moved entries with `entry-reflow` animations tracked in a live registry; reads a pane's content hold, honours a view's `data-entry-reflow-off` (open Folder Peek panels) (#1718).
 - `pane-watch.ts` — per-pane observed navigation tickets, lease commit/rollback, pending-change replay and refresh admission.
 - `directory-events.ts` — shared native directory event subscription with explicit readiness, retry and late-listener retirement.
 - `pane-lineage.svelte.ts` — lazy per-pane entry lineage (#1431): the applicable contribution, debounced `changed` reloads, the 400ms first-paint hold, 300ms held arrivals and the `projectLineage` grouping; counts cycle fallbacks.
@@ -473,6 +474,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-window-lifecycle.ts` — window lifecycle (focus/close/resize) handlers.
 - `use-pane-dividers.svelte.ts` — single captured divider gesture per workspace; pointer/keyboard adapter with geometry and lifetime validation.
 - `use-pane-canvas-size.svelte.ts` — synchronous before-paint presentation sizing of the CSS-filled canvas; absolute pane frames cannot feed back into its ResizeObserver (#1703).
+- `use-file-view-width.svelte.ts` — FileList's layout width from a hold-excluding probe inside ResizeObserver delivery; commits width and paint-only inset together, wrapping a held reveal's reflow in the entry FLIP (#1061, #1718).
 - `use-pane-creation-motion.svelte.ts` — Svelte pre/post-update animation binding; pointer-gesture pause/release, keyboard settlement, reduced-motion, resize, scroll, divider input and teardown cancellation (#1703, #1709).
 - `use-inline-panel-width.svelte.ts` — mount-owned contribution of visible inline accessories to the pane viewport.
 - `use-panel-resize.svelte.ts` — localStorage width preference adapter for Sidebar, SCM, Miller and Git columns.
@@ -599,7 +601,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `pane-viewport.ts` — pure descendant minima (`paneMinima` sizes the rendered canvas and split children without measurement), canvas placement, active-pane reveal and keyboard divider policy.
 - `pane-layout.ts` — pane split-tree pure logic (#228); `focusAfterClosing`/`reinsertLeaf` for closing and restoring panes (#229).
 - `pane-presentation.ts` — flat constrained placement with readiness pruning and pure single-leaf-creation policy, independent of renderer ancestry (#1703).
-- `pane-motion.ts` — pure stable-size reveal plan and clipped visible rectangles; separates file-grid layout from animated bounds and preserves interruption geometry (#1709).
+- `pane-motion.ts` — pure stable-size reveal plan and clipped visible rectangles, reveal timing and the held extent the file view treats as paint-only room; preserves interruption geometry (#1709, #1718).
+- `entry-reflow.ts` — pure FLIP plan for entries keyed by path across one reflow: glide offsets for painted entries, none for newly mounted or departed ones (#1718).
 - `window-tab-order.ts` — tab-strip index arithmetic: insertion after the active tab, Ctrl+Tab wrapping, drag reordering.
 - `closed-panes.ts` — bounded closed-pane stack, pane-vs-tab restore precedence, repeated last-tab close detection (#229).
 - `tab-title.ts` — VS Code-style tab title disambiguation.

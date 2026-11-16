@@ -34,3 +34,12 @@ it('also handles a growing or moving survivor without resizing its content each 
 it('keeps fully clipped panes empty for hit testing', () => {
   expect(visiblePaneRect({ x: 0, y: 0, w: 200, h: 200 }, [0, 210, 0, 0]).w).toBe(0);
 });
+
+it('reports the extent held beyond the final bounds as paint-only room for the file view', () => {
+  const source = { x: 0, y: 0, w: 1000, h: 800 };
+  expect(stablePaneFrame(source, NO_PANE_INSET, { x: 0, y: 0, w: 497, h: 800 }).held).toEqual({ w: 503, h: 0 });
+  expect(stablePaneFrame(source, NO_PANE_INSET, { x: 503, y: 0, w: 497, h: 800 }).held).toEqual({ w: 503, h: 0 });
+  expect(stablePaneFrame(source, NO_PANE_INSET, { x: 0, y: 403, w: 1000, h: 397 }).held).toEqual({ w: 0, h: 403 });
+  // A growing survivor is never held: its content already fits.
+  expect(stablePaneFrame({ x: 100, y: 0, w: 240, h: 200 }, NO_PANE_INSET, { x: 0, y: 0, w: 500, h: 350 }).held).toEqual({ w: 0, h: 0 });
+});

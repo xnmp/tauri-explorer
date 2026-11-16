@@ -4,7 +4,7 @@
 -->
 <script lang="ts">
   import { loadView, loadedView, viewLoadFailed, viewRendererFor } from "./view-loaders.svelte";
-  import { flushSync, tick, onDestroy, untrack } from "svelte";
+  import { tick, onDestroy, untrack } from "svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { setFileListFocusReturn } from "$lib/state/file-list-focus-context";
   import { createDeferredFocusRequest, type DeferredFocusRequest } from "$lib/state/deferred-focus";
@@ -25,6 +25,7 @@
   import { rectDimToCSS } from "$lib/domain/zoom";
   import { pastDragThreshold } from "$lib/domain/pointer-drag";
   import { marqueeLayerTransforms } from "$lib/domain/marquee-rect";
+  import { useFileViewWidth } from "$lib/composables/use-file-view-width.svelte";
   import InlineNewFolder from "./InlineNewFolder.svelte";
   import PluginFileView from "./PluginFileView.svelte";
   import { fileViewRegistry } from "$lib/plugins/file-view-registry.svelte";
@@ -119,8 +120,6 @@
 
   let viewScrollToIndex = $state<((index: number) => void) | undefined>();
 
-  // Track content geometry for grid columns and cursor visibility.
-  let contentWidth = $state(0);
   // An explicit navigation/focus reveal owns visibility until the user scrolls.
   // ResizeObserver delivery order differs between engines, so DOM membership
   // after a resize cannot establish whether the cursor was visible before it.
@@ -152,22 +151,15 @@
   // Cached marquee indices to skip redundant selectByIndices calls when the covered items haven't changed
   let lastMarqueeIndices: number[] | null = null;
 
-  $effect(() => {
-    if (!contentRef) return;
-    const observer = new ResizeObserver((entries) => {
-      const width = entries[0]?.contentRect.width ?? 0;
-      // ResizeObserver runs after layout and before paint. Commit both the
-      // column count and row chunking in this delivery, so a restored preview
-      // dock cannot paint rows sized for the previous (fullscreen) width.
-      flushSync(() => { contentWidth = width; });
-      if (cachedDragRect) {
-        cachedDragRect = contentRef!.getBoundingClientRect();
-        setMarqueeBase();
-      }
-    });
-    observer.observe(contentRef);
-    return () => observer.disconnect();
+  let layoutProbe = $state<HTMLElement | null>(null);
+  const viewWidth = useFileViewWidth({
+    content: () => contentRef, probe: () => layoutProbe,
+    onresize: (content) => { if (cachedDragRect) { cachedDragRect = content.getBoundingClientRect(); setMarqueeBase(); } },
   });
+  const contentWidth = $derived(viewWidth.width);
+  // Only views whose entries flow with the width reflow under a held reveal;
+  // Details rows keep their full held width and hit area until it settles.
+  const flowInset = $derived(!pluginView && (explorer.viewMode === "tiles" || explorer.viewMode === "list") ? viewWidth.inset : 0);
 
   $effect(() => {
     if (cursorReveal && (cursorReveal.directory !== explorer.currentPath
@@ -501,6 +493,7 @@
     class:drop-target={listDropFeedback.active}
     class:marquee-active={marquee.isDragging}
     data-current-path={explorer.currentPath}
+    style:--virtual-content-inset-end="{flowInset}px"
     bind:this={contentRef}
     onwheelcapture={releaseCursorReveal}
     ontouchstartcapture={releaseCursorReveal}
@@ -510,6 +503,7 @@
     ondragleave={handleListDragLeave}
     ondrop={handleListDrop}
   >
+    <div class="layout-probe" bind:this={layoutProbe} aria-hidden="true"></div>
     {#if explorer.driveGone}
       <div class="status drive-gone-state">
         <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
@@ -710,6 +704,9 @@
     background: transparent;
     transition: background var(--transition-fast), box-shadow var(--transition-fast);
   }
+
+  /* Measures the view's layout width; excludes a held reveal's width (#1718). */
+  .layout-probe { position: absolute; top: 0; left: 0; right: var(--pane-content-hold-x, 0px); height: 0; visibility: hidden; pointer-events: none; }
 
   .content.drop-target {
     background: rgba(0, 120, 212, 0.08);

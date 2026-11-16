@@ -1,8 +1,9 @@
 import { paneCreation, sameLayout, type PaneCreation } from '$lib/domain/pane-presentation';
 import type { PaneNode, LeafRect } from '$lib/domain/pane-layout';
-import { stablePaneFrame, visiblePaneRect, type PaneInsets } from '$lib/domain/pane-motion';
+import { SvelteMap } from 'svelte/reactivity';
+import { PANE_CREATION_EASING, PANE_CREATION_MS, stablePaneFrame, visiblePaneRect, type PaneInsets } from '$lib/domain/pane-motion';
+import { finishEntryReflows, pauseEntryReflows, resumeEntryReflows } from './entry-reflow-motion';
 
-export const PANE_CREATION_MS = 220;
 interface Frame { element: HTMLElement; rect: LeafRect; clip: string }
 type Snapshot = Map<string, Frame>;
 
@@ -25,17 +26,40 @@ function inheritedInset(source: Frame, target: LeafRect): number[] {
 const inset = (values: readonly number[]) => `inset(${values.map(value => `${value}px`).join(' ')})`;
 
 /** One cancellable, presentation-only animation lifetime per retained tab.
- * File-view dimensions stay fixed while the visible boundary moves through
- * clipping. The live layout settles once, on completion or cancellation. */
+ * Frame dimensions stay fixed while the visible boundary moves through
+ * clipping, and settle once, on completion or cancellation. A held frame
+ * publishes its extra width so its file view reflows to the final width on
+ * the first frame and glides its entries there (#1718). */
 export function createPaneCreationMotion(root: () => HTMLElement | undefined, reduced: () => boolean) {
   let previous: PaneNode | undefined;
   let pending: { creation: PaneCreation; before: Snapshot; width: number; height: number } | undefined;
   const animations = new Set<Animation>();
+  /** Held frames' extra width by pane id, rendered by PaneLayoutView as
+   * `--pane-content-hold-x` (domain PANE_CONTENT_HOLD_X). The frame's inline
+   * style belongs to Svelte, which rewrites it whenever the pane's placement
+   * string changes, so the hold must be rendered state, never set directly. */
+  const heldWidths = new SvelteMap<string, number>();
+  /** The animation that owns each pane's hold. */
+  const holds = new Map<string, Animation>();
 
-  function finish() {
+  function releaseHold(pane: string) {
+    holds.delete(pane);
+    heldWidths.delete(pane);
+  }
+  /** Settle every frame now. Holds go in the same task as their animations, so
+   * no rendering opportunity sees a settled frame that still claims a hold. */
+  function settleFrames() {
     pending = undefined;
     for (const animation of animations) animation.cancel();
     animations.clear();
+    for (const pane of [...holds.keys()]) releaseHold(pane);
+  }
+  /** An interruption also settles the entries' reflow. A re-layout alone does
+   * not: a pane split again mid-glide continues from its painted entries. */
+  function finish() {
+    settleFrames();
+    const canvas = root();
+    if (canvas) finishEntryReflows(canvas);
   }
   function capture(): { frames: Snapshot; width: number; height: number } | undefined {
     const canvas = root();
@@ -60,14 +84,24 @@ export function createPaneCreationMotion(root: () => HTMLElement | undefined, re
     // Capture the currently displayed (possibly interrupted) frame before
     // cancelling its effects. A replacement starts from what the user saw.
     const snapshot = creation ? capture() : undefined;
-    finish();
+    settleFrames();
     previous = shown ? next : undefined;
     if (creation && snapshot) pending = { creation, before: snapshot.frames, width: snapshot.width, height: snapshot.height };
   }
-  function animate(element: HTMLElement, keyframes: Keyframe[]) {
-    const animation = element.animate(keyframes, { duration: PANE_CREATION_MS, easing: 'cubic-bezier(0.33, 1, 0.68, 1)', fill: 'both' });
+  function animate(element: HTMLElement, keyframes: Keyframe[], hold?: { pane: string; width: number }) {
+    const animation = element.animate(keyframes, { duration: PANE_CREATION_MS, easing: PANE_CREATION_EASING, fill: 'both' });
     animations.add(animation);
-    const release = () => { animations.delete(animation); animation.cancel(); };
+    if (hold && hold.width > .5) {
+      heldWidths.set(hold.pane, hold.width);
+      holds.set(hold.pane, animation);
+    }
+    // Cancellation settles synchronously (settleFrames); this late callback
+    // must not release a newer animation's hold on the same frame.
+    const release = () => {
+      animations.delete(animation);
+      animation.cancel();
+      if (hold && holds.get(hold.pane) === animation) releaseHold(hold.pane);
+    };
     void animation.finished.then(release, release);
   }
   function play() {
@@ -91,7 +125,7 @@ export function createPaneCreationMotion(root: () => HTMLElement | undefined, re
         const plan = stablePaneFrame(a, clipInsets(old.clip), b);
         // Keep left/top positioning: pane-hosted fixed overlays must retain
         // their window coordinate space, which a parent transform would change.
-        animate(frame.element, [{ ...bounds(plan.from), clipPath: inset(plan.fromClip) }, { ...bounds(plan.to), clipPath: inset(plan.toClip) }]);
+        animate(frame.element, [{ ...bounds(plan.from), clipPath: inset(plan.fromClip) }, { ...bounds(plan.to), clipPath: inset(plan.toClip) }], { pane: key.slice('pane:'.length), width: plan.held.w });
       } else {
         animate(frame.element, [{ transform: `translate(${a.x - b.x}px, ${a.y - b.y}px)`, width: `${a.w}px`, height: `${a.h}px`, clipPath: old.clip === 'none' ? 'inset(0px)' : old.clip }, { transform: 'translate(0px, 0px)', width: `${b.w}px`, height: `${b.h}px`, clipPath: 'inset(0px)' }]);
       }
@@ -117,7 +151,20 @@ export function createPaneCreationMotion(root: () => HTMLElement | undefined, re
     dividerClip[horizontal ? 3 : 2] = 0;
     animate(divider.element, [{ transform: horizontal ? `translateX(${delta}px)` : `translateY(${delta}px)`, clipPath: inset(dividerClip) }, { transform: 'translate(0px, 0px)', clipPath: 'inset(0px)' }]);
   }
-  function pause() { for (const animation of animations) animation.pause(); }
-  function resume() { for (const animation of animations) if (animation.playState === 'paused') animation.play(); }
-  return { prepare, play, finish, pause, resume };
+  function pause() {
+    for (const animation of animations) animation.pause();
+    const canvas = root();
+    if (canvas) pauseEntryReflows(canvas);
+  }
+  function resume() {
+    for (const animation of animations) if (animation.playState === 'paused') animation.play();
+    const canvas = root();
+    if (canvas) resumeEntryReflows(canvas);
+  }
+  /** CSS value for a pane frame's `--pane-content-hold-x`, if it is held. */
+  const heldWidth = (pane: string): string | undefined => {
+    const width = heldWidths.get(pane);
+    return width === undefined ? undefined : `${width}px`;
+  };
+  return { prepare, play, finish, pause, resume, heldWidth };
 }

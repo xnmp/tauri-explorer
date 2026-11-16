@@ -109,6 +109,14 @@ test('special folders take their pack-native icon in Miller columns, sidebar and
     await expect(tab(page, 'Folder').locator('svg.tab-icon')).toHaveCount(1);
     const box = await tab(page, 'src').locator('.tab-icon-special').boundingBox();
     expect(box && Math.round(box.width)).toBe(16);
+    // Tab-strip chrome must not recolor the pack-native artwork inside the
+    // imported icon component; it should match that same icon in the sidebar.
+    const fills = (locator: import('@playwright/test').Locator) => locator
+      .locator('path, rect, circle, ellipse, polygon, polyline, line, use')
+      .evaluateAll(shapes => shapes.map(shape => getComputedStyle(shape).fill));
+    const tabFills = await fills(tab(page, 'src').locator('.tab-icon-special'));
+    expect(tabFills.length).toBeGreaterThan(0);
+    expect(tabFills).toEqual(await fills(bookmark(page, 'src').locator('.nav-icon')));
 
     const sidebar = await page.locator('.files-view').boundingBox();
     const miller = await page.locator('.miller-columns:visible').boundingBox();

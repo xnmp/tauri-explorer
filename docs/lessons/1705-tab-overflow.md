@@ -11,6 +11,10 @@ create another tab along with the active tab and window controls.
 - Fixed-width tabs must give their title the remaining flex space. Otherwise
   the close glyph can sit at the tab's center, and an ordinary tab click closes
   it. The existing multi-pane close test caught this regression.
+- Extracted component CSS must preserve the original ownership boundary.
+  Limit the tab's folder-art fill rules to its own SVG; matching a special
+  folder's wrapper would recolor imported pack artwork. Compare computed
+  colors with the same icon in the sidebar, and keep Git glyphs stroke-only.
 - Reveal on explicit activation as well as ID/geometry changes. Selecting the
   already-active tab from search must reveal it after manual strip browsing.
 - A picker trigger and focusout dismissal must share ownership: moving focus

@@ -268,7 +268,7 @@
   }
 
   /* Dynamic folder icon color using CSS filter - adapts to theme accent */
-  .tab-area .tab-icon path {
+  .tab-area svg.tab-icon path {
     fill: var(--accent);
     opacity: 0.85;
   }
@@ -281,11 +281,11 @@
   /* A special folder's pack icon (#1499) is FileIcon in a wrapper span. */
   .tab-area .tab .tab-icon-special { display: inline-flex; flex-shrink: 0; }
 
-  .tab-area .tab:hover .tab-icon path {
+  .tab-area .tab:hover svg.tab-icon path {
     opacity: 1;
   }
 
-  .tab-area .tab.active .tab-icon path {
+  .tab-area .tab.active svg.tab-icon path {
     opacity: 1;
   }
 
@@ -345,8 +345,8 @@
     opacity: 0.85;
   }
 
-  .tab-area .tab-icon-git path,
-  .tab-area .tab-icon-git circle {
+  .tab-area svg.tab-icon-git path,
+  .tab-area svg.tab-icon-git circle {
     fill: none;
     stroke: currentColor;
   }

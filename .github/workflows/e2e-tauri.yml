@@ -377,6 +377,8 @@ jobs:
           env -u WAYLAND_DISPLAY GDK_BACKEND=x11 xvfb-run -a --server-args="-screen 0 2600x1600x24" dbus-run-session -- bash e2e-tauri/with-window-manager.sh bash -e -c '
             bun run test:e2e:tauri:dnd --negative-control
             bun run test:e2e:tauri:dnd --full
+            # HiDPI: positions must stay under the cursor at scale 2 (#1704).
+            bun run test:e2e:tauri:dnd --scale=2
           '
 
       # The runner's EDGEWEBDRIVER matches the Edge *browser*, but tauri apps

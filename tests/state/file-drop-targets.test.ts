@@ -94,10 +94,12 @@ describe("file drop target resolution and feedback", () => {
     Object.assign(target, { isConnected: false }); expect(registry.resolve(target)).toEqual({ type: "blocked" });
   });
 
-  it("uses DPR once for native hit tests and raw client coordinates at CSS zoom", () => {
+  it("hit-tests native and client coordinates unchanged at any DPR and CSS zoom (#1704)", () => {
     const target = dropElement(); register(target); hit(target); vi.stubGlobal("window", { devicePixelRatio: 2 });
+    // native_file_drag emits CSS viewport pixels; a DPR division here put the
+    // hit point at cursor / scale on HiDPI Linux and macOS.
     resolveDropTarget({ x: 300, y: 450 }); highlightTarget({ x: 300, y: 450 });
-    expect(document.elementFromPoint).toHaveBeenLastCalledWith(150, 225);
+    expect(document.elementFromPoint).toHaveBeenLastCalledWith(300, 450);
     resolveDropTargetAtPoint(300, 450); highlightTargetAtPoint(300, 450);
     expect(document.elementFromPoint).toHaveBeenLastCalledWith(300, 450);
     clearHighlights(); expect(target.classList.contains("drop-target")).toBe(false);

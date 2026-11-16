@@ -1,12 +1,17 @@
 import { test, expect, type Page } from "./fixtures";
 import { seedSettings } from "./helpers";
 
+// The commit graph is an opt-in experimental feature (#1675).
+test.beforeEach(async ({ page }) => {
+  await seedSettings(page, { enableGitGraph: true });
+});
+
 let pageErrors: string[] = [];
 test.beforeEach(({ page }) => { pageErrors = []; page.on("pageerror", error => pageErrors.push(error.message)); });
 test.afterEach(() => expect(pageErrors).toEqual([]));
 
 async function graph(page: Page, zoom = 100) {
-  await seedSettings(page, { zoomLevel: zoom }, { replace: true });
+  await seedSettings(page, { zoomLevel: zoom, enableGitGraph: true }, { replace: true });
   await page.setViewportSize({ width: 1600, height: 900 });
   await page.goto("/?path=/home/user/Documents/project");
   await expect(page.locator(".file-list .entry-item").first()).toBeVisible();

@@ -10,7 +10,12 @@
  * on, and the coordinate conversion (domain/zoom.ts) is engine-aware.
  */
 import { test, expect, type Page } from "./fixtures";
-import { HOME_URL, waitForEntries, pressShortcut } from "./helpers";
+import { HOME_URL, waitForEntries, pressShortcut, seedSettings } from "./helpers";
+
+// The commit graph is an opt-in experimental feature (#1675).
+test.beforeEach(async ({ page }) => {
+  await seedSettings(page, { enableGitGraph: true });
+});
 
 /** Bump the app zoom via the real command; returns the resulting factor. */
 async function zoomIn(page: Page, steps: number): Promise<number> {

@@ -72,6 +72,8 @@ rolls the new one out. Probe candidates from captured output, never
 `apt-cache … | grep -q`, which returns SIGPIPE (141) under pipefail. The 26.04
 image's `/usr/bin/sleep` is uutils coreutils and does not run under another
 name, so process fixtures link the Node binary instead (#1666).
+Playwright refuses 26.04 hosts outright, so every Playwright job, including
+perf.yml's Tiles guard, runs in the pinned Playwright container.
 Contracts: `tests/ci-apt-install.test.ts`.
 
 # Browser jobs in the Playwright container (#1367)
@@ -336,3 +338,16 @@ the repository variable `TEST_CACHE=off` to stop reads everywhere; dev pushes
 then re-run every target and store fresh results, which replaces stale
 entries. Remove the variable afterwards. Locally, run the suite directly
 (`bun run test`, `cargo test`); that never uses the cache.
+
+# macOS signing (#1671)
+
+`release.yml`'s macOS entry and the manual `macos-signing-check.yml` both build
+through `scripts/macos-release-build.sh`, which owns Developer ID signing,
+notarization of the `.app` and DMG, and the verification that gates them (the
+Tauri CLI only warns when it skips notarization). The `APPLE_*` secrets are
+all-or-none: none builds an unsigned DMG with a warning (an error once the
+repository variable `MACOS_REQUIRE_SIGNING` is 1), a partial set fails. The
+check workflow uses its own cache key so a dev run cannot seed the release
+job's cached tauri-cli binary.
+The script runs under macOS's stock bash 3.2 (no `mapfile`). Runbook and
+secret list: `docs/macos-signing.md`.

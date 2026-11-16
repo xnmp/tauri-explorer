@@ -14,8 +14,13 @@
  * explorer pane a usable file-list region.
  */
 import { test, expect, type Page } from "./fixtures";
-import { VIEW_MODES, applySettingsAndReload, waitForEntries, type ViewMode } from "./helpers";
+import { VIEW_MODES, applySettingsAndReload, waitForEntries, type ViewMode, seedSettings } from "./helpers";
 import type { MockControl } from "../src/lib/api/mock-control";
+
+// The commit graph is an opt-in experimental feature (#1675).
+test.beforeEach(async ({ page }) => {
+  await seedSettings(page, { enableGitGraph: true });
+});
 
 const DIR = "/home/preview-containment";
 const LONG_NAME =

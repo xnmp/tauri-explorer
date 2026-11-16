@@ -23,11 +23,10 @@ If another program changes the clipboard between Cut and Paste, Paste copies
 instead of moving. When ownership cannot be proven, Cut refuses the action;
 use Copy there.
 
-The current downloadable builds are unsigned. Windows may show a SmartScreen
-warning. The macOS DMG is Apple Silicon only and is not notarized; the
-[README](../README.md#install) has the quarantine instruction and a source-build
-route for Intel Macs. If you are uncomfortable bypassing an OS warning, wait
-for signed builds. There is no automatic updater: check the release page for
+The macOS DMG is Apple Silicon only, signed with a Developer ID and notarized,
+so it opens without a workaround; the [README](../README.md#install) has a
+source-build route for Intel Macs. Windows builds are unsigned and may show a
+SmartScreen warning. There is no automatic updater: check the release page for
 new versions and install them manually.
 
 ## When something goes wrong

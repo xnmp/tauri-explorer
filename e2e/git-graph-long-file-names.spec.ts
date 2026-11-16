@@ -15,7 +15,12 @@
  * image and the assertion cannot drift apart.
  */
 import { test, expect, type Page } from "./fixtures";
-import { waitForEntries } from "./helpers";
+import { waitForEntries, seedSettings } from "./helpers";
+
+// The commit graph is an opt-in experimental feature (#1675).
+test.beforeEach(async ({ page }) => {
+  await seedSettings(page, { enableGitGraph: true });
+});
 
 /**
  * Mirrors `MOCK_LONG_COMMIT_FILE_PATH` in src/lib/api/mock-invoke.ts, the file

@@ -9,7 +9,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { navigateTo, domTexts } from "./helpers";
+import { navigateTo, domTexts, setSettingToggle } from "./helpers";
 import { createNativeFixtureDirectory } from "../native-qualification";
 
 const repository = fs.realpathSync(
@@ -88,6 +88,7 @@ describe("native GitHub author avatar", () => {
 
   it("renders a GitHub noreply avatar through production IPC without breaking virtualized rows", async () => {
     await navigateTo(repository);
+    await setSettingToggle("Git Commit Graph", true); // opt-in experimental flag (#1675)
     await browser.execute(() => {
       localStorage.setItem("git-graph-avatar-preferences", JSON.stringify({ visible: true, gravatarEnabled: false }));
     });

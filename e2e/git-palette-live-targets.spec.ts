@@ -6,8 +6,13 @@
  * in place and execute against the loaded graph.
  */
 import { test, expect } from "./fixtures";
-import { waitForEntries } from "./helpers";
+import { waitForEntries, seedSettings } from "./helpers";
 import type { MockControl } from "../src/lib/api/mock-control";
+
+// The commit graph is an opt-in experimental feature (#1675).
+test.beforeEach(async ({ page }) => {
+  await seedSettings(page, { enableGitGraph: true });
+});
 
 test("open palette with an unchanged Git: query gains late history targets", async ({
   page,

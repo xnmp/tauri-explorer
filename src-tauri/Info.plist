@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Tauri Explorer asks Finder to move deleted files to the Trash, so you can restore them with Put Back.</string>
   <key>NSAppTransportSecurity</key><dict>
     <key>NSExceptionDomains</key><dict>
       <key>127.0.0.1</key><dict>

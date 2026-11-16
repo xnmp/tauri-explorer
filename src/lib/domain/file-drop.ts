@@ -97,7 +97,10 @@ export function html5DragUriList(source: { sessionId?: string; path: string; pat
 }
 
 /** HTML text survives WebKit's stripped custom types without becoming a URL
- * in the OS pasteboard. No filesystem path or link is embedded here. */
+ * in the OS pasteboard. No filesystem path or link is embedded here. It must
+ * stay visible text: WebKit drops an empty fragment and synthesizes a file
+ * link in its place. On Linux the native source reads the marker and exports
+ * an empty fragment to receivers (`linux_html5::consume_source_html`, #1656). */
 export function html5DragHtml(source: { sessionId?: string }): string {
   return source.sessionId ? `<span>urn:tauri-explorer:drag:${source.sessionId}</span>` : "";
 }

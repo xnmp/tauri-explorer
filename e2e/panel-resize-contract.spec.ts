@@ -188,7 +188,7 @@ test("inline panels release geometry on hide and island hoist", async ({ page })
 
 for (const zoom of [80, 150]) {
   test(`left-edge Git columns follow zoomed pointer movement at ${zoom}%`, async ({ page }) => {
-    await seedSettings(page, { zoomLevel: zoom }, { replace: true });
+    await seedSettings(page, { zoomLevel: zoom, enableGitGraph: true /* opt-in, #1675 */ }, { replace: true });
     await page.setViewportSize({ width: 1800, height: 1000 });
     await page.goto("/?path=/home/user/Documents/project");
     await expect(page.locator(".file-list .entry-item").first()).toBeVisible();

@@ -12,7 +12,12 @@
  * 000c000 on other branch lines.
  */
 import { test, expect, type Page } from "./fixtures";
-import { waitForEntries } from "./helpers";
+import { waitForEntries, seedSettings } from "./helpers";
+
+// The commit graph is an opt-in experimental feature (#1675).
+test.beforeEach(async ({ page }) => {
+  await seedSettings(page, { enableGitGraph: true });
+});
 
 const MERGE_EXPERIMENT = "000f000"; // 15 — parents [12, 14]
 const MERGE_FEATURE = "000c000"; // 12 — first parent of 15

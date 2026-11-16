@@ -13,7 +13,12 @@
  * effect of the assertions so they are guaranteed to depict the asserted state.
  */
 import { test, expect } from "./fixtures";
-import { waitForEntries } from "./helpers";
+import { waitForEntries, seedSettings } from "./helpers";
+
+// The commit graph is an opt-in experimental feature (#1675).
+test.beforeEach(async ({ page }) => {
+  await seedSettings(page, { enableGitGraph: true });
+});
 
 const MONOSPACE = /monospace|ui-monospace|Menlo|Consolas|Courier|SFMono/i;
 

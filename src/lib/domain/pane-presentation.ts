@@ -18,7 +18,11 @@ export function panePresentation(root: PaneNode, viewport: PaneSize, divider: nu
   mark(root);
   function place(node: PaneNode) {
     const rect = node.type === 'leaf' ? geometry.panes.get(node.id)! : geometry.splits.get(node.id)!.rect;
-    const style = `left:${rect.x}px;top:${rect.y}px;width:${rect.w}px;height:${rect.h}px`;
+    // An unpartitioned canvas needs no measured placement. Native CSS fill
+    // lets descendant size observers see viewport/preview changes in their
+    // first delivery, without an extra presentation-measurement generation.
+    const style = node === root && node.type === 'leaf' ? 'left:0;top:0;width:100%;height:100%'
+      : `left:${rect.x}px;top:${rect.y}px;width:${rect.w}px;height:${rect.h}px`;
     if (!materialized.get(node.id)) { placeholders.push({ id: node.id, style }); return; }
     if (node.type === 'leaf') { panes.push({ id: node.id, style }); return; }
     const horizontal = node.direction === 'row';

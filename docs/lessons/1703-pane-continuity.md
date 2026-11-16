@@ -32,6 +32,11 @@ workspace overflow comes from the parent pane tree's minimum size, so
 The regression listens for actual page errors: adding a shallow probe observer
 changes delivery depth and can accidentally mask this particular feedback.
 
+Keep an unpartitioned pane on direct CSS fill rather than measured pixels.
+Otherwise preview/window resizing adds a presentation-observer generation
+before the file-list width observer, briefly retaining the old tile grid.
+Only actual split placement needs the constrained numeric geometry.
+
 Interrupted reveals need spatial clipping as well as interpolated rectangles.
 Splitting a still-opening incoming pane on the perpendicular axis otherwise
 lets its descendant paint and receive clicks ahead of the ancestor divider.

@@ -35,6 +35,11 @@ describe('pane creation policy', () => {
 });
 
 describe('flat pane placement', () => {
+  it('fills a lone pane directly in CSS without waiting for a viewport measurement', () => {
+    const layout = panePresentation(leaf('a'), { width: 0, height: 0 }, 6);
+    expect(layout.panes[0].style).toBe('left:0;top:0;width:100%;height:100%');
+  });
+
   it('keeps pane identities independent of split ancestry and emits each divider once', () => {
     const initial = panePresentation(leaf('a'), viewport, 6);
     const nested = panePresentation(splitLeaf(splitLeaf(leaf('a'), 'a', 'right', 'b', 'ab'), 'a', 'down', 'c', 'ac'), viewport, 6);

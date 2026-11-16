@@ -23,6 +23,7 @@ import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { collectStartupFiles, normalizeHashedNames } from "./startup-bundle.mjs";
+import { findLightDarkPolyfill } from "./css-polyfill-leaks.mjs";
 import { findHookLeaks } from "./release-hook-leaks.mjs";
 
 // Measured 2026-07-12 (chore/perf-regression-guards, post merge of dev):
@@ -227,6 +228,20 @@ if (process.env.VITE_E2E_HOOKS !== "1") {
   }
   console.log(`Hook check:  no test-support chunk or e2e marker in ${scripts.length} scripts`);
 }
+
+// Lightning CSS must not rewrite light-dark() into variables that user themes
+// never define (#1728; see vite.config.ts).
+const stylesheets = emittedFiles
+  .filter((file) => file.endsWith(".css"))
+  .map((file) => ({ file, text: readFileSync(resolve(clientDir, file), "utf-8") }));
+const polyfilled = findLightDarkPolyfill(stylesheets);
+if (polyfilled.length > 0) {
+  console.error("FAIL: built CSS contains the Lightning CSS light-dark() polyfill (--lightningcss-light/dark):");
+  for (const file of polyfilled) console.error(`  ${file}`);
+  console.error("Keep `css.lightningcss.exclude: Features.LightDark` in vite.config.ts (#1728).");
+  process.exit(1);
+}
+console.log(`CSS check:   no light-dark() polyfill in ${stylesheets.length} stylesheets`);
 
 if (startupRaw > STARTUP_RAW_BUDGET || startupGzip > STARTUP_GZIP_BUDGET) {
   console.error("FAIL: the full static startup graph exceeds its budget. Inspect eager imports before raising the cap.");

@@ -179,11 +179,13 @@ plist = "1.8"
 
 # Thin LTO + single codegen unit: measurable wins for the CPU-bound stacks
 # (image decode, ripgrep, fuzzy matching, zip) at an acceptable release build
-# cost; strip drops debug symbols from the shipped binary.
+# cost. strip = "debuginfo" drops DWARF but keeps the symbol table, so
+# release panic backtraces name their functions (#1682); "symbols" left
+# every frame "<unknown>".
 [profile.release]
 lto = "thin"
 codegen-units = 1
-strip = "symbols"
+strip = "debuginfo"
 
 # Compile dependencies optimized even in dev builds. The content-search stack
 # (regex, grep-searcher, ignore) is 10-50x slower at opt-level 0, which made

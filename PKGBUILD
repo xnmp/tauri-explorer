@@ -29,7 +29,8 @@ makedepends=(
   'openssl'
   'rust'
 )
-options=('!lto')
+# '!strip': keep the symbol table release backtraces need (#1682).
+options=('!lto' '!strip')
 source=()
 sha256sums=()
 

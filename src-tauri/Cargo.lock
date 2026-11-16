@@ -5564,7 +5564,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-explorer"
-version = "1.25.2"
+version = "1.26.0"
 dependencies = [
  "base64 0.23.1",
  "bytes",

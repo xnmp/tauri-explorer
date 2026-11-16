@@ -294,8 +294,15 @@ pub async fn open_recycle_bin() -> Result<(), AppError> {
 /// to its own install directory (`C:\Program Files\tauri-explorer`, #408),
 /// and Finder/DMG on macOS uses `/`. Both compare canonicalized so prefix
 /// (`\\?\`) and case differences on Windows can't defeat the check.
+///
+/// An AppImage's AppRun changes into `$APPDIR/usr` before exec'ing the
+/// binary, so any cwd inside an AppImage mount is an artifact too (#1691).
 pub fn is_launcher_artifact_cwd(cwd: &std::path::Path, exe_dir: Option<&std::path::Path>) -> bool {
     if cwd == std::path::Path::new("/") {
+        return true;
+    }
+    let appdir = std::env::var_os("APPDIR").map(std::path::PathBuf::from);
+    if is_inside_appimage_mount(cwd, appdir.as_deref()) {
         return true;
     }
     let Some(exe_dir) = exe_dir else { return false };
@@ -303,6 +310,28 @@ pub fn is_launcher_artifact_cwd(cwd: &std::path::Path, exe_dir: Option<&std::pat
         (Ok(c), Ok(e)) => c == e,
         _ => cwd == exe_dir,
     }
+}
+
+/// True when `cwd` lies inside an AppImage's mounted filesystem: this
+/// process's `$APPDIR`, or (for a second instance handing over its cwd
+/// through single-instance) any `.mount_*` runtime mount whose root holds
+/// the image's `AppRun` entry point (#1691).
+fn is_inside_appimage_mount(cwd: &std::path::Path, appdir: Option<&std::path::Path>) -> bool {
+    let cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+    if let Some(appdir) = appdir.filter(|dir| dir.is_absolute()) {
+        let appdir = appdir
+            .canonicalize()
+            .unwrap_or_else(|_| appdir.to_path_buf());
+        if appdir != std::path::Path::new("/") && cwd.starts_with(&appdir) {
+            return true;
+        }
+    }
+    cwd.ancestors().any(|dir| {
+        dir.file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with(".mount_"))
+            && dir.join("AppRun").exists()
+    })
 }
 
 /// Record the frontend cold-start timing summary in the app log. Written next
@@ -444,12 +473,12 @@ pub async fn get_log_dir(app: tauri::AppHandle) -> Result<String, AppError> {
 
 #[cfg(test)]
 mod tests {
-    use super::is_launcher_artifact_cwd;
     #[cfg(target_os = "linux")]
     use super::linux_trash_files_directory;
     #[cfg(not(target_os = "linux"))]
     use super::recycle_bin_launcher;
     use super::startup_progress_line;
+    use super::{is_inside_appimage_mount, is_launcher_artifact_cwd};
     #[cfg(target_os = "windows")]
     use std::ffi::OsString;
     use std::path::Path;
@@ -506,6 +535,41 @@ mod tests {
         assert!(!is_launcher_artifact_cwd(&home, Some(&exe_dir)));
         // Unknown exe dir: only "/" is rejected.
         assert!(!is_launcher_artifact_cwd(&home, None));
+    }
+
+    #[test]
+    fn appimage_mount_cwds_are_launcher_artifacts() {
+        let dir = tempfile::tempdir().unwrap();
+        // AppRun cds into $APPDIR/usr before exec'ing usr/bin/app (#1691).
+        let appdir = dir.path().join(".mount_tauri-AbCdEf");
+        let usr = appdir.join("usr");
+        let exe_dir = usr.join("bin");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        std::fs::write(appdir.join("AppRun"), b"").unwrap();
+
+        // Own $APPDIR, with or without the AppRun marker.
+        assert!(is_inside_appimage_mount(&usr, Some(&appdir)));
+        assert!(is_inside_appimage_mount(&appdir, Some(&appdir)));
+        // A second instance's mount: no $APPDIR match, found by AppRun.
+        let other = dir.path().join(".mount_tauri-ZyXwVu");
+        std::fs::create_dir_all(other.join("usr")).unwrap();
+        std::fs::write(other.join("AppRun"), b"").unwrap();
+        assert!(is_inside_appimage_mount(&other.join("usr"), Some(&appdir)));
+        assert!(is_inside_appimage_mount(&other.join("usr"), None));
+        assert!(is_launcher_artifact_cwd(&other.join("usr"), Some(&exe_dir)));
+
+        // Ordinary folders stay launch locations, including a `.mount_`
+        // lookalike without AppRun and a sibling of $APPDIR.
+        let home = dir.path().join("home");
+        let lookalike = dir.path().join(".mount_notes");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&lookalike).unwrap();
+        assert!(!is_inside_appimage_mount(&home, Some(&appdir)));
+        assert!(!is_inside_appimage_mount(&lookalike, None));
+        assert!(!is_launcher_artifact_cwd(&home, Some(&exe_dir)));
+        // A relative or root $APPDIR never swallows every cwd.
+        assert!(!is_inside_appimage_mount(&home, Some(Path::new("/"))));
+        assert!(!is_inside_appimage_mount(&home, Some(Path::new("usr"))));
     }
 
     #[cfg(target_os = "linux")]

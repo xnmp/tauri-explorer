@@ -178,6 +178,14 @@ pub(crate) fn init_test_logger() {
     log::set_max_level(log::LevelFilter::Debug);
 }
 
+/// Process-exit cleanup: cancel AI CLI children and settle installed-plugin
+/// mutations. Runs on `RunEvent::Exit`, and from the updater's Windows
+/// install path, which exits the process without that event (#1679).
+pub(crate) fn release_process_resources() {
+    ai::cancel_all();
+    installed_plugins::shutdown();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// Wire text (ADR 0031) for a native path handed to the frontend before any
 /// command runs, such as the launch working directory (#1592).
@@ -788,7 +796,9 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
         .run(|app, event| {
-            if matches!(&event,tauri::RunEvent::Exit){ai::cancel_all();installed_plugins::shutdown();}
+            if matches!(&event, tauri::RunEvent::Exit) {
+                release_process_resources();
+            }
             // Portal mode has no persistent window: closing the last picker
             // must not exit the service. Only its idle policy exits it, through
             // an explicit `exit(code)` (#1427).

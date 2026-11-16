@@ -4,8 +4,9 @@
  * if any entry is invalid, so the builder must fail closed.
  */
 
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { buildUpdaterManifest, UPDATER_PLATFORMS } from "../scripts/updater-manifest.mjs";
+import { buildUpdaterManifest, UPDATER_PLATFORMS, updaterSignatureProblem } from "../scripts/updater-manifest.mjs";
 
 const TAG = "v1.26.0";
 const ASSETS = [
@@ -91,5 +92,54 @@ describe("updater manifest", () => {
     const assets = ASSETS.map((a) => a.replace("1.26.0", "1.26.0-rc.1"));
     const manifest = build({ tag: "v1.26.0-rc.1", assets, signatures: signaturesFor(assets) });
     expect(manifest.version).toBe("1.26.0-rc.1");
+  });
+});
+
+/**
+ * Fixture produced by the real tauri-cli (`cargo tauri signer generate` with a
+ * throwaway key, then `cargo tauri signer sign payload.txt`); only the public
+ * key is kept.
+ */
+describe("updater signature verification", () => {
+  const fixture = (name: string) => new URL(`./fixtures/updater-signature/${name}`, import.meta.url);
+  const data = readFileSync(fixture("payload.txt"));
+  const signature = readFileSync(fixture("payload.txt.sig"), "utf8");
+  const pubkey = readFileSync(fixture("test.key.pub"), "utf8");
+  const appPubkey = JSON.parse(readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"))
+    .plugins.updater.pubkey as string;
+
+  /** Re-encode the signature file after editing its decoded lines. */
+  const editSignature = (edit: (lines: string[]) => void) => {
+    const lines = Buffer.from(signature.trim(), "base64").toString("utf8").split("\n");
+    edit(lines);
+    return Buffer.from(lines.join("\n")).toString("base64");
+  };
+
+  it("accepts a tauri-cli signature made with the configured key", () => {
+    expect(updaterSignatureProblem({ data, signature, pubkey })).toBeNull();
+  });
+
+  it("rejects a file changed after signing", () => {
+    const tampered = Buffer.concat([data, Buffer.from("x")]);
+    expect(updaterSignatureProblem({ data: tampered, signature, pubkey })).toMatch(/does not match the file/);
+  });
+
+  it("rejects a signature from a key other than the one installed apps embed", () => {
+    expect(updaterSignatureProblem({ data, signature, pubkey: appPubkey })).toMatch(/different key/);
+  });
+
+  it("rejects an edited trusted comment", () => {
+    const edited = editSignature((lines) => {
+      lines[2] = lines[2].replace("file:payload.txt", "file:other.txt");
+    });
+    expect(updaterSignatureProblem({ data, signature: edited, pubkey })).toMatch(/trusted comment/);
+  });
+
+  it("reports malformed signatures and keys instead of throwing", () => {
+    expect(updaterSignatureProblem({ data, signature: "", pubkey })).toMatch(/minisign format/);
+    expect(updaterSignatureProblem({ data, signature: "not base64 !!", pubkey })).toBeTypeOf("string");
+    expect(updaterSignatureProblem({ data, signature, pubkey: "" })).toMatch(/public key/);
+    const truncated = editSignature((lines) => lines.splice(2));
+    expect(updaterSignatureProblem({ data, signature: truncated, pubkey })).toMatch(/minisign format/);
   });
 });

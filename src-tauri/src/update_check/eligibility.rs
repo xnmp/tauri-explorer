@@ -4,8 +4,13 @@
 //! bundle type the Tauri bundler patches into the binary is not enough on its
 //! own: the AUR `-bin` package repacks the official `.deb`, so an Arch binary
 //! still reports `Deb`, and a `--no-bundle` distro build reports nothing.
-//! Self-update is therefore granted only when the install mechanism that the
-//! updater would drive is demonstrably the one that owns this copy.
+//!
+//! Self-update is granted only to installs the app owns end to end: Windows
+//! installers, an installed macOS `.app`, and an AppImage replacing its own
+//! file. Linux deb/rpm installs stay notify-only even though the plugin can
+//! drive `pkexec dpkg -i`/`rpm -U`: the system package manager owns them,
+//! `dpkg -i` cannot resolve new dependencies, and the plugin's fallbacks end
+//! in a terminal `sudo` that can block forever when launched from a shell.
 
 use std::path::Path;
 use tauri::utils::config::BundleType;
@@ -66,11 +71,9 @@ pub struct InstallFacts {
     /// Bundle type patched into the binary by the Tauri bundler; `None` for
     /// unbundled builds (macOS reports `App` even then, see `macos_app`).
     pub bundle: Option<Bundle>,
-    /// Linux: `$APPIMAGE` is set, i.e. the AppImage runtime launched us.
-    pub running_as_appimage: bool,
-    /// Linux deb/rpm: `dpkg`/`rpm` own the running executable. Only queried
-    /// for those bundle types; false otherwise.
-    pub owned_by_bundle_package_db: bool,
+    /// Linux: running inside the AppImage named by `$APPIMAGE`, whose
+    /// directory we can write (see `is_replaceable_appimage`).
+    pub replaceable_appimage: bool,
     /// macOS: the executable sits in a writable `.app` bundle (not a mounted
     /// disk image or a translocated copy).
     pub macos_app: bool,
@@ -81,9 +84,10 @@ pub struct InstallFacts {
 pub enum NotifyReason {
     /// Not produced by the Tauri bundler (dev build, `--no-bundle` package).
     Unbundled,
-    /// A deb/rpm-built binary that the matching package database does not own
-    /// (e.g. the AUR `-bin` repack, or files copied out of the package).
-    ForeignPackageManager,
+    /// A deb/rpm-built binary: the system package manager owns the files.
+    PackageManaged,
+    /// An AppImage binary not running from a writable AppImage of its own.
+    AppImageNotReplaceable,
     /// macOS app run from a disk image, translocated, or outside a bundle.
     MacAppNotInstalled,
     /// A bundle type with no self-update path on this OS.
@@ -104,14 +108,31 @@ pub fn classify(facts: &InstallFacts) -> Eligibility {
         (Os::Windows, Some(Bundle::Nsis | Bundle::Msi)) => SelfUpdate,
         (Os::Mac, Some(Bundle::App)) if facts.macos_app => SelfUpdate,
         (Os::Mac, Some(Bundle::App)) => NotifyOnly(MacAppNotInstalled),
-        (Os::Linux, Some(Bundle::AppImage)) if facts.running_as_appimage => SelfUpdate,
-        (Os::Linux, Some(Bundle::AppImage)) => NotifyOnly(Unbundled),
-        (Os::Linux, Some(Bundle::Deb | Bundle::Rpm)) if facts.owned_by_bundle_package_db => {
-            SelfUpdate
-        }
-        (Os::Linux, Some(Bundle::Deb | Bundle::Rpm)) => NotifyOnly(ForeignPackageManager),
+        (Os::Linux, Some(Bundle::AppImage)) if facts.replaceable_appimage => SelfUpdate,
+        (Os::Linux, Some(Bundle::AppImage)) => NotifyOnly(AppImageNotReplaceable),
+        (Os::Linux, Some(Bundle::Deb | Bundle::Rpm)) => NotifyOnly(PackageManaged),
         _ => NotifyOnly(UnsupportedBundle),
     }
+}
+
+/// True when this process runs from the AppImage that `$APPIMAGE` names and
+/// that file can be replaced. `$APPIMAGE` is inherited by child processes, so
+/// it alone could point at another application's AppImage; the executable
+/// must also lie inside the runtime's mount (`$APPDIR`). The updater writes
+/// the new image beside the old one, so its directory must be writable.
+pub fn is_replaceable_appimage(
+    exe: &Path,
+    appdir: Option<&Path>,
+    appimage: Option<&Path>,
+    dir_writable: impl Fn(&Path) -> bool,
+) -> bool {
+    let (Some(appdir), Some(appimage)) = (appdir, appimage) else {
+        return false;
+    };
+    appdir.is_absolute()
+        && appimage.is_absolute()
+        && exe.starts_with(appdir)
+        && appimage.parent().is_some_and(dir_writable)
 }
 
 /// True when a macOS executable path lies inside an installed `.app` bundle.
@@ -137,8 +158,7 @@ mod tests {
         InstallFacts {
             os,
             bundle,
-            running_as_appimage: false,
-            owned_by_bundle_package_db: false,
+            replaceable_appimage: false,
             macos_app: false,
         }
     }
@@ -167,30 +187,41 @@ mod tests {
     fn appimage_requires_the_appimage_runtime() {
         let mut f = facts(Os::Linux, Some(Bundle::AppImage));
         assert_ne!(classify(&f), Eligibility::SelfUpdate);
-        f.running_as_appimage = true;
+        f.replaceable_appimage = true;
         assert_eq!(classify(&f), Eligibility::SelfUpdate);
     }
 
     #[test]
-    fn deb_and_rpm_require_package_db_ownership() {
-        // The AUR -bin package repacks the .deb: the binary says Deb but
-        // pacman owns it, so dpkg must not be asked to install over it.
+    fn deb_and_rpm_stay_notify_only() {
+        // The AUR -bin package repacks the .deb, and even a genuine dpkg/rpm
+        // install belongs to the system package manager.
         for bundle in [Bundle::Deb, Bundle::Rpm] {
             let mut f = facts(Os::Linux, Some(bundle));
+            f.replaceable_appimage = true;
             assert_eq!(
                 classify(&f),
-                Eligibility::NotifyOnly(NotifyReason::ForeignPackageManager)
+                Eligibility::NotifyOnly(NotifyReason::PackageManaged)
             );
-            f.owned_by_bundle_package_db = true;
-            assert_eq!(classify(&f), Eligibility::SelfUpdate);
         }
     }
 
     #[test]
-    fn appimage_env_does_not_promote_a_deb_binary() {
-        let mut f = facts(Os::Linux, Some(Bundle::Deb));
-        f.running_as_appimage = true;
-        assert_ne!(classify(&f), Eligibility::SelfUpdate);
+    fn appimage_must_run_from_its_own_writable_image() {
+        let exe = Path::new("/tmp/.mount_tauri-abc/usr/bin/tauri-explorer");
+        let appdir = Some(Path::new("/tmp/.mount_tauri-abc"));
+        let image = Some(Path::new("/home/a/Apps/tauri-explorer.AppImage"));
+        let writable = |_: &Path| true;
+        assert!(is_replaceable_appimage(exe, appdir, image, writable));
+        // Read-only directory: the replacement would fail every day.
+        assert!(!is_replaceable_appimage(exe, appdir, image, |_| false));
+        // $APPIMAGE inherited from another AppImage, binary run elsewhere.
+        let extracted = Path::new("/home/a/squashfs-root/usr/bin/tauri-explorer");
+        assert!(!is_replaceable_appimage(extracted, appdir, image, writable));
+        // Missing or relative environment.
+        assert!(!is_replaceable_appimage(exe, None, image, writable));
+        assert!(!is_replaceable_appimage(exe, appdir, None, writable));
+        let relative = Some(Path::new("tauri-explorer.AppImage"));
+        assert!(!is_replaceable_appimage(exe, appdir, relative, writable));
     }
 
     #[test]

@@ -148,7 +148,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `JobsPanel.svelte` — background jobs viewer (Ctrl+J); Retry on failed jobs that carry `retry`.
 - `ToastOverlay.svelte` — stacked toast notifications.
 - `CrashNotice.svelte` — crash-report banner (#184).
-- `UpdateNotice.svelte` — update banner (#185, #1679): once-a-day check after startup; a self-update the backend already downloaded offers "Restart now" (`installUpdate`), otherwise "View release". Follows the `autoUpdate` setting.
+- `UpdateCheck.svelte` — startup host for the update check (#185, #1679): after a 5 s delay, when the once-a-day throttle allows, lazy-loads `UpdateNotice` (keeps the update IPC out of the startup bundle).
+- `UpdateNotice.svelte` — update banner: checks on mount; a self-update the backend already downloaded offers "Restart now" (flushes tab state, then `installUpdate`), otherwise "View release". Follows the `autoUpdate` setting.
 - `AnimatedBackground.svelte` — canvas background animation host.
 - `sidebar-view-registry.ts` — maps sidebar-view ids (owned by `state/sidebar-views.svelte.ts`) to their icon + Svelte component.
 
@@ -429,7 +430,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `ai-rename.ts` — AI rename suggestion IPC (#145).
 - `crash.ts` — crash-report capture bridge (#184).
 - `user-report.ts` — typed `submit_user_report` IPC wrapper (`useGitHubToken` route flag) and the write-only report-token commands (#1455).
-- `update.ts` — GitHub-release update check (once/day throttle, #185).
+- `update.ts` — `prepareUpdate(autoInstall)` / `installUpdate` (#185, #1679).
+- `update-throttle.ts` — once-a-day update-check throttle (localStorage), split out so the startup bundle omits the update IPC.
 - `warm-pool.ts` — warm-window pool IPC wrappers.
 - `open.ts` — open files in the default/chosen app, image viewer (with siblings), or a terminal.
 - `trash.ts` — `list_trash` / `restore_trash_items` IPC for the in-app Trash; restore is a native mutation reply keyed by opaque entry IDs.
@@ -743,8 +745,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `load_diagnostics/store.rs` — bounded rotating JSON records under `<app log dir>/slow-loads/` (newest 20, replace by trace ID).
 - `load_diagnostics/persist.rs` — record precedence (frontend beats native fallback; within a source settled beats late pending; re-checked against the file on disk), bounded in-memory session records, and one dedicated writer thread that also fills in the filesystem (time-bounded probe); `recent_slow_loads` reads disk on one reusable reader thread with a timeout.
 - `update_check.rs` — `prepare_update` / `install_update` (#185, #1679): signed self-update when `autoUpdate` is on and the install is eligible, falling back to the GitHub-releases notify-only notice. Runbook: `docs/auto-update.md`.
-- `update_check/eligibility.rs` — pure policy: which installs may replace themselves (Windows NSIS/MSI, installed macOS `.app`, running AppImage, deb/rpm only when `dpkg`/`rpm` own the executable); unbundled and foreign-package-manager installs stay notify-only.
-- `update_check/self_update.rs` — one process-wide `SelfUpdateJob` (managed state): check + download + verify via `tauri-plugin-updater`, hold the bytes until restart, install off the async runtime, then `request_restart`; gathers the install facts (`$APPIMAGE`, package-db ownership, `.app` location).
+- `update_check/eligibility.rs` — pure policy: which installs may replace themselves (Windows NSIS/MSI, installed macOS `.app`, an AppImage running from its own writable image); deb/rpm, unbundled, Arch and Nix installs stay notify-only.
+- `update_check/self_update.rs` — one process-wide `SelfUpdateJob` (managed state): check + download + verify via `tauri-plugin-updater` (read timeout; Windows `on_before_exit` runs `release_process_resources`), hold the bytes until restart, install off the async runtime, then `request_restart`; gathers the install facts (bundle type, own writable AppImage, `.app` location).
+- `update_check/restart_fds.rs` — Linux: marks every descriptor above stderr close-on-exec before the update relaunch, so the new process does not inherit (and pin) the old AppImage's FUSE mount.
 - `warm_pool.rs` — native warm registry with label-scoped spawn reservations, bounded claims and committed activation.
 - `wire_path.rs` — canonical wire text for native paths (#1592, ADR 0031): bijective encode/decode (invalid bytes ↔ U+EF00+byte), wire path algebra (`parent`/`file_name`/`join`), lossy display text and `refuse_escaped` for surfaces without phase-1 support. The only sanctioned native↔text conversion (`clippy.toml`). Tests: `test_support/wire_path_test.rs` (vectors + proptests), `test_support/wire_path_fs_test.rs` (real-filesystem regressions, mounted from `files/mod.rs`).
 - `gemini.rs` — shared helpers for shelling out to `gemini` CLI.
@@ -1050,7 +1053,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `e2e/impact-coverage.ts` — opt-in (`E2E_COVERAGE=1`) per-test coverage collector wired as an auto fixture in `e2e/fixtures.ts`; covers every page, context and popup a test opens. `tests/e2e-fixture-imports.test.ts` keeps every spec on the shared fixtures so none escapes it.
 - `scripts/version-only.mjs` — recognises a release version bump (only `version` in package.json/tauri.conf.json, `[package] version` in Cargo.toml, local-crate versions in Cargo.lock, `pkgver` in PKGBUILD, plus CHANGELOG.md) by structured per-format comparison; anything else, malformed or added/deleted files are not version-only. Selectors then run e2e NONE, rust NONE and only text-related unit tests; contracts in `tests/version-only.test.ts` (#1367).
 - `scripts/ci-jobs.mjs` — `report`: ci.yml gate jobs print each upstream shard's result and the step a failed/cancelled one stopped at (Actions API, diagnostics only); `auto-rerun`: decides whether `.github/workflows/ci-auto-rerun.yml` re-runs a failed first attempt (only install/setup-step failures, once). Contracts in `tests/ci-jobs.test.ts` (#1367).
-- `scripts/updater-manifest.mjs` — builds the signed self-update `latest.json` from the release assets and their `.sig` files (bundle-specific platform keys only; fails closed on any missing asset/signature); run by `release.yml`, contracts in `tests/updater-manifest.test.ts` (#1679). `src-tauri/tauri.updater.conf.json` is the `--config` overlay release builds pass to enable `createUpdaterArtifacts`.
+- `scripts/updater-manifest.mjs` — builds the signed self-update `latest.json` from the release assets and their `.sig` files (bundle-specific platform keys only; fails closed on any missing asset/signature or a signature that does not verify against `plugins.updater.pubkey`); run by `release.yml`, contracts in `tests/updater-manifest.test.ts` (#1679). `src-tauri/tauri.updater.conf.json` is the `--config` overlay release builds pass to enable `createUpdaterArtifacts`.
 - `scripts/release-ci-gate.mjs` — run by `.github/workflows/release.yml` before tagging/building: requires a dev commit with the released tree to have a successful dev-push CI run and `smoke (ubuntu-latest)`, waiting for in-progress runs; contracts in `tests/release-ci-gate.test.ts` (#1367).
 - `scripts/perf-fixtures.mjs` — deterministic flat large-folder fixtures (1k/10k/100k/500k sparse files, mixed names/sizes/mtimes, `manifest.json`) in a temp root outside the repo; `create`/`remove` (#983, `docs/performance.md`).
 - `scripts/perf-real-app.mjs` — end-to-end folder-open and navigation timings (n/median/p95) against a real binary through tauri-driver under Xvfb with private XDG dirs; in-page MutationObserver + animation-frame marks, no app instrumentation (#983, `docs/performance.md`); `--scenarios memory` samples per-process RSS/PSS and anonymous memory by allocator, with retained/live-per-entry budget flags (#1416).

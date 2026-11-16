@@ -24,7 +24,7 @@
   import WindowDialogs from "$lib/components/WindowDialogs.svelte";
   import TitleBar from "$lib/components/TitleBar.svelte";
   import CrashNotice from "$lib/components/CrashNotice.svelte";
-  import UpdateNotice from "$lib/components/UpdateNotice.svelte";
+  import UpdateCheck from "$lib/components/UpdateCheck.svelte";
   import type { PickerInfo } from "$lib/components/FilePicker.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import PaneContainer from "$lib/components/PaneContainer.svelte";
@@ -303,7 +303,7 @@
 </main>
 
 <CrashNotice />
-<UpdateNotice />
+<UpdateCheck />
 {/if}
 
 <WindowDialogs {pickerInfo} recovery={session?.recovery} onFilesChanged={refreshAllPanes} />

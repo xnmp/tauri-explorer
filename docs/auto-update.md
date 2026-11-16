@@ -11,11 +11,20 @@ View release").
 2. On a self-updatable install the update is downloaded and its signature
    verified in the background; the notice then reads *"X is ready to install —
    Restart now / Later"*.
-3. **Restart now** installs and relaunches. On Windows the installer
-   (`installMode: passive`, a progress window) takes over the process. Linux
-   deb/rpm installs ask for the administrator password (pkexec).
-4. **Later** keeps the download for this session; the next daily check offers
-   it again. If installation fails (e.g. the password prompt is cancelled) an
+3. **Restart now** first saves the window's open tabs (a restart skips the
+   close handlers that normally do), then installs and relaunches; the main
+   window restores its tabs. Like quitting, it ends work in progress;
+   interrupted file transfers go through the usual recovery path.
+   - macOS / AppImage: the files are replaced and the app relaunches through
+     the normal exit path. Every descriptor is marked close-on-exec first, so
+     the relaunched copy does not inherit (and pin) the old AppImage mount.
+   - Windows: the installer (`installMode: passive`, a progress window) takes
+     over; the plugin exits the process directly, so the app's exit cleanup
+     runs from the updater's `on_before_exit` hook. The NSIS installer is
+     per-user. The MSI is per-machine: if its UAC prompt is declined after the
+     app has exited, nothing is installed and the app must be reopened by hand.
+4. **Later** keeps the download in memory for this session; the next daily
+   check offers it again. If installation fails before the process exits, an
    error toast appears and **Restart now** stays available.
 
 ## Which installs self-update
@@ -28,9 +37,12 @@ repacks the `.deb`, and the source `PKGBUILD` and Nix builds are `--no-bundle`.
 | --- | --- | --- |
 | Windows NSIS `-setup.exe` / MSI | yes | |
 | macOS `.app` in a writable location | yes | not from a mounted DMG or App Translocation |
-| Linux AppImage (run as an AppImage) | yes | `$APPIMAGE` is set; the image file is replaced |
-| Linux `.deb` / `.rpm` | only if `dpkg-query -S` / `rpm -qf` owns the executable | pkexec `dpkg -i` / `rpm -U` |
+| Linux AppImage | yes, when running from it and its directory is writable | the executable must lie in `$APPDIR` (an inherited `$APPIMAGE` alone could name another app's image) |
+| Linux `.deb` / `.rpm` | no, notify only | the package manager owns them; `dpkg -i` cannot pull new dependencies and the plugin's password fallbacks end in a terminal `sudo` |
 | Arch (`PKGBUILD`, AUR `-bin`), Nix, dev builds | no, notify only | the system package manager owns the files |
+
+The manifest still publishes `linux-x86_64-deb`/`-rpm` entries; only the app's
+policy declines them, so enabling them later needs no release-format change.
 
 ## Release pipeline
 
@@ -46,7 +58,10 @@ repacks the `.deb`, and the source `PKGBUILD` and Nix builds are `--no-bundle`.
 - The release job renames the macOS archive to
   `tauri-explorer_<version>_aarch64.app.tar.gz`, runs
   `scripts/updater-manifest.mjs` to produce `latest.json`, and uploads it with
-  the bundles and signatures.
+  the bundles and signatures. The script verifies every signature against
+  `plugins.updater.pubkey` first: tauri-cli only warns when the signing secret
+  does not match the embedded key, and such a release would be rejected by
+  every install.
 - Installed apps fetch
   `https://github.com/xnmp/tauri-explorer/releases/latest/download/latest.json`
   (`plugins.updater.endpoints` in `tauri.conf.json`). Platform keys are
@@ -72,14 +87,26 @@ Releases published before this feature have no `latest.json`. The app then logs
   `tauri.conf.json` already carries the new public key, then switch the
   secrets to the new key.
 
+## Known limitations
+
+- The verified download stays in memory until restart (over 100 MB for an
+  AppImage).
+- A session that stays open past a newer release keeps offering the update it
+  already downloaded; the next launch picks up the newer one.
+- Each check runs from the window that performs it; the job itself is shared,
+  so other windows wait for, and reuse, the same download.
+
 ## Testing
 
 - Policy: `cargo test --lib update_check` (eligibility matrix, macOS bundle paths).
-- Manifest: `bunx vitest run tests/updater-manifest.test.ts`.
+- Manifest and signature verification: `bunx vitest run tests/updater-manifest.test.ts`
+  (fixture signed by the real tauri-cli with a throwaway key).
 - Frontend contract (mock backend): `npx playwright test e2e/auto-update.spec.ts`.
 - End-to-end on Linux: build an AppImage with an overlay that points
   `plugins.updater.endpoints` at `http://127.0.0.1:<port>/latest.json` with
   `dangerousInsecureTransportProtocol: true`, then build a version-bumped
   AppImage, serve a `latest.json` for it, and run the old AppImage under
-  `dbus-run-session` + `xvfb-run` with private `XDG_*` directories (the
-  single-instance plugin would otherwise hand off to a running copy).
+  a private Xvfb display and D-Bus session with private `XDG_*` directories
+  (the single-instance plugin would otherwise hand off to a running copy).
+  After **Restart now**, check that the AppImage file's hash changed, the new
+  version is running, and the old `/tmp/.mount_*` is gone.

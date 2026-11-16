@@ -8,6 +8,8 @@
 //! GitHub releases API powers the notify-only notice.
 
 mod eligibility;
+#[cfg(target_os = "linux")]
+mod restart_fds;
 mod self_update;
 
 pub use self_update::SelfUpdateJob;

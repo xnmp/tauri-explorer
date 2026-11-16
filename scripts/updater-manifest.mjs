@@ -2,7 +2,8 @@
 // updater-manifest.mjs — assemble the signed self-update manifest (#1679).
 //
 // Usage:  node scripts/updater-manifest.mjs --tag v1.26.0 --dir artifacts \
-//           --notes release-notes.md --repo owner/name --out latest.json
+//           --notes release-notes.md --repo owner/name --out latest.json \
+//           [--config src-tauri/tauri.conf.json]
 //
 // Run by release.yml after the build matrix's bundles are downloaded. Every
 // updater platform needs exactly one asset and its `.sig` (written by
@@ -11,10 +12,16 @@
 // partial or malformed manifest would break updates everywhere: any missing
 // piece fails the release instead.
 //
+// Every signature is also verified against the public key installed apps
+// embed (`plugins.updater.pubkey` in --config). tauri-cli only warns when the
+// signing secret does not match it; publishing such a release would make
+// every install download the update daily and reject it.
+//
 // Platform keys are bundle-specific (`linux-x86_64-deb`, not `linux-x86_64`):
 // the plugin looks up `{os}-{arch}-{bundle}` first, and an unbundled build
 // (no embedded bundle type) then finds nothing, which is the intent.
 
+import { createHash, createPublicKey, verify } from "node:crypto";
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -84,6 +91,53 @@ export function buildUpdaterManifest({ tag, repo, notes, pubDate, assets, signat
 }
 
 /**
+ * Verify a Tauri updater signature (minisign) over `data`.
+ * `signature` is the `.sig` file text and `pubkey` the `plugins.updater.pubkey`
+ * value; both are base64 of minisign's text formats. Checks the key id, the
+ * Ed25519 signature over the BLAKE2b-512 prehash (`ED`) or the raw data
+ * (legacy `Ed`), and the global signature over the trusted comment.
+ * @param {{ data: Uint8Array, signature: string, pubkey: string }} input
+ * @returns {string | null} null when valid, otherwise why not.
+ */
+export function updaterSignatureProblem({ data, signature, pubkey }) {
+  /** @param {string} text */
+  const lines = (text) => Buffer.from(text.trim(), "base64").toString("utf8").split(/\r?\n/);
+  try {
+    const keyLine = lines(pubkey).find((l) => l && !l.startsWith("untrusted comment:"));
+    const key = Buffer.from(keyLine ?? "", "base64");
+    if (key.length !== 42 || key.subarray(0, 2).toString("latin1") !== "Ed") {
+      return "public key is not a minisign Ed25519 key";
+    }
+    const sigLines = lines(signature);
+    const sigAt = sigLines.findIndex((l) => l && !l.startsWith("untrusted comment:"));
+    const sig = Buffer.from(sigLines[sigAt] ?? "", "base64");
+    const trusted = sigLines[sigAt + 1] ?? "";
+    const globalSig = Buffer.from(sigLines[sigAt + 2] ?? "", "base64");
+    if (sig.length !== 74 || !trusted.startsWith("trusted comment: ") || globalSig.length !== 64) {
+      return "signature is not in minisign format";
+    }
+    if (!sig.subarray(2, 10).equals(key.subarray(2, 10))) {
+      return "signed with a different key than the embedded public key";
+    }
+    const algorithm = sig.subarray(0, 2).toString("latin1");
+    if (algorithm !== "ED" && algorithm !== "Ed") return `unknown signature algorithm ${algorithm}`;
+    const publicKey = createPublicKey({
+      key: { kty: "OKP", crv: "Ed25519", x: key.subarray(10).toString("base64url") },
+      format: "jwk",
+    });
+    const message = algorithm === "ED" ? createHash("blake2b512").update(data).digest() : data;
+    if (!verify(null, message, publicKey, sig.subarray(10))) return "signature does not match the file";
+    const comment = Buffer.from(trusted.slice("trusted comment: ".length), "utf8");
+    if (!verify(null, Buffer.concat([sig.subarray(10), comment]), publicKey, globalSig)) {
+      return "trusted comment signature is invalid";
+    }
+    return null;
+  } catch (error) {
+    return `unreadable signature or key: ${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
+/**
  * Recursively list files under `dir` (the merged build-matrix artifacts).
  * @param {string} dir
  * @returns {string[]}
@@ -103,6 +157,15 @@ function arg(name) {
   return value;
 }
 
+/**
+ * @param {string} name
+ * @param {string} fallback
+ */
+function optionalArg(name, fallback) {
+  const at = process.argv.indexOf(`--${name}`);
+  return at >= 0 && process.argv[at + 1] ? process.argv[at + 1] : fallback;
+}
+
 function main() {
   const files = listFiles(arg("dir"));
   const sigFiles = files.filter((f) => f.endsWith(".sig"));
@@ -117,6 +180,19 @@ function main() {
     assets: files.filter((f) => !f.endsWith(".sig")).map((f) => basename(f)),
     signatures,
   });
+  const config = JSON.parse(readFileSync(optionalArg("config", "src-tauri/tauri.conf.json"), "utf8"));
+  const pubkey = config?.plugins?.updater?.pubkey;
+  if (typeof pubkey !== "string" || !pubkey) throw new Error("No plugins.updater.pubkey in the Tauri config");
+  const byName = new Map(files.map((f) => [basename(f), f]));
+  const invalid = Object.entries(manifest.platforms).flatMap(([key, { url, signature }]) => {
+    const name = decodeURIComponent(url.slice(url.lastIndexOf("/") + 1));
+    const path = byName.get(name);
+    const problem = path
+      ? updaterSignatureProblem({ data: readFileSync(path), signature, pubkey })
+      : "asset file not found";
+    return problem ? [`${key} (${name}): ${problem}`] : [];
+  });
+  if (invalid.length) throw new Error(`Updater signatures fail verification:\n  ${invalid.join("\n  ")}`);
   writeFileSync(arg("out"), `${JSON.stringify(manifest, null, 2)}\n`);
   console.log(`Updater manifest ${manifest.version}: ${Object.keys(manifest.platforms).join(", ")}`);
 }

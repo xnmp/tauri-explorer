@@ -62,4 +62,11 @@ describe("fitTextForReport", () => {
     expect(fitted).not.toMatch(/[\uD800-\uDBFF]\n/);
     expect(fitted.endsWith(REPORT_TEXT_TRUNCATED)).toBe(true);
   });
+
+  it("drops the control characters the native side never sends, keeping line breaks", () => {
+    const text = `panic:\tboom\u0007\u0085 here\r\nlocation: src/lib.rs:1:1${"\n.".repeat(100)}`;
+    const fitted = fitTextForReport(text, 5000);
+    expect(fitted.startsWith("panic:boom here\r\nlocation: src/lib.rs:1:1")).toBe(true);
+    expect(fitted).not.toMatch(/[\u0000-\u0009\u000B\u000C\u000E-\u001F\u007F-\u009F]/);
+  });
 });

@@ -150,6 +150,9 @@
       ...(offerSlowLoads && includeSlowLoads ? [{ kind: "slow-loads" as const, text: slowLoadText }] : []),
     ];
     if (diagnostics.length > 0) draft.diagnostics = diagnostics;
+    // A crash the reporter saw (sent or unticked) is settled once the report
+    // lands; one that did not fit beside the description stays attached.
+    const crashSettled = offerCrash;
     const useGitHubToken = userReportRoute(reportTokenStore.state, attachments.length) === "github-token";
     const submission = userReportDraftStore.beginSubmission();
     if (!submission) return;
@@ -168,7 +171,7 @@
     try {
       const issue = await submitUserReport(draft, useGitHubToken);
       userReportDraftStore.finishSubmission(submission, true);
-      crashReportStore.detach();
+      if (crashSettled) crashReportStore.detach();
       retirePendingToast();
       toastStore.show("Report submitted", "success", {
         duration: 6000,
@@ -358,7 +361,14 @@
       {/if}
     </section>
 
-    {#if offerCrash && attachedCrash}
+    {#if attachedCrash && !offerCrash}
+      <section class="diagnostics" aria-label="Crash report">
+        <p class="attachment-hint crash-does-not-fit">
+          The crash report does not fit alongside this description. Shorten the description to
+          include it; it stays saved for your next report otherwise.
+        </p>
+      </section>
+    {:else if offerCrash && attachedCrash}
       <section class="diagnostics" aria-label="Crash report">
         <label class="diagnostics-toggle">
           <input type="checkbox" bind:checked={includeCrash} disabled={submitting} />

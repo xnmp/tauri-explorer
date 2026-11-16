@@ -31,6 +31,10 @@ export const REPORT_TEXT_TRUNCATED = "… (truncated to fit the report)";
 
 const units = (value: string): number => value.length;
 
+/** Control characters `sanitize` in user_report.rs drops (Unicode Cc except
+ *  line breaks), removed here too so the preview shows exactly what is sent. */
+const UNSENT_CONTROLS = /[\u0000-\u0009\u000B\u000C\u000E-\u001F\u007F-\u009F]/g;
+
 /** Units left for all diagnostic sections after the reporter's own text. */
 export function reportDiagnosticsBudget(description: string, contact = ""): number {
   return Math.max(
@@ -56,7 +60,7 @@ export function budgetAfter(budget: number, text: string): number {
  * the budget is too small for a useful section.
  */
 export function fitTextForReport(text: string, maxUnits: number): string {
-  const trimmed = text.trim();
+  const trimmed = text.replace(UNSENT_CONTROLS, "").trim();
   if (!trimmed || maxUnits < MIN_REPORT_DIAGNOSTIC_UNITS) return "";
   if (units(trimmed) <= maxUnits) return trimmed;
   const room = maxUnits - units(REPORT_TEXT_TRUNCATED) - 1;

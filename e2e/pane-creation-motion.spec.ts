@@ -115,6 +115,112 @@ for (const placement of ['left', 'right', 'up', 'down'] as const) {
   });
 }
 
+type Positions = Record<string, [number, number]>;
+
+/** Painted entry positions in one pane, transforms included. */
+const entryPositions = (page: Page, paneId: string) => page.evaluate(id => {
+  const pane = document.querySelector(`.explorer-pane[data-pane-id="${id}"]`)!;
+  return Object.fromEntries([...pane.querySelectorAll<HTMLElement>('[data-region="row"][data-path]')]
+    .map(entry => { const rect = entry.getBoundingClientRect(); return [entry.dataset.path!, [rect.x, rect.y]]; })) as Positions;
+}, paneId);
+
+const maxOffset = (a: Positions, b: Positions) => Math.max(0, ...Object.keys(b).filter(key => a[key]).map(key =>
+  Math.max(Math.abs(a[key][0] - b[key][0]), Math.abs(a[key][1] - b[key][1]))));
+
+/** Split, let the first rendered frame deliver its reflow, then hold every
+ * pane and entry animation at the reveal's start. */
+async function freezeReflow(page: Page, placement: 'left' | 'right') {
+  return page.evaluate(async placement => {
+    // @ts-expect-error Vite serves the application module.
+    const { windowTabsManager: manager } = await import('/src/lib/state/window-tabs.svelte.ts');
+    const sourceId = manager.activePaneId;
+    manager.splitPane(placement);
+    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const animations = document.getAnimations().filter(animation => animation.id === 'entry-reflow'
+      || ((animation.effect as KeyframeEffect)?.target as HTMLElement)?.dataset?.paneMotion);
+    for (const animation of animations) { animation.pause(); animation.currentTime = 0; }
+    (window as any).__splitAnimations = animations;
+    return { sourceId, reflows: animations.filter(animation => animation.id === 'entry-reflow').length };
+  }, placement);
+}
+
+for (const [view, peek] of [['tiles', true], ['tiles', false], ['list', false]] as const) {
+  for (const placement of ['right', 'left'] as const) {
+    test(`a split source reflows on its first frame and glides entries into place (${view}${peek ? ', Folder Peek' : ''}, ${placement})`, async ({ page }) => {
+      const errors: string[] = [];
+      page.on('pageerror', error => errors.push(error.message));
+      await page.setViewportSize({ width: 1400, height: 800 });
+      await page.goto(`/?path=/perf/huge-5000&viewMode=${view}`);
+      await page.locator('.entry-item').first().waitFor();
+      await page.evaluate(async peek => {
+        // @ts-expect-error Vite serves the application module.
+        const { settingsStore } = await import('/src/lib/state/settings.svelte.ts');
+        settingsStore.update({ folderPeek: peek });
+      }, peek);
+      const sourceId = (await page.locator('.explorer-pane').getAttribute('data-pane-id'))!;
+      const firstEntry = page.locator('.explorer-pane [data-region="row"][data-path]').first();
+      await expect(firstEntry).toBeVisible();
+      const original = await entryPositions(page, sourceId);
+
+      const split = await freezeReflow(page, placement);
+      expect(split.sourceId).toBe(sourceId);
+      expect(split.reflows).toBeGreaterThan(0);
+      // The first frame shows the old layout: nothing jumps when the split starts.
+      expect(maxOffset(original, await entryPositions(page, sourceId))).toBeLessThan(1);
+
+      // Every entry ends where the settled pane lays it out, and the settle
+      // itself moves nothing: the reflow already happened at the start.
+      await seek(page, 219.9);
+      const ending = await entryPositions(page, sourceId);
+      const moved = Object.keys(ending).filter(key => original[key] && Math.abs(original[key][1] - ending[key][1]) > 1);
+      expect(moved.length).toBeGreaterThan(0);
+      await seek(page, 110);
+      const middle = await entryPositions(page, sourceId);
+      for (const key of moved) {
+        const [from, to, now] = [original[key][1], ending[key][1], middle[key][1]];
+        expect(now).toBeGreaterThan(Math.min(from, to));
+        expect(now).toBeLessThan(Math.max(from, to));
+      }
+      await seek(page, 220);
+      await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+      expect(maxOffset(ending, await entryPositions(page, sourceId))).toBeLessThan(1.5);
+      expect(await page.evaluate(() => document.getAnimations().filter(a => a.id === 'entry-reflow').length)).toBe(0);
+      expect(errors).toEqual([]);
+    });
+  }
+}
+
+test('a scrolled source keeps entries painted on the reveal\'s first frame', async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 800 });
+  await page.goto('/?path=/perf/huge-5000&viewMode=tiles');
+  await page.locator('.entry-item').first().waitFor();
+  // The split keeps the pixel offset, so the narrower grid mounts a new range.
+  await page.locator('.virtual-viewport').evaluate(el => { el.scrollTop = 3000; });
+  const sourceId = (await page.locator('.explorer-pane').getAttribute('data-pane-id'))!;
+  await freezeReflow(page, 'right');
+  const painted = await page.evaluate(id => {
+    const pane = document.querySelector(`.explorer-pane[data-pane-id="${id}"]`)!;
+    const view = pane.querySelector('.virtual-viewport')!.getBoundingClientRect();
+    return [...pane.querySelectorAll<HTMLElement>('[data-region="row"][data-path]')].filter(entry => {
+      const rect = entry.getBoundingClientRect();
+      return rect.bottom > view.top && rect.top < view.bottom && rect.left < view.right
+        && getComputedStyle(entry).opacity === '1';
+    }).length;
+  }, sourceId);
+  expect(painted).toBeGreaterThan(0);
+});
+
+test('input during a split settles the entry reflow with the reveal', async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 800 });
+  await page.goto('/?path=/perf/huge-5000&viewMode=tiles');
+  await page.locator('.entry-item').first().waitFor();
+  expect((await freezeReflow(page, 'right')).reflows).toBeGreaterThan(0);
+  await seek(page, 60);
+  await page.keyboard.press('Home');
+  expect(await page.evaluate(() => document.getAnimations().filter(a => a.id === 'entry-reflow'
+    || ((a.effect as KeyframeEffect)?.target as HTMLElement)?.dataset?.paneMotion).length)).toBe(0);
+});
+
 test('nested creation preserves unrelated panes and interrupted splits close cleanly', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));

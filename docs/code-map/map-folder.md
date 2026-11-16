@@ -144,7 +144,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `TerminalPanel.svelte` — embedded xterm.js terminal panel (#139).
 - `StatusBar.svelte` — bottom status bar (selection count, size, path).
 - `TitleBar.svelte` — window title bar + tab strip host + window controls.
-- `WindowTabBar.svelte` — window tab strip (drag/reorder/tear-off); executes the domain tab-drag reducer effects.
+- `WindowTabBar.svelte` — compressed window tab strip, active-tab reveal and edge scrolling; executes the domain tab-drag reducer effects.
+- `WindowTabPicker.svelte` — searchable all-tabs combobox with full pane paths, keyboard selection and anchored positioning.
+- `window-tab-bar.css` — tab strip chrome scoped to `.tab-area`, including compression and persistent controls.
 - `JobsPanel.svelte` — background jobs viewer (Ctrl+J); Retry on failed jobs that carry `retry`.
 - `ToastOverlay.svelte` — stacked toast notifications.
 - `CrashNotice.svelte` — crash-report banner (#184); Report… lazily loads `state/crash-reporting.ts` to open Report Issue with the crash attached (#1684).
@@ -489,6 +491,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 ## src/lib/domain/ — pure logic, no framework deps. Test + reuse here.
 
 - `pointer-drag.ts` — shared five-pixel press-to-drag threshold for tabs, files, sidebar items and click suppression.
+- `tab-strip.ts` — pure Chrome-style tab sizing, full-path tab filtering and drag edge-scroll speed.
 - `tab-drag.ts` — pure tab-drag lifecycle and effects, including session-qualified asynchronous detach settlement (#1642).
 - `src/lib/domain/job-presentation.ts` — validates optional job cost/reveal metadata and formats exact decimal money.
 - `src/lib/domain/job-reveal.ts` — pure pane choice, present-file selection, reveal routing and latest-click cancellation policy.

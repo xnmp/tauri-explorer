@@ -203,15 +203,42 @@ export function matchesShortcut(
   return shortcutEventKey(event) === shortcutKeyIdentity(shortcut.key, shortcut.shift);
 }
 
+/** US-layout characters (unshifted, shifted) for physical punctuation and
+ * digit keys. Used only to recover the key a macOS Option press replaced. */
+const US_KEY_BY_CODE: Readonly<Record<string, readonly [string, string]>> = {
+  Backquote: ["`", "~"], Minus: ["-", "_"], Equal: ["=", "+"],
+  BracketLeft: ["[", "{"], BracketRight: ["]", "}"], Backslash: ["\\", "|"],
+  Semicolon: [";", ":"], Quote: ["'", '"'], Comma: [",", "<"], Period: [".", ">"],
+  Slash: ["/", "?"], Space: [" ", " "],
+  Digit1: ["1", "1"], Digit2: ["2", "2"], Digit3: ["3", "3"], Digit4: ["4", "4"], Digit5: ["5", "5"],
+  Digit6: ["6", "6"], Digit7: ["7", "7"], Digit8: ["8", "8"], Digit9: ["9", "9"], Digit0: ["0", "0"],
+};
+
+/** A key that no longer names the pressed key: a non-ASCII character
+ * (macOS Option's "…" for `;`, "æ" for `'`, NBSP for Space) or a dead key. */
+function isReplacedKey(key: string): boolean {
+  if (key === "Dead" || key === "Unidentified") return true;
+  const chars = Array.from(key);
+  return chars.length === 1 && chars[0].codePointAt(0)! > 0x7f;
+}
+
 /** Match exactly the identity the recorder has always saved: physical Alt
  * letters (Option-produced characters) and shifted digits, logical other keys.
- * Removing the alternate fallback preserves existing recorded shortcuts while
- * preventing a layout event from also matching a different physical shortcut.
+ * Under Alt, a key replaced by a non-ASCII character resolves by physical
+ * code to its US character, so Option+; still means `;` on macOS even with Cmd
+ * held. Keys that still type ASCII under Alt (Linux, Windows, AZERTY) keep
+ * their logical identity. Removing the alternate fallback preserves existing
+ * recorded shortcuts while preventing a layout event from also matching a
+ * different physical shortcut.
  */
 function shortcutEventKey(event: KeyboardEvent): string {
-  const letter = event.altKey ? /^Key([A-Z])$/.exec(event.code ?? "") : null;
-  const digit = event.shiftKey ? /^Digit([0-9])$/.exec(event.code ?? "") : null;
-  return letter ? letter[1].toLowerCase() : digit ? digit[1] : shortcutKeyIdentity(event.key, event.shiftKey);
+  const code = event.code ?? "";
+  const letter = event.altKey ? /^Key([A-Z])$/.exec(code) : null;
+  if (letter) return letter[1].toLowerCase();
+  const replaced = event.altKey && isReplacedKey(event.key) ? US_KEY_BY_CODE[code] : undefined;
+  if (replaced) return shortcutKeyIdentity(replaced[event.shiftKey ? 1 : 0], event.shiftKey);
+  const digit = event.shiftKey ? /^Digit([0-9])$/.exec(code) : null;
+  return digit ? digit[1] : shortcutKeyIdentity(event.key, event.shiftKey);
 }
 
 function shortcutKeyIdentity(key: string, shift: boolean): string {

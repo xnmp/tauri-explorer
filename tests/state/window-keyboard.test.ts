@@ -373,17 +373,25 @@ describe("window keyboard routing", () => {
     expect(f.dialogs.requestCloseTop).not.toHaveBeenCalled();
   });
 
-  it("editable and modal contexts do not run ordinary commands or hardcoded settings/jobs", () => {
+  it.each(["input", "editable"])("modal %s fields do not run ordinary commands or hardcoded settings/jobs", (context) => {
     const f = fixture();
     f.bind("plugin.run", "Ctrl+K");
-    for (const context of ["input", "editable", "modal"]) {
-      Object.assign(f.target, { tagName: context === "input" ? "INPUT" : "DIV", isContentEditable: context === "editable" });
-      f.dialogs.hasModalOpen = context === "modal";
-      for (const key of ["k", "j", ","]) expect(f.press(key, { ctrlKey: true }).defaultPrevented).toBe(false);
-    }
+    Object.assign(f.target, { tagName: context === "input" ? "INPUT" : "DIV", isContentEditable: context === "editable" });
+    f.dialogs.hasModalOpen = true;
+    for (const key of ["k", "j", ","]) expect(f.press(key, { ctrlKey: true }).defaultPrevented).toBe(false);
     expect(f.executeCommand).not.toHaveBeenCalled();
     expect(f.dialogs.openJobsPanel).not.toHaveBeenCalled();
     expect(f.dialogs.openSettings).not.toHaveBeenCalled();
+  });
+
+  it.each(["input", "editable"])("non-modal %s fields yield Ctrl/Cmd commands and hardcoded settings/jobs", (context) => {
+    const f = fixture();
+    f.bind("plugin.run", "Ctrl+K");
+    Object.assign(f.target, { tagName: context === "input" ? "INPUT" : "DIV", isContentEditable: context === "editable" });
+    for (const key of ["k", "j", ","]) expect(f.press(key, { ctrlKey: true }).defaultPrevented).toBe(true);
+    expect(f.executeCommand).toHaveBeenCalledExactlyOnceWith("plugin.run");
+    expect(f.dialogs.openJobsPanel).toHaveBeenCalledOnce();
+    expect(f.dialogs.openSettings).toHaveBeenCalledOnce();
   });
 
   it("disposal removes listeners and releases held modifiers", () => {
@@ -710,4 +718,143 @@ it.each(["Enter", " "])("pane dialog native button retains %j despite a rebound 
   f.bind("tabs.newTab", key === " " ? "Space" : key, "window");
   expect(f.press(key).defaultPrevented).toBe(false);
   expect(f.executeCommand).not.toHaveBeenCalled();
+});
+
+
+describe("non-modal text field shortcuts", () => {
+  type Row = [label: string, key: string, modifiers: Partial<KeyboardEvent>, runs: boolean];
+  /** Each key is bound to a command; `runs` is whether the field yields it. */
+  const rows: Row[] = [
+    ["Ctrl+T", "t", { ctrlKey: true }, true],
+    ["Cmd+T", "t", { metaKey: true }, true],
+    ["Ctrl+Shift+P", "P", { ctrlKey: true, shiftKey: true }, true],
+    ["Ctrl+W", "w", { ctrlKey: true }, true],
+    ["Ctrl+Tab", "Tab", { ctrlKey: true }, true],
+    ["Ctrl+1", "1", { ctrlKey: true }, true],
+    ["Ctrl+F2", "F2", { ctrlKey: true }, true],
+    ["Cmd+Alt+; (split)", ";", { metaKey: true, altKey: true }, true],
+    ["Ctrl+Alt+Cmd+T", "t", { ctrlKey: true, altKey: true, metaKey: true }, true],
+    ["Ctrl+Cmd+T", "t", { ctrlKey: true, metaKey: true }, true],
+    ["Ctrl+е (non-Latin layout, bound as typed)", "е", { ctrlKey: true }, true],
+    ["plain t", "t", {}, false],
+    ["Shift+T", "T", { shiftKey: true }, false],
+    ["Alt+T", "t", { altKey: true }, false],
+    ["Alt+Shift+T", "T", { altKey: true, shiftKey: true }, false],
+    ["plain F2", "F2", {}, false],
+    ["Escape", "Escape", {}, false],
+    ["Tab", "Tab", {}, false],
+    ["AltGr (Ctrl+Alt+Q)", "@", { ctrlKey: true, altKey: true }, false],
+    ["AltGr+Shift (Ctrl+Alt+Shift+E)", "€", { ctrlKey: true, altKey: true, shiftKey: true }, false],
+    ...(["a", "c", "v", "x", "y", "z"] as const).flatMap((letter): Row[] => [
+      [`Ctrl+${letter.toUpperCase()}`, letter, { ctrlKey: true }, false],
+      [`Cmd+${letter.toUpperCase()}`, letter, { metaKey: true }, false],
+      [`Ctrl+Shift+${letter.toUpperCase()}`, letter.toUpperCase(), { ctrlKey: true, shiftKey: true }, false],
+    ]),
+    ["Ctrl+A with Caps Lock", "A", { ctrlKey: true }, false],
+    ["Ctrl+ф (non-Latin A)", "ф", { ctrlKey: true, code: "KeyA" }, false],
+    ["Cmd+Option+Z (Ω)", "Ω", { metaKey: true, altKey: true, code: "KeyZ" }, false],
+    ...(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown", "Backspace", "Delete", "Insert", "Enter", " "] as const)
+      .flatMap((key): Row[] => [
+        [`Ctrl+${key}`, key, { ctrlKey: true }, false],
+        [`Cmd+Shift+${key}`, key, { metaKey: true, shiftKey: true }, false],
+        [`plain ${key}`, key, {}, false],
+      ]),
+  ];
+
+  const shortcutFor = (key: string, m: Partial<KeyboardEvent>) => [
+    m.ctrlKey ? "Ctrl" : "", m.metaKey ? "Meta" : "", m.shiftKey ? "Shift" : "", m.altKey ? "Alt" : "",
+    m.code?.startsWith("Key") ? m.code.slice(3) : key === " " ? "Space" : key,
+  ].filter(Boolean).join("+");
+
+  it.each(rows)("%s from a focused input (key %j, %j) runs: %s", (_label, key, modifiers, runs) => {
+    const f = fixture();
+    Object.assign(f.target, { tagName: "INPUT" });
+    f.bind("plugin.fieldProbe", shortcutFor(key, modifiers));
+    const event = f.press(key, modifiers);
+    expect(f.executeCommand.mock.calls).toEqual(runs ? [["plugin.fieldProbe"]] : []);
+    expect(event.defaultPrevented).toBe(runs);
+  });
+
+  it("an unbound Ctrl chord stays with the field", () => {
+    const f = fixture();
+    Object.assign(f.target, { tagName: "INPUT" });
+    f.bind("tabs.newTab", "Ctrl+T");
+    expect(f.press("b", { ctrlKey: true }).defaultPrevented).toBe(false);
+    expect(f.executeCommand).not.toHaveBeenCalled();
+  });
+
+  it("a Ctrl chord the field already handled stays with the field", () => {
+    const f = fixture();
+    Object.assign(f.target, { tagName: "INPUT" });
+    f.bind("tabs.newTab", "Ctrl+T");
+    f.press("t", { ctrlKey: true }, true);
+    expect(f.executeCommand).not.toHaveBeenCalled();
+  });
+
+  it("tracked Linux Super counts as Cmd, and makes Ctrl+Alt a shortcut rather than AltGr", () => {
+    const f = fixture();
+    Object.assign(f.target, { tagName: "INPUT" });
+    f.bind("tabs.newTab", "Ctrl+T");
+    f.bind("plugin.superAlt", "Ctrl+Meta+Alt+K");
+    f.press("Super", { code: "MetaLeft" });
+    expect(f.press("t", {}).defaultPrevented).toBe(true);
+    expect(f.press("k", { ctrlKey: true, altKey: true }).defaultPrevented).toBe(true);
+    expect(f.executeCommand.mock.calls).toEqual([["tabs.newTab"], ["plugin.superAlt"]]);
+  });
+
+  it("a Ctrl/Cmd chord prefix accepted from a field owns the next key", () => {
+    const f = fixture();
+    Object.assign(f.target, { tagName: "INPUT" });
+    f.bind("plugin.chord", "Ctrl+K T");
+    expect(f.press("k", { ctrlKey: true }).defaultPrevented).toBe(true);
+    expect(f.press("t").defaultPrevented).toBe(true);
+    expect(f.executeCommand).toHaveBeenCalledExactlyOnceWith("plugin.chord");
+  });
+
+  it("a mismatching suffix after a field-accepted prefix is consumed, not typed", () => {
+    const f = fixture();
+    Object.assign(f.target, { tagName: "INPUT" });
+    f.bind("plugin.chord", "Ctrl+K T");
+    f.press("k", { ctrlKey: true });
+    expect(f.press("x").defaultPrevented).toBe(true);
+    expect(f.press("t").defaultPrevented).toBe(false);
+    expect(f.executeCommand).not.toHaveBeenCalled();
+  });
+
+  it("a suffix the field already handled retires the pending chord", () => {
+    const f = fixture();
+    Object.assign(f.target, { tagName: "INPUT" });
+    f.bind("plugin.chord", "Ctrl+K Enter");
+    f.press("k", { ctrlKey: true });
+    f.press("Enter", {}, true);
+    expect(f.executeCommand).not.toHaveBeenCalled();
+    expect(f.press("Enter").defaultPrevented).toBe(false);
+    expect(f.executeCommand).not.toHaveBeenCalled();
+  });
+
+  it.each([["Alt+M T", "m", { altKey: true }], ["Ctrl+A T", "a", { ctrlKey: true }], ["Ctrl+Alt+Q T", "@", { ctrlKey: true, altKey: true }]] as const)(
+    "a %s prefix the field keeps never starts a chord", (shortcut, key, modifiers) => {
+      const f = fixture();
+      Object.assign(f.target, { tagName: "INPUT" });
+      f.bind("plugin.chord", shortcut);
+      expect(f.press(key, modifiers).defaultPrevented).toBe(false);
+      expect(f.press("t").defaultPrevented).toBe(false);
+      expect(f.executeCommand).not.toHaveBeenCalled();
+    });
+
+  it("a modal field keeps Ctrl+T", () => {
+    const f = fixture();
+    Object.assign(f.target, { tagName: "INPUT" });
+    f.bind("tabs.newTab", "Ctrl+T");
+    f.dialogs.hasModalOpen = true;
+    expect(f.press("t", { ctrlKey: true }).defaultPrevented).toBe(false);
+    expect(f.executeCommand).not.toHaveBeenCalled();
+  });
+
+  it("the terminal keeps Ctrl+T (its own allowlist still decides)", () => {
+    const f = fixture(true);
+    f.bind("tabs.newTab", "Ctrl+T");
+    expect(f.press("t", { ctrlKey: true }).defaultPrevented).toBe(false);
+    expect(f.executeCommand).not.toHaveBeenCalled();
+  });
 });

@@ -93,7 +93,8 @@ export function startWindowKeyboard(target: EventTarget, dependencies: WindowKey
     const action = resolveWindowKey(event, {
       input, nativeButton, fileEntry, trackedMetaHeld: bindings.trackedMetaHeld,
       terminal: terminalFocus && scope === undefined, terminalCommand,
-      chord, modal: scope === null, filterOpen: explorer?.showFilter ?? false,
+      chord, chordPending: !terminalFocus && bindings.isChordActive,
+      modal: scope === null, filterOpen: explorer?.showFilter ?? false,
     });
     if (action === "native-activation") {
       bindings.cancelChord();

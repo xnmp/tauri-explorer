@@ -690,3 +690,70 @@ it("records both Ctrl and Meta distinctly so exact modifier matching can execute
   expect(recorded).toBe("Ctrl+Meta+C");
   expect(matchesShortcutString(event, recorded)).toBe(true);
 });
+
+describe("Option-replaced punctuation resolves by physical key (macOS)", () => {
+  const press = (key: string, code: string | undefined, mods: Partial<KeyboardEvent> = {}) =>
+    ({ key, code, ctrlKey: false, metaKey: false, shiftKey: false, altKey: true, ...mods }) as KeyboardEvent;
+
+  // macOS US layout: what Option (and Option+Cmd) puts in event.key.
+  it.each([
+    ["`", "Dead", "Backquote"], ["-", "–", "Minus"], ["=", "≠", "Equal"],
+    ["[", "“", "BracketLeft"], ["]", "‘", "BracketRight"], ["\\", "«", "Backslash"],
+    [";", "…", "Semicolon"], ["'", "æ", "Quote"], [",", "≤", "Comma"],
+    [".", "≥", "Period"], ["/", "÷", "Slash"], ["1", "¡", "Digit1"], ["0", "º", "Digit0"],
+  ])("Option+%s (key %s, code %s) matches and records the US character", (us, key, code) => {
+    const event = press(key, code);
+    expect(matchesShortcutString(event, `Alt+${us}`)).toBe(true);
+    expect(eventToShortcutString(event)).toBe(`Alt+${us}`);
+    expect(matchesShortcutString(event, `Alt+${key}`)).toBe(false);
+  });
+
+  it("Cmd+Option+; and Cmd+Option+' reach the split-pane bindings", () => {
+    expect(matchesShortcutString(press("…", "Semicolon", { metaKey: true }), "Cmd+Alt+;")).toBe(true);
+    expect(matchesShortcutString(press("æ", "Quote", { metaKey: true }), "Cmd+Alt+'")).toBe(true);
+    expect(matchesShortcutString(press("…", "Semicolon", { metaKey: true }), "Cmd+Alt+'")).toBe(false);
+  });
+
+  it("Option+Shift resolves to the shifted US character, as Linux reports it", () => {
+    const mac = press("Ú", "Semicolon", { shiftKey: true });
+    const linux = press(":", "Semicolon", { shiftKey: true });
+    expect(eventToShortcutString(mac)).toBe(eventToShortcutString(linux));
+    expect(matchesShortcutString(mac, "Alt+Shift+:")).toBe(true);
+  });
+
+  it("Option+Space (non-breaking space) is Alt+Space", () => {
+    const event = press(" ", "Space");
+    expect(matchesShortcutString(event, "Alt+Space")).toBe(true);
+    expect(eventToShortcutString(event)).toBe("Alt+Space");
+  });
+
+  it.each([["Dead", "KeyE"], ["´", "KeyE"], ["Dead", "KeyU"], ["˜", "KeyN"]])(
+    "dead-key letter %s on %s keeps its physical letter", (key, code) => {
+      const letter = code.slice(3).toLowerCase();
+      expect(matchesShortcutString(press(key, code), `Alt+${letter}`)).toBe(true);
+      expect(eventToShortcutString(press(key, code))).toBe(`Alt+${letter.toUpperCase()}`);
+    });
+
+  it("keys that still type ASCII under Alt keep their logical identity (Linux, AZERTY)", () => {
+    // AZERTY: the physical Comma key types ";" and the M key types ",".
+    expect(matchesShortcutString(press(";", "Comma"), "Alt+;")).toBe(true);
+    expect(matchesShortcutString(press(";", "Comma"), "Alt+,")).toBe(false);
+    expect(matchesShortcutString(press(",", "KeyM"), "Alt+m")).toBe(true);
+    expect(matchesShortcutString(press("'", "Quote"), "Alt+'")).toBe(true);
+    expect(eventToShortcutString(press(";", "Comma"))).toBe("Alt+;");
+  });
+
+  it("non-ASCII keys without Alt keep their logical identity", () => {
+    const event = { key: "é", code: "Digit2", ctrlKey: true, metaKey: false, shiftKey: false, altKey: false } as KeyboardEvent;
+    expect(matchesShortcutString(event, "Ctrl+é")).toBe(true);
+    expect(matchesShortcutString(event, "Ctrl+2")).toBe(false);
+  });
+
+  it.each([["…", "IntlBackslash"], ["…", "NumpadDecimal"], ["…", ""], ["…", undefined], ["Unidentified", undefined]])(
+    "an unmapped or missing code (%s, %s) falls back to the logical key", (key, code) => {
+      const event = press(key, code);
+      expect(matchesShortcutString(event, "Alt+;")).toBe(false);
+      expect(matchesShortcutString(event, `Alt+${key}`)).toBe(true);
+      expect(eventToShortcutString(event)).toBe(`Alt+${key.length === 1 ? key.toUpperCase() : key}`);
+    });
+});

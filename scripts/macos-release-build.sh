@@ -2,7 +2,7 @@
 # Build the macOS release bundles, signed with Developer ID and notarized
 # (#1671, runbook: docs/macos-signing.md).
 #
-# Usage: scripts/macos-release-build.sh <rust-target-triple>
+# Usage: scripts/macos-release-build.sh <rust-target-triple> [extra cargo-tauri-build args]
 #
 # Credentials (all or none; repository secrets in CI):
 #   APPLE_CERTIFICATE           base64 Developer ID Application .p12
@@ -18,7 +18,9 @@
 # skips notarization, so these checks are the gate, not the build's exit code.
 set -euo pipefail
 
-target=${1:?usage: $0 <rust-target-triple>}
+target=${1:?usage: $0 <rust-target-triple> [extra cargo-tauri-build args]}
+shift
+extra_args=("$@")
 bundle_dir="src-tauri/target/$target/release/bundle"
 
 credential_vars=(
@@ -36,7 +38,7 @@ if (( ${#missing[@]} == ${#credential_vars[@]} )); then
     exit 1
   fi
   echo "::warning::No Apple signing credentials configured; the macOS DMG is unsigned and Gatekeeper will block it (docs/macos-signing.md)"
-  cargo tauri build --target "$target"
+  cargo tauri build --target "$target" ${extra_args[@]+"${extra_args[@]}"}
   exit 0
 fi
 if (( ${#missing[@]} > 0 )); then
@@ -60,7 +62,7 @@ export APPLE_API_KEY_PATH="$key_dir/AuthKey_${APPLE_API_KEY}.p8"
 # Tauri imports APPLE_CERTIFICATE into a temporary keychain, signs the .app
 # (hardened runtime, src-tauri/Entitlements.plist), notarizes and staples it,
 # then signs the DMG. It does not notarize the DMG; that happens below.
-cargo tauri build --target "$target"
+cargo tauri build --target "$target" ${extra_args[@]+"${extra_args[@]}"}
 
 # Must run under macOS's stock bash 3.2: no mapfile, no empty "${a[@]}".
 only_match() {
@@ -170,5 +172,26 @@ require_output "Gatekeeper source for $dmg" "source=Notarized Developer ID" "$dm
 mount_dir=$(mktemp -d)
 hdiutil attach "$dmg" -nobrowse -readonly -noautoopen -mountpoint "$mount_dir" -quiet
 verify_app "$(only_match '*.app' "$mount_dir")"
+
+# Self-update archive (#1679, only when the build was asked for updater
+# artifacts). Tauri archives the .app before the staple above, so rebuild it
+# from the stapled, verified app and sign that archive with the updater key.
+shopt -s nullglob
+updater_archives=("$bundle_dir"/macos/*.app.tar.gz)
+shopt -u nullglob
+if (( ${#updater_archives[@]} > 1 )); then
+  fail "Expected at most one updater archive in $bundle_dir/macos; found ${#updater_archives[@]}"
+fi
+if (( ${#updater_archives[@]} == 1 )); then
+  archive=${updater_archives[0]}
+  COPYFILE_DISABLE=1 tar -czf "$archive" -C "$(dirname "$app")" "$(basename "$app")"
+  rm -f "$archive.sig"
+  # Reads TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD.
+  cargo tauri signer sign "$archive"
+  [[ -s "$archive.sig" ]] || fail "No updater signature was written for $archive"
+  archive_check=$(mktemp -d "$key_dir/archive.XXXXXX")
+  tar -xzf "$archive" -C "$archive_check"
+  verify_app "$(only_match '*.app' "$archive_check")"
+fi
 
 echo "Signed and notarized: $dmg"

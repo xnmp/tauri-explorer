@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { shouldCheckForUpdate, markUpdateChecked } from "$lib/api/update";
+import { shouldCheckForUpdate, markUpdateChecked } from "$lib/api/update-throttle";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 

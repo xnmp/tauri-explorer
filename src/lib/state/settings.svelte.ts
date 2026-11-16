@@ -19,7 +19,16 @@ import {
 } from "./persisted";
 import { decideConfigReload, type ConfigReloadReason } from "$lib/domain/config-reload";
 import { readConfigFile } from "$lib/api/config";
-import { NUMERIC_SETTINGS, clampNumericSetting, isValidNumericSetting, type NumericSettingRule } from "$lib/domain/settings-numbers";
+import { NUMERIC_SETTINGS, clampNumericSetting } from "$lib/domain/settings-numbers";
+import {
+  boundedPersistedInput,
+  isRecord,
+  MAX_PERSISTED_SETTINGS_BYTES,
+  normalizeSettingsInput as normalizeInput,
+  type NumericSettingsKey,
+  persistedExtras,
+  persistedSettings,
+} from "./settings-input";
 import type { ViewMode } from "./types";
 import {
   type PreviewPanePositionMode,
@@ -119,6 +128,7 @@ export interface Settings {
   autoEnterSingleSubdir: boolean; // when entering a dir with exactly one visible subdir (and nothing else), descend into it recursively
   ffmpegPath: string; // explicit path to ffmpeg binary for video/audio thumbnails (empty = auto-detect)
   tabTitleGitRoot: boolean; // when the folder is inside a git repo, show the repo root name + git icon in the tab title (default on, #471)
+  autoUpdate: boolean; // download signed updates in the background and offer a restart; off = notify only (default on, #1679)
   settingsVersion: number; // schema stamp on the persisted blob; drives one-shot migrations when a default flips (#506)
   warmWindow: boolean; // keep a hidden pre-warmed window pooled so Ctrl+N is near-instant
   terminalFollowsExplorer: boolean; // auto-cd the embedded terminal when the active pane navigates (#149)
@@ -198,6 +208,7 @@ const DEFAULT_SETTINGS: Settings = {
   autoEnterSingleSubdir: false,
   ffmpegPath: "",
   tabTitleGitRoot: true,
+  autoUpdate: true,
   warmWindow: true,
   terminalFollowsExplorer: true,
   explorerFollowsTerminal: true,
@@ -209,87 +220,10 @@ const DEFAULT_SETTINGS: Settings = {
 
 const STORAGE_KEY = "explorer-settings";
 const CONFIG_FILENAME = "settings.json";
-const MAX_PERSISTED_SETTINGS_BYTES = 1024 * 1024;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function persistedExtras(value: unknown): Record<string, unknown> {
-  if (!isRecord(value)) return {};
-  const known = new Set<string>(Object.keys(DEFAULT_SETTINGS));
-  return Object.fromEntries(Object.entries(value).filter(([key]) => !known.has(key)));
-}
-
-function persistedSettings(settings: Settings, extras: Record<string, unknown>): Record<string, unknown> {
-  return { ...extras, ...settings };
-}
-
-const SETTING_ENUMS: Partial<Record<keyof Settings, readonly string[]>> = {
-  iconTheme: ["default", "material", "classic", "minimal", "catppuccin"],
-  thumbnailSize: ["small", "medium", "large", "xlarge"],
-  viewMode: ["details", "list", "tiles"],
-  previewPanePosition: ["right", "bottom", "top", "auto"],
-  windowsBackdrop: ["off", "mica", "acrylic"],
-  defaultPaneLayout: ["dwindle", "right", "down"],
-};
-
-// Exhaustiveness is checked against Settings: a new numeric preference must
-// declare its consumer contract in the domain before it can enter live state.
-type NumericSettingsKey = {
-  [K in keyof Settings]: Settings[K] extends number ? K : never;
-}[keyof Settings];
-const SETTING_NUMBER_RULES: Record<NumericSettingsKey, NumericSettingRule> = NUMERIC_SETTINGS;
-
-function boundedPersistedInput(value: unknown): unknown {
-  try {
-    return JSON.stringify(value).length <= MAX_PERSISTED_SETTINGS_BYTES ? value : {};
-  } catch {
-    return {};
-  }
-}
 
 /** Keep only values satisfying the existing Settings contract. */
 export function normalizeSettingsInput(value: unknown): Partial<Settings> {
-  if (!isRecord(value)) return {};
-  const normalized: Partial<Settings> = {};
-  for (const key of Object.keys(DEFAULT_SETTINGS) as (keyof Settings)[]) {
-    const candidate = value[key];
-    const fallback = DEFAULT_SETTINGS[key];
-    if (candidate === undefined) continue;
-    if (key === "terminalShortcuts" || key === "pluginsEnabled" || key === "pluginColumnVisibility") {
-      if (!isRecord(candidate)) continue;
-      const expected = key === "terminalShortcuts" ? "string" : "boolean";
-      (normalized as Record<string, unknown>)[key] = Object.fromEntries(
-        Object.entries(candidate).filter(([, entry]) => typeof entry === expected),
-      );
-      continue;
-    }
-    if (key === "navBarButtons" || key === "columnVisibility") {
-      if (!isRecord(candidate) || !isRecord(fallback)) continue;
-      (normalized as Record<string, unknown>)[key] = {
-        ...fallback,
-        ...Object.fromEntries(
-          Object.keys(fallback)
-            .filter((nestedKey) => typeof candidate[nestedKey] === typeof fallback[nestedKey])
-            .map((nestedKey) => [nestedKey, candidate[nestedKey]]),
-        ),
-      };
-      continue;
-    }
-    if (typeof fallback === "number") {
-      if (isValidNumericSetting(SETTING_NUMBER_RULES[key as NumericSettingsKey], candidate)) {
-        (normalized as Record<string, unknown>)[key] = candidate;
-      }
-      continue;
-    }
-    if (typeof candidate !== typeof fallback) continue;
-    if (key === "defaultFileView" && candidate !== "" && !isFileViewId(candidate as string)) continue;
-    const allowed = SETTING_ENUMS[key];
-    if (allowed && !allowed.includes(candidate as string)) continue;
-    (normalized as Record<string, unknown>)[key] = candidate;
-  }
-  return normalized;
+  return normalizeInput(value, DEFAULT_SETTINGS);
 }
 
 function createSettingsStore() {
@@ -301,7 +235,7 @@ function createSettingsStore() {
     layoutTheme: legacyLayoutThemeId(initialPersisted),
     ...normalizeSettingsInput(initialPersisted),
   });
-  let extras: Record<string, unknown> = persistedExtras(initialPersisted);
+  let extras: Record<string, unknown> = persistedExtras(initialPersisted, DEFAULT_SETTINGS);
 
   function saveSettings(next: Settings): void {
     const persisted = persistedSettings(next, extras);
@@ -323,7 +257,7 @@ function createSettingsStore() {
       if (!isRecord(parsed)) return null;
       const loaded = normalizeSettingsInput(parsed);
       const { settings: migrated, changed } = migrateSettings(loaded, DEFAULT_SETTINGS);
-      return { settings: migrated, extras: persistedExtras(parsed), migrationChanged: changed };
+      return { settings: migrated, extras: persistedExtras(parsed, DEFAULT_SETTINGS), migrationChanged: changed };
     } catch {
       return null;
     }
@@ -379,7 +313,7 @@ function createSettingsStore() {
     const cachedBlob = boundedPersistedInput(loadPersisted<unknown>(STORAGE_KEY, {}));
     const saved = normalizeSettingsInput(cachedBlob);
     if (Object.keys(saved).length > 0) {
-      extras = persistedExtras(cachedBlob);
+      extras = persistedExtras(cachedBlob, DEFAULT_SETTINGS);
       const cached = (saved as Record<string, unknown>)[SETTINGS_VERSION_KEY];
       const stamp = typeof cached === "number" && Number.isFinite(cached) ? cached : 0;
       settings = { ...settings, [SETTINGS_VERSION_KEY]: stamp };
@@ -703,6 +637,9 @@ function createSettingsStore() {
     },
     get tabTitleGitRoot() {
       return settings.tabTitleGitRoot;
+    },
+    get autoUpdate() {
+      return settings.autoUpdate;
     },
     get warmWindow() {
       return settings.warmWindow;

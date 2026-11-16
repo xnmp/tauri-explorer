@@ -201,10 +201,17 @@ export const MOCK_LOCAL_KEYS = {
   submittedReport: "mock-submitted-report",
   /** "1" when a GitHub report token is saved (`user_report_token_state`). */
   reportToken: "mock-report-token",
-  /** "1" when set: `check_for_update` reports a newer release. */
+  /** "1" when set: `prepare_update` reports a newer release. */
   updateAvailable: "mockUpdateAvailable",
   /** Overrides the reported release URL when `updateAvailable` is set. */
   updateUrl: "mock-update-url",
+  /** "1" when set: this install can self-update, so `prepare_update` with
+   * `autoInstall` reports the release as downloaded (`ready`). */
+  updateSelfUpdatable: "mockUpdateSelfUpdatable",
+  /** Last `autoInstall` argument `prepare_update` received ("true"/"false"). */
+  updateAutoInstallArg: "mockUpdateAutoInstallArg",
+  /** "1" after `install_update` ran; "fail" beforehand makes it reject. */
+  updateInstalled: "mockUpdateInstalled",
   /** Text `clipboard_read_text` returns. */
   clipboardText: "mock-clipboard-text",
   /** "1" when set: `clipboard_publish` with `operation: "cut"` throws. */

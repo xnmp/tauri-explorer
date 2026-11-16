@@ -65,5 +65,16 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDEwOERFQ0RCMDdBRDlDNUQKUldSZG5LMEgyK3lORUhwM2RNTGFYZVZyRTRWMEJyU2FLN2E2QkJrTFlTWWdEd3Vhdk5aOUxHb24K",
+      "endpoints": [
+        "https://github.com/xnmp/tauri-explorer/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

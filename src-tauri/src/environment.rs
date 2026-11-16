@@ -80,7 +80,7 @@ pub(crate) struct Probe {
     pub session_type: Option<String>,
     pub desktop: Option<String>,
     pub gdk_backend: Option<String>,
-    pub wsl_distro: Option<String>,
+    pub wsl: bool,
     pub install: Install,
 }
 
@@ -127,7 +127,9 @@ pub(crate) fn summarize(probe: &Probe) -> Vec<EnvironmentField> {
         present(probe.session_type.as_deref()).map(str::to_owned),
         present(probe.desktop.as_deref()).map(str::to_owned),
         present(probe.gdk_backend.as_deref()).map(|backend| format!("GDK_BACKEND={backend}")),
-        present(probe.wsl_distro.as_deref()).map(|distro| format!("WSL ({distro})")),
+        // Presence only: a WSL distro name is user-chosen (and can contain a
+        // name), while the OS line already identifies the distribution.
+        probe.wsl.then(|| "WSL".to_owned()),
     ]
     .into_iter()
     .flatten()
@@ -200,6 +202,7 @@ pub(crate) fn crash_header() -> String {
 }
 
 /// Parse `/etc/os-release` (freedesktop format) into a display name.
+#[cfg(any(test, all(unix, not(target_os = "macos"))))]
 pub(crate) fn parse_os_release(text: &str) -> Option<String> {
     let mut pretty = None;
     let mut name = None;
@@ -229,6 +232,7 @@ pub(crate) fn parse_os_release(text: &str) -> Option<String> {
 }
 
 /// Shell-style value unquoting as the os-release spec allows.
+#[cfg(any(test, all(unix, not(target_os = "macos"))))]
 fn unquote(raw: &str) -> String {
     let inner = ['"', '\'']
         .iter()
@@ -475,7 +479,7 @@ fn probe() -> Probe {
             .then(|| env_value("XDG_CURRENT_DESKTOP"))
             .flatten(),
         gdk_backend: linux_like.then(|| env_value("GDK_BACKEND")).flatten(),
-        wsl_distro: linux_like.then(|| env_value("WSL_DISTRO_NAME")).flatten(),
+        wsl: linux_like && env_set("WSL_DISTRO_NAME"),
         install: classify_install(
             std::env::consts::OS,
             &env_set,

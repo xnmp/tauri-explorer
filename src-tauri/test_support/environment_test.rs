@@ -62,12 +62,12 @@ fn session_includes_forced_gdk_backend_and_wsl() {
     let fields = summarize(&Probe {
         session_type: Some("x11".into()),
         gdk_backend: Some("x11".into()),
-        wsl_distro: Some("Ubuntu".into()),
+        wsl: true,
         ..probe()
     });
     assert!(fields
         .iter()
-        .any(|f| f.label == "Session" && f.value == "x11, GDK_BACKEND=x11, WSL (Ubuntu)"));
+        .any(|f| f.label == "Session" && f.value == "x11, GDK_BACKEND=x11, WSL"));
 }
 
 #[test]

@@ -330,7 +330,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `warm-activation.ts` — owns parked-window observation, reveal/navigation admission, acknowledged activation and retirement.
 - `warm-window.ts` — native warm-pool adapters and acknowledged reuse; integrates the activation owner.
 - `page-foreground.ts` — `warmMode()` and the page's one foreground gate: a parked or measuring warm window defers drive pushes/poll and file-operation recovery until its activation commits (#931).
-- `window-appearance.ts` — shared window creation options, including exact feature-injected WebView2 environment arguments in Windows E2E.
+- `window-appearance.ts` — shared window creation options for fresh and warm windows: Windows backdrop, macOS vibrancy transparency + material (`domain/macos-vibrancy.ts`, #1733), and exact feature-injected WebView2 environment arguments in Windows E2E.
 - `window-title.svelte.ts` — resolves launch-home context and keeps the native OS title synchronized with the active pane directory.
 - `window-close.ts` — owns synchronous close admission, native close requests, terminal destruction and failure recovery.
 - `window-chrome.ts` — owns native maximize-state observation, resize query coalescing, and late listener/read retirement.
@@ -612,6 +612,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `settings-migration.ts` — versioned one-shot migrations for the persisted settings blob; `migrateSettings` + the append-only ledger (#506).
 - `layout-theme.ts` — layout-theme catalog (#1306): built-ins, leading-comment metadata, user-file validation, resolution/fallback reasons, row-height parsing.
 - `layout-theme-ids.ts` — eager built-in layout ids and the legacy Floating Islands → `layoutTheme` mapping used by settings migration.
+- `macos-vibrancy.ts` — macOS vibrancy mode (off / transparent / material) and the Sidebar material shared by JS-created windows (`state/window-appearance.ts`) and the page tint attribute; kept in step with `lib.rs` `MACOS_VIBRANCY_MATERIAL` by `tests/domain/macos-vibrancy.test.ts` (#1733).
 - `miller-placement.ts` — `millerHoistedToIsland`: whether Miller columns hoist to the left island (island layout, no sidebar, single-pane tab only); shared by `+page.svelte` and `ExplorerPane.svelte` (#434, #1699).
 - `settings-numbers.ts` — Numeric preference consumer contracts shared by persisted validation and interactive setters.
 - `folder-preview.ts` — folder preview image selection (#146).

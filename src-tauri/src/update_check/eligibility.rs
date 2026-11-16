@@ -207,21 +207,28 @@ mod tests {
 
     #[test]
     fn appimage_must_run_from_its_own_writable_image() {
-        let exe = Path::new("/tmp/.mount_tauri-abc/usr/bin/tauri-explorer");
-        let appdir = Some(Path::new("/tmp/.mount_tauri-abc"));
-        let image = Some(Path::new("/home/a/Apps/tauri-explorer.AppImage"));
+        // An absolute root on every platform: Windows treats `/tmp/...` as
+        // root-relative, so Unix literals would fail `is_absolute` (#1697).
+        let root = std::env::temp_dir();
+        let mount = root.join(".mount_tauri-abc");
+        let exe = mount.join("usr/bin/tauri-explorer");
+        let appdir = Some(mount.as_path());
+        let image_path = root.join("Apps/tauri-explorer.AppImage");
+        let image = Some(image_path.as_path());
         let writable = |_: &Path| true;
-        assert!(is_replaceable_appimage(exe, appdir, image, writable));
+        assert!(is_replaceable_appimage(&exe, appdir, image, writable));
         // Read-only directory: the replacement would fail every day.
-        assert!(!is_replaceable_appimage(exe, appdir, image, |_| false));
+        assert!(!is_replaceable_appimage(&exe, appdir, image, |_| false));
         // $APPIMAGE inherited from another AppImage, binary run elsewhere.
-        let extracted = Path::new("/home/a/squashfs-root/usr/bin/tauri-explorer");
-        assert!(!is_replaceable_appimage(extracted, appdir, image, writable));
+        let extracted = root.join("squashfs-root/usr/bin/tauri-explorer");
+        assert!(!is_replaceable_appimage(
+            &extracted, appdir, image, writable
+        ));
         // Missing or relative environment.
-        assert!(!is_replaceable_appimage(exe, None, image, writable));
-        assert!(!is_replaceable_appimage(exe, appdir, None, writable));
+        assert!(!is_replaceable_appimage(&exe, None, image, writable));
+        assert!(!is_replaceable_appimage(&exe, appdir, None, writable));
         let relative = Some(Path::new("tauri-explorer.AppImage"));
-        assert!(!is_replaceable_appimage(exe, appdir, relative, writable));
+        assert!(!is_replaceable_appimage(&exe, appdir, relative, writable));
     }
 
     #[test]

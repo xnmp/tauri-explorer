@@ -214,6 +214,11 @@ pub struct Environment<'a> {
 const MAX_REPORT_DESCRIPTION_UNITS: usize = 8000;
 /// The relay's body ceiling (`maxRelayBodyUnits` in the relay contract).
 const MAX_RELAY_BODY_UNITS: usize = 8500;
+/// Cap on the environment block, so the dialog's fixed overhead allowance
+/// (`REPORT_BODY_OVERHEAD_UNITS` in domain/report-diagnostics.ts, 600) always
+/// covers it plus the contact label and separators. A typical block is about
+/// 250 units; lower-priority lines drop first past the cap.
+const MAX_ENVIRONMENT_UNITS: usize = 480;
 /// Slow folder-load diagnostics the reporter chose to include (#1022).
 const MAX_DIAGNOSTICS_UNITS: usize = 6000;
 /// Below this remaining budget a diagnostics section would be too truncated
@@ -269,10 +274,13 @@ pub fn assemble_issue_body(
         .collect::<Vec<_>>()
         .join("\n\n");
     // The environment block takes what the relay ceiling leaves after the
-    // reporter's own words; lower-priority lines drop first (#1683).
+    // reporter's own words, up to its own cap; lower-priority lines drop
+    // first (#1683).
     const RULE: &str = "---\n";
     let separator = if head.is_empty() { 0 } else { 2 };
-    let budget = MAX_RELAY_BODY_UNITS.saturating_sub(units(&head) + separator + units(RULE));
+    let budget = MAX_RELAY_BODY_UNITS
+        .saturating_sub(units(&head) + separator + units(RULE))
+        .min(MAX_ENVIRONMENT_UNITS);
     let environment = format!(
         "{RULE}{}",
         crate::environment::render_report_lines(environment.version, environment.fields, budget)
@@ -698,7 +706,7 @@ mod tests {
 
     use super::{
         append_diagnostics, truncate_utf16, units, validate_diagnostics, DiagnosticKind,
-        ReportDiagnostic, MAX_DIAGNOSTICS_UNITS, MAX_RELAY_BODY_UNITS,
+        ReportDiagnostic, MAX_DIAGNOSTICS_UNITS, MAX_RELAY_BODY_UNITS, MIN_DIAGNOSTICS_UNITS,
     };
     use super::{
         assemble_issue_body, attachment_from_image_bytes, map_transport_error, relay_error_kind,
@@ -1364,6 +1372,74 @@ mod tests {
             .unwrap();
         assert!(crash_at < slow_at, "sections keep the order given");
         assert!(body.contains("```text\npanic: boom\nlocation: src/lib.rs:1:1\n```"));
+    }
+
+    /// `REPORT_BODY_OVERHEAD_UNITS` and `REPORT_DIAGNOSTIC_WRAPPER_UNITS` in
+    /// domain/report-diagnostics.ts.
+    const FRONTEND_OVERHEAD_UNITS: usize = 600;
+    const FRONTEND_WRAPPER_UNITS: usize = 100;
+
+    /// The dialog fits each section with its own fixed allowances
+    /// (`report-diagnostics.ts`) and previews the result. Whatever the
+    /// environment, description and contact, the native body must then carry
+    /// that text untruncated, or the preview would not be what is sent.
+    #[test]
+    fn dialog_fitted_sections_are_never_cut_further() {
+        let long = |label: &'static str| crate::environment::EnvironmentField {
+            label,
+            value: "v".repeat(100),
+        };
+        let fields = [
+            long("OS"),
+            long("Webview"),
+            long("Renderer"),
+            long("Session"),
+            long("Install"),
+            long("Display scale"),
+        ];
+        let environment = Environment {
+            version: "9999.9999.9999-very-long-prerelease-tag",
+            fields: &fields,
+        };
+        // Line-structured text of exactly `len` units (frontend fitting
+        // keeps whole lines, so any length up to the budget is possible).
+        let text = |len: usize| -> String {
+            let mut out = "frame: some::rust::function_name\n".repeat(len / 33 + 1);
+            out.truncate(len - 1);
+            out + "x"
+        };
+        let contact = "c".repeat(MAX_CONTACT_UNITS);
+        for description_len in [0, 1, 1000, 4000, 7000, 7590] {
+            let description = "d".repeat(description_len);
+            let budget = MAX_RELAY_BODY_UNITS
+                .saturating_sub(FRONTEND_OVERHEAD_UNITS + description_len + contact.len());
+            let crash_len =
+                MAX_DIAGNOSTICS_UNITS.min(budget.saturating_sub(FRONTEND_WRAPPER_UNITS));
+            if crash_len < MIN_DIAGNOSTICS_UNITS {
+                continue;
+            }
+            let crash_text = text(crash_len);
+            let remaining = budget - crash_len - FRONTEND_WRAPPER_UNITS;
+            let slow_len =
+                MAX_DIAGNOSTICS_UNITS.min(remaining.saturating_sub(FRONTEND_WRAPPER_UNITS));
+            let mut sections = vec![crash(&crash_text)];
+            if slow_len >= MIN_DIAGNOSTICS_UNITS {
+                sections.extend(slow(&text(slow_len)));
+            }
+            let base = assemble_issue_body(&description, Some(&contact), &environment);
+            let body = append_diagnostics(base, &sections);
+            assert!(units(&body) <= MAX_RELAY_BODY_UNITS);
+            assert!(
+                !body.contains("(truncated to fit the report)"),
+                "description {description_len}: native side cut a previewed section"
+            );
+            for section in &sections {
+                assert!(
+                    body.contains(&section.text),
+                    "description {description_len}"
+                );
+            }
+        }
     }
 
     #[test]

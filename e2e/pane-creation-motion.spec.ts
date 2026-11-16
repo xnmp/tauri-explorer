@@ -20,12 +20,32 @@ async function freezeSplit(page: Page, placement: 'left' | 'right' | 'up' | 'dow
 }
 
 async function seek(page: Page, time: number) {
-  await page.evaluate(time => {
-    for (const animation of (window as any).__splitAnimations as Animation[]) animation.currentTime = time;
+  await page.evaluate(async time => {
+    const animations = (window as any).__splitAnimations as Animation[];
+    const settled = animations.map(animation => animation.finished.catch(() => {}));
+    for (const animation of animations) {
+      if (time === 220) animation.finish();
+      else animation.currentTime = time;
+    }
+    if (time === 220) {
+      await Promise.all(settled);
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+    }
   }, time);
 }
 
 const frame = (page: Page, id: string) => page.locator(`.pane-frame[data-pane-motion="pane:${id}"]`);
+
+async function visibleFrame(page: Page, id: string) {
+  return frame(page, id).evaluate(element => {
+    const rect = element.getBoundingClientRect();
+    const values = getComputedStyle(element).clipPath.match(/^inset\(([^)]+)\)$/)?.[1].split(/\s+/).map(parseFloat) ?? [0];
+    const [top, right = top, bottom = top, left = right] = values;
+    const zoom = rect.width / parseFloat(getComputedStyle(element).width);
+    return { x: rect.x + left * zoom, y: rect.y + top * zoom,
+      width: rect.width - (left + right) * zoom, height: rect.height - (top + bottom) * zoom };
+  });
+}
 
 const modes = process.env.ALL_VIEW_MODES ? ['details', 'list', 'tiles'] : ['list'];
 for (const mode of modes) {
@@ -71,16 +91,16 @@ for (const placement of ['left', 'right', 'up', 'down'] as const) {
     const original = frame(page, split.sourceId);
     const incoming = frame(page, split.paneId);
     const content = incoming.locator('.file-list');
-    const start = (await original.boundingBox())!;
+    const start = await visibleFrame(page, split.sourceId);
     expect(start.width).toBeCloseTo(before.width, 0);
     expect(start.height).toBeCloseTo(before.height, 0);
     const newContentBefore = (await content.boundingBox())!;
     await seek(page, 110);
-    const middle = (await original.boundingBox())!;
+    const middle = await visibleFrame(page, split.sourceId);
     const newContentDuring = (await content.boundingBox())!;
     const divider = (await page.locator('.pane-divider').boundingBox())!;
     await seek(page, 220);
-    const end = (await original.boundingBox())!;
+    const end = await visibleFrame(page, split.sourceId);
     const horizontal = placement === 'left' || placement === 'right';
     const extent = (box: typeof start) => horizontal ? box.width : box.height;
     expect(extent(middle)).toBeLessThan(extent(start));

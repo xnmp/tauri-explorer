@@ -11,7 +11,8 @@ import type { FileEntry } from "$lib/domain/file";
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";
 import { dialogStore } from "$lib/state/dialogs.svelte";
 import { renameSuggestionStore } from "$lib/state/rename-suggestion.svelte";
-import { findNextWordBoundary, findPrevWordBoundary } from "$lib/domain/word-boundary";
+import { applyWordEdit, wordEditCommand } from "$lib/domain/word-boundary";
+import { isMac } from "$lib/domain/platform";
 import { displayName, renameRequest } from "$lib/domain/wire-name";
 
 export function useInlineRename(getExplorer: () => ExplorerInstance) {
@@ -126,25 +127,23 @@ export function useInlineRename(getExplorer: () => ExplorerInstance) {
       const complete = captureFocusReturn?.();
       cancelRename();
       complete?.(true);
-    } else if ((event.ctrlKey || event.metaKey) && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
-      event.preventDefault();
+    } else {
+      const command = wordEditCommand(event, isMac);
       const input = renameInputRef;
-      if (!input) return false;
-      const text = input.value;
-      const movingRight = event.key === "ArrowRight";
-      const caretPos = movingRight
-        ? (input.selectionEnd ?? 0)
-        : (input.selectionStart ?? 0);
-      const newPos = movingRight
-        ? findNextWordBoundary(text, caretPos)
-        : findPrevWordBoundary(text, caretPos);
-      if (event.shiftKey) {
-        const anchor = input.selectionDirection === "backward" ? input.selectionEnd! : input.selectionStart!;
-        const [start, end] = newPos < anchor ? [newPos, anchor] : [anchor, newPos];
-        input.setSelectionRange(start, end, newPos < anchor ? "backward" : "forward");
-      } else {
-        input.setSelectionRange(newPos, newPos);
+      if (!command || !input) return false;
+      event.preventDefault();
+      const next = applyWordEdit({
+        value: input.value,
+        selectionStart: input.selectionStart ?? 0,
+        selectionEnd: input.selectionEnd ?? 0,
+        selectionDirection: input.selectionDirection ?? "none",
+      }, command, event.shiftKey);
+      if (next.value !== input.value) {
+        input.value = next.value;
+        editedName = next.value;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
       }
+      input.setSelectionRange(next.selectionStart, next.selectionEnd, next.selectionDirection);
     }
     return false;
   }

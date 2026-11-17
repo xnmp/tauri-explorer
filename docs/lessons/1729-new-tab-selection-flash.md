@@ -33,7 +33,9 @@ Testing: a seeded selection race needs a held listing in the Vitest explorer
 suite. Frame-level regressions need a rAF sampler started before the keypress
 plus artificial listing latency (`__mockControl.latency` on every listing
 command); a single post-hoc DOM assertion lands after the listing and passes
-on the broken code. `e2e/new-tab-selection.spec.ts` counts selected rows per
+on the broken code. End the sampling window by frame count as well as time
+(at least N frames *and* the listing latency): CI's WebKit runner draws so few
+rAF frames that a wall-clock window recorded under six of them. `e2e/new-tab-selection.spec.ts` counts selected rows per
 frame in all three view modes; `e2e/new-tab-preview.spec.ts` samples the
 preview, including the cross-folder split (empty state, never the old file).
 The filtered-source case runs against the mock backend in

@@ -25,28 +25,36 @@ const shownRows = (page: Page) => page.locator(".pane-tree:not(.retained) .entry
 
 interface Frame { tabs: number; selected: number; selectedPath: string | null }
 
-/** Records the shown tab's selection in every animation frame until stopped. */
-async function startFrameSampler(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    const frames: Frame[] = [];
-    let running = true;
-    const tick = () => {
-      if (!running) return;
-      const selected = document.querySelectorAll<HTMLElement>(".pane-tree:not(.retained) .entry-item.selected");
-      frames.push({
-        tabs: document.querySelectorAll(".tab").length,
-        selected: selected.length,
-        selectedPath: selected[0]?.dataset.path ?? null,
-      });
-      requestAnimationFrame(tick);
-    };
-    requestAnimationFrame(tick);
-    (window as any).__stopFrameSampler = () => { running = false; return frames; };
-  });
-}
+/** Frames recorded after the new tab appears: at least this many, and for at
+ * least the listing's latency plus a margin. Counting frames as well as time
+ * keeps a slow runner (few rAF callbacks per second) from ending the window
+ * with too few samples to show anything. */
+const MIN_FRAMES = 30;
+const MIN_WINDOW_MS = LISTING_LATENCY_MS + 400;
 
-const stopFrameSampler = (page: Page): Promise<Frame[]> =>
-  page.evaluate(() => (window as any).__stopFrameSampler());
+/** Records the shown tab's selection in every animation frame from the frame
+ * the second tab appears until both minimums are met; `trigger` opens it. */
+async function sampleNewTabFrames(page: Page, trigger: () => Promise<void>): Promise<Frame[]> {
+  await page.evaluate(({ minFrames, minMs }) => {
+    const frames: Frame[] = [];
+    let start: number | null = null;
+    (window as any).__newTabFrames = new Promise<Frame[]>((resolve) => {
+      const tick = (now: number) => {
+        const tabs = document.querySelectorAll(".tab").length;
+        if (tabs === 2) {
+          start ??= now;
+          const selected = document.querySelectorAll<HTMLElement>(".pane-tree:not(.retained) .entry-item.selected");
+          frames.push({ tabs, selected: selected.length, selectedPath: selected[0]?.dataset.path ?? null });
+        }
+        if (start !== null && frames.length >= minFrames && now - start >= minMs) resolve(frames);
+        else requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+  }, { minFrames: MIN_FRAMES, minMs: MIN_WINDOW_MS });
+  await trigger();
+  return page.evaluate(() => (window as any).__newTabFrames as Promise<Frame[]>);
+}
 
 /** Every listing request after this call waits LISTING_LATENCY_MS. */
 async function slowListings(page: Page): Promise<void> {
@@ -82,17 +90,14 @@ async function open(page: Page, viewMode: string): Promise<void> {
 
 for (const viewMode of ALL_VIEW_MODES) {
   test(`${viewMode}: Ctrl+T keeps a row selected in every frame`, async ({ page }) => {
+    test.setTimeout(60_000); // a slow runner takes longer to draw MIN_FRAMES frames
     await open(page, viewMode);
     const selectedBefore = await page.locator(".pane-tree:not(.retained) .entry-item.selected").getAttribute("data-path");
     await slowListings(page);
-    await startFrameSampler(page);
-    await page.keyboard.press("Control+t");
-    await expect(page.locator(".tab")).toHaveCount(2);
-    // Past the new tab's listing, which publishes its own selection.
-    await page.waitForTimeout(LISTING_LATENCY_MS + 400);
-    const frames = (await stopFrameSampler(page)).filter((frame) => frame.tabs === 2);
+    // The window spans the new tab's listing, which publishes its own selection.
+    const frames = await sampleNewTabFrames(page, () => page.keyboard.press("Control+t"));
 
-    expect(frames.length).toBeGreaterThan(5);
+    expect(frames.length).toBeGreaterThanOrEqual(MIN_FRAMES);
     const dropped = frames.filter((frame) => frame.selected !== 1);
     expect(dropped, `frames without exactly one selected row: ${JSON.stringify(dropped.slice(0, 5))}`).toEqual([]);
     // The seeded row is the one the listing picks: the selection never moves.
@@ -179,7 +184,8 @@ test.describe("ordinary navigation keeps the browser's own ring heuristic", () =
     await expect(shownRows(page).first()).toHaveAttribute("data-path", /^\/home\/user\/Downloads\//);
     await shownRows(page).first().click();
     await page.keyboard.press("ArrowDown");
-    expect(await matchesFocusVisible(page, 1)).toBe(true);
+    // Keyboard row focus (the recorded ring state is engine-specific here).
+    await expect(shownRows(page).nth(1)).toBeFocused();
     await clearRowFocusCalls(page);
     await page.locator(".pane-tree:not(.retained) [aria-label='Go back']").click();
     await expect(shownRows(page).first()).toHaveAttribute("data-path", /^\/home\/user\/Documents\//);

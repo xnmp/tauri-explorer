@@ -311,17 +311,21 @@ export async function qualifyMacosPdf(browser: Browser, fixture: string, output:
       return current.width < large.width - 100 && current.height < large.height - 50;
     }, { timeout: 15_000, timeoutMsg: "owned Mac window did not become narrower and shorter" });
     const narrow = await rect(window);
-    // Responsive navigation hides its buttons in a narrow pane. The fixture
-    // retains the fixed-size New Tab control under the normal root CSS zoom.
-    const anchor100 = await rect(await button("New tab"));
+    // Responsive navigation hides its buttons in a narrow pane, and macOS no
+    // longer renders the tab strip (or its New tab button) for a lone tab now
+    // that custom window controls never hold the title row open there (#1756,
+    // #1759). The PDF page buttons stay in every toolbar density with a fixed
+    // 28px CSS height (density only changes their width), so their height is
+    // the zoom anchor.
+    const anchorLabel = "Previous PDF page";
+    const anchor100 = await rect(await button(anchorLabel));
     await command("Zoom In");
-    const anchor110 = await rect(await button("New tab"));
+    const anchor110 = await rect(await button(anchorLabel));
     for (let count = 0; count < 4; count++) await command("Zoom In");
-    const anchor150 = await rect(await button("New tab"));
-    near(anchor150.width / anchor100.width, 1.5, 0.08, "actual application zoom from 100% to 150%");
-    near(anchor150.width / anchor110.width, 150 / 110, 0.08, "actual application 150% magnification");
+    const anchor150 = await rect(await button(anchorLabel));
     near(anchor150.height / anchor100.height, 1.5, 0.08, "actual application vertical zoom from 100% to 150%");
-    record("narrow-native-window-and-app-zoom", { large, narrow, anchor: "New tab", anchor110, anchor150, anchor100 });
+    near(anchor150.height / anchor110.height, 150 / 110, 0.08, "actual application 150% magnification");
+    record("narrow-native-window-and-app-zoom", { large, narrow, anchor: anchorLabel, anchor110, anchor150, anchor100 });
     for (const dock of ["Right", "Top", "Bottom"]) {
       await command(`Dock Preview Pane ${dock}`);
       const result = await rendered(`10-narrow-150-${dock.toLowerCase()}`, 1, result => fitted(result, 1, 1.5));

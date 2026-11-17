@@ -28,18 +28,35 @@
   @media (prefers-reduced-motion: reduce) {
     .tab-area .tab-viewport.bleed.ease-widths .tab { transition: none; }
   }
-  .tab-area .tab-scroll-group { display: flex; flex: 0 1 auto; min-width: 0; height: 100%; align-items: flex-end; }
+  .tab-area .tab-scroll-group { position: relative; display: flex; flex: 0 1 auto; min-width: 0; height: 100%; align-items: flex-end; }
   /* The scroller clips at its padding box, but the active tab's fillets and
      their ring hang TAB_BLEED outside it (#1734): pad the viewport by that
-     much (and 1px below for the ring), and while the tabs fit cancel the
-     padding with negative margins so the layout is unchanged. Overflowing,
-     the padding stays and scrolled tabs pass under the scroll buttons. */
+     much (and 1px below for the ring), cancelled by negative margins so the
+     layout is unchanged. The same geometry holds once the strip overflows,
+     so crossing into overflow moves no tab: the scroll buttons overlay the
+     strip's ends, and the tabs fade out under them on each side that has
+     more to scroll to. */
   .tab-area .tab-viewport {
     flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none;
     padding: 0 var(--tab-bleed, 0px) 1px;
-    margin-bottom: -1px;
+    margin: 0 calc(-1 * var(--tab-bleed, 0px)) -1px;
+    --tab-fade-in: calc(var(--tab-bleed, 0px) + var(--tab-scroll-btn-w, 0px));
+    --tab-fade-out: calc(var(--tab-fade-in) + 24px);
+    --tab-edge-fade: linear-gradient(to right,
+      transparent calc(var(--tab-fade-start, 0) * var(--tab-fade-in)),
+      #000 calc(var(--tab-fade-start, 0) * var(--tab-fade-out)),
+      #000 calc(100% - var(--tab-fade-end, 0) * var(--tab-fade-out)),
+      transparent calc(100% - var(--tab-fade-end, 0) * var(--tab-fade-in)));
   }
-  .tab-area .tab-viewport.bleed { margin-inline: calc(-1 * var(--tab-bleed, 0px)); }
+  .tab-area .tab-viewport.fade-start, .tab-area .tab-viewport.fade-end {
+    -webkit-mask-image: var(--tab-edge-fade);
+    mask-image: var(--tab-edge-fade);
+  }
+  .tab-area .tab-viewport.fade-start { --tab-fade-start: 1; }
+  .tab-area .tab-viewport.fade-end { --tab-fade-end: 1; }
+  .tab-area .tab-scroll-btn { position: absolute; bottom: 0; z-index: 3; }
+  .tab-area .tab-scroll-btn.start { left: 0; }
+  .tab-area .tab-scroll-btn.end { right: 0; }
   .tab-area .tab-viewport::-webkit-scrollbar { display: none; }
   .tab-area .tab-scroll-btn, .tab-area .tab-picker-btn {
     display: flex; align-items: center; justify-content: center; flex: none;
@@ -50,7 +67,8 @@
   }
   .tab-area .tab-picker-btn { width: 30px; }
   .tab-area .tab-scroll-btn:hover:not(:disabled), .tab-area .tab-picker-btn:hover, .tab-area .tab-picker-btn[aria-expanded="true"] { background: var(--control-fill-secondary); color: var(--text-primary); }
-  .tab-area .tab-scroll-btn:disabled { opacity: 0.35; cursor: default; }
+  /* An end with nothing more to scroll to has no button over its tab. */
+  .tab-area .tab-scroll-btn:disabled { visibility: hidden; }
   /* Icon-only tabs keep their icon where it was and centre it only once the
      tab is too narrow for the usual padding, so crossing into icon-only mode
      moves nothing; the title has already faded to nothing by then (#1734). */

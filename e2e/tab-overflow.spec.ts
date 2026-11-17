@@ -265,3 +265,25 @@ for (const [label, count, settings] of [['3 tabs', 3, {}], ['12 tabs', 12, {}], 
   await expect(page.locator('.tab')).toHaveCount(count);
   expectPlusFollows(closing);
 });
+
+// Crossing from a fitting strip into an overflowing one moves no tab by
+// layout: the scroll buttons overlay the strip's ends instead of entering
+// its flow, and the viewport keeps its geometry. (Only the strip's own
+// scroll position may move the tabs, to reveal the new one.)
+test('a strip crossing into overflow shifts no tab', async ({ page }) => {
+  await openTabs(page, 14, 900);
+  await page.waitForTimeout(300);
+  let crossed = false;
+  for (let i = 0; i < 20 && !crossed; i++) {
+    const frames = await steppedFrames(page, () => pressShortcut(page, 't', { ctrlKey: true }));
+    crossed = frames.some(frame => frame.overflowing);
+    for (let index = 1; index < frames.length; index++) {
+      const [a, b] = [frames[index - 1], frames[index]];
+      const shift = (b.firstLeft! + b.scrollLeft) - (a.firstLeft! + a.scrollLeft);
+      expect(Math.abs(shift), `first tab shifts ${shift.toFixed(1)}px at t=${b.t} (overflowing ${a.overflowing} -> ${b.overflowing})`).toBeLessThanOrEqual(1);
+    }
+    await page.waitForTimeout(250);
+  }
+  expect(crossed).toBe(true);
+  await expect(page.getByRole('button', { name: 'Scroll tabs left', exact: true })).toBeVisible();
+});

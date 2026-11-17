@@ -41,6 +41,9 @@ export interface TabFrame {
   closeRight: number | null;
   /** A tab sliding out (inert while it leaves): its width and opacity. */
   closing: { width: number; opacity: number } | null;
+  /** The strip's scroll position and whether its tabs overflow it. */
+  scrollLeft: number;
+  overflowing: boolean;
 }
 
 /** Start sampling every frame for `ms`. Read the result with `readTabFrames`. */
@@ -103,6 +106,8 @@ export async function sampleTabFrames(page: Page, ms = 500): Promise<void> {
             closeRight: closeBox ? (closeBox.right - bar.left) / zoom : null,
           };
         })(),
+        scrollLeft: titlebar.querySelector<HTMLElement>(".tab-viewport")?.scrollLeft ?? 0,
+        overflowing: Boolean(titlebar.querySelector(".tab-viewport:not(.bleed)")),
         closing: (() => {
           const leaving = tabs.find((el) => el.inert);
           return leaving ? { width: leaving.getBoundingClientRect().width / zoom, opacity: Number(getComputedStyle(leaving).opacity) } : null;

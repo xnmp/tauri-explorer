@@ -70,6 +70,11 @@
   });
   const stripLayout = $derived(tabStripLayout(stripTabs.count, tabSpaceWidth, Math.min(renamingTabId ? 180 : 120, tabSpaceWidth || 120)));
   const showScrollButtons = $derived(stripLayout.overflowing && tabSpaceWidth >= 240);
+  /** Room the overlaid scroll button and the edge fade take at each end. */
+  const SCROLL_BUTTON_WIDTH = 24;
+  const EDGE_FADE = 24;
+  const fadeStart = $derived(stripLayout.overflowing && tabScrollLeft >= 1);
+  const fadeEnd = $derived(stripLayout.overflowing && tabScrollLeft + tabViewportWidth < stripLayout.totalWidth + 2 * TAB_BLEED - 1);
   let pickerButton: HTMLButtonElement | undefined = $state();
   let pickerOpen = $state(false);
   const pickerItems = $derived(tabs.map(tab => ({
@@ -149,8 +154,11 @@
     const selected = Array.from(tabViewport.querySelectorAll<HTMLElement>(".tab"))
       .find(tab => tab.dataset.tabId === activeTabId);
     if (!selected) return;
-    // Leave room for the active tab's fillets, which hang outside its box.
-    const delta = tabRevealDelta(selected.getBoundingClientRect(), tabViewport.getBoundingClientRect(), cssToRect(TAB_BLEED));
+    // Leave room for the active tab's fillets, which hang outside its box,
+    // and, in an overflowing strip, for the scroll button and edge fade
+    // overlaid on each end.
+    const room = TAB_BLEED + (stripLayout.overflowing ? (showScrollButtons ? SCROLL_BUTTON_WIDTH : 0) + EDGE_FADE : 0);
+    const delta = tabRevealDelta(selected.getBoundingClientRect(), tabViewport.getBoundingClientRect(), cssToRect(room));
     if (delta) tabViewport.scrollLeft += rectDimToCSS(delta);
   }
 
@@ -623,9 +631,9 @@
   <div class="tab-area" data-region="tab-strip" bind:this={tabArea}>
     <div class="tab-scroll-group" bind:this={tabScrollGroup} style:width={roomSpacer ? null : `${tabs.length * (TAB_MAX_WIDTH + TAB_GAP) - TAB_GAP}px`}>
       {#if showScrollButtons}
-        <button class="tab-scroll-btn" aria-label="Scroll tabs left" disabled={tabScrollLeft < 1} onclick={() => scrollTabs(-1)}>‹</button>
+        <button class="tab-scroll-btn start" aria-label="Scroll tabs left" disabled={tabScrollLeft < 1} onclick={() => scrollTabs(-1)}>‹</button>
       {/if}
-      <div class="tab-viewport" class:bleed={!stripLayout.overflowing} class:ease-widths={easeWidths} style:--tab-bleed={`${TAB_BLEED}px`} style:--tab-width-ease={`${widthEaseMs}ms`} bind:this={tabViewport} bind:clientWidth={tabViewportWidth} onscroll={() => { tabScrollLeft = tabViewport?.scrollLeft ?? 0; }} onwheel={handleTabWheel}>
+      <div class="tab-viewport" class:bleed={!stripLayout.overflowing} class:ease-widths={easeWidths} class:fade-start={fadeStart} class:fade-end={fadeEnd} style:--tab-bleed={`${TAB_BLEED}px`} style:--tab-scroll-btn-w={showScrollButtons ? `${SCROLL_BUTTON_WIDTH}px` : "0px"} style:--tab-width-ease={`${widthEaseMs}ms`} bind:this={tabViewport} bind:clientWidth={tabViewportWidth} onscroll={() => { tabScrollLeft = tabViewport?.scrollLeft ?? 0; }} onwheel={handleTabWheel}>
     <!-- A tablist owns only tabs; the new-tab button sits beside it (#785). -->
     <div class="tab-list" role="tablist" aria-label="Tabs">
     {#each tabs as tab (tab.id)}
@@ -744,7 +752,7 @@
     </div>
       </div>
       {#if showScrollButtons}
-        <button class="tab-scroll-btn" aria-label="Scroll tabs right" disabled={tabScrollLeft + tabViewportWidth >= stripLayout.totalWidth + 2 * TAB_BLEED - 1} onclick={() => scrollTabs(1)}>›</button>
+        <button class="tab-scroll-btn end" aria-label="Scroll tabs right" disabled={tabScrollLeft + tabViewportWidth >= stripLayout.totalWidth + 2 * TAB_BLEED - 1} onclick={() => scrollTabs(1)}>›</button>
       {/if}
     </div>
 

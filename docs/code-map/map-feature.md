@@ -476,11 +476,11 @@ backend for E2E/browser).
 
 - `components/KeybindingsDialog.svelte` — dedicated lazy-loaded editor via `WindowDialogs` and `dialogStore.isKeybindingsOpen`; `KeybindingsSettings` reuses the persisted store. General Settings links here; palette Settings and Keyboard Shortcuts open distinct surfaces. Ctrl+/ and Keyboard Shortcut Reference retain the live cheatsheet (#758).
 
-- `domain/window-keys.ts`, `state/window-keyboard.ts` — window-key policy and owned subscriptions; main file-list entries route Open/Preview commands while ordinary/Miller buttons retain Enter/Space; accepted local file-list/custom-control keys retire chords, and terminal exceptions retain their exact command identity through dispatch. `domain/terminal-keys.ts` resolves that identity for both xterm and window routing.
+- `domain/window-keys.ts`, `state/window-keyboard.ts` — window-key policy and owned subscriptions; main file-list entries route Open/Preview commands while ordinary/Miller buttons retain Enter/Space; accepted local file-list/custom-control keys retire chords, and terminal exceptions retain their exact command identity through dispatch. Non-modal text fields yield bound Ctrl/Cmd chords via `isWindowShortcutInField` but keep text, AltGr and editing keys (#1730). `domain/terminal-keys.ts` resolves that identity for both xterm and window routing.
 - `state/deferred-focus.ts`, `state/terminal.svelte.ts` — cancellable terminal-opening focus across lazy loading; new interactions retire obsolete focus requests while queued insertions still arrive.
 - `+page.svelte` — composes the window keyboard owner with active explorer and surface commands
 - `state/keybindings.svelte.ts` — `keybindingsStore`: binding map, resolve
-- `domain/keybinding-parser.ts` — parse "Ctrl+Shift+P" ↔ event; capture/runtime share the existing recorder identity (physical Alt letters/shifted digits, logical other keys), with US shifted-digit aliases
+- `domain/keybinding-parser.ts` — parse "Ctrl+Shift+P" ↔ event; capture/runtime share the existing recorder identity (physical Alt letters/shifted digits, Option-replaced non-ASCII punctuation by physical code → US char, logical other keys), with US shifted-digit aliases
 - `domain/shortcut-conflicts.ts`, `domain/shortcut-import.ts` — one-time obsolete Files Sidebar default migration (#1309/#1310), modifier/key overlap and prospective import validation, including swaps/cycles and fallback-default conflicts
 - `domain/shortcut-recording.ts`, `state/shortcut-recorder.ts` — explicit two-step recording, immutable transitions and owned timeout/cancellation; runtime ignores modifiers/repeats without renewing its deadline (#759)
 - `domain/keyboard.ts` — key event normalization

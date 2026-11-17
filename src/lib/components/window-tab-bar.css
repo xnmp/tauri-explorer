@@ -82,6 +82,15 @@
     display: none;
   }
 
+  /* While the tabs fit, they share any room the strip briefly lacks: a new
+     active tab appears at its seed width on the frame the others only start
+     easing narrower, and in a compressed strip that seed would overflow and
+     scroll the whole strip sideways for a few frames. Shrinking every tab
+     a little instead keeps the strip in place (#1734). An overflowing strip
+     scrolls, and its tabs keep their widths. */
+  .tab-area .tab-viewport.bleed .tab-list { max-width: 100%; }
+  .tab-area .tab-viewport.bleed .tab { flex-shrink: 1; }
+
   .tab-area .tab {
     box-sizing: border-box;
     display: flex;
@@ -110,9 +119,15 @@
        The explicit width also makes the tab's intrinsic contribution its real
        width, so the content-sized strip and the new-tab button behind it
        follow a slide every frame (#1734). min-width: 0 lets the 100-tab
-       strip shrink tabs below their content. */
-    flex: 0 0 calc(var(--tab-width) * var(--tab-slide, 1));
-    width: calc(var(--tab-width) * var(--tab-slide, 1));
+       strip shrink tabs below their content.
+       A tab grows from --tab-seed: nothing for a tab opening behind the
+       active one, but the active tab starts as a small tab that already
+       shows its icon and carries the seam, so some tab owns the island on
+       every frame of an opening (see .tab.active). */
+    --tab-seed: 0px;
+    --tab-grown: calc(var(--tab-seed) + (var(--tab-width) - var(--tab-seed)) * var(--tab-slide, 1));
+    flex: 0 0 var(--tab-grown);
+    width: var(--tab-grown);
     min-width: 0;
     max-width: 220px;
     position: relative;
@@ -201,8 +216,16 @@
   }
 
   .tab-area .tab.active {
-    /* Fillets grow with a sliding tab, so its first frames have no spikes. */
-    --fillet: calc(14px * var(--tab-slide));
+    /* A new active tab opens from a seed wide enough for its padding and
+       icon, with whole fillets, padding and content, and grows from there:
+       the title is revealed by the tab's own clip. Growing from nothing,
+       the strip had frames with no visible active tab, then an empty
+       silhouette (#1734). Fillets only shrink for a tab narrower than two
+       of them. */
+    --tab-seed: min(var(--tab-width), 34px);
+    --tab-content-alpha: 1;
+    padding: 0 var(--tab-pad-r) 0 var(--tab-pad-l);
+    --fillet: min(14px, calc(var(--tab-grown) / 2));
     /* --background-card is translucent in every theme; painted straight over
        the titlebar's own card layer it composites into a DIFFERENT color
        than the pane below (and reads as see-through, #243). Layering it

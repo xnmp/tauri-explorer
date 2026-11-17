@@ -12,7 +12,9 @@
  * live `--tab-width` the strip publishes, so the growth follows the strip, and
  * the content is clipped by a `clip-path` widened by the fillet flare so the
  * fillets stay whole. `--tab-slide` exposes the progress to the stylesheet,
- * which grows the fillets and caps the corner radius with it.
+ * which grows the tab from its `--tab-seed` (a new active tab opens already
+ * showing its icon and seam, so some tab owns the island on every frame) and
+ * caps the corner radius and fillets by the grown width.
  */
 
 /** Slide durations, in milliseconds. */

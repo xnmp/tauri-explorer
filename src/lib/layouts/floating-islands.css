@@ -230,7 +230,7 @@
 
 /* A tab's corner radius never exceeds half its (sliding) width. */
 :root[data-layout-base="floating-islands"] [data-region="tab"] {
-  --rt: min(var(--layout-radius), calc(var(--tab-width, 220px) * var(--tab-slide) / 2));
+  --rt: min(var(--layout-radius), calc(var(--tab-grown, 220px) / 2));
   border-radius: var(--rt) var(--rt) 0 0;
 }
 

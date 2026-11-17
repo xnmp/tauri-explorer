@@ -6,7 +6,7 @@
  * rAF callback and layout of a frame, just before paint, so a probe element
  * resized each frame reports exactly what that frame will show.
  */
-import type { Page } from "./fixtures";
+import { expect, type Page } from "./fixtures";
 
 export interface TabFrame {
   /** Milliseconds since sampling started. */
@@ -27,8 +27,15 @@ export interface TabFrame {
    *  the new-tab button, CSS px relative to the title bar. */
   lastRight: number | null;
   plusLeft: number | null;
+  /** Left edge of the first tab, CSS px relative to the title bar. */
+  firstLeft: number | null;
   /** Tabs marked selected (exactly one, or none in an empty strip). */
   selectedCount: number;
+  /** Opacity of the active tab's outline, and of its icon (1 = fully drawn). */
+  edgeOpacity: number | null;
+  iconOpacity: number | null;
+  /** Islands whose top edge is open under the active tab. */
+  seamed: number;
 }
 
 /** Start sampling every frame for `ms`. Read the result with `readTabFrames`. */
@@ -67,12 +74,22 @@ export async function sampleTabFrames(page: Page, ms = 500): Promise<void> {
         edge: box(".tab-edge-stroke"),
         shade: box(".strip-shade"),
         titlebarWidth: bar.width / zoom,
+        firstLeft: tabs.length ? (tabs[0].getBoundingClientRect().left - bar.left) / zoom : null,
         lastRight: tabs.length ? (tabs[tabs.length - 1].getBoundingClientRect().right - bar.left) / zoom : null,
         plusLeft: (() => {
           const plus = titlebar.querySelector(".new-tab-btn");
           return plus ? (plus.getBoundingClientRect().left - bar.left) / zoom : null;
         })(),
         selectedCount: tabs.filter((el) => el.getAttribute("aria-selected") === "true").length,
+        edgeOpacity: (() => {
+          const edge = titlebar.querySelector<SVGElement>(".tab-edge-stroke");
+          return edge?.getAttribute("d") ? Number(edge.getAttribute("opacity") ?? 1) : null;
+        })(),
+        iconOpacity: (() => {
+          const icon = tab?.querySelector<Element>(".tab-icon, .tab-icon-special");
+          return icon ? Number(getComputedStyle(icon).opacity) : null;
+        })(),
+        seamed: document.querySelectorAll("[data-tab-seam]").length,
       });
     });
     observer.observe(probe);
@@ -160,4 +177,30 @@ export async function steppedFrames(page: Page, action: () => Promise<void>, { s
 export async function steppedFramesOfNewTab(page: Page, action: () => Promise<void>): Promise<TabFrame[]> {
   const before = await page.locator('.tab-viewport [data-region="tab"]').count();
   return (await steppedFrames(page, action)).filter((frame) => frame.widths.length > before);
+}
+
+/** Widest a new active tab may be on its first frame: its padding and icon. */
+export const TAB_SEED_MAX = 34;
+
+/**
+ * A new active tab opens from a small seed (its padding and icon, never
+ * nothing) and grows monotonically to its final width through at least
+ * three intermediate frames, with no frame jumping from the seed's end of
+ * the growth to its full end. `frames` start at the first that shows it.
+ */
+export function expectSeededGrowth(frames: TabFrame[]): void {
+  expect(frames.length).toBeGreaterThanOrEqual(4);
+  const seed = frames[0].active!.width;
+  const final = frames[frames.length - 1].active!.width;
+  expect(seed, "seed width").toBeGreaterThanOrEqual(Math.min(final, 28));
+  expect(seed, "seed width").toBeLessThanOrEqual(TAB_SEED_MAX + 0.5);
+  const at = (fraction: number) => seed + (final - seed) * fraction;
+  let previous = seed;
+  for (const { t, active } of frames) {
+    expect(active!.width, `t=${t}`).toBeGreaterThanOrEqual(previous - 0.5);
+    expect(previous < at(0.1) && active!.width > at(0.9), `jump at t=${t}`).toBe(false);
+    previous = active!.width;
+  }
+  expect(frames.filter(({ active }) => active!.width > at(0.1) && active!.width < at(0.9)).length).toBeGreaterThanOrEqual(3);
+  expect(Math.abs(previous - final)).toBeLessThanOrEqual(0.5);
 }

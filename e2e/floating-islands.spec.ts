@@ -8,7 +8,7 @@
  */
 import { test, expect, type Page } from "./fixtures";
 import { applySettingsAndReload, pressShortcut, seedSettings, waitForEntries } from "./helpers";
-import { steppedFrames, steppedFramesOfNewTab, type TabFrame } from "./tab-frames";
+import { expectSeededGrowth, steppedFrames, steppedFramesOfNewTab, type TabFrame } from "./tab-frames";
 
 test.describe("Floating islands (#277)", () => {
   test("selecting the layout applies islands without a native backdrop", async ({ page }) => {
@@ -172,8 +172,6 @@ test.describe("Fused active tab (#1734)", () => {
       expect(hole, `hole t=${frame.t}`).not.toBeNull();
       expect(Math.abs(hole![0] - expected[0]), `hole left t=${frame.t}`).toBeLessThanOrEqual(0.6);
       expect(Math.abs(hole![1] - expected[1]), `hole right t=${frame.t}`).toBeLessThanOrEqual(0.6);
-      // A tab with no width yet has nothing to fill or outline.
-      if (active!.width < 1) continue;
       expect(fill, `fill t=${frame.t}`).not.toBeNull();
       expect(Math.abs(fill![0] - expected[0]), `fill left t=${frame.t}`).toBeLessThanOrEqual(1);
       expect(Math.abs(fill![1] - expected[1]), `fill right t=${frame.t}`).toBeLessThanOrEqual(1);
@@ -192,37 +190,23 @@ test.describe("Fused active tab (#1734)", () => {
     }
   });
 
-  test("a sliding tab keeps its fillets, in proportion to its width", async ({ page }) => {
+  test("a new active tab has whole fillets from its first frame", async ({ page }) => {
     await openIslands(page);
-    const frames = await slideFrames(page);
-    const final = frames[frames.length - 1].active!;
-    expect(final.fillet).toBeCloseTo(14, 0);
-    for (const { t, active } of frames) {
-      expect(Math.abs(active!.fillet - (14 * active!.width) / final.width), `t=${t}`).toBeLessThanOrEqual(1);
+    for (const { t, active } of await slideFrames(page)) {
+      expect(active!.fillet, `t=${t}`).toBeCloseTo(14, 0);
     }
   });
 
-  for (const count of [3, 8]) test(`first frames: the new tab grows from nothing and no tab snaps (${count} tabs)`, async ({ page }) => {
+  for (const count of [3, 8]) test(`first frames: the new tab grows from its seed and no tab snaps (${count} tabs)`, async ({ page }) => {
     // Eight tabs compress: the others ease to their narrower width while the
     // new tab grows, never in one frame.
     await openIslands(page, { count });
     await page.waitForTimeout(300);
     const all = await steppedFrames(page, () => pressShortcut(page, "t", { ctrlKey: true }));
-    const frames = all.filter((frame) => frame.widths.length > count);
-    expect(frames.length).toBeGreaterThanOrEqual(4);
-    const final = frames[frames.length - 1];
-    const finalWidth = final.active!.width;
-    // Grows from nothing, monotonically, through intermediate widths: no
-    // frame jumps from under 10% to full.
-    expect(frames[0].active!.width).toBeLessThanOrEqual(finalWidth * 0.1);
-    let previous = 0;
-    for (const frame of frames) {
-      const width = frame.active!.width;
-      expect(width, `t=${frame.t}`).toBeGreaterThanOrEqual(previous - 0.5);
-      expect(previous < finalWidth * 0.1 && width > finalWidth * 0.9, `jump at t=${frame.t}`).toBe(false);
-      previous = width;
-    }
-    expect(frames.filter((frame) => frame.active!.width > finalWidth * 0.1 && frame.active!.width < finalWidth * 0.9).length).toBeGreaterThanOrEqual(3);
+    expectSeededGrowth(all.filter((frame) => frame.widths.length > count));
+    // The strip stays in place: a seed the others have not yet made room for
+    // must not overflow and scroll every tab sideways.
+    for (const frame of all) expect(Math.abs(frame.firstLeft! - all[0].firstLeft!), `first tab t=${frame.t}`).toBeLessThanOrEqual(0.5);
     // The existing tabs (indices below `count`) ease to their new width:
     // no 15ms step, including the one the new tab appears in, covers more
     // than half of a tab's whole change (a snap covers all of it).
@@ -233,37 +217,60 @@ test.describe("Fused active tab (#1734)", () => {
         expect(step, `tab ${i} t=${all[index].t} of ${change.toFixed(1)}`).toBeLessThanOrEqual(Math.max(1, change * 0.5));
       }
     }
-    expect(Math.abs(previous - finalWidth)).toBeLessThanOrEqual(0.5);
   });
 
-  /** Exactly one tab owns the island, and the seam sits on it, every frame. */
-  function expectSeamOnActive(frames: TabFrame[]) {
+  /**
+   * Exactly one tab reads as the active one on every frame, from the frame
+   * before the action on: it is selected, wide enough to show its icon, and
+   * fused to its island (the hole, fill, full-strength outline and open
+   * island edge all sit on it). A frame where no tab, or two, own the island
+   * fails, as does a frame where the owner is an empty sliver.
+   */
+  function expectOneActiveTab(frames: TabFrame[]) {
     for (const frame of frames) {
-      expect(frame.selectedCount, `selected t=${frame.t}`).toBe(1);
+      const at = `t=${frame.t}`;
+      expect(frame.selectedCount, `selected ${at}`).toBe(1);
       const { active, hole } = frame;
+      expect(active!.width, `active width ${at}`).toBeGreaterThanOrEqual(28);
+      expect(frame.iconOpacity, `icon ${at}`).toBeGreaterThanOrEqual(0.99);
       const expected = [active!.left - active!.fillet, active!.right + active!.fillet];
-      expect(Math.abs(hole![0] - expected[0]), `hole left t=${frame.t}`).toBeLessThanOrEqual(0.6);
-      expect(Math.abs(hole![1] - expected[1]), `hole right t=${frame.t}`).toBeLessThanOrEqual(0.6);
-      if (active!.width >= 1) expect(frame.fill, `fill t=${frame.t}`).not.toBeNull();
+      expect(active!.fillet, `fillet ${at}`).toBeGreaterThanOrEqual(13);
+      expect(Math.abs(hole![0] - expected[0]), `hole left ${at}`).toBeLessThanOrEqual(0.6);
+      expect(Math.abs(hole![1] - expected[1]), `hole right ${at}`).toBeLessThanOrEqual(0.6);
+      expect(frame.fill, `fill ${at}`).not.toBeNull();
+      expect(Math.abs(frame.fill![0] - expected[0]), `fill left ${at}`).toBeLessThanOrEqual(1);
+      expect(Math.abs(frame.fill![1] - expected[1]), `fill right ${at}`).toBeLessThanOrEqual(1);
+      expect(frame.edgeOpacity, `edge ${at}`).toBeGreaterThanOrEqual(0.99);
+      expect(frame.seamed, `seam ${at}`).toBeGreaterThanOrEqual(1);
     }
   }
+
+  for (const count of [3, 8]) test(`opening a tab: the new tab owns the island from its first frame (${count} tabs)`, async ({ page }) => {
+    await openIslands(page, { count });
+    await page.waitForTimeout(300);
+    const frames = await steppedFrames(page, () => pressShortcut(page, "t", { ctrlKey: true }));
+    await expect(page.locator('.tab-viewport [data-region="tab"]')).toHaveCount(count + 1);
+    expectOneActiveTab(frames);
+    // The new (last) tab is the active one from the first frame after Ctrl+T.
+    for (const frame of frames.slice(1)) expect(frame.activeIndex, `t=${frame.t}`).toBe(count);
+  });
 
   test("closing the active tab hands the seam to its neighbour in the same frame", async ({ page }) => {
     await openIslands(page);
     await page.waitForTimeout(300);
     const frames = await steppedFrames(page, () => pressShortcut(page, "w", { ctrlKey: true, shiftKey: true }));
     await expect(page.locator('.tab-viewport [data-region="tab"]')).toHaveCount(2);
-    expectSeamOnActive(frames);
+    expectOneActiveTab(frames);
   });
 
   test("switching tabs by click and Ctrl+Tab moves the seam in the same frame", async ({ page }) => {
     await openIslands(page);
     await page.waitForTimeout(300);
     const first = page.locator('.tab-viewport [data-region="tab"]').first();
-    expectSeamOnActive(await steppedFrames(page, () => first.click(), { steps: 8 }));
+    expectOneActiveTab(await steppedFrames(page, () => first.click(), { steps: 8 }));
     await expect(first).toHaveAttribute("aria-selected", "true");
     await page.mouse.move(5, 400);
-    expectSeamOnActive(await steppedFrames(page, () => pressShortcut(page, "Tab", { ctrlKey: true }), { steps: 8 }));
+    expectOneActiveTab(await steppedFrames(page, () => pressShortcut(page, "Tab", { ctrlKey: true }), { steps: 8 }));
     await expect(page.locator('.tab-viewport [data-region="tab"]').nth(1)).toHaveAttribute("aria-selected", "true");
   });
 });

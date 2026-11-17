@@ -19,9 +19,10 @@ blur in place.
   callback and reports the previous frame; sample with a ResizeObserver
   probe instead (`e2e/tab-frames.ts`), which runs after rAF and layout,
   before paint.
-- A tab sliding in from zero width would draw its outline as a 1px vertical
-  sliver: the edge stroke and shadows fade in with the slide
-  (`presence`, from `--tab-slide`).
+- A tab narrower than about 18px would draw its outline as a 1px vertical
+  sliver, so the edge stroke and shadows fade with the tab's width
+  (`presence`). An active tab opens from a 34px seed, so it is drawn whole
+  from its first frame; see `1734-tab-slide-fillets.md`.
 - Performance: in software-rendered WebKit, repainting the shadow layer and
   re-clipping the seamed island each frame cost ~45ms. `will-change:
   opacity` on the SVG layers and on `[data-tab-seam]` composites them.

@@ -96,12 +96,13 @@ export function attachTabSeam(titlebar: HTMLElement): TabSeam {
     // fillet element's rendered width (fillet + 1px ring) is the resolved value.
     const filletEl = tab.querySelector<HTMLElement>('[data-region="tab-fillet"]');
     const fillet = filletEl ? Math.max(0, filletEl.getBoundingClientRect().width / zoom - 1) : 0;
-    // A sliding tab's outline and shadow fade in with it: at zero width they
-    // would collapse into a 1px vertical sliver.
-    const slide = parseFloat(style.getPropertyValue("--tab-slide"));
-    const presence = Number.isFinite(slide) ? Math.min(1, Math.max(0, (slide - 0.05) / 0.45)) : 1;
     const left = css(box.left, bar.left);
     const tabWidth = box.width / zoom;
+    // An active tab opens from a seed and is drawn whole from its first
+    // frame. Only a tab narrower than that (a layout without the seed) fades
+    // its outline and shadow, which would otherwise collapse into a 1px
+    // vertical sliver.
+    const presence = Math.min(1, Math.max(0, (tabWidth - 2) / 16));
     const base = css(box.bottom, bar.top);
     const contour: TabContour = tabContour(
       { left, width: tabWidth, top: css(box.top, bar.top), base },

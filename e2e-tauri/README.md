@@ -129,6 +129,43 @@ use no DOM evaluation or synthetic acceptance screenshots. The uploaded report
 retains the source/binary identity, geometry, fixture hash and each actual image.
 Production worker cleanup is not independently measured by this AX-only route.
 
+## macOS visual capture (on demand)
+
+Linux CI cannot show how the macOS material looks in real WKWebView with
+`NSVisualEffectView` vibrancy. `.github/workflows/macos-visual-capture.yml`
+builds the production `.app` from any ref on a GitHub-hosted Mac and captures
+it:
+
+```bash
+gh workflow run macos-visual-capture.yml -f ref=<branch-or-sha>
+# optional: only some scenarios
+gh workflow run macos-visual-capture.yml -f ref=<branch> -f scenarios=a-islands-dark,e-settings-translucency
+gh run download <run-id> -n macos-visual-capture -D <dir>
+```
+
+The app comes from `ref`; the tooling (`macos-visual-capture.ts`, its Swift and
+Python helpers) always comes from the workflow's own commit, so refs that
+predate it, or lack newer settings, still capture. The driver sets a
+high-contrast wallpaper, then for each scenario seeds `settings.json` (theme,
+layout, Window Vibrancy + Native Blur, integrated title bar,
+`translucencyOpacity`) before launching through Appium Mac2:
+Floating Islands dark and light, the default layout, islands at
+`translucencyOpacity` 20 and 100, the Settings dialog filtered to the vibrancy
+rows, and islands with the native title bar. Each still is saved three ways:
+`screencapture -l` (window only), `screencapture -R` (the screen under the
+window) and XCTest's screenshot cropped to the window. The islands and default
+scenarios also record four actions (Cmd+T ×3; Ctrl+Tab/Ctrl+Shift+Tab/
+Cmd+Shift+]/clicks; close the middle tab with Cmd+W; crowd to 12 tabs then
+close five). ffmpeg extracts every frame cropped to the title/tab strip, and
+Pillow builds an overview sheet per action plus one sheet of consecutive frames
+per burst of motion. The artifact's `README.txt` lists every file;
+`report.json` records blank-image checks, input times and notes.
+
+It is evidence only: it never gates anything and must stay out of required
+checks. The app bundle is cached by source tree, so re-running a ref skips the
+build. Screen Recording and Accessibility permission are granted only on the
+disposable runner; the driver refuses to run anywhere else.
+
 ## Session-loss failure evidence (`diagnostics/`)
 
 Failure-evidence diagnostics live in `e2e-tauri/diagnostics/`. Modules

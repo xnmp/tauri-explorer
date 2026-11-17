@@ -41,7 +41,7 @@ import { providerFor } from "$lib/plugins/fs-providers";
 import { basename, toNativeSeparators, pathComparison, coverageOf } from "$lib/domain/path";
 import { isWindows } from "$lib/domain/platform";
 import { fetchDirectory } from "$lib/api/files";
-import { sortEntries, filterHidden, type FileEntry, type SortField, type SortKeys } from "$lib/domain/file";
+import { sortEntries, filterHidden, sortSettlesSynchronously, type FileEntry, type SortField, type SortKeys } from "$lib/domain/file";
 import { entryLengthSeconds, lengthRevision, trackLengthSort } from "./length-sort.svelte";
 import type { ExplorerCoreState, SelectOptions, ViewMode } from "./types";
 import * as selection from "./selection";
@@ -69,7 +69,8 @@ import type { LoadReason } from "$lib/domain/load-diagnostics";
 import type { ExplorerSeed } from "$lib/domain/window-input";
 import type { PreviewTarget } from "$lib/plugins/preview-registry.svelte";
 
-interface NavigationFocusRequest { complete(): void; cancel(): void }
+/** `restore`: the pane's first load (new tab, split, restored tab), not a navigation. */
+interface NavigationFocusRequest { complete(restore: boolean): void; cancel(): void }
 interface NavigationFocusIntent { request: NavigationFocusRequest | null; offered: boolean }
 
 // Distinguishes concurrent panes in slow-load diagnostics (#1022).
@@ -561,7 +562,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
 
         const focus = navigationFocus.request;
         navigationFocus.request = null;
-        focus?.complete();
+        focus?.complete(reason === "initial");
 
         coreState.loading = false;
         load.finish("ok");
@@ -1074,8 +1075,9 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
 
   const { undo, redo } = createExplorerHistory({ captureMutation, refresh });
 
-  // Seeded rows show the row the listing will pick at once (#1729); the listing still sees no user selection.
-  if (seed) untrack(selectFirstDisplayed);
+  // Seeded rows (the source's listing) show the row the listing will pick at once, unless async sort keys or
+  // lineage grouping can still reorder them (#1729). The listing still sees no user selection.
+  if (seed) untrack(() => { if (sortSettlesSynchronously(peekSort()[0]) && !lineageGrouping) selectFirstDisplayed(); });
 
   // ===================
   // Public API
@@ -1189,9 +1191,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
       cursorKey = landing;
       onRevealCallback?.();
     },
-    get currentPath() {
-      return coreState.currentPath;
-    },
+    get currentPath() { return coreState.currentPath; },
     get loading() { return coreState.loading; },
     /** True until this pane's first listing settles, successfully or not. */
     get awaitingFirstListing() { return awaitingFirstListing; },

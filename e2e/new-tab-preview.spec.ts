@@ -6,9 +6,10 @@
  * frame or two. A rAF sampler records the preview's DOM state in every frame
  * from the keypress until the new pane's listing has settled.
  *
- * Ctrl+T covers the seeded tab (whose first row is selected at creation); the
- * dual-pane split opens the parent folder unseeded, so only the preview's own
- * hold (`previewFileFor`) keeps the file there until that listing selects a row.
+ * Ctrl+T covers the seeded tab (whose first row is selected at creation). The
+ * preview's own hold (`previewFileFor`) only keeps a file of the loading pane's
+ * folder: the dual-pane split opens the parent folder, so it shows the empty
+ * state rather than a file from another folder until its listing selects a row.
  */
 import { test, expect, type Page } from "./fixtures";
 import { ALL_VIEW_MODES, seedSettings } from "./helpers";
@@ -75,7 +76,7 @@ for (const viewMode of ALL_VIEW_MODES) {
   });
 }
 
-test("an unseeded split pane holds the preview until its listing selects a row", async ({ page }) => {
+test("a split pane of another folder never previews the source folder's file", async ({ page }) => {
   const name = await open(page, "details");
   await slowListings(page);
   await startPreviewSampler(page);
@@ -91,10 +92,8 @@ test("an unseeded split pane holds the preview until its listing selects a row",
   const frames = (await stopPreviewSampler(page)).filter((frame) => frame.panes === 2);
 
   expect(frames.length).toBeGreaterThan(5);
-  expect(frames.filter((frame) => frame.empty), "the preview never shows its empty state").toEqual([]);
-  // The held file until the listing settles, then the new pane's selection.
-  expect(frames[0].name).toBe(name);
+  expect(frames.filter((frame) => frame.name === name), `${name} is not in the new pane's folder`).toEqual([]);
   const firstSettled = frames.findIndex((frame) => frame.name === settled);
   expect(firstSettled).toBeGreaterThan(0);
-  expect(frames.slice(0, firstSettled).every((frame) => frame.name === name)).toBe(true);
+  expect(frames.slice(0, firstSettled).every((frame) => frame.empty)).toBe(true);
 });

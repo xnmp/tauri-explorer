@@ -567,3 +567,60 @@ describe("awaitingFirstListing (#1729)", () => {
     }
   });
 });
+
+describe("seeded selection with asynchronous sort keys (#1729)", () => {
+  it.each(["length", "prompt", "opened"] as const)("leaves a Details pane sorted by %s to its listing", async (sortBy) => {
+    const entries = [entry("a.txt"), entry("b.txt")];
+    const explorer = createExplorerState({ currentPath: "/root", entries, sortBy, sortAscending: true, viewMode: "details" });
+    try {
+      expect(explorer.selectedPaths.size).toBe(0);
+    } finally {
+      await explorer.destroy();
+    }
+  });
+
+  it("still seeds List and Tiles, which always sort by name", async () => {
+    const entries = [entry("b.txt"), entry("a.txt")];
+    const explorer = createExplorerState({ currentPath: "/root", entries, sortBy: "length", sortAscending: true, viewMode: "tiles" });
+    try {
+      expect([...explorer.selectedPaths]).toEqual([entries[1].path]);
+    } finally {
+      await explorer.destroy();
+    }
+  });
+});
+
+describe("navigation focus restore flag (#1729)", () => {
+  /** Records the `restore` argument of each completed navigation focus. */
+  function recordFocus(explorer: ReturnType<typeof createExplorerState>): boolean[] {
+    const completed: boolean[] = [];
+    explorer.onNavigationFocus = () => ({ complete: (restore: boolean) => completed.push(restore), cancel: () => {} });
+    return completed;
+  }
+
+  it("marks a pane's first load as a restore", async () => {
+    loadImpl.current = staticLoad({ "/root": [entry("a.txt")] });
+    const explorer = createExplorerState({ currentPath: "/root", entries: [entry("a.txt")], sortBy: "name", sortAscending: true, viewMode: "details" });
+    try {
+      const completed = recordFocus(explorer);
+      await explorer.initialLoad("/root");
+      expect(completed).toEqual([true]);
+    } finally {
+      await explorer.destroy();
+    }
+  });
+
+  it("marks ordinary navigation (sidebar, breadcrumb, Back) as not a restore", async () => {
+    loadImpl.current = staticLoad({ "/a": [entry("f", "/a")], "/b": [entry("g", "/b")] });
+    const explorer = createExplorerState();
+    try {
+      const completed = recordFocus(explorer);
+      await explorer.navigateTo("/a");
+      await explorer.navigateTo("/b");
+      await explorer.goBack();
+      expect(completed).toEqual([false, false, false]);
+    } finally {
+      await explorer.destroy();
+    }
+  });
+});

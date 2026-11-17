@@ -171,14 +171,14 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     navigationFocusRequest = request;
     return {
       cancel: request.cancel,
-      complete() {
+      complete(restore: boolean) {
         void tick().then(() => {
           if (navigationFocusRequest === request) navigationFocusRequest = null;
           if (!request.consume()) return;
           const selected = paneExplorer.focusedEntry;
-          // Restore-type focus keeps the ring state the user last saw on a
-          // row, not WebKit's key-press heuristic (#1729).
-          if (selected) fileListScrollToEntry?.(selected, rowFocusRing.shown);
+          // A pane's first load restores the ring state last seen on a row, not
+          // WebKit's key-press heuristic (#1729); navigation keeps the browser's.
+          if (selected) fileListScrollToEntry?.(selected, restore ? rowFocusRing.shown : undefined);
           else paneRef?.focus({ preventScroll: true });
         });
       },

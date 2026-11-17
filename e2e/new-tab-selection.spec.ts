@@ -157,3 +157,34 @@ for (const viewMode of ALL_VIEW_MODES) {
     });
   });
 }
+
+test.describe("ordinary navigation keeps the browser's own ring heuristic", () => {
+  test.beforeEach(async ({ page }) => { await recordRowFocus(page); });
+
+  test("keyboard navigation from a sidebar bookmark after a row click requests no ring override", async ({ page }) => {
+    await open(page, "details");
+    await shownRows(page).nth(1).click();
+    await clearRowFocusCalls(page);
+    await page.locator('.quick-access .bookmark-drop-target[data-path="/home/user/Downloads"]').first().focus();
+    await page.keyboard.press("Enter");
+    await expect(page.locator('.pane-tree:not(.retained) .entry-item[data-path^="/home/user/Downloads/"]').first()).toBeFocused();
+    const calls = await rowFocusCalls(page);
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every((call) => call.focusVisible === undefined), JSON.stringify(calls)).toBe(true);
+  });
+
+  test("a mouse click on Back after arrow keys requests no ring override", async ({ page }) => {
+    await open(page, "details");
+    await page.locator('.quick-access .bookmark-drop-target[data-path="/home/user/Downloads"]').first().click();
+    await expect(shownRows(page).first()).toHaveAttribute("data-path", /^\/home\/user\/Downloads\//);
+    await shownRows(page).first().click();
+    await page.keyboard.press("ArrowDown");
+    expect(await matchesFocusVisible(page, 1)).toBe(true);
+    await clearRowFocusCalls(page);
+    await page.locator(".pane-tree:not(.retained) [aria-label='Go back']").click();
+    await expect(shownRows(page).first()).toHaveAttribute("data-path", /^\/home\/user\/Documents\//);
+    await expect.poll(async () => (await rowFocusCalls(page)).length).toBeGreaterThan(0);
+    const calls = await rowFocusCalls(page);
+    expect(calls.every((call) => call.focusVisible === undefined), JSON.stringify(calls)).toBe(true);
+  });
+});

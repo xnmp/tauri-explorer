@@ -2,37 +2,34 @@
 import { describe, expect, it } from "vitest";
 import { createRowFocusRing } from "$lib/state/row-focus-ring";
 
-/** A row whose `:focus-visible` match is fixed; other selectors never match. */
-const row = (focusVisible: boolean) => ({
-  matches: (selector: string) => selector === ":focus-visible" && focusVisible,
-});
+/** A row focused by the keyboard matches `:focus-visible`; a clicked one does not. */
+const keyboardFocusedRow = { matches: (selector: string) => selector === ":focus-visible" };
+const clickedRow = { matches: () => false };
+const unsupportedEngineRow = { matches: () => { throw new SyntaxError("unsupported selector"); } };
 
 describe("row focus ring", () => {
-  it("shows no ring before any row had focus", () => {
-    expect(createRowFocusRing().shown).toBe(false);
+  it("leaves a restore to the browser before any row had focus", () => {
+    expect(createRowFocusRing().shown).toBeUndefined();
   });
 
-  it("follows the last focused row", () => {
+  it("restores with the ring after the user moved between rows by keyboard", () => {
     const ring = createRowFocusRing();
-    ring.record(row(true));
-    expect(ring.shown).toBe(true);
-    ring.record(row(false));
-    expect(ring.shown).toBe(false);
-    ring.record(row(true));
+    ring.record(clickedRow);
+    ring.record(keyboardFocusedRow);
     expect(ring.shown).toBe(true);
   });
 
-  it("treats an engine that rejects :focus-visible as showing no ring", () => {
+  it("restores without the ring after a click, even after earlier keyboard use", () => {
     const ring = createRowFocusRing();
-    ring.record(row(true));
-    ring.record({ matches: () => { throw new SyntaxError("unsupported selector"); } });
+    ring.record(keyboardFocusedRow);
+    ring.record(clickedRow);
     expect(ring.shown).toBe(false);
   });
 
-  it("keeps separate instances independent", () => {
-    const a = createRowFocusRing();
-    const b = createRowFocusRing();
-    a.record(row(true));
-    expect(b.shown).toBe(false);
+  it("leaves a restore to the browser where the engine cannot report :focus-visible", () => {
+    const ring = createRowFocusRing();
+    ring.record(keyboardFocusedRow);
+    ring.record(unsupportedEngineRow);
+    expect(ring.shown).toBeUndefined();
   });
 });

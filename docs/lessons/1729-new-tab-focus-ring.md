@@ -7,12 +7,17 @@ instead inherits the state from the previously focused element, and neither
 Playwright engine reproduces WebKit's key-press heuristic.
 
 Fix: `state/row-focus-ring.ts` records, on every row `focusin` in `FileList`,
-whether that row matched `:focus-visible`. Restore-type focus — navigation
-focus completion in `ExplorerPane` (which covers the new tab) and
+whether that row matched `:focus-visible`. Restore-type focus only — a pane's
+first load (`NavigationFocusRequest.complete(restore)` is true for the
+`"initial"` load reason: new tab, split, restored tab) and
 `FileList.handleViewLayoutChange` — passes `focusVisible: rowFocusRing.shown`
-through FileList's `scrollToEntry` seam. Keyboard navigation passes no option
-and keeps the browser heuristic. The record is window-global because the
-restoring row belongs to a different tab than the recorded one.
+through FileList's `scrollToEntry` seam. Ordinary navigation (sidebar,
+breadcrumb, Back) and keyboard movement pass no option: applying the recorded
+state there took the ring away from a keyboard user who had last clicked a row,
+and forced one on a mouse click on Back after arrow keys. Before any row had
+focus, or where `:focus-visible` cannot be evaluated, `shown` is undefined and
+the browser decides. The record is window-global because the restoring row
+belongs to a different tab than the recorded one.
 
 Second cause found on dev: with retained tabs (#1173) the new tab never
 restored row focus at all. Its navigation focus request captured the source

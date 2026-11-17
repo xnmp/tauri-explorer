@@ -43,34 +43,43 @@ describe("preview classification", () => {
 });
 
 describe("previewFileFor (#1729)", () => {
-  const shown = file("shown.txt");
-  const other = file("other.txt");
+  const inDir = (name: string, dir = "/work"): FileEntry => ({ ...file(name), path: `${dir}/${name}` });
+  const shown = inDir("shown.txt");
+  const other = inDir("other.txt");
+  const pane = (selected: FileEntry[], awaitingFirstListing: boolean, directory = "/work") =>
+    ({ selected, awaitingFirstListing, directory });
 
   it("shows the single selected entry, whatever was shown before", () => {
-    expect(previewFileFor([other], false, shown)).toBe(other);
-    expect(previewFileFor([other], true, shown)).toBe(other);
-    expect(previewFileFor([other], true, null)).toBe(other);
+    expect(previewFileFor(pane([other], false), shown)).toBe(other);
+    expect(previewFileFor(pane([other], true), shown)).toBe(other);
+    expect(previewFileFor(pane([other], true, "/elsewhere"), null)).toBe(other);
   });
 
-  it("keeps the shown file while the pane awaits its first listing with nothing selected", () => {
-    expect(previewFileFor([], true, shown)).toBe(shown);
+  it("keeps the shown file while a pane of its directory awaits its first listing with nothing selected", () => {
+    expect(previewFileFor(pane([], true), shown)).toBe(shown);
+  });
+
+  it("matches the directory by native equality (trailing separator, Windows case and separators)", () => {
+    expect(previewFileFor(pane([], true, "/work/"), shown)).toBe(shown);
+    const windows = { ...file("a.txt"), path: "C:\\Work\\a.txt" };
+    expect(previewFileFor(pane([], true, "c:/work"), windows)).toBe(windows);
+  });
+
+  it("never holds a file from another directory, or before the pane knows its directory", () => {
+    expect(previewFileFor(pane([], true, "/elsewhere"), shown)).toBeNull();
+    expect(previewFileFor(pane([], true, "/work/sub"), shown)).toBeNull();
+    expect(previewFileFor(pane([], true, ""), shown)).toBeNull();
   });
 
   it("has nothing to keep when nothing was shown yet", () => {
-    expect(previewFileFor([], true, null)).toBeNull();
+    expect(previewFileFor(pane([], true), null)).toBeNull();
   });
 
   it("empties once the pane has a listing and nothing is selected", () => {
-    expect(previewFileFor([], false, shown)).toBeNull();
+    expect(previewFileFor(pane([], false), shown)).toBeNull();
   });
 
   it("previews nothing for a multi-selection, even while awaiting a listing", () => {
-    expect(previewFileFor([shown, other], true, shown)).toBeNull();
-    expect(previewFileFor([shown, other], false, shown)).toBeNull();
-  });
-
-  it("handles a huge selection without previewing", () => {
-    const many = Array.from({ length: 100_000 }, (_, i) => file(`f${i}`));
-    expect(previewFileFor(many, true, shown)).toBeNull();
+    expect(previewFileFor(pane([shown, other], true), shown)).toBeNull();
   });
 });

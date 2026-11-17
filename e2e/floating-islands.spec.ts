@@ -315,4 +315,66 @@ test.describe("Fused active tab (#1734)", () => {
     const hovered = await glyphContrast(page, sample, hoverBg);
     expect(hovered, `hovered ${hovered.toFixed(1)} vs rest ${rest.toFixed(1)}`).toBeGreaterThanOrEqual(rest - 2);
   });
+
+  // The close button of a tab opening from its seed waits until the tab has
+  // room for it: it never draws past the tab's edge (default layout) or
+  // under its curved corner (islands).
+  for (const layout of ["floating-islands", "default"]) test(`a new tab's close button never shows outside the tab (${layout})`, async ({ page }) => {
+    await openIslands(page, { layout });
+    await page.waitForTimeout(300);
+    const frames = await steppedFrames(page, () => pressShortcut(page, "t", { ctrlKey: true }));
+    expect(frames.some((frame) => (frame.closeOpacity ?? 0) > 0.99)).toBe(true);
+    for (const frame of frames) {
+      if ((frame.closeOpacity ?? 0) <= 0.01) continue;
+      expect(frame.closeRight!, `t=${frame.t} close at ${frame.closeRight} in tab to ${frame.active!.right}`).toBeLessThanOrEqual(frame.active!.right - 2);
+    }
+  });
+
+  // A closing tab never shrinks as an empty stub: once its content has
+  // faded (below 40% of its width) its own surface fades with it.
+  test("a closing tab fades its surface with its content (default layout)", async ({ page }) => {
+    await openIslands(page, { layout: "default" });
+    await page.waitForTimeout(300);
+    const frames = await steppedFrames(page, () => pressShortcut(page, "w", { ctrlKey: true, shiftKey: true }));
+    const leaving = frames.filter((frame) => frame.closing);
+    expect(leaving.length).toBeGreaterThanOrEqual(3);
+    const start = Math.max(...leaving.map((frame) => frame.closing!.width));
+    for (const { t, closing } of leaving) {
+      const fraction = closing!.width / start;
+      if (fraction < 0.35) expect(closing!.opacity, `t=${t} at ${(fraction * 100).toFixed(0)}%`).toBeLessThan(1);
+      if (fraction < 0.1) expect(closing!.opacity, `t=${t} at ${(fraction * 100).toFixed(0)}%`).toBeLessThanOrEqual(0.3);
+    }
+  });
+
+  // Titles that do not fit fade out at their right edge (no ellipsis, no
+  // hard-clipped half letters), and crossing into icon-only tabs moves no
+  // icon.
+  for (const layout of ["floating-islands", "default"]) test(`narrow titles fade out and icons stay put (${layout})`, async ({ page }) => {
+    await openIslands(page, { layout, count: 9, theme: "light" });
+    await page.mouse.move(5, 400);
+    const tab = page.locator('.tab-viewport [data-region="tab"]').nth(1);
+    const title = (await tab.locator(".tab-title").boundingBox())!;
+    expect(title.width).toBeGreaterThan(12);
+    const [bg] = await pixels(page, { x: Math.round(title.x + 2), y: Math.round(title.y - 2), width: 1, height: 1 });
+    const head = await glyphContrast(page, { x: title.x, y: title.y, width: Math.min(10, title.width / 2), height: title.height }, bg);
+    // The last 8px hold an ellipsis at full contrast; a fade halves them.
+    const tail = await glyphContrast(page, { x: title.x + title.width - 8, y: title.y, width: 8, height: title.height }, bg);
+    expect(head).toBeGreaterThan(40);
+    expect(tail, `tail ${tail.toFixed(1)} vs head ${head.toFixed(1)}`).toBeLessThanOrEqual(head * 0.6);
+
+    const iconOffset = async (index: number) => {
+      const box = (await page.locator('.tab-viewport [data-region="tab"]').nth(index).boundingBox())!;
+      const icon = (await page.locator('.tab-viewport [data-region="tab"]').nth(index).locator(".tab-icon, .tab-icon-special").first().boundingBox())!;
+      return icon.x - box.x;
+    };
+    const before = await iconOffset(0);
+    // Open tabs until the inactive tabs turn icon-only.
+    for (let i = 0; i < 12 && !(await page.locator(".tab.compact").count()); i++) {
+      await pressShortcut(page, "t", { ctrlKey: true });
+      await page.waitForTimeout(250);
+    }
+    await expect(page.locator(".tab.compact").first()).toBeVisible();
+    const after = await iconOffset(0);
+    expect(Math.abs(after - before), `icon offset ${before} -> ${after}`).toBeLessThanOrEqual(1);
+  });
 });

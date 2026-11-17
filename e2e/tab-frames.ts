@@ -36,6 +36,11 @@ export interface TabFrame {
   iconOpacity: number | null;
   /** Islands whose top edge is open under the active tab. */
   seamed: number;
+  /** The active tab's close button: opacity and right edge (CSS px). */
+  closeOpacity: number | null;
+  closeRight: number | null;
+  /** A tab sliding out (inert while it leaves): its width and opacity. */
+  closing: { width: number; opacity: number } | null;
 }
 
 /** Start sampling every frame for `ms`. Read the result with `readTabFrames`. */
@@ -90,6 +95,18 @@ export async function sampleTabFrames(page: Page, ms = 500): Promise<void> {
           return icon ? Number(getComputedStyle(icon).opacity) : null;
         })(),
         seamed: document.querySelectorAll("[data-tab-seam]").length,
+        ...(() => {
+          const close = tab?.querySelector<HTMLElement>(".tab-close");
+          const closeBox = close?.getBoundingClientRect();
+          return {
+            closeOpacity: close ? Number(getComputedStyle(close).opacity) : null,
+            closeRight: closeBox ? (closeBox.right - bar.left) / zoom : null,
+          };
+        })(),
+        closing: (() => {
+          const leaving = tabs.find((el) => el.inert);
+          return leaving ? { width: leaving.getBoundingClientRect().width / zoom, opacity: Number(getComputedStyle(leaving).opacity) } : null;
+        })(),
       });
     });
     observer.observe(probe);

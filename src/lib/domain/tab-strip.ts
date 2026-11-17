@@ -3,6 +3,9 @@ export const TAB_MAX_WIDTH = 220;
 export const TAB_MIN_WIDTH = 32;
 export const TAB_ACTIVE_MIN_WIDTH = 120;
 export const TAB_GAP = 1;
+/** Inactive tabs narrower than this show only their icon: below it the
+ *  padding, icon and gap leave the title no more than a few faded pixels. */
+export const TAB_ICON_ONLY_BELOW = 44;
 /** Room the tab viewport keeps beside its tabs so the active tab's fillets
  *  (14px) and their 1px ring are never clipped by the scroller (#1734). */
 export const TAB_BLEED = 15;
@@ -18,7 +21,7 @@ export function tabStripLayout(count: number, availableWidth: number, activeMini
   const inactiveWidth = size === 1 ? 0
     : Math.min(TAB_MAX_WIDTH, Math.max(TAB_MIN_WIDTH, (space - activeWidth) / (size - 1)));
   const totalWidth = activeWidth + inactiveWidth * (size - 1) + TAB_GAP * (size - 1);
-  return { activeWidth, inactiveWidth, iconOnly: inactiveWidth < 64, overflowing: totalWidth > available + 0.5, totalWidth };
+  return { activeWidth, inactiveWidth, iconOnly: inactiveWidth < TAB_ICON_ONLY_BELOW, overflowing: totalWidth > available + 0.5, totalWidth };
 }
 
 export interface SearchableTab {

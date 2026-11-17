@@ -51,6 +51,9 @@ export function tabSlideCss(t: number, width = "var(--tab-width)", flare = 0, si
       `flex-basis: ${size}`, `width: ${size}`, `max-width: ${size}`, "min-width: 0",
       `padding-left: calc(var(--tab-pad-l, 0px) * ${p})`, `padding-right: calc(var(--tab-pad-r, 0px) * ${p})`,
       `--tab-content-alpha: ${fixed(Math.min(1, Math.max(0, unit(t) * 2.5 - 1)))}`,
+      // The tab's own surface fades out from where its content is gone, so
+      // a closing tab never shrinks as an empty stub.
+      `opacity: ${fixed(Math.min(1, unit(t) * 2.5))}`,
     ] : []),
     `--tab-slide: ${p}`,
     `clip-path: inset(-${CLIP_REACH}px -${reach}px -${CLIP_REACH}px -${reach}px)`,

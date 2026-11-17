@@ -70,8 +70,13 @@ use_mirror() {
   files=$(grep -rlE "$from" "$apt_etc/sources.list" "$apt_etc/sources.list.d" 2>/dev/null || true)
   [ -n "$files" ] || return 1
   echo "::warning title=apt mirror fallback::switching Ubuntu sources to ${to}"
+  # `-i.orig` (a suffix) is the form GNU and BSD sed share; BSD sed would read
+  # a bare `-i -E` as the suffix `-E`. apt ignores `*.list.orig`, but drop the
+  # backups so the next mirror pass does not rewrite them too.
   # shellcheck disable=SC2086 # one path per line, none contain spaces.
-  sudo sed -i -E "s#${from}#${to}#g" $files
+  sudo sed -i.orig -E "s#${from}#${to}#g" $files
+  local file
+  for file in $files; do sudo rm -f "${file}.orig"; done
 }
 
 # Regex for the image's own mirror sources: its mirror list or Azure archive.
@@ -165,7 +170,7 @@ case ${1:-} in
     # later tools that write there (the Tauri bundler's ~/.cache/tauri).
     mkdir -p "$archives"
     sudo mkdir -p "$archives/partial"
-    before=$(find "$archives" -maxdepth 1 -name '*.deb' | wc -l)
+    before=$(find "$archives" -maxdepth 1 -name '*.deb' | wc -l | tr -d '[:space:]')
     # The cache lives under the runner's home, which apt's _apt download
     # sandbox user cannot write; download as root instead of warning per file.
     # shellcheck disable=SC2086 # APT_PACKAGES is a space-separated list.
@@ -180,7 +185,7 @@ case ${1:-} in
     sudo apt-get -o "Dir::Cache::archives=$archives" autoclean -qq
     sudo rm -rf "$archives/partial" "$archives/lock"
     sudo chown -R "$(id -u):$(id -g)" "$archives"
-    after=$(find "$archives" -maxdepth 1 -name '*.deb' | wc -l)
+    after=$(find "$archives" -maxdepth 1 -name '*.deb' | wc -l | tr -d '[:space:]')
     echo "apt cache: ${before} .debs restored, ${after} after install ($(du -sh "$archives" | cut -f1))"
     ;;
   *)

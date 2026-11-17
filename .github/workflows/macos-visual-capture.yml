@@ -17,7 +17,7 @@ on:
         required: true
         default: dev
       scenarios:
-        description: Optional comma-separated scenario ids (default all; see e2e-tauri/macos-visual-capture.ts)
+        description: "Comma-separated scenario ids or presets (matrix, extras); empty = all. See e2e-tauri/macos-visual-capture.ts"
         required: false
         default: ''
   # Development only: the workflow's own branch, capturing its own commit.

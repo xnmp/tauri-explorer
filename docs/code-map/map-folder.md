@@ -1038,9 +1038,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `e2e-tauri/macos-ui-smoke.ts` — standalone Appium Mac2/XCTest pilot: exact bundled binary, unique listing fixture, native accessibility navigation outcome and retained evidence.
 - `e2e-tauri/macos-pdf-preview.ts` — hosted Mac2 PDF outcome qualification: real page pixels, centered zoom, trusted pan, narrow docks and native replacement/error handling.
 - `e2e-tauri/macos-display.swift` — measured CoreGraphics display identity and physical-pixel/point calibration for native screenshots.
-- `e2e-tauri/macos-visual-capture.ts` — on-demand hosted-Mac evidence driver (#1750): per-scenario seeded settings, Mac2-driven tab open/switch/close/overflow, window stills and screen recordings; asserts nothing.
+- `e2e-tauri/macos-visual-capture.ts` — on-demand hosted-Mac evidence driver (#1750): layout x translucency x theme matrix of seeded settings, Mac2-driven tab open/switch/close/overflow, window stills with 4x inspect crops, and screen recordings; asserts nothing.
 - `e2e-tauri/macos-visual-capture.swift` — capture helper: sets the desktop picture on every screen and lists an app's CGWindowList ids for `screencapture -l`.
-- `e2e-tauri/macos_visual_capture.py` — Pillow helpers for the capture: high-contrast wallpaper, blank-image stats, crops and per-action/per-burst contact sheets.
+- `e2e-tauri/macos_visual_capture.py` — Pillow helpers for the capture: high-contrast wallpaper, blank-image stats, crops, 4x nearest-neighbour inspect crops and per-action/per-burst contact sheets.
 - `e2e-tauri/pdf_screenshot.py` — read-only Pillow screenshot oracle; measures solid PDF fixture landmarks inside native AX viewport bounds.
 - `e2e-tauri/test_pdf_screenshot.py` — oracle negative controls for blank/wrong-page/cropped/scattered-color screenshots and Retina coordinates.
 - `e2e-tauri/native-driver-transcript.ts` — owns piped native-driver output through child stdio closure and bounded final log flushing; failed or timed-out evidence fails session cleanup (#965).

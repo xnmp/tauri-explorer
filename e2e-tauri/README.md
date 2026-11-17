@@ -138,8 +138,9 @@ it:
 
 ```bash
 gh workflow run macos-visual-capture.yml -f ref=<branch-or-sha>
-# optional: only some scenarios
-gh workflow run macos-visual-capture.yml -f ref=<branch> -f scenarios=a-islands-dark,e-settings-translucency
+# optional: only some scenarios (ids, or the presets matrix / extras)
+gh workflow run macos-visual-capture.yml -f ref=<branch> -f scenarios=matrix
+gh workflow run macos-visual-capture.yml -f ref=<branch> -f scenarios=islands-vibrancy-dark,settings-translucency
 gh run download <run-id> -n macos-visual-capture -D <dir>
 ```
 
@@ -148,19 +149,22 @@ Python helpers) always comes from the workflow's own commit, so refs that
 predate it, or lack newer settings, still capture. The driver sets a
 high-contrast wallpaper, then for each scenario seeds `settings.json` (theme,
 layout, Window Vibrancy + Native Blur, integrated title bar,
-`translucencyOpacity`) before launching through Appium Mac2:
-Floating Islands dark and light, the default layout, islands at
-`translucencyOpacity` 20 and 100, the Settings dialog filtered to the vibrancy
-rows, and islands with the native title bar. Each still is saved three ways:
+`translucencyOpacity`) before launching through Appium Mac2. The `matrix`
+preset covers every layout (Floating Islands, default) x translucency (Window
+Vibrancy + Native Blur on, off) x theme (dark, light) cell; the `extras` are
+islands at `translucencyOpacity` 20 and 100, the Settings dialog filtered to
+the material rows, and islands with the native title bar. Each still is saved three ways:
 `screencapture -R` (the screen under the window: judge vibrancy here),
 `screencapture -l` (window only; the WindowServer does not composite the
 behind-window material into it, so it looks opaque) and XCTest's screenshot
-cropped to the window. The islands and default
-scenarios also record four actions (Cmd+T ×3; Ctrl+Tab/Ctrl+Shift+Tab/
+cropped to the window. The matrix cells also record four actions (Cmd+T ×3; Ctrl+Tab/Ctrl+Shift+Tab/
 Cmd+Shift+]/clicks; close the middle tab with Cmd+W; crowd to 12 tabs then
 close five). ffmpeg extracts every frame cropped to the title/tab strip, and
 Pillow builds an overview sheet per action plus one sheet of consecutive frames
-per burst of motion. The artifact's `README.txt` lists every file;
+per burst of motion. Each still also gets `inspect/` crops at 4x
+nearest-neighbour (the active tab and its feet, the island/strip top corners,
+the traffic lights and window controls) so single-pixel defects can be judged
+without opening full frames. The artifact's `README.txt` lists every file;
 `report.json` records blank-image checks, input times and notes.
 
 The hosted macOS 26 image ships with Reduce Transparency and Reduce Motion on,

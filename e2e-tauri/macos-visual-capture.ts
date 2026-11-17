@@ -48,16 +48,17 @@ interface Scenario {
   id: string;
   title: string;
   settings: Record<string, unknown>;
+  /** "matrix" cells cover layout x translucency x theme; "extra" are one-offs. */
+  group: "matrix" | "extra";
   record?: boolean;
   settingsDialog?: boolean;
 }
 
 // Shared by every scenario. integratedTitleBar puts the tabs in the title bar
 // beside the traffic lights, where the island tab-to-panel seam is drawn;
-// scenario f keeps the native title bar for comparison. Keys a branch does
-// not know are ignored by its settings merge.
+// islands-native-titlebar keeps the native title bar for comparison. Keys a
+// branch does not know are ignored by its settings merge.
 const BASE = {
-  macOsVibrancy: true,
   vibrancyBlur: true,
   integratedTitleBar: true,
   warmWindow: false,
@@ -65,18 +66,45 @@ const BASE = {
   showPreviewPane: false,
   viewMode: "details",
 };
-const ISLANDS = { layoutTheme: "floating-islands", floatingIslands: true };
-const DEFAULT_LAYOUT = { layoutTheme: "default", floatingIslands: false };
+const LAYOUTS = {
+  islands: { name: "Floating Islands", settings: { layoutTheme: "floating-islands", floatingIslands: true } },
+  default: { name: "Default layout", settings: { layoutTheme: "default", floatingIslands: false } },
+} as const;
+const VIBRANCY = {
+  vibrancy: { name: "Window Vibrancy + Native Blur", settings: { macOsVibrancy: true } },
+  opaque: { name: "translucency off", settings: { macOsVibrancy: false } },
+} as const;
+const THEMES = ["dark", "light"] as const;
 
-const SCENARIOS: Scenario[] = [
-  { id: "a-islands-dark", title: "Floating Islands + Native Blur, dark", settings: { ...BASE, ...ISLANDS, theme: "dark" }, record: true },
-  { id: "b-islands-light", title: "Floating Islands + Native Blur, light", settings: { ...BASE, ...ISLANDS, theme: "light" }, record: true },
-  { id: "c-default-dark", title: "Default layout + Native Blur, dark", settings: { ...BASE, ...DEFAULT_LAYOUT, theme: "dark" }, record: true },
-  { id: "d1-islands-dark-opacity-20", title: "Floating Islands, dark, translucencyOpacity 20", settings: { ...BASE, ...ISLANDS, theme: "dark", translucencyOpacity: 20 } },
-  { id: "d2-islands-dark-opacity-100", title: "Floating Islands, dark, translucencyOpacity 100", settings: { ...BASE, ...ISLANDS, theme: "dark", translucencyOpacity: 100 } },
-  { id: "e-settings-translucency", title: "Settings dialog filtered to the vibrancy rows", settings: { ...BASE, ...ISLANDS, theme: "dark" }, settingsDialog: true },
-  { id: "f-islands-dark-native-titlebar", title: "Floating Islands, dark, native title bar", settings: { ...BASE, ...ISLANDS, theme: "dark", integratedTitleBar: false } },
+/** Every layout x translucency x theme cell, each with stills and recordings. */
+const MATRIX: Scenario[] = Object.entries(LAYOUTS).flatMap(([layoutId, layout]) =>
+  Object.entries(VIBRANCY).flatMap(([vibrancyId, vibrancy]) => THEMES.map((theme): Scenario => ({
+    id: `${layoutId}-${vibrancyId}-${theme}`,
+    title: `${layout.name}, ${vibrancy.name}, ${theme}`,
+    settings: { ...BASE, ...layout.settings, ...vibrancy.settings, theme },
+    group: "matrix",
+    record: true,
+  }))));
+
+const ISLANDS_VIBRANT = { ...BASE, ...LAYOUTS.islands.settings, ...VIBRANCY.vibrancy.settings, theme: "dark" };
+const EXTRAS: Scenario[] = [
+  { id: "opacity-20", title: "Floating Islands, vibrancy, dark, translucencyOpacity 20", settings: { ...ISLANDS_VIBRANT, translucencyOpacity: 20 }, group: "extra" },
+  { id: "opacity-100", title: "Floating Islands, vibrancy, dark, translucencyOpacity 100", settings: { ...ISLANDS_VIBRANT, translucencyOpacity: 100 }, group: "extra" },
+  { id: "settings-translucency", title: "Settings dialog filtered to the material rows", settings: ISLANDS_VIBRANT, group: "extra", settingsDialog: true },
+  { id: "islands-native-titlebar", title: "Floating Islands, vibrancy, dark, native title bar", settings: { ...ISLANDS_VIBRANT, integratedTitleBar: false }, group: "extra" },
 ];
+const SCENARIOS: Scenario[] = [...MATRIX, ...EXTRAS];
+
+/** CAPTURE_SCENARIOS: ids and/or the presets "matrix" and "extras"; empty = all. */
+function selectScenarios(spec: string | undefined): Scenario[] {
+  const tokens = (spec ?? "").split(",").map((token) => token.trim()).filter(Boolean);
+  if (tokens.length === 0) return SCENARIOS;
+  const wanted = new Set(tokens.flatMap((token) =>
+    token === "matrix" ? MATRIX.map((s) => s.id) : token === "extras" ? EXTRAS.map((s) => s.id) : [token]));
+  const unknown = [...wanted].filter((id) => !SCENARIOS.some((s) => s.id === id));
+  if (unknown.length) throw new Error(`unknown scenarios: ${unknown.join(", ")}`);
+  return SCENARIOS.filter((s) => wanted.has(s.id));
+}
 
 const report = {
   schemaVersion: 1,
@@ -260,6 +288,7 @@ interface ScenarioContext {
   window: Rect;
   stripHeight: number;
   stills: Record<string, Record<string, ImageStats | string>>;
+  inspect: Record<string, unknown>;
   recordings: unknown[];
   observations: Record<string, unknown>;
 }
@@ -297,7 +326,78 @@ async function still(ctx: ScenarioContext, name: string): Promise<void> {
     fs.rmSync(screen);
   } catch (error) { results.xctest = `failed: ${String(error).slice(0, 300)}`; }
   ctx.stills[name] = results;
+  if (fs.existsSync(region)) {
+    try { ctx.inspect[name] = await inspect(ctx, name, region); }
+    catch (error) { ctx.inspect[name] = `failed: ${String(error).slice(0, 300)}`; }
+  }
   saveReport();
+}
+
+interface Geometry { active: Rect | null; activeBy: string; tabs: number; tablist: Rect | null; up: Rect | null }
+
+/** Where the tab-strip details are, read from the accessibility tree. */
+async function geometry(ctx: ScenarioContext): Promise<Geometry> {
+  const list = await tabs(ctx.browser, ctx.window);
+  let active: Rect | null = null;
+  let activeBy = "none";
+  for (const tab of list) {
+    const selected = String(await tab.element.getAttribute("selected").catch(() => ""));
+    if (selected === "true" || selected === "1") { active = tab.rect; activeBy = "selected"; break; }
+  }
+  if (!active && list.length) {
+    // Compressed strips keep the active tab widest.
+    active = list.reduce((a, b) => (b.rect.width > a.rect.width ? b : a)).rect;
+    activeBy = "widest";
+  }
+  const find = async (selector: string) => {
+    const element = await ctx.browser.$(selector).getElement();
+    return (await element.isExisting()) ? rectOf(element) : null;
+  };
+  return {
+    active, activeBy, tabs: list.length,
+    tablist: await find("-ios predicate string:label == 'Tabs'"),
+    up: await find("-ios predicate string:label == 'Go up one level'"),
+  };
+}
+
+/**
+ * 4x nearest-neighbour crops of the details a 1px defect hides in: the active
+ * tab and its two feet, the island/strip top corners under the strip, the
+ * traffic lights and the app's window controls. Taken from the region still,
+ * which is what a user sees (material included).
+ */
+async function inspect(ctx: ScenarioContext, moment: string, source: string): Promise<unknown> {
+  const g = await geometry(ctx);
+  const w = ctx.window;
+  const strip = g.tablist ?? g.active;
+  const seam = strip ? strip.y + strip.height : w.y + 40;
+  const boxes: Array<{ name: string } & Rect> = [
+    { name: "traffic-lights", x: w.x, y: w.y, width: 84, height: 40 },
+    { name: "window-controls", x: w.x + w.width - 112, y: w.y, width: 112, height: 40 },
+    { name: "island-top-left", x: w.x, y: seam - 10, width: 64, height: 44 },
+    { name: "island-top-right", x: w.x + w.width - 64, y: seam - 10, width: 64, height: 44 },
+  ];
+  if (g.up) boxes.push({ name: "content-island-top-left", x: g.up.x - 110, y: seam - 10, width: 64, height: 44 });
+  if (g.active) {
+    const a = g.active;
+    const bottom = a.y + a.height;
+    boxes.push(
+      { name: "active-tab", x: a.x - 24, y: a.y - 8, width: a.width + 48, height: a.height + 24 },
+      { name: "active-tab-foot-left", x: a.x - 24, y: bottom - 20, width: 48, height: 32 },
+      { name: "active-tab-foot-right", x: a.x + a.width - 24, y: bottom - 20, width: 48, height: 32 },
+    );
+  }
+  const image = python<ImageStats>("stats", source);
+  const scale = image.width / w.width;
+  const crops = boxes.map((box) => ({
+    name: box.name,
+    x: Math.round((box.x - w.x) * scale), y: Math.round((box.y - w.y) * scale),
+    width: Math.round(box.width * scale), height: Math.round(box.height * scale),
+  }));
+  const dir = path.join(ctx.dir, "inspect");
+  fs.mkdirSync(dir, { recursive: true });
+  const written = python<{ files: string[] }>("inspect", source, dir, moment, JSON.stringify(crops));
+  return { geometry: g, files: written.files.map(rel) };
 }
 
 // --------------------------------------------------------------- recorders
@@ -561,7 +661,7 @@ async function runScenario(scenario: Scenario): Promise<void> {
   await waitForAppExit();
   resetAppState(scenario.settings);
   fs.writeFileSync(path.join(dir, "settings.json"), `${JSON.stringify(scenario.settings, null, 2)}\n`);
-  const entry = { id: scenario.id, title: scenario.title, stills: {}, recordings: [] as unknown[], observations: {}, error: null as string | null };
+  const entry = { id: scenario.id, title: scenario.title, group: scenario.group, stills: {}, inspect: {}, recordings: [] as unknown[], observations: {}, error: null as string | null };
   report.scenarios.push(entry);
   let browser: Browser | undefined;
   try {
@@ -573,7 +673,7 @@ async function runScenario(scenario: Scenario): Promise<void> {
     await sleep(2_500);
     const ctx: ScenarioContext = {
       scenario, browser, dir, window: await windowRect(browser), stripHeight: 140,
-      stills: entry.stills, recordings: entry.recordings, observations: entry.observations,
+      stills: entry.stills, inspect: entry.inspect, recordings: entry.recordings, observations: entry.observations,
     };
     ctx.observations.window = ctx.window;
     await still(ctx, "01-single-tab");
@@ -631,14 +731,18 @@ function writeReadme(): void {
     "  scenarios/<id>/NN-<moment>-region.png   screencapture -R: the screen as a user sees it, native material included. Judge vibrancy here.",
     "  scenarios/<id>/NN-<moment>-window.png   screencapture -l: window only, no shadow. Behind-window material is NOT composited, so it looks opaque.",
     "  scenarios/<id>/NN-<moment>-xctest.png   XCTest screenshot cropped to the window (fallback route)",
+    "  scenarios/<id>/inspect/NN-<detail>.png  4x nearest-neighbour crops of a region still: active tab and its feet,",
+    "                                          island/strip top corners, traffic lights, window controls",
+    "  scenarios/<id>/inspect/NN-sheet.png     every detail crop of that moment on one labelled sheet",
     "  scenarios/<id>/recordings/<action>.mov  screen recording of the window during one action",
     "  scenarios/<id>/recordings/<action>-frames/NNNNN.png  every recorded frame, cropped to the title/tab strip",
     "  scenarios/<id>/recordings/<action>-frames/times.txt  presentation time (s) of each frame",
     "  scenarios/<id>/recordings/<action>-sheets/overview-sheet.png  ~20 frames sampled across the action's motion",
     "  scenarios/<id>/recordings/<action>-sheets/burst-NN-sheet.png  consecutive frames of one burst of motion (usually one input)",
     "",
-    "Scenarios",
-    ...SCENARIOS.map((s) => `  ${s.id}: ${s.title}${s.record ? " (with recordings)" : ""}`),
+    "Scenarios (matrix = layout x translucency x theme; select with CAPTURE_SCENARIOS / the scenarios input:",
+    "ids, or the presets matrix and extras)",
+    ...SCENARIOS.map((s) => `  [${s.group}] ${s.id}: ${s.title}${s.record ? " (with recordings)" : ""}`),
     "",
     "Actions (recorded scenarios start with three tabs, the middle one active)",
     "  1-open-tabs         Cmd+T three times, 1.6 s apart",
@@ -689,8 +793,7 @@ async function main(): Promise<void> {
   }
   if (!fs.existsSync(path.join(APP, "Contents/MacOS", PROCESS_NAME))) throw new Error(`no app bundle at ${APP}`);
   fs.mkdirSync(OUTPUT, { recursive: true });
-  const only = process.env.CAPTURE_SCENARIOS?.split(",").map((s) => s.trim()).filter(Boolean);
-  const scenarios = only?.length ? SCENARIOS.filter((s) => only.includes(s.id)) : SCENARIOS;
+  const scenarios = selectScenarios(process.env.CAPTURE_SCENARIOS);
   try {
     prepareHost();
     prepareFixture();

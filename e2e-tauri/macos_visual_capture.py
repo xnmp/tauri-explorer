@@ -5,6 +5,8 @@ Subcommands (all print one JSON object on stdout):
   stats PNG                    size and luminance spread; flags blank images
   crop IN OUT X Y W H          crop a pixel rectangle
   sheets FRAMES_DIR OUT_DIR    overview and per-burst contact sheets
+  inspect SRC OUT_DIR PREFIX CROPS_JSON
+                               4x nearest-neighbour detail crops plus one labelled sheet
 
 Evidence tooling only: nothing here asserts product behaviour.
 """
@@ -215,6 +217,45 @@ def sheets(frames_dir: str, out_dir: str) -> dict:
     }
 
 
+INSPECT_ZOOM = 4
+
+
+def inspect(source: str, out_dir: str, prefix: str, crops_json: str) -> dict:
+    """Magnify small regions without smoothing, so single-pixel steps stay visible."""
+    image = Image.open(source).convert("RGB")
+    target = Path(out_dir)
+    target.mkdir(parents=True, exist_ok=True)
+    files: list[str] = []
+    tiles: list[tuple[str, Image.Image]] = []
+    for crop_spec in json.loads(crops_json):
+        x, y = max(0, crop_spec["x"]), max(0, crop_spec["y"])
+        box = (x, y, min(image.width, crop_spec["x"] + crop_spec["width"]), min(image.height, crop_spec["y"] + crop_spec["height"]))
+        if box[2] <= box[0] or box[3] <= box[1]:
+            continue
+        tile = image.crop(box)
+        tile = tile.resize((tile.width * INSPECT_ZOOM, tile.height * INSPECT_ZOOM), Image.Resampling.NEAREST)
+        path = target / f"{prefix}-{crop_spec['name']}.png"
+        tile.save(path)
+        files.append(str(path))
+        tiles.append((f"{crop_spec['name']}  src={box[0]},{box[1]} {box[2] - box[0]}x{box[3] - box[1]}px  x{INSPECT_ZOOM}", tile))
+    if tiles:
+        label_h, gap = 20, 8
+        width = max(tile.width for _, tile in tiles)
+        height = sum(tile.height + label_h + gap for _, tile in tiles)
+        canvas = Image.new("RGB", (width, height), (24, 24, 24))
+        draw = ImageDraw.Draw(canvas)
+        y = 0
+        for label, tile in tiles:
+            draw.text((6, y + 3), label, fill=(255, 220, 120), font=font(13))
+            y += label_h
+            canvas.paste(tile, (0, y))
+            y += tile.height + gap
+        sheet_path = target / f"{prefix}-sheet.png"
+        canvas.save(sheet_path)
+        files.append(str(sheet_path))
+    return {"files": files}
+
+
 def main(argv: list[str]) -> None:
     if len(argv) < 2:
         raise SystemExit(__doc__)
@@ -227,6 +268,8 @@ def main(argv: list[str]) -> None:
         emit(crop(args[0], args[1], *[int(round(float(v))) for v in args[2:6]]))
     elif command == "sheets":
         emit(sheets(args[0], args[1]))
+    elif command == "inspect":
+        emit(inspect(args[0], args[1], args[2], args[3]))
     else:
         raise SystemExit(f"unknown command {command}\n{__doc__}")
 

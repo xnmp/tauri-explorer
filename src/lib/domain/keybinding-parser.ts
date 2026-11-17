@@ -171,6 +171,9 @@ export interface MatchOptions {
    * modifier (the Linux "Cmd") never sets it, so the caller tracks the
    * Super key's held state and overlays it here. */
   metaHeld?: boolean;
+  /** Platform whose Option key replaces characters (macOS). Defaults to the
+   * running platform; tests pass it explicitly. */
+  mac?: boolean;
 }
 
 /**
@@ -200,7 +203,7 @@ export function matchesShortcut(
   if (shortcut.shift !== event.shiftKey) return false;
   if (shortcut.alt !== event.altKey) return false;
 
-  return shortcutEventKey(event) === shortcutKeyIdentity(shortcut.key, shortcut.shift);
+  return shortcutEventKey(event, options?.mac ?? isMac) === shortcutKeyIdentity(shortcut.key, shortcut.shift);
 }
 
 /** US-layout characters (unshifted, shifted) for physical punctuation and
@@ -224,18 +227,19 @@ function isReplacedKey(key: string): boolean {
 
 /** Match exactly the identity the recorder has always saved: physical Alt
  * letters (Option-produced characters) and shifted digits, logical other keys.
- * Under Alt, a key replaced by a non-ASCII character resolves by physical
- * code to its US character, so Option+; still means `;` on macOS even with Cmd
- * held. Keys that still type ASCII under Alt (Linux, Windows, AZERTY) keep
- * their logical identity. Removing the alternate fallback preserves existing
- * recorded shortcuts while preventing a layout event from also matching a
- * different physical shortcut.
+ * On macOS only, Option replaces the typed character, so under Alt a key that
+ * became non-ASCII resolves by physical code to its US character: Option+;
+ * still means `;` even with Cmd held. Elsewhere Alt does not transform keys, so
+ * a non-ASCII key (German ö, AZERTY é, AltGr output) is the layout's own
+ * character and keeps its logical identity, as do keys that still type ASCII.
+ * Removing the alternate fallback preserves existing recorded shortcuts while
+ * preventing a layout event from also matching a different physical shortcut.
  */
-function shortcutEventKey(event: KeyboardEvent): string {
+function shortcutEventKey(event: KeyboardEvent, mac: boolean): string {
   const code = event.code ?? "";
   const letter = event.altKey ? /^Key([A-Z])$/.exec(code) : null;
   if (letter) return letter[1].toLowerCase();
-  const replaced = event.altKey && isReplacedKey(event.key) ? US_KEY_BY_CODE[code] : undefined;
+  const replaced = mac && event.altKey && isReplacedKey(event.key) ? US_KEY_BY_CODE[code] : undefined;
   if (replaced) return shortcutKeyIdentity(replaced[event.shiftKey ? 1 : 0], event.shiftKey);
   const digit = event.shiftKey ? /^Digit([0-9])$/.exec(code) : null;
   return digit ? digit[1] : shortcutKeyIdentity(event.key, event.shiftKey);
@@ -350,7 +354,7 @@ export function eventToShortcutString(event: KeyboardEvent, options?: MatchOptio
   if (event.shiftKey) parts.push("Shift");
   if (event.altKey) parts.push("Alt");
 
-  const rawKey = shortcutEventKey(event);
+  const rawKey = shortcutEventKey(event, options?.mac ?? isMac);
 
   // Format the key using lookup or uppercase for single chars
   const key = KEY_TO_SHORTCUT[rawKey] ??

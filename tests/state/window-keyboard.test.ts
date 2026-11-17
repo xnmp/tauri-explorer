@@ -753,7 +753,19 @@ describe("non-modal text field shortcuts", () => {
     ["Ctrl+A with Caps Lock", "A", { ctrlKey: true }, false],
     ["Ctrl+ф (non-Latin A)", "ф", { ctrlKey: true, code: "KeyA" }, false],
     ["Cmd+Option+Z (Ω)", "Ω", { metaKey: true, altKey: true, code: "KeyZ" }, false],
-    ...(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown", "Backspace", "Delete", "Insert", "Enter", " "] as const)
+    ["Ctrl+PageDown (next tab)", "PageDown", { ctrlKey: true, code: "PageDown" }, true],
+    ["Ctrl+Shift+PageUp", "PageUp", { ctrlKey: true, shiftKey: true, code: "PageUp" }, true],
+    ["plain PageDown", "PageDown", { code: "PageDown" }, false],
+    ["Shift+PageUp", "PageUp", { shiftKey: true, code: "PageUp" }, false],
+    // Real `code` values alongside the logical key.
+    ["Ctrl+T (with code)", "t", { ctrlKey: true, code: "KeyT" }, true],
+    ["Cmd+Alt+' (with code)", "'", { metaKey: true, altKey: true, code: "Quote" }, true],
+    ["Ctrl+C (with code)", "c", { ctrlKey: true, code: "KeyC" }, false],
+    ["AZERTY Ctrl+A (physical Q)", "a", { ctrlKey: true, code: "KeyQ" }, false],
+    ["AZERTY Ctrl+Q (physical A)", "q", { ctrlKey: true, code: "KeyA" }, true],
+    ["IME composing Ctrl+P", "p", { ctrlKey: true, code: "KeyP", isComposing: true }, false],
+    ["IME keyCode 229 Ctrl+L", "l", { ctrlKey: true, code: "KeyL", keyCode: 229 }, false],
+    ...(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "Backspace", "Delete", "Insert", "Enter", " "] as const)
       .flatMap((key): Row[] => [
         [`Ctrl+${key}`, key, { ctrlKey: true }, false],
         [`Cmd+Shift+${key}`, key, { metaKey: true, shiftKey: true }, false],
@@ -763,7 +775,7 @@ describe("non-modal text field shortcuts", () => {
 
   const shortcutFor = (key: string, m: Partial<KeyboardEvent>) => [
     m.ctrlKey ? "Ctrl" : "", m.metaKey ? "Meta" : "", m.shiftKey ? "Shift" : "", m.altKey ? "Alt" : "",
-    m.code?.startsWith("Key") ? m.code.slice(3) : key === " " ? "Space" : key,
+    m.altKey && m.code?.startsWith("Key") ? m.code.slice(3) : key === " " ? "Space" : key,
   ].filter(Boolean).join("+");
 
   it.each(rows)("%s from a focused input (key %j, %j) runs: %s", (_label, key, modifiers, runs) => {
@@ -791,15 +803,41 @@ describe("non-modal text field shortcuts", () => {
     expect(f.executeCommand).not.toHaveBeenCalled();
   });
 
-  it("tracked Linux Super counts as Cmd, and makes Ctrl+Alt a shortcut rather than AltGr", () => {
+  it("a tracked Super overlay alone (e.g. a lost keyup) never turns typing into commands", () => {
     const f = fixture();
     Object.assign(f.target, { tagName: "INPUT" });
     f.bind("tabs.newTab", "Ctrl+T");
     f.bind("plugin.superAlt", "Ctrl+Meta+Alt+K");
     f.press("Super", { code: "MetaLeft" });
-    expect(f.press("t", {}).defaultPrevented).toBe(true);
-    expect(f.press("k", { ctrlKey: true, altKey: true }).defaultPrevented).toBe(true);
-    expect(f.executeCommand.mock.calls).toEqual([["tabs.newTab"], ["plugin.superAlt"]]);
+    expect(f.press("t", { code: "KeyT" }).defaultPrevented).toBe(false);
+    expect(f.press("k", { ctrlKey: true, altKey: true, code: "KeyK" }).defaultPrevented).toBe(false);
+    expect(f.executeCommand).not.toHaveBeenCalled();
+    // The file list still honours the overlay (WebKitGTK omits Super from metaKey).
+    Object.assign(f.target, { tagName: "DIV" });
+    expect(f.press("t", { code: "KeyT" }).defaultPrevented).toBe(true);
+    expect(f.executeCommand).toHaveBeenCalledExactlyOnceWith("tabs.newTab");
+  });
+
+  it("an IME key after a field-accepted prefix is left to the composition", () => {
+    const f = fixture();
+    Object.assign(f.target, { tagName: "INPUT" });
+    f.bind("plugin.chord", "Ctrl+K T");
+    f.press("k", { ctrlKey: true, code: "KeyK" });
+    expect(f.press("Process", { code: "KeyA", isComposing: true, keyCode: 229 }).defaultPrevented).toBe(false);
+    expect(f.executeCommand).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["j", "general.openJobsPanel"],
+    [",", "general.openSettings"],
+    ["\\", "view.toggleDualPane"],
+  ] as const)("an unavailable Ctrl+%s surface action leaves the key with the field", (key, id) => {
+    const f = fixture();
+    Object.assign(f.target, { tagName: "INPUT" });
+    f.available.delete(id);
+    expect(f.press(key, { ctrlKey: true }).defaultPrevented).toBe(false);
+    f.available.add(id);
+    expect(f.press(key, { ctrlKey: true }).defaultPrevented).toBe(true);
   });
 
   it("a Ctrl/Cmd chord prefix accepted from a field owns the next key", () => {

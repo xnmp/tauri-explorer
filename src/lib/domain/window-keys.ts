@@ -2,14 +2,22 @@ import { parseChord } from "./keybinding-parser";
 import type { TerminalCommandId } from "./terminal-keys";
 
 type WindowKey = Pick<KeyboardEvent, "key" | "code" | "ctrlKey" | "metaKey" | "altKey" | "shiftKey">
-  & Partial<Pick<KeyboardEvent, "defaultPrevented">>;
+  & Partial<Pick<KeyboardEvent, "defaultPrevented" | "isComposing" | "keyCode">>;
 
 /** Keys a focused text field keeps under any modifier: caret movement,
  * deletion, submission and spacing. */
 const FIELD_EDITING_KEYS = new Set([
-  "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown",
+  "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End",
   "Backspace", "Delete", "Insert", "Enter", " ",
 ]);
+/** Page keys scroll a field only unmodified or with Shift; with Ctrl/Cmd they
+ * are tab navigation (Ctrl+PageUp/PageDown), like Ctrl+Tab. */
+const FIELD_PAGE_KEYS = new Set(["PageUp", "PageDown"]);
+
+/** An input-method composition owns its keys (WebKit reports keyCode 229). */
+function isComposingKey(event: WindowKey): boolean {
+  return event.isComposing === true || event.keyCode === 229;
+}
 /** Ctrl/Cmd clipboard, select-all and undo/redo letters. */
 const FIELD_EDITING_LETTERS = new Set(["a", "c", "v", "x", "y", "z"]);
 
@@ -22,20 +30,22 @@ function letterOf(event: Pick<KeyboardEvent, "key" | "code">): string | undefine
 }
 
 /** Whether a key pressed in a focused, non-modal text field is a window
- * shortcut rather than text input. Only Ctrl/Cmd chords qualify (Linux Super,
- * which WebKitGTK omits from metaKey, counts as Cmd via `metaHeld`); the field
- * keeps plain, Shift- and Alt-only keys, Ctrl+Alt without Cmd (Windows AltGr
- * types characters), its editing keys and anything it already handled.
+ * shortcut rather than text input. Only chords whose own event carries Ctrl or
+ * Cmd qualify: the tracked Linux Super overlay is deliberately ignored here,
+ * because a lost Super keyup would otherwise turn ordinary typing into
+ * commands. The field keeps plain, Shift- and Alt-only keys, Ctrl+Alt without
+ * Cmd (Windows AltGr types characters), IME composition, its editing keys and
+ * anything it already handled.
  *
  * Trade-off: on macOS, bound Ctrl keys such as Ctrl+T/N/P/W run their command
  * instead of the emacs-style text bindings (Ctrl+A/E/K remain as long as they
  * are unbound or editing letters). */
-export function isWindowShortcutInField(event: WindowKey, metaHeld = false): boolean {
-  if (event.defaultPrevented) return false;
-  const meta = event.metaKey || metaHeld;
-  if (!event.ctrlKey && !meta) return false;
-  if (event.ctrlKey && event.altKey && !meta) return false;
+export function isWindowShortcutInField(event: WindowKey): boolean {
+  if (event.defaultPrevented || isComposingKey(event)) return false;
+  if (!event.ctrlKey && !event.metaKey) return false;
+  if (event.ctrlKey && event.altKey && !event.metaKey) return false;
   if (FIELD_EDITING_KEYS.has(event.key)) return false;
+  if (FIELD_PAGE_KEYS.has(event.key)) return true;
   const letter = letterOf(event);
   return letter === undefined || !FIELD_EDITING_LETTERS.has(letter);
 }
@@ -81,11 +91,11 @@ export function resolveWindowKey(event: WindowKey, context: WindowKeyContext): W
     return context.modal ? "pass" : "command";
   }
   if (event.key === "Escape" && context.modal) return "close-dialogs";
-  const fieldShortcut = context.input && isWindowShortcutInField(event, context.trackedMetaHeld);
+  const fieldShortcut = context.input && isWindowShortcutInField(event);
   // Configured prefixes and pending suffixes must reach the matcher before
   // Explorer's fallback surface keys. Modal/terminal ownership wins; a field
   // yields only a Ctrl/Cmd prefix, and a prefix it yielded owns the next key.
-  if (context.chord && !context.modal && (!context.input || (context.chordPending && !event.defaultPrevented) || fieldShortcut)) return "command";
+  if (context.chord && !context.modal && (!context.input || (context.chordPending && !event.defaultPrevented && !isComposingKey(event)) || fieldShortcut)) return "command";
   // Repeated Ctrl+F must consume the WebView find shortcut even inside the
   // filter input; Shift+Ctrl+F remains the separate content-search command.
   if (event.key.toLowerCase() === "f" && primary && !event.shiftKey && !event.altKey && !context.modal) {

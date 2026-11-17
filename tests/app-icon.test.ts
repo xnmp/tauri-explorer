@@ -1,7 +1,9 @@
 /**
- * Application icon contracts (#1553): the canonical artwork's tau is filled,
- * the README records the artwork actually committed, and the Windows ICO no
- * longer stretches the folder to the frame edge.
+ * Application icon contracts (#1553, #1732): the canonical artwork's tau is
+ * filled, the README records the artwork actually committed, the Windows ICO
+ * no longer stretches the folder to the frame edge, and only the macOS ICNS is
+ * an opaque Apple-grid squircle while the other platforms keep the standalone,
+ * transparent-cornered folder.
  */
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -12,6 +14,8 @@ import { describe, expect, it } from "vitest";
 const ICON_PNG = new URL("../src-tauri/icons/icon.png", import.meta.url);
 const APERTURE_PNG = new URL("../src-tauri/icons/icon-aperture.png", import.meta.url);
 const ICON_ICO = new URL("../src-tauri/icons/icon.ico", import.meta.url);
+const ICON_ICNS = new URL("../src-tauri/icons/icon.icns", import.meta.url);
+const ICON_128 = new URL("../src-tauri/icons/128x128.png", import.meta.url);
 const GEN_ICONS = new URL("../src-tauri/icons/gen_icons.py", import.meta.url);
 const README = new URL("../src-tauri/icons/README.md", import.meta.url);
 
@@ -121,6 +125,77 @@ function icoFrames(ico: Buffer): Map<number, Buffer> {
   return frames;
 }
 
+/** PNG-encoded ICNS elements by OSType (e.g. "ic10" = 512@2x, the 1024px frame). */
+function icnsPngFrames(icns: Buffer): Map<string, Buffer> {
+  expect(icns.toString("ascii", 0, 4)).toBe("icns");
+  expect(icns.readUInt32BE(4)).toBe(icns.length);
+  const frames = new Map<string, Buffer>();
+  let offset = 8;
+  while (offset < icns.length) {
+    const type = icns.toString("ascii", offset, offset + 4);
+    const length = icns.readUInt32BE(offset + 4);
+    expect(length).toBeGreaterThanOrEqual(8);
+    const data = icns.subarray(offset + 8, offset + length);
+    if (data.subarray(0, 8).toString("hex") === "89504e470d0a1a0a") frames.set(type, data);
+    offset += length;
+  }
+  return frames;
+}
+
+interface Box {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+/** Bounding box (exclusive right/bottom) of pixels with alpha above `threshold`. */
+function opaqueBounds({ width, alpha }: Rgba, threshold = 200): Box {
+  const box = { left: width, top: Infinity, right: -1, bottom: -1 };
+  for (let i = 0; i < alpha.length; i++) {
+    if (alpha[i] <= threshold) continue;
+    const x = i % width;
+    const y = Math.floor(i / width);
+    box.left = Math.min(box.left, x);
+    box.right = Math.max(box.right, x + 1);
+    box.top = Math.min(box.top, y);
+    box.bottom = Math.max(box.bottom, y + 1);
+  }
+  return box;
+}
+
+/** Alpha at a point given as fractions of a box (0..1 across, 0..1 down). */
+function alphaWithin(image: Rgba, box: Box, fx: number, fy: number): number {
+  const x = Math.floor(box.left + fx * (box.right - box.left));
+  const y = Math.floor(box.top + fy * (box.bottom - box.top));
+  return image.alpha[y * image.width + x];
+}
+
+/**
+ * The notch beside the folder tab: near the top edge, three quarters of the
+ * way across the folder's opaque box. The standalone folder is see-through
+ * there; the macOS squircle fills it with its deep-teal tile.
+ */
+const NOTCH = [0.75, 0.04] as const;
+
+/** Standalone folder: transparent canvas corners and a see-through notch. */
+function expectStandaloneFolder(image: Rgba) {
+  const { width, height, alpha } = image;
+  for (const [x, y] of [
+    [0, 0],
+    [width - 1, 0],
+    [0, height - 1],
+    [width - 1, height - 1],
+  ]) {
+    expect(alpha[y * width + x]).toBe(0);
+  }
+  const box = opaqueBounds(image);
+  // No squircle-style margin: the folder spans most of the frame.
+  expect((box.right - box.left) / width).toBeGreaterThan(0.8);
+  expect(alphaWithin(image, box, 0.5, 0.5)).toBeGreaterThan(200);
+  expect(alphaWithin(image, box, ...NOTCH)).toBeLessThan(16);
+}
+
 describe("application icon (#1553)", () => {
   it("fills the tau: the canonical icon has no enclosed see-through aperture", () => {
     // The input artwork still has the aperture, proving the check can see it.
@@ -155,5 +230,59 @@ describe("application icon (#1553)", () => {
     }
     expect((maxX - minX + 1) / frame.width).toBeLessThanOrEqual(0.9);
     expect(enclosedTransparentPixels(frame)).toBe(0);
+  });
+});
+
+describe("macOS squircle ICNS (#1732)", () => {
+  // Apple's macOS icon grid: a 1024 canvas with an 824 tile centred on it.
+  // The tile is the superellipse |x|^5 + |y|^5 = 412^5 around the centre.
+  const CANVAS = 1024;
+  const TILE = 824;
+  const EXPONENT = 5;
+  const frame = () => {
+    const ic10 = icnsPngFrames(readFileSync(ICON_ICNS)).get("ic10");
+    expect(ic10).toBeDefined();
+    return decodePngAlpha(ic10!);
+  };
+
+  it("draws the 1024px ic10 frame as an opaque superellipse tile on Apple's grid", () => {
+    const image = frame();
+    expect({ width: image.width, height: image.height }).toEqual({
+      width: CANVAS,
+      height: CANVAS,
+    });
+
+    const half = TILE / 2;
+    let outsideVisible = 0;
+    let insideTranslucent = 0;
+    for (let y = 0; y < CANVAS; y++) {
+      for (let x = 0; x < CANVAS; x++) {
+        const dx = Math.abs(x + 0.5 - CANVAS / 2);
+        const dy = Math.abs(y + 0.5 - CANVAS / 2);
+        const radius = (dx ** EXPONENT + dy ** EXPONENT) ** (1 / EXPONENT);
+        const a = image.alpha[y * CANVAS + x];
+        // Allow the one-pixel antialiased edge band either side.
+        if (radius > half + 1.5 && a !== 0) outsideVisible++;
+        if (radius < half - 1.5 && a !== 255) insideTranslucent++;
+      }
+    }
+    expect(outsideVisible).toBe(0);
+    expect(insideTranslucent).toBe(0);
+
+    const box = opaqueBounds(image, 128);
+    for (const extent of [box.right - box.left, box.bottom - box.top]) {
+      expect(Math.abs(extent - TILE)).toBeLessThanOrEqual(2);
+    }
+    expect(Math.abs((box.left + box.right) / 2 - CANVAS / 2)).toBeLessThanOrEqual(1);
+    expect(Math.abs((box.top + box.bottom) / 2 - CANVAS / 2)).toBeLessThanOrEqual(1);
+
+    // The notch beside the tab is filled, unlike the standalone folder's.
+    expect(alphaWithin(image, box, ...NOTCH)).toBe(255);
+  });
+
+  it("keeps the canonical folder art standalone everywhere else", () => {
+    expectStandaloneFolder(decodePngAlpha(readFileSync(ICON_128)));
+    expectStandaloneFolder(decodePngAlpha(icoFrames(readFileSync(ICON_ICO)).get(256)!));
+    expectStandaloneFolder(decodePngAlpha(readFileSync(ICON_PNG)));
   });
 });

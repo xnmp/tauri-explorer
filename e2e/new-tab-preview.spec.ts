@@ -86,6 +86,8 @@ test("an unseeded split pane holds the preview until its listing selects a row",
   await expect(newPane.locator(".entry-item.selected")).toHaveCount(1, { timeout: LISTING_LATENCY_MS + 5000 });
   const settled = (await newPane.locator(".entry-item.selected").getAttribute("data-path"))!.split("/").pop()!;
   await expect(page.locator(".preview-filename")).toHaveText(settled);
+  // Keep sampling past the settle, so a loaded runner still records enough frames.
+  await page.waitForTimeout(400);
   const frames = (await stopPreviewSampler(page)).filter((frame) => frame.panes === 2);
 
   expect(frames.length).toBeGreaterThan(5);

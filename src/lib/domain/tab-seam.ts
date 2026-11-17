@@ -16,12 +16,8 @@
 /** Concave fillet radius of a fully open active tab. */
 export const TAB_FILLET = 14;
 
-/** Depth of the seam an island under the tab cuts into its top edge:
- *  its 1px border plus the half-pixel inset highlight below it. */
-export const TAB_SEAM_DEPTH = 2;
-
 /** Where the light comes from: the top left, so shadows fall down-right. */
-export const TAB_LIGHT = { dx: 1.5, dy: 2, blur: 2.5, liftBlur: 3 } as const;
+export const TAB_LIGHT = { dx: 2.5, dy: 2.5, blur: 2.5, liftBlur: 2.5 } as const;
 
 export interface TabBox {
   readonly left: number;
@@ -158,69 +154,59 @@ export function stripShadePath(
   return `${outside}${outside}${ccwRect(left, right, h)}${tabSilhouettePath(c, -0.5)}`;
 }
 
+/**
+ * Where the tab's edge stroke takes over an island's outline
+ * (`domain/island-outline.ts`): at a rounded corner's end on the top edge,
+ * or round a squared corner from the island's side.
+ */
+export type EdgeCorner =
+  | { readonly kind: "round"; readonly x: number }
+  | { readonly kind: "square"; readonly edge: number; readonly handover: number };
+
 export interface TabEdge {
-  /** Open path for a 1px stroke: island top, tab outline, island top. */
+  /** One open path: island top edge, tab outline, island top edge. */
   readonly d: string;
-  /** Horizontal extent of the stroke; it fades to nothing at both ends. */
-  readonly from: number;
-  readonly to: number;
-  /** Where the stroke reaches full strength, measured inward from each end. */
-  readonly fadeIn: number;
-  readonly fadeOut: number;
+  /** The same stroke in three runs, for islands whose borders differ in colour. */
+  readonly left: string;
+  readonly tab: string;
+  readonly right: string;
 }
 
-/** How far the stroke runs along the base when no island meets a foot. */
-const LOOSE_REACH = 2;
-
 /**
- * The edge highlight: one stroke along the island top edge, up the fillet,
- * over the tab and back down, continuing the islands' 1px inside border and
- * fading out through each island's rounded top corner.
+ * The tab's edge stroke, `width` wide: along a seamed island's top edge from
+ * where the island hands it over, up the fillet, over the tab and back
+ * down, then on along the next island's top edge to its handover. `c.base`
+ * is the islands' painted top edge, so the stroke covers their top border
+ * row exactly. A foot with no island to continue along (a gutter, or an
+ * island of another kind) ends the stroke at the foot.
  */
 export function tabEdgePath(
   c: TabContour,
-  islands: { readonly left?: IslandEdge | null; readonly right?: IslandEdge | null } = {},
+  width: number,
+  corners: { readonly left?: EdgeCorner | null; readonly right?: EdgeCorner | null } = {},
 ): TabEdge {
-  const { start, end, body } = outline(c, -0.5);
+  const half = Math.max(0, num(width, 1)) / 2;
+  const { start, end, body } = outline(c, -half);
   const y = start.y;
-  const leftIsland = islands.left && islands.left.left < start.x ? islands.left : null;
-  const rightIsland = islands.right && islands.right.right > end.x ? islands.right : null;
-  const parts: string[] = [];
-  let from: number;
-  let fadeIn: number;
-  if (leftIsland) {
-    const r = Math.min(nonNegative(leftIsland.radius), start.x - leftIsland.left);
-    from = leftIsland.left;
-    fadeIn = Math.max(r, 1);
-    if (r > 0.5) {
-      parts.push(`M${n(leftIsland.left + 0.5)} ${n(c.base + r)}`);
-      parts.push(`A${n(r - 0.5)} ${n(r - 0.5)} 0 0 1 ${n(leftIsland.left + r)} ${n(y)}`);
-    } else parts.push(`M${n(leftIsland.left)} ${n(y)}`);
-    parts.push(`L${n(start.x)} ${n(y)}`);
-  } else {
-    const reach = LOOSE_REACH * Math.max(c.fillet, 1);
-    from = start.x - reach;
-    fadeIn = reach;
-    parts.push(`M${n(from)} ${n(y)}L${n(start.x)} ${n(y)}`);
+  const lead = (corner: EdgeCorner, x: number) =>
+    corner.kind === "round"
+      ? `${n(corner.x)} ${n(y)}`
+      : `${n(corner.edge + (x > corner.edge ? half : -half))} ${n(corner.handover)}V${n(y)}`;
+  const lc = corners.left;
+  const left = lc && (lc.kind === "round" ? lc.x : lc.edge) < start.x ? `M${lead(lc, start.x)}L${n(start.x)} ${n(y)}` : "";
+  const rc = corners.right;
+  let right = "";
+  if (rc && (rc.kind === "round" ? rc.x : rc.edge) > end.x) {
+    right = rc.kind === "round"
+      ? `L${n(rc.x)} ${n(y)}`
+      : `L${n(rc.edge - half)} ${n(y)}V${n(rc.handover)}`;
   }
-  parts.push(body);
-  let to: number;
-  let fadeOut: number;
-  if (rightIsland) {
-    const r = Math.min(nonNegative(rightIsland.radius), rightIsland.right - end.x);
-    to = rightIsland.right;
-    fadeOut = Math.max(r, 1);
-    if (r > 0.5) {
-      parts.push(`L${n(rightIsland.right - r)} ${n(y)}`);
-      parts.push(`A${n(r - 0.5)} ${n(r - 0.5)} 0 0 1 ${n(rightIsland.right - 0.5)} ${n(c.base + r)}`);
-    } else parts.push(`L${n(rightIsland.right)} ${n(y)}`);
-  } else {
-    const reach = LOOSE_REACH * Math.max(c.fillet, 1);
-    to = end.x + reach;
-    fadeOut = reach;
-    parts.push(`L${n(to)} ${n(y)}`);
-  }
-  return { d: parts.join(""), from, to, fadeIn, fadeOut };
+  return {
+    d: `${left || `M${n(start.x)} ${n(y)}`}${body}${right}`,
+    left,
+    tab: `M${n(start.x)} ${n(y)}${body}`,
+    right: right ? `M${n(end.x)} ${n(y)}${right}` : "",
+  };
 }
 
 export interface TabKeyShadow {

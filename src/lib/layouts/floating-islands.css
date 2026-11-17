@@ -30,13 +30,16 @@
   --layout-inset: 0 6px 6px 6px;
   --layout-radius: 14px;
   --layout-border: 1px solid var(--surface-stroke);
-  /* Shadows fall down and to the right, away from the top-left light. */
-  --layout-shadow:
-    inset 0 0.5px 0 rgba(255, 255, 255, 0.09),
+  /* Shadows fall down and to the right, away from the top-left light. An
+     island the active tab opens into drops its top highlight (the tab's
+     edge stroke owns that edge). */
+  --layout-shadow-top: inset 0 0.5px 0 rgba(255, 255, 255, 0.09);
+  --layout-shadow-body:
     inset 0 -0.5px 0 rgba(0, 0, 0, 0.2),
     0.5px 1px 3px rgba(0, 0, 0, 0.15),
     2px 4px 12px rgba(0, 0, 0, 0.2),
     5px 12px 32px rgba(0, 0, 0, 0.15);
+  --layout-shadow: var(--layout-shadow-top), var(--layout-shadow-body);
   /* Island material: a panel colour over a base colour, both flat, so the
      active tab (inline SVG fill) can wear exactly the same surface. Colour
      themes tune it through --vibrancy-island-card. */
@@ -64,11 +67,11 @@
     color-mix(in srgb, var(--islands-strip-shade-color) 62%, transparent),
     color-mix(in srgb, var(--islands-strip-shade-color) 90%, transparent)
   );
-  --islands-tab-key: rgba(0, 0, 0, 0.32);
-  --islands-tab-lift: rgba(0, 0, 0, 0.14);
-  /* The tab's edge highlight: a solid 1px core tinted with the accent,
-     continuing the islands' border. */
-  --islands-tab-edge: color-mix(in srgb, var(--accent) 45%, var(--text-primary) 20%);
+  /* The active tab's shadow (#1734): a light, even lift round its whole
+     outline, and a heavier key shadow cast to the right only, away from a
+     light on the left. Dark strips need stronger alphas to show at all. */
+  --islands-tab-lift: light-dark(rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0.55));
+  --islands-tab-key: light-dark(rgba(0, 0, 0, 0.3), rgba(0, 0, 0, 0.65));
 }
 
 /* Windows Mica/Acrylic (#382): islands use the theme's dark solid colour at
@@ -221,11 +224,8 @@
 }
 
 :root[data-layout-base="floating-islands"] [data-region="tab-edge"] .tab-edge-stroke {
-  stroke-width: 1px;
-}
-
-:root[data-layout-base="floating-islands"] [data-region="tab-edge"] .tab-edge-stop {
-  stop-color: var(--islands-tab-edge);
+  /* The marks set each run's island border colour and painted width. */
+  stroke: var(--surface-stroke);
 }
 
 /* A tab's corner radius never exceeds half its (sliding) width. */
@@ -301,50 +301,40 @@
 /* Seam extents change every frame of a tab slide: registered as
    non-inherited so updating them restyles the island alone, never the file
    list inside it. */
-@property --tab-seam-left {
-  syntax: "<length>";
+/* The seam clip changes every frame of a tab slide: registered as
+   non-inherited so updating it restyles the island alone, never the file
+   list inside it. */
+@property --tab-seam-clip {
+  syntax: "*";
   inherits: false;
-  initial-value: 0px;
 }
 
-@property --tab-seam-right {
-  syntax: "<length>";
-  inherits: false;
-  initial-value: 0px;
-}
-
-@property --tab-seam-depth {
-  syntax: "<length>";
-  inherits: false;
-  initial-value: 2px;
-}
-
-/* The island the tab stands on opens its top edge under the tab and fillets
-   (border, inset highlight and the shadow above it), so the tab runs into
-   the island. The notch is all it clips: the polygon reaches far past the
-   island, so overlays inside it are never cut. A fullscreen preview covers
-   the window and keeps its whole box. The seam follows a sliding tab every
-   frame: will-change gives the island its own layer so a moving notch only
-   re-clips it (WebKit otherwise repaints the whole island, ~45ms a frame in
-   software). Opacity, unlike transform, does not make the island the
-   containing block of fixed overlays.
+/* The island the tab stands on opens into it (domain/island-outline.ts):
+   its top edge and top corners belong to the tab's edge stroke, which runs
+   on round the corners down to the straight sides, where the island's own
+   border takes over. The clip removes, on device pixels, its top border row
+   and the ring of each corner the stroke owns (the tab's fill repaints
+   them) and everything above the notch under the tab (the island's shadow
+   there would darken the tab); its top highlight goes along the whole
+   width. The clip reaches far past the island, so overlays inside it are
+   never cut.
+   A fullscreen preview covers the window and keeps its whole box. The seam
+   follows a sliding tab every frame: will-change gives the island its own
+   layer so a moving notch only re-clips it (WebKit otherwise repaints the
+   whole island, ~45ms a frame in software). Opacity, unlike transform,
+   does not make the island the containing block of fixed overlays.
    Both still make the island a stacking context, which would trap its
    context menus under later sibling islands (the preview) they overhang:
    lift the island above its siblings. Islands never overlap one another,
    and menus from other islands stay in main's own stacking context. */
+:root[data-layout-base="floating-islands"] [data-tab-seam] {
+  --layout-shadow: var(--layout-shadow-body);
+}
+
 :root[data-layout-base="floating-islands"]:not([data-preview-fullscreen]) [data-tab-seam] {
   z-index: 1;
   will-change: opacity;
-  clip-path: polygon(
-    -100vw -100vh,
-    var(--tab-seam-left) -100vh,
-    var(--tab-seam-left) var(--tab-seam-depth, 2px),
-    var(--tab-seam-right) var(--tab-seam-depth, 2px),
-    var(--tab-seam-right) -100vh,
-    calc(100% + 100vw) -100vh,
-    calc(100% + 100vw) calc(100% + 100vh),
-    -100vw calc(100% + 100vh)
-  );
+  clip-path: var(--tab-seam-clip, none);
 }
 
 /* Structural island: the sidebar. Radius, border and shadow come from the

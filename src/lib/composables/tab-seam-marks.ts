@@ -8,19 +8,24 @@
  * - the tab's fill (`data-tab-island` names the surface it wears: that of
  *   the island under it), reaching down into the island's seam;
  * - the key shadow and lift (inline SVG paths, `[data-region="tab-key-shadow"]`);
- * - the edge highlight stroke (`[data-region="tab-edge"]`);
- * - a `data-tab-seam` mark plus `--tab-seam-left/right` on each island whose
- *   top edge the tab opens into.
+ * - the edge stroke (`[data-region="tab-edge"]`), which takes over the top
+ *   edge of each island the tab opens into between its corner tangents;
+ * - a `data-tab-seam` mark plus `--tab-seam-clip` on each such island: its
+ *   clip removes the top border row the stroke takes over
+ *   (`domain/island-outline.ts`).
  *
  * Everything is an attribute or path update on long-lived inline elements:
  * never a per-frame `url(data:...)`, which WKWebView drops while it changes.
  * Geometry is pure (`domain/tab-seam.ts`); colours come from CSS.
  */
 import {
-  TAB_SEAM_DEPTH, islandAt, islandUnder, stripShadePath, tabFootFor, tabShownSpan, tabContour, tabEdgePath, tabFillPath,
-  tabHoleFor, tabKeyShadow, type IslandEdge, type TabContour,
+  islandAt, islandUnder, stripShadePath, tabFootFor, tabShownSpan, tabContour, tabEdgePath, tabFillPath,
+  tabHoleFor, tabKeyShadow, type EdgeCorner, type IslandEdge, type TabContour,
 } from "$lib/domain/tab-seam";
-import { getZoomFactor } from "$lib/domain/zoom";
+import {
+  cutPath, islandClipPolygon, islandCut, paintedWidth, snapX, snapY, type CornerOwnership, type DeviceGrid,
+} from "$lib/domain/island-outline";
+import { getZoomFactor, isChromiumEngine } from "$lib/domain/zoom";
 import { ISLANDS, STRUCTURAL } from "./island-regions";
 
 /** Frames to keep measuring after the last change, to catch layout that settles late. */
@@ -41,9 +46,16 @@ function clearSeams(except: Set<Element>): void {
   for (const el of document.querySelectorAll<HTMLElement>("[data-tab-seam]")) {
     if (except.has(el)) continue;
     el.removeAttribute("data-tab-seam");
-    el.style.removeProperty("--tab-seam-left");
-    el.style.removeProperty("--tab-seam-right");
+    el.style.removeProperty("--tab-seam-clip");
   }
+}
+
+/** The colour an island's CSS border paints on one side; transparent when it has none. */
+function borderColor(el: HTMLElement, side: "left" | "right"): string {
+  const style = getComputedStyle(el);
+  const width = parseFloat(side === "left" ? style.borderLeftWidth : style.borderRightWidth) || 0;
+  const kind = side === "left" ? style.borderLeftStyle : style.borderRightStyle;
+  return width > 0 && kind !== "none" && kind !== "hidden" ? (side === "left" ? style.borderLeftColor : style.borderRightColor) : "transparent";
 }
 
 /** Attach the marks to one title bar. */
@@ -61,7 +73,8 @@ export function attachTabSeam(titlebar: HTMLElement): TabSeam {
     titlebar.removeAttribute("data-tab-island");
     set(svg(shadowLayer, ".strip-shade"), "d", "");
     for (const el of shadowLayer?.querySelectorAll(".tab-fill path") ?? []) set(el, "d", "");
-    for (const el of [svg(shadowLayer, ".tab-key"), svg(shadowLayer, ".tab-lift"), svg(edgeLayer, ".tab-edge-stroke")]) set(el, "d", "");
+    set(svg(edgeLayer, ".tab-edge-clip"), "d", "");
+    for (const el of [svg(shadowLayer, ".tab-key"), svg(shadowLayer, ".tab-lift"), ...(edgeLayer?.querySelectorAll(".tab-edge-stroke") ?? [])]) set(el, "d", "");
     clearSeams(new Set());
     for (const el of document.querySelectorAll("[data-tab-square]")) el.removeAttribute("data-tab-square");
   }
@@ -78,8 +91,12 @@ export function attachTabSeam(titlebar: HTMLElement): TabSeam {
     const zoom = getZoomFactor() || 1;
     const bar = titlebar.getBoundingClientRect();
     const css = (value: number, origin: number) => (value - origin) / zoom;
+    // Device pixels: the islands' top edges and borders are painted on them,
+    // and the strip's base follows them (domain/island-outline.ts).
+    const dpr = window.devicePixelRatio || 1;
+    const grid: DeviceGrid = { scale: zoom * dpr, x: bar.left * dpr, y: bar.top * dpr, unit: isChromiumEngine ? dpr : 1 };
     const width = bar.width / zoom;
-    const height = bar.height / zoom;
+    const height = snapY(grid, bar.height / zoom);
     const tab = titlebar.querySelector<HTMLElement>('.tab-viewport [data-region="tab"][aria-selected="true"]');
     const viewport = tab?.closest<HTMLElement>(".tab-viewport");
     if (!tab || !viewport) return cleared("none");
@@ -97,7 +114,7 @@ export function attachTabSeam(titlebar: HTMLElement): TabSeam {
     // its outline and shadow, which would otherwise collapse into a 1px
     // vertical sliver.
     const presence = Math.min(1, Math.max(0, (tabWidth - 2) / 16));
-    const base = css(box.bottom, bar.top);
+    const base = snapY(grid, css(box.bottom, bar.top));
     const contour: TabContour = tabContour(
       { left, width: tabWidth, top: css(box.top, bar.top), base },
       parseFloat(style.borderTopLeftRadius) || 0,
@@ -121,7 +138,7 @@ export function attachTabSeam(titlebar: HTMLElement): TabSeam {
     const footHole = { left: Math.max(hole.left, viewLeft), right: Math.min(hole.right, viewRight) };
 
     // Islands whose top edge sits on the strip base.
-    const islands: (IslandEdge & { el: HTMLElement; structural: boolean })[] = [];
+    const islands: (IslandEdge & { el: HTMLElement; structural: boolean; top: number })[] = [];
     for (const el of document.querySelectorAll<HTMLElement>(ISLANDS)) {
       const r = el.getBoundingClientRect();
       if (!r.width || Math.abs(css(r.top, bar.top) - base) > 1) continue;
@@ -130,36 +147,81 @@ export function attachTabSeam(titlebar: HTMLElement): TabSeam {
         structural: el.matches(STRUCTURAL),
         left: css(r.left, bar.left),
         right: css(r.right, bar.left),
+        top: css(r.top, bar.top),
         // The layout's radius, not the rendered one: a corner squared under
         // the tab must not read as an island without corners.
         radius: parseFloat(getComputedStyle(el).getPropertyValue("--layout-radius")) || parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0,
       });
     }
-    const edges: IslandEdge[] = islands;
     // The tab wears the surface of the island it stands on and opens into
     // the islands of that kind under it; another kind keeps its edge.
     const home = islandUnder(islands, hole);
     const kind = home ? (home.structural ? "structural" : "content") : "none";
     const foot = tabFootFor(footHole, islands.map((island) => ({ ...island, home: Boolean(home) && island.structural === home!.structural })));
-    const seams = foot.seams.map(({ island, row }) => ({ el: island.el, row, left: island.left }));
     const squared = foot.squared;
     const bridges = foot.bridges;
-    const fill = tabFillPath(contour, [...seams.map((seam) => seam.row), ...bridges], TAB_SEAM_DEPTH);
+    const squareOf = new Map(squared.map(({ el, square }) => [el, square]));
+
+    // The edge stroke owns each seamed island's top edge and top corners, on
+    // the device-pixel grid layout paints them on (domain/island-outline.ts).
+    const stroke = paintedWidth(grid, home ? parseFloat(getComputedStyle(home.el).borderLeftWidth) || 1 : 1);
+    const seamIslands = foot.seams.map(({ island }) => island);
+    const leftIsland = (islandAt(seamIslands, hole.left) as (typeof seamIslands)[number] | null);
+    const rightIsland = (islandAt(seamIslands, hole.right) as (typeof seamIslands)[number] | null);
+    let leftCorner: EdgeCorner | null = null;
+    let rightCorner: EdgeCorner | null = null;
+    // The clip-path's reference box: Chromium clips against the layout box,
+    // WebKit against the box as painted, snapped to device pixels.
+    const clipOrigin = (island: { left: number; top: number }) =>
+      isChromiumEngine ? island : { left: snapX(grid, island.left), top: snapY(grid, island.top) };
+    const seams = foot.seams.map(({ island, row }) => {
+      const square = squareOf.get(island.el) ?? { left: false, right: false };
+      const own = (side: "left" | "right"): CornerOwnership => {
+        if ((side === "left" ? leftIsland : rightIsland) !== island) return null;
+        if (side === "left" ? island.left >= hole.left : island.right <= hole.right) return null;
+        return square[side] ? "square" : "round";
+      };
+      const corners = { left: own("left"), right: own("right") };
+      const cut = islandCut({ ...island, border: stroke }, grid, row, corners);
+      const edge = (side: "left" | "right"): EdgeCorner => {
+        const [x, y] = cut.handover[side];
+        return corners[side] === "round" ? { kind: "round", x } : { kind: "square", edge: x, handover: y };
+      };
+      if (corners.left) leftCorner = edge("left");
+      if (corners.right) rightCorner = edge("right");
+      return { el: island.el, cut: cutPath(cut), clip: islandClipPolygon(clipOrigin(island), cut) };
+    });
+    const fill = tabFillPath(contour, bridges, stroke);
     const squares = squared.map(({ el, square }) => `${el.dataset.region}:${square.left ? "l" : ""}${square.right ? "r" : ""}`).join(",");
-    // The edge continues along the top of the tab's own kind of island only.
-    const kin = home ? edges.filter((_, i) => islands[i].structural === home.structural) : [];
-    const edge = tabEdgePath(contour, { left: islandAt(kin, hole.left), right: islandAt(kin, hole.right) });
+    const edge = tabEdgePath(contour, stroke, { left: leftCorner, right: rightCorner });
+    // The stroke wears each island's own border colour.
+    const tabColor = home ? borderColor(home.el, "left") : "";
+    const leftColor = leftIsland ? borderColor(leftIsland.el, "left") : tabColor;
+    const rightColor = rightIsland ? borderColor(rightIsland.el, "right") : tabColor;
+    const oneColor = leftColor === tabColor && rightColor === tabColor;
+    const strokes = oneColor
+      ? [{ d: edge.d, color: tabColor }, { d: "", color: "" }, { d: "", color: "" }]
+      : [{ d: edge.tab, color: tabColor }, { d: edge.left, color: leftColor }, { d: edge.right, color: rightColor }];
     const shadow = tabKeyShadow(contour);
     const shade = stripShadePath(width, height, contour, { left: viewLeft, right: viewRight });
+    const cuts = seams.map((seam) => seam.cut).join("");
+    const strokeKey = strokes.map((part) => `${part.d}~${part.color}`).join("/");
+    const clipKey = seams.map((seam) => seam.clip).join("/");
 
-    const key = `${shade}|${fill}|${edge.d}|${kind}|${viewLeft},${viewRight}|${presence}|${squares}`;
+    const key = `${shade}|${fill}|${strokeKey}|${stroke}|${kind}|${viewLeft},${viewRight}|${presence}|${squares}|${cuts}|${clipKey}|${width}x${height}`;
     if (key === previous) return key;
 
     set(titlebar, "data-tab-hole", `${Math.round(hole.left * 100) / 100} ${Math.round(hole.right * 100) / 100}`);
     set(titlebar, "data-tab-island", kind);
-    for (const el of shadowLayer?.querySelectorAll(".tab-fill path") ?? []) set(el, "d", fill);
+    for (const el of shadowLayer?.querySelectorAll(".tab-body path") ?? []) set(el, "d", fill);
+    for (const el of shadowLayer?.querySelectorAll(".tab-corners path") ?? []) set(el, "d", cuts);
+    const r3 = (v: number) => Math.round(v * 1000) / 1000;
+    set(svg(edgeLayer, ".tab-edge-clip"), "d", `M${r3(viewLeft)} 0H${r3(Math.max(viewLeft, viewRight))}V${r3(base)}H${r3(viewLeft)}Z${cuts}`);
     // Shade, shadows and edge: inline SVG, updated in place.
     set(svg(shadowLayer, ".strip-shade"), "d", shade);
+    const barClip = svg(shadowLayer, ".tab-bar-clip");
+    set(barClip, "width", String(width));
+    set(barClip, "height", String(height));
     set(svg(shadowLayer, ".tab-lift"), "d", shadow.silhouette);
     set(svg(shadowLayer, ".tab-key"), "d", shadow.silhouette);
     set(svg(shadowLayer, ".tab-key"), "transform", `translate(${shadow.dx} ${shadow.dy})`);
@@ -172,25 +234,22 @@ export function attachTabSeam(titlebar: HTMLElement): TabSeam {
       set(clip, "height", String(Math.max(0, base)));
     }
     for (const clip of titlebar.querySelectorAll(".tab-below-clip")) set(clip, "y", String(base));
-    set(svg(edgeLayer, ".tab-edge-stroke"), "d", edge.d);
-    set(svg(edgeLayer, ".tab-edge-stroke"), "opacity", String(Math.round(presence * 1000) / 1000));
-    set(svg(shadowLayer, ".tab-shadows"), "opacity", String(Math.round(presence * 1000) / 1000));
-    const gradient = svg(edgeLayer, "linearGradient");
-    set(gradient, "x1", String(edge.from));
-    set(gradient, "x2", String(edge.to));
-    const span = Math.max(1, edge.to - edge.from);
-    const stops = edgeLayer?.querySelectorAll("stop") ?? [];
-    const offsets = [0, Math.min(0.5, edge.fadeIn / span), Math.max(0.5, 1 - edge.fadeOut / span), 1];
-    stops.forEach((stop, i) => set(stop, "offset", String(Math.round(offsets[i] * 10000) / 10000)));
+    const opacity = String(Math.round(presence * 1000) / 1000);
+    edgeLayer?.querySelectorAll<SVGPathElement>(".tab-edge-stroke").forEach((path, i) => {
+      set(path, "d", strokes[i]?.d ?? "");
+      set(path, "stroke-width", String(Math.round(stroke * 1000) / 1000));
+      set(path, "opacity", opacity);
+      if (path.style.stroke !== (strokes[i]?.color ?? "")) path.style.stroke = strokes[i]?.color ?? "";
+    });
+    set(svg(shadowLayer, ".tab-shadows"), "opacity", opacity);
 
-    // Seams: islands the tab opens into lose their top edge under it.
+    // Seams: islands the tab opens into give their top edge and corners to
+    // the stroke (`--tab-seam-clip` removes the notch and the corner bands).
     const seamed = new Set<Element>();
-    for (const { el, row, left: islandLeft } of seams) {
+    for (const { el, clip } of seams) {
       seamed.add(el);
       el.setAttribute("data-tab-seam", "");
-      el.style.setProperty("--tab-seam-left", `${Math.round((row.left - islandLeft) * 100) / 100}px`);
-      el.style.setProperty("--tab-seam-right", `${Math.round((row.right - islandLeft) * 100) / 100}px`);
-      el.style.setProperty("--tab-seam-depth", `${TAB_SEAM_DEPTH}px`);
+      if (el.style.getPropertyValue("--tab-seam-clip") !== clip) el.style.setProperty("--tab-seam-clip", clip);
     }
     clearSeams(seamed);
     // Corners the foot reaches into are squared while it stands there.

@@ -122,30 +122,46 @@ describe("tab silhouette", () => {
 describe("tabEdgePath", () => {
   const c = tabContour(box, 14, 14);
 
-  it("continues the island's inside border and fades through its rounded corners", () => {
-    const island = { left: 6, right: 900, radius: 14 };
-    const edge = tabEdgePath(c, { left: island, right: island });
-    const { first, last, points, arcs } = walk(edge.d);
-    expect(first).toEqual({ x: 6.5, y: 52 });
-    expect(last).toEqual({ x: 899.5, y: 52 });
-    // The run sits on the island border's centre line, half a pixel below the base.
-    expect(points).toContainEqual({ x: 86, y: 38.5 });
-    expect(points).toContainEqual({ x: 886, y: 38.5 });
-    expect(arcs[0]).toBe(13.5);
-    expect(edge).toMatchObject({ from: 6, to: 900, fadeIn: 14, fadeOut: 14 });
+  it("runs over the tab between its feet, on the stroke's centre line half a stroke below the base", () => {
+    const edge = tabEdgePath(c, 1);
+    const { first, last, arcs } = walk(edge.d);
+    expect(first).toEqual({ x: 86, y: 38.5 });
+    expect(last).toEqual({ x: 314, y: 38.5 });
+    expect(arcs).toEqual([14.5, 13.5, 13.5, 14.5]);
+    expect(edge.left).toBe("");
+    expect(edge.right).toBe("");
+    expect(edge.tab).toBe(edge.d);
   });
 
-  it("runs a short, fading reach where no island meets a foot", () => {
-    const edge = tabEdgePath(c);
-    expect(edge.from).toBe(86 - 28);
-    expect(edge.to).toBe(314 + 28);
-    expect(edge.fadeIn).toBe(28);
+  it("continues along the island's top edge to each rounded corner's tangent", () => {
+    const edge = tabEdgePath(c, 1, { left: { kind: "round", x: 20 }, right: { kind: "round", x: 880 } });
+    expect(walk(edge.d).first).toEqual({ x: 20, y: 38.5 });
+    expect(walk(edge.d).last).toEqual({ x: 880, y: 38.5 });
+    // Three runs that join end to end: the island colours can differ from the tab's.
+    expect(walk(edge.left).last).toEqual(walk(edge.tab).first);
+    expect(walk(edge.tab).last).toEqual(walk(edge.right).first);
+    expect(edge.d.startsWith(edge.left)).toBe(true);
   });
 
-  it("ignores islands that do not extend beyond the feet", () => {
-    const edge = tabEdgePath(c, { left: { left: 90, right: 500, radius: 14 }, right: { left: 0, right: 310, radius: 14 } });
-    expect(edge.from).toBe(58);
-    expect(edge.to).toBe(342);
+  it("turns a squared corner down its side to the handover", () => {
+    const edge = tabEdgePath(c, 1, { left: { kind: "square", edge: 6, handover: 39 } });
+    const { points } = walk(edge.left);
+    // Inside the island's edge by half a stroke, from the handover up to the top line.
+    expect(points[0]).toEqual({ x: 6.5, y: 39 });
+    expect(points[1]).toEqual({ x: 6.5, y: 38.5 });
+    expect(points.at(-1)).toEqual({ x: 86, y: 38.5 });
+  });
+
+  it("ignores a corner that does not lie beyond its foot", () => {
+    const edge = tabEdgePath(c, 1, { left: { kind: "round", x: 90 }, right: { kind: "square", edge: 300, handover: 39 } });
+    expect(edge.left).toBe("");
+    expect(edge.right).toBe("");
+  });
+
+  it("follows the stroke width and survives a malformed one", () => {
+    expect(walk(tabEdgePath(c, 2).d).first).toEqual({ x: 86, y: 39 });
+    expect(walk(tabEdgePath(c, Number.NaN).d).first.y).toBe(38.5);
+    expect(walk(tabEdgePath(c, -3).d).first.y).toBe(38);
   });
 
   it("finds the island under a foot", () => {

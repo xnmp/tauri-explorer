@@ -301,6 +301,8 @@
        silhouette (#1734). Fillets only shrink for a tab narrower than two
        of them. */
     --tab-seed: min(var(--tab-width), 34px);
+    --tab-surface: var(--background-card);
+    --tab-surface-base: var(--background-solid);
     --tab-content-alpha: 1;
     padding: 0 var(--tab-pad-r) 0 var(--tab-pad-l);
     --fillet: min(14px, calc(var(--tab-grown) / 2));
@@ -321,8 +323,8 @@
         1px calc(100% - var(--fillet)) no-repeat,
       linear-gradient(var(--surface-stroke), var(--surface-stroke)) right top /
         1px calc(100% - var(--fillet)) no-repeat,
-      linear-gradient(var(--background-card), var(--background-card)),
-      var(--background-solid);
+      linear-gradient(var(--tab-surface), var(--tab-surface)),
+      var(--tab-surface-base);
     color: var(--text-primary);
     font-weight: var(--font-weight-semibold);
     border-top: 2px solid var(--accent);
@@ -335,6 +337,15 @@
     /* Fillets render outside the tab box; text clipping is handled by
        .tab-title's own overflow. */
     overflow: visible;
+  }
+
+  /* Under the macOS material the window is translucent: an opaque tab over
+     the translucent pane read as a white (or black) card on glass. The
+     title bar is already the pane's card, so the tab adds exactly what the
+     navigation bar below adds to the pane, and no solid base (#1734). */
+  :root[data-macos-material] .tab-area .tab.active {
+    --tab-surface: var(--layout-chrome-surface, var(--background-card-secondary));
+    --tab-surface-base: transparent;
   }
 
   /* Chrome-style fillets (#157): concave quarter-circles that flare the
@@ -382,12 +393,12 @@
       radial-gradient(
         circle var(--fillet) at 0 0,
         transparent calc(var(--fillet) - 0.5px),
-        var(--background-card) var(--fillet)
+        var(--tab-surface) var(--fillet)
       ),
       radial-gradient(
         circle var(--fillet) at 0 0,
         transparent calc(var(--fillet) - 0.5px),
-        var(--background-solid) var(--fillet)
+        var(--tab-surface-base) var(--fillet)
       );
   }
 
@@ -404,12 +415,12 @@
       radial-gradient(
         circle var(--fillet) at 100% 0,
         transparent calc(var(--fillet) - 0.5px),
-        var(--background-card) var(--fillet)
+        var(--tab-surface) var(--fillet)
       ),
       radial-gradient(
         circle var(--fillet) at 100% 0,
         transparent calc(var(--fillet) - 0.5px),
-        var(--background-solid) var(--fillet)
+        var(--tab-surface-base) var(--fillet)
       );
   }
 

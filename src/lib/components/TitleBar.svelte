@@ -118,10 +118,18 @@
             <rect class="tab-view-clip" x="0" y="0" width="0" height="0" />
             <rect class="tab-below-clip" x="-4096" y="0" width="8192" height="4096" />
           </clipPath>
+          <!-- The shade stays inside the bar: the tab's hole reaches below
+               it, and outside the bar's rectangle that hole would be painted. -->
+          <clipPath id="tab-strip-clip"><rect class="tab-bar-clip" x="0" y="0" width="0" height="0" /></clipPath>
         </defs>
-        <path class="strip-shade" />
-        <!-- The tab wears its island's surface: base layer, then panel layer. -->
-        <g class="tab-fill" clip-path="url(#tab-fill-view)">
+        <path class="strip-shade" clip-path="url(#tab-strip-clip)" />
+        <!-- The tab wears its island's surface: base layer, then panel layer;
+             also over the island pixels its edge stroke takes over. -->
+        <g class="tab-fill tab-body" clip-path="url(#tab-fill-view)">
+          <path class="tab-fill-base" />
+          <path class="tab-fill-panel" />
+        </g>
+        <g class="tab-fill tab-corners">
           <path class="tab-fill-base" />
           <path class="tab-fill-panel" />
         </g>
@@ -144,22 +152,22 @@
       <div class="spacer" data-tab-room></div>
     </div>
     {#if layoutStore.islands}
-      <!-- One stroke over the tab, its fillets and the island top edges,
-           fading out through the islands' rounded corners. -->
+      <!-- One stroke over the tab, its fillets and the top edges and corners
+           of the islands it opens into, in their border colour; split in
+           three runs only when those islands' borders differ. -->
       <svg class="tab-seam-layer tab-edge-layer" data-region="tab-edge" aria-hidden="true">
         <defs>
-          <linearGradient id="tab-edge-fade" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="1" y2="0">
-            <stop class="tab-edge-stop" offset="0" stop-opacity="0" />
-            <stop class="tab-edge-stop" offset="0.1" />
-            <stop class="tab-edge-stop" offset="0.9" />
-            <stop class="tab-edge-stop" offset="1" stop-opacity="0" />
-          </linearGradient>
-          <clipPath id="tab-edge-view">
-            <rect class="tab-view-clip" x="0" y="0" width="0" height="0" />
-            <rect class="tab-below-clip" x="-4096" y="0" width="8192" height="4096" />
-          </clipPath>
+          <!-- Above the base, the strip's view; below it, only the island
+               pixels the stroke owns (the islands paint the rest). One path:
+               WebKit bounds a clip of several shapes by its target's
+               geometry, which would cut the stroke's lower half. -->
+          <clipPath id="tab-edge-view"><path class="tab-edge-clip" /></clipPath>
         </defs>
-        <path class="tab-edge-stroke" fill="none" stroke="url(#tab-edge-fade)" clip-path="url(#tab-edge-view)" />
+        <g clip-path="url(#tab-edge-view)">
+          <path class="tab-edge-stroke" fill="none" />
+          <path class="tab-edge-stroke" fill="none" />
+          <path class="tab-edge-stroke" fill="none" />
+        </g>
       </svg>
     {/if}
 

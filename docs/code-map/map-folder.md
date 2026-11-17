@@ -502,6 +502,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `pointer-drag.ts` — shared five-pixel press-to-drag threshold for tabs, files, sidebar items and click suppression.
 - `tab-strip.ts` — pure Chrome-style tab sizing, full-path tab filtering and drag edge-scroll speed; `TAB_BLEED` and the bleed-aware active-tab reveal.
+- `island-outline.ts` — Floating Islands seam pixel ownership (#1734): device-pixel snapping per engine, the island top-edge cut the tab's SVG stroke takes over (handovers at the corner tangents), its path and the island's clip polygon.
 - `tab-seam.ts` — Floating Islands active-tab geometry (#1734): contour, strip-shade hole, fill, seam rows, gutter bridges, squared island corners, strip start padding, edge stroke and key shadow paths.
 - `tab-slide.ts` — tab insert/remove slide timing and per-frame flex-basis CSS (fillets and content scale with `--tab-slide`).
 - `tab-drag.ts` — pure tab-drag lifecycle and effects, including session-qualified asynchronous detach settlement (#1642).

@@ -128,3 +128,51 @@ judge frame-exact claims from Chromium sheets.
 - Title fades apply only when a title (or one of its parts) overflows
   (`.fits`). Inactive titles narrower than 24px (1.5× the fade) are hidden
   (`TAB_ICON_ONLY_BELOW = 64`).
+
+## One painter per pixel at the seam (#1744 real-Mac review)
+
+- **Every pixel has one painter, and ownership changes on device-pixel
+  boundaries.** Two translucent layers meeting inside one anti-aliased pixel
+  conflate into a visible seam, and a layer that both an island and the tab
+  paint (a top border, an inset highlight, a shade) reads as a band or a
+  hairline across the tab's foot. A seamed island now gives up its whole top
+  border row between its corner tangents (`domain/island-outline.ts`): its
+  clip-path removes that row and everything above the notch, the tab's fill
+  repaints it, and the tab's SVG stroke draws the edge from tangent to
+  tangent, over the tab. The island's own inset top highlight is dropped
+  while seamed.
+- **Corners stay CSS.** An SVG arc only approximates the engine's border
+  rasteriser: WebKit draws a 1px CSS corner up to 17/255 heavier than a
+  geometric ring, Chromium up to 11. The stroke takes over on the straight
+  edge at the first whole device pixel past each arc, so every island's
+  corners stay identical whether or not a tab opens into it.
+- **The engines snap differently.** WebKit snaps box edges and border widths
+  to device pixels; Chromium snaps to zoomed CSS pixels, then scales by the
+  device pixel ratio (`DeviceGrid.unit`). At 125% on a 2x display an island
+  at 47.5 visual px paints at device row 96 in Chromium and 95 in WebKit.
+- **The clip-path reference box differs too.** Chromium resolves a
+  `clip-path: polygon()` against the unsnapped layout box, WebKit against the
+  snapped painted box; the polygon is written relative to each.
+- **WebKit bounds a multi-child SVG `<clipPath>` by the clipped element's
+  geometry bounding box.** A clip with a rect and a path cut away the lower
+  half of the stroke at 110%/2x. Use one `<path>` child.
+- **A nonzero strip shade painted its silhouette hole.** The shade's path
+  ran outside the bar, so its hole beyond the bar rect was filled: a faint
+  band along the foot in WebKit. Clip the shade to the bar.
+- **The default layout's active tab must not stay opaque on the material.**
+  It is the pane's surface layered over `--background-solid` (#243); under
+  `[data-macos-material]` that solid read as a white card on glass over the
+  translucent toolbar. On the material it adds only the navigation bar's
+  surface over the title bar (already the pane's card), with no solid base.
+- **Frozen frames in WebKit need one throwaway screenshot.** A held strip
+  moves ~10px on WebKit's first `page.screenshot`, and the seam marks' frame
+  loop stops with the paused animations. The matrix spec pauses, takes that
+  screenshot, then dispatches `resize` so the marks follow before measuring.
+
+Tests: `e2e/tab-outline-matrix.spec.ts` runs layout (islands, default) ×
+platform (macOS with material, macOS without, Linux/Windows) × theme at rest
+(1, 3 and 12 tabs), on hover and on stepped frames of opening and closing, at
+100%/1x, plus every islands cell at 125%/2x. Each check compares the frame
+with one layer changed: the island outline against its own CSS border, the
+rows from one above the seam to four below against the tab body, the strip
+shade below the base, and the shadow on each side. It fails on 478ca1ac.

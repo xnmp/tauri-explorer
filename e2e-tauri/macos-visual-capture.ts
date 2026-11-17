@@ -631,7 +631,7 @@ function writeReadme(): void {
     "  scenarios/<id>/recordings/<action>-frames/NNNNN.png  every recorded frame, cropped to the title/tab strip",
     "  scenarios/<id>/recordings/<action>-frames/times.txt  presentation time (s) of each frame",
     "  scenarios/<id>/recordings/<action>-sheets/overview-sheet.png  ~20 frames sampled across the action's motion",
-    "  scenarios/<id>/recordings/<action>-sheets/burst-NN-sheet.png  consecutive frames of one burst of motion (one input)",
+    "  scenarios/<id>/recordings/<action>-sheets/burst-NN-sheet.png  consecutive frames of one burst of motion (usually one input)",
     "",
     "Scenarios",
     ...SCENARIOS.map((s) => `  ${s.id}: ${s.title}${s.record ? " (with recordings)" : ""}`),

@@ -21,10 +21,14 @@ from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageStat
 OVERVIEW_FRAMES = 20
 BURST_FRAMES = 24
 MAX_BURSTS = 16
-# Mean absolute grey-level change (0-255) that counts as motion. Cursor-only
-# movement inside the strip stays below this on a 1200pt-wide crop.
-MOTION_THRESHOLD = 0.35
+# A frame "moves" when this share of its pixels changed by more than
+# PIXEL_DELTA grey levels. A sliding tab touches a small area of the strip, so
+# a mean over the whole frame would miss it.
+PIXEL_DELTA = 12
+MOTION_THRESHOLD = 0.0005
+# Moving frames closer than this (in frames and seconds) belong to one burst.
 QUIET_GAP = 6
+QUIET_SECONDS = 0.35
 
 
 def emit(value: object) -> None:
@@ -113,21 +117,28 @@ def motion(frames: list[Path]) -> list[float]:
     previous = None
     for frame in frames:
         small = Image.open(frame).convert("L")
-        small = small.resize((max(1, small.width // 4), max(1, small.height // 4)))
+        small = small.resize((max(1, small.width // 2), max(1, small.height // 2)))
         if previous is not None:
-            diff = ImageChops.difference(small, previous)
-            scores.append(ImageStat.Stat(diff).mean[0])
+            diff = ImageChops.difference(small, previous).point(lambda v: 255 if v > PIXEL_DELTA else 0)
+            scores.append(ImageStat.Stat(diff).mean[0] / 255)
         previous = small
     return scores
 
 
-def bursts(scores: list[float]) -> list[tuple[int, int]]:
-    """Runs of moving frames, merging runs separated by short quiet gaps."""
+def bursts(scores: list[float], times: list[float | None]) -> list[tuple[int, int]]:
+    """Runs of moving frames, merging runs separated by short quiet gaps.
+
+    Recorders on the hosted VM emit variable-rate video (a frame only when
+    the screen changes), so a gap is measured in time as well as in frames.
+    """
     runs: list[list[int]] = []
     for index, score in enumerate(scores):
         if score < MOTION_THRESHOLD:
             continue
-        if runs and index - runs[-1][1] <= QUIET_GAP:
+        last = runs[-1][1] if runs else None
+        close_in_time = (last is None or times[index] is None or times[last] is None
+                         or times[index] - times[last] <= QUIET_SECONDS)
+        if last is not None and index - last <= QUIET_GAP and close_in_time:
             runs[-1][1] = index
         else:
             runs.append([index, index])
@@ -157,7 +168,7 @@ def sheet(frames: list[Path], indices: list[int], times: list[float | None], sco
     small = font(12)
     for index, image in zip(indices, images):
         stamp = times[index]
-        label = f"frame {index + 1:05d}" + (f"  t={stamp:.3f}s" if stamp is not None else "") + f"  motion={scores[index]:.2f}"
+        label = f"frame {index + 1:05d}" + (f"  t={stamp:.3f}s" if stamp is not None else "") + f"  changed={scores[index] * 100:.2f}%"
         draw.text((6, y + 2), label, fill=(255, 220, 120), font=small)
         y += label_h
         canvas.paste(image, (0, y))
@@ -181,7 +192,7 @@ def sheets(frames_dir: str, out_dir: str) -> dict:
         raise SystemExit(f"no frames in {frames_dir}")
     times = read_times(directory, len(frames))
     scores = motion(frames)
-    runs = bursts(scores)
+    runs = bursts(scores, times)
     # The overview samples the moving frames (plus the first and last) so
     # pauses between inputs do not fill the sheet with identical images.
     moving = sorted({0, len(frames) - 1, *[i for start, end in runs for i in range(start, end + 1)]})
@@ -191,7 +202,7 @@ def sheets(frames_dir: str, out_dir: str) -> dict:
     written = [str(overview)]
     for number, (start, end) in enumerate(runs[:MAX_BURSTS], start=1):
         first = max(0, start - 2)
-        last = min(len(frames), first + BURST_FRAMES)
+        last = min(len(frames), end + 4, first + BURST_FRAMES)
         path = target / f"burst-{number:02d}-sheet.png"
         sheet(frames, list(range(first, last)), times, scores, path,
               f"{directory.name} burst {number}: consecutive frames {first + 1}-{last}")

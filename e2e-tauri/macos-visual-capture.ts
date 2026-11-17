@@ -132,6 +132,10 @@ function prepareHost(): void {
   const wallpaper = path.join(OUTPUT, "wallpaper.png");
   python("wallpaper", wallpaper, String(display.pixelWidth), String(display.pixelHeight));
   report.wallpaper = attempt("set wallpaper", () => JSON.parse(run(helper, ["wallpaper", wallpaper])));
+  report.host.accessibility = attempt("display accommodations", () => JSON.parse(run(helper, ["a11y", "-"])));
+  if ((report.host.accessibility as { reduceTransparency?: boolean } | null)?.reduceTransparency) {
+    report.notes.push("Reduce Transparency is on: macOS paints materials opaque and the page sees prefers-reduced-transparency");
+  }
 }
 
 async function captureDesktop(): Promise<void> {
@@ -474,6 +478,14 @@ async function clickTab(ctx: ScenarioContext, index: number | "middle", mark: Ma
   const target = index === "middle" ? Math.floor(list.length / 2) : Math.min(index, list.length - 1);
   mark(`click tab ${target + 1}/${list.length}`);
   await list[target].element.click();
+  await parkPointer(ctx);
+}
+
+/** Move the pointer off the strip so hover styles and tooltips stay out of the frames. */
+async function parkPointer(ctx: ScenarioContext): Promise<void> {
+  const w = ctx.window;
+  await ctx.browser.execute("macos: hover", { x: Math.round(w.x + w.width * 0.6), y: Math.round(w.y + w.height * 0.85) })
+    .catch((error: unknown) => { report.notes.push(`pointer park failed: ${String(error).slice(0, 200)}`); });
 }
 
 async function recordTabActions(ctx: ScenarioContext): Promise<void> {
@@ -513,14 +525,20 @@ async function settingsDialog(ctx: ScenarioContext): Promise<void> {
   await filter.waitForDisplayed({ timeout: 15_000 });
   await sleep(1_200);
   await still(ctx, "02-settings-dialog");
-  // "vibrancy" is a search term of Window Vibrancy, Native Blur and (where the
-  // branch has it) Translucency Opacity, so the rows show together.
-  await b.execute("macos: keys", { keys: Array.from("vibrancy"), elementId: filter.elementId });
-  await sleep(1_200);
-  await still(ctx, "03-settings-vibrancy-rows");
-  const source = await b.getPageSource();
-  fs.writeFileSync(path.join(ctx.dir, "settings-page-source.xml"), source);
-  ctx.observations.translucencyOpacityRow = source.includes("Translucency Opacity");
+  // Search terms differ per row: "vibrancy" finds Window Vibrancy (and
+  // Translucency Opacity where the ref has it), "blur" finds Native Blur
+  // (and Translucency Opacity).
+  let translucencyRow = false;
+  for (const [index, query] of ["vibrancy", "blur"].entries()) {
+    await b.execute("macos: keys", { keys: [{ key: "a", modifierFlags: COMMAND }], elementId: filter.elementId });
+    await b.execute("macos: keys", { keys: Array.from(query), elementId: filter.elementId });
+    await sleep(1_200);
+    await still(ctx, `0${index + 3}-settings-filter-${query}`);
+    const source = await b.getPageSource();
+    fs.writeFileSync(path.join(ctx.dir, `settings-filter-${query}-page-source.xml`), source);
+    translucencyRow ||= source.includes("Translucency Opacity");
+  }
+  ctx.observations.translucencyOpacityRow = translucencyRow;
   if (!ctx.observations.translucencyOpacityRow) {
     report.notes.push(`${ctx.scenario.id}: no Translucency Opacity row on this ref (captured anyway)`);
   }
@@ -591,6 +609,7 @@ function writeReadme(): void {
     `Host: ${String(report.host.swVers ?? "").replace(/\n/g, "; ")}  model: ${String(report.host.model ?? "")}`,
     `Display: ${report.display ? `${report.display.width}x${report.display.height}pt, ${report.display.pixelWidth}x${report.display.pixelHeight}px` : "?"}`,
     `Recorder: ${report.recorder.choice ? JSON.stringify(report.recorder.choice) : "none"}`,
+    `Display accommodations: ${JSON.stringify(report.host.accessibility ?? null)}`,
     "",
     "Layout",
     "  report.json            machine-readable run record: stills with blank checks, recordings, notes, errors",
@@ -614,6 +633,7 @@ function writeReadme(): void {
     "Actions (recorded scenarios start with three tabs, the middle one active)",
     "  1-open-tabs         Cmd+T three times, 1.6 s apart",
     "  2-switch-tabs       Ctrl+Tab, Ctrl+Tab, Ctrl+Shift+Tab, Cmd+Shift+], click tab 1, click tab 3",
+    "  (after every click the pointer is parked over the file list so hover/tooltips stay out of the strip)",
     "  3-close-middle-tab  click the middle tab, then Cmd+W",
     "  4-crowd-overflow    Cmd+T until 12 tabs, then Cmd+W five times",
     "  Each recording's input times (seconds from recorder start) are in report.json under marks.",

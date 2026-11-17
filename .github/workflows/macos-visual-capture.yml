@@ -61,7 +61,7 @@ jobs:
             sw_vers
             xcodebuild -version
             csrutil status || true
-            system_profiler SPDisplaysDataType || true
+            echo "reduceTransparency=$(defaults read com.apple.universalaccess reduceTransparency 2>&1)"
             echo '--- system TCC screen-capture rows'
             sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
               "SELECT client, auth_value FROM access WHERE service='kTCCServiceScreenCapture';" || true
@@ -174,6 +174,20 @@ jobs:
             done
           done
           sudo launchctl kickstart -k system/com.apple.tccd 2>/dev/null || sudo pkill -HUP tccd || true
+
+      # Hosted images may ship with Reduce Transparency on, which makes every
+      # material opaque (and matches prefers-reduced-transparency in the
+      # page). Turn it off so vibrancy can render; the driver records what
+      # macOS actually reports afterwards.
+      - name: Allow transparency on this disposable runner
+        continue-on-error: true
+        run: |
+          echo "before: $(defaults read com.apple.universalaccess reduceTransparency 2>&1)"
+          defaults write com.apple.universalaccess reduceTransparency -bool false \
+            || sudo -u "$USER" defaults write com.apple.universalaccess reduceTransparency -bool false
+          echo "after: $(defaults read com.apple.universalaccess reduceTransparency 2>&1)" | tee -a "$OUT/host.txt"
+          # Running UI picks the preference up on relaunch; the app launches later.
+          killall Dock SystemUIServer 2>/dev/null || true
 
       - name: Capture stills and recordings
         env:

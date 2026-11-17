@@ -1,6 +1,7 @@
 // Hosted-Mac visual capture helpers (#1750). Prints one JSON value.
 //   wallpaper <png>   set the desktop picture on every screen, then read it back
 //   windows <pid>     CGWindowList entries owned by <pid> (ids for screencapture -l)
+//   a11y -            display accommodations that change how materials render
 // Evidence tooling for a disposable runner only: it changes the desktop.
 import AppKit
 import CoreGraphics
@@ -17,7 +18,7 @@ func fail(_ message: String) -> Never {
 }
 
 let arguments = CommandLine.arguments
-guard arguments.count == 3 else { fail("usage: wallpaper <png> | windows <pid>") }
+guard arguments.count == 3 else { fail("usage: wallpaper <png> | windows <pid> | a11y -") }
 _ = NSApplication.shared
 
 switch arguments[1] {
@@ -58,6 +59,16 @@ case "windows":
         ]
     }
     emit(windows)
+case "a11y":
+    // Reduce Transparency makes NSVisualEffectView paint an opaque fallback
+    // and matches the page's prefers-reduced-transparency media query.
+    let workspace = NSWorkspace.shared
+    emit([
+        "reduceTransparency": workspace.accessibilityDisplayShouldReduceTransparency,
+        "increaseContrast": workspace.accessibilityDisplayShouldIncreaseContrast,
+        "reduceMotion": workspace.accessibilityDisplayShouldReduceMotion,
+        "differentiateWithoutColor": workspace.accessibilityDisplayShouldDifferentiateWithoutColor,
+    ])
 default:
     fail("unknown command \(arguments[1])")
 }

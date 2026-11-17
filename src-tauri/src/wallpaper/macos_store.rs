@@ -1,4 +1,4 @@
-//! Pure logic for the private macOS 14+ wallpaper store (#1441).
+//! Pure logic for the private macOS 14+ wallpaper store (#1441, #1731).
 //!
 //! `~/Library/Application Support/com.apple.wallpaper/Store/Index.plist`
 //! records the wallpaper for "all Spaces and displays"
@@ -13,9 +13,20 @@
 //! `Displays` are emptied. Nothing else (`SystemDefault`, `Idle`, `Type`,
 //! dates, unknown keys) is touched, no `Configuration` blob is ever
 //! fabricated, and a store whose shape is not recognised is never written.
-//! See `docs/lessons/1441-macos-wallpaper-all-spaces.md`.
+//!
+//! Two layouts are understood:
+//! - macOS 14/15: an image choice names its file in `Files[0].relative`.
+//! - macOS 26 (Tahoe): `Files` is empty and the URL lives inside the
+//!   choice's `Configuration`, a nested property list. After a reload the
+//!   agent may also re-expand all-Spaces mode into one entry per display and
+//!   Space with no `AllSpacesAndDisplays.Desktop` ([`Coverage`]).
+//!
+//! Everything here is pure, so it is tested on every host. See
+//! `docs/lessons/1441-macos-wallpaper-all-spaces.md` and
+//! `docs/lessons/1731-macos-wallpaper-all-spaces.md`.
 
 use plist::{Dictionary, Value};
+use std::collections::BTreeSet;
 
 /// `Provider` of a still-image choice.
 pub const IMAGE_PROVIDER: &str = "com.apple.wallpaper.choice.image";
@@ -27,6 +38,17 @@ const OVERRIDE_SECTIONS: &[&str] = &["Displays", "Spaces"];
 /// `Spaces` nests `<space>` → `Displays` → `<display>`; a little headroom
 /// beyond that, but never an unbounded walk of an unknown structure.
 const MAX_DEPTH: usize = 5;
+
+/// Bounds for reading a choice's nested `Configuration` plist. macOS writes
+/// a few hundred bytes; anything far larger, deeper or wider is not a
+/// configuration this code understands and is ignored (fail-safe: the
+/// choice is then not recognised as showing any image).
+const MAX_CONFIGURATION_BYTES: usize = 256 * 1024;
+const MAX_CONFIGURATION_DEPTH: usize = 8;
+const MAX_CONFIGURATION_NODES: usize = 4096;
+
+/// At most this many entries are listed by [`describe`].
+const DESCRIBE_LIMIT: usize = 24;
 
 /// Why the store was left unchanged.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,6 +135,81 @@ fn parse(store: &[u8]) -> Result<Value, StoreError> {
         .map_err(|e| StoreError::Malformed(e.to_string()))
 }
 
+/// Collects the distinct `file://` paths inside a nested `Configuration`
+/// plist, within the bounds above. Nested plist data is followed too.
+struct ConfigurationWalk {
+    nodes_left: usize,
+    exhausted: bool,
+    paths: BTreeSet<String>,
+}
+
+impl ConfigurationWalk {
+    fn plist(&mut self, bytes: &[u8], depth: usize) {
+        if bytes.len() > MAX_CONFIGURATION_BYTES || depth > MAX_CONFIGURATION_DEPTH {
+            self.exhausted = true;
+            return;
+        }
+        if let Ok(value) = parse(bytes) {
+            self.value(&value, depth);
+        }
+    }
+
+    fn value(&mut self, value: &Value, depth: usize) {
+        if self.exhausted || self.nodes_left == 0 || depth > MAX_CONFIGURATION_DEPTH {
+            self.exhausted = true;
+            return;
+        }
+        self.nodes_left -= 1;
+        match value {
+            Value::String(s) => {
+                if let Some(path) = url_path(s) {
+                    self.paths.insert(normalize_path(&path).to_string());
+                }
+            }
+            Value::Dictionary(d) => d.values().for_each(|v| self.value(v, depth + 1)),
+            Value::Array(a) => a.iter().for_each(|v| self.value(v, depth + 1)),
+            Value::Data(d) if d.starts_with(b"bplist") || d.starts_with(b"<?xml") => {
+                self.plist(d, depth + 1)
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The image a macOS 26 `Configuration` blob names: its single distinct
+/// `file://` URL. None when it names none, several, or exceeds the bounds,
+/// so an unfamiliar configuration is never mistaken for the image.
+fn configuration_image_path(configuration: &[u8]) -> Option<String> {
+    let mut walk = ConfigurationWalk {
+        nodes_left: MAX_CONFIGURATION_NODES,
+        exhausted: false,
+        paths: BTreeSet::new(),
+    };
+    walk.plist(configuration, 0);
+    if walk.exhausted || walk.paths.len() != 1 {
+        return None;
+    }
+    walk.paths.into_iter().next()
+}
+
+/// The image path of a still-image choice: `Files[0].relative` (macOS
+/// 14/15) or, when `Files` is empty or absent, the URL in its
+/// `Configuration` (macOS 26).
+fn choice_image_path(choice: &Dictionary) -> Option<String> {
+    if choice.get("Provider")?.as_string()? != IMAGE_PROVIDER {
+        return None;
+    }
+    let files = match choice.get("Files") {
+        None => &[][..],
+        Some(files) => files.as_array()?.as_slice(),
+    };
+    match files {
+        [file] => url_path(file.as_dictionary()?.get("relative")?.as_string()?),
+        [] => configuration_image_path(choice.get("Configuration")?.as_data()?),
+        _ => None,
+    }
+}
+
 /// `entry.Desktop` when it is a desktop entry with a `Content.Choices` array.
 fn desktop(entry: &Dictionary) -> Option<&Dictionary> {
     let desktop = entry.get("Desktop")?.as_dictionary()?;
@@ -124,35 +221,42 @@ fn desktop(entry: &Dictionary) -> Option<&Dictionary> {
     Some(desktop)
 }
 
+/// What a desktop shows when it is exactly one still image.
+fn desktop_image_path(desktop: &Dictionary) -> Option<String> {
+    let content = desktop.get("Content")?.as_dictionary()?;
+    let [choice] = content.get("Choices")?.as_array()?.as_slice() else {
+        return None;
+    };
+    choice_image_path(choice.as_dictionary()?)
+}
+
 /// Whether a desktop shows exactly one still image, at `image_path`.
-/// `Configuration` is not required (newer releases may omit it); whatever
-/// macOS wrote is copied verbatim, never synthesised.
+/// `Configuration` is not required on 14/15; whatever macOS wrote is copied
+/// verbatim, never synthesised.
 fn shows_image(desktop: &Dictionary, image_path: &str) -> bool {
-    let choice = (|| {
-        let content = desktop.get("Content")?.as_dictionary()?;
-        let [choice] = content.get("Choices")?.as_array()?.as_slice() else {
-            return None;
-        };
-        let choice = choice.as_dictionary()?;
-        if choice.get("Provider")?.as_string()? != IMAGE_PROVIDER {
-            return None;
-        }
-        let [file] = choice.get("Files")?.as_array()?.as_slice() else {
-            return None;
-        };
-        url_path(file.as_dictionary()?.get("relative")?.as_string()?)
-    })();
-    choice.is_some_and(|p| normalize_path(&p) == normalize_path(image_path))
+    desktop_image_path(desktop).is_some_and(|p| normalize_path(&p) == normalize_path(image_path))
+}
+
+/// A desktop entry found in the store: where it is, the entry holding it
+/// (`Desktop`, `Idle`, `Type`, …) and its `Desktop`.
+struct Found<'a> {
+    at: String,
+    entry: &'a Dictionary,
+    desktop: &'a Dictionary,
 }
 
 /// Every desktop entry with its location (`"Spaces/<id>/Default"` …).
-fn desktops(root: &Dictionary) -> Vec<(String, &Dictionary)> {
-    fn walk<'a>(v: &'a Value, at: String, depth: usize, out: &mut Vec<(String, &'a Dictionary)>) {
+fn desktops(root: &Dictionary) -> Vec<Found<'_>> {
+    fn walk<'a>(v: &'a Value, at: String, depth: usize, out: &mut Vec<Found<'a>>) {
         let Some(dict) = v.as_dictionary() else {
             return;
         };
-        if let Some(d) = desktop(dict) {
-            out.push((at, d));
+        if let Some(desktop) = desktop(dict) {
+            out.push(Found {
+                at,
+                entry: dict,
+                desktop,
+            });
             return;
         }
         if depth < MAX_DEPTH {
@@ -170,12 +274,13 @@ fn desktops(root: &Dictionary) -> Vec<(String, &Dictionary)> {
     out
 }
 
-/// The `Desktop` dictionary macOS wrote for `image_path` between `before`
-/// and `after`: an entry showing the image that is new, or differs from the
-/// entry at the same location before (e.g. a new `LastSet`). An entry that
-/// already showed the image before does not count, so an unrelated Space
-/// showing the same picture cannot short-circuit the wait for macOS's save.
-pub fn fresh_image_desktop(
+/// The entry (holding a `Desktop`) macOS wrote for `image_path` between
+/// `before` and `after`: an entry showing the image that is new, or whose
+/// `Desktop` differs from the one at the same location before (e.g. a new
+/// `LastSet`). An entry that already showed the image before does not
+/// count, so an unrelated Space showing the same picture cannot
+/// short-circuit the wait for macOS's save.
+pub fn fresh_image_entry(
     before: Option<&[u8]>,
     after: &[u8],
     image_path: &str,
@@ -188,26 +293,31 @@ pub fn fresh_image_desktop(
     let previous = desktops(&before);
     desktops(&after)
         .into_iter()
-        .filter(|(_, d)| shows_image(d, image_path))
-        .find(|(at, d)| !previous.iter().any(|(p_at, p)| p_at == at && p == d))
-        .map(|(_, d)| d.clone())
+        .filter(|f| shows_image(f.desktop, image_path))
+        .find(|f| {
+            !previous
+                .iter()
+                .any(|p| p.at == f.at && p.desktop == f.desktop)
+        })
+        .map(|f| f.entry.clone())
 }
 
-/// Any `Desktop` already showing `image_path`, for when NSWorkspace made no
+/// Any entry already showing `image_path`, for when NSWorkspace made no
 /// change because every display already showed the image.
-pub fn existing_image_desktop(store: &[u8], image_path: &str) -> Option<Dictionary> {
+pub fn existing_image_entry(store: &[u8], image_path: &str) -> Option<Dictionary> {
     let root = parse(store).ok()?.into_dictionary()?;
     desktops(&root)
         .into_iter()
-        .find(|(_, d)| shows_image(d, image_path))
-        .map(|(_, d)| d.clone())
+        .find(|f| shows_image(f.desktop, image_path))
+        .map(|f| f.entry.clone())
 }
 
-/// The store in all-Spaces mode showing `image_desktop` (a `Desktop`
-/// dictionary macOS wrote): `AllSpacesAndDisplays.Desktop.Content` replaced
-/// (or the whole `Desktop` if the entry had none), `Spaces` and `Displays`
+/// The store in all-Spaces mode showing `image_entry` (an entry macOS
+/// wrote, holding a `Desktop`): `AllSpacesAndDisplays.Desktop.Content`
+/// replaced (the whole `Desktop` if the entry had none, the whole entry if
+/// the store had no `AllSpacesAndDisplays`), `Spaces` and `Displays`
 /// emptied, everything else preserved. Same encoding as the input.
-pub fn all_spaces_store(store: &[u8], image_desktop: &Dictionary) -> Result<Vec<u8>, StoreError> {
+pub fn all_spaces_store(store: &[u8], image_entry: &Dictionary) -> Result<Vec<u8>, StoreError> {
     let is_binary = store.starts_with(b"bplist");
     let mut root = parse(store)?;
     let dict = root
@@ -221,23 +331,31 @@ pub fn all_spaces_store(store: &[u8], image_desktop: &Dictionary) -> Result<Vec<
             return Err(StoreError::UnrecognisedLayout);
         }
     }
+    let image_desktop = desktop(image_entry).ok_or(StoreError::UnrecognisedLayout)?;
     let content = image_desktop
         .get("Content")
-        .and_then(Value::as_dictionary)
-        .ok_or(StoreError::UnrecognisedLayout)?
-        .clone();
-    let all = dict
-        .get_mut(ALL)
-        .and_then(Value::as_dictionary_mut)
+        .cloned()
         .ok_or(StoreError::UnrecognisedLayout)?;
-    match all.get_mut("Desktop") {
-        Some(Value::Dictionary(d)) => {
-            d.insert("Content".into(), Value::Dictionary(content));
-        }
-        Some(_) => return Err(StoreError::UnrecognisedLayout),
+    let has_overrides = OVERRIDE_SECTIONS.iter().any(|s| dict.contains_key(s));
+    match dict.get_mut(ALL) {
+        // A store with neither an all-Spaces entry nor any override is not
+        // one this code knows.
+        None if !has_overrides => return Err(StoreError::UnrecognisedLayout),
+        // macOS 26 can leave no all-Spaces entry at all once it has expanded
+        // the store per Space: macOS's own entry for the image becomes it.
         None => {
-            all.insert("Desktop".into(), Value::Dictionary(image_desktop.clone()));
+            dict.insert(ALL.into(), Value::Dictionary(image_entry.clone()));
         }
+        Some(Value::Dictionary(all)) => match all.get_mut("Desktop") {
+            Some(Value::Dictionary(d)) => {
+                d.insert("Content".into(), content);
+            }
+            Some(_) => return Err(StoreError::UnrecognisedLayout),
+            None => {
+                all.insert("Desktop".into(), Value::Dictionary(image_desktop.clone()));
+            }
+        },
+        Some(_) => return Err(StoreError::UnrecognisedLayout),
     }
     for section in OVERRIDE_SECTIONS {
         if dict.contains_key(section) {
@@ -255,14 +373,88 @@ pub fn all_spaces_store(store: &[u8], image_desktop: &Dictionary) -> Result<Vec<
     Ok(bytes)
 }
 
-/// Whether every desktop the store records (all-Spaces entry and any
-/// per-display / per-Space override) shows `image_path`.
-pub fn shows_everywhere(store: &[u8], image_path: &str) -> bool {
+/// How much of the store shows an image.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Coverage {
+    /// All-Spaces mode: `AllSpacesAndDisplays.Desktop` and every override
+    /// show the image.
+    AllSpaces,
+    /// macOS 26's reloaded form: no `AllSpacesAndDisplays.Desktop`, but one
+    /// or more per-display / per-Space entries, every one showing the image.
+    EveryRecordedSpace,
+    /// Some recorded desktop shows something else, or none is recorded.
+    Incomplete,
+    /// Not a readable property-list dictionary.
+    Unreadable,
+}
+
+impl Coverage {
+    /// Whether WallpaperAgent's reloaded store means every Space changed.
+    pub fn is_everywhere(self) -> bool {
+        matches!(self, Coverage::AllSpaces | Coverage::EveryRecordedSpace)
+    }
+}
+
+/// How much of `store` shows `image_path`.
+pub fn coverage(store: &[u8], image_path: &str) -> Coverage {
     let Some(root) = parse(store).ok().and_then(Value::into_dictionary) else {
-        return false;
+        return Coverage::Unreadable;
     };
-    let all = desktops(&root);
-    all.iter().any(|(at, _)| at == ALL) && all.iter().all(|(_, d)| shows_image(d, image_path))
+    let found = desktops(&root);
+    if found.is_empty() || !found.iter().all(|f| shows_image(f.desktop, image_path)) {
+        return Coverage::Incomplete;
+    }
+    if found.iter().any(|f| f.at == ALL) {
+        Coverage::AllSpaces
+    } else if root
+        .get(ALL)
+        .and_then(Value::as_dictionary)
+        .is_some_and(|all| all.contains_key("Desktop"))
+    {
+        // An all-Spaces desktop this code cannot read: not proof.
+        Coverage::Incomplete
+    } else {
+        Coverage::EveryRecordedSpace
+    }
+}
+
+/// A one-line summary of the store for diagnostics: each recorded desktop
+/// and what it shows. Bounded, so a huge store cannot flood the log.
+pub fn describe(store: &[u8]) -> String {
+    let root = match parse(store).map(Value::into_dictionary) {
+        Ok(Some(root)) => root,
+        Ok(None) => return "not a dictionary".into(),
+        Err(e) => return e.to_string(),
+    };
+    let found = desktops(&root);
+    let mut parts: Vec<String> = found
+        .iter()
+        .take(DESCRIBE_LIMIT)
+        .map(|f| {
+            let shows = desktop_image_path(f.desktop).unwrap_or_else(|| {
+                let provider = f
+                    .desktop
+                    .get("Content")
+                    .and_then(Value::as_dictionary)
+                    .and_then(|c| c.get("Choices"))
+                    .and_then(Value::as_array)
+                    .and_then(|c| c.first())
+                    .and_then(Value::as_dictionary)
+                    .and_then(|c| c.get("Provider"))
+                    .and_then(Value::as_string)
+                    .unwrap_or("unknown");
+                format!("<{provider}>")
+            });
+            format!("{}={shows}", f.at)
+        })
+        .collect();
+    if found.len() > DESCRIBE_LIMIT {
+        parts.push(format!("… {} more", found.len() - DESCRIBE_LIMIT));
+    }
+    if parts.is_empty() {
+        return "no desktop entries".into();
+    }
+    parts.join("; ")
 }
 
 #[cfg(test)]
@@ -272,25 +464,71 @@ mod tests {
     const OLD: &str = "/Users/me/Pictures/old.jpg";
     const NEW: &str = "/Users/me/My Pictures/it's \"new\";1.png";
 
-    fn image_desktop(path: &str, last_set: &str, config: Option<&[u8]>) -> Value {
-        let mut file = Dictionary::new();
-        file.insert("relative".into(), Value::String(file_url(path)));
+    /// How a fixture choice names its file.
+    #[derive(Clone, Copy)]
+    enum Layout<'a> {
+        /// macOS 14/15: `Files[0].relative`, with an optional opaque
+        /// `Configuration` blob.
+        Sonoma(Option<&'a [u8]>),
+        /// macOS 26: empty `Files`; the URL is inside `Configuration`.
+        Tahoe,
+    }
+
+    /// A macOS 26 `Configuration`: a nested binary plist naming the file.
+    fn tahoe_configuration(path: &str) -> Vec<u8> {
+        encode(
+            &dict(vec![
+                ("type", Value::String("imageFile".into())),
+                (
+                    "url",
+                    dict(vec![("relative", Value::String(file_url(path)))]),
+                ),
+                ("placement", Value::String("fill".into())),
+                ("backgroundColor", Value::Data(vec![0, 0, 0])),
+            ]),
+            true,
+        )
+    }
+
+    fn choice(path: &str, layout: Layout) -> Value {
         let mut choice = Dictionary::new();
-        if let Some(c) = config {
-            choice.insert("Configuration".into(), Value::Data(c.to_vec()));
+        match layout {
+            Layout::Sonoma(config) => {
+                let mut file = Dictionary::new();
+                file.insert("relative".into(), Value::String(file_url(path)));
+                if let Some(c) = config {
+                    choice.insert("Configuration".into(), Value::Data(c.to_vec()));
+                }
+                choice.insert("Files".into(), Value::Array(vec![Value::Dictionary(file)]));
+            }
+            Layout::Tahoe => {
+                choice.insert(
+                    "Configuration".into(),
+                    Value::Data(tahoe_configuration(path)),
+                );
+                choice.insert("Files".into(), Value::Array(vec![]));
+            }
         }
-        choice.insert("Files".into(), Value::Array(vec![Value::Dictionary(file)]));
         choice.insert("Provider".into(), Value::String(IMAGE_PROVIDER.into()));
+        Value::Dictionary(choice)
+    }
+
+    fn desktop_with(choice: Value, last_set: &str) -> Value {
         let mut content = Dictionary::new();
-        content.insert(
-            "Choices".into(),
-            Value::Array(vec![Value::Dictionary(choice)]),
-        );
+        content.insert("Choices".into(), Value::Array(vec![choice]));
         content.insert("Shuffle".into(), Value::String("$null".into()));
         let mut desktop = Dictionary::new();
         desktop.insert("Content".into(), Value::Dictionary(content));
         desktop.insert("LastSet".into(), Value::String(last_set.into()));
         Value::Dictionary(desktop)
+    }
+
+    fn image_desktop(path: &str, last_set: &str, config: Option<&[u8]>) -> Value {
+        desktop_with(choice(path, Layout::Sonoma(config)), last_set)
+    }
+
+    fn tahoe_desktop(path: &str, last_set: &str) -> Value {
+        desktop_with(choice(path, Layout::Tahoe), last_set)
     }
 
     fn entry(desktop: Value) -> Value {
@@ -301,6 +539,10 @@ mod tests {
             ("Idle", Value::Dictionary(idle)),
             ("Type", Value::String("individual".into())),
         ])
+    }
+
+    fn entry_dict(desktop: Value) -> Dictionary {
+        entry(desktop).into_dictionary().unwrap()
     }
 
     fn dict(pairs: Vec<(&str, Value)>) -> Value {
@@ -346,6 +588,37 @@ mod tests {
         ])
     }
 
+    /// macOS 26 after an agent reload: no `AllSpacesAndDisplays.Desktop`,
+    /// one entry per display (A, B) and Space (S1, S2), each showing the
+    /// image named by its own `Configuration`.
+    fn tahoe_reloaded(shows: [&str; 4]) -> Value {
+        let [s1a, s1b, s2a, s2b] = shows;
+        let space = |a: &str, b: &str| {
+            dict(vec![(
+                "Displays",
+                dict(vec![
+                    ("A", entry(tahoe_desktop(a, "t2"))),
+                    ("B", entry(tahoe_desktop(b, "t2"))),
+                ]),
+            )])
+        };
+        dict(vec![
+            (
+                "AllSpacesAndDisplays",
+                dict(vec![("Type", Value::String("idle".into()))]),
+            ),
+            ("Displays", Value::Dictionary(Dictionary::new())),
+            (
+                "Spaces",
+                dict(vec![("S1", space(s1a, s1b)), ("S2", space(s2a, s2b))]),
+            ),
+            (
+                "SystemDefault",
+                entry(tahoe_desktop("/System/default.heic", "t0")),
+            ),
+        ])
+    }
+
     fn encode(v: &Value, binary: bool) -> Vec<u8> {
         let mut out = Vec::new();
         if binary {
@@ -370,6 +643,21 @@ mod tests {
                 .get(k)
                 .unwrap_or_else(|| panic!("{k}"))
         })
+    }
+
+    /// Whether a single desktop is recognised as showing `path`.
+    fn recognised(desktop: Value, path: &str) -> bool {
+        shows_image(&desktop.into_dictionary().unwrap(), path)
+    }
+
+    fn with_configuration(config: Vec<u8>, files: Option<Value>) -> Value {
+        let mut c = Dictionary::new();
+        c.insert("Provider".into(), Value::String(IMAGE_PROVIDER.into()));
+        c.insert("Configuration".into(), Value::Data(config));
+        if let Some(f) = files {
+            c.insert("Files".into(), f);
+        }
+        desktop_with(Value::Dictionary(c), "t")
     }
 
     #[test]
@@ -411,43 +699,172 @@ mod tests {
         // canonicalize gave /private/tmp; macOS recorded /tmp.
         let before = encode(&store(image_desktop(OLD, "t0", Some(b"c"))), true);
         let after = encode(&store(image_desktop("/tmp/w.png", "t1", Some(b"c"))), true);
-        assert!(fresh_image_desktop(Some(&before), &after, "/private/tmp/w.png").is_some());
+        assert!(fresh_image_entry(Some(&before), &after, "/private/tmp/w.png").is_some());
+    }
+
+    #[test]
+    fn tahoe_choices_name_their_image_in_the_nested_configuration() {
+        assert!(recognised(tahoe_desktop(NEW, "t"), NEW));
+        assert!(!recognised(tahoe_desktop(OLD, "t"), NEW));
+
+        // XML-encoded and keyed-archiver-shaped configurations are read too.
+        let xml = encode(
+            &dict(vec![(
+                "url",
+                dict(vec![("relative", Value::String(file_url(NEW)))]),
+            )]),
+            false,
+        );
+        assert!(recognised(with_configuration(xml, None), NEW));
+        let archived = encode(
+            &dict(vec![
+                ("$archiver", Value::String("NSKeyedArchiver".into())),
+                (
+                    "$objects",
+                    Value::Array(vec![
+                        Value::String("$null".into()),
+                        dict(vec![("NS.relative", Value::Integer(2.into()))]),
+                        Value::String(file_url(NEW)),
+                    ]),
+                ),
+            ]),
+            true,
+        );
+        assert!(recognised(
+            with_configuration(archived, Some(Value::Array(vec![]))),
+            NEW
+        ));
+
+        // A file URL nested one plist deeper still counts.
+        let nested = encode(
+            &dict(vec![("inner", Value::Data(tahoe_configuration(NEW)))]),
+            true,
+        );
+        assert!(recognised(with_configuration(nested, None), NEW));
+    }
+
+    #[test]
+    fn files_take_precedence_over_the_configuration() {
+        // macOS 14/15: an opaque Configuration never overrides Files.
+        let mut c = Dictionary::new();
+        c.insert("Provider".into(), Value::String(IMAGE_PROVIDER.into()));
+        c.insert(
+            "Configuration".into(),
+            Value::Data(tahoe_configuration(OLD)),
+        );
+        let mut file = Dictionary::new();
+        file.insert("relative".into(), Value::String(file_url(NEW)));
+        c.insert("Files".into(), Value::Array(vec![Value::Dictionary(file)]));
+        assert!(recognised(desktop_with(Value::Dictionary(c), "t"), NEW));
+    }
+
+    #[test]
+    fn unfamiliar_configurations_are_never_mistaken_for_the_image() {
+        let two_files = encode(
+            &dict(vec![
+                ("url", Value::String(file_url(NEW))),
+                ("fallback", Value::String(file_url(OLD))),
+            ]),
+            true,
+        );
+        let no_file = encode(
+            &dict(vec![("url", Value::String("https://x/y.png".into()))]),
+            true,
+        );
+        let huge = {
+            let mut bytes = tahoe_configuration(NEW);
+            // Valid plist header, then far more than any real configuration.
+            bytes.resize(MAX_CONFIGURATION_BYTES + 1, 0);
+            bytes
+        };
+        let mut deep = dict(vec![("url", Value::String(file_url(NEW)))]);
+        for _ in 0..(MAX_CONFIGURATION_DEPTH + 2) {
+            deep = dict(vec![("x", deep)]);
+        }
+        let wide = encode(
+            &Value::Array(
+                (0..MAX_CONFIGURATION_NODES)
+                    .map(|_| Value::String(file_url(NEW)))
+                    .collect(),
+            ),
+            true,
+        );
+        let cases: Vec<(&str, Vec<u8>)> = vec![
+            ("two files", two_files),
+            ("no file URL", no_file),
+            ("empty", vec![]),
+            ("truncated", b"bplist00\x01\x02".to_vec()),
+            ("junk", b"\xff\xfe not a plist".to_vec()),
+            ("huge", huge),
+            ("deep", encode(&deep, true)),
+            ("wide", wide),
+        ];
+        for (name, config) in cases {
+            assert!(
+                !recognised(with_configuration(config, Some(Value::Array(vec![]))), NEW),
+                "{name}"
+            );
+        }
+
+        // No Configuration at all, Files empty: nothing to read.
+        let mut c = Dictionary::new();
+        c.insert("Provider".into(), Value::String(IMAGE_PROVIDER.into()));
+        c.insert("Files".into(), Value::Array(vec![]));
+        assert!(!recognised(desktop_with(Value::Dictionary(c), "t"), NEW));
+        // Configuration of the wrong type.
+        let mut c = Dictionary::new();
+        c.insert("Provider".into(), Value::String(IMAGE_PROVIDER.into()));
+        c.insert("Configuration".into(), Value::String(file_url(NEW)));
+        assert!(!recognised(desktop_with(Value::Dictionary(c), "t"), NEW));
+        // Another provider (e.g. a dynamic wallpaper) naming the same file.
+        let mut c = Dictionary::new();
+        c.insert(
+            "Provider".into(),
+            Value::String("com.apple.wallpaper.choice.dynamic".into()),
+        );
+        c.insert(
+            "Configuration".into(),
+            Value::Data(tahoe_configuration(NEW)),
+        );
+        assert!(!recognised(desktop_with(Value::Dictionary(c), "t"), NEW));
     }
 
     #[test]
     fn an_image_already_shown_elsewhere_is_not_mistaken_for_the_new_save() {
         // S2/B already showed NEW before; macOS has not saved yet.
         let before = encode(&store(image_desktop(OLD, "t0", Some(b"c-old"))), true);
-        assert_eq!(fresh_image_desktop(Some(&before), &before, NEW), None);
-        assert!(existing_image_desktop(&before, NEW).is_some());
+        assert_eq!(fresh_image_entry(Some(&before), &before, NEW), None);
+        assert!(existing_image_entry(&before, NEW).is_some());
 
         // Now macOS saves the current Space's new entry.
         let after = encode(&store(image_desktop(NEW, "t1", Some(b"c-fresh"))), true);
-        let fresh = fresh_image_desktop(Some(&before), &after, NEW).unwrap();
-        assert_eq!(fresh["LastSet"], Value::String("t1".into()));
+        let fresh = Value::Dictionary(fresh_image_entry(Some(&before), &after, NEW).unwrap());
+        assert_eq!(
+            get(&fresh, &["Desktop", "LastSet"]),
+            &Value::String("t1".into())
+        );
     }
 
     #[test]
     fn a_re_save_of_the_same_image_counts_as_fresh() {
         let before = encode(&store(image_desktop(NEW, "t0", Some(b"c"))), true);
         let after = encode(&store(image_desktop(NEW, "t1", Some(b"c"))), true);
-        assert!(fresh_image_desktop(Some(&before), &after, NEW).is_some());
+        assert!(fresh_image_entry(Some(&before), &after, NEW).is_some());
     }
 
     #[test]
     fn missing_or_malformed_before_snapshot_still_detects_the_save() {
         let after = encode(&store(image_desktop(NEW, "t1", Some(b"c"))), true);
-        assert!(fresh_image_desktop(None, &after, NEW).is_some());
-        assert!(fresh_image_desktop(Some(b"junk"), &after, NEW).is_some());
-        assert_eq!(fresh_image_desktop(None, b"junk", NEW), None);
+        assert!(fresh_image_entry(None, &after, NEW).is_some());
+        assert!(fresh_image_entry(Some(b"junk"), &after, NEW).is_some());
+        assert_eq!(fresh_image_entry(None, b"junk", NEW), None);
+        assert_eq!(fresh_image_entry(None, b"", NEW), None);
     }
 
     #[test]
     fn all_spaces_layout_points_the_all_spaces_entry_at_the_image_and_empties_overrides() {
         let input = store(image_desktop(NEW, "t1", Some(b"c-fresh")));
-        let fresh = image_desktop(NEW, "t1", Some(b"c-fresh"))
-            .into_dictionary()
-            .unwrap();
+        let fresh = entry_dict(image_desktop(NEW, "t1", Some(b"c-fresh")));
         let out = all_spaces_store(&encode(&input, true), &fresh).unwrap();
         assert!(out.starts_with(b"bplist"), "binary in, binary out");
         let root = Value::Dictionary(decode(&out));
@@ -495,6 +912,7 @@ mod tests {
             get(&input, &["SystemDefault"])
         );
         assert_eq!(get(&root, &["FutureKey"]), &Value::Integer(7.into()));
+        assert_eq!(coverage(&out, NEW), Coverage::AllSpaces);
     }
 
     #[test]
@@ -509,13 +927,17 @@ mod tests {
                 dict(vec![("S", entry(image_desktop(OLD, "t0", None)))]),
             ),
         ]);
-        let fresh = image_desktop(NEW, "t1", None).into_dictionary().unwrap();
+        let fresh = entry_dict(image_desktop(NEW, "t1", None));
         let out = all_spaces_store(&encode(&input, false), &fresh).unwrap();
         assert!(!out.starts_with(b"bplist"), "XML in, XML out");
         let root = Value::Dictionary(decode(&out));
         assert_eq!(
             get(&root, &["AllSpacesAndDisplays", "Desktop"]),
-            &Value::Dictionary(fresh)
+            &image_desktop(NEW, "t1", None)
+        );
+        assert_eq!(
+            get(&root, &["AllSpacesAndDisplays", "Type"]),
+            &Value::String("idle".into())
         );
         assert_eq!(
             get(&root, &["Spaces"]),
@@ -528,17 +950,78 @@ mod tests {
     }
 
     #[test]
+    fn a_store_without_an_all_spaces_section_takes_the_macos_entry_as_it() {
+        let input = dict(vec![(
+            "Spaces",
+            dict(vec![("S", entry(tahoe_desktop(NEW, "t1")))]),
+        )]);
+        let fresh = entry_dict(tahoe_desktop(NEW, "t1"));
+        let out = all_spaces_store(&encode(&input, true), &fresh).unwrap();
+        let root = Value::Dictionary(decode(&out));
+        assert_eq!(
+            get(&root, &["AllSpacesAndDisplays"]),
+            &Value::Dictionary(fresh)
+        );
+        assert_eq!(coverage(&out, NEW), Coverage::AllSpaces);
+    }
+
+    #[test]
+    fn tahoe_store_round_trip_detects_the_save_and_rewrites_from_it() {
+        // Before: macOS 26 per-Space form showing OLD everywhere.
+        let before = encode(&tahoe_reloaded([OLD, OLD, OLD, OLD]), true);
+        // NSWorkspace changed the current Space (S1) on both displays.
+        let saved = encode(&tahoe_reloaded([NEW, NEW, OLD, OLD]), true);
+        assert_eq!(fresh_image_entry(Some(&before), &before, NEW), None);
+        let fresh = fresh_image_entry(Some(&before), &saved, NEW).expect("macOS's entry");
+        let out = all_spaces_store(&saved, &fresh).unwrap();
+        let root = Value::Dictionary(decode(&out));
+        // The Tahoe choice, with its Configuration, is copied verbatim.
+        assert_eq!(
+            get(&root, &["AllSpacesAndDisplays", "Desktop"]),
+            &tahoe_desktop(NEW, "t2")
+        );
+        assert_eq!(coverage(&out, NEW), Coverage::AllSpaces);
+        assert_eq!(coverage(&saved, NEW), Coverage::Incomplete);
+    }
+
+    #[test]
+    fn the_reloaded_per_space_form_counts_only_when_every_entry_shows_the_image() {
+        let everywhere = encode(&tahoe_reloaded([NEW, NEW, NEW, NEW]), true);
+        assert_eq!(coverage(&everywhere, NEW), Coverage::EveryRecordedSpace);
+        assert!(coverage(&everywhere, NEW).is_everywhere());
+        // XML encoding is equally accepted.
+        let xml = encode(&tahoe_reloaded([NEW, NEW, NEW, NEW]), false);
+        assert_eq!(coverage(&xml, NEW), Coverage::EveryRecordedSpace);
+
+        // One display on one Space kept the old picture.
+        let one_left = encode(&tahoe_reloaded([NEW, NEW, NEW, OLD]), true);
+        assert_eq!(coverage(&one_left, NEW), Coverage::Incomplete);
+        assert!(!coverage(&one_left, NEW).is_everywhere());
+
+        // An all-Spaces desktop this code cannot read is not proof.
+        let mut odd = tahoe_reloaded([NEW, NEW, NEW, NEW]);
+        odd.as_dictionary_mut().unwrap().insert(
+            "AllSpacesAndDisplays".into(),
+            dict(vec![(
+                "Desktop",
+                dict(vec![("Content", Value::String("?".into()))]),
+            )]),
+        );
+        assert_eq!(coverage(&encode(&odd, true), NEW), Coverage::Incomplete);
+    }
+
+    #[test]
     fn choices_without_configuration_are_accepted_as_written_by_macos() {
         let before = encode(&store(image_desktop(OLD, "t0", None)), true);
         let after = encode(&store(image_desktop(NEW, "t1", None)), true);
-        let fresh = fresh_image_desktop(Some(&before), &after, NEW).unwrap();
+        let fresh = fresh_image_entry(Some(&before), &after, NEW).unwrap();
         let out = all_spaces_store(&after, &fresh).unwrap();
-        assert!(shows_everywhere(&out, NEW));
+        assert_eq!(coverage(&out, NEW), Coverage::AllSpaces);
     }
 
     #[test]
     fn refuses_malformed_input() {
-        let fresh = image_desktop(NEW, "t", None).into_dictionary().unwrap();
+        let fresh = entry_dict(image_desktop(NEW, "t", None));
         for bad in [&b""[..], b"bplist00\x01\x02", b"<plist><dict>"] {
             assert!(matches!(
                 all_spaces_store(bad, &fresh),
@@ -549,10 +1032,14 @@ mod tests {
 
     #[test]
     fn refuses_unrecognised_layouts() {
-        let fresh = image_desktop(NEW, "t", None).into_dictionary().unwrap();
+        let fresh = entry_dict(image_desktop(NEW, "t", None));
         let cases = [
             Value::Array(vec![]),
             Value::Dictionary(Dictionary::new()),
+            dict(vec![(
+                "SystemDefault",
+                entry(image_desktop(OLD, "t", None)),
+            )]),
             dict(vec![("AllSpacesAndDisplays", Value::String("x".into()))]),
             dict(vec![(
                 "AllSpacesAndDisplays",
@@ -570,18 +1057,19 @@ mod tests {
                 "{case:?}"
             );
         }
-        let no_content = dict(vec![("LastSet", Value::String("t".into()))])
+        // The template must itself be a desktop entry.
+        let no_desktop = dict(vec![("LastSet", Value::String("t".into()))])
             .into_dictionary()
             .unwrap();
         let ok_store = encode(&store(image_desktop(OLD, "t", None)), true);
         assert_eq!(
-            all_spaces_store(&ok_store, &no_content),
+            all_spaces_store(&ok_store, &no_desktop),
             Err(StoreError::UnrecognisedLayout)
         );
     }
 
     #[test]
-    fn shows_everywhere_requires_the_all_spaces_entry_and_every_override() {
+    fn all_spaces_coverage_requires_the_all_spaces_entry_and_every_override() {
         let one = |all: &str| {
             encode(
                 &dict(vec![(
@@ -591,18 +1079,24 @@ mod tests {
                 true,
             )
         };
-        assert!(shows_everywhere(&one(NEW), NEW));
-        assert!(!shows_everywhere(&one(OLD), NEW));
+        assert_eq!(coverage(&one(NEW), NEW), Coverage::AllSpaces);
+        assert_eq!(coverage(&one(OLD), NEW), Coverage::Incomplete);
         // An override still showing another image (macOS restored per-Space state).
-        assert!(!shows_everywhere(
-            &encode(&store(image_desktop(NEW, "t", None)), true),
-            NEW
-        ));
-        assert!(!shows_everywhere(b"", NEW));
-        assert!(!shows_everywhere(
-            &encode(&Value::Dictionary(Dictionary::new()), true),
-            NEW
-        ));
+        assert_eq!(
+            coverage(&encode(&store(image_desktop(NEW, "t", None)), true), NEW),
+            Coverage::Incomplete
+        );
+        assert_eq!(coverage(b"", NEW), Coverage::Unreadable);
+        assert_eq!(coverage(b"\x00\x01junk", NEW), Coverage::Unreadable);
+        assert_eq!(
+            coverage(&encode(&Value::Array(vec![]), true), NEW),
+            Coverage::Unreadable
+        );
+        assert_eq!(
+            coverage(&encode(&Value::Dictionary(Dictionary::new()), true), NEW),
+            Coverage::Incomplete,
+            "no recorded desktop is no proof"
+        );
     }
 
     #[test]
@@ -618,6 +1112,78 @@ mod tests {
             ]),
             true,
         );
-        assert_eq!(fresh_image_desktop(None, &after, NEW), None);
+        assert_eq!(fresh_image_entry(None, &after, NEW), None);
+    }
+
+    #[test]
+    fn a_store_with_thousands_of_spaces_is_handled_and_described_briefly() {
+        let spaces: Dictionary = (0..5000)
+            .map(|i| {
+                (
+                    format!("S{i}"),
+                    dict(vec![("Default", entry(tahoe_desktop(NEW, "t")))]),
+                )
+            })
+            .collect();
+        let big = encode(
+            &dict(vec![
+                ("AllSpacesAndDisplays", Value::Dictionary(Dictionary::new())),
+                ("Spaces", Value::Dictionary(spaces)),
+            ]),
+            true,
+        );
+        assert_eq!(coverage(&big, NEW), Coverage::EveryRecordedSpace);
+        let text = describe(&big);
+        assert!(
+            text.ends_with(&format!("… {} more", 5000 - DESCRIBE_LIMIT)),
+            "{text}"
+        );
+        assert!(text.len() < 8 * 1024, "bounded: {} bytes", text.len());
+    }
+
+    #[test]
+    fn describe_lists_what_each_desktop_shows() {
+        let text = describe(&encode(&store(image_desktop(NEW, "t1", None)), true));
+        assert!(
+            text.contains(&format!("AllSpacesAndDisplays={OLD}")),
+            "{text}"
+        );
+        assert!(text.contains(&format!("Spaces/S1/Default={NEW}")), "{text}");
+        assert!(
+            text.contains(&format!("Spaces/S2/Displays/B={NEW}")),
+            "{text}"
+        );
+
+        let tahoe = describe(&encode(&tahoe_reloaded([NEW, OLD, NEW, NEW]), true));
+        assert!(
+            tahoe.contains(&format!("Spaces/S1/Displays/B={OLD}")),
+            "{tahoe}"
+        );
+
+        let mut dynamic = Dictionary::new();
+        dynamic.insert(
+            "Provider".into(),
+            Value::String("com.apple.wallpaper.choice.dynamic".into()),
+        );
+        let other = encode(
+            &dict(vec![(
+                "AllSpacesAndDisplays",
+                entry(desktop_with(Value::Dictionary(dynamic), "t")),
+            )]),
+            true,
+        );
+        assert_eq!(
+            describe(&other),
+            "AllSpacesAndDisplays=<com.apple.wallpaper.choice.dynamic>"
+        );
+        assert!(describe(b"").contains("could not be read"));
+        assert_eq!(
+            describe(&encode(&Value::Array(vec![]), true)),
+            "not a dictionary"
+        );
+        assert_eq!(
+            describe(&encode(&Value::Dictionary(Dictionary::new()), true)),
+            "no desktop entries"
+        );
     }
 }

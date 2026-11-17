@@ -2,8 +2,8 @@
 //! Issue: tauri-explorer-mj32
 #![allow(clippy::disallowed_methods)] // Retire-when: #1638 closed (non-UTF-8 names, ADR 0031)
 
-// macOS: every display + every Space (#1441). Built on other hosts only for
-// tests, so its pure planning logic is checked everywhere.
+// macOS: every display + every Space (#1441, #1731). Built on other hosts
+// only for tests, so its pure planning and store logic is checked everywhere.
 #[cfg(any(target_os = "macos", test))]
 mod macos;
 #[cfg(any(target_os = "macos", test))]
@@ -96,12 +96,12 @@ enum WallpaperBackend {
 }
 
 /// Set wallpaper on macOS: every display via NSWorkspace, and every Space
-/// where the running macOS allows (`macos.rs`, #1441).
+/// where the running macOS allows (`macos.rs`, #1441, #1731).
 #[cfg(not(windows))]
 fn set_macos(path: &str) -> Result<WallpaperOutcome, AppError> {
     #[cfg(target_os = "macos")]
     {
-        macos::set_wallpaper_system(path)
+        macos_outcome(macos::set_wallpaper_system(path))
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -110,6 +110,26 @@ fn set_macos(path: &str) -> Result<WallpaperOutcome, AppError> {
             "The macOS wallpaper backend is unavailable on this platform".to_string(),
         ))
     }
+}
+
+/// Log every macOS result, with the detail of a partial one, and give the
+/// UI only the short notice.
+#[cfg(any(target_os = "macos", test))]
+fn macos_outcome(
+    result: Result<Option<macos::Partial>, AppError>,
+) -> Result<WallpaperOutcome, AppError> {
+    match &result {
+        Ok(None) => log::info!("macOS wallpaper set on every display and Space"),
+        Ok(Some(partial)) => log::warn!(
+            "macOS wallpaper only partly set ({}): {}",
+            partial.user,
+            partial.detail
+        ),
+        Err(e) => log::warn!("macOS wallpaper not set: {e}"),
+    }
+    result.map(|partial| WallpaperOutcome {
+        notice: partial.map(|p| p.user.to_string()),
+    })
 }
 
 /// Set wallpaper using hyprpaper.
@@ -401,8 +421,9 @@ if (-not $ok) {{ exit 1 }}
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WallpaperOutcome {
-    /// Set when only part of the request was applied (e.g. macOS changed the
-    /// current Space but not the others); None when everything was changed.
+    /// A short notice when only part of the request was applied (macOS:
+    /// "Could only change wallpaper on some displays" / "… on the current
+    /// Space"); None when everything was changed. Details go to the log.
     pub notice: Option<String>,
 }
 
@@ -505,5 +526,24 @@ mod tests {
             let path = std::path::Path::new(name);
             assert_eq!(is_wallpaper_image(path), expected, "Failed for: {}", name);
         }
+    }
+
+    #[test]
+    fn a_partial_macos_result_reaches_the_ui_as_its_short_notice_only() {
+        let partial = macos::Partial {
+            user: macos::CURRENT_SPACE,
+            detail: "other Spaces unchanged: macOS kept its per-Space wallpapers".into(),
+        };
+        assert_eq!(
+            macos_outcome(Ok(Some(partial))).unwrap(),
+            WallpaperOutcome {
+                notice: Some("Could only change wallpaper on the current Space".into())
+            }
+        );
+        assert_eq!(
+            macos_outcome(Ok(None)).unwrap(),
+            WallpaperOutcome::default()
+        );
+        assert!(macos_outcome(Err(AppError::Other("Failed to set wallpaper: x".into()))).is_err());
     }
 }

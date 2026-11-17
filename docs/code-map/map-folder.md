@@ -259,6 +259,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `directory-listing.ts` — complete directory snapshots, queued-request supersession, teardown and observation transfer.
 - `navigation.ts` — pure back/forward history utilities.
 - `src/lib/state/pane-pointer-focus.ts` — pointer gesture focus ownership without cancelling native drag acquisition.
+- `src/lib/state/row-focus-ring.ts` — window-global record of whether the last focused file row showed its `:focus-visible` ring; restore-type row focus (new tab, view layout change) requests that state instead of WebKit's key-press heuristic (#1729).
 - `selection.ts` — pure selection math (range/toggle/anchor).
 - `sort-prefs.ts` — per-directory sort preference persistence.
 - `refresh-manager.ts` — dedupe/debounce/rate-limit directory refresh requests.

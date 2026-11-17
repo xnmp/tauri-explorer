@@ -9,7 +9,7 @@
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import type { PreviewImageOptions } from "$lib/state/preview-image";
   import { createPreviewContentLoader, type PreviewContent } from "$lib/state/preview-content";
-  import { classifyPreview } from "$lib/domain/preview-kind";
+  import { classifyPreview, previewFileFor } from "$lib/domain/preview-kind";
   import { needsFullResolution, renditionMaxEdge } from "$lib/domain/preview-rendition";
   import { createLatestOnlyRunner } from "$lib/domain/latest-only";
   import { usePreviewFullscreen } from "$lib/composables/use-preview-fullscreen.svelte";
@@ -106,12 +106,11 @@
 
   /** Currently selected file from the active explorer. A marquee drag only
    *  updates it when the drag ends: loading every file the band crosses
-   *  stalled the drag (#1169). */
+   *  stalled the drag (#1169). A pane awaiting its first listing keeps the shown file (#1729). */
+  let shownFile: FileEntry | null = null; // the previous result, read untracked
   const selectedFile = $derived.by((): FileEntry | null => {
     const explorer = windowTabsManager.getActiveExplorer();
-    if (!explorer) return null;
-    const selected = explorer.getSettledSelectedEntries();
-    return selected.length === 1 ? selected[0] : null;
+    return (shownFile = explorer ? previewFileFor(explorer.getSettledSelectedEntries(), explorer.awaitingFirstListing, shownFile) : null);
   });
 
   // SDK 2: a plugin's non-file Preview subject for the active pane. A file

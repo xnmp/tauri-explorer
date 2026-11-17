@@ -26,3 +26,18 @@ export function createDeferredFocusRequest(events: EventTarget, isCurrent: () =>
     },
   };
 }
+
+/** The part of a focus owner `focusStillOwned` inspects. */
+export interface FocusOwner {
+  readonly isConnected: boolean;
+  closest(selector: string): unknown;
+}
+
+/** Whether focus still belongs to `previous`, the owner when a request began:
+ * it still has focus, or it can no longer hold focus — removed, or inside an
+ * inert subtree such as a retained (hidden) tab (#1173, #1729) — and focus fell
+ * to the body with it. Any other move of focus is a newer owner's. */
+export function focusStillOwned(previous: FocusOwner | null, active: unknown, body: unknown): boolean {
+  if (active === previous) return true;
+  return !!previous && active === body && (!previous.isConnected || previous.closest("[inert]") !== null);
+}

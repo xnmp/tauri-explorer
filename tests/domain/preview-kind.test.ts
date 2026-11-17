@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { FileEntry } from "$lib/domain/file";
-import { classifyPreview, shouldHoldPreviewImage } from "$lib/domain/preview-kind";
+import { classifyPreview, previewFileFor, shouldHoldPreviewImage } from "$lib/domain/preview-kind";
 import * as types from "$lib/domain/file-types";
 
 const file = (name: string, kind: FileEntry["kind"] = "file"): FileEntry =>
@@ -39,5 +39,38 @@ describe("preview classification", () => {
     }
     expect(shouldHoldPreviewImage(null, "image")).toBe(false);
     expect(shouldHoldPreviewImage("text", "image")).toBe(false);
+  });
+});
+
+describe("previewFileFor (#1729)", () => {
+  const shown = file("shown.txt");
+  const other = file("other.txt");
+
+  it("shows the single selected entry, whatever was shown before", () => {
+    expect(previewFileFor([other], false, shown)).toBe(other);
+    expect(previewFileFor([other], true, shown)).toBe(other);
+    expect(previewFileFor([other], true, null)).toBe(other);
+  });
+
+  it("keeps the shown file while the pane awaits its first listing with nothing selected", () => {
+    expect(previewFileFor([], true, shown)).toBe(shown);
+  });
+
+  it("has nothing to keep when nothing was shown yet", () => {
+    expect(previewFileFor([], true, null)).toBeNull();
+  });
+
+  it("empties once the pane has a listing and nothing is selected", () => {
+    expect(previewFileFor([], false, shown)).toBeNull();
+  });
+
+  it("previews nothing for a multi-selection, even while awaiting a listing", () => {
+    expect(previewFileFor([shown, other], true, shown)).toBeNull();
+    expect(previewFileFor([shown, other], false, shown)).toBeNull();
+  });
+
+  it("handles a huge selection without previewing", () => {
+    const many = Array.from({ length: 100_000 }, (_, i) => file(`f${i}`));
+    expect(previewFileFor(many, true, shown)).toBeNull();
   });
 });

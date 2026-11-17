@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createDeferredFocusRequest } from "$lib/state/deferred-focus";
+import { createDeferredFocusRequest, focusStillOwned, type FocusOwner } from "$lib/state/deferred-focus";
 import { TerminalPanelStore } from "$lib/state/terminal.svelte";
 import { dialogStore } from "$lib/state/dialogs.svelte";
 
@@ -97,5 +97,42 @@ describe("terminal opening focus", () => {
     store.insertPaths(["/next"]);
     expect(insert).not.toHaveBeenCalled();
     store.close();
+  });
+});
+
+describe("focusStillOwned (#1729)", () => {
+  const body: FocusOwner = { isConnected: true, closest: () => null };
+  const owner = (state: { connected?: boolean; inert?: boolean } = {}): FocusOwner => ({
+    isConnected: state.connected ?? true,
+    closest: (selector: string) => (selector === "[inert]" && state.inert ? {} : null),
+  });
+
+  it("holds while the previous owner keeps focus", () => {
+    const row = owner();
+    expect(focusStillOwned(row, row, body)).toBe(true);
+    expect(focusStillOwned(body, body, body)).toBe(true);
+  });
+
+  it("holds when the owner was removed and focus fell to the body", () => {
+    expect(focusStillOwned(owner({ connected: false }), body, body)).toBe(true);
+  });
+
+  it("holds when the owner became inert (a retained tab) and focus fell to the body", () => {
+    expect(focusStillOwned(owner({ inert: true }), body, body)).toBe(true);
+  });
+
+  it("is lost to a newer owner even when the old one left", () => {
+    const newer = owner();
+    expect(focusStillOwned(owner({ inert: true }), newer, body)).toBe(false);
+    expect(focusStillOwned(owner({ connected: false }), newer, body)).toBe(false);
+  });
+
+  it("is lost when a live, focusable owner was blurred to the body", () => {
+    expect(focusStillOwned(owner(), body, body)).toBe(false);
+  });
+
+  it("is lost without a previous owner unless nothing changed", () => {
+    expect(focusStillOwned(null, body, body)).toBe(false);
+    expect(focusStillOwned(null, null, body)).toBe(true);
   });
 });

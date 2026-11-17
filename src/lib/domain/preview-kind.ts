@@ -24,3 +24,16 @@ export function classifyPreview(file: FileEntry): PreviewKind {
 export function shouldHoldPreviewImage(shown: PreviewKind | null, next: PreviewKind): boolean {
   return (shown === "image" || shown === "audio-cover") && next === "image";
 }
+
+/** The file the preview shows for the active pane's settled selection. A pane
+ * still waiting for its first listing (a new tab or split) that has selected
+ * nothing keeps the file already shown, so the preview does not flash its
+ * empty state before that listing selects a row (#1729). */
+export function previewFileFor<T>(
+  selected: readonly T[],
+  awaitingFirstListing: boolean,
+  shown: T | null,
+): T | null {
+  if (selected.length === 1) return selected[0];
+  return selected.length === 0 && awaitingFirstListing ? shown : null;
+}

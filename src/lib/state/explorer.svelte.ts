@@ -123,6 +123,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   let presentationDirectory = $state(seed?.currentPath ?? "");
   const fileViewPresentation = createFileViewPresentation(() => presentationDirectory, () => fileView);
 
+  let awaitingFirstListing = $state(true); // until a listing settles, ok or error (#1729)
   // A plugin's non-file Preview subject. It belongs to the folder it was set
   // in and yields to any later file selection.
   let previewTarget = $state.raw<{ owner: string; target: PreviewTarget; directory: string } | null>(null);
@@ -523,6 +524,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
         return "stale";
       }
 
+      awaitingFirstListing = false;
       if (result.ok) {
         load.phase("publish"); load.entries(result.entries.length);
         presentationDirectory = result.path;
@@ -1072,6 +1074,9 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
 
   const { undo, redo } = createExplorerHistory({ captureMutation, refresh });
 
+  // Seeded rows show the row the listing will pick at once (#1729); the listing still sees no user selection.
+  if (seed) untrack(selectFirstDisplayed);
+
   // ===================
   // Public API
   // ===================
@@ -1187,21 +1192,13 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     get currentPath() {
       return coreState.currentPath;
     },
-    get loading() {
-      return coreState.loading;
-    },
-    get error() {
-      return coreState.error;
-    },
-    get viewMode() {
-      return coreState.viewMode;
-    },
-    get sortBy() {
-      return coreState.sortBy;
-    },
-    get sortAscending() {
-      return coreState.sortAscending;
-    },
+    get loading() { return coreState.loading; },
+    /** True until this pane's first listing settles, successfully or not. */
+    get awaitingFirstListing() { return awaitingFirstListing; },
+    get error() { return coreState.error; },
+    get viewMode() { return coreState.viewMode; },
+    get sortBy() { return coreState.sortBy; },
+    get sortAscending() { return coreState.sortAscending; },
     get selectedPaths() {
       return coreState.selectedPaths;
     },

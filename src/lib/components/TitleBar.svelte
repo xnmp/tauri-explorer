@@ -139,7 +139,8 @@
         <path class="tab-edge-stroke" fill="none" stroke="url(#tab-edge-fade)" clip-path="url(#tab-edge-view)" />
       </svg>
     {/if}
-    <div class="spacer"></div>
+    <!-- The tab strip grows into this spacer (WindowTabBar measures it). -->
+    <div class="spacer" data-tab-room></div>
 
     {#if settingsStore.showWindowControls}
       <div class="window-controls">

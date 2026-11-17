@@ -8,7 +8,7 @@
  */
 import { test, expect, type Page } from "./fixtures";
 import { applySettingsAndReload, pressShortcut, seedSettings, waitForEntries } from "./helpers";
-import { framesOfNewTab, type TabFrame } from "./tab-frames";
+import { framesOf, framesOfNewTab, type TabFrame } from "./tab-frames";
 
 test.describe("Floating islands (#277)", () => {
   test("selecting the layout applies islands without a native backdrop", async ({ page }) => {
@@ -197,11 +197,14 @@ test.describe("Fused active tab (#1734)", () => {
     }
   });
 
-  for (const count of [3, 8]) test(`first frames: the new tab grows from nothing while the others hold still (${count} tabs)`, async ({ page }) => {
-    // Eight tabs compress: the strip must size every tab for the new count
-    // in the frame the new tab appears, not one frame later.
+  for (const count of [3, 8]) test(`first frames: the new tab grows from nothing and no tab snaps (${count} tabs)`, async ({ page }) => {
+    // Eight tabs compress: the others ease to their narrower width while the
+    // new tab grows, never in one frame.
     await openIslands(page, { count });
-    const frames = await slideFrames(page);
+    await page.waitForTimeout(300);
+    const all = await framesOf(page, () => pressShortcut(page, "t", { ctrlKey: true }));
+    const frames = all.filter((frame) => frame.widths.length > count);
+    expect(frames.length).toBeGreaterThanOrEqual(4);
     const final = frames[frames.length - 1];
     const finalWidth = final.active!.width;
     expect(frames[0].active!.width).toBeLessThanOrEqual(finalWidth * 0.35);
@@ -211,11 +214,13 @@ test.describe("Fused active tab (#1734)", () => {
       expect(width, `t=${frame.t}`).toBeGreaterThanOrEqual(previous - 0.5);
       expect(width - previous, `t=${frame.t}`).toBeLessThanOrEqual(finalWidth * 0.5);
       previous = width;
-      // Every other tab keeps its final width in every frame (no one-frame
-      // squeeze while the strip remeasures).
-      frame.widths.forEach((other, i) => {
-        if (i !== frame.activeIndex) expect(Math.abs(other - final.widths[i]), `tab ${i} t=${frame.t}`).toBeLessThanOrEqual(0.5);
-      });
+    }
+    // The existing tabs (indices below `count`) never jump between frames,
+    // including the frame the new tab appears in.
+    for (let index = 1; index < all.length; index++) {
+      for (let i = 0; i < count; i++) {
+        expect(Math.abs(all[index].widths[i] - all[index - 1].widths[i]), `tab ${i} t=${all[index].t}`).toBeLessThanOrEqual(6);
+      }
     }
     expect(Math.abs(previous - finalWidth)).toBeLessThanOrEqual(0.5);
   });

@@ -50,13 +50,54 @@
     if (restoreFocus) pickerButton?.focus();
   }
 
-  // A new or closed tab changes the room the strip may take. bind:clientWidth
-  // reports it a frame late, so the first frame of a new tab's slide was laid
-  // out for the old count: every tab narrowed for one frame, then snapped
-  // back. Measure synchronously after the DOM update instead (#1734).
+  // The room the tabs may take is the scroll group's width plus whatever the
+  // title bar's flexible spacer (`data-tab-room`) has left over beyond its
+  // minimum. The group itself sizes to its content, so the new-tab and
+  // picker buttons ride right behind a tab sliding in or out every frame,
+  // while the sum stays constant through the slide (#1734). Without that
+  // spacer the group falls back to an explicit width, which is the room.
+  let tabArea: HTMLDivElement | undefined = $state();
+  const roomSpacer = $derived(tabArea?.parentElement?.querySelector<HTMLElement>(":scope > [data-tab-room]") ?? null);
+
+  function measureRoom(): void {
+    if (!tabScrollGroup) return;
+    // Fractional widths: rounded clientWidths do not sum to a constant, and a
+    // 1px wobble would re-lay out (and re-ease) every tab mid-slide.
+    let leftover = 0;
+    if (roomSpacer) {
+      const min = parseFloat(getComputedStyle(roomSpacer).minWidth) || 0;
+      leftover = Math.max(0, rectDimToCSS(roomSpacer.getBoundingClientRect().width) - min);
+    }
+    const room = rectDimToCSS(tabScrollGroup.getBoundingClientRect().width) + leftover;
+    // Ignore float noise from the two measurements.
+    if (Math.abs(room - tabSpaceWidth) > 0.01) tabSpaceWidth = room;
+  }
+
+  $effect(() => {
+    const group = tabScrollGroup;
+    if (!group) return;
+    const observer = new ResizeObserver(measureRoom);
+    observer.observe(group);
+    if (roomSpacer) observer.observe(roomSpacer);
+    return () => observer.disconnect();
+  });
+
+  // Tab widths ease to a new count (window-tab-bar.css) only once the strip
+  // has its first measured layout: the initial mount never animates.
+  let easeWidths = $state(false);
+  $effect(() => {
+    if (easeWidths || tabSpaceWidth <= 0) return;
+    let frame = requestAnimationFrame(() => { frame = requestAnimationFrame(() => { easeWidths = true; }); });
+    return () => cancelAnimationFrame(frame);
+  });
+
+  // A new or closed tab changes the room the strip may take; ResizeObserver
+  // reports it a frame late, so the first frame of a new tab's slide would
+  // be laid out for the old count. Measure synchronously after the DOM
+  // update too.
   $effect(() => {
     void tabs.length;
-    if (tabScrollGroup) tabSpaceWidth = tabScrollGroup.clientWidth;
+    measureRoom();
   });
 
   // Activation/layout changes reveal the selected tab. Manual browsing does
@@ -539,12 +580,12 @@
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <!-- Drag handlers only — keyboard interaction lives on the tabs. -->
   <!-- svelte-ignore a11y_interactive_supports_focus -->
-  <div class="tab-area" data-region="tab-strip">
-    <div class="tab-scroll-group" bind:this={tabScrollGroup} bind:clientWidth={tabSpaceWidth} style:width={`${tabs.length * (TAB_MAX_WIDTH + TAB_GAP) - TAB_GAP}px`}>
+  <div class="tab-area" data-region="tab-strip" bind:this={tabArea}>
+    <div class="tab-scroll-group" bind:this={tabScrollGroup} style:width={roomSpacer ? null : `${tabs.length * (TAB_MAX_WIDTH + TAB_GAP) - TAB_GAP}px`}>
       {#if showScrollButtons}
         <button class="tab-scroll-btn" aria-label="Scroll tabs left" disabled={tabScrollLeft < 1} onclick={() => scrollTabs(-1)}>‹</button>
       {/if}
-      <div class="tab-viewport" class:bleed={!stripLayout.overflowing} style:--tab-bleed={`${TAB_BLEED}px`} bind:this={tabViewport} bind:clientWidth={tabViewportWidth} onscroll={() => { tabScrollLeft = tabViewport?.scrollLeft ?? 0; }} onwheel={handleTabWheel}>
+      <div class="tab-viewport" class:bleed={!stripLayout.overflowing} class:ease-widths={easeWidths} style:--tab-bleed={`${TAB_BLEED}px`} bind:this={tabViewport} bind:clientWidth={tabViewportWidth} onscroll={() => { tabScrollLeft = tabViewport?.scrollLeft ?? 0; }} onwheel={handleTabWheel}>
     <!-- A tablist owns only tabs; the new-tab button sits beside it (#785). -->
     <div class="tab-list" role="tablist" aria-label="Tabs">
     {#each tabs as tab (tab.id)}

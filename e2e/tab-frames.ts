@@ -23,6 +23,12 @@ export interface TabFrame {
   edge: [number, number] | null;
   shade: [number, number] | null;
   titlebarWidth: number;
+  /** Right edge of the last tab (sliding-out tabs included) and left edge of
+   *  the new-tab button, CSS px relative to the title bar. */
+  lastRight: number | null;
+  plusLeft: number | null;
+  /** Tabs marked selected (exactly one, or none in an empty strip). */
+  selectedCount: number;
 }
 
 /** Start sampling every frame for `ms`. Read the result with `readTabFrames`. */
@@ -61,6 +67,12 @@ export async function sampleTabFrames(page: Page, ms = 500): Promise<void> {
         edge: box(".tab-edge-stroke"),
         shade: box(".strip-shade"),
         titlebarWidth: bar.width / zoom,
+        lastRight: tabs.length ? (tabs[tabs.length - 1].getBoundingClientRect().right - bar.left) / zoom : null,
+        plusLeft: (() => {
+          const plus = titlebar.querySelector(".new-tab-btn");
+          return plus ? (plus.getBoundingClientRect().left - bar.left) / zoom : null;
+        })(),
+        selectedCount: tabs.filter((el) => el.getAttribute("aria-selected") === "true").length,
       });
     });
     observer.observe(probe);
@@ -94,20 +106,34 @@ async function slowTitlebarAnimations(page: Page, rate: number): Promise<void> {
       if (this.closest('[data-region="titlebar"]') && Number(timing?.duration) > 50) animation.playbackRate = rate;
       return animation;
     };
+    // CSS transitions (tab widths easing to a new count) slow down with
+    // them, from their first frame: scale the tabs' transition duration.
+    const tab = document.querySelector('[data-region="titlebar"] [data-region="tab"]');
+    const seconds = tab ? parseFloat(getComputedStyle(tab).transitionDuration) || 0 : 0;
+    if (seconds > 0) {
+      const style = document.createElement("style");
+      style.textContent = `[data-region="titlebar"] [data-region="tab"] { transition-duration: ${seconds / rate}s !important; }`;
+      document.head.appendChild(style);
+    }
   }, rate);
 }
 
 /**
- * Sample while `action` runs a tab insertion, returning the frames from the
- * first one that shows the new tab. The slide plays at `rate` of its speed.
+ * Sample every frame while `action` runs and the title bar settles, with its
+ * animations playing at `rate` of their speed.
  */
-export async function framesOfNewTab(page: Page, action: () => Promise<void>, rate = 0.1): Promise<TabFrame[]> {
-  const before = await page.locator('.tab-viewport [data-region="tab"]').count();
+export async function framesOf(page: Page, action: () => Promise<void>, rate = 0.1): Promise<TabFrame[]> {
   const ms = Math.ceil(250 / rate);
   await slowTitlebarAnimations(page, rate);
   await sampleTabFrames(page, ms);
   await action();
   await page.waitForTimeout(ms + 150);
-  const frames = await readTabFrames(page);
+  return readTabFrames(page);
+}
+
+/** Frames of a tab insertion, from the first one that shows the new tab. */
+export async function framesOfNewTab(page: Page, action: () => Promise<void>, rate = 0.1): Promise<TabFrame[]> {
+  const before = await page.locator('.tab-viewport [data-region="tab"]').count();
+  const frames = await framesOf(page, action, rate);
   return frames.filter((frame) => frame.widths.length > before);
 }

@@ -79,11 +79,32 @@ export async function readTabFrames(page: Page): Promise<TabFrame[]> {
 }
 
 /**
- * Sample while `action` runs a tab insertion, returning the frames from the
- * first one that shows the new tab.
+ * Play the title bar's animations (the tab slides) at `rate` of their speed.
+ * The slide is still driven by the real document timeline and the app's own
+ * frame loop, but each frame advances it a small step, so a frame the
+ * engine spends elsewhere (WebKit mounts the new tab's pane for ~100ms)
+ * cannot hide a jump or skip the first frames.
  */
-export async function framesOfNewTab(page: Page, action: () => Promise<void>, ms = 500): Promise<TabFrame[]> {
+async function slowTitlebarAnimations(page: Page, rate: number): Promise<void> {
+  await page.evaluate((rate) => {
+    const animate = Element.prototype.animate;
+    Element.prototype.animate = function (this: Element, ...args: Parameters<Element["animate"]>) {
+      const animation = animate.apply(this, args);
+      const timing = animation.effect?.getTiming();
+      if (this.closest('[data-region="titlebar"]') && Number(timing?.duration) > 50) animation.playbackRate = rate;
+      return animation;
+    };
+  }, rate);
+}
+
+/**
+ * Sample while `action` runs a tab insertion, returning the frames from the
+ * first one that shows the new tab. The slide plays at `rate` of its speed.
+ */
+export async function framesOfNewTab(page: Page, action: () => Promise<void>, rate = 0.1): Promise<TabFrame[]> {
   const before = await page.locator('.tab-viewport [data-region="tab"]').count();
+  const ms = Math.ceil(250 / rate);
+  await slowTitlebarAnimations(page, rate);
   await sampleTabFrames(page, ms);
   await action();
   await page.waitForTimeout(ms + 150);

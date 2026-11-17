@@ -235,4 +235,35 @@ test.describe("Fused active tab (#1734)", () => {
     }
     expect(Math.abs(previous - finalWidth)).toBeLessThanOrEqual(0.5);
   });
+
+  /** Exactly one tab owns the island, and the seam sits on it, every frame. */
+  function expectSeamOnActive(frames: TabFrame[]) {
+    for (const frame of frames) {
+      expect(frame.selectedCount, `selected t=${frame.t}`).toBe(1);
+      const { active, hole } = frame;
+      const expected = [active!.left - active!.fillet, active!.right + active!.fillet];
+      expect(Math.abs(hole![0] - expected[0]), `hole left t=${frame.t}`).toBeLessThanOrEqual(0.6);
+      expect(Math.abs(hole![1] - expected[1]), `hole right t=${frame.t}`).toBeLessThanOrEqual(0.6);
+      if (active!.width >= 1) expect(frame.fill, `fill t=${frame.t}`).not.toBeNull();
+    }
+  }
+
+  test("closing the active tab hands the seam to its neighbour in the same frame", async ({ page }) => {
+    await openIslands(page);
+    await page.waitForTimeout(300);
+    const frames = await steppedFrames(page, () => pressShortcut(page, "w", { ctrlKey: true, shiftKey: true }));
+    await expect(page.locator('.tab-viewport [data-region="tab"]')).toHaveCount(2);
+    expectSeamOnActive(frames);
+  });
+
+  test("switching tabs by click and Ctrl+Tab moves the seam in the same frame", async ({ page }) => {
+    await openIslands(page);
+    await page.waitForTimeout(300);
+    const first = page.locator('.tab-viewport [data-region="tab"]').first();
+    expectSeamOnActive(await steppedFrames(page, () => first.click(), { steps: 8 }));
+    await expect(first).toHaveAttribute("aria-selected", "true");
+    await page.mouse.move(5, 400);
+    expectSeamOnActive(await steppedFrames(page, () => pressShortcut(page, "Tab", { ctrlKey: true }), { steps: 8 }));
+    await expect(page.locator('.tab-viewport [data-region="tab"]').nth(1)).toHaveAttribute("aria-selected", "true");
+  });
 });

@@ -142,7 +142,16 @@
 
   /** Tab enter/exit: animate --tab-slide, which sizes the tab from the live
    *  --tab-width, never clipping the fillets (domain/tab-slide.ts, #1734). */
-  function tabSlide(_node: HTMLElement, { duration, sized }: { duration: number; sized: boolean }) {
+  function tabSlide(node: HTMLElement, { duration, sized }: { duration: number; sized: boolean }) {
+    // A closing tab is no longer the selected one: its neighbour took over
+    // when it was removed, and Svelte no longer updates the leaving node. It
+    // must not keep looking (or being found as) the active tab while it
+    // slides out (#1734).
+    if (sized) {
+      node.classList.remove("active");
+      node.setAttribute("aria-selected", "false");
+      node.inert = true;
+    }
     return { duration, easing: cubicOut, css: (t: number) => tabSlideCss(t, "var(--tab-width)", TAB_BLEED, sized) };
   }
 

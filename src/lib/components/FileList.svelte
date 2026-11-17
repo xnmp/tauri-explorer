@@ -8,6 +8,7 @@
   import { settingsStore } from "$lib/state/settings.svelte";
   import { setFileListFocusReturn } from "$lib/state/file-list-focus-context";
   import { createDeferredFocusRequest, type DeferredFocusRequest } from "$lib/state/deferred-focus";
+  import { rowFocusRing } from "$lib/state/row-focus-ring";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { dropIntoDirectory } from "$lib/composables/use-dom-directory-drop";
   import { isPeekClaimed } from "$lib/composables/use-native-drop-target.svelte";
@@ -52,7 +53,7 @@
     /** Tiles spatial navigation while Folder Peek panels are open (#1241). */
     getTilesNavigation?: () => TileNavigationSnapshot | null;
     /** Scroll a selected entry into view; bound by ExplorerPane's keyboard navigation. */
-    scrollToEntry?: (entry: FileEntry) => void;
+    scrollToEntry?: (entry: FileEntry, focusVisible?: boolean) => void;
   }
 
   let { explorer, presentation, scrollToEntry = $bindable(), getListNavigation = $bindable(), getTilesNavigation = $bindable() }: Props = $props();
@@ -132,10 +133,7 @@
     }
   }
 
-  function releaseCursorReveal(): void {
-    cursorReveal = null;
-    pendingFocus?.cancel();
-  }
+  function releaseCursorReveal(): void { cursorReveal = null; pendingFocus?.cancel(); }
 
   // Cached container rect for the duration of a marquee drag (avoids forced layout per mousemove)
   let cachedDragRect: DOMRect | null = null;
@@ -183,7 +181,7 @@
     const focus = document.activeElement;
     if (focus !== document.body && (!fileListRef?.contains(focus)
       || !focus?.matches('.entry-item, .virtual-viewport:is([role="grid"], [role="treegrid"], [role="tree"], [role="listbox"])'))) return;
-    scrollToSelected(entry);
+    scrollToSelected(entry, rowFocusRing.shown); // restore-type focus keeps the last row's ring state (#1729)
   }
 
   // Marquee selection composable
@@ -241,7 +239,8 @@
     };
   });
 
-  function scrollToSelected(entry: FileEntry): void {
+  /** `focusVisible` only for restore-type focus; keyboard navigation keeps the browser heuristic (#1729). */
+  function scrollToSelected(entry: FileEntry, focusVisible?: boolean): void {
     // A repeated path (lineage peek) reveals the cursor's own occurrence.
     const index = entry === explorer.focusedEntry ? explorer.cursorIndex : explorer.displayEntries.indexOf(entry);
     if (index < 0) return;
@@ -252,7 +251,7 @@
     void tick().then(() => {
       const element = contentRef?.querySelector<HTMLElement>(`.entry-item[data-index="${index}"]`);
       if (request.consume() && element?.dataset.path === entry.path) {
-        element.focus({ preventScroll: true });
+        element.focus(focusVisible === undefined ? { preventScroll: true } : { preventScroll: true, focusVisible });
       }
       if (pendingFocus === request) pendingFocus = undefined;
     });
@@ -270,6 +269,7 @@
   function handleFocusIn(event: FocusEvent): void {
     const target = event.target as HTMLElement;
     if (target.matches(".entry-item")) {
+      rowFocusRing.record(target);
       const index = Number(target.dataset.index);
       const entry = explorer.displayEntries[index];
       if (entry?.path === target.dataset.path) explorer.focusEntry(entry, index);

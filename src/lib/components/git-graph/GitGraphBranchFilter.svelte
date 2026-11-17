@@ -115,6 +115,9 @@
     </div>
     <div class="bf-heading">Commits</div>
     <input
+      autocorrect="off"
+      autocapitalize="none"
+      spellcheck="false"
       class="bf-path-search"
       placeholder="Filter commits by file path…"
       aria-label="Filter commits by file path"
@@ -125,6 +128,9 @@
     <div class="bf-heading">Branches</div>
     <!-- svelte-ignore a11y_autofocus -- opened by explicit user action; focus goes where they're about to type -->
     <input
+      autocorrect="off"
+      autocapitalize="none"
+      spellcheck="false"
       class="bf-search"
       placeholder="Filter branches…"
       bind:value={branchQuery}

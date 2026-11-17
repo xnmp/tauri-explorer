@@ -120,6 +120,9 @@
       <FileIcon entry={iconEntry} size="small" />
     </span>
     <input
+      autocorrect="off"
+      autocapitalize="none"
+      spellcheck="false"
       type="text"
       class="new-folder-input"
       bind:value={newFolderName}
@@ -138,6 +141,9 @@
       <FileIcon entry={iconEntry} size="small" />
     </span>
     <input
+      autocorrect="off"
+      autocapitalize="none"
+      spellcheck="false"
       type="text"
       class="new-folder-input"
       bind:value={newFolderName}
@@ -156,6 +162,9 @@
       <FileIcon entry={iconEntry} size="large" />
     </div>
     <input
+      autocorrect="off"
+      autocapitalize="none"
+      spellcheck="false"
       type="text"
       class="new-folder-input tile-new-folder-input"
       bind:value={newFolderName}

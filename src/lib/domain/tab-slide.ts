@@ -32,15 +32,24 @@ const fixed = (value: number): string => String(Math.round(value * 10000) / 1000
  * @param t      progress, clamped to 0..1 (non-finite counts as fully open)
  * @param width  the tab's final width as a CSS length, normally `var(--tab-width)`
  * @param flare  how far the fillets reach outside the tab box, in CSS px
+ * @param sized  also animate the size declarations. The stylesheet already
+ *               sizes, pads and fades tabs from `--tab-slide`; WebKit honours
+ *               that for a tab sliding in (whose --tab-width can change
+ *               mid-slide, which keyframes resolve once) but does not
+ *               recompute it for a removed tab sliding out, whose geometry
+ *               never changes. So slide-outs carry their own size, padding
+ *               and content fade; slide-ins do not.
  */
-export function tabSlideCss(t: number, width = "var(--tab-width)", flare = 0): string {
+export function tabSlideCss(t: number, width = "var(--tab-width)", flare = 0, sized = true): string {
   const p = fixed(unit(t));
   const reach = fixed(Math.max(0, Number.isFinite(flare) ? flare : 0));
   const size = `calc(${width} * ${p})`;
   return [
-    `flex-basis: ${size}`,
-    `width: ${size}`,
-    "min-width: 0",
+    ...(sized ? [
+      `flex-basis: ${size}`, `width: ${size}`, `max-width: ${size}`, "min-width: 0",
+      `padding-left: calc(var(--tab-pad-l, 0px) * ${p})`, `padding-right: calc(var(--tab-pad-r, 0px) * ${p})`,
+      `--tab-content-alpha: ${fixed(Math.min(1, Math.max(0, unit(t) * 2.5 - 1)))}`,
+    ] : []),
     `--tab-slide: ${p}`,
     `clip-path: inset(-${CLIP_REACH}px -${reach}px -${CLIP_REACH}px -${reach}px)`,
   ].join("; ") + ";";

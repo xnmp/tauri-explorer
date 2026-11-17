@@ -12,13 +12,17 @@
    with the same curve, so the strip never outgrows its room and the
    new-tab button rides behind the last tab (#1734). Only while the tabs fit
    (an overflowing strip reveals the active tab from its final geometry) and
-   after the strip's first layout (mounting never animates). */
-@property --tab-width {
-  syntax: "<length>";
+   after the strip's first layout (mounting never animates).
+   The strip publishes the width as a unitless --tab-px: WebKit zooms a
+   registered <length> when it computes it, and the zoomed value was zoomed
+   again where it is used, so tabs grew under CSS zoom. */
+@property --tab-px {
+  syntax: "<number>";
   inherits: true;
-  initial-value: 0px;
+  initial-value: 0;
 }
-  .tab-area .tab-viewport.bleed.ease-widths .tab { transition: --tab-width 130ms cubic-bezier(0.33, 1, 0.68, 1); }
+  .tab-area .tab { --tab-width: calc(var(--tab-px) * 1px); }
+  .tab-area .tab-viewport.bleed.ease-widths .tab { transition: --tab-px 150ms cubic-bezier(0.33, 1, 0.68, 1); }
   @media (prefers-reduced-motion: reduce) {
     .tab-area .tab-viewport.bleed.ease-widths .tab { transition: none; }
   }
@@ -45,9 +49,9 @@
   .tab-area .tab-picker-btn { width: 30px; }
   .tab-area .tab-scroll-btn:hover:not(:disabled), .tab-area .tab-picker-btn:hover, .tab-area .tab-picker-btn[aria-expanded="true"] { background: var(--control-fill-secondary); color: var(--text-primary); }
   .tab-area .tab-scroll-btn:disabled { opacity: 0.35; cursor: default; }
-  .tab-area .tab.compact { padding: 0; justify-content: center; gap: 0; }
+  .tab-area .tab.compact { --tab-pad-l: 0px; --tab-pad-r: 0px; justify-content: center; gap: 0; }
   .tab-area .tab.compact .tab-title, .tab-area .tab.compact .tab-close { display: none; }
-  .tab-area .tab.active.narrow { padding: 0 calc(6px * var(--tab-slide)); gap: 0; }
+  .tab-area .tab.active.narrow { --tab-pad-l: 6px; --tab-pad-r: 6px; gap: 0; }
   .tab-area .tab.active.narrow .tab-icon, .tab-area .tab.active.narrow .tab-icon-special, .tab-area .tab.active.narrow .tab-close { display: none; }
   .tab-area {
     display: flex;
@@ -84,8 +88,11 @@
     align-items: center;
     gap: 8px;
     height: 30px;
-    /* Padding grows with a sliding tab so it starts from nothing (#1734). */
-    padding: 0 calc(5px * var(--tab-slide)) 0 calc(12px * var(--tab-slide));
+    /* Padding grows with a sliding tab so it starts from nothing (#1734).
+       Named, so a slide-out can scale it in its own keyframes. */
+    --tab-pad-l: 12px;
+    --tab-pad-r: 5px;
+    padding: 0 calc(var(--tab-pad-r) * var(--tab-slide)) 0 calc(var(--tab-pad-l) * var(--tab-slide));
     /* Content fades in once the growing tab has room for it. */
     --tab-content-alpha: clamp(0, calc(var(--tab-slide) * 2.5 - 1), 1);
     /* Subtle-but-visible fill: --background was undefined outside the tahoe

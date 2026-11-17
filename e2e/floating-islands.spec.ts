@@ -8,7 +8,7 @@
  */
 import { test, expect, type Page } from "./fixtures";
 import { applySettingsAndReload, pressShortcut, seedSettings, waitForEntries } from "./helpers";
-import { framesOf, framesOfNewTab, type TabFrame } from "./tab-frames";
+import { steppedFrames, steppedFramesOfNewTab, type TabFrame } from "./tab-frames";
 
 test.describe("Floating islands (#277)", () => {
   test("selecting the layout applies islands without a native backdrop", async ({ page }) => {
@@ -139,9 +139,14 @@ test.describe("Fused active tab (#1734)", () => {
         const [below] = await pixels(page, { x: center, y: base + 3, width: 1, height: 1 });
         expect(distance(above, below)).toBeLessThanOrEqual(10);
 
-        // The rest of the strip is shaded: darker than the tab.
+        // The rest of the strip is shaded, clearly darker than the tab, so the
+        // tab reads as part of its island. Opaque: a luminance step of at
+        // least 12 (of 255; the default dark theme measures ~15, light ~45,
+        // Chrome's dark frame ~20). Over the material the shade is
+        // translucent and the wallpaper varies, so the floor is 8 (measured
+        // ~11 light, ~17 dark over the simulated wallpaper).
         const [strip] = await pixels(page, { x: 8, y: Math.round(tab.y) + 2, width: 1, height: 1 });
-        expect(luminance(strip)).toBeLessThan(luminance(above) - 1);
+        expect(luminance(above) - luminance(strip)).toBeGreaterThanOrEqual(material ? 8 : 12);
 
         if (material) {
           await page.screenshot({ path: `screenshots/feat/islands-tab-owns-window/islands-${theme}.png`, animations: "disabled" });
@@ -153,7 +158,7 @@ test.describe("Fused active tab (#1734)", () => {
   /** Frames of a Ctrl+T slide, from the first that shows the new tab. */
   async function slideFrames(page: Page): Promise<TabFrame[]> {
     await page.waitForTimeout(300);
-    const frames = await framesOfNewTab(page, () => pressShortcut(page, "t", { ctrlKey: true }));
+    const frames = await steppedFramesOfNewTab(page, () => pressShortcut(page, "t", { ctrlKey: true }));
     expect(frames.length).toBeGreaterThanOrEqual(4);
     return frames;
   }
@@ -202,24 +207,30 @@ test.describe("Fused active tab (#1734)", () => {
     // new tab grows, never in one frame.
     await openIslands(page, { count });
     await page.waitForTimeout(300);
-    const all = await framesOf(page, () => pressShortcut(page, "t", { ctrlKey: true }));
+    const all = await steppedFrames(page, () => pressShortcut(page, "t", { ctrlKey: true }));
     const frames = all.filter((frame) => frame.widths.length > count);
     expect(frames.length).toBeGreaterThanOrEqual(4);
     const final = frames[frames.length - 1];
     const finalWidth = final.active!.width;
-    expect(frames[0].active!.width).toBeLessThanOrEqual(finalWidth * 0.35);
+    // Grows from nothing, monotonically, through intermediate widths: no
+    // frame jumps from under 10% to full.
+    expect(frames[0].active!.width).toBeLessThanOrEqual(finalWidth * 0.1);
     let previous = 0;
     for (const frame of frames) {
       const width = frame.active!.width;
       expect(width, `t=${frame.t}`).toBeGreaterThanOrEqual(previous - 0.5);
-      expect(width - previous, `t=${frame.t}`).toBeLessThanOrEqual(finalWidth * 0.5);
+      expect(previous < finalWidth * 0.1 && width > finalWidth * 0.9, `jump at t=${frame.t}`).toBe(false);
       previous = width;
     }
-    // The existing tabs (indices below `count`) never jump between frames,
-    // including the frame the new tab appears in.
-    for (let index = 1; index < all.length; index++) {
-      for (let i = 0; i < count; i++) {
-        expect(Math.abs(all[index].widths[i] - all[index - 1].widths[i]), `tab ${i} t=${all[index].t}`).toBeLessThanOrEqual(6);
+    expect(frames.filter((frame) => frame.active!.width > finalWidth * 0.1 && frame.active!.width < finalWidth * 0.9).length).toBeGreaterThanOrEqual(3);
+    // The existing tabs (indices below `count`) ease to their new width:
+    // no 15ms step, including the one the new tab appears in, covers more
+    // than half of a tab's whole change (a snap covers all of it).
+    for (let i = 0; i < count; i++) {
+      const change = Math.abs(all[all.length - 1].widths[i] - all[0].widths[i]);
+      for (let index = 1; index < all.length; index++) {
+        const step = Math.abs(all[index].widths[i] - all[index - 1].widths[i]);
+        expect(step, `tab ${i} t=${all[index].t} of ${change.toFixed(1)}`).toBeLessThanOrEqual(Math.max(1, change * 0.5));
       }
     }
     expect(Math.abs(previous - finalWidth)).toBeLessThanOrEqual(0.5);

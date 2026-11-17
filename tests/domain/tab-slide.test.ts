@@ -17,6 +17,13 @@ describe("tabSlideCss", () => {
     expect(frame["--tab-slide"]).toBe("0.25");
   });
 
+  it("can leave sizing to the stylesheet, animating only the progress", () => {
+    const frame = declarations(tabSlideCss(0.25, "var(--tab-width)", 15, false));
+    expect(frame["--tab-slide"]).toBe("0.25");
+    expect(frame.width).toBeUndefined();
+    expect(frame["flex-basis"]).toBeUndefined();
+  });
+
   it("never clips with overflow, and widens its clip by the fillet flare", () => {
     const frame = declarations(tabSlideCss(0.5, "var(--tab-width)", 15));
     expect(frame.overflow).toBeUndefined();

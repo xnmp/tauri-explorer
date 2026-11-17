@@ -52,13 +52,18 @@
     linear-gradient(var(--islands-structural-fill), var(--islands-structural-fill)), var(--islands-structural-fill-base);
   /* The strip around the tabs: the theme base, deepened and nudged toward
      the accent, so each palette keeps its own strip. Painted by the
-     [data-region="tab-key-shadow"] layer everywhere but under the active tab. */
-  --islands-strip-shade-color: color-mix(
-    in srgb,
-    color-mix(in srgb, var(--background-solid) 90%, var(--accent)) 80%,
-    black
+     [data-region="tab-key-shadow"] layer everywhere but under the active tab.
+     Dark islands sit close to the base, so a dark strip deepens further for
+     the active tab to read as part of its island (tab-to-strip luminance
+     step of about 15 on the default dark theme, near Chrome's dark frame). */
+  --islands-strip-shade-color: light-dark(
+    color-mix(in srgb, color-mix(in srgb, var(--background-solid) 90%, var(--accent)) 80%, black),
+    color-mix(in srgb, color-mix(in srgb, var(--background-solid) 90%, var(--accent)) 50%, black)
   );
-  --islands-strip-shade: color-mix(in srgb, var(--islands-strip-shade-color) 62%, transparent);
+  --islands-strip-shade: light-dark(
+    color-mix(in srgb, var(--islands-strip-shade-color) 62%, transparent),
+    color-mix(in srgb, var(--islands-strip-shade-color) 90%, transparent)
+  );
   --islands-tab-key: rgba(0, 0, 0, 0.32);
   --islands-tab-lift: rgba(0, 0, 0, 0.14);
   /* The tab's edge highlight: a solid 1px core tinted with the accent,

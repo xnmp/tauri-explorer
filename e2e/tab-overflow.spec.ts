@@ -1,6 +1,6 @@
 import { test, expect, type Page } from './fixtures';
 import { BUILT_IN_THEMES, pressShortcut, seedSettings, VIEW_MODES, waitForEntries } from './helpers';
-import { framesOf, framesOfNewTab, type TabFrame } from './tab-frames';
+import { steppedFrames, steppedFramesOfNewTab, type TabFrame } from './tab-frames';
 
 const PATHS = ['/home/user', '/home/user/Downloads', '/home/user/Documents', '/home/user/Pictures', '/home/user/Documents/project/src', '/home/user/my-project/src'];
 const SHOTS = 'screenshots/feat/tab-overflow';
@@ -229,16 +229,17 @@ for (const [label, count, width] of [['fitting', 3, 1000], ['overflowing', 40, 6
 test('a new tab slides from nothing to its full width with no jump', async ({ page }) => {
   await openTabs(page, 3);
   await page.waitForTimeout(300);
-  const frames = await framesOfNewTab(page, () => pressShortcut(page, 't', { ctrlKey: true }));
+  const frames = await steppedFramesOfNewTab(page, () => pressShortcut(page, 't', { ctrlKey: true }));
   expect(frames.length).toBeGreaterThanOrEqual(4);
   const final = frames[frames.length - 1].active!.width;
-  expect(frames[0].active!.width).toBeLessThanOrEqual(final * 0.35);
+  expect(frames[0].active!.width).toBeLessThanOrEqual(final * 0.1);
   let previous = 0;
   for (const { t, active } of frames) {
     expect(active!.width, `t=${t}`).toBeGreaterThanOrEqual(previous - 0.5);
-    expect(active!.width - previous, `t=${t}`).toBeLessThanOrEqual(final * 0.5);
+    expect(previous < final * 0.1 && active!.width > final * 0.9, `jump at t=${t}`).toBe(false);
     previous = active!.width;
   }
+  expect(frames.filter(({ active }) => active!.width > final * 0.1 && active!.width < final * 0.9).length).toBeGreaterThanOrEqual(3);
 });
 
 /** The new-tab button keeps its distance from the last tab in every frame. */
@@ -254,7 +255,7 @@ function expectPlusFollows(frames: TabFrame[]) {
 test('the new-tab button rides behind a tab sliding in and out', async ({ page }) => {
   await openTabs(page, 3);
   await page.waitForTimeout(300);
-  const opening = await framesOf(page, () => pressShortcut(page, 't', { ctrlKey: true }));
+  const opening = await steppedFrames(page, () => pressShortcut(page, 't', { ctrlKey: true }));
   await expect(page.locator('.tab')).toHaveCount(4);
   expect(opening.some(frame => frame.widths.length === 4)).toBe(true);
   expectPlusFollows(opening);
@@ -262,7 +263,7 @@ test('the new-tab button rides behind a tab sliding in and out', async ({ page }
   await page.waitForTimeout(200);
   // Close by keyboard: a click would leave the pointer over the shrinking
   // strip, where it ends up hovering (and rotating) the new-tab button.
-  const closing = await framesOf(page, () => pressShortcut(page, 'w', { ctrlKey: true, shiftKey: true }));
+  const closing = await steppedFrames(page, () => pressShortcut(page, 'w', { ctrlKey: true, shiftKey: true }));
   await expect(page.locator('.tab')).toHaveCount(3);
   expectPlusFollows(closing);
 });

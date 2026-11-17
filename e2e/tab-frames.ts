@@ -91,49 +91,73 @@ export async function readTabFrames(page: Page): Promise<TabFrame[]> {
 }
 
 /**
- * Play the title bar's animations (the tab slides) at `rate` of their speed.
- * The slide is still driven by the real document timeline and the app's own
- * frame loop, but each frame advances it a small step, so a frame the
- * engine spends elsewhere (WebKit mounts the new tab's pane for ~100ms)
- * cannot hide a jump or skip the first frames.
+ * Freeze every title bar animation and transition as it starts: it keeps
+ * the "running" state (so the app's own frame loop keeps measuring) but
+ * advances only when a test sets its time.
  */
-async function slowTitlebarAnimations(page: Page, rate: number): Promise<void> {
-  await page.evaluate((rate) => {
+async function holdTitlebarAnimations(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const w = window as unknown as { __tabHold?: boolean };
+    if (w.__tabHold) return;
+    w.__tabHold = true;
+    const inTitlebar = (el: Element | null) => Boolean(el?.closest?.('[data-region="titlebar"]'));
+    const hold = (animation: Animation) => { animation.playbackRate = 1e-6; };
     const animate = Element.prototype.animate;
     Element.prototype.animate = function (this: Element, ...args: Parameters<Element["animate"]>) {
       const animation = animate.apply(this, args);
-      const timing = animation.effect?.getTiming();
-      if (this.closest('[data-region="titlebar"]') && Number(timing?.duration) > 50) animation.playbackRate = rate;
+      if (inTitlebar(this) && Number(animation.effect?.getTiming().duration) > 50) hold(animation);
       return animation;
     };
-    // CSS transitions (tab widths easing to a new count) slow down with
-    // them, from their first frame: scale the tabs' transition duration.
+    // A transition is only reachable from its first frame on, when it has
+    // already advanced; stretch the tabs' transitions so that advance is
+    // negligible, and step them in stretched time (TRANSITION_STRETCH).
     const tab = document.querySelector('[data-region="titlebar"] [data-region="tab"]');
     const seconds = tab ? parseFloat(getComputedStyle(tab).transitionDuration) || 0 : 0;
     if (seconds > 0) {
       const style = document.createElement("style");
-      style.textContent = `[data-region="titlebar"] [data-region="tab"] { transition-duration: ${seconds / rate}s !important; }`;
+      style.textContent = `[data-region="titlebar"] [data-region="tab"] { transition-duration: ${seconds * 1000}s !important; }`;
       document.head.appendChild(style);
     }
-  }, rate);
+  });
 }
 
 /**
- * Sample every frame while `action` runs and the title bar settles, with its
- * animations playing at `rate` of their speed.
+ * Run `action` with the title bar's animations held, then advance them in
+ * `stepMs` steps of animation time, sampling one painted frame per step.
+ * Stepping animation time (not wall time) makes every step the same on a
+ * fast or a slow runner: a stalled engine cannot skip a step or merge two.
+ * Returns the frame before the action, then one per step.
  */
-export async function framesOf(page: Page, action: () => Promise<void>, rate = 0.1): Promise<TabFrame[]> {
-  const ms = Math.ceil(250 / rate);
-  await slowTitlebarAnimations(page, rate);
-  await sampleTabFrames(page, ms);
+export async function steppedFrames(page: Page, action: () => Promise<void>, { stepMs = 15, steps = 22 } = {}): Promise<TabFrame[]> {
+  await holdTitlebarAnimations(page);
+  await sampleTabFrames(page, 60_000);
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const before = (await readTabFrames(page)).at(-1)!;
   await action();
-  await page.waitForTimeout(ms + 150);
-  return readTabFrames(page);
+  const frames = [before];
+  for (let step = 0; step <= steps; step++) {
+    frames.push(await page.evaluate(async (time) => {
+      // Each animation's clock starts at the first step that sees it.
+      const w = window as unknown as { __tabFrames: unknown[]; __tabSeen?: WeakMap<Animation, number> };
+      const seen = (w.__tabSeen ??= new WeakMap());
+      for (const animation of document.getAnimations()) {
+        const target = (animation.effect as KeyframeEffect | null)?.target;
+        if (!target?.closest?.('[data-region="titlebar"]') || animation.playState === "finished") continue;
+        if (!seen.has(animation)) seen.set(animation, time);
+        const elapsed = time - seen.get(animation)!;
+        animation.currentTime = animation instanceof CSSTransition ? elapsed * 1000 : elapsed;
+      }
+      // Two frames: the app's frame loop applies the new geometry, then the
+      // sampler records what that frame paints.
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      return w.__tabFrames.at(-1);
+    }, step * stepMs) as TabFrame);
+  }
+  return frames;
 }
 
-/** Frames of a tab insertion, from the first one that shows the new tab. */
-export async function framesOfNewTab(page: Page, action: () => Promise<void>, rate = 0.1): Promise<TabFrame[]> {
+/** Stepped frames of a tab insertion, from the first one that shows the new tab. */
+export async function steppedFramesOfNewTab(page: Page, action: () => Promise<void>): Promise<TabFrame[]> {
   const before = await page.locator('.tab-viewport [data-region="tab"]').count();
-  const frames = await framesOf(page, action, rate);
-  return frames.filter((frame) => frame.widths.length > before);
+  return (await steppedFrames(page, action)).filter((frame) => frame.widths.length > before);
 }

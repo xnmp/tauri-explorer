@@ -37,7 +37,24 @@
   let tabSpaceWidth = $state(0);
   let tabViewportWidth = $state(0);
   let tabScrollLeft = $state(0);
-  const stripLayout = $derived(tabStripLayout(tabs.length, tabSpaceWidth, Math.min(renamingTabId ? 180 : 120, tabSpaceWidth || 120)));
+  // The count the tabs are sized for. A closing tab's slide-out starts one
+  // frame after its removal (Svelte runs a zero-length placeholder animation
+  // first), so the remaining tabs start widening on that same frame: a frame
+  // earlier, they would outgrow the room while the closing tab is still at
+  // full width, clipping the strip and stalling the new-tab button (#1734).
+  // A new tab's slide-in holds zero width over that frame, so growth applies
+  // at once.
+  let layoutCount = $state(windowTabsManager.tabs.length);
+  $effect(() => {
+    const count = tabs.length;
+    if (count >= layoutCount) {
+      layoutCount = count;
+      return;
+    }
+    const frame = requestAnimationFrame(() => { layoutCount = count; });
+    return () => cancelAnimationFrame(frame);
+  });
+  const stripLayout = $derived(tabStripLayout(layoutCount, tabSpaceWidth, Math.min(renamingTabId ? 180 : 120, tabSpaceWidth || 120)));
   const showScrollButtons = $derived(stripLayout.overflowing && tabSpaceWidth >= 240);
   let pickerButton: HTMLButtonElement | undefined = $state();
   let pickerOpen = $state(false);
@@ -61,16 +78,16 @@
 
   function measureRoom(): void {
     if (!tabScrollGroup) return;
-    // Fractional widths: rounded clientWidths do not sum to a constant, and a
-    // 1px wobble would re-lay out (and re-ease) every tab mid-slide.
     let leftover = 0;
     if (roomSpacer) {
       const min = parseFloat(getComputedStyle(roomSpacer).minWidth) || 0;
-      leftover = Math.max(0, rectDimToCSS(roomSpacer.getBoundingClientRect().width) - min);
+      leftover = Math.max(0, roomSpacer.clientWidth - min);
     }
-    const room = rectDimToCSS(tabScrollGroup.getBoundingClientRect().width) + leftover;
-    // Ignore float noise from the two measurements.
-    if (Math.abs(room - tabSpaceWidth) > 0.01) tabSpaceWidth = room;
+    const room = tabScrollGroup.clientWidth + leftover;
+    // clientWidths are rounded, so mid-slide their sum wobbles by 1px; a
+    // wobble must not re-lay out (and re-ease) every tab. A real change of
+    // the room moves it by more.
+    if (!roomSpacer ? room !== tabSpaceWidth : Math.abs(room - tabSpaceWidth) > 1) tabSpaceWidth = room;
   }
 
   $effect(() => {
@@ -123,10 +140,10 @@
     if (delta) tabViewport.scrollLeft += rectDimToCSS(delta);
   }
 
-  /** Tab enter/exit: grow the flex basis from the live --tab-width, never
-   *  clipping the fillets (domain/tab-slide.ts, #1734). */
-  function tabSlide(_node: HTMLElement, { duration }: { duration: number }) {
-    return { duration, easing: cubicOut, css: (t: number) => tabSlideCss(t, "var(--tab-width)", TAB_BLEED) };
+  /** Tab enter/exit: animate --tab-slide, which sizes the tab from the live
+   *  --tab-width, never clipping the fillets (domain/tab-slide.ts, #1734). */
+  function tabSlide(_node: HTMLElement, { duration, sized }: { duration: number; sized: boolean }) {
+    return { duration, easing: cubicOut, css: (t: number) => tabSlideCss(t, "var(--tab-width)", TAB_BLEED, sized) };
   }
 
   function scrollTabs(direction: number): void {
@@ -596,12 +613,12 @@
         class:active={tab.id === activeTabId}
         class:compact={tab.id !== activeTabId && stripLayout.iconOnly}
         class:narrow={tab.id === activeTabId && stripLayout.activeWidth < 90}
-        style:--tab-width={`${tab.id === activeTabId ? stripLayout.activeWidth : stripLayout.inactiveWidth}px`}
+        style:--tab-px={tab.id === activeTabId ? stripLayout.activeWidth : stripLayout.inactiveWidth}
         class:drag-over={dropTargetTabId === tab.id}
         class:file-drop-target={fileDropTargetTabId === tab.id}
         class:dragging={draggingTabId === tab.id}
-        in:tabSlide={{ duration: reducedMotion.current ? 0 : TAB_SLIDE_IN_MS }}
-        out:tabSlide={{ duration: reducedMotion.current ? 0 : TAB_SLIDE_OUT_MS }}
+        in:tabSlide={{ duration: reducedMotion.current ? 0 : TAB_SLIDE_IN_MS, sized: false }}
+        out:tabSlide={{ duration: reducedMotion.current ? 0 : TAB_SLIDE_OUT_MS, sized: true }}
         onintroend={() => { if (tab.id === activeTabId) revealActiveTab(); }}
         onoutroend={revealActiveTab}
         role="tab"

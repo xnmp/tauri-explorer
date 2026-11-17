@@ -509,7 +509,7 @@ jobs:
             echo "chromium E2E: nothing to run in this shard; $mode ($E2E_REASON)"
             exit 0
           fi
-          echo "chromium E2E: $mode ($E2E_REASON), shard of $(wc -l < "$RUNNER_TEMP/e2e-shard.txt") spec file(s)"
+          echo "chromium E2E: $mode ($E2E_REASON), shard of $(wc -l < "$RUNNER_TEMP/e2e-shard.txt" | tr -d '[:space:]') spec file(s)"
           node scripts/test-cache.mjs run --task ci:e2e --target "chromium-${{ matrix.shard }}"
 
       - name: Pack test-result cache
@@ -731,7 +731,7 @@ jobs:
             echo "chromium ALL_VIEW_MODES E2E: nothing to run in this shard; $mode ($E2E_REASON)"
             exit 0
           fi
-          echo "chromium ALL_VIEW_MODES E2E: $mode ($E2E_REASON), shard of $(wc -l < "$RUNNER_TEMP/e2e-shard.txt") spec file(s)"
+          echo "chromium ALL_VIEW_MODES E2E: $mode ($E2E_REASON), shard of $(wc -l < "$RUNNER_TEMP/e2e-shard.txt" | tr -d '[:space:]') spec file(s)"
           node scripts/test-cache.mjs run --task ci:e2e --target "chromium-view-modes-${{ matrix.shard }}"
 
       - name: Pack test-result cache
@@ -1063,7 +1063,7 @@ jobs:
             echo "WebKit E2E: nothing to run in this shard; $mode ($E2E_REASON)"
             exit 0
           fi
-          echo "WebKit E2E: $mode ($E2E_REASON), shard of $(wc -l < "$RUNNER_TEMP/e2e-shard.txt") spec file(s)"
+          echo "WebKit E2E: $mode ($E2E_REASON), shard of $(wc -l < "$RUNNER_TEMP/e2e-shard.txt" | tr -d '[:space:]') spec file(s)"
           node scripts/test-cache.mjs run --task ci:e2e --target "webkit-${{ matrix.shard }}"
 
       - name: Pack test-result cache

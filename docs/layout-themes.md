@@ -77,6 +77,7 @@ variables keep the Default value shown.
 | `--layout-shadow` | `none` | Shadow of those panels (any `box-shadow` value). |
 | `--layout-surface` | theme card colour | Background of the file panes and preview. |
 | `--layout-chrome-surface` | theme chrome colours | Background of title bar, sidebar, toolbar, column header and status bar. |
+| `--layout-app-surface` | native-material tint | Window body (`[data-region="app"]`) under native material. Unset, the page paints the theme tint (on macOS, the theme base at 15% on light themes and 55% on dark ones). |
 | `--layout-hairline` | `var(--divider)` | Rule colour between chrome regions. |
 | `--layout-row-height` | `32px` | Details row height, in `px`, clamped to 20–64. Virtual scrolling and marquee selection follow it. |
 
@@ -129,6 +130,7 @@ Root (`<html>`) attributes describe the window and can scope rules:
 | `data-theme` | Active colour theme id. |
 | `data-native-backdrop` | Native window material is on (macOS vibrancy with blur, Windows Mica/Acrylic). The body is transparent; paint opaque surfaces only where you want them. |
 | `data-transparent-window` | The window was created transparent (macOS vibrancy). Without `data-native-backdrop` the body is painted opaque. |
+| `data-macos-material` | The macOS vibrancy material is on (macOS, Window Vibrancy and Native Blur). The page tints the window body with the theme base. |
 | `data-win-backdrop` | Windows material kind (`mica`, `acrylic`, ...). |
 | `data-preview-fullscreen` | A preview is fullscreen. |
 

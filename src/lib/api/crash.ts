@@ -9,7 +9,7 @@
  */
 
 import { invoke } from "./common";
-import { dedupeFrontendCrash } from "$lib/domain/crash-report";
+import { dedupeFrontendCrash, isBenignBrowserError } from "$lib/domain/crash-report";
 
 export interface CrashReport {
   fileName: string;
@@ -94,6 +94,8 @@ export function installGlobalErrorHandlers(): void {
   if (installed || typeof window === "undefined") return;
   installed = true;
   window.addEventListener("error", (event) => {
+    // Layout notices, not failures: never log or record them (#1725).
+    if (isBenignBrowserError(event.message)) return;
     const where = event.filename ? ` (${event.filename}:${event.lineno}:${event.colno})` : "";
     const message = `uncaught: ${event.message}${where}`;
     forward(message);

@@ -10,6 +10,8 @@
   import { loadE2EHooks } from "$lib/api/e2e-hooks";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { applyWindowsBackdrop } from "$lib/state/window-backdrop";
+  import { isMac } from "$lib/domain/platform";
+  import { macOsVibrancyMode } from "$lib/domain/macos-vibrancy";
   import { layoutStore } from "$lib/state/layout.svelte";
   import "$lib/layouts/floating-islands.css";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
@@ -127,6 +129,11 @@
     // macOS vibrancy makes the window transparent even with blur off (lib.rs);
     // without material behind it, the body must stay opaque in every layout.
     document.documentElement.toggleAttribute("data-transparent-window", settingsStore.macOsVibrancy);
+    // The macOS material itself is grey; [data-macos-material] tints it with
+    // the theme base so the palette survives (#1733). Windows backdrops keep
+    // their own strength tint (window-backdrop.ts).
+    document.documentElement.toggleAttribute("data-macos-material",
+      macOsVibrancyMode(isMac, settingsStore) === "material");
   });
 
   // Windows Mica/Acrylic: apply the native backdrop with a theme-matched tint
@@ -593,10 +600,30 @@
     background: var(--background-solid);
   }
 
+  /* A layout that paints the window body itself (--layout-app-surface) wins
+     over the tint. */
   :global([data-native-backdrop]) .explorer {
-    background: var(--vibrancy-tint, transparent);
+    background: var(--layout-app-surface, var(--vibrancy-tint, transparent));
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
+  }
+
+  /* macOS material (#1733): the material is a neutral grey, so paint the
+     theme base over it, lightly on light themes and heavily on dark ones,
+     where the grey otherwise reads as a washed-out palette. A theme may set
+     its own --vibrancy-tint (Tahoe's lavender wash). light-dark() follows the
+     theme's color-scheme. */
+  :global([data-macos-material]) .explorer {
+    background: var(
+      --layout-app-surface,
+      var(
+        --vibrancy-tint,
+        light-dark(
+          color-mix(in srgb, var(--background-solid) 15%, transparent),
+          color-mix(in srgb, var(--background-solid) 55%, transparent)
+        )
+      )
+    );
   }
 
   /* Windows Acrylic strength: a theme-coloured tint over the whole window,

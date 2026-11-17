@@ -187,6 +187,9 @@
       <EntryNameLabel name={entry.name} variant="tiles" placeholder />
       <!-- svelte-ignore a11y_autofocus -->
       <textarea
+        autocorrect="off"
+        autocapitalize="none"
+        spellcheck="false"
         class="rename-input tile-rename"
         class:error={!!rename.renameError}
         bind:value={rename.editedName}
@@ -222,6 +225,9 @@
     <span class="rename-wrap">
       <!-- svelte-ignore a11y_autofocus -->
       <input
+        autocorrect="off"
+        autocapitalize="none"
+        spellcheck="false"
         type="text"
         class="rename-input rename-row"
         class:error={!!rename.renameError}

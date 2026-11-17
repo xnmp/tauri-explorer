@@ -26,3 +26,21 @@ export function dedupeFrontendCrash(
   return { record: true, seen: next };
 }
 
+
+/**
+ * Browser notices that arrive as window `error` events but are not failures:
+ * a ResizeObserver callback changed layout, so the browser deferred the
+ * resulting notifications to the next frame. The file grid does this on
+ * purpose (#1061); Chromium's older wording is "loop limit exceeded" (#1725).
+ */
+const BENIGN_BROWSER_ERRORS: readonly RegExp[] = [
+  /^ResizeObserver loop completed with undelivered notifications\.?$/,
+  /^ResizeObserver loop limit exceeded\.?$/,
+];
+
+/** True for a window `error` message that must not be logged or recorded as a crash. */
+export function isBenignBrowserError(message: string | null | undefined): boolean {
+  if (typeof message !== "string") return false;
+  const text = message.trim();
+  return BENIGN_BROWSER_ERRORS.some((pattern) => pattern.test(text));
+}

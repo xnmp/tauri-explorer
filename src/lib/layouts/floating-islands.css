@@ -453,14 +453,22 @@
   overflow: hidden;
 }
 
-/* The main area clips sideways only, so island shadows are not cut flat at
-   the status bar's top edge (#1734). min-height: 0 keeps a long listing
-   from growing the area, now that its block axis no longer clips, and
-   pushing the islands past the window bottom. With the status bar shown,
-   the islands keep a 4px bottom inset above it. */
+/* The main area does not clip, so island shadows are not cut flat at the
+   status bar's top edge (#1734). The window box clips instead, on both
+   axes: a narrow window's sideways overflow stops at the window edge, and
+   clip (unlike hidden) leaves no scroll container that focus could scroll.
+   Never clip one axis only: WKWebView then places a composited island (the
+   one the active tab opens into) a fraction of a pixel off the device grid,
+   so its clipped top row bleeds into the row below as a line and its
+   content is resampled soft (#1744). min-height: 0 keeps a long listing
+   from growing the area and pushing the islands past the window bottom.
+   With the status bar shown, the islands keep a 4px bottom inset above it. */
+:root[data-layout-base="floating-islands"] [data-region="app"] {
+  overflow: clip;
+}
+
 :root[data-layout-base="floating-islands"] [data-region="main"] {
-  overflow-x: clip;
-  overflow-y: visible;
+  overflow: visible;
   min-height: 0;
 }
 

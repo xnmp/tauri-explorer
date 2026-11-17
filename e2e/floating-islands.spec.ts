@@ -305,6 +305,24 @@ test.describe("Fused active tab (#1734)", () => {
     });
   });
 
+  // WKWebView places a composited island a fraction of a pixel off the device
+  // grid under an ancestor that clips one axis only: its clipped top row then
+  // paints as a line one row under the seam (real-Mac capture, #1744). Local
+  // engines do not show it, so pin the clipping contract the fix relies on.
+  test("no ancestor of a seamed island clips one axis only, and the window clips", async ({ page }) => {
+    await openIslands(page, { material: true, theme: "light" });
+    const clips = await page.locator("[data-tab-seam]").first().evaluate((island) => {
+      const out: { node: string; x: string; y: string }[] = [];
+      for (let el = island.parentElement; el; el = el.parentElement) {
+        const style = getComputedStyle(el);
+        out.push({ node: `${el.tagName.toLowerCase()}${el.dataset.region ? `[${el.dataset.region}]` : ""}`, x: style.overflowX, y: style.overflowY });
+      }
+      return out;
+    });
+    for (const { node, x, y } of clips) expect(x, `${node} clips one axis`).toBe(y);
+    expect(clips.find((c) => c.node === "main[app]")).toEqual({ node: "main[app]", x: "clip", y: "clip" });
+  });
+
   test("closing the active tab hands the seam to its neighbour in the same frame", async ({ page }) => {
     await openIslands(page);
     await page.waitForTimeout(300);

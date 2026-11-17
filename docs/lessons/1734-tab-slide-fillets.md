@@ -176,3 +176,34 @@ platform (macOS with material, macOS without, Linux/Windows) × theme at rest
 with one layer changed: the island outline against its own CSS border, the
 rows from one above the seam to four below against the tab body, the strip
 shade below the base, and the shadow on each side. It fails on 478ca1ac.
+
+## A one-axis clip offsets a composited island on WKWebView (#1744 real-Mac review)
+
+A line one row under the seam (row 39 at 1x, under every islands cell) showed
+only on the hosted Mac: no local Chromium or WebKitGTK run reproduced it, with
+or without focus. A throwaway probe branch drew `elementsFromPoint` and the
+computed styles at that row on screen, then varied one property per captured
+cell (rounds in run history 44085332817 … 44124911778):
+
+- Only the island painted there, and with `box-shadow: none` the row was
+  clean. But hiding each title bar SVG layer, the seam clip, the border or
+  the radius left it; a composited sidebar grew the same line; and with the
+  island not composited it vanished. Single shadows split it oddly (a 3px
+  blur clean, 12px, 32px and a 1px spread not) because they only moved the
+  layer's fractional origin.
+- The island's content was resampled too: the address bar's top edge spread
+  over two rows. The layer sat a fraction of a pixel off the device grid,
+  so its clipped top row (the seam cut) bled into the row below, showing the
+  backdrop through it.
+- Cause: `[data-region="main"]` clipped one axis (`overflow-x: clip;
+  overflow-y: visible`, added so island shadows are not cut at the status
+  bar). With `overflow` visible, hidden or clip on both axes, or the island
+  moved 1px down, the row was clean and the content sharp.
+
+Fix: `main` does not clip; the window box (`[data-region="app"]`) clips on
+both axes. `clip`, not `hidden`, so a narrow window's sideways overflow (the
+preview at 420px) creates no scroll container. `overflow-clip-margin` would
+have kept the clip on `main`, but WebKit 26 does not support it.
+`e2e/floating-islands.spec.ts` pins the contract: no ancestor of a seamed
+island clips one axis only. The remaining one-level shade inside each island
+edge at 1x is the `inset 0 -0.5px` hairline, which predates #1744.

@@ -702,6 +702,9 @@ test.describe("Fused active tab (#1734)", () => {
     { what: "opening, 5 tabs at 560px", width: 560, count: 5 },
     { what: "closing, 3 tabs at 1100px", width: 1100, count: 3 },
   ]) test(`a sliding tab never paints a fragment of its title (${what})`, async ({ page }) => {
+    // Every step takes four screenshots and several frames; a CI WebKit
+    // runner needed 26s of the default 30s for the opening case.
+    test.setTimeout(90_000);
     const closing = what.startsWith("closing");
     await openIslands(page, { theme: "light", count, width, active: count - 1 });
     await page.mouse.move(5, 500);
@@ -725,7 +728,8 @@ test.describe("Fused active tab (#1734)", () => {
     await steppedFrames(page, () => closing
       ? pressShortcut(page, "w", { ctrlKey: true, shiftKey: true })
       : pressShortcut(page, "t", { ctrlKey: true }), {
-      steps: 16,
+      // Through the slide's end: 120ms closing, 180ms opening.
+      steps: closing ? 9 : 13,
       onStep: async (step) => {
         const title = page.locator(`${sliding} .tab-title`);
         if (await title.count() !== 1) return;
@@ -740,27 +744,29 @@ test.describe("Fused active tab (#1734)", () => {
           }
           return most;
         };
-        // WebKit's screenshots can move a held strip (about 10px, see
-        // tab-outline-matrix.spec.ts): a comparison counts only when the
-        // title's box and the frame with it shown are the same before and
-        // after the frame without it.
-        let box = await measure();
-        let ink = Number.NaN;
-        for (let attempt = 0; attempt < 4 && Number.isNaN(ink); attempt++) {
-          box = await measure();
-          if (box.width < 0.5) return;
-          const clip = { x: Math.floor(box.x) - 1, y: Math.floor(box.y), width: Math.ceil(box.width) + 2, height: Math.ceil(box.height) };
-          const shown = await shot(clip);
-          await title.evaluate((el) => { el.style.visibility = "hidden"; });
-          const hidden = await shot(clip);
-          await title.evaluate((el) => { el.style.visibility = ""; });
-          const again = await shot(clip);
-          const after = await measure();
-          // (Stretched transitions still creep in Chromium: a fraction of a pixel.)
-          const still = Math.abs(after.x - box.x) < 0.5 && Math.abs(after.width - box.width) < 0.5;
-          if (still && diff(shown, again) <= 2) ink = diff(shown, hidden);
-        }
-        expect(ink, `step ${step}: the held frame never stood still`).not.toBeNaN();
+        // steppedFrames pauses the title bar's animations while a step is
+        // inspected, so the frame holds still across its screenshots: the
+        // title's box and its shown frame are the same before and after the
+        // frame without it. The title is painted afresh first: the first
+        // frame of a closing tab could keep a raster of its title whose
+        // antialiasing differs (by up to 56/255) from the one any repaint
+        // gives, which the hidden-title frame forces.
+        const box = await measure();
+        if (box.width < 0.5) return;
+        const clip = { x: Math.floor(box.x) - 1, y: Math.floor(box.y), width: Math.ceil(box.width) + 2, height: Math.ceil(box.height) };
+        await title.evaluate(async (el) => {
+          el.style.visibility = "hidden";
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          el.style.visibility = "";
+        });
+        const shown = await shot(clip);
+        await title.evaluate((el) => { el.style.visibility = "hidden"; });
+        const hidden = await shot(clip);
+        await title.evaluate((el) => { el.style.visibility = ""; });
+        const again = await shot(clip);
+        expect(await measure(), `step ${step}: the title's box holds still`).toEqual(box);
+        expect(diff(shown, again), `step ${step}: the held frame holds still`).toBe(0);
+        const ink = diff(shown, hidden);
         samples.push({ step, box: box.client, ink });
       },
     });

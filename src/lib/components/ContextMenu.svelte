@@ -886,13 +886,8 @@
     z-index: var(--z-menu);
     min-width: 220px;
     padding: 6px;
-    /* Opaque: the flyout tint over the solid base (#1734). A backdrop
-       filter sampled only the webview, never the native window material,
-       and an ancestor's filter made the island the containing block for
-       this fixed menu. */
-    background:
-      linear-gradient(var(--background-acrylic), var(--background-acrylic)),
-      var(--background-solid);
+    /* Opaque flyout tint over the solid base (#1734): no backdrop filter. */
+    background: linear-gradient(var(--background-acrylic), var(--background-acrylic)), var(--background-solid);
     border: 1px solid var(--surface-stroke-flyout);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-flyout);
@@ -1013,9 +1008,7 @@
     top: -6px;
     min-width: 120px;
     padding: 6px;
-    background:
-      linear-gradient(var(--background-acrylic), var(--background-acrylic)),
-      var(--background-solid);
+    background: linear-gradient(var(--background-acrylic), var(--background-acrylic)), var(--background-solid);
     border: 1px solid var(--surface-stroke-flyout);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-flyout);

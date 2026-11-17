@@ -189,11 +189,13 @@
             <SettingToggle checked={settingsStore.showSidebar} onchange={() => settingsStore.toggleSidebar()} />
           </SettingRow>
 
+          {#if !isMac}
           <SettingRow label="Show Window Controls"
             description="Display minimize, maximize and close buttons"
             hidden={!matchesSearch(...rows.windowControls)}>
             <SettingToggle checked={settingsStore.showWindowControls} onchange={() => settingsStore.toggleWindowControls()} />
           </SettingRow>
+          {/if}
 
           {#if isMac}
           <SettingRow label="Integrated Title Bar"

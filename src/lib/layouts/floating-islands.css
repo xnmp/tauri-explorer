@@ -299,8 +299,13 @@
    frame: will-change gives the island its own layer so a moving notch only
    re-clips it (WebKit otherwise repaints the whole island, ~45ms a frame in
    software). Opacity, unlike transform, does not make the island the
-   containing block of fixed overlays. */
+   containing block of fixed overlays.
+   Both still make the island a stacking context, which would trap its
+   context menus under later sibling islands (the preview) they overhang:
+   lift the island above its siblings. Islands never overlap one another,
+   and menus from other islands stay in main's own stacking context. */
 :root[data-layout-base="floating-islands"]:not([data-preview-fullscreen]) [data-tab-seam] {
+  z-index: 1;
   will-change: opacity;
   clip-path: polygon(
     -100vw -100vh,

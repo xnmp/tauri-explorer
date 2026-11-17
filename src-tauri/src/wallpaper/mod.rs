@@ -5,9 +5,13 @@
 // macOS: every display + every Space (#1441, #1731). Built on other hosts
 // only for tests, so its pure planning and store logic is checked everywhere.
 #[cfg(any(target_os = "macos", test))]
+mod bounded;
+#[cfg(any(target_os = "macos", test))]
 mod macos;
 #[cfg(any(target_os = "macos", test))]
 mod macos_store;
+#[cfg(any(target_os = "macos", test))]
+mod plist_bounds;
 
 use crate::error::AppError;
 use std::path::PathBuf;

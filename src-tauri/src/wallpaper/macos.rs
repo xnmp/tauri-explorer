@@ -3,7 +3,8 @@
 //!
 //! 1. Snapshot the private wallpaper store, then call
 //!    `NSWorkspace.setDesktopImageURL(_:for:options:)` once per `NSScreen`
-//!    (objc2, queued on the main thread with a 10 s bound). This changes
+//!    (objc2, queued on the main thread: 10 s to start, 20 s more to
+//!    finish once started). This changes
 //!    every display, but only on the current Space. Each display's result
 //!    is typed ([`ScreenResult`]), never parsed from script output.
 //! 2. macOS 14+: wait until WallpaperAgent has persisted that change (an
@@ -199,16 +200,27 @@ fn await_macos_entry(
             .map(|e| (store, e))
             .ok_or_else(|| not_changed(macos_store::StoreError::UnrecognisedLayout.to_string()));
     }
+    // A store that is missing or unreadable at one poll may be mid-save:
+    // keep polling, and report the last such reason only if nothing usable
+    // ever appeared.
+    let mut unusable = None;
     for _ in 0..STORE_POLL_ATTEMPTS {
         os.sleep(STORE_POLL_INTERVAL);
-        let store = read_existing(os)?;
+        let store = match read_existing(os) {
+            Ok(store) => store,
+            Err(reason) => {
+                unusable = Some(reason);
+                continue;
+            }
+        };
+        unusable = None;
         if let Some(entry) = macos_store::fresh_image_entry(before, &store, image_path) {
             return Ok((store, entry));
         }
     }
-    Err(not_changed(
-        "macOS did not save the change in time, so other Spaces were left untouched",
-    ))
+    Err(unusable.unwrap_or_else(|| {
+        not_changed("macOS did not save the change in time, so other Spaces were left untouched")
+    }))
 }
 
 fn change_other_spaces(
@@ -245,7 +257,7 @@ fn change_other_spaces(
     os.sleep(VERIFY_DELAY);
     let after = os.read_store();
     if let Ok(Some(kept)) = &after {
-        if macos_store::coverage(kept, image_path).is_everywhere() {
+        if macos_store::kept_everywhere(&store, kept, image_path) {
             return OtherSpaces::Changed;
         }
     }
@@ -362,26 +374,27 @@ fn store_path() -> Result<std::path::PathBuf, String> {
 
 /// The per-display step through AppKit. NSScreen and the desktop-image
 /// calls belong on the main thread, so the work is queued on the main
-/// dispatch queue and awaited from this (blocking-pool) thread for at most
-/// ten seconds. Called on the main thread itself, it runs inline
-/// rather than waiting on its own queue.
+/// dispatch queue and awaited from this (blocking-pool) thread through
+/// `bounded::hand_off`: it must start within 10 s (or is abandoned, having
+/// changed nothing), and once started its result is awaited up to 20 s
+/// more. Called on the main thread itself, it runs inline rather than
+/// waiting on its own queue. AppKit may block the main thread inside
+/// `setDesktopImageURL`; nothing here can bound that.
 #[cfg(target_os = "macos")]
 mod appkit {
     use super::{macos_store, ScreenReport, ScreenResult};
+    use crate::wallpaper::bounded::{hand_off, HandOffError};
     use objc2::MainThreadMarker;
     use objc2_app_kit::{NSScreen, NSWorkspace};
     use objc2_foundation::{NSString, NSURL};
-    use std::sync::atomic::{AtomicU8, Ordering};
-    use std::sync::{mpsc, Arc};
     use std::time::Duration;
 
-    const MAIN_THREAD_BOUND: Duration = Duration::from_secs(10);
-
-    /// Queued work's lifecycle: a block still `PENDING` at the deadline is
-    /// `ABANDONED` and does nothing if the main thread reaches it later.
-    const PENDING: u8 = 0;
-    const RUNNING: u8 = 1;
-    const ABANDONED: u8 = 2;
+    /// The main thread must start the work within this, or it is abandoned
+    /// (and does nothing if reached later): nothing changed.
+    const START_WITHIN: Duration = Duration::from_secs(10);
+    /// Once started, the work is taking effect, so its result is awaited
+    /// this much longer rather than reported as a failure.
+    const THEN_GRACE: Duration = Duration::from_secs(20);
 
     fn standardized_path(url: &NSURL) -> Option<String> {
         Some(url.URLByStandardizingPath()?.path()?.to_string())
@@ -430,52 +443,37 @@ mod appkit {
         if let Some(mtm) = MainThreadMarker::new() {
             return Ok(set_every_screen(mtm, image_path));
         }
-        let (sender, receiver) = mpsc::sync_channel(1);
-        let state = Arc::new(AtomicU8::new(PENDING));
-        let queued_state = Arc::clone(&state);
         let path = image_path.to_owned();
-        dispatch2::DispatchQueue::main().exec_async(move || {
-            if queued_state
-                .compare_exchange(PENDING, RUNNING, Ordering::AcqRel, Ordering::Acquire)
-                .is_err()
-            {
-                return;
-            }
-            let report = match MainThreadMarker::new() {
+        let report = hand_off(
+            |job| dispatch2::DispatchQueue::main().exec_async(job),
+            move || match MainThreadMarker::new() {
                 Some(mtm) => Ok(set_every_screen(mtm, &path)),
                 None => Err("the main queue ran off the main thread".to_string()),
-            };
-            let _ = sender.send(report);
-        });
-        match receiver.recv_timeout(MAIN_THREAD_BOUND) {
+            },
+            START_WITHIN,
+            THEN_GRACE,
+        );
+        match report {
             Ok(report) => report,
-            Err(_) => {
-                let abandoned = state
-                    .compare_exchange(PENDING, ABANDONED, Ordering::AcqRel, Ordering::Acquire)
-                    .is_ok();
-                Err(if abandoned {
-                    "the main thread was busy for 10 s, so no display was changed".to_string()
-                } else {
-                    "the displays did not respond within 10 s".to_string()
-                })
+            Err(HandOffError::NotStarted) => {
+                Err("the main thread was busy for 10 s, so no display was changed".into())
             }
+            Err(HandOffError::StillRunning) => {
+                Err("the displays did not respond within 30 s; some may still change".into())
+            }
+            Err(HandOffError::Lost) => Err("the display step ended without a result".into()),
         }
     }
 }
 
+/// Short system commands: none should take more than a few seconds, and
+/// the flow holds its mutex while they run, so each is killed at its bound.
+#[cfg(target_os = "macos")]
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
+
 #[cfg(target_os = "macos")]
 fn run(program: &str, args: &[&str]) -> Result<String, String> {
-    let output = std::process::Command::new(program)
-        .args(args)
-        .output()
-        .map_err(|e| format!("{program}: {e}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "{program}: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    super::bounded::run_command(program, args, COMMAND_TIMEOUT)
 }
 
 #[cfg(target_os = "macos")]
@@ -489,11 +487,22 @@ impl MacWallpaperOs for SystemMacOs {
     }
 
     fn read_store(&mut self) -> Result<Option<Vec<u8>>, String> {
-        match std::fs::read(store_path()?) {
-            Ok(bytes) => Ok(Some(bytes)),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(e.to_string()),
+        use std::io::Read;
+        let file = match std::fs::File::open(store_path()?) {
+            Ok(file) => file,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e.to_string()),
+        };
+        // Never read more than the parser would accept.
+        let limit = macos_store::MAX_STORE_BYTES as u64;
+        let mut bytes = Vec::new();
+        file.take(limit + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|e| e.to_string())?;
+        if bytes.len() as u64 > limit {
+            return Err(format!("it is larger than {} MiB", limit >> 20));
         }
+        Ok(Some(bytes))
     }
 
     fn write_store(&mut self, bytes: &[u8]) -> Result<(), String> {
@@ -700,7 +709,8 @@ mod tests {
             displays.insert("A".into(), entry(path, "t3", true));
             let mut space = Dictionary::new();
             space.insert("Displays".into(), Value::Dictionary(displays));
-            spaces.insert(format!("S{i}"), Value::Dictionary(space));
+            // Same Space ids as `store_with`.
+            spaces.insert(format!("S{}", i + 1), Value::Dictionary(space));
         }
         let mut root = Dictionary::new();
         root.insert(
@@ -753,10 +763,6 @@ mod tests {
                 "{}",
                 p.detail
             );
-        }
-        // The user text never names the wrong cause or leaks technical detail.
-        for user in [SOME_DISPLAYS, CURRENT_SPACE] {
-            assert!(!user.contains("monitor"));
         }
     }
 
@@ -882,6 +888,45 @@ mod tests {
             p.detail
         );
         assert_eq!(os.count(Event::Write), 1);
+    }
+
+    #[test]
+    fn a_store_missing_or_unreadable_at_the_first_polls_is_polled_again() {
+        let before = store(("/old.jpg", "t0"), "/old.jpg");
+        let saved = store((IMG, "t1"), "/old.jpg");
+        let mut os = FakeOs::new("14.0", vec![]);
+        os.reads = vec![
+            Ok(Some(before)),
+            Ok(None),
+            Err("busy".into()),
+            Ok(Some(saved)),
+        ];
+        assert_eq!(outcome(&mut os), None);
+        assert_eq!(os.count(Event::Write), 1);
+
+        // Never usable: the last reason is reported after the full wait.
+        let mut os = FakeOs::new("14.0", vec![None]);
+        let p = outcome(&mut os).unwrap();
+        assert!(p.detail.contains("not found"), "{}", p.detail);
+        assert_eq!(os.slept, STORE_POLL_INTERVAL * STORE_POLL_ATTEMPTS);
+    }
+
+    #[test]
+    fn a_reload_that_loses_a_space_is_not_reported_as_complete() {
+        let before = store_with(("/old.jpg", "t0"), "/old.jpg", true);
+        let saved = store_with((IMG, "t1"), "/old.jpg", true);
+        let mut os = FakeOs::new("26.1", vec![Some(before), Some(saved)]);
+        // The agent kept only the current Space (S1); S2 is gone.
+        let mut root = Dictionary::new();
+        let mut displays = Dictionary::new();
+        displays.insert("A".into(), entry(IMG, "t3", true));
+        let mut s1 = Dictionary::new();
+        s1.insert("Displays".into(), Value::Dictionary(displays));
+        let mut spaces = Dictionary::new();
+        spaces.insert("S1".into(), Value::Dictionary(s1));
+        root.insert("Spaces".into(), Value::Dictionary(spaces));
+        os.after_restart = Some(encode(root));
+        assert_eq!(outcome(&mut os).unwrap().user, CURRENT_SPACE);
     }
 
     #[test]

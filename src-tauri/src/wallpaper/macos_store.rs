@@ -9,10 +9,16 @@
 //!
 //! Following the tested reference (pnitijarasrat/dotfile#102), the store is
 //! returned to all-Spaces mode: `AllSpacesAndDisplays.Desktop.Content` takes
-//! the entry macOS itself just wrote for the new image, and `Spaces` and
-//! `Displays` are emptied. Nothing else (`SystemDefault`, `Idle`, `Type`,
-//! dates, unknown keys) is touched, no `Configuration` blob is ever
-//! fabricated, and a store whose shape is not recognised is never written.
+//! the entry macOS itself just wrote for the new image, and every per-Space
+//! and per-display `Desktop` override is removed. Their `Idle` (screen
+//! saver) settings stay; an override left with no `Idle` is removed whole.
+//! Nothing else (`SystemDefault`, the all-Spaces `Idle`, `Type`, dates,
+//! unknown keys) is touched, no `Configuration` blob is ever fabricated,
+//! and a store whose shape is not recognised is never written.
+//!
+//! Parsing is bounded before it starts (`plist_bounds`): size, expanded
+//! value count and depth, so a corrupt or hostile store or `Configuration`
+//! cannot cost exponential time or overflow the stack.
 //!
 //! Two layouts are understood:
 //! - macOS 14/15: an image choice names its file in `Files[0].relative`.
@@ -25,6 +31,7 @@
 //! `docs/lessons/1441-macos-wallpaper-all-spaces.md` and
 //! `docs/lessons/1731-macos-wallpaper-all-spaces.md`.
 
+use super::plist_bounds::{self, Limits};
 use plist::{Dictionary, Value};
 use std::collections::BTreeSet;
 
@@ -39,13 +46,33 @@ const OVERRIDE_SECTIONS: &[&str] = &["Displays", "Spaces"];
 /// beyond that, but never an unbounded walk of an unknown structure.
 const MAX_DEPTH: usize = 5;
 
+/// Largest store this code reads or parses. Real stores are tens of KiB.
+pub const MAX_STORE_BYTES: usize = 16 * 1024 * 1024;
+
+/// Parse bounds for the store itself.
+const STORE_LIMITS: Limits = Limits {
+    max_bytes: MAX_STORE_BYTES,
+    max_nodes: 1_000_000,
+    max_depth: 64,
+};
+
+/// More desktop entries than any real display × Space count: beyond this
+/// the store is not one this code recognises.
+const MAX_DESKTOPS: usize = 2048;
+
 /// Bounds for reading a choice's nested `Configuration` plist. macOS writes
 /// a few hundred bytes; anything far larger, deeper or wider is not a
 /// configuration this code understands and is ignored (fail-safe: the
-/// choice is then not recognised as showing any image).
+/// choice is then not recognised as showing any image). Checked before
+/// parsing, so their cost is bounded per choice.
 const MAX_CONFIGURATION_BYTES: usize = 256 * 1024;
 const MAX_CONFIGURATION_DEPTH: usize = 8;
-const MAX_CONFIGURATION_NODES: usize = 4096;
+const MAX_CONFIGURATION_NODES: usize = 512;
+const CONFIGURATION_LIMITS: Limits = Limits {
+    max_bytes: MAX_CONFIGURATION_BYTES,
+    max_nodes: MAX_CONFIGURATION_NODES,
+    max_depth: MAX_CONFIGURATION_DEPTH * 2,
+};
 
 /// At most this many entries are listed by [`describe`].
 const DESCRIBE_LIMIT: usize = 24;
@@ -130,9 +157,19 @@ fn url_path(url: &str) -> Option<String> {
     String::from_utf8(out).ok()
 }
 
+/// Parse a binary or XML plist after checking what it may cost.
+fn parse_within(bytes: &[u8], limits: &Limits) -> Result<Value, StoreError> {
+    plist_bounds::check(bytes, limits).map_err(StoreError::Malformed)?;
+    let parsed = if bytes.starts_with(b"bplist00") {
+        Value::from_reader(std::io::Cursor::new(bytes))
+    } else {
+        Value::from_reader_xml(bytes)
+    };
+    parsed.map_err(|e| StoreError::Malformed(e.to_string()))
+}
+
 fn parse(store: &[u8]) -> Result<Value, StoreError> {
-    Value::from_reader(std::io::Cursor::new(store))
-        .map_err(|e| StoreError::Malformed(e.to_string()))
+    parse_within(store, &STORE_LIMITS)
 }
 
 /// Collects the distinct `file://` paths inside a nested `Configuration`
@@ -149,7 +186,12 @@ impl ConfigurationWalk {
             self.exhausted = true;
             return;
         }
-        if let Ok(value) = parse(bytes) {
+        // Over the bounds: unfamiliar, never a match.
+        if plist_bounds::check(bytes, &CONFIGURATION_LIMITS).is_err() {
+            self.exhausted = true;
+            return;
+        }
+        if let Ok(value) = parse_within(bytes, &CONFIGURATION_LIMITS) {
             self.value(&value, depth);
         }
     }
@@ -245,9 +287,13 @@ struct Found<'a> {
     desktop: &'a Dictionary,
 }
 
-/// Every desktop entry with its location (`"Spaces/<id>/Default"` …).
-fn desktops(root: &Dictionary) -> Vec<Found<'_>> {
+/// Every desktop entry with its location (`"Spaces/<id>/Default"` …), or
+/// None for more than [`MAX_DESKTOPS`] (not a store this code recognises).
+fn desktops(root: &Dictionary) -> Option<Vec<Found<'_>>> {
     fn walk<'a>(v: &'a Value, at: String, depth: usize, out: &mut Vec<Found<'a>>) {
+        if out.len() > MAX_DESKTOPS {
+            return;
+        }
         let Some(dict) = v.as_dictionary() else {
             return;
         };
@@ -271,6 +317,51 @@ fn desktops(root: &Dictionary) -> Vec<Found<'_>> {
             walk(v, (*section).to_string(), 0, &mut out);
         }
     }
+    (out.len() <= MAX_DESKTOPS).then_some(out)
+}
+
+/// Whether `v` holds a desktop entry within the walk depth.
+fn has_desktop(v: &Value, depth: usize) -> bool {
+    let Some(dict) = v.as_dictionary() else {
+        return false;
+    };
+    desktop(dict).is_some()
+        || (depth < MAX_DEPTH && dict.values().any(|c| has_desktop(c, depth + 1)))
+}
+
+/// A Space or display the store records an override for.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum Recorded {
+    Space(String),
+    Display(String),
+}
+
+/// The Spaces and displays `root` records, optionally only those that hold
+/// a desktop entry.
+fn recorded(root: &Dictionary, with_desktop_only: bool) -> BTreeSet<Recorded> {
+    let keep = |v: &Value| !with_desktop_only || has_desktop(v, 0);
+    let section = |name: &str| root.get(name).and_then(Value::as_dictionary);
+    let mut out = BTreeSet::new();
+    let displays = |d: &Dictionary, out: &mut BTreeSet<Recorded>| {
+        for (id, _) in d.iter().filter(|(_, v)| keep(v)) {
+            out.insert(Recorded::Display(id.clone()));
+        }
+    };
+    if let Some(d) = section("Displays") {
+        displays(d, &mut out);
+    }
+    for (id, space) in section("Spaces").into_iter().flat_map(Dictionary::iter) {
+        if keep(space) {
+            out.insert(Recorded::Space(id.clone()));
+        }
+        if let Some(d) = space
+            .as_dictionary()
+            .and_then(|s| s.get("Displays"))
+            .and_then(Value::as_dictionary)
+        {
+            displays(d, &mut out);
+        }
+    }
     out
 }
 
@@ -290,8 +381,8 @@ pub fn fresh_image_entry(
         .and_then(|b| parse(b).ok())
         .and_then(Value::into_dictionary)
         .unwrap_or_default();
-    let previous = desktops(&before);
-    desktops(&after)
+    let previous = desktops(&before).unwrap_or_default();
+    desktops(&after)?
         .into_iter()
         .filter(|f| shows_image(f.desktop, image_path))
         .find(|f| {
@@ -306,7 +397,7 @@ pub fn fresh_image_entry(
 /// change because every display already showed the image.
 pub fn existing_image_entry(store: &[u8], image_path: &str) -> Option<Dictionary> {
     let root = parse(store).ok()?.into_dictionary()?;
-    desktops(&root)
+    desktops(&root)?
         .into_iter()
         .find(|f| shows_image(f.desktop, image_path))
         .map(|f| f.entry.clone())
@@ -315,8 +406,9 @@ pub fn existing_image_entry(store: &[u8], image_path: &str) -> Option<Dictionary
 /// The store in all-Spaces mode showing `image_entry` (an entry macOS
 /// wrote, holding a `Desktop`): `AllSpacesAndDisplays.Desktop.Content`
 /// replaced (the whole `Desktop` if the entry had none, the whole entry if
-/// the store had no `AllSpacesAndDisplays`), `Spaces` and `Displays`
-/// emptied, everything else preserved. Same encoding as the input.
+/// the store had no `AllSpacesAndDisplays`), every `Desktop` override under
+/// `Spaces` and `Displays` removed (their `Idle` kept), everything else
+/// preserved. Same encoding as the input.
 pub fn all_spaces_store(store: &[u8], image_entry: &Dictionary) -> Result<Vec<u8>, StoreError> {
     let is_binary = store.starts_with(b"bplist");
     let mut root = parse(store)?;
@@ -358,8 +450,8 @@ pub fn all_spaces_store(store: &[u8], image_entry: &Dictionary) -> Result<Vec<u8
         Some(_) => return Err(StoreError::UnrecognisedLayout),
     }
     for section in OVERRIDE_SECTIONS {
-        if dict.contains_key(section) {
-            dict.insert((*section).into(), Value::Dictionary(Dictionary::new()));
+        if let Some(Value::Dictionary(overrides)) = dict.get_mut(section) {
+            remove_desktop_overrides(overrides, 0);
         }
     }
 
@@ -373,6 +465,30 @@ pub fn all_spaces_store(store: &[u8], image_entry: &Dictionary) -> Result<Vec<u8
     Ok(bytes)
 }
 
+/// Remove every `Desktop` override below `dict`, keeping each entry's other
+/// settings when it has an `Idle` (screen saver) choice, and dropping
+/// entries and containers left with nothing to say.
+fn remove_desktop_overrides(dict: &mut Dictionary, depth: usize) {
+    let keys: Vec<String> = dict.keys().cloned().collect();
+    for key in keys {
+        let Some(Value::Dictionary(child)) = dict.get_mut(&key) else {
+            continue;
+        };
+        let keep = if child.contains_key("Desktop") {
+            child.remove("Desktop");
+            child.contains_key("Idle")
+        } else if depth < MAX_DEPTH {
+            remove_desktop_overrides(child, depth + 1);
+            !child.is_empty()
+        } else {
+            true
+        };
+        if !keep {
+            dict.remove(&key);
+        }
+    }
+}
+
 /// How much of the store shows an image.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Coverage {
@@ -380,7 +496,8 @@ pub enum Coverage {
     /// show the image.
     AllSpaces,
     /// macOS 26's reloaded form: no `AllSpacesAndDisplays.Desktop`, but one
-    /// or more per-display / per-Space entries, every one showing the image.
+    /// or more per-display / per-Space entries, every one showing the image,
+    /// and every recorded Space and display holding one.
     EveryRecordedSpace,
     /// Some recorded desktop shows something else, or none is recorded.
     Incomplete,
@@ -388,19 +505,14 @@ pub enum Coverage {
     Unreadable,
 }
 
-impl Coverage {
-    /// Whether WallpaperAgent's reloaded store means every Space changed.
-    pub fn is_everywhere(self) -> bool {
-        matches!(self, Coverage::AllSpaces | Coverage::EveryRecordedSpace)
-    }
-}
-
 /// How much of `store` shows `image_path`.
 pub fn coverage(store: &[u8], image_path: &str) -> Coverage {
     let Some(root) = parse(store).ok().and_then(Value::into_dictionary) else {
         return Coverage::Unreadable;
     };
-    let found = desktops(&root);
+    let Some(found) = desktops(&root) else {
+        return Coverage::Incomplete;
+    };
     if found.is_empty() || !found.iter().all(|f| shows_image(f.desktop, image_path)) {
         return Coverage::Incomplete;
     }
@@ -413,8 +525,32 @@ pub fn coverage(store: &[u8], image_path: &str) -> Coverage {
     {
         // An all-Spaces desktop this code cannot read: not proof.
         Coverage::Incomplete
+    } else if recorded(&root, true) != recorded(&root, false) {
+        // A Space or display with no desktop falls back to an all-Spaces
+        // entry that does not exist: not proof it shows the image.
+        Coverage::Incomplete
     } else {
         Coverage::EveryRecordedSpace
+    }
+}
+
+/// Whether the store WallpaperAgent kept after its reload shows the image
+/// everywhere, given the store as it was before the rewrite: all-Spaces
+/// mode, or the reloaded per-Space form with every Space and display that
+/// `before_rewrite` recorded still present and showing the image.
+pub fn kept_everywhere(before_rewrite: &[u8], kept: &[u8], image_path: &str) -> bool {
+    match coverage(kept, image_path) {
+        Coverage::AllSpaces => true,
+        Coverage::EveryRecordedSpace => {
+            let dict = |b: &[u8]| parse(b).ok().and_then(Value::into_dictionary);
+            match (dict(before_rewrite), dict(kept)) {
+                (Some(before), Some(kept)) => {
+                    recorded(&before, false).is_subset(&recorded(&kept, true))
+                }
+                _ => false,
+            }
+        }
+        Coverage::Incomplete | Coverage::Unreadable => false,
     }
 }
 
@@ -426,7 +562,9 @@ pub fn describe(store: &[u8]) -> String {
         Ok(None) => return "not a dictionary".into(),
         Err(e) => return e.to_string(),
     };
-    let found = desktops(&root);
+    let Some(found) = desktops(&root) else {
+        return format!("more than {MAX_DESKTOPS} desktop entries");
+    };
     let mut parts: Vec<String> = found
         .iter()
         .take(DESCRIBE_LIMIT)
@@ -862,7 +1000,7 @@ mod tests {
     }
 
     #[test]
-    fn all_spaces_layout_points_the_all_spaces_entry_at_the_image_and_empties_overrides() {
+    fn all_spaces_layout_points_the_all_spaces_entry_at_the_image_and_removes_desktop_overrides() {
         let input = store(image_desktop(NEW, "t1", Some(b"c-fresh")));
         let fresh = entry_dict(image_desktop(NEW, "t1", Some(b"c-fresh")));
         let out = all_spaces_store(&encode(&input, true), &fresh).unwrap();
@@ -885,14 +1023,26 @@ mod tests {
             get(choice, &["Configuration"]),
             &Value::Data(b"c-fresh".to_vec())
         );
+        // No Desktop override is left; every override's screen saver is.
+        let found = desktops(root.as_dictionary().unwrap()).unwrap();
         assert_eq!(
-            get(&root, &["Spaces"]),
-            &Value::Dictionary(Dictionary::new())
+            found.iter().map(|f| f.at.as_str()).collect::<Vec<_>>(),
+            ["AllSpacesAndDisplays"]
         );
-        assert_eq!(
-            get(&root, &["Displays"]),
-            &Value::Dictionary(Dictionary::new())
-        );
+        for at in [
+            &["Displays", "A"][..],
+            &["Spaces", "S1", "Default"],
+            &["Spaces", "S1", "Displays", "A"],
+            &["Spaces", "S2", "Displays", "B"],
+        ] {
+            let kept = get(&root, at).as_dictionary().unwrap();
+            assert_eq!(
+                kept.get("Idle"),
+                get(&input, at).as_dictionary().unwrap().get("Idle"),
+                "{at:?}"
+            );
+            assert!(!kept.contains_key("Desktop"), "{at:?}");
+        }
 
         // Preserved: the entry's own date/Idle/Type, SystemDefault, unknown keys.
         assert_eq!(
@@ -940,13 +1090,70 @@ mod tests {
             &Value::String("idle".into())
         );
         assert_eq!(
-            get(&root, &["Spaces"]),
-            &Value::Dictionary(Dictionary::new())
+            get(&root, &["Spaces", "S"]),
+            &dict(vec![
+                ("Idle", get(&input, &["Spaces", "S", "Idle"]).clone()),
+                ("Type", Value::String("individual".into())),
+            ])
         );
         assert!(
             root.as_dictionary().unwrap().get("Displays").is_none(),
             "absent stays absent"
         );
+    }
+
+    #[test]
+    fn overrides_without_a_screen_saver_are_removed_whole() {
+        let bare = |path: &str| dict(vec![("Desktop", image_desktop(path, "t0", None))]);
+        let input = dict(vec![
+            (
+                "AllSpacesAndDisplays",
+                entry(image_desktop(OLD, "t0", None)),
+            ),
+            ("Displays", dict(vec![("A", bare(OLD))])),
+            (
+                "Spaces",
+                dict(vec![
+                    // Only a Desktop: the whole Space goes.
+                    (
+                        "S1",
+                        dict(vec![
+                            ("Default", bare(NEW)),
+                            ("Displays", dict(vec![("A", bare(NEW))])),
+                        ]),
+                    ),
+                    // A screen saver on one display survives; its sibling goes.
+                    (
+                        "S2",
+                        dict(vec![(
+                            "Displays",
+                            dict(vec![
+                                ("A", entry(image_desktop(OLD, "t0", None))),
+                                ("B", bare(OLD)),
+                            ]),
+                        )]),
+                    ),
+                    // Unknown non-dictionary data is left alone.
+                    ("S3", dict(vec![("Note", Value::String("keep".into()))])),
+                ]),
+            ),
+        ]);
+        let fresh = entry_dict(image_desktop(NEW, "t1", None));
+        let out = all_spaces_store(&encode(&input, true), &fresh).unwrap();
+        let root = Value::Dictionary(decode(&out));
+        assert_eq!(get(&root, &["Displays"]), &dict(vec![]));
+        let spaces = get(&root, &["Spaces"]).as_dictionary().unwrap();
+        assert!(!spaces.contains_key("S1"));
+        let s2 = get(&root, &["Spaces", "S2", "Displays"])
+            .as_dictionary()
+            .unwrap();
+        assert_eq!(s2.keys().collect::<Vec<_>>(), ["A"]);
+        assert!(s2["A"].as_dictionary().unwrap().contains_key("Idle"));
+        assert_eq!(
+            get(&root, &["Spaces", "S3", "Note"]),
+            &Value::String("keep".into())
+        );
+        assert_eq!(coverage(&out, NEW), Coverage::AllSpaces);
     }
 
     #[test]
@@ -988,7 +1195,6 @@ mod tests {
     fn the_reloaded_per_space_form_counts_only_when_every_entry_shows_the_image() {
         let everywhere = encode(&tahoe_reloaded([NEW, NEW, NEW, NEW]), true);
         assert_eq!(coverage(&everywhere, NEW), Coverage::EveryRecordedSpace);
-        assert!(coverage(&everywhere, NEW).is_everywhere());
         // XML encoding is equally accepted.
         let xml = encode(&tahoe_reloaded([NEW, NEW, NEW, NEW]), false);
         assert_eq!(coverage(&xml, NEW), Coverage::EveryRecordedSpace);
@@ -996,7 +1202,6 @@ mod tests {
         // One display on one Space kept the old picture.
         let one_left = encode(&tahoe_reloaded([NEW, NEW, NEW, OLD]), true);
         assert_eq!(coverage(&one_left, NEW), Coverage::Incomplete);
-        assert!(!coverage(&one_left, NEW).is_everywhere());
 
         // An all-Spaces desktop this code cannot read is not proof.
         let mut odd = tahoe_reloaded([NEW, NEW, NEW, NEW]);
@@ -1008,6 +1213,90 @@ mod tests {
             )]),
         );
         assert_eq!(coverage(&encode(&odd, true), NEW), Coverage::Incomplete);
+    }
+
+    #[test]
+    fn a_recorded_space_without_a_desktop_is_not_proof_of_success() {
+        // Review probe: only the current Space shows the image, another
+        // Space holds only a screen saver, and there is no all-Spaces entry.
+        let probe = dict(vec![(
+            "Spaces",
+            dict(vec![
+                (
+                    "S1",
+                    dict(vec![("Default", entry(tahoe_desktop(NEW, "t")))]),
+                ),
+                ("S2", dict(vec![("Idle", Value::String("ss".into()))])),
+            ]),
+        )]);
+        let probe = encode(&probe, true);
+        assert_eq!(coverage(&probe, NEW), Coverage::Incomplete);
+        assert!(!kept_everywhere(&probe, &probe, NEW));
+
+        // A display recorded without a desktop is the same.
+        let mut display_gap = tahoe_reloaded([NEW, NEW, NEW, NEW]);
+        display_gap.as_dictionary_mut().unwrap().insert(
+            "Displays".into(),
+            dict(vec![(
+                "C",
+                dict(vec![("Idle", Value::String("ss".into()))]),
+            )]),
+        );
+        assert_eq!(
+            coverage(&encode(&display_gap, true), NEW),
+            Coverage::Incomplete
+        );
+    }
+
+    #[test]
+    fn the_agent_must_keep_every_space_and_display_recorded_before_the_rewrite() {
+        // Before the rewrite: Spaces S1, S2 on displays A, B.
+        let before = encode(&tahoe_reloaded([NEW, NEW, OLD, OLD]), true);
+        let all = encode(&tahoe_reloaded([NEW, NEW, NEW, NEW]), true);
+        assert!(kept_everywhere(&before, &all, NEW));
+
+        // The agent kept only S1: S2 lost, though every kept entry shows NEW.
+        let mut lost_space = tahoe_reloaded([NEW, NEW, NEW, NEW]);
+        lost_space
+            .as_dictionary_mut()
+            .unwrap()
+            .get_mut("Spaces")
+            .and_then(Value::as_dictionary_mut)
+            .unwrap()
+            .remove("S2");
+        let lost_space = encode(&lost_space, true);
+        assert_eq!(coverage(&lost_space, NEW), Coverage::EveryRecordedSpace);
+        assert!(!kept_everywhere(&before, &lost_space, NEW));
+
+        // A display recorded before but absent from every kept Space.
+        let mut lost_display = tahoe_reloaded([NEW, NEW, NEW, NEW]);
+        for space in ["S1", "S2"] {
+            lost_display
+                .as_dictionary_mut()
+                .unwrap()
+                .get_mut("Spaces")
+                .and_then(Value::as_dictionary_mut)
+                .and_then(|s| s.get_mut(space))
+                .and_then(Value::as_dictionary_mut)
+                .and_then(|s| s.get_mut("Displays"))
+                .and_then(Value::as_dictionary_mut)
+                .unwrap()
+                .remove("B");
+        }
+        assert!(!kept_everywhere(&before, &encode(&lost_display, true), NEW));
+
+        // All-Spaces mode needs no per-Space evidence; old pictures never pass.
+        let one = encode(
+            &dict(vec![(
+                "AllSpacesAndDisplays",
+                entry(tahoe_desktop(NEW, "t")),
+            )]),
+            true,
+        );
+        assert!(kept_everywhere(&before, &one, NEW));
+        assert!(!kept_everywhere(&before, &before, NEW));
+        assert!(!kept_everywhere(&before, b"junk", NEW));
+        assert!(!kept_everywhere(b"junk", &all, NEW));
     }
 
     #[test]
@@ -1117,7 +1406,7 @@ mod tests {
 
     #[test]
     fn a_store_with_thousands_of_spaces_is_handled_and_described_briefly() {
-        let spaces: Dictionary = (0..5000)
+        let spaces: Dictionary = (0..MAX_DESKTOPS)
             .map(|i| {
                 (
                     format!("S{i}"),
@@ -1135,10 +1424,101 @@ mod tests {
         assert_eq!(coverage(&big, NEW), Coverage::EveryRecordedSpace);
         let text = describe(&big);
         assert!(
-            text.ends_with(&format!("… {} more", 5000 - DESCRIBE_LIMIT)),
+            text.ends_with(&format!("… {} more", MAX_DESKTOPS - DESCRIBE_LIMIT)),
             "{text}"
         );
         assert!(text.len() < 8 * 1024, "bounded: {} bytes", text.len());
+
+        // One more than any real display × Space count: not recognised.
+        let spaces: Dictionary = (0..=MAX_DESKTOPS)
+            .map(|i| {
+                (
+                    format!("S{i}"),
+                    dict(vec![("Default", entry(tahoe_desktop(NEW, "t")))]),
+                )
+            })
+            .collect();
+        let too_many = encode(&dict(vec![("Spaces", Value::Dictionary(spaces))]), true);
+        assert_eq!(coverage(&too_many, NEW), Coverage::Incomplete);
+        assert_eq!(existing_image_entry(&too_many, NEW), None);
+        assert!(describe(&too_many).starts_with("more than"));
+    }
+
+    /// Binary plist whose objects form a DAG: object i = [i+1, i+1], the
+    /// last a short string, so `levels` objects expand to 2^levels values.
+    fn dag_bplist(levels: usize, leaf: &str) -> Vec<u8> {
+        let mut out = b"bplist00".to_vec();
+        let mut offsets = vec![];
+        for i in 0..levels {
+            offsets.push(out.len() as u32);
+            out.push(0xA2);
+            out.extend_from_slice(&((i + 1) as u16).to_be_bytes());
+            out.extend_from_slice(&((i + 1) as u16).to_be_bytes());
+        }
+        offsets.push(out.len() as u32);
+        out.push(0x50 | leaf.len() as u8);
+        out.extend_from_slice(leaf.as_bytes());
+        let table = out.len() as u64;
+        for o in &offsets {
+            out.extend_from_slice(&o.to_be_bytes());
+        }
+        out.extend_from_slice(&[0u8; 6]);
+        out.extend_from_slice(&[4, 2]);
+        out.extend_from_slice(&(offsets.len() as u64).to_be_bytes());
+        out.extend_from_slice(&0u64.to_be_bytes());
+        out.extend_from_slice(&table.to_be_bytes());
+        out
+    }
+
+    #[test]
+    fn exponentially_expanding_plists_are_refused_quickly() {
+        // Review probe: 256 bytes at 22 levels took 1.2 s, doubling per level.
+        let started = std::time::Instant::now();
+        for levels in [22, 30, 40] {
+            let config = dag_bplist(levels, "file:///a.png");
+            assert!(config.len() < 512);
+            assert!(
+                !recognised(with_configuration(config, None), "/a.png"),
+                "{levels}"
+            );
+
+            let store = dag_bplist(levels, "x");
+            assert_eq!(coverage(&store, "/a.png"), Coverage::Unreadable);
+            assert_eq!(fresh_image_entry(None, &store, "/a.png"), None);
+            assert!(describe(&store).contains("could not be read"));
+            let fresh = entry_dict(image_desktop(NEW, "t", None));
+            assert!(matches!(
+                all_spaces_store(&store, &fresh),
+                Err(StoreError::Malformed(_))
+            ));
+        }
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(1),
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn deeply_nested_and_oversized_stores_are_refused_before_parsing() {
+        let deep = format!(
+            "<?xml version=\"1.0\"?><plist>{}{}</plist>",
+            "<array>".repeat(50_000),
+            "</array>".repeat(50_000)
+        );
+        // A small stack: neither the check nor a parse may recurse this deep.
+        let result = std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(move || coverage(deep.as_bytes(), "/a.png"))
+            .unwrap()
+            .join()
+            .unwrap();
+        assert_eq!(result, Coverage::Unreadable);
+
+        let mut huge = encode(&store(image_desktop(NEW, "t", None)), false);
+        huge.resize(MAX_STORE_BYTES + 1, b' ');
+        assert_eq!(coverage(&huge, NEW), Coverage::Unreadable);
+        assert!(describe(&huge).contains("bytes"));
     }
 
     #[test]

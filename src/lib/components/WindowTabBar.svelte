@@ -615,6 +615,9 @@
         {#if renamingTabId === tab.id}
           <!-- svelte-ignore a11y_autofocus -->
           <input
+            autocorrect="off"
+            autocapitalize="none"
+            spellcheck="false"
             class="tab-rename-input"
             type="text"
             bind:value={renameValue}

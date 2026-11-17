@@ -39,7 +39,13 @@ function run(command: string, env: Record<string, string> = {}) {
   };
   stub(
     "sudo",
-    `setsid "$@" & child=$!
+    `# setsid(1) is absent on macOS hosts; setsid(2) via perl is equivalent.
+if command -v setsid >/dev/null 2>&1; then
+  setsid "$@" &
+else
+  perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or die "exec: $!"' -- "$@" &
+fi
+child=$!
 trap ':' TERM
 while :; do wait "$child"; status=$?; kill -0 "$child" 2>/dev/null || break; done
 exit "$status"`,
@@ -109,7 +115,13 @@ esac`,
       return [];
     }
   })();
-  return { ...result, calls, archives, sources: readFileSync(sources, "utf8") };
+  return {
+    ...result,
+    calls,
+    archives,
+    sources: readFileSync(sources, "utf8"),
+    sourceFiles: readdirSync(join(etc, "sources.list.d")),
+  };
 }
 
 describe("apt.sh update", () => {
@@ -124,8 +136,10 @@ describe("apt.sh update", () => {
   });
 
   it.each(["fail", "hang"])("falls back to the canonical archive when the mirror refresh %ss (#1647)", (mode) => {
-    const { status, calls, sources, stdout } = run("update", { UPDATE_FAILS: mode, APT_ATTEMPTS: "2" });
+    const { status, calls, sources, sourceFiles, stdout } = run("update", { UPDATE_FAILS: mode, APT_ATTEMPTS: "2" });
     expect(status).toBe(0);
+    // Rewriting the sources leaves no sed backup behind for apt to trip over.
+    expect(sourceFiles).toEqual(["ubuntu.sources"]);
     expect(updates(calls)).toHaveLength(3);
     expect(sources).not.toContain("kernel.org");
     expect(sources).toContain("URIs: http://archive.ubuntu.com/ubuntu/\n");

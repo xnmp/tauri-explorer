@@ -169,6 +169,9 @@
       <div class="search-container">
         <span class="search-prefix">🎨</span>
         <input
+          autocorrect="off"
+          autocapitalize="none"
+          spellcheck="false"
           type="text"
           class="search-input"
           placeholder={`${title} (↑↓ preview, Enter to apply, Esc to revert)`}

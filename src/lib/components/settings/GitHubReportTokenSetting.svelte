@@ -44,6 +44,8 @@
   <p class="status" role="status">{status}</p>
   <form class="token-form" onsubmit={(event) => { event.preventDefault(); void save(); }}>
     <input
+      autocorrect="off"
+      autocapitalize="none"
       type="password"
       class="token-input"
       aria-label="GitHub personal access token"

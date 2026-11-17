@@ -20,6 +20,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `+page.svelte` — app root. Global keyboard shortcuts, store init, layout composition (TitleBar > toolbar > Sidebar + PaneContainer > StatusBar), overlay dialogs. Open for global shortcut wiring / top-level layout.
 - `+layout.ts` — SvelteKit adapter-static SPA config (prerender/ssr flags). Rarely touched.
 - `src/hooks.client.ts` — SPA client entry; installs global crash/error handlers before the app mounts (catches early init errors).
+- `src/app.d.ts` — ambient type augmentation: adds `autocorrect` to `svelte/elements` `HTMLTextareaAttributes` (Svelte types it only for `<input>`); guarded by `tests/text-input-autocorrect.test.ts` (#1726).
 
 ## src/lib/components/ — Svelte 5 UI. Views, dialogs, panels, item chrome.
 
@@ -656,7 +657,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `terminal-shell.ts` — shell dialect profile + WSL↔Windows path translation (#409/#418).
 - `terminal-theme.ts` — map CSS theme vars → xterm.js theme (pane-surface background, ANSI palette from status colours or `--terminal-*` overrides).
 - `content-search.ts` — `ContentMatch`/`ContentSearchResult` types for ripgrep results; re-exported by `api/search.ts`.
-- `crash-report.ts` — pure crash-dedupe helper behind `api/crash.ts`.
+- `crash-report.ts` — pure crash-dedupe + benign-browser-notice (ResizeObserver) helpers behind `api/crash.ts` (#1725).
 - `crash-report-draft.ts` — pure crash → report title/draft update (#1684), loaded only when reporting.
 - `report-diagnostics.ts` — Report Issue diagnostic sections (kinds mirror `user_report.rs` `DiagnosticKind`), shared relay budget and head-keeping text fitting (#1022, #1684).
 - `user-report.ts` — report contracts and pure prefilled-GitHub fallback URL builder.

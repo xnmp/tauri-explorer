@@ -102,6 +102,9 @@
           <div class="save-form">
             <!-- svelte-ignore a11y_autofocus -- Modal traps focus and documents [autofocus] as its initial-focus mechanism (see Modal.svelte); this is a name-entry field the user should be able to type into immediately -->
             <input
+              autocorrect="off"
+              autocapitalize="none"
+              spellcheck="false"
               type="text"
               class="save-input"
               placeholder="Workspace name..."
@@ -129,6 +132,9 @@
                     {#if editingId === workspace.id}
                       <!-- svelte-ignore a11y_autofocus -- Modal traps focus and documents [autofocus] as its initial-focus mechanism (see Modal.svelte); rename mode should let the user type immediately -->
                       <input
+                        autocorrect="off"
+                        autocapitalize="none"
+                        spellcheck="false"
                         type="text"
                         class="rename-input"
                         bind:value={editName}

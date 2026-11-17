@@ -59,6 +59,9 @@
           </select>
         {:else}
           <input
+            autocorrect="off"
+            autocapitalize="none"
+            spellcheck="false"
             aria-label={row.label}
             class="text-input"
             type={row.type === "password" ? "password" : "text"}

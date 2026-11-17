@@ -10,19 +10,51 @@ import { TAB_BLEED } from "$lib/domain/tab-strip";
 import { TAB_STRIP_PADDING } from "$lib/domain/tab-seam";
 import { tabSlideCss } from "$lib/domain/tab-slide";
 
+/** The selected state Svelte last rendered on a leaving tab, kept while
+ *  `tabSlide` shows it unselected. */
+const leaving = new WeakMap<Element, { active: boolean; selected: string | null }>();
+
+function showUnselected(node: Element): void {
+  if (!leaving.has(node)) leaving.set(node, { active: node.classList.contains("active"), selected: node.getAttribute("aria-selected") });
+  node.classList.remove("active");
+  node.setAttribute("aria-selected", "false");
+}
+
+function restoreRendered(node: Element): void {
+  const rendered = leaving.get(node);
+  if (!rendered) return;
+  leaving.delete(node);
+  node.classList.toggle("active", rendered.active);
+  if (rendered.selected === null) node.removeAttribute("aria-selected");
+  else node.setAttribute("aria-selected", rendered.selected);
+}
+
 /** Tab enter/exit: animate --tab-slide, which sizes the tab from the live
- *  --tab-width, never clipping the fillets (domain/tab-slide.ts). */
-export function tabSlide(node: HTMLElement, { duration, sized }: { duration: number; sized: boolean }) {
-  // A closing tab is no longer the selected one: its neighbour took over
-  // when it was removed, and Svelte no longer updates the leaving node. It
-  // must not keep looking (or being found as) the active tab while it
-  // slides out.
-  if (sized) {
-    node.classList.remove("active");
-    node.setAttribute("aria-selected", "false");
-    node.inert = true;
+ *  --tab-width, never clipping the fillets (domain/tab-slide.ts).
+ *
+ *  A closing tab is no longer the selected one: its neighbour took over when
+ *  it was removed, and Svelte no longer updates the leaving node, so it must
+ *  not keep looking (or being found as) the active tab while it slides out.
+ *  (Svelte makes it inert, and restores that itself.) If the same tab
+ *  returns before its slide ends, Svelte reverses the outro, starts the
+ *  intro, and resumes updating the node by comparing against what it last
+ *  rendered, so the intro first puts that back (#1744 review).
+ *
+ *  Svelte computes an outro's options once per node and reuses them for a
+ *  later outro, but calls a deferred config (a function, as `crossfade`
+ *  returns) at the start of every one, before the next frame: the leaving
+ *  state is applied there. An intro's options are computed again after
+ *  every outro. */
+export function tabSlide(node: Element, { duration, sized }: { duration: number; sized: boolean }) {
+  const config = { duration, easing: cubicOut, css: (t: number) => tabSlideCss(t, "var(--tab-width)", TAB_BLEED, sized) };
+  if (!sized) {
+    restoreRendered(node);
+    return config;
   }
-  return { duration, easing: cubicOut, css: (t: number) => tabSlideCss(t, "var(--tab-width)", TAB_BLEED, sized) };
+  return () => {
+    showUnselected(node);
+    return config;
+  };
 }
 
 /**

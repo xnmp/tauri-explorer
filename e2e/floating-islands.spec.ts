@@ -693,6 +693,84 @@ test.describe("Fused active tab (#1734)", () => {
     }
   });
 
+  // A sliding tab's title box passes through widths narrower than its 16px
+  // fade: there a lone glyph stem painted, like a caret (#1744 review). On
+  // every stepped frame, a title box under 24px paints no ink; the oracle
+  // compares the frame with that title hidden.
+  for (const { what, width, count } of [
+    { what: "opening, 3 tabs at 1100px", width: 1100, count: 3 },
+    { what: "opening, 5 tabs at 560px", width: 560, count: 5 },
+    { what: "closing, 3 tabs at 1100px", width: 1100, count: 3 },
+  ]) test(`a sliding tab never paints a fragment of its title (${what})`, async ({ page }) => {
+    const closing = what.startsWith("closing");
+    await openIslands(page, { theme: "light", count, width, active: count - 1 });
+    await page.mouse.move(5, 500);
+    await page.waitForTimeout(300);
+    // Opening: the new active tab grows. Closing: the closed tab shrinks
+    // out, inert, while its neighbour takes over.
+    const sliding = closing ? '.tab-viewport [data-region="tab"][inert]' : '.tab-viewport [data-region="tab"][aria-selected="true"]';
+    const samples: { step: number; box: number; ink: number }[] = [];
+    const shot = async (clip: { x: number; y: number; width: number; height: number }) => {
+      const png = await page.screenshot({ clip });
+      return page.evaluate(async (data) => {
+        const image = new Image();
+        image.src = `data:image/png;base64,${data}`;
+        await image.decode();
+        const canvas = Object.assign(document.createElement("canvas"), { width: image.width, height: image.height });
+        const context = canvas.getContext("2d")!;
+        context.drawImage(image, 0, 0);
+        return [...context.getImageData(0, 0, image.width, image.height).data];
+      }, png.toString("base64"));
+    };
+    await steppedFrames(page, () => closing
+      ? pressShortcut(page, "w", { ctrlKey: true, shiftKey: true })
+      : pressShortcut(page, "t", { ctrlKey: true }), {
+      steps: 16,
+      onStep: async (step) => {
+        const title = page.locator(`${sliding} .tab-title`);
+        if (await title.count() !== 1) return;
+        const measure = () => title.evaluate((el) => {
+          const r = el.getBoundingClientRect();
+          return { x: r.left, y: r.top, width: r.width, height: r.height, client: el.clientWidth };
+        });
+        const diff = (a: number[], b: number[]) => {
+          let most = 0;
+          for (let i = 0; i < a.length; i += 4) {
+            most = Math.max(most, Math.abs(a[i] - b[i]), Math.abs(a[i + 1] - b[i + 1]), Math.abs(a[i + 2] - b[i + 2]));
+          }
+          return most;
+        };
+        // WebKit's screenshots can move a held strip (about 10px, see
+        // tab-outline-matrix.spec.ts): a comparison counts only when the
+        // title's box and the frame with it shown are the same before and
+        // after the frame without it.
+        let box = await measure();
+        let ink = Number.NaN;
+        for (let attempt = 0; attempt < 4 && Number.isNaN(ink); attempt++) {
+          box = await measure();
+          if (box.width < 0.5) return;
+          const clip = { x: Math.floor(box.x) - 1, y: Math.floor(box.y), width: Math.ceil(box.width) + 2, height: Math.ceil(box.height) };
+          const shown = await shot(clip);
+          await title.evaluate((el) => { el.style.visibility = "hidden"; });
+          const hidden = await shot(clip);
+          await title.evaluate((el) => { el.style.visibility = ""; });
+          const again = await shot(clip);
+          const after = await measure();
+          // (Stretched transitions still creep in Chromium: a fraction of a pixel.)
+          const still = Math.abs(after.x - box.x) < 0.5 && Math.abs(after.width - box.width) < 0.5;
+          if (still && diff(shown, again) <= 2) ink = diff(shown, hidden);
+        }
+        expect(ink, `step ${step}: the held frame never stood still`).not.toBeNaN();
+        samples.push({ step, box: box.client, ink });
+      },
+    });
+    const narrow = samples.filter((sample) => sample.box < 24);
+    expect(narrow.length, `frames with a title box under 24px: ${JSON.stringify(samples)}`).toBeGreaterThan(0);
+    for (const sample of narrow) expect(sample.ink, `step ${sample.step}, title box ${sample.box}px`).toBeLessThanOrEqual(2);
+    // The oracle sees a title once there is room for one.
+    expect(Math.max(...samples.filter((sample) => sample.box >= 40).map((sample) => sample.ink), 0), "a wider title paints").toBeGreaterThan(40);
+  });
+
   test("a title that fits is not faded, one that does not is", async ({ page }) => {
     await openIslands(page, { theme: "light", settings: { zoomLevel: 125 } });
     await page.mouse.move(5, 500);

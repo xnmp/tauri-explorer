@@ -185,12 +185,17 @@ async function holdTitlebarAnimations(page: Page): Promise<void> {
 
 /**
  * Run `action` with the title bar's animations held, then advance them in
- * `stepMs` steps of animation time, sampling one painted frame per step.
+ * `stepMs` steps of animation time, sampling one painted frame per step
+ * (`onStep` may inspect each held frame).
  * Stepping animation time (not wall time) makes every step the same on a
  * fast or a slow runner: a stalled engine cannot skip a step or merge two.
  * Returns the frame before the action, then one per step.
  */
-export async function steppedFrames(page: Page, action: () => Promise<void>, { stepMs = 15, steps = 22 } = {}): Promise<TabFrame[]> {
+export async function steppedFrames(
+  page: Page,
+  action: () => Promise<void>,
+  { stepMs = 15, steps = 22, onStep }: { stepMs?: number; steps?: number; onStep?: (step: number) => Promise<void> } = {},
+): Promise<TabFrame[]> {
   await holdTitlebarAnimations(page);
   await sampleTabFrames(page, 60_000);
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -214,6 +219,8 @@ export async function steppedFrames(page: Page, action: () => Promise<void>, { s
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       return w.__tabFrames.at(-1);
     }, step * stepMs) as TabFrame);
+    // Inspect the held frame (a screenshot does not advance it).
+    await onStep?.(step);
   }
   return frames;
 }

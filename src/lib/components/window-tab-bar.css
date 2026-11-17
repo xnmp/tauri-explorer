@@ -477,6 +477,21 @@
     --tab-title-fade: linear-gradient(to right, #000 calc(100% - 16px), transparent);
     -webkit-mask-image: var(--tab-title-fade);
     mask-image: var(--tab-title-fade);
+    -webkit-mask-composite: source-in;
+    mask-composite: intersect;
+  }
+  /* The active tab grows from a sliver as it opens, with its content at
+     full strength, and a closing tab (inert while it leaves) shrinks to
+     one. Their title's fade is intersected with a gate whose
+     edge moves at 3.5 times the box's rate: nothing shows below 24px,
+     where a growing tab painted a lone glyph stem, the title is revealed
+     from its first letter, and from 40px the gate is solid, so a settled
+     tab's title is untouched (#1744 review). */
+  .tab-area .tab.active .tab-title,
+  .tab-area .tab[inert] .tab-title {
+    --tab-title-fade:
+      linear-gradient(to right, #000 calc(100% - 16px), transparent),
+      linear-gradient(to right, #000 calc(350% - 100px), transparent calc(350% - 84px));
   }
   /* A title that fits keeps every letter (WindowTabBar marks it). */
   .tab-area .tab-title.fits { -webkit-mask-image: none; mask-image: none; }

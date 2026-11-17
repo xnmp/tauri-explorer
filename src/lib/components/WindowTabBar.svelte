@@ -37,22 +37,15 @@
   let tabSpaceWidth = $state(0);
   let tabViewportWidth = $state(0);
   let tabScrollLeft = $state(0);
-  // The count the tabs are sized for. A closing tab's slide-out starts one
-  // frame after its removal (Svelte runs a zero-length placeholder animation
-  // first), so the remaining tabs start widening on that same frame: a frame
-  // earlier, they would outgrow the room while the closing tab is still at
-  // full width, clipping the strip and stalling the new-tab button (#1734).
-  // A new tab's slide-in holds zero width over that frame, so growth applies
-  // at once.
   // The strip's total width must change one way only, or the new-tab button
   // dips back. A sliding tab's own animation starts one frame after it is
   // inserted or removed (Svelte runs a zero-length placeholder first), so the
-  // strip lays out the new count and active tab one frame late too, then:
-  // - opening, the other tabs ease narrower over the new tab's own duration
-  //   and curve, never giving up its room before it takes it (any excess is
-  //   shared by flex-shrink, see window-tab-bar.css);
-  // - closing, they take their wider width at once and flex-shrink hands
-  //   them exactly the room the sliding tab frees, frame by frame.
+  // strip lays out the new count and active tab one frame late too. The
+  // other tabs then ease to their new width over the sliding tab's own
+  // duration, with the same ease-out cubic curve: narrower as a new tab grows
+  // (any excess is shared by flex-shrink, see window-tab-bar.css), wider as a
+  // closing tab shrinks. They never take more room than it frees, so the
+  // total moves one way. A 0ms close ease jumped them up to 16px in one frame.
   // Two independent eases undershot by up to 12px (#1734). Switching tabs
   // swaps the active and inactive widths with one ease, at once.
   let stripTabs = $state({ count: windowTabsManager.tabs.length, activeId: windowTabsManager.activeTabId });
@@ -60,7 +53,7 @@
   $effect.pre(() => {
     const next = { count: tabs.length, activeId: activeTabId };
     const previous = untrack(() => stripTabs.count);
-    widthEaseMs = next.count < previous ? 0 : TAB_SLIDE_IN_MS;
+    widthEaseMs = next.count < previous ? TAB_SLIDE_OUT_MS : TAB_SLIDE_IN_MS;
     if (next.count === previous) {
       stripTabs = next;
       return;

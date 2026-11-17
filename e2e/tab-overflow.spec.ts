@@ -271,11 +271,14 @@ for (const [label, count, settings] of [['3 tabs', 3, {}], ['12 tabs', 12, {}], 
 // its flow, and the viewport keeps its geometry. (Only the strip's own
 // scroll position may move the tabs, to reveal the new one.)
 test('a strip crossing into overflow shifts no tab', async ({ page }) => {
+  // Several stepped openings until one crosses: budget for a loaded runner.
+  test.setTimeout(90_000);
   await openTabs(page, 14, 900);
   await page.waitForTimeout(300);
   let crossed = false;
   for (let i = 0; i < 20 && !crossed; i++) {
-    const frames = await steppedFrames(page, () => pressShortcut(page, 't', { ctrlKey: true }));
+    // The crossing is a layout change: it lands in the first frames.
+    const frames = await steppedFrames(page, () => pressShortcut(page, 't', { ctrlKey: true }), { steps: 10 });
     crossed = frames.some(frame => frame.overflowing);
     for (let index = 1; index < frames.length; index++) {
       const [a, b] = [frames[index - 1], frames[index]];

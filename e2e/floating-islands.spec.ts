@@ -220,6 +220,27 @@ test.describe("Fused active tab (#1734)", () => {
     }
   });
 
+  test("closing a tab: the others widen with its slide and no tab snaps", async ({ page }) => {
+    // Three tabs in the islands strip are narrower than their maximum, so
+    // the survivors widen into the closed tab's room: over its slide, never
+    // in one frame, while the strip (and "+") only moves left.
+    await openIslands(page);
+    await page.waitForTimeout(300);
+    const all = await steppedFrames(page, () => pressShortcut(page, "w", { ctrlKey: true, shiftKey: true }));
+    await expect(page.locator('.tab-viewport [data-region="tab"]')).toHaveCount(2);
+    for (let i = 0; i < 2; i++) {
+      const change = Math.abs(all[all.length - 1].widths[i] - all[0].widths[i]);
+      expect(change, `tab ${i} widens`).toBeGreaterThan(4);
+      for (let index = 1; index < all.length; index++) {
+        const step = Math.abs(all[index].widths[i] - all[index - 1].widths[i]);
+        expect(step, `tab ${i} t=${all[index].t} of ${change.toFixed(1)}`).toBeLessThanOrEqual(Math.max(1, change * 0.5));
+      }
+    }
+    for (let index = 1; index < all.length; index++) {
+      expect(all[index].plusLeft!, `+ t=${all[index].t}`).toBeLessThanOrEqual(all[index - 1].plusLeft! + 0.5);
+    }
+  });
+
   /**
    * Exactly one tab reads as the active one on every frame, from the frame
    * before the action on: it is selected, wide enough to show its icon, and

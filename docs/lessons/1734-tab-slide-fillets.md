@@ -49,12 +49,19 @@ judge frame-exact claims from Chromium sheets.
 
 ## Visual QA follow-ups (#1744 review)
 
-- **Strip width moves one way.** On open, the other tabs ease over the new
-  tab's duration and curve. On close they jump (`--tab-width-ease: 0ms`), and
-  flex-shrink hands them the room the outro releases. The strip layout
-  (count plus active id) is deferred one frame on count changes, so it starts
-  with the slide rather than a frame before it. Otherwise "+" dips, most
-  visibly in WebKit at 125% and with 12 tabs.
+- **Strip width moves one way.** The other tabs ease to their new width over
+  the sliding tab's own duration (in 180ms, out 120ms) with the same
+  ease-out cubic curve. They never take more room than the sliding tab frees,
+  so the total moves one way. The strip layout (count plus active id) is
+  deferred one frame on count changes, so it starts with the slide rather
+  than a frame before it. Otherwise "+" dips, most visibly in WebKit at 125%
+  and with 12 tabs. A 0ms close ease avoided the dip but jumped survivors up
+  to 16px in one frame in the narrower islands strip.
+- **The stepped harness stretches transitions unconditionally.** It used to
+  stretch them only if a tab already had a transition when the hold started.
+  On a loaded runner the strip had not enabled its width ease yet, so later
+  transitions ran in real 180ms and read as one-frame snaps (WebKit, 4
+  workers: 15 of 16 failures).
 - **Stacking.** Title bar children are positioned so they paint above the
   strip shade layer. Each tab is `isolation: isolate`, with its hover/active
   `::before` at `z-index: -1`, so the pill never covers the title or icon.

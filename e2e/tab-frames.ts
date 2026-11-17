@@ -150,14 +150,13 @@ async function holdTitlebarAnimations(page: Page): Promise<void> {
     // A transition is only reachable from its first frame on, when it has
     // already advanced; stretch the tabs' transitions so that advance is
     // negligible, and step them in stretched time (TRANSITION_STRETCH).
-    const tab = document.querySelector('[data-region="titlebar"] [data-region="tab"]');
-    const seconds = tab ? parseFloat(getComputedStyle(tab).transitionDuration) || 0 : 0;
-    if (seconds > 0) {
-      const style = document.createElement("style");
-      // Scale the strip's own duration (it is 0 while a tab closes).
-      style.textContent = `[data-region="titlebar"] [data-region="tab"] { transition-duration: calc(var(--tab-width-ease, ${seconds}s) * 1000) !important; }`;
-      document.head.appendChild(style);
-    }
+    // Install it unconditionally: the strip may not have enabled its width
+    // ease yet when the hold starts (on a loaded runner), and a stretch keyed
+    // on the duration at that moment let later transitions run in real time.
+    const style = document.createElement("style");
+    // Scale the strip's own duration (it is the sliding tab's: in or out).
+    style.textContent = `[data-region="titlebar"] [data-region="tab"] { transition-duration: calc(var(--tab-width-ease, 180ms) * 1000) !important; }`;
+    document.head.appendChild(style);
   });
 }
 

@@ -129,6 +129,56 @@ use no DOM evaluation or synthetic acceptance screenshots. The uploaded report
 retains the source/binary identity, geometry, fixture hash and each actual image.
 Production worker cleanup is not independently measured by this AX-only route.
 
+## macOS visual capture (on demand)
+
+Linux CI cannot show how the macOS material looks in real WKWebView with
+`NSVisualEffectView` vibrancy. `.github/workflows/macos-visual-capture.yml`
+builds the production `.app` from any ref on a GitHub-hosted Mac and captures
+it:
+
+```bash
+gh workflow run macos-visual-capture.yml -f ref=<branch-or-sha>
+# optional: only some scenarios (ids, or the presets matrix / extras)
+gh workflow run macos-visual-capture.yml -f ref=<branch> -f scenarios=matrix
+gh workflow run macos-visual-capture.yml -f ref=<branch> -f scenarios=islands-vibrancy-dark,settings-translucency
+gh run download <run-id> -n macos-visual-capture -D <dir>
+```
+
+The app comes from `ref`; the tooling (`macos-visual-capture.ts`, its Swift and
+Python helpers) always comes from the workflow's own commit, so refs that
+predate it, or lack newer settings, still capture. The driver sets a
+high-contrast wallpaper, then for each scenario seeds `settings.json` (theme,
+layout, Window Vibrancy + Native Blur, integrated title bar,
+`translucencyOpacity`) before launching through Appium Mac2. The `matrix`
+preset covers every layout (Floating Islands, default) x translucency (Window
+Vibrancy + Native Blur on, off) x theme (dark, light) cell; the `extras` are
+islands at `translucencyOpacity` 20 and 100, the Settings dialog filtered to
+the material rows, and islands with the native title bar. Each still is saved three ways:
+`screencapture -R` (the screen under the window: judge vibrancy here),
+`screencapture -l` (window only; the WindowServer does not composite the
+behind-window material into it, so it looks opaque) and XCTest's screenshot
+cropped to the window. The matrix cells also record four actions (Cmd+T ×3; Ctrl+Tab/Ctrl+Shift+Tab/
+Cmd+Shift+]/clicks; close the middle tab with Cmd+W; crowd to 12 tabs then
+close five). ffmpeg extracts every frame cropped to the title/tab strip, and
+Pillow builds an overview sheet per action plus one sheet of consecutive frames
+per burst of motion. Each still also gets `inspect/` crops at 4x
+nearest-neighbour (the active tab and its feet, the island/strip top corners,
+the traffic lights and window controls) so single-pixel defects can be judged
+without opening full frames. The artifact's `README.txt` lists every file;
+`report.json` records blank-image checks, input times and notes.
+
+The hosted macOS 26 image ships with Reduce Transparency and Reduce Motion on,
+which make every material opaque and suppress animations (the page sees
+`prefers-reduced-transparency` / `prefers-reduced-motion`); the workflow turns
+both off and `report.json` records what macOS reports. The VM's display is
+1024x768 at 1x with a paravirtualized GPU, so the window fills the screen and
+pixel density is half a Retina Mac's.
+
+It is evidence only: it never gates anything and must stay out of required
+checks. The app bundle is cached by source tree, so re-running a ref skips the
+build. Screen Recording and Accessibility permission are granted only on the
+disposable runner; the driver refuses to run anywhere else.
+
 ## Session-loss failure evidence (`diagnostics/`)
 
 Failure-evidence diagnostics live in `e2e-tauri/diagnostics/`. Modules

@@ -1,0 +1,219 @@
+name: macOS Visual Capture
+
+# On-demand evidence (#1750): screenshots and screen recordings of the
+# production .app in real WKWebView with NSVisualEffectView vibrancy, on a
+# hosted Mac. It asserts nothing about the product and must never become a
+# required check: keep it out of gate, aggregation and path-filter jobs.
+#
+#   gh workflow run macos-visual-capture.yml -f ref=<branch-or-sha>
+#
+# The app is built from `ref`; the capture tooling always comes from this
+# workflow's own commit, so refs that predate the tooling can be captured.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or SHA to build and capture
+        required: true
+        default: dev
+      scenarios:
+        description: "Comma-separated scenario ids or presets (matrix, extras); empty = all. See e2e-tauri/macos-visual-capture.ts"
+        required: false
+        default: ''
+  # Development only: the workflow's own branch, capturing its own commit.
+  push:
+    branches: [test/macos-visual-capture]
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    runs-on: macos-26
+    timeout-minutes: 120
+    env:
+      CAPTURE_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.sha }}
+      CAPTURE_SCENARIOS: ${{ inputs.scenarios }}
+      OUT: ${{ github.workspace }}/qualification-results/macos-visual-capture
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+      HOMEBREW_NO_INSTALL_CLEANUP: '1'
+    steps:
+      # The app under capture lives at the workspace root so the cargo cache
+      # paths match macos-native-ui.yml's and can seed this job.
+      - name: Check out the ref to capture
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.CAPTURE_REF }}
+
+      - name: Check out the capture tooling
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          path: capture-tools
+
+      - name: Record hosted Mac environment
+        id: host
+        run: |
+          mkdir -p "$OUT"
+          {
+            printf 'runner=%s image=%s/%s arch=%s\n' "$RUNNER_OS" "$ImageOS" "$ImageVersion" "$RUNNER_ARCH"
+            printf 'ref=%s commit=%s tooling=%s\n' "$CAPTURE_REF" "$(git rev-parse HEAD)" "$GITHUB_SHA"
+            sw_vers
+            xcodebuild -version
+            csrutil status || true
+            echo "image reduceTransparency=$(defaults read com.apple.universalaccess reduceTransparency 2>&1)"
+            echo "image reduceMotion=$(defaults read com.apple.universalaccess reduceMotion 2>&1)"
+            echo '--- system TCC screen-capture rows'
+            sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
+              "SELECT client, auth_value FROM access WHERE service='kTCCServiceScreenCapture';" || true
+          } > "$OUT/host.txt" 2>&1
+          cat "$OUT/host.txt"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Key the app bundle by its source tree and toolchain
+        id: app-key
+        run: |
+          rustc_id=$(rustc -Vv | shasum -a 256 | cut -c1-16)
+          # Every top-level tree except docs, tests and CI tooling feeds the
+          # build, so iterating on the capture tooling reuses the bundle.
+          tree=$(git ls-tree HEAD | grep -vE $'\t(e2e-tauri|e2e|tests|docs|screenshots|evidence|website|\\.github)$' | shasum -a 256 | cut -c1-24)
+          echo "rustc=$rustc_id" >> "$GITHUB_OUTPUT"
+          echo "key=macos-visual-capture-app-v1-${ImageOS}-${RUNNER_ARCH}-${rustc_id}-${tree}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore a previously built app bundle
+        id: app-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: src-tauri/target/release/bundle/macos/tauri-explorer.app
+          key: ${{ steps.app-key.outputs.key }}
+
+      - name: Restore cargo build cache
+        if: steps.app-cache.outputs.cache-hit != 'true'
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: macos-visual-capture-${{ runner.os }}-${{ runner.arch }}-${{ steps.app-key.outputs.rustc }}-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/Cargo.toml', 'src-tauri/tauri.conf.json') }}
+          restore-keys: |
+            macos-visual-capture-${{ runner.os }}-${{ runner.arch }}-${{ steps.app-key.outputs.rustc }}-
+            macos-native-ui-${{ runner.os }}-${{ runner.arch }}-${{ steps.app-key.outputs.rustc }}-
+
+      - name: Build production WKWebView application bundle
+        if: steps.app-cache.outputs.cache-hit != 'true'
+        env:
+          VITE_E2E_HOOKS: '0'
+        run: |
+          bun install --frozen-lockfile
+          bun run tauri build --bundles app
+
+      - name: Save the app bundle for later capture runs
+        if: steps.app-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: src-tauri/target/release/bundle/macos/tauri-explorer.app
+          key: ${{ steps.app-key.outputs.key }}
+
+      - name: Install capture tooling dependencies
+        working-directory: capture-tools
+        run: bun install --frozen-lockfile
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Install Pillow and ffmpeg
+        run: |
+          python -m pip install --disable-pip-version-check Pillow==12.3.0
+          command -v ffmpeg || brew install ffmpeg
+          ffmpeg -version | head -1
+
+      - name: Install pinned Appium Mac2 driver
+        run: |
+          npm install --global appium@3.8.0
+          appium driver install mac2@4.2.0
+
+      - name: Grant XCTest Accessibility on this disposable runner
+        run: |
+          helper="$(xcode-select -p)/Platforms/MacOSX.platform/Developer/Library/Xcode/Agents/Xcode Helper.app/Contents/MacOS/Xcode Helper"
+          bash capture-tools/scripts/grant-macos-accessibility.sh "$helper"
+          sudo automationmodetool enable-automationmode-without-authentication || echo '::warning::Could not suppress an automation prompt'
+          appium driver doctor mac2
+
+      # screencapture/ffmpeg need Screen Recording permission. The TCC client
+      # is the responsible process, so grant every ancestor of this shell as
+      # well as the capture binaries. Best effort: the driver probes which
+      # recorder actually yields frames and falls back to stills.
+      - name: Grant Screen Recording on this disposable runner
+        continue-on-error: true
+        run: |
+          clients=(/usr/sbin/screencapture "$(command -v ffmpeg)" "$(command -v bun)" "$(command -v node)" /bin/bash /bin/zsh /bin/sh)
+          pid=$$
+          while [ "$pid" -gt 1 ]; do
+            exe=$(ps -o comm= -p "$pid" | sed 's/^ *//')
+            case "$exe" in /*) clients+=("$exe") ;; esac
+            pid=$(ps -o ppid= -p "$pid" | tr -d ' ')
+          done
+          for client in "${clients[@]}"; do
+            [ -e "$client" ] || continue
+            for path in "$client" "$(realpath "$client")"; do
+              sql=${path//\'/\'\'}
+              sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
+                "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, indirect_object_identifier, flags, last_modified) VALUES ('kTCCServiceScreenCapture', '$sql', 1, 2, 3, 1, 'UNUSED', 0, CAST(strftime('%s','now') AS INTEGER));" \
+                && echo "granted $path"
+            done
+          done
+          sudo launchctl kickstart -k system/com.apple.tccd 2>/dev/null || sudo pkill -HUP tccd || true
+
+      # The hosted macOS 26 image ships with Reduce Transparency and Reduce
+      # Motion on: every material paints opaque and the page matches
+      # prefers-reduced-transparency / prefers-reduced-motion, which would
+      # hide both the vibrancy and the tab animations under review. Turn them
+      # off; the driver records what macOS reports afterwards.
+      - name: Allow transparency and motion on this disposable runner
+        continue-on-error: true
+        run: |
+          for key in reduceTransparency reduceMotion; do
+            echo "$key before: $(defaults read com.apple.universalaccess "$key" 2>&1)"
+            defaults write com.apple.universalaccess "$key" -bool false
+            echo "$key after: $(defaults read com.apple.universalaccess "$key" 2>&1)" | tee -a "$OUT/host.txt"
+          done
+          # Running UI picks the preference up on relaunch; the app launches later.
+          killall Dock SystemUIServer 2>/dev/null || true
+
+      - name: Capture stills and recordings
+        env:
+          CAPTURE_APP: ${{ github.workspace }}/src-tauri/target/release/bundle/macos/tauri-explorer.app
+          CAPTURE_OUTPUT: ${{ env.OUT }}
+          CAPTURE_COMMIT: ${{ steps.host.outputs.commit }}
+          CAPTURE_PYTHON: python
+        run: |
+          appium --address 127.0.0.1 --port 4723 > "$OUT/appium.log" 2>&1 &
+          appium_pid=$!
+          trap 'kill "$appium_pid" 2>/dev/null || true; wait "$appium_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:4723/status > /dev/null; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:4723/status > /dev/null
+          bun run capture-tools/e2e-tauri/macos-visual-capture.ts
+
+      - name: Upload capture artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-visual-capture
+          path: qualification-results/macos-visual-capture/
+          if-no-files-found: error
+          retention-days: 14

@@ -2,7 +2,7 @@ import { admitsCommandDestination } from "$lib/domain/command-admission";
 import { isModifierKey } from "$lib/domain/keyboard";
 import { getTerminalCommand } from "$lib/domain/terminal-keys";
 import { allowsPaneDialogCommandInput } from "$lib/domain/pane-dialog-keys";
-import { resolveWindowKey, isNativeControlActivation } from "$lib/domain/window-keys";
+import { resolveWindowKey, isNativeControlActivation, type WindowKeyAction } from "$lib/domain/window-keys";
 import type { Command } from "./commands.svelte";
 import type { ModalScope } from "./modal-ownership.svelte";
 import type { keybindingsStore as bindingsType } from "./keybindings.svelte";
@@ -23,6 +23,11 @@ export interface WindowKeyboardDependencies {
   getActiveExplorer(): { readonly showFilter: boolean; openFilter(): void; closeFilter(): void } | undefined;
   getActivePaneId?(): string;
 }
+
+/** Commands behind the hardcoded surface shortcuts that a field may yield. */
+const SURFACE_COMMANDS: Partial<Record<WindowKeyAction, string>> = {
+  "open-jobs": "general.openJobsPanel", "open-settings": "general.openSettings", "toggle-dual-pane": "view.toggleDualPane",
+};
 
 /** Own window keyboard subscriptions and transient modifier/chord state. */
 export function startWindowKeyboard(target: EventTarget, dependencies: WindowKeyboardDependencies): () => void {
@@ -93,7 +98,8 @@ export function startWindowKeyboard(target: EventTarget, dependencies: WindowKey
     const action = resolveWindowKey(event, {
       input, nativeButton, fileEntry, trackedMetaHeld: bindings.trackedMetaHeld,
       terminal: terminalFocus && scope === undefined, terminalCommand,
-      chord, modal: scope === null, filterOpen: explorer?.showFilter ?? false,
+      chord, chordPending: !terminalFocus && bindings.isChordActive,
+      modal: scope === null, filterOpen: explorer?.showFilter ?? false,
     });
     if (action === "native-activation") {
       bindings.cancelChord();
@@ -124,6 +130,9 @@ export function startWindowKeyboard(target: EventTarget, dependencies: WindowKey
     }
     // A surface action ends any unrelated prefix just as a command match does.
     bindings.cancelChord();
+    // From a text field, an unavailable surface shortcut stays the field's key.
+    const surfaceCommand = SURFACE_COMMANDS[action];
+    if (input && surfaceCommand && !isAvailable(surfaceCommand)) return;
     event.preventDefault();
     switch (action) {
       case "close-dialogs": dialogs.requestCloseTop(event); break;

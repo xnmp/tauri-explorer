@@ -2,6 +2,39 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.27.0 — 2026-11-17
+
+### Added
+
+- macOS: the sidebar uses native vibrancy on every window, tinted by the
+  active theme (#1733).
+- macOS: a new engraved tau app icon on an opaque squircle, so the Dock no
+  longer puts it on a white plate (#1732).
+
+### Changed
+
+- macOS: the custom minimize/maximize/close buttons never render, since the
+  native traffic lights are always there; the Show Window Controls setting
+  is hidden on macOS (#1756).
+
+### Fixed
+
+- Word movement while renaming (Ctrl+Arrow, Option+Arrow on macOS) stops at
+  every punctuation character, not only spaces and a few separators, and
+  Ctrl/Option+Backspace/Delete delete by the same words (#1746).
+- Bound Ctrl/Cmd shortcuts such as Ctrl+T work while a text field (like
+  the address bar of a new window) has focus, and on macOS Option
+  shortcuts on punctuation keys (such as the split commands) match again
+  (#1730).
+- macOS: text fields no longer show the autocorrect bubble (#1726).
+- Selection, preview and the focus ring stay continuous when Ctrl+T opens a
+  new tab (#1729).
+- User themes that use `light-dark()` colours work in release builds
+  (#1728).
+- ResizeObserver loop notices no longer show up as crashes (#1725).
+- Launching the AppImage opens the home folder instead of the AppImage
+  mount (#1691).
+
 ## v1.26.0 — 2026-11-16
 
 ### Added

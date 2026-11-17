@@ -487,10 +487,14 @@ async function clickTab(ctx: ScenarioContext, index: number | "middle", mark: Ma
   await parkPointer(ctx);
 }
 
-/** Move the pointer off the strip so hover styles and tooltips stay out of the frames. */
+/**
+ * Move the pointer off the strip so hover styles and tooltips stay out of the
+ * frames. The empty lower sidebar has no hover target (a file row would show
+ * its date tooltip in later stills).
+ */
 async function parkPointer(ctx: ScenarioContext): Promise<void> {
   const w = ctx.window;
-  await ctx.browser.execute("macos: hover", { x: Math.round(w.x + w.width * 0.6), y: Math.round(w.y + w.height * 0.85) })
+  await ctx.browser.execute("macos: hover", { x: Math.round(w.x + 110), y: Math.round(w.y + w.height * 0.8) })
     .catch((error: unknown) => { report.notes.push(`pointer park failed: ${String(error).slice(0, 200)}`); });
 }
 
@@ -639,7 +643,7 @@ function writeReadme(): void {
     "Actions (recorded scenarios start with three tabs, the middle one active)",
     "  1-open-tabs         Cmd+T three times, 1.6 s apart",
     "  2-switch-tabs       Ctrl+Tab, Ctrl+Tab, Ctrl+Shift+Tab, Cmd+Shift+], click tab 1, click tab 3",
-    "  (after every click the pointer is parked over the file list so hover/tooltips stay out of the strip)",
+    "  (after every click the pointer is parked over the empty lower sidebar so hover/tooltips stay out of the strip)",
     "  3-close-middle-tab  click the middle tab, then Cmd+W",
     "  4-crowd-overflow    Cmd+T until 12 tabs, then Cmd+W five times",
     "  Each recording's input times (seconds from recorder start) are in report.json under marks.",

@@ -30,6 +30,8 @@ test.describe("Floating islands (#277)", () => {
     const bodyBg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
     expect(bodyBg).not.toBe("rgba(0, 0, 0, 0)");
 
+    await page.screenshot({ path: "evidence/1769-restored-floating-islands.png" });
+
     await applySettingsAndReload(page, { layoutTheme: "default" });
     await waitForEntries(page);
     await expect(html).toHaveAttribute("data-layout-base", "default");

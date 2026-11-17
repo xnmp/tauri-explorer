@@ -63,7 +63,7 @@ test.describe("theme tint over the macOS material (#1733)", () => {
       background-attachment: fixed !important;
     }`;
 
-  async function openVibrant(page: Page, theme: string, platform = "MacIntel"): Promise<void> {
+  async function openVibrant(page: Page, theme: string, platform = "MacIntel", layoutTheme = "default"): Promise<void> {
     await page.addInitScript((value) => {
       Object.defineProperty(window.navigator, "platform", { get: () => value, configurable: true });
     }, platform);
@@ -71,19 +71,19 @@ test.describe("theme tint over the macOS material (#1733)", () => {
     await applySettingsAndReload(page, {
       macOsVibrancy: true,
       vibrancyBlur: true,
-      layoutTheme: "floating-islands",
+      layoutTheme,
       theme,
     });
     await waitForEntries(page);
   }
 
-  /** The window body's paint, and what the given share of the theme base
-   *  computes to in the same document (same serialization). */
-  async function tint(page: Page) {
-    return page.evaluate(() => {
+  /** The window body's paint, and what the given share of `color` (the theme
+   *  base by default) computes to in the same document (same serialization). */
+  async function tint(page: Page, color = "var(--background-solid)") {
+    return page.evaluate((source) => {
       const mix = (share: number) => {
         const probe = document.createElement("div");
-        probe.style.background = `color-mix(in srgb, var(--background-solid) ${share}%, transparent)`;
+        probe.style.background = `color-mix(in srgb, ${source} ${share}%, transparent)`;
         document.body.appendChild(probe);
         const color = getComputedStyle(probe).backgroundColor;
         probe.remove();
@@ -93,8 +93,9 @@ test.describe("theme tint over the macOS material (#1733)", () => {
         body: getComputedStyle(document.querySelector(".explorer")!).backgroundColor,
         light: mix(15),
         dark: mix(55),
+        islandsDark: mix(30),
       };
-    });
+    }, color);
   }
 
   test("dark themes paint 55% of the theme base over the material", async ({ page }) => {
@@ -123,6 +124,20 @@ test.describe("theme tint over the macOS material (#1733)", () => {
       path: "screenshots/feat/macos-vibrancy-material/vibrancy-tint-light.png",
       animations: "disabled",
     });
+  });
+
+  test("Floating Islands paints its own window body: light 15%, dark 30% (#1734)", async ({ page }) => {
+    // Islands nudge the body toward the accent and use their own dark
+    // coverage, so the wallpaper still shows between dark islands.
+    await openVibrant(page, "dark", "MacIntel", "floating-islands");
+    const dark = await tint(page, "var(--islands-body-color)");
+    expect(dark.body).toBe(dark.islandsDark);
+    expect(dark.body).not.toBe((await tint(page)).dark);
+
+    await applySettingsAndReload(page, { theme: "light" });
+    await waitForEntries(page);
+    const light = await tint(page, "var(--islands-body-color)");
+    expect(light.body).toBe(light.light);
   });
 
   test("a theme's own tint wins: Tahoe's lighter lavender wash", async ({ page }) => {

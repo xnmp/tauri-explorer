@@ -469,6 +469,12 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-pointer-drag.svelte.ts` — pointer-event drag for macOS (in-app DnD). [modified on branch]
 - `use-pointer-intent.svelte.ts` — pointer-vs-keyboard intent for pickers.
 - `use-sidebar-drag.svelte.ts` — lightweight sidebar-item pointer drag (macOS).
+- `src/lib/composables/island-regions.ts` — shared Floating Islands region selectors (island surfaces vs structural regions) used by the tab seam marks and strip start.
+- `src/lib/composables/tab-seam-marks.ts` — lazily loaded Floating Islands tab marks: measures the active tab and islands, updates the title bar's inline SVG shade/fill/shadow/edge and island `data-tab-seam` notches in place.
+- `src/lib/composables/use-tab-seam.svelte.ts` — loads and attaches `tab-seam-marks` while the islands layout is active; repaints on tab changes.
+- `src/lib/composables/tab-strip-dom.ts` — window tab strip DOM helpers: slide transition (restoring a reversed leaving tab's selected state), reveal glide, title-fade fit check, and the strip's room measured on the title bar's room box so its own writes never loop a ResizeObserver (#1734).
+- `src/lib/composables/tab-strip-motion.svelte.ts` — window tab strip motion state: the tabs the strip lays out (a frame late while a tab slides), width/start eases and the reveal glide flag, on an injectable frame scheduler (#1734).
+- `src/lib/composables/tab-strip-start.ts` — Floating Islands tab strip start: measures the leftmost content island under the title bar (observing only boxes shallower than the strip, plus a MutationObserver for structural island changes) and reports the aligned start that `tabStripStart` adapts to the room (#1734).
 - `src/lib/composables/use-sidebar-drag-end.ts` — source-bound document dragend capture, bookmark fallback and gesture retirement.
 - `src/lib/composables/use-sidebar-file-drop.ts` — MIME-scoped Quick Access pinning and bookmark reorder, independent of retained file consumers.
 - `src/lib/composables/use-dom-directory-drop.ts` — shared importable folder/breadcrumb/tab/listing/Miller DOM transfer destinations and copy policies.
@@ -496,7 +502,11 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 ## src/lib/domain/ — pure logic, no framework deps. Test + reuse here.
 
 - `pointer-drag.ts` — shared five-pixel press-to-drag threshold for tabs, files, sidebar items and click suppression.
-- `tab-strip.ts` — pure Chrome-style tab sizing, full-path tab filtering and drag edge-scroll speed.
+- `tab-strip.ts` — pure Chrome-style tab sizing, full-path tab filtering and drag edge-scroll speed; `TAB_BLEED` and the bleed-aware active-tab reveal.
+- `island-outline.ts` — Floating Islands seam pixel ownership (#1734): device-pixel snapping per engine, the island top-edge cut the tab's SVG stroke takes over (handovers at the corner tangents), its path and the island's clip polygon.
+- `tab-seam.ts` — Floating Islands active-tab geometry (#1734): contour, strip-shade hole, fill, seam rows, gutter bridges, squared island corners, strip start padding, edge stroke and key shadow paths.
+- `tab-slide.ts` — tab insert/remove slide timing and per-frame flex-basis CSS (fillets and content scale with `--tab-slide`).
+- `tab-strip-motion.ts` — pure tab strip transition decisions: which eases a tab-count change uses, whether it slides, and each tab's width (laid out vs entering).
 - `tab-drag.ts` — pure tab-drag lifecycle and effects, including session-qualified asynchronous detach settlement (#1642).
 - `src/lib/domain/job-presentation.ts` — validates optional job cost/reveal metadata and formats exact decimal money.
 - `src/lib/domain/job-reveal.ts` — pure pane choice, present-file selection, reveal routing and latest-click cancellation policy.

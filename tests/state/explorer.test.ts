@@ -383,3 +383,244 @@ describe("Trash deletion confirmation (#1216)", () => {
     }
   });
 });
+
+describe("seeded panes (new tab / split, #1729)", () => {
+  const seedOf = (entries: FileEntry[], sort: { sortBy?: "name" | "size"; sortAscending?: boolean } = {}) => ({
+    currentPath: "/root", entries, sortBy: sort.sortBy ?? "name", sortAscending: sort.sortAscending ?? true, viewMode: "tiles" as const,
+  });
+
+  /** A listing that settles only when released. */
+  function heldLoad(entries: FileEntry[]) {
+    let release!: (result?: DirectoryListingResult) => void;
+    loadImpl.current = (path) => new Promise<DirectoryListingResult>((resolve) => {
+      release = (result) => resolve(result ?? { ok: true, path, entries });
+    });
+    return { release: (result?: DirectoryListingResult) => release(result) };
+  }
+
+  it("selects the first displayed row at creation, before any listing", async () => {
+    const [b, a, c] = [entry("b.txt"), entry("a.txt"), entry("c.txt")];
+    const explorer = createExplorerState(seedOf([b, a, c]));
+    try {
+      expect([...explorer.selectedPaths]).toEqual([a.path]);
+      expect(explorer.focusedEntry?.path).toBe(a.path);
+      expect(explorer.state.selectionAnchorPath).toBe(a.path);
+    } finally {
+      await explorer.destroy();
+    }
+  });
+
+  it("picks the first row of the seed's own sort and visibility", async () => {
+    const hidden = entry(".hidden");
+    const small = { ...entry("z-small.txt"), size: 1 };
+    const big = { ...entry("a-big.txt"), size: 999 };
+    const explorer = createExplorerState(seedOf([hidden, small, big], { sortBy: "size", sortAscending: false }));
+    try {
+      expect(explorer.displayEntries[0].path).toBe(big.path);
+      expect([...explorer.selectedPaths]).toEqual([big.path]);
+    } finally {
+      await explorer.destroy();
+    }
+  });
+
+  it("selects the same row the settled listing picks, so the selection never moves", async () => {
+    const entries = [entry("a.txt"), entry("b.txt")];
+    const load = heldLoad(entries);
+    const explorer = createExplorerState(seedOf(entries));
+    try {
+      const loading = explorer.initialLoad("/root");
+      expect([...explorer.selectedPaths]).toEqual([entries[0].path]);
+      load.release();
+      await loading;
+      expect([...explorer.selectedPaths]).toEqual([entries[0].path]);
+    } finally {
+      await explorer.destroy();
+    }
+  });
+
+  it("still lets the listing choose when the user did nothing and the folder changed", async () => {
+    const [a, b, first] = [entry("b.txt"), entry("c.txt"), entry("a-new.txt")];
+    const load = heldLoad([first, a, b]);
+    const explorer = createExplorerState(seedOf([a, b]));
+    try {
+      const loading = explorer.initialLoad("/root");
+      load.release();
+      await loading;
+      expect([...explorer.selectedPaths]).toEqual([first.path]);
+    } finally {
+      await explorer.destroy();
+    }
+  });
+
+  it("keeps a click made before the listing settles (the seed is no user selection)", async () => {
+    const entries = [entry("a.txt"), entry("b.txt"), entry("c.txt")];
+    const load = heldLoad(entries);
+    const explorer = createExplorerState(seedOf(entries));
+    try {
+      const loading = explorer.initialLoad("/root");
+      explorer.selectEntry(entries[2]);
+      load.release();
+      await loading;
+      expect([...explorer.selectedPaths]).toEqual([entries[2].path]);
+      expect(explorer.focusedEntry?.path).toBe(entries[2].path);
+    } finally {
+      await explorer.destroy();
+    }
+  });
+
+  it("keeps a click on the seeded row itself", async () => {
+    const entries = [entry("a.txt"), entry("b.txt")];
+    const load = heldLoad([entry("0-new.txt"), ...entries]);
+    const explorer = createExplorerState(seedOf(entries));
+    try {
+      const loading = explorer.initialLoad("/root");
+      explorer.selectEntry(entries[0]);
+      load.release();
+      await loading;
+      expect([...explorer.selectedPaths]).toEqual([entries[0].path]);
+    } finally {
+      await explorer.destroy();
+    }
+  });
+
+  it("selects nothing for an empty seed or an unseeded pane", async () => {
+    const empty = createExplorerState(seedOf([]));
+    const unseeded = createExplorerState();
+    try {
+      expect(empty.selectedPaths.size).toBe(0);
+      expect(unseeded.selectedPaths.size).toBe(0);
+    } finally {
+      await empty.destroy();
+      await unseeded.destroy();
+    }
+  });
+});
+
+describe("awaitingFirstListing (#1729)", () => {
+  it("is true until the first listing settles successfully", async () => {
+    let release!: () => void;
+    loadImpl.current = (path) => new Promise<DirectoryListingResult>((resolve) => {
+      release = () => resolve({ ok: true, path, entries: [entry("a.txt")] });
+    });
+    const explorer = createExplorerState();
+    try {
+      expect(explorer.awaitingFirstListing).toBe(true);
+      const navigation = explorer.navigateTo("/root");
+      expect(explorer.awaitingFirstListing).toBe(true);
+      release();
+      await navigation;
+      expect(explorer.awaitingFirstListing).toBe(false);
+    } finally {
+      await explorer.destroy();
+    }
+  });
+
+  it("settles on a failed listing too", async () => {
+    loadImpl.current = staticLoad({});
+    const explorer = createExplorerState();
+    try {
+      expect(await explorer.navigateTo("/missing")).toBe(false);
+      expect(explorer.error).not.toBeNull();
+      expect(explorer.awaitingFirstListing).toBe(false);
+    } finally {
+      await explorer.destroy();
+    }
+  });
+
+  it("stays settled across later navigations", async () => {
+    loadImpl.current = staticLoad({ "/a": [entry("f", "/a")], "/b": [entry("g", "/b")] });
+    const explorer = createExplorerState();
+    try {
+      await explorer.navigateTo("/a");
+      let release!: () => void;
+      loadImpl.current = (path) => new Promise<DirectoryListingResult>((resolve) => {
+        release = () => resolve({ ok: true, path, entries: [entry("g", "/b")] });
+      });
+      const navigation = explorer.navigateTo("/b");
+      expect(explorer.awaitingFirstListing).toBe(false);
+      release();
+      await navigation;
+    } finally {
+      await explorer.destroy();
+    }
+  });
+
+  it("is not settled by a superseded listing", async () => {
+    let releaseA!: () => void;
+    let releaseB!: () => void;
+    loadImpl.current = (path) => new Promise<DirectoryListingResult>((resolve) => {
+      const settle = () => resolve({ ok: true, path, entries: [entry("x", path)] });
+      if (path === "/A") releaseA = settle; else releaseB = settle;
+    });
+    const explorer = createExplorerState();
+    try {
+      const a = explorer.navigateTo("/A");
+      const b = explorer.navigateTo("/B");
+      releaseA();
+      expect(await a).toBe(false);
+      expect(explorer.awaitingFirstListing).toBe(true);
+      releaseB();
+      expect(await b).toBe(true);
+      expect(explorer.awaitingFirstListing).toBe(false);
+    } finally {
+      await explorer.destroy();
+    }
+  });
+});
+
+describe("seeded selection with asynchronous sort keys (#1729)", () => {
+  it.each(["length", "prompt", "opened"] as const)("leaves a Details pane sorted by %s to its listing", async (sortBy) => {
+    const entries = [entry("a.txt"), entry("b.txt")];
+    const explorer = createExplorerState({ currentPath: "/root", entries, sortBy, sortAscending: true, viewMode: "details" });
+    try {
+      expect(explorer.selectedPaths.size).toBe(0);
+    } finally {
+      await explorer.destroy();
+    }
+  });
+
+  it("still seeds List and Tiles, which always sort by name", async () => {
+    const entries = [entry("b.txt"), entry("a.txt")];
+    const explorer = createExplorerState({ currentPath: "/root", entries, sortBy: "length", sortAscending: true, viewMode: "tiles" });
+    try {
+      expect([...explorer.selectedPaths]).toEqual([entries[1].path]);
+    } finally {
+      await explorer.destroy();
+    }
+  });
+});
+
+describe("navigation focus restore flag (#1729)", () => {
+  /** Records the `restore` argument of each completed navigation focus. */
+  function recordFocus(explorer: ReturnType<typeof createExplorerState>): boolean[] {
+    const completed: boolean[] = [];
+    explorer.onNavigationFocus = () => ({ complete: (restore: boolean) => completed.push(restore), cancel: () => {} });
+    return completed;
+  }
+
+  it("marks a pane's first load as a restore", async () => {
+    loadImpl.current = staticLoad({ "/root": [entry("a.txt")] });
+    const explorer = createExplorerState({ currentPath: "/root", entries: [entry("a.txt")], sortBy: "name", sortAscending: true, viewMode: "details" });
+    try {
+      const completed = recordFocus(explorer);
+      await explorer.initialLoad("/root");
+      expect(completed).toEqual([true]);
+    } finally {
+      await explorer.destroy();
+    }
+  });
+
+  it("marks ordinary navigation (sidebar, breadcrumb, Back) as not a restore", async () => {
+    loadImpl.current = staticLoad({ "/a": [entry("f", "/a")], "/b": [entry("g", "/b")] });
+    const explorer = createExplorerState();
+    try {
+      const completed = recordFocus(explorer);
+      await explorer.navigateTo("/a");
+      await explorer.navigateTo("/b");
+      await explorer.goBack();
+      expect(completed).toEqual([false, false, false]);
+    } finally {
+      await explorer.destroy();
+    }
+  });
+});

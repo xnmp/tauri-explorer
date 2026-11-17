@@ -74,7 +74,7 @@ const defaultDependencies: WindowLaunchDependencies = {
     const now = Date.now();
     const normalized = normalizeDirectorySeed({
       currentPath: explorer.currentPath,
-      entries: explorer.ownDisplayEntries,
+      entries: explorer.ownEntries, // the listing, not the source's (filtered) presentation
       sortBy: explorer.sortBy,
       sortAscending: explorer.sortAscending,
       viewMode: viewMode ?? explorer.viewMode,

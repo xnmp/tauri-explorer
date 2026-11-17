@@ -357,6 +357,8 @@
   <header class="picker-header" onmousedown={startWindowDrag}>
     <span class="picker-title">{heading}</span>
     <input
+      autocorrect="off"
+      autocapitalize="none"
       class="address-input"
       type="text"
       spellcheck="false"
@@ -372,7 +374,7 @@
   </header>
 
   {#if filterOpen}
-    <input class="filter-input" aria-label="Filter current folder" placeholder="Filter current folder…" bind:this={filterRef} bind:value={filterQuery} oninput={() => { intentRevision++; cursorPath = ""; selectedFiles = new Set(); typeAhead.reset(); }} />
+    <input autocorrect="off" autocapitalize="none" spellcheck="false" class="filter-input" aria-label="Filter current folder" placeholder="Filter current folder…" bind:this={filterRef} bind:value={filterQuery} oninput={() => { intentRevision++; cursorPath = ""; selectedFiles = new Set(); typeAhead.reset(); }} />
   {/if}
   <div class="columns" bind:this={columnsRef}>
     {#each chain as dirPath, columnIndex (dirPath)}
@@ -409,6 +411,8 @@
   <footer class="picker-footer">
     {#if info.mode === "save"}
       <input
+        autocorrect="off"
+        autocapitalize="none"
         class="name-input"
         type="text"
         placeholder="File name"

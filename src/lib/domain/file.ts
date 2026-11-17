@@ -74,6 +74,12 @@ export type SortField = "name" | "size" | "modified" | "type" | "prompt" | "leng
 
 const SORT_FIELDS: readonly string[] = ["name", "size", "modified", "type", "prompt", "length", "opened"] satisfies SortField[];
 
+/** Whether a row order sorted by `field` is final once the listing is known.
+ *  Lengths, lineage prompts and the open history resolve asynchronously. */
+export function sortSettlesSynchronously(field: SortField): boolean {
+  return field !== "length" && field !== "prompt" && field !== "opened";
+}
+
 export function isSortField(value: unknown): value is SortField {
   return typeof value === "string" && SORT_FIELDS.includes(value);
 }

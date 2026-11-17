@@ -41,6 +41,9 @@
     <label class="prompt-label" for="git-graph-rename-input">Rename branch '{actions.renamePrompt.oldName}'</label>
     <!-- svelte-ignore a11y_autofocus -->
     <input
+      autocorrect="off"
+      autocapitalize="none"
+      spellcheck="false"
       id="git-graph-rename-input"
       class="prompt-input"
       type="text"
@@ -68,6 +71,9 @@
     </label>
     <!-- svelte-ignore a11y_autofocus -->
     <input
+      autocorrect="off"
+      autocapitalize="none"
+      spellcheck="false"
       id="git-graph-name-input"
       class="prompt-input"
       type="text"
@@ -174,9 +180,9 @@
         <p class="dialog-subtitle">{prDialog.dialog.action === "create" ? `Current branch: ${prDialog.dialog.headBranch}` : `PR #${prDialog.dialog.prNumber} · ${repoPath}`}</p>
       </div>
       {#if prDialog.dialog.action === "create"}
-        <div class="form-field"><label for="pr-title">Title</label><input id="pr-title" data-autofocus required bind:value={prDialog.dialog.title} disabled={prActionBusy} /></div>
-        <div class="form-field"><label for="pr-base">Base branch</label><input id="pr-base" required placeholder="e.g. main" bind:value={prDialog.dialog.base} disabled={prActionBusy} /></div>
-        <div class="form-field"><label for="pr-body">Description</label><textarea id="pr-body" rows="4" bind:value={prDialog.dialog.body} disabled={prActionBusy}></textarea></div>
+        <div class="form-field"><label for="pr-title">Title</label><input autocorrect="off" autocapitalize="none" spellcheck="false" id="pr-title" data-autofocus required bind:value={prDialog.dialog.title} disabled={prActionBusy} /></div>
+        <div class="form-field"><label for="pr-base">Base branch</label><input autocorrect="off" autocapitalize="none" spellcheck="false" id="pr-base" required placeholder="e.g. main" bind:value={prDialog.dialog.base} disabled={prActionBusy} /></div>
+        <div class="form-field"><label for="pr-body">Description</label><textarea autocorrect="off" autocapitalize="none" spellcheck="false" id="pr-body" rows="4" bind:value={prDialog.dialog.body} disabled={prActionBusy}></textarea></div>
         <p class="dialog-subtitle">Push the branch before creating a PR. This creates it on the repository's selected GitHub remote.</p>
       {:else if prDialog.dialog.action === "merge"}
         <div class="form-field"><label for="pr-method">Merge method</label><select id="pr-method" bind:value={prDialog.dialog.method} disabled={prActionBusy}><option value="squash">Squash</option><option value="merge">Merge commit</option><option value="rebase">Rebase</option></select></div>

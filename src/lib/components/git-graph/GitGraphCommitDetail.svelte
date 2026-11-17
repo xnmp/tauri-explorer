@@ -93,6 +93,9 @@
          domain/commit-panel. Ctrl+Enter commits, Esc closes. -->
     <div class="detail-meta-col commit-box" data-testid="git-graph-commit-box">
       <textarea
+        autocorrect="off"
+        autocapitalize="none"
+        spellcheck="false"
         class="commit-box-input"
         data-testid="git-graph-commit-message"
         rows="2"

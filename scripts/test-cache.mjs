@@ -26,9 +26,9 @@
 // See .github/workflows/CLAUDE.md for detecting a stale hit and bypassing.
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve, isAbsolute } from "node:path";
+import { basename, dirname, join, relative, resolve, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const CACHE_VERSION = "v3";
@@ -73,12 +73,34 @@ export function cacheMode(/** @type {{ read: boolean, write: boolean }} */ { rea
 }
 
 /**
+ * Absolute path with symlinks resolved. The path may not exist yet (a cache
+ * directory is created later), so resolve the deepest existing ancestor and
+ * re-append the rest. Without this, `/var/...` inside a checkout whose cwd is
+ * `/private/var/...` (macOS) compares as outside it.
+ * @param {string} path
+ */
+function canonicalPath(path) {
+  let current = resolve(path);
+  const rest = [];
+  for (;;) {
+    try {
+      return join(realpathSync(current), ...rest);
+    } catch {
+      const parent = dirname(current);
+      if (parent === current) return resolve(path);
+      rest.unshift(basename(current));
+      current = parent;
+    }
+  }
+}
+
+/**
  * Turborepo would read entries from a directory PR content can populate.
  * @param {string} dir
  * @param {string} workspace
  */
 export function assertOutsideWorkspace(dir, workspace) {
-  const rel = relative(resolve(workspace), resolve(dir));
+  const rel = relative(canonicalPath(workspace), canonicalPath(dir));
   if (rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))) {
     throw new Error(`test-cache: cache directory ${dir} is inside the checkout ${workspace}`);
   }

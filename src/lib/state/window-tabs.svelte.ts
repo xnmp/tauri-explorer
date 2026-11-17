@@ -445,7 +445,7 @@ function createWindowTabsManager(options: {
     const seed = canSeed
       ? {
           currentPath: sourceExplorer.currentPath,
-          entries: [...sourceExplorer.ownDisplayEntries],
+          entries: [...sourceExplorer.ownEntries], // the listing, not its filtered presentation (#1729)
           sortBy: sourceExplorer.sortBy,
           sortAscending: sourceExplorer.sortAscending,
           viewMode: sourceExplorer.viewMode,

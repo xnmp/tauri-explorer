@@ -20,6 +20,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `+page.svelte` — app root. Global keyboard shortcuts, store init, layout composition (TitleBar > toolbar > Sidebar + PaneContainer > StatusBar), overlay dialogs. Open for global shortcut wiring / top-level layout.
 - `+layout.ts` — SvelteKit adapter-static SPA config (prerender/ssr flags). Rarely touched.
 - `src/hooks.client.ts` — SPA client entry; installs global crash/error handlers before the app mounts (catches early init errors).
+- `src/app.d.ts` — ambient type augmentation: adds `autocorrect` to `svelte/elements` `HTMLTextareaAttributes` (Svelte types it only for `<input>`); guarded by `tests/text-input-autocorrect.test.ts` (#1726).
 
 ## src/lib/components/ — Svelte 5 UI. Views, dialogs, panels, item chrome.
 
@@ -259,6 +260,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `directory-listing.ts` — complete directory snapshots, queued-request supersession, teardown and observation transfer.
 - `navigation.ts` — pure back/forward history utilities.
 - `src/lib/state/pane-pointer-focus.ts` — pointer gesture focus ownership without cancelling native drag acquisition.
+- `src/lib/state/row-focus-ring.ts` — window-global record of whether the last focused file row showed its `:focus-visible` ring; restore-type row focus (a pane's first load, view layout change) requests that state instead of WebKit's key-press heuristic (#1729).
+- `src/lib/state/preview-file-hold.ts` — the preview's previous file across active-pane changes, fed to `previewFileFor` from PreviewPane's derived selection (#1729).
 - `selection.ts` — pure selection math (range/toggle/anchor).
 - `sort-prefs.ts` — per-directory sort preference persistence.
 - `refresh-manager.ts` — dedupe/debounce/rate-limit directory refresh requests.
@@ -330,7 +333,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `warm-activation.ts` — owns parked-window observation, reveal/navigation admission, acknowledged activation and retirement.
 - `warm-window.ts` — native warm-pool adapters and acknowledged reuse; integrates the activation owner.
 - `page-foreground.ts` — `warmMode()` and the page's one foreground gate: a parked or measuring warm window defers drive pushes/poll and file-operation recovery until its activation commits (#931).
-- `window-appearance.ts` — shared window creation options, including exact feature-injected WebView2 environment arguments in Windows E2E.
+- `window-appearance.ts` — shared window creation options for fresh and warm windows: Windows backdrop, macOS vibrancy transparency + material (`domain/macos-vibrancy.ts`, #1733), and exact feature-injected WebView2 environment arguments in Windows E2E.
 - `window-title.svelte.ts` — resolves launch-home context and keeps the native OS title synchronized with the active pane directory.
 - `window-close.ts` — owns synchronous close admission, native close requests, terminal destruction and failure recovery.
 - `window-chrome.ts` — owns native maximize-state observation, resize query coalescing, and late listener/read retirement.
@@ -519,7 +522,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/domain/workspace-selection.ts` — pure cross-pane click focus policy and focused-first, path-deduplicated active-tab selection.
 - `file-list-navigation.ts` — independent path cursor and pure keyboard movement/selection intents for all file-list views.
 
-- `window-keys.ts` — pure ordered window-key routing policy for native button activation, terminal, modal, editable and filter contexts.
+- `window-keys.ts` — pure ordered window-key routing policy for native button activation, terminal, modal, editable and filter contexts; `isWindowShortcutInField` decides which Ctrl/Cmd chords a non-modal text field yields.
 - `window-launch-plan.ts` — pure initial-directory/view and restoration policy across main and child windows.
 - `window-input.ts` — launch, warm-window and directory-seed validation; shared parse/producer budgets and canonical explorer seed shape.
 
@@ -612,6 +615,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `settings-migration.ts` — versioned one-shot migrations for the persisted settings blob; `migrateSettings` + the append-only ledger (#506).
 - `layout-theme.ts` — layout-theme catalog (#1306): built-ins, leading-comment metadata, user-file validation, resolution/fallback reasons, row-height parsing.
 - `layout-theme-ids.ts` — eager built-in layout ids and the legacy Floating Islands → `layoutTheme` mapping used by settings migration.
+- `macos-vibrancy.ts` — macOS vibrancy mode (off / transparent / material) and the Sidebar material shared by JS-created windows (`state/window-appearance.ts`) and the page tint attribute; kept in step with `lib.rs` `MACOS_VIBRANCY_MATERIAL` by `tests/domain/macos-vibrancy.test.ts` (#1733).
 - `miller-placement.ts` — `millerHoistedToIsland`: whether Miller columns hoist to the left island (island layout, no sidebar, single-pane tab only); shared by `+page.svelte` and `ExplorerPane.svelte` (#434, #1699).
 - `settings-numbers.ts` — Numeric preference consumer contracts shared by persisted validation and interactive setters.
 - `folder-preview.ts` — folder preview image selection (#146).
@@ -651,7 +655,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `terminal-shell.ts` — shell dialect profile + WSL↔Windows path translation (#409/#418).
 - `terminal-theme.ts` — map CSS theme vars → xterm.js theme (pane-surface background, ANSI palette from status colours or `--terminal-*` overrides).
 - `content-search.ts` — `ContentMatch`/`ContentSearchResult` types for ripgrep results; re-exported by `api/search.ts`.
-- `crash-report.ts` — pure crash-dedupe helper behind `api/crash.ts`.
+- `crash-report.ts` — pure crash-dedupe + benign-browser-notice (ResizeObserver) helpers behind `api/crash.ts` (#1725).
 - `crash-report-draft.ts` — pure crash → report title/draft update (#1684), loaded only when reporting.
 - `report-diagnostics.ts` — Report Issue diagnostic sections (kinds mirror `user_report.rs` `DiagnosticKind`), shared relay budget and head-keeping text fitting (#1022, #1684).
 - `user-report.ts` — report contracts and pure prefilled-GitHub fallback URL builder.
@@ -1032,6 +1036,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `e2e-tauri/macos-ui-smoke.ts` — standalone Appium Mac2/XCTest pilot: exact bundled binary, unique listing fixture, native accessibility navigation outcome and retained evidence.
 - `e2e-tauri/macos-pdf-preview.ts` — hosted Mac2 PDF outcome qualification: real page pixels, centered zoom, trusted pan, narrow docks and native replacement/error handling.
 - `e2e-tauri/macos-display.swift` — measured CoreGraphics display identity and physical-pixel/point calibration for native screenshots.
+- `e2e-tauri/macos-visual-capture.ts` — on-demand hosted-Mac evidence driver (#1750): layout x translucency x theme matrix of seeded settings, Mac2-driven tab open/switch/close/overflow, window stills with 4x inspect crops, and screen recordings; asserts nothing.
+- `e2e-tauri/macos-visual-capture.swift` — capture helper: sets the desktop picture on every screen and lists an app's CGWindowList ids for `screencapture -l`.
+- `e2e-tauri/macos_visual_capture.py` — Pillow helpers for the capture: high-contrast wallpaper, blank-image stats, crops, 4x nearest-neighbour inspect crops and per-action/per-burst contact sheets.
 - `e2e-tauri/pdf_screenshot.py` — read-only Pillow screenshot oracle; measures solid PDF fixture landmarks inside native AX viewport bounds.
 - `e2e-tauri/test_pdf_screenshot.py` — oracle negative controls for blank/wrong-page/cropped/scattered-color screenshots and Retina coordinates.
 - `e2e-tauri/native-driver-transcript.ts` — owns piped native-driver output through child stdio closure and bounded final log flushing; failed or timed-out evidence fails session cleanup (#965).

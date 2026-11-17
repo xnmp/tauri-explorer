@@ -9,7 +9,8 @@
   import { resolveFileListMove } from "$lib/domain/file-list-navigation";
   import { tick, untrack } from "svelte";
   import { layoutStore } from "$lib/state/layout.svelte";
-  import { createDeferredFocusRequest } from "$lib/state/deferred-focus";
+  import { createDeferredFocusRequest, focusStillOwned } from "$lib/state/deferred-focus";
+  import { rowFocusRing } from "$lib/state/row-focus-ring";
   import { setPaneIdContext } from "$lib/state/pane-context";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
@@ -84,7 +85,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   let paneRef = $state<HTMLElement | null>(null);
   let getListNavigation = $state<(() => import("$lib/domain/list-column-flow").ListNavigationSnapshot | null) | undefined>();
   let getTilesNavigation = $state<(() => import("$lib/domain/tile-panel-navigation").TileNavigationSnapshot | null) | undefined>();
-  let fileListScrollToEntry = $state<((entry: import("$lib/domain/file").FileEntry) => void) | undefined>();
+  let fileListScrollToEntry = $state<((entry: import("$lib/domain/file").FileEntry, focusVisible?: boolean) => void) | undefined>();
 
   // All keyboard navigation is handled at window level so it works regardless
   // of focus state. Only the active pane responds.
@@ -163,18 +164,21 @@ import { nextRemovableRoot } from "$lib/domain/drives";
       !!paneRef?.isConnected && windowTabsManager.getActiveExplorer() === paneExplorer
       && !dialogStore.isPaneBlocked(paneId)
       && !document.activeElement?.matches("input, textarea, select, [contenteditable='true']")
-      && (document.activeElement === active
-        || (!!active && !active.isConnected && document.activeElement === document.body)),
+      // A new tab's request starts while the source tab's row still has focus;
+      // retaining that tab makes the row inert and focus falls to the body.
+      && focusStillOwned(active, document.activeElement, document.body),
     );
     navigationFocusRequest = request;
     return {
       cancel: request.cancel,
-      complete() {
+      complete(restore: boolean) {
         void tick().then(() => {
           if (navigationFocusRequest === request) navigationFocusRequest = null;
           if (!request.consume()) return;
           const selected = paneExplorer.focusedEntry;
-          if (selected) fileListScrollToEntry?.(selected);
+          // A pane's first load restores the ring state last seen on a row, not
+          // WebKit's key-press heuristic (#1729); navigation keeps the browser's.
+          if (selected) fileListScrollToEntry?.(selected, restore ? rowFocusRing.shown : undefined);
           else paneRef?.focus({ preventScroll: true });
         });
       },

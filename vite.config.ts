@@ -1,4 +1,5 @@
 import { defineConfig, loadEnv, type Plugin } from "vite";
+import { Features } from "lightningcss";
 import { sveltekit } from "@sveltejs/kit/vite";
 import { releaseHookGuard } from "./scripts/release-hook-leaks.mjs";
 import { e2eBrowserBuild } from "./scripts/e2e-browser-build.mjs";
@@ -36,6 +37,12 @@ export default defineConfig(async ({ mode }) => ({
     }),
     e2eBrowserBuild({ enabled: browserTestBuild }),
   ],
+
+  // Lightning CSS (Vite's CSS minifier) would compile `light-dark()` into
+  // `--lightningcss-light/dark` variables that runtime-loaded user themes never
+  // define, so the tint and island surfaces would paint nothing. Keep the
+  // native function; `check:bundle` fails if the polyfill returns (#1728).
+  css: { lightningcss: { exclude: Features.LightDark } },
 
   // The app's own `import.meta.env.DEV` diagnostics (startup console summary,
   // PDF worker receipts, shortcut-conflict warnings) behave as on the dev

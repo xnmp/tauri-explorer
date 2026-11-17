@@ -123,7 +123,7 @@
     {:else}
       <div class="crop-footer">
         <label class="crop-copy-name">Copy filename
-          <input bind:value={copyName} disabled={busy} spellcheck="false" />
+          <input autocorrect="off" autocapitalize="none" bind:value={copyName} disabled={busy} spellcheck="false" />
         </label>
         <div class="crop-actions">
           <button class="btn secondary" disabled={toolBusy || editorState.phase === "saving"} onclick={close}>Cancel</button>

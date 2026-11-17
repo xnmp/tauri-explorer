@@ -77,7 +77,7 @@ variables keep the Default value shown.
 | `--layout-shadow` | `none` | Shadow of those panels (any `box-shadow` value). |
 | `--layout-surface` | theme card colour | Background of the file panes and preview. |
 | `--layout-chrome-surface` | theme chrome colours | Background of title bar, sidebar, toolbar, column header and status bar. |
-| `--layout-app-surface` | native-material tint | Window body (`[data-region="app"]`) under native material. Unset, the page paints the theme tint (on macOS, the theme base at 15% on light themes and 55% on dark ones). Floating Islands sets its own (see below). |
+| `--layout-app-surface` | native-material tint | Window body (`[data-region="app"]`) under native material. Unset, the page paints the theme tint (on macOS, the theme base at 15% on light themes and 55% on dark ones). |
 | `--layout-hairline` | `var(--divider)` | Rule colour between chrome regions. |
 | `--layout-row-height` | `32px` | Details row height, in `px`, clamped to 20–64. Virtual scrolling and marquee selection follow it. |
 
@@ -94,14 +94,12 @@ names are internal and change without notice; `data-region` names do not.
 | --- | --- | --- |
 | `backdrop` | Decorative background layer behind the app | |
 | `app` | The whole window surface | |
-| `titlebar` | Title bar containing the tab strip | Floating Islands: `data-tab-hole="left right"` (the active tab's opening, CSS px), `data-tab-island="content\|structural\|none"` (the surface it wears) |
+| `titlebar` | Title bar containing the tab strip | |
 | `tab-strip` | Window tab strip | |
 | `tab` | One window tab | `aria-selected="true"` on the active tab |
 | `tab-fillet` | Curves joining the active tab to the content | `data-side="left\|right"` |
-| `tab-key-shadow` | Floating Islands: inline SVG under the tab strip holding the strip shade, the active tab's fill and its key shadow | |
-| `tab-edge` | Floating Islands: inline SVG edge highlight around the active tab and along its island's top edge | |
 | `main` | Area below the title bar | |
-| `sidebar` | Sidebar container (outer box) | Floating Islands: `data-tab-seam` while the active tab opens into it (also on `panes`, `pane`, `preview`, `miller-island`) |
+| `sidebar` | Sidebar container (outer box) | |
 | `sidebar-body` | Sidebar painted body | |
 | `sidebar-section-header` | Section headings (Quick Access, Drives, ...) | |
 | `sidebar-item` | One sidebar entry | |
@@ -135,32 +133,6 @@ Root (`<html>`) attributes describe the window and can scope rules:
 | `data-macos-material` | The macOS vibrancy material is on (macOS, Window Vibrancy and Native Blur). The page tints the window body with the theme base. |
 | `data-win-backdrop` | Windows material kind (`mica`, `acrylic`, ...). |
 | `data-preview-fullscreen` | A preview is fullscreen. |
-
-### Floating Islands surfaces
-
-Under the macOS material, Floating Islands reads a small theme contract.
-Set these on `:root` in a colour theme; unset, the defaults apply.
-
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `--island-surface` | light: `--vibrancy-island-card`, else `--background-card`; dark: `--background-solid` lifted 10% toward white | Panel colour of every island. |
-| `--island-body-coverage` / `-dark` | `0.15` / `0.3` | Share of the material the window body hides. |
-| `--island-coverage` / `-dark` | `0.983` / `0.545` | Total share a content island (panes, preview, Miller) hides, body included. |
-| `--island-structural-coverage` / `-dark` | `0.762` / `0.48` | Total share the sidebar hides, body included. |
-
-Alphas compound over the body, so an island's own alpha is derived:
-`island alpha = 1 - (1 - coverage) / (1 - body coverage)`. The light defaults
-reproduce the earlier alphas exactly. The window body is the theme base
-nudged 6% toward the accent; a theme's `--vibrancy-tint` or a layout's
-`--layout-app-surface` still wins. Under `prefers-reduced-transparency`
-every surface is opaque.
-
-The active tab owns the window: it wears the surface of the island it
-stands on, that island opens its top edge under the tab (a 2px notch,
-`data-tab-seam`), and the rest of the strip is shaded (35% light, 50% dark).
-Islands carry no `backdrop-filter`: it made each island the containing block
-of fixed overlays, so menus opened offset, and the webview cannot sample the
-native material anyway. Context menus and modal cards are opaque.
 
 ### Native window material
 

@@ -213,3 +213,33 @@ line. Below 2x its offset is a fraction of a device pixel, which WebKit on
 macOS resamples around the edge. Below 2dppx the line is
 `inset 0 -1px 0` at half the alpha (the same ink on one whole pixel); the
 probe capture showed the top and sides clean and a crisp bottom line.
+
+## Review of #1744: title fragments and leaving-tab state
+
+- **A growing tab's title box is narrower than its 16px end fade.** The active
+  tab keeps its content at full strength while it opens, so at 4px the fade
+  left a bare glyph stem that read as a caret. The title's mask now
+  intersects the fade with a gate whose edge moves at 3.5× the box's rate
+  (`calc(350% - 100px)` to `calc(350% - 84px)`, `mask-composite: intersect`):
+  nothing below 24px, solid from 40px. It applies only to the active tab and
+  a closing (inert) one; inactive tabs between 64 and 80px wide settle with
+  title boxes in that range and must keep their text. A single gradient with
+  `min()` stops worked in Chromium but did not gate in WebKit; two layers with
+  `-webkit-mask-composite: source-in` work in both.
+  `e2e/floating-islands.spec.ts` steps the slide 15ms at a time and compares
+  each frame's title clip with the title hidden. That oracle needs a still
+  frame: WebKit screenshots can move a held strip, and stretched transitions
+  creep a fraction of a pixel in Chromium, so a comparison only counts when
+  the title's box and its shown frame are unchanged after the hidden shot.
+- **Svelte computes an outro's options once per node.** On a reversal it only
+  aborts the outro, and a later outro reuses the cached options, so state set
+  in the transition function runs once. A deferred config (a function, as
+  `crossfade` returns) is called at the start of every outro, in a microtask
+  before the next frame. The intro's options are recomputed after every outro,
+  so the intro restores what Svelte last rendered (`.active`, `aria-selected`):
+  a resumed node's class and attribute effects only diff against their cached
+  values. Svelte sets and restores `inert` itself.
+- **The home island and the foot use the same hole.** For a tab half
+  scrolled out of view, `islandUnder` took the whole hole while the seams used
+  the view-clamped one, so the tab could wear the surface of a hidden island.
+  Both now use `tabFootHole` (`domain/tab-seam.ts`).

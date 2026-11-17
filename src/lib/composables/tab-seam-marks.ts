@@ -19,11 +19,11 @@
  * Geometry is pure (`domain/tab-seam.ts`); colours come from CSS.
  */
 import {
-  islandAt, islandUnder, stripShadePath, tabFootFor, tabShownSpan, tabContour, tabEdgePath, tabFillPath,
-  tabHoleFor, tabKeyShadow, type EdgeCorner, type IslandEdge, type TabContour,
+  cornerOwnership, islandAt, stripShadePath, stripShownView, tabFootFor, tabFootHole, tabHome, tabPresence, tabShownSpan,
+  tabContour, tabEdgePath, tabFillPath, tabHoleFor, tabKeyShadow, type EdgeCorner, type IslandEdge, type TabContour,
 } from "$lib/domain/tab-seam";
 import {
-  cutPath, islandClipPolygon, islandCut, paintedWidth, snapX, snapY, type CornerOwnership, type DeviceGrid,
+  cutPath, islandClipPolygon, islandCut, paintedWidth, snapX, snapY, type DeviceGrid,
 } from "$lib/domain/island-outline";
 import { getZoomFactor, isChromiumEngine } from "$lib/domain/zoom";
 import { ISLANDS, STRUCTURAL } from "./island-regions";
@@ -109,11 +109,7 @@ export function attachTabSeam(titlebar: HTMLElement): TabSeam {
     const fillet = filletEl ? Math.max(0, filletEl.getBoundingClientRect().width / zoom - 1) : 0;
     const left = css(box.left, bar.left);
     const tabWidth = box.width / zoom;
-    // An active tab opens from a seed and is drawn whole from its first
-    // frame. Only a tab narrower than that (a layout without the seed) fades
-    // its outline and shadow, which would otherwise collapse into a 1px
-    // vertical sliver.
-    const presence = Math.min(1, Math.max(0, (tabWidth - 2) / 16));
+    const presence = tabPresence(tabWidth);
     const base = snapY(grid, css(box.bottom, bar.top));
     const contour: TabContour = tabContour(
       { left, width: tabWidth, top: css(box.top, bar.top), base },
@@ -126,16 +122,12 @@ export function attachTabSeam(titlebar: HTMLElement): TabSeam {
     // An island opens only under the part of the active tab the strip shows:
     // a tab scrolled out of the viewport leaves every island closed, and one
     // half under an edge opens it no further than that edge (#1734).
-    // An overflowing strip's ends are transparent under its scroll buttons.
-    // (the fade's transparent run: the fillet bleed plus the button).
     const viewStyle = getComputedStyle(viewport);
-    const faded = (parseFloat(viewStyle.getPropertyValue("--tab-bleed")) || 0) + (parseFloat(viewStyle.getPropertyValue("--tab-scroll-btn-w")) || 0);
-    const shown = tabShownSpan({ left, right: left + tabWidth }, {
-      left: viewLeft + (viewport.classList.contains("fade-start") ? faded : 0),
-      right: viewRight - (viewport.classList.contains("fade-end") ? faded : 0),
-    });
+    const run = (parseFloat(viewStyle.getPropertyValue("--tab-bleed")) || 0) + (parseFloat(viewStyle.getPropertyValue("--tab-scroll-btn-w")) || 0);
+    const faded = { start: viewport.classList.contains("fade-start"), end: viewport.classList.contains("fade-end") };
+    const shown = tabShownSpan({ left, right: left + tabWidth }, stripShownView({ left: viewLeft, right: viewRight }, faded, run));
     if (!shown) return cleared("hidden");
-    const footHole = { left: Math.max(hole.left, viewLeft), right: Math.min(hole.right, viewRight) };
+    const footHole = tabFootHole(hole, { left: viewLeft, right: viewRight });
 
     // Islands whose top edge sits on the strip base.
     const islands: (IslandEdge & { el: HTMLElement; structural: boolean; top: number })[] = [];
@@ -155,9 +147,8 @@ export function attachTabSeam(titlebar: HTMLElement): TabSeam {
     }
     // The tab wears the surface of the island it stands on and opens into
     // the islands of that kind under it; another kind keeps its edge.
-    const home = islandUnder(islands, hole);
-    const kind = home ? (home.structural ? "structural" : "content") : "none";
-    const foot = tabFootFor(footHole, islands.map((island) => ({ ...island, home: Boolean(home) && island.structural === home!.structural })));
+    const { home, kind, islands: underStrip } = tabHome(islands, footHole);
+    const foot = tabFootFor(footHole, underStrip);
     const squared = foot.squared;
     const bridges = foot.bridges;
     const squareOf = new Map(squared.map(({ el, square }) => [el, square]));
@@ -176,12 +167,10 @@ export function attachTabSeam(titlebar: HTMLElement): TabSeam {
       isChromiumEngine ? island : { left: snapX(grid, island.left), top: snapY(grid, island.top) };
     const seams = foot.seams.map(({ island, row }) => {
       const square = squareOf.get(island.el) ?? { left: false, right: false };
-      const own = (side: "left" | "right"): CornerOwnership => {
-        if ((side === "left" ? leftIsland : rightIsland) !== island) return null;
-        if (side === "left" ? island.left >= hole.left : island.right <= hole.right) return null;
-        return square[side] ? "square" : "round";
+      const corners = {
+        left: cornerOwnership("left", island, leftIsland, hole, square),
+        right: cornerOwnership("right", island, rightIsland, hole, square),
       };
-      const corners = { left: own("left"), right: own("right") };
       const cut = islandCut({ ...island, border: stroke }, grid, row, corners);
       const edge = (side: "left" | "right"): EdgeCorner => {
         const [x, y] = cut.handover[side];

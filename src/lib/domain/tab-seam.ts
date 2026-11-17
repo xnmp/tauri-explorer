@@ -13,6 +13,8 @@
  * is half a pixel smaller, so the shade runs under the tab's anti-aliased edge.
  */
 
+import type { CornerOwnership } from "./island-outline";
+
 /** Concave fillet radius of a fully open active tab. */
 export const TAB_FILLET = 14;
 
@@ -369,6 +371,78 @@ export function tabFillPath(c: TabContour, rows: readonly TabSeamRow[], depth: n
     ? rows.map((row) => `M${n(row.left)} ${n(c.base)}H${n(row.right)}V${n(c.base + d)}H${n(row.left)}Z`).join("")
     : "";
   return `${tabSilhouettePath(c, 0, 0)}${seams}`;
+}
+
+/**
+ * How strongly the tab's outline and shadows show. An active tab opens from
+ * a seed and is drawn whole from its first frame; only a tab narrower than
+ * that (a layout without the seed) fades them, over its first 16px past 2px,
+ * which would otherwise collapse into a 1px vertical sliver.
+ */
+export function tabPresence(width: number): number {
+  return Number.isFinite(width) ? Math.min(1, Math.max(0, (width - 2) / 16)) : 0;
+}
+
+/**
+ * The span of the tab viewport that shows tabs: an overflowing strip's ends
+ * are transparent under its scroll buttons, over `run` (the fade's
+ * transparent run: the fillet bleed plus the button) at each faded end.
+ */
+export function stripShownView(
+  view: { readonly left: number; readonly right: number },
+  faded: { readonly start: boolean; readonly end: boolean },
+  run: number,
+): TabSeamRow {
+  const r = nonNegative(run);
+  return { left: view.left + (faded.start ? r : 0), right: view.right - (faded.end ? r : 0) };
+}
+
+/**
+ * The part of the tab's hole over the viewport (#1734). The tab stands on,
+ * wears and opens into islands only there: a tab half scrolled out of view
+ * neither opens an island beyond the viewport's edge nor wears the surface
+ * of one under its hidden part.
+ */
+export function tabFootHole(hole: TabHole, view: { readonly left: number; readonly right: number }): TabHole {
+  return { left: Math.max(hole.left, view.left), right: Math.min(hole.right, view.right) };
+}
+
+/** Which kind of island the tab stands on, and so the surface it wears. */
+export type TabIslandKind = "structural" | "content" | "none";
+
+/**
+ * The tab's home: the island under most of its foot, whose surface it wears,
+ * and the islands under the strip marked with whether they are that kind
+ * (only those open their top edge into the tab, `tabFootFor`).
+ */
+export function tabHome<T extends IslandEdge & { readonly structural: boolean }>(
+  islands: readonly T[],
+  foot: TabHole,
+): { readonly home: T | null; readonly kind: TabIslandKind; readonly islands: readonly (T & { readonly home: boolean })[] } {
+  const home = islandUnder(islands, foot);
+  return {
+    home,
+    kind: home ? (home.structural ? "structural" : "content") : "none",
+    islands: islands.map((island) => ({ ...island, home: home !== null && island.structural === home.structural })),
+  };
+}
+
+/**
+ * How the edge stroke meets one top corner of a seamed island: none unless
+ * that island is the one at the hole's edge on that side (`edgeIsland`, from
+ * `islandAt`) with its corner beyond the hole; then the island's own rounded
+ * corner, or a squared one the stroke turns while the foot stands beside it.
+ */
+export function cornerOwnership(
+  side: "left" | "right",
+  island: IslandEdge,
+  edgeIsland: IslandEdge | null,
+  hole: TabHole,
+  square: IslandSquare,
+): CornerOwnership {
+  if (edgeIsland !== island) return null;
+  if (side === "left" ? island.left >= hole.left : island.right <= hole.right) return null;
+  return square[side] ? "square" : "round";
 }
 
 /** Pick the island whose top edge spans `x` on the strip base, if any. */

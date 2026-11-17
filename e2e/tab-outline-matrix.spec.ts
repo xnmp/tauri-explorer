@@ -434,7 +434,9 @@ for (const cell of CELLS) {
       }
     });
 
-    test("every frame of opening and closing a tab", async ({ page }) => {
+    // Three held frames per slide, not every frame: the matrix already costs
+    // minutes per engine (stepped frames: floating-islands.spec.ts).
+    test("opening and closing a tab, held at 15%, 50% and 85% of the slide", async ({ page }) => {
       await framesOf(page, cell, "opening", openTab(page));
       await framesOf(page, cell, "closing", closeTab(page));
     });

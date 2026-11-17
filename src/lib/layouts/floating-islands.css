@@ -310,9 +310,6 @@
   border-top-right-radius: 0 !important;
 }
 
-/* Seam extents change every frame of a tab slide: registered as
-   non-inherited so updating them restyles the island alone, never the file
-   list inside it. */
 /* The seam clip changes every frame of a tab slide: registered as
    non-inherited so updating it restyles the island alone, never the file
    list inside it. */

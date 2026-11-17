@@ -1,8 +1,7 @@
 /**
- * Set as Wallpaper reports what it could and could not change (#1441,
- * #1731): a partial backend outcome becomes exactly one info toast carrying
- * the backend's short notice, a full success stays silent, and a failure
- * stays an error.
+ * Set as Wallpaper reports what it could and could not change (#1441):
+ * a partial backend outcome becomes an info toast, a full success stays
+ * silent, and a failure stays an error.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -24,28 +23,14 @@ describe("setWallpaper", () => {
     show.mockReset();
   });
 
-  it.each([
-    "Could only change wallpaper on some displays",
-    "Could only change wallpaper on the current Space",
-  ])("shows a partial result as one info toast: %s", async (notice) => {
+  it("shows the backend's notice when only part of the change was applied", async () => {
+    const notice = "Only the current Space was changed: macOS 13 offers no supported way.";
     invoke.mockResolvedValue({ notice });
     await setWallpaper("/pics/a b.png");
     expect(invoke).toHaveBeenCalledWith("set_as_wallpaper", { path: "/pics/a b.png" });
     expect(show).toHaveBeenCalledTimes(1);
     expect(show.mock.calls[0][0]).toBe(notice);
     expect(show.mock.calls[0][1]).toBe("info");
-  });
-
-  it("does not add a success toast alongside a partial notice", async () => {
-    invoke.mockResolvedValue({ notice: "Could only change wallpaper on the current Space" });
-    await setWallpaper("/pics/a.png");
-    expect(show.mock.calls.map(([, kind]) => kind)).toEqual(["info"]);
-  });
-
-  it("treats an empty notice as complete success", async () => {
-    invoke.mockResolvedValue({ notice: "" });
-    await setWallpaper("/pics/a.png");
-    expect(show).not.toHaveBeenCalled();
   });
 
   it("stays silent on complete success, including older backends that return nothing", async () => {

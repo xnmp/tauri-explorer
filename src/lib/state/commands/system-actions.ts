@@ -9,8 +9,7 @@ import { openInTerminal as apiOpenInTerminal } from "$lib/api/open";
 import { toastStore } from "../toast.svelte";
 import { settingsStore } from "../settings.svelte";
 
-/** A partial-wallpaper notice explains why the wallpaper did not change
- *  everywhere; give it time to be read. */
+/** A partial-wallpaper notice is a sentence or two; give it time to be read. */
 const PARTIAL_NOTICE_MS = 8000;
 
 export async function setWallpaper(path: string): Promise<void> {
@@ -18,9 +17,7 @@ export async function setWallpaper(path: string): Promise<void> {
   if (!result.ok) {
     toastStore.show(`Set wallpaper failed: ${result.error}`, "error");
   } else if (result.data) {
-    // Partial success is one toast: the backend's short notice ("Could only
-    // change wallpaper on some displays" / "… on the current Space"); the
-    // technical detail stays in the native log (#1731).
+    // Partial success (e.g. macOS: other Spaces unchanged) — say what wasn't done.
     toastStore.show(result.data, "info", { duration: PARTIAL_NOTICE_MS });
   }
 }

@@ -269,7 +269,8 @@ for (const [label, count, settings] of [['3 tabs', 3, {}], ['12 tabs', 12, {}], 
 // Crossing from a fitting strip into an overflowing one moves no tab by
 // layout: the scroll buttons overlay the strip's ends instead of entering
 // its flow, and the viewport keeps its geometry. (Only the strip's own
-// scroll position may move the tabs, to reveal the new one.)
+// scroll position may move the tabs, to reveal the new one; a reveal that
+// follows a sliding tab glides, holding the list back by a transform.)
 test('a strip crossing into overflow shifts no tab', async ({ page }) => {
   // Several stepped openings until one crosses: budget for a loaded runner.
   test.setTimeout(90_000);
@@ -282,7 +283,7 @@ test('a strip crossing into overflow shifts no tab', async ({ page }) => {
     crossed = frames.some(frame => frame.overflowing);
     for (let index = 1; index < frames.length; index++) {
       const [a, b] = [frames[index - 1], frames[index]];
-      const shift = (b.firstLeft! + b.scrollLeft) - (a.firstLeft! + a.scrollLeft);
+      const shift = (b.firstLeft! + b.scrollLeft - b.listShift) - (a.firstLeft! + a.scrollLeft - a.listShift);
       expect(Math.abs(shift), `first tab shifts ${shift.toFixed(1)}px at t=${b.t} (overflowing ${a.overflowing} -> ${b.overflowing})`).toBeLessThanOrEqual(1);
     }
     await page.waitForTimeout(250);

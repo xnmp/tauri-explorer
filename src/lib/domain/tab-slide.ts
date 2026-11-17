@@ -46,14 +46,15 @@ export function tabSlideCss(t: number, width = "var(--tab-width)", flare = 0, si
   const p = fixed(unit(t));
   const reach = fixed(Math.max(0, Number.isFinite(flare) ? flare : 0));
   const size = `calc(${width} * ${p})`;
+  const fade = fixed(Math.min(1, Math.max(0, unit(t) * 2.5 - 1)));
   return [
     ...(sized ? [
       `flex-basis: ${size}`, `width: ${size}`, `max-width: ${size}`, "min-width: 0",
       `padding-left: calc(var(--tab-pad-l, 0px) * ${p})`, `padding-right: calc(var(--tab-pad-r, 0px) * ${p})`,
-      `--tab-content-alpha: ${fixed(Math.min(1, Math.max(0, unit(t) * 2.5 - 1)))}`,
-      // The tab's own surface fades out from where its content is gone, so
-      // a closing tab never shrinks as an empty stub.
-      `opacity: ${fixed(Math.min(1, unit(t) * 2.5))}`,
+      `--tab-content-alpha: ${fade}`,
+      // The tab's surface and outline fade out with its content, so a
+      // closing tab never shrinks as an empty stub or an outline (#1734).
+      `opacity: ${fade}`,
     ] : []),
     `--tab-slide: ${p}`,
     `clip-path: inset(-${CLIP_REACH}px -${reach}px -${CLIP_REACH}px -${reach}px)`,

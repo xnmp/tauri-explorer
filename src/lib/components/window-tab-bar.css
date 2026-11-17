@@ -28,6 +28,32 @@
   @media (prefers-reduced-motion: reduce) {
     .tab-area .tab-viewport.bleed.ease-widths .tab { transition: none; }
   }
+/* Floating Islands starts the strip over the content islands where its tabs
+   can afford it (tabStripStart, #1734). A tab sliding in or out can move that
+   start: it eases with the tab (--tab-start-ease, the slide's duration), so
+   the first tab glides instead of jumping; a window resize moves it at once
+   (0ms). Unitless for the same CSS-zoom reason as --tab-px. */
+@property --tab-strip-start {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 12;
+}
+/* A reveal that follows a sliding tab glides with it: the tab list is
+   shifted back by the distance scrolled and eases to rest (#1734). */
+@property --tab-list-shift {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+  .tab-area .tab-list.shifted { transform: translateX(calc(var(--tab-list-shift) * 1px)); }
+  .tab-area .tab-list.shifted.glide { transition: --tab-list-shift var(--tab-width-ease, 180ms) cubic-bezier(0.33, 1, 0.68, 1); }
+  .tab-area.aligned {
+    padding-left: calc(var(--tab-strip-start) * 1px);
+    transition: --tab-strip-start var(--tab-start-ease, 0ms) cubic-bezier(0.33, 1, 0.68, 1);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .tab-area.aligned { transition: none; }
+  }
   .tab-area .tab-scroll-group { position: relative; display: flex; flex: 0 1 auto; min-width: 0; height: 100%; align-items: flex-end; }
   /* The scroller clips at its padding box, but the active tab's fillets and
      their ring hang TAB_BLEED outside it (#1734): pad the viewport by that
@@ -82,8 +108,7 @@
     height: 34px;
     flex: 0 1 auto;
     min-width: 0;
-    /* Floating Islands aligns the strip with the content islands (#1734). */
-    padding-left: var(--tab-strip-pad, 12px);
+    padding-left: 12px;
     gap: 1px;
     position: relative;
     /* No background of its own: the titlebar owns the strip surface. Painting
@@ -114,6 +139,27 @@
      scrolls, and its tabs keep their widths. */
   .tab-area .tab-viewport.bleed .tab-list { max-width: 100%; }
   .tab-area .tab-viewport.bleed .tab { flex-shrink: 1; }
+  /* An overflowing strip is as wide as its tabs at rest: a tab sliding in or
+     out shares its excess with the others the same way, so the last tab is
+     never pushed past the scroller's edge mid-slide. */
+  .tab-area .tab-viewport:not(.bleed) .tab-list { width: var(--tab-list-width, max-content); }
+  .tab-area .tab-viewport:not(.bleed) .tab { flex-shrink: 1; }
+  /* The scroll extent's end bleed belongs to the list, not the scroller:
+     WebKit leaves a scroller's inline-end padding out of its scroll width,
+     so there the last tab's fillet could never scroll into view (#1734). */
+  .tab-area .tab-viewport:not(.bleed) { padding-right: 0; }
+  .tab-area .tab-viewport:not(.bleed) .tab-list {
+    box-sizing: content-box;
+    padding-right: var(--tab-bleed, 0px);
+  }
+  /* While a revealing scroll glides, the list keeps its scroll extent but
+     its tabs fit inside the rest position's end: the end of the strip (often
+     the new active tab and its fillet) stays put and whole while the start
+     slides away, instead of the end being pushed past the scroller (#1734). */
+  .tab-area .tab-viewport:not(.bleed) .tab-list.shifted {
+    width: calc(var(--tab-list-width) - max(0, var(--tab-list-shift)) * 1px);
+    padding-right: calc(var(--tab-bleed, 0px) + max(0, var(--tab-list-shift)) * 1px);
+  }
 
   .tab-area .tab {
     box-sizing: border-box;
@@ -203,6 +249,10 @@
     border-radius: var(--radius-sm);
     background: var(--control-fill-secondary);
   }
+  /* Beside the active tab its fillet flares about 5px into this tab at the
+     pill's lower corner: keep the pill clear of it with room to spare. */
+  .tab-area .tab.before-active:hover:not(.active)::before { right: 10px; }
+  .tab-area .tab.after-active:hover:not(.active)::before { left: 10px; }
 
   .tab-area .tab:hover {
     color: var(--text-primary);
@@ -417,6 +467,8 @@
     -webkit-mask-image: var(--tab-title-fade);
     mask-image: var(--tab-title-fade);
   }
+  /* A title that fits keeps every letter (WindowTabBar marks it). */
+  .tab-area .tab-title.fits { -webkit-mask-image: none; mask-image: none; }
 
   /* An inactive tab's close button overlays the end of its title (it only
      shows on hover), so it reserves no room; the title fades out under it. */
@@ -425,8 +477,11 @@
     right: var(--tab-pad-r);
     top: calc(50% - 9px);
   }
-  .tab-area .tab:not(.active):hover .tab-title {
+  .tab-area .tab:not(.active):hover .tab-title,
+  .tab-area .tab:not(.active):hover .tab-title.fits {
     --tab-title-fade: linear-gradient(to right, #000 calc(100% - 34px), transparent calc(100% - 16px));
+    -webkit-mask-image: var(--tab-title-fade);
+    mask-image: var(--tab-title-fade);
   }
 
   .tab-area .tab-rename-input {

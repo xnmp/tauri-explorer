@@ -472,7 +472,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/composables/island-regions.ts` — shared Floating Islands region selectors (island surfaces vs structural regions) used by the tab seam marks and strip start.
 - `src/lib/composables/tab-seam-marks.ts` — lazily loaded Floating Islands tab marks: measures the active tab and islands, updates the title bar's inline SVG shade/fill/shadow/edge and island `data-tab-seam` notches in place.
 - `src/lib/composables/use-tab-seam.svelte.ts` — loads and attaches `tab-seam-marks` while the islands layout is active; repaints on tab changes.
-- `src/lib/composables/tab-strip-start.ts` — Floating Islands tab strip start: measures the leftmost content island under the title bar and sets `--tab-strip-pad` so the first tab's foot lands past the island's top-left corner (#1734).
+- `src/lib/composables/tab-strip-dom.ts` — window tab strip DOM helpers: slide transition, reveal glide, title-fade fit check, and the strip's room measured on the title bar's room box so its own writes never loop a ResizeObserver (#1734).
+- `src/lib/composables/tab-strip-start.ts` — Floating Islands tab strip start: measures the leftmost content island under the title bar (observing only boxes shallower than the strip, plus a MutationObserver for structural island changes) and reports the aligned start that `tabStripStart` adapts to the room (#1734).
 - `src/lib/composables/use-sidebar-drag-end.ts` — source-bound document dragend capture, bookmark fallback and gesture retirement.
 - `src/lib/composables/use-sidebar-file-drop.ts` — MIME-scoped Quick Access pinning and bookmark reorder, independent of retained file consumers.
 - `src/lib/composables/use-dom-directory-drop.ts` — shared importable folder/breadcrumb/tab/listing/Miller DOM transfer destinations and copy policies.

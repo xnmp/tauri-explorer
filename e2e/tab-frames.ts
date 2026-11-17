@@ -44,6 +44,14 @@ export interface TabFrame {
   /** The strip's scroll position and whether its tabs overflow it. */
   scrollLeft: number;
   overflowing: boolean;
+  /** How far a revealing scroll's glide still holds the tabs back (CSS px):
+   *  the tab list's transform, which moves no tab by layout. */
+  listShift: number;
+  /** Where the strip starts (its left padding, CSS px): Floating Islands
+   *  eases it with a sliding tab in a window too narrow to align it. */
+  stripStart: number;
+  /** The tab scroller's box, CSS px relative to the title bar. */
+  view: [number, number] | null;
 }
 
 /** Start sampling every frame for `ms`. Read the result with `readTabFrames`. */
@@ -108,6 +116,18 @@ export async function sampleTabFrames(page: Page, ms = 500): Promise<void> {
         })(),
         scrollLeft: titlebar.querySelector<HTMLElement>(".tab-viewport")?.scrollLeft ?? 0,
         overflowing: Boolean(titlebar.querySelector(".tab-viewport:not(.bleed)")),
+        listShift: (() => {
+          const list = titlebar.querySelector<HTMLElement>(".tab-list.shifted");
+          return list ? parseFloat(getComputedStyle(list).getPropertyValue("--tab-list-shift")) || 0 : 0;
+        })(),
+        view: (() => {
+          const viewport = titlebar.querySelector<HTMLElement>(".tab-viewport")?.getBoundingClientRect();
+          return viewport ? [(viewport.left - bar.left) / zoom, (viewport.right - bar.left) / zoom] as [number, number] : null;
+        })(),
+        stripStart: (() => {
+          const area = titlebar.querySelector<HTMLElement>('[data-region="tab-strip"]');
+          return area ? parseFloat(getComputedStyle(area).getPropertyValue("--tab-strip-start")) || 12 : 0;
+        })(),
         closing: (() => {
           const leaving = tabs.find((el) => el.inert);
           return leaving ? { width: leaving.getBoundingClientRect().width / zoom, opacity: Number(getComputedStyle(leaving).opacity) } : null;
@@ -155,7 +175,10 @@ async function holdTitlebarAnimations(page: Page): Promise<void> {
     // on the duration at that moment let later transitions run in real time.
     const style = document.createElement("style");
     // Scale the strip's own duration (it is the sliding tab's: in or out).
-    style.textContent = `[data-region="titlebar"] [data-region="tab"] { transition-duration: calc(var(--tab-width-ease, 180ms) * 1000) !important; }`;
+    // The strip start eases with a sliding tab too (Floating Islands).
+    style.textContent = `[data-region="titlebar"] [data-region="tab"] { transition-duration: calc(var(--tab-width-ease, 180ms) * 1000) !important; }
+      [data-region="titlebar"] [data-region="tab-strip"] { transition-duration: calc(var(--tab-start-ease, 0ms) * 1000) !important; }
+      [data-region="titlebar"] .tab-list.glide { transition-duration: calc(var(--tab-width-ease, 180ms) * 1000) !important; }`;
     document.head.appendChild(style);
   });
 }

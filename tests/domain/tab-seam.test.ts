@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  TAB_FILLET, TAB_LIGHT, TAB_STRIP_PADDING, gutterRowsFor, islandAt, islandSquareFor, islandUnder, seamRowFor, tabFillPath, tabStripPadding, stripShadePath, tabContour, tabEdgePath, tabHoleFor, tabKeyShadow, tabSilhouettePath,
+  TAB_FILLET, TAB_LIGHT, TAB_STRIP_PADDING, gutterRowsFor, tabFootFor, tabShownSpan, islandAt, islandSquareFor, islandUnder, seamRowFor, tabFillPath, tabStripPadding, stripShadePath, tabContour, tabEdgePath, tabHoleFor, tabKeyShadow, tabSilhouettePath,
 } from "$lib/domain/tab-seam";
 
 /** Endpoints of every segment (M/L/A/H/V/Z) plus each arc's radius. */
@@ -240,5 +240,56 @@ describe("the foot always stands on a straight top edge (#1734)", () => {
     // No bridge unless both facing corners are squared under the foot.
     expect(gutterRowsFor({ left: 500, right: 790 }, [square(panes), { ...preview, square: { left: false, right: false } }])).toEqual([]);
     expect(gutterRowsFor(hole, [])).toEqual([]);
+  });
+});
+
+describe("a narrow window's strip over the sidebar (#1734)", () => {
+  // Sidebar (structural) island 6-246, panes (content) 254-1094.
+  const sidebar = { left: 6, right: 246, radius: 14, home: false };
+  const panes = { left: 254, right: 1094, radius: 14, home: true };
+
+  it("stands a foot straddling the sidebar gutter on straight edges of both kinds", () => {
+    const hole = { left: 200, right: 330 };
+    const foot = tabFootFor(hole, [sidebar, panes]);
+    // Both facing corners are squared, whatever their kind...
+    expect(foot.squared.map((island) => [island.left, island.square])).toEqual([
+      [6, { left: false, right: true }],
+      [254, { left: true, right: false }],
+    ]);
+    // ...the gutter between them is bridged...
+    expect(foot.bridges).toEqual([{ left: 246, right: 254 }]);
+    // ...and only the tab's own kind opens its edge, from its squared corner.
+    expect(foot.seams.map(({ island, row }) => [island.left, row])).toEqual([[254, { left: 254, right: 330 }]]);
+  });
+
+  it("squares the sidebar's corner under a foot that only reaches into it", () => {
+    const foot = tabFootFor({ left: 100, right: 240 }, [{ ...sidebar, home: true }, panes]);
+    expect(foot.squared.map((island) => island.square)).toEqual([{ left: false, right: true }]);
+    expect(foot.bridges).toEqual([]);
+    expect(foot.seams.map(({ row }) => row)).toEqual([{ left: 100, right: 240 }]);
+  });
+
+  it("leaves every corner round under a foot on a straight stretch", () => {
+    const foot = tabFootFor({ left: 400, right: 560 }, [sidebar, panes]);
+    expect(foot.squared).toEqual([]);
+    expect(foot.bridges).toEqual([]);
+  });
+});
+
+describe("islands open only under a shown tab (#1734)", () => {
+  const view = { left: 267, right: 371 };
+
+  it("shows nothing of a tab scrolled past either end", () => {
+    expect(tabShownSpan({ left: 414, right: 488 }, view)).toBeNull();
+    expect(tabShownSpan({ left: 150, right: 267 }, view)).toBeNull();
+  });
+
+  it("clips a tab half under an edge to the edge", () => {
+    expect(tabShownSpan({ left: 330, right: 404 }, view)).toEqual({ left: 330, right: 371 });
+    expect(tabShownSpan({ left: 280, right: 354 }, view)).toEqual({ left: 280, right: 354 });
+  });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY])("shows nothing for unmeasured geometry %s", (value) => {
+    expect(tabShownSpan({ left: value, right: 400 }, view)).toBeNull();
   });
 });

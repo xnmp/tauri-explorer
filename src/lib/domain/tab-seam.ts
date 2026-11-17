@@ -308,6 +308,58 @@ export function gutterRowsFor(
 }
 
 /**
+ * The span of the active tab its scroller shows, or null when it shows none
+ * of it (#1734): islands open only under a tab the strip shows, so a tab
+ * scrolled out of view never leaves a seam with nothing above it.
+ */
+export function tabShownSpan(
+  tab: { readonly left: number; readonly right: number },
+  view: { readonly left: number; readonly right: number },
+): TabSeamRow | null {
+  if (![tab.left, tab.right, view.left, view.right].every(Number.isFinite)) return null;
+  const left = Math.max(tab.left, view.left);
+  const right = Math.min(tab.right, view.right);
+  return right - left >= 1 ? { left, right } : null;
+}
+
+/** An island under the strip, and whether it is the kind the tab wears. */
+export interface FootIsland extends IslandEdge {
+  readonly home: boolean;
+}
+
+export interface TabFoot<T extends FootIsland> {
+  /** Islands with a corner squared under the foot. */
+  readonly squared: readonly (T & { readonly square: IslandSquare })[];
+  /** Islands of the tab's own kind that open their top edge under it. */
+  readonly seams: readonly { readonly island: T; readonly row: TabSeamRow }[];
+  /** Gutters the tab's fill bridges between squared neighbours. */
+  readonly bridges: readonly TabSeamRow[];
+}
+
+/**
+ * Where the tab's foot (its hole) meets the islands below (#1734). The foot
+ * always stands on straight top edges: every island it reaches over has the
+ * corners under it squared, whatever the island's kind, and the gutter
+ * between two squared neighbours is bridged by the tab's fill. Only islands
+ * of the tab's own kind (`home`) open their top edge into it; another kind
+ * keeps its edge, which the tab then sits on. The strip normally starts past
+ * the content island's corner, but a narrow window gives that room back to
+ * the tabs (`tabStripStart`), so any tab can stand over any gutter.
+ */
+export function tabFootFor<T extends FootIsland>(hole: TabHole, islands: readonly T[]): TabFoot<T> {
+  const squared: (T & { square: IslandSquare })[] = [];
+  const seams: { island: T; row: TabSeamRow }[] = [];
+  for (const island of islands) {
+    const square = islandSquareFor(hole, island);
+    if (square.left || square.right) squared.push({ ...island, square });
+    if (!island.home) continue;
+    const row = seamRowFor(hole, island, square);
+    if (row) seams.push({ island, row });
+  }
+  return { squared, seams, bridges: gutterRowsFor(hole, squared) };
+}
+
+/**
  * The island the tab stands on, whose surface it wears: the one under most
  * of the tab's hole. Ties keep the earlier island.
  */

@@ -53,13 +53,20 @@
   // below, kept in step with the strip by the lazily loaded seam marks.
   useTabSeam(() => titlebarEl, () => [windowTabsManager.tabs, windowTabsManager.activeTabId, tabStripVisible]);
 
-  // Floating Islands: the strip starts over the content islands, so a fused
-  // tab always stands on one island's straight top edge (#1734).
+  // Floating Islands: the strip starts over the content islands where its
+  // tabs can afford it (WindowTabBar, `tabStripStart`), so a fused tab stands
+  // over the content it opens (#1734). Keyed on a boolean so re-applying the
+  // same layout does not detach and re-measure the strip.
+  let alignedStart = $state<number | null>(null);
+  const alignStrip = $derived(Boolean(titlebarEl) && layoutStore.islands && tabStripVisible);
   $effect(() => {
     const bar = titlebarEl;
-    if (!bar || !layoutStore.islands || !tabStripVisible) return;
-    const start = attachTabStripStart(bar);
-    return () => start.destroy();
+    if (!alignStrip || !bar) return;
+    const start = attachTabStripStart(bar, (value) => { alignedStart = value; });
+    return () => {
+      start.destroy();
+      alignedStart = null;
+    };
   });
 
   onMount(() => {
@@ -69,8 +76,7 @@
 
   async function handleDragStart(event: MouseEvent) {
     if (event.button !== 0) return;
-    const target = event.target as HTMLElement;
-    if (target.closest("button") || target.closest(".tab-area")) return;
+    if (!titlebar.startsWindowDrag(event.target as Element)) return;
 
     if (event.detail === 2) {
       await appWindow?.toggleMaximize();
@@ -127,9 +133,16 @@
         </g>
       </svg>
     {/if}
-    {#if windowTabsManager.activeTab}
-      <WindowTabBar />
-    {/if}
+    <!-- The tab strip grows into the spacer. Their box is the strip's room:
+         nothing the strip lays out inside it (its start, its tabs) changes
+         its size, so WindowTabBar can observe it without feeding back into
+         its own observation (#1734). -->
+    <div class="tab-room" data-tab-room-box>
+      {#if windowTabsManager.activeTab}
+        <WindowTabBar {alignedStart} />
+      {/if}
+      <div class="spacer" data-tab-room></div>
+    </div>
     {#if layoutStore.islands}
       <!-- One stroke over the tab, its fillets and the island top edges,
            fading out through the islands' rounded corners. -->
@@ -149,8 +162,6 @@
         <path class="tab-edge-stroke" fill="none" stroke="url(#tab-edge-fade)" clip-path="url(#tab-edge-view)" />
       </svg>
     {/if}
-    <!-- The tab strip grows into this spacer (WindowTabBar measures it). -->
-    <div class="spacer" data-tab-room></div>
 
     {#if settingsStore.showWindowControls}
       <div class="window-controls">
@@ -254,6 +265,14 @@
 
   .titlebar.integrated {
     padding-left: 70px;
+  }
+
+  .tab-room {
+    display: flex;
+    align-items: flex-end;
+    flex: 1 1 0;
+    min-width: 0;
+    height: 100%;
   }
 
   .spacer {

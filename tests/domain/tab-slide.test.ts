@@ -24,16 +24,18 @@ describe("tabSlideCss", () => {
     expect(frame["flex-basis"]).toBeUndefined();
   });
 
-  it("fades a closing tab's content before its surface, and the surface before it is gone", () => {
+  it("fades a closing tab's surface and outline out with its content", () => {
     const at = (t: number) => declarations(tabSlideCss(t));
     expect(at(1)["--tab-content-alpha"]).toBe("1");
     expect(at(1).opacity).toBe("1");
-    // Content is gone by 40% width; the surface fades from there to zero.
-    expect(at(0.4)["--tab-content-alpha"]).toBe("0");
-    expect(at(0.4).opacity).toBe("1");
-    expect(at(0.2).opacity).toBe("0.5");
-    expect(at(0).opacity).toBe("0");
-    for (const t of [0.05, 0.1, 0.2, 0.3]) expect(Number(at(t).opacity)).toBeLessThan(1);
+    // Content, surface and outline are one fade, gone by 40% width: no
+    // outline lingers around a tab whose content has already gone.
+    for (const t of [1, 0.8, 0.6, 0.5, 0.45, 0.4, 0.3, 0.1, 0]) {
+      expect(at(t).opacity, `t=${t}`).toBe(at(t)["--tab-content-alpha"]);
+    }
+    expect(at(0.4).opacity).toBe("0");
+    expect(Number(at(0.5).opacity)).toBeGreaterThan(0);
+    expect(Number(at(0.5).opacity)).toBeLessThan(1);
   });
 
   it("never clips with overflow, and widens its clip by the fillet flare", () => {

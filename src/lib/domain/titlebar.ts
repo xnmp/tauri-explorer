@@ -48,3 +48,14 @@ export function showTabStrip(
 ): boolean {
   return showWindowTabBar(tabCount, activeTabRenameable) || showWindowControls;
 }
+
+/**
+ * Whether a primary press on `target` drags (or, double-clicked, maximizes)
+ * the window. Everything in the title bar does, except its controls: buttons,
+ * fields, the tabs and their scroller, and the open-tabs picker. That
+ * includes the strip's empty band before its first tab, which Floating
+ * Islands widens over the sidebar (#1734).
+ */
+export function startsWindowDrag(target: Element | null): boolean {
+  return !target?.closest("button, input, textarea, select, .tab-scroll-group, .window-tab-picker");
+}

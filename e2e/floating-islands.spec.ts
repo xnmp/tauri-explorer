@@ -8,7 +8,7 @@
  */
 import { test, expect, type Page } from "./fixtures";
 import { applySettingsAndReload, pressShortcut, seedSettings, waitForEntries } from "./helpers";
-import { expectSeededGrowth, steppedFrames, steppedFramesOfNewTab, type TabFrame } from "./tab-frames";
+import { expectSeededGrowth, steppedFrames, steppedFramesOfNewTab, TAB_SEED_MAX, type TabFrame } from "./tab-frames";
 
 test.describe("Floating islands (#277)", () => {
   test("selecting the layout applies islands without a native backdrop", async ({ page }) => {
@@ -59,8 +59,8 @@ test.describe("Fused active tab (#1734)", () => {
     }`;
   const PATHS = ["/home/user", "/home/user/Downloads", "/home/user/Documents"];
 
-  async function openIslands(page: Page, { theme = "dark", material = false, count = 3, layout = "floating-islands", active = count - 1, settings = {} as Record<string, unknown> } = {}): Promise<void> {
-    await page.setViewportSize({ width: 1100, height: 600 });
+  async function openIslands(page: Page, { theme = "dark", material = false, count = 3, layout = "floating-islands", active = count - 1, settings = {} as Record<string, unknown>, width = 1100 } = {}): Promise<void> {
+    await page.setViewportSize({ width, height: 600 });
     if (material) {
       await page.addInitScript(() => {
         Object.defineProperty(window.navigator, "platform", { get: () => "MacIntel", configurable: true });
@@ -206,16 +206,28 @@ test.describe("Fused active tab (#1734)", () => {
     const all = await steppedFrames(page, () => pressShortcut(page, "t", { ctrlKey: true }));
     expectSeededGrowth(all.filter((frame) => frame.widths.length > count));
     // The strip stays in place: a seed the others have not yet made room for
-    // must not overflow and scroll every tab sideways.
-    for (const frame of all) expect(Math.abs(frame.firstLeft! - all[0].firstLeft!), `first tab t=${frame.t}`).toBeLessThanOrEqual(0.5);
+    // must not overflow and scroll every tab sideways. Only the strip's start
+    // may move (it gives a narrower window's tabs room back, #1734), and it
+    // glides with the slide: no step covers more than half its move.
+    const offset = (frame: TabFrame) => frame.firstLeft! - frame.stripStart;
+    for (const frame of all) expect(Math.abs(offset(frame) - offset(all[0])), `first tab t=${frame.t}`).toBeLessThanOrEqual(0.5);
+    const move = Math.abs(all[all.length - 1].stripStart - all[0].stripStart);
+    for (let index = 1; index < all.length; index++) {
+      const step = Math.abs(all[index].stripStart - all[index - 1].stripStart);
+      expect(step, `strip start t=${all[index].t} of ${move.toFixed(1)}`).toBeLessThanOrEqual(Math.max(1, move * 0.5));
+    }
     // The existing tabs (indices below `count`) ease to their new width:
     // no 15ms step, including the one the new tab appears in, covers more
-    // than half of a tab's whole change (a snap covers all of it).
+    // than half of a tab's whole change (a snap covers all of it). On the
+    // frame the new tab appears at its seed, every tab may also give up its
+    // share of that seed (flex-shrink, window-tab-bar.css) and take it back
+    // as the strip makes room.
+    const seedShare = (TAB_SEED_MAX + 1) / (count + 1);
     for (let i = 0; i < count; i++) {
       const change = Math.abs(all[all.length - 1].widths[i] - all[0].widths[i]);
       for (let index = 1; index < all.length; index++) {
         const step = Math.abs(all[index].widths[i] - all[index - 1].widths[i]);
-        expect(step, `tab ${i} t=${all[index].t} of ${change.toFixed(1)}`).toBeLessThanOrEqual(Math.max(1, change * 0.5));
+        expect(step, `tab ${i} t=${all[index].t} of ${change.toFixed(1)}`).toBeLessThanOrEqual(Math.max(1, change * 0.5, seedShare));
       }
     }
   });
@@ -462,5 +474,268 @@ test.describe("Fused active tab (#1734)", () => {
     await page.locator('.tab-viewport [data-region="tab"]').first().click();
     await page.mouse.move(5, 500);
     await expect(page.locator("[data-tab-square]")).toHaveCount(0);
+  });
+  // ---- Narrow windows (#1744 review 2) ----
+
+  /** The active tab, the tab scroller and the hole, in page CSS px. */
+  async function stripState(page: Page) {
+    return page.evaluate(() => {
+      const bar = document.querySelector<HTMLElement>('[data-region="titlebar"]')!;
+      const zoom = parseFloat(document.documentElement.style.zoom) / 100 || 1;
+      const box = (el: Element | null) => {
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        return { left: r.left / zoom, right: r.right / zoom };
+      };
+      const hole = bar.getAttribute("data-tab-hole")?.split(" ").map(Number) ?? null;
+      const barLeft = bar.getBoundingClientRect().left / zoom;
+      return {
+        tab: box(bar.querySelector('.tab-viewport [data-region="tab"][aria-selected="true"]')),
+        view: box(bar.querySelector(".tab-viewport")),
+        hole: hole && { left: hole[0] + barLeft, right: hole[1] + barLeft },
+        seams: document.querySelectorAll("[data-tab-seam]").length,
+        overflowing: Boolean(bar.querySelector(".tab-viewport:not(.bleed)")),
+        compact: bar.querySelectorAll(".tab.compact").length,
+        buttons: bar.querySelectorAll(".tab-scroll-btn").length,
+      };
+    });
+  }
+
+  for (const width of [560, 640]) test(`a narrow window shows its active tab at load and opens an island only under it (${width}px)`, async ({ page }) => {
+    await openIslands(page, { width, count: 14 });
+    await page.mouse.move(5, 500);
+    await page.waitForTimeout(400);
+    const state = await stripState(page);
+    expect(state.overflowing, "the fixture overflows").toBe(true);
+    // The active (last) tab is wholly inside the scroller...
+    expect(state.tab!.left).toBeGreaterThanOrEqual(state.view!.left - 0.5);
+    expect(state.tab!.right).toBeLessThanOrEqual(state.view!.right + 0.5);
+    // ...and the hole opens under it, nowhere else.
+    expect(Math.abs(state.hole!.left - (state.tab!.left - 14))).toBeLessThanOrEqual(1);
+    expect(Math.abs(state.hole!.right - (state.tab!.right + 14))).toBeLessThanOrEqual(1);
+    expect(state.seams).toBeGreaterThanOrEqual(1);
+    // An overflowing strip, however narrow, offers its scroll buttons.
+    expect(state.buttons).toBe(2);
+    // Scrolled out of view (past the faded end under the scroll button), the
+    // active tab leaves every island closed.
+    await page.locator(".tab-viewport").evaluate((el) => { el.scrollLeft = 0; });
+    await expect.poll(async () => (await stripState(page)).seams).toBe(0);
+    expect((await stripState(page)).hole).toBeNull();
+    // Scrolled back, the island opens again.
+    await page.locator(".tab-viewport").evaluate((el) => { el.scrollLeft = el.scrollWidth; });
+    await expect.poll(async () => (await stripState(page)).seams).toBeGreaterThanOrEqual(1);
+  });
+
+  test("a narrow window gives the band over the sidebar back to its tabs", async ({ page }) => {
+    await openIslands(page, { width: 700, count: 4 });
+    await page.mouse.move(5, 500);
+    const state = await stripState(page);
+    expect(state.overflowing).toBe(false);
+    expect(state.compact, "no icon-only tabs").toBe(0);
+    // Each inactive title has a readable box, wider than its 16px fade.
+    const titles = await page.locator('.tab-viewport [data-region="tab"]:not([aria-selected="true"]) .tab-title').evaluateAll((els) => els.map((el) => el.clientWidth));
+    expect(titles.length).toBe(3);
+    for (const width of titles) expect(width).toBeGreaterThanOrEqual(24);
+    // The strip starts before the content island to make that room.
+    const first = (await page.locator('.tab-viewport [data-region="tab"]').first().boundingBox())!;
+    const panes = await islandBox(page, "panes");
+    expect(first.x).toBeLessThan(panes.x);
+  });
+
+  // When the strip gives the sidebar band back, any tab can straddle the
+  // sidebar's gutter: its foot still stands on straight top edges.
+  for (const theme of ["light", "dark"]) test(`a tab straddling the sidebar gutter stands on squared corners (${theme})`, async ({ page }) => {
+    await openIslands(page, { theme, width: 560, count: 5 });
+    await page.mouse.move(5, 500);
+    const tab = await activeTabBox(page);
+    const sidebar = await islandBox(page, "sidebar");
+    const panes = await islandBox(page, "panes");
+    const gutter = [sidebar.x + sidebar.width, panes.x];
+    expect(tab.x - 14, "the fixture's foot reaches over the gutter").toBeLessThan(gutter[0] - 18);
+    expect(tab.x + tab.width + 14).toBeGreaterThan(gutter[1] + 14);
+    const corners = await page.evaluate(() => ["sidebar", "panes"].map((region) => {
+      const style = getComputedStyle(document.querySelector(`[data-region="${region}"]`)!);
+      return [style.borderTopLeftRadius, style.borderTopRightRadius];
+    }));
+    expect(corners[0][1], "sidebar's right corner").toBe("0px");
+    expect(corners[1][0], "panes' left corner").toBe("0px");
+    // Each island's corner zone under the foot continues its straight top
+    // edge: every row matches the same row further inside the island (the
+    // sidebar keeps its own edge line, which the tab sits on); a rounded
+    // corner would curve away and show the gutter.
+    const base = Math.round(tab.y + tab.height);
+    for (const [x, inside] of [[gutter[0] - 10, gutter[0] - 14], [gutter[1] + 2, gutter[1] + 40]]) {
+      for (let row = 1; row <= 5; row++) {
+        const [reference] = await pixels(page, { x: Math.round(inside), y: base + row, width: 1, height: 1 });
+        const zone = await pixels(page, { x: Math.round(x), y: base + row, width: 8, height: 1 });
+        const worst = Math.max(...zone.map((pixel) => distance(pixel, reference)));
+        expect(worst, `corner zone at x=${Math.round(x)}, row ${row}`).toBeLessThanOrEqual(10);
+      }
+    }
+  });
+
+  // The strip start follows the islands and the room it measures, and writing
+  // it resizes the strip. Neither measurement may observe a box that write
+  // resizes in the same frame: WebKit reports that as a ResizeObserver loop
+  // (a dense split layout restored at 130% did, and so did resizing a
+  // window whose start was giving the sidebar band back to its tabs).
+  test("aligning the strip never loops its ResizeObservers", async ({ page }) => {
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    await page.setViewportSize({ width: 640, height: 480 });
+    await seedSettings(page, { layoutTheme: "floating-islands", zoomLevel: 130 });
+    await page.goto("/?path=/home/user");
+    await waitForEntries(page);
+    await page.waitForTimeout(500);
+    const ids = Array.from({ length: 16 }, (_, i) => i);
+    type Node = { type: "leaf"; id: string; path: string } | { type: "split"; id: string; direction: "row" | "column"; ratio: number; first: Node; second: Node };
+    const split = (part: number[], depth = 0): Node => {
+      if (part.length === 1) return { type: "leaf", id: `dense-${part[0]}`, path: "/home/user/Documents" };
+      const middle = Math.ceil(part.length / 2);
+      return { type: "split", id: `dense-split-${part.join("-")}`, direction: depth % 2 ? "column" : "row", ratio: 0.5, first: split(part.slice(0, middle), depth + 1), second: split(part.slice(middle), depth + 1) };
+    };
+    await page.evaluate(async (layout) => {
+      const load = new Function("return import('/src/lib/state/window-tabs.svelte.ts')");
+      (await load()).windowTabsManager.restoreFromState({ version: 3, tabs: [{ id: "dense", kind: "explorer", activePaneId: "dense-15", layout }], activeTabId: "dense" });
+    }, split(ids));
+    await expect(page.locator(".explorer-pane")).toHaveCount(16);
+    await page.waitForTimeout(300);
+    // Resizing moves the start through the range where it gives the band
+    // over the sidebar back to the tabs.
+    for (const width of [700, 760, 820, 900, 1100, 760, 640]) {
+      await page.setViewportSize({ width, height: 480 });
+      await page.waitForTimeout(150);
+    }
+    expect(errors).toEqual([]);
+  });
+
+  test("the empty band before the first tab drags the window", async ({ page }) => {
+    await openIslands(page);
+    await page.mouse.move(5, 500);
+    const strip = (await page.locator('[data-region="tab-strip"]').boundingBox())!;
+    const first = (await page.locator('.tab-viewport [data-region="tab"]').first().boundingBox())!;
+    expect(first.x - strip.x, "the fixture has a band").toBeGreaterThan(100);
+    const drags = (x: number, y: number) => page.evaluate(async ({ x, y }) => {
+      const load = new Function("return import('/src/lib/domain/titlebar.ts')");
+      const { startsWindowDrag } = await load();
+      const target = document.elementFromPoint(x, y);
+      return Boolean(target?.closest('[data-region="titlebar"]')) && startsWindowDrag(target);
+    }, { x, y });
+    const y = first.y + first.height / 2;
+    expect(await drags(strip.x + 40, y), "the band").toBe(true);
+    expect(await drags(first.x - 30, y), "just before the first tab").toBe(true);
+    expect(await drags(first.x + first.width / 2, y), "a tab").toBe(false);
+  });
+
+  // Crossing into overflow scrolls the strip to show the new tab: the tabs
+  // glide there with the slide, never jumping in one frame, and the new tab
+  // is never cut by the scroller's edge.
+  test("a narrow strip crossing into overflow glides, its new tab whole", async ({ page }) => {
+    await openIslands(page, { width: 560, count: 7 });
+    await page.waitForTimeout(300);
+    const frames = await steppedFrames(page, () => pressShortcut(page, "t", { ctrlKey: true }));
+    expect(frames.some((frame) => frame.overflowing), "the fixture crosses into overflow").toBe(true);
+    const total = Math.abs(frames[frames.length - 1].firstLeft! - frames[0].firstLeft!);
+    for (let index = 1; index < frames.length; index++) {
+      const step = Math.abs(frames[index].firstLeft! - frames[index - 1].firstLeft!);
+      expect(step, `first tab t=${frames[index].t} of ${total.toFixed(1)}`).toBeLessThanOrEqual(Math.max(1, total * 0.5));
+    }
+    for (const frame of frames.slice(1)) {
+      expect(frame.active!.right, `t=${frame.t}`).toBeLessThanOrEqual(frame.view![1] + 0.5);
+      expect(frame.hole![1], `hole t=${frame.t}`).toBeLessThanOrEqual(frame.view![1] + 0.5);
+    }
+  });
+
+  // A strip that fills its room, fitting or overflowing: the tab sliding in
+  // grows as the others shrink, so their total (and the new-tab button
+  // behind them) holds still, and an overflowing strip keeps its end in
+  // place while its start glides away. At 1100px with ten tabs the button
+  // dipped mid-slide; overflowing, the strip scrolled its end away.
+  for (const [width, count] of [[1100, 10], [560, 6], [1100, 16]] as const) test(`a full strip holds its new-tab button still while a tab slides in (${width}px, ${count} tabs)`, async ({ page }) => {
+    await openIslands(page, { width, count, theme: "light" });
+    await page.waitForTimeout(300);
+    const frames = await steppedFrames(page, () => pressShortcut(page, "t", { ctrlKey: true }));
+    expect(frames.some((frame) => frame.widths.length === count + 1), "the fixture opens a tab").toBe(true);
+    const steady = frames[0].plusLeft!;
+    expect(Math.abs(frames[frames.length - 1].plusLeft! - steady), "the fixture fills its room").toBeLessThanOrEqual(1);
+    for (const frame of frames) {
+      expect(Math.abs(frame.plusLeft! - steady), `+ at t=${frame.t}`).toBeLessThanOrEqual(1);
+      expect(Math.abs(frame.lastRight! - frames[0].lastRight!), `last tab's end at t=${frame.t}`).toBeLessThanOrEqual(1);
+    }
+  });
+
+  // Inactive tabs either show a title box wider than its fade, or no title.
+  for (const count of [3, 6, 9]) test(`inactive tabs show no fragments of titles (${count} tabs)`, async ({ page }) => {
+    await openIslands(page, { count, theme: "light" });
+    await page.mouse.move(5, 500);
+    for (let width = 520; width <= 940; width += 30) {
+      await page.setViewportSize({ width, height: 600 });
+      await expect.poll(() => page.locator('.tab-viewport [data-region="tab"]:not([aria-selected="true"]) .tab-title').evaluateAll((els) =>
+        els.map((el) => (getComputedStyle(el).display === "none" ? null : el.clientWidth)).filter((box) => box !== null && box < 24)), `${width}px`).toEqual([]);
+    }
+  });
+
+  test("a title that fits is not faded, one that does not is", async ({ page }) => {
+    await openIslands(page, { theme: "light", settings: { zoomLevel: 125 } });
+    await page.mouse.move(5, 500);
+    const titles = await page.locator('.tab-viewport [data-region="tab"] .tab-title').evaluateAll((els) => els.map((el) => {
+      const fits = [el, ...el.children].every((part) => part.scrollWidth <= part.clientWidth);
+      const style = getComputedStyle(el);
+      return { fits, masked: (style.maskImage || style.webkitMaskImage || "none") !== "none" };
+    }));
+    expect(titles.some((title) => title.fits), "the fixture has a title that fits").toBe(true);
+    for (const title of titles) expect(title.masked).toBe(!title.fits);
+    await page.setViewportSize({ width: 640, height: 600 });
+    await expect.poll(() => page.locator('.tab-viewport [data-region="tab"][aria-selected="true"] .tab-title').evaluate((el) => {
+      const style = getComputedStyle(el);
+      return (style.maskImage || style.webkitMaskImage || "none") !== "none" && el.querySelector(".tab-cwd")!.scrollWidth > el.querySelector(".tab-cwd")!.clientWidth;
+    })).toBe(true);
+  });
+
+  for (const side of ["before", "after"] as const) test(`a hovered neighbour's pill keeps clear of the active tab's fillet (${side})`, async ({ page }) => {
+    await openIslands(page, { count: 3, active: 1 });
+    const tabs = page.locator('.tab-viewport [data-region="tab"]');
+    const neighbour = tabs.nth(side === "before" ? 0 : 2);
+    await neighbour.hover();
+    const gap = await neighbour.evaluate((el, side) => {
+      const active = document.querySelector('.tab-viewport [data-region="tab"][aria-selected="true"]')!.getBoundingClientRect();
+      const box = el.getBoundingClientRect();
+      const pill = getComputedStyle(el, "::before");
+      return side === "before" ? active.left - (box.right - parseFloat(pill.right)) : (box.left + parseFloat(pill.left)) - active.right;
+    }, side);
+    // The fillet reaches about 5px out at the pill's lower corner.
+    expect(gap).toBeGreaterThanOrEqual(8);
+  });
+
+  for (const theme of ["light", "dark"]) test(`a tab straddling split panes stands on squared corners (${theme})`, async ({ page }) => {
+    await openIslands(page, { theme, count: 3, active: 1 });
+    await page.evaluate(async () => {
+      const load = new Function("return import('/src/lib/state/window-tabs.svelte.ts')");
+      const manager = (await load()).windowTabsManager;
+      const leaf = (id: string, path: string) => ({ type: "leaf", id, path });
+      manager.restoreFromState({ version: 3, activeTabId: "s-1", tabs: [0, 1, 2].map((i) => ({
+        id: `s-${i}`, kind: "explorer", activePaneId: `l-${i}`,
+        layout: { type: "split", id: `split-${i}`, direction: "row", ratio: 0.5, first: leaf(`l-${i}`, "/home/user"), second: leaf(`r-${i}`, "/home/user/Documents") },
+      })) });
+    });
+    await page.mouse.move(5, 500);
+    await expect(page.locator(".pane-tree:not(.retained) .explorer-pane")).toHaveCount(2);
+    await page.waitForTimeout(300);
+    const tab = await activeTabBox(page);
+    const panes = await page.locator(".pane-tree:not(.retained) .explorer-pane").evaluateAll((els) => els.map((el) => {
+      const island = el.closest<HTMLElement>("[data-region]") ?? el;
+      const r = el.getBoundingClientRect();
+      return { left: r.left, right: r.right, square: el.getAttribute("data-tab-square") ?? island.getAttribute("data-tab-square") };
+    }));
+    const gutter = [panes[0].right, panes[1].left];
+    expect(tab.x - 14, "the fixture's foot reaches over the split").toBeLessThan(gutter[0] - 14);
+    expect(tab.x + tab.width + 14).toBeGreaterThan(gutter[1] + 14);
+    const base = Math.round(tab.y + tab.height);
+    const [surface] = await pixels(page, { x: Math.round(tab.x + 20), y: base + 4, width: 1, height: 1 });
+    for (const x of [gutter[0] - 10, gutter[1] + 2]) {
+      const region = await pixels(page, { x: Math.round(x), y: base + 1, width: 8, height: 5 });
+      const worst = Math.max(...region.map((pixel) => distance(pixel, surface)));
+      expect(worst, `corner zone at x=${Math.round(x)}`).toBeLessThanOrEqual(8);
+    }
   });
 });

@@ -82,3 +82,49 @@ judge frame-exact claims from Chromium sheets.
   tests must scan the whole corner zone, not one interior pixel.
 - A faint step beside the fused tab in light themes is the tab's lift-shadow
   gradient, not a path edge.
+
+## Round 2 (narrow windows, WebKit)
+
+- **The strip start is adaptive.** It starts over the content island only
+  while every tab still fits at its comfortable width there
+  (`tabStripStart`); otherwise it gives the band over the sidebar back, down
+  to the window edge. The room is measured as if the strip started at the
+  edge, so moving the start never changes its own input. A foot that then
+  lands on any island, or straddles a gutter, squares the reached corners
+  (`tabFootFor`), and only the active tab's shown span opens a seam
+  (`tabShownSpan`, fades included).
+- **A transient layout can clamp a scroll position.** Re-running an effect
+  that removed and re-applied the strip padding forced a layout without it,
+  and the browser silently clamped `scrollLeft` to 0. No ResizeObserver saw
+  the transient. Derive effect triggers as booleans, and report values
+  through callbacks instead of writing CSS from a teardown.
+- **Reveal from the target layout, then glide.** Revealing the rendered,
+  mid-slide strip scrolled one way and then back. `tabRevealScroll` computes
+  the rest position (a fitting strip rests at 0). The list is then translated
+  back by the distance scrolled, and that eases out. While it glides, the
+  overflowing list keeps its scroll extent but pads its end by the shift, so
+  the end of the strip, often the new tab and its fillet, stays whole.
+- **WebKit leaves a scroller's inline-end padding out of `scrollWidth`.** An
+  overflowing strip's end bleed lives on the tab list (its own padding), not
+  on the viewport, or the last tab's fillet can never scroll into view.
+- **Never observe a box your write resizes.** WebKit reports "ResizeObserver
+  loop completed with undelivered notifications" when a callback's write
+  resizes an observed box at or above the round's shallowest depth. Islands
+  sit deeper (panes container at depth 9, split panes at 13) than the strip's
+  scroller (depth 8). Observing them made the start's padding write loop, as
+  in a dense split layout restored at 130%. The start observes only the title
+  bar, main and main's children, and a MutationObserver handles split and
+  island changes. The room is observed on `data-tab-room-box`, which neither
+  the start nor the tabs can resize.
+- **An effect that creates an observer must not track what its callback
+  writes.** The room effect measured synchronously, so it tracked the room.
+  Every change re-created the ResizeObserver mid-delivery, and the new
+  observer's initial notification for a shallow box was skipped: a WebKit
+  loop on every zoom change (`pane-viewport` divider tests). Untrack the
+  initial measure.
+- **Seam marks must forget a cleared state.** After a hidden or empty
+  measurement, the "unchanged key" short-circuit kept a tab scrolled back
+  into view from redrawing its seams.
+- Title fades apply only when a title (or one of its parts) overflows
+  (`.fits`). Inactive titles narrower than 24px (1.5× the fade) are hidden
+  (`TAB_ICON_ONLY_BELOW = 64`).

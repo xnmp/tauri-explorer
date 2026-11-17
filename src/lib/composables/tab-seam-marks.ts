@@ -17,8 +17,8 @@
  * Geometry is pure (`domain/tab-seam.ts`); colours come from CSS.
  */
 import {
-  TAB_SEAM_DEPTH, gutterRowsFor, islandAt, islandSquareFor, islandUnder, seamRowFor, stripShadePath, tabContour, tabEdgePath, tabFillPath,
-  tabHoleFor, tabKeyShadow, type IslandEdge, type IslandSquare, type TabContour, type TabSeamRow,
+  TAB_SEAM_DEPTH, islandAt, islandUnder, stripShadePath, tabFootFor, tabShownSpan, tabContour, tabEdgePath, tabFillPath,
+  tabHoleFor, tabKeyShadow, type IslandEdge, type TabContour,
 } from "$lib/domain/tab-seam";
 import { getZoomFactor } from "$lib/domain/zoom";
 import { ISLANDS, STRUCTURAL } from "./island-regions";
@@ -66,6 +66,14 @@ export function attachTabSeam(titlebar: HTMLElement): TabSeam {
     for (const el of document.querySelectorAll("[data-tab-square]")) el.removeAttribute("data-tab-square");
   }
 
+  /** Marks drawn for nothing: the next drawable state must draw again even
+   *  when it repeats the last one drawn (a tab scrolled away and back). */
+  function cleared(state: string): string {
+    clear();
+    previous = state;
+    return state;
+  }
+
   function measure(): string {
     const zoom = getZoomFactor() || 1;
     const bar = titlebar.getBoundingClientRect();
@@ -74,10 +82,7 @@ export function attachTabSeam(titlebar: HTMLElement): TabSeam {
     const height = bar.height / zoom;
     const tab = titlebar.querySelector<HTMLElement>('.tab-viewport [data-region="tab"][aria-selected="true"]');
     const viewport = tab?.closest<HTMLElement>(".tab-viewport");
-    if (!tab || !viewport) {
-      clear();
-      return "none";
-    }
+    if (!tab || !viewport) return cleared("none");
     const box = tab.getBoundingClientRect();
     const view = viewport.getBoundingClientRect();
     const style = getComputedStyle(tab);
@@ -101,6 +106,19 @@ export function attachTabSeam(titlebar: HTMLElement): TabSeam {
     const hole = tabHoleFor({ left, width: tabWidth }, contour.fillet)!;
     const viewLeft = css(view.left, bar.left);
     const viewRight = css(view.right, bar.left);
+    // An island opens only under the part of the active tab the strip shows:
+    // a tab scrolled out of the viewport leaves every island closed, and one
+    // half under an edge opens it no further than that edge (#1734).
+    // An overflowing strip's ends are transparent under its scroll buttons.
+    // (the fade's transparent run: the fillet bleed plus the button).
+    const viewStyle = getComputedStyle(viewport);
+    const faded = (parseFloat(viewStyle.getPropertyValue("--tab-bleed")) || 0) + (parseFloat(viewStyle.getPropertyValue("--tab-scroll-btn-w")) || 0);
+    const shown = tabShownSpan({ left, right: left + tabWidth }, {
+      left: viewLeft + (viewport.classList.contains("fade-start") ? faded : 0),
+      right: viewRight - (viewport.classList.contains("fade-end") ? faded : 0),
+    });
+    if (!shown) return cleared("hidden");
+    const footHole = { left: Math.max(hole.left, viewLeft), right: Math.min(hole.right, viewRight) };
 
     // Islands whose top edge sits on the strip base.
     const islands: (IslandEdge & { el: HTMLElement; structural: boolean })[] = [];
@@ -122,16 +140,10 @@ export function attachTabSeam(titlebar: HTMLElement): TabSeam {
     // the islands of that kind under it; another kind keeps its edge.
     const home = islandUnder(islands, hole);
     const kind = home ? (home.structural ? "structural" : "content") : "none";
-    const seams: { el: HTMLElement; row: TabSeamRow; left: number }[] = [];
-    const squared: (IslandEdge & { el: HTMLElement; square: IslandSquare })[] = [];
-    for (const island of islands) {
-      if (!home || island.structural !== home.structural) continue;
-      const square = islandSquareFor(hole, island);
-      if (square.left || square.right) squared.push({ ...island, square });
-      const row = seamRowFor(hole, island, square);
-      if (row) seams.push({ el: island.el, row, left: island.left });
-    }
-    const bridges = gutterRowsFor(hole, squared);
+    const foot = tabFootFor(footHole, islands.map((island) => ({ ...island, home: Boolean(home) && island.structural === home!.structural })));
+    const seams = foot.seams.map(({ island, row }) => ({ el: island.el, row, left: island.left }));
+    const squared = foot.squared;
+    const bridges = foot.bridges;
     const fill = tabFillPath(contour, [...seams.map((seam) => seam.row), ...bridges], TAB_SEAM_DEPTH);
     const squares = squared.map(({ el, square }) => `${el.dataset.region}:${square.left ? "l" : ""}${square.right ? "r" : ""}`).join(",");
     // The edge continues along the top of the tab's own kind of island only.
@@ -218,7 +230,8 @@ export function attachTabSeam(titlebar: HTMLElement): TabSeam {
   if (main) resize.observe(main);
   // Tab slides are CSS animations Svelte starts on insertion and removal.
   const onAnimation = () => frames();
-  const onScroll = () => update();
+  // Scrolling also toggles the strip's end fades a frame later.
+  const onScroll = () => { update(); frames(); };
   titlebar.addEventListener("animationstart", onAnimation, true);
   titlebar.addEventListener("transitionstart", onAnimation, true);
   titlebar.addEventListener("scroll", onScroll, true);

@@ -133,8 +133,12 @@ function prepareHost(): void {
   python("wallpaper", wallpaper, String(display.pixelWidth), String(display.pixelHeight));
   report.wallpaper = attempt("set wallpaper", () => JSON.parse(run(helper, ["wallpaper", wallpaper])));
   report.host.accessibility = attempt("display accommodations", () => JSON.parse(run(helper, ["a11y", "-"])));
-  if ((report.host.accessibility as { reduceTransparency?: boolean } | null)?.reduceTransparency) {
+  const accommodations = report.host.accessibility as { reduceTransparency?: boolean; reduceMotion?: boolean } | null;
+  if (accommodations?.reduceTransparency) {
     report.notes.push("Reduce Transparency is on: macOS paints materials opaque and the page sees prefers-reduced-transparency");
+  }
+  if (accommodations?.reduceMotion) {
+    report.notes.push("Reduce Motion is on: the page sees prefers-reduced-motion, so tab animations may be skipped");
   }
 }
 
@@ -261,10 +265,12 @@ interface ScenarioContext {
 }
 
 /**
- * Three views of one moment: screencapture's window-only image (-l, no
- * shadow), the screen region under the window (what a user sees, material
- * included), and XCTest's own screenshot cropped to the window — the route
- * the native UI smoke already proves, kept as a fallback.
+ * Three views of one moment: the screen region under the window (what a user
+ * sees, native material included), screencapture's window-only image (-l, no
+ * shadow; the WindowServer does not composite the behind-window material into
+ * it, so vibrancy looks opaque there), and XCTest's own screenshot cropped to
+ * the window — the route the native UI smoke already proves, kept as a
+ * fallback.
  */
 async function still(ctx: ScenarioContext, name: string): Promise<void> {
   const display = report.display!;
@@ -618,8 +624,8 @@ function writeReadme(): void {
     "  recorder-probe/        short probe recordings used to pick a working recorder",
     "  appium.log             Appium/Mac2 server log",
     "  scenarios/<id>/settings.json      settings seeded before launch (unknown keys are ignored by older refs)",
-    "  scenarios/<id>/NN-<moment>-window.png   screencapture -l: window only, no shadow",
-    "  scenarios/<id>/NN-<moment>-region.png   screencapture -R: the screen under the window (material as a user sees it)",
+    "  scenarios/<id>/NN-<moment>-region.png   screencapture -R: the screen as a user sees it, native material included. Judge vibrancy here.",
+    "  scenarios/<id>/NN-<moment>-window.png   screencapture -l: window only, no shadow. Behind-window material is NOT composited, so it looks opaque.",
     "  scenarios/<id>/NN-<moment>-xctest.png   XCTest screenshot cropped to the window (fallback route)",
     "  scenarios/<id>/recordings/<action>.mov  screen recording of the window during one action",
     "  scenarios/<id>/recordings/<action>-frames/NNNNN.png  every recorded frame, cropped to the title/tab strip",

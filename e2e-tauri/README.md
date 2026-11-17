@@ -152,14 +152,23 @@ layout, Window Vibrancy + Native Blur, integrated title bar,
 Floating Islands dark and light, the default layout, islands at
 `translucencyOpacity` 20 and 100, the Settings dialog filtered to the vibrancy
 rows, and islands with the native title bar. Each still is saved three ways:
-`screencapture -l` (window only), `screencapture -R` (the screen under the
-window) and XCTest's screenshot cropped to the window. The islands and default
+`screencapture -R` (the screen under the window: judge vibrancy here),
+`screencapture -l` (window only; the WindowServer does not composite the
+behind-window material into it, so it looks opaque) and XCTest's screenshot
+cropped to the window. The islands and default
 scenarios also record four actions (Cmd+T ×3; Ctrl+Tab/Ctrl+Shift+Tab/
 Cmd+Shift+]/clicks; close the middle tab with Cmd+W; crowd to 12 tabs then
 close five). ffmpeg extracts every frame cropped to the title/tab strip, and
 Pillow builds an overview sheet per action plus one sheet of consecutive frames
 per burst of motion. The artifact's `README.txt` lists every file;
 `report.json` records blank-image checks, input times and notes.
+
+The hosted macOS 26 image ships with Reduce Transparency and Reduce Motion on,
+which make every material opaque and suppress animations (the page sees
+`prefers-reduced-transparency` / `prefers-reduced-motion`); the workflow turns
+both off and `report.json` records what macOS reports. The VM's display is
+1024x768 at 1x with a paravirtualized GPU, so the window fills the screen and
+pixel density is half a Retina Mac's.
 
 It is evidence only: it never gates anything and must stay out of required
 checks. The app bundle is cached by source tree, so re-running a ref skips the

@@ -61,7 +61,8 @@ jobs:
             sw_vers
             xcodebuild -version
             csrutil status || true
-            echo "reduceTransparency=$(defaults read com.apple.universalaccess reduceTransparency 2>&1)"
+            echo "image reduceTransparency=$(defaults read com.apple.universalaccess reduceTransparency 2>&1)"
+            echo "image reduceMotion=$(defaults read com.apple.universalaccess reduceMotion 2>&1)"
             echo '--- system TCC screen-capture rows'
             sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
               "SELECT client, auth_value FROM access WHERE service='kTCCServiceScreenCapture';" || true
@@ -175,17 +176,19 @@ jobs:
           done
           sudo launchctl kickstart -k system/com.apple.tccd 2>/dev/null || sudo pkill -HUP tccd || true
 
-      # Hosted images may ship with Reduce Transparency on, which makes every
-      # material opaque (and matches prefers-reduced-transparency in the
-      # page). Turn it off so vibrancy can render; the driver records what
-      # macOS actually reports afterwards.
-      - name: Allow transparency on this disposable runner
+      # The hosted macOS 26 image ships with Reduce Transparency and Reduce
+      # Motion on: every material paints opaque and the page matches
+      # prefers-reduced-transparency / prefers-reduced-motion, which would
+      # hide both the vibrancy and the tab animations under review. Turn them
+      # off; the driver records what macOS reports afterwards.
+      - name: Allow transparency and motion on this disposable runner
         continue-on-error: true
         run: |
-          echo "before: $(defaults read com.apple.universalaccess reduceTransparency 2>&1)"
-          defaults write com.apple.universalaccess reduceTransparency -bool false \
-            || sudo -u "$USER" defaults write com.apple.universalaccess reduceTransparency -bool false
-          echo "after: $(defaults read com.apple.universalaccess reduceTransparency 2>&1)" | tee -a "$OUT/host.txt"
+          for key in reduceTransparency reduceMotion; do
+            echo "$key before: $(defaults read com.apple.universalaccess "$key" 2>&1)"
+            defaults write com.apple.universalaccess "$key" -bool false
+            echo "$key after: $(defaults read com.apple.universalaccess "$key" 2>&1)" | tee -a "$OUT/host.txt"
+          done
           # Running UI picks the preference up on relaunch; the app launches later.
           killall Dock SystemUIServer 2>/dev/null || true
 

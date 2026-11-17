@@ -37,8 +37,41 @@ are held and seeked 15ms per step, and CSS transitions are stretched ×1000.
 Wall-clock playback flaked on CI, because headless WebKit spends ~100ms
 mounting a new tab's pane.
 
-Seeking WebKit's stretched transition of the registered `--tab-px` reports
-its end value after the first step. The transition still reads as running at
-10%, so this looks like a seeking artifact, not app behaviour. WebKit contact
-sheets of a compressed strip therefore show the other tabs snapping at
-frame 2. Judge that case from Chromium, or from WebKit's first frame only.
+**WebKit screenshots perturb running tab animations; they do not show app
+behaviour.** An earlier note here blamed WebKit's seeking for tabs snapping at
+frame 2. That was wrong. Without screenshots, seeked and real-time WebKit
+trajectories match Chromium to about 0.3px. `page.screenshot` jumps a running
+`--tab-px` transition and paints that state before any script runs. The
+JS-written seam marks therefore lag the tab in that one captured frame,
+which looks like a shape about 1.25× off at 125% zoom. Assert motion from
+`steppedFrames` geometry. Treat WebKit contact sheets as illustration and
+judge frame-exact claims from Chromium sheets.
+
+## Visual QA follow-ups (#1744 review)
+
+- **Strip width moves one way.** On open, the other tabs ease over the new
+  tab's duration and curve. On close they jump (`--tab-width-ease: 0ms`), and
+  flex-shrink hands them the room the outro releases. The strip layout
+  (count plus active id) is deferred one frame on count changes, so it starts
+  with the slide rather than a frame before it. Otherwise "+" dips, most
+  visibly in WebKit at 125% and with 12 tabs.
+- **Stacking.** Title bar children are positioned so they paint above the
+  strip shade layer. Each tab is `isolation: isolate`, with its hover/active
+  `::before` at `z-index: -1`, so the pill never covers the title or icon.
+  Hover stays transition-free (#503).
+- **Titles clip and fade, never re-ellipsize.** A right-edge mask fade on the
+  title keeps the text from reflowing every frame of a slide. Compact tabs keep
+  their icon anchored at the left padding (no centring), so the icon-only
+  crossing (`TAB_ICON_ONLY_BELOW`) does not move it.
+- **Overflow is an overlay.** The scroll buttons are absolutely positioned over
+  the viewport's edge fades, so crossing into overflow shifts no tab.
+- **The fused tab stands on a flat stretch of one island.** In Floating
+  Islands, the strip starts over the content island
+  (`composables/tab-strip-start.ts`, `tabStripPadding`), so the first tab's
+  fillet clears the island's rounded corner. A tab spanning two content
+  islands (split panes, preview) squares their facing corners
+  (`data-tab-square`) and bridges the gutter (`gutterRowsFor`). In dark themes
+  only a rounded corner's edge highlight differs from the surface, so pixel
+  tests must scan the whole corner zone, not one interior pixel.
+- A faint step beside the fused tab in light themes is the tab's lift-shadow
+  gradient, not a path edge.

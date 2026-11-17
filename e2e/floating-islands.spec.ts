@@ -256,6 +256,22 @@ test.describe("Fused active tab (#1734)", () => {
     for (const frame of frames.slice(1)) expect(frame.activeIndex, `t=${frame.t}`).toBe(count);
   });
 
+  // At 125% zoom on a 2× display the seam is still measured and drawn in the
+  // tab's own CSS space from the first frame (#1744 review: a sheet captured
+  // with screenshots between WebKit steps showed it offset; without them it
+  // tracks the tab).
+  test.describe("at 125% zoom on a 2x display", () => {
+    test.use({ deviceScaleFactor: 2 });
+    test("opening a tab: the new tab owns the island from its first frame", async ({ page }) => {
+      await openIslands(page, { theme: "light", settings: { zoomLevel: 125 } });
+      await page.waitForTimeout(300);
+      const frames = await steppedFrames(page, () => pressShortcut(page, "t", { ctrlKey: true }));
+      await expect(page.locator('.tab-viewport [data-region="tab"]')).toHaveCount(4);
+      expectOneActiveTab(frames);
+      for (const frame of frames.slice(1)) expect(frame.activeIndex, `t=${frame.t}`).toBe(3);
+    });
+  });
+
   test("closing the active tab hands the seam to its neighbour in the same frame", async ({ page }) => {
     await openIslands(page);
     await page.waitForTimeout(300);

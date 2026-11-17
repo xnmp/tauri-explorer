@@ -377,4 +377,53 @@ test.describe("Fused active tab (#1734)", () => {
     const after = await iconOffset(0);
     expect(Math.abs(after - before), `icon offset ${before} -> ${after}`).toBeLessThanOrEqual(1);
   });
+
+  /** Box of an island region and the title bar's base, in page CSS px. */
+  async function islandBox(page: Page, region: string) {
+    return (await page.locator(`[data-region="${region}"]`).first().boundingBox())!;
+  }
+
+  // The fused tab always stands on a straight stretch of island top edge:
+  // never on a rounded corner, never over the sidebar's gutter.
+  for (const theme of ["light", "dark"]) test(`the first tab's foot lands on its island's straight edge (${theme})`, async ({ page }) => {
+    await openIslands(page, { theme, active: 0 });
+    await page.mouse.move(5, 500);
+    const tab = await activeTabBox(page);
+    const panes = await islandBox(page, "panes");
+    const sidebar = await islandBox(page, "sidebar");
+    const foot = tab.x - 14;
+    expect(foot, "left fillet starts on the straight edge").toBeGreaterThanOrEqual(panes.x + 14 - 0.5);
+    expect(sidebar.x + sidebar.width, "the sidebar lies wholly before the strip").toBeLessThan(foot);
+    // Under the fillet's foot the island's top edge is open into the tab:
+    // the tab's surface, not a corner curve or the strip.
+    const base = Math.round(tab.y + tab.height);
+    const [under] = await pixels(page, { x: Math.round(foot + 2), y: base + 3, width: 1, height: 1 });
+    const [inside] = await pixels(page, { x: Math.round(tab.x + tab.width / 2), y: base + 3, width: 1, height: 1 });
+    expect(distance(under, inside)).toBeLessThanOrEqual(12);
+  });
+
+  for (const theme of ["light", "dark"]) test(`a tab straddling two content islands stands on squared corners (${theme})`, async ({ page }) => {
+    await openIslands(page, { theme, settings: { showPreviewPane: true } });
+    await page.mouse.move(5, 500);
+    const tab = await activeTabBox(page);
+    const panes = await islandBox(page, "panes");
+    const preview = await islandBox(page, "preview");
+    const gutter = [panes.x + panes.width, preview.x];
+    expect(tab.x, "the fixture's tab straddles the gutter").toBeLessThan(gutter[0] - 20);
+    expect(tab.x + tab.width).toBeGreaterThan(gutter[1] + 20);
+    const base = Math.round(tab.y + tab.height);
+    const [surface] = await pixels(page, { x: Math.round(tab.x + 30), y: base + 3, width: 1, height: 1 });
+    // Where a rounded corner would cut away and draw its curved edge (the
+    // 8px beside each island's facing side, just under the base), both
+    // islands are their plain surface: no corner curve, no edge highlight.
+    for (const x of [gutter[0] - 10, gutter[1] + 2]) {
+      const region = await pixels(page, { x: Math.round(x), y: base + 1, width: 8, height: 5 });
+      const worst = Math.max(...region.map((pixel) => distance(pixel, surface)));
+      expect(worst, `corner zone at x=${Math.round(x)}`).toBeLessThanOrEqual(8);
+    }
+    // Moving the tab off the gutter rounds the corners again.
+    await page.locator('.tab-viewport [data-region="tab"]').first().click();
+    await page.mouse.move(5, 500);
+    await expect(page.locator("[data-tab-square]")).toHaveCount(0);
+  });
 });

@@ -252,16 +252,59 @@ export interface TabSeamRow {
   readonly right: number;
 }
 
+/** Which top corners of an island are squared under the tab's foot. */
+export interface IslandSquare {
+  readonly left: boolean;
+  readonly right: boolean;
+}
+
+const ROUND: IslandSquare = { left: false, right: false };
+
+/**
+ * The top corners of an island the tab stands on that its foot (the hole)
+ * reaches into. A foot never lands on a rounded corner (#1734): such a corner
+ * is squared while the tab stands there, so the foot always meets a straight
+ * top edge. That happens where the tab straddles the gutter between two
+ * islands of its kind (split panes, panes and preview); the strip itself
+ * starts past the first island's corner (`tabStripPadding`).
+ */
+export function islandSquareFor(hole: TabHole, island: IslandEdge): IslandSquare {
+  const radius = Math.min(nonNegative(island.radius), Math.max(0, (island.right - island.left) / 2));
+  if (!(hole.right > island.left && hole.left < island.right) || radius === 0) return ROUND;
+  return { left: hole.left < island.left + radius, right: hole.right > island.right - radius };
+}
+
 /**
  * Where an island opens its top edge under the tab: the hole's overlap with
- * the island's straight top edge (its rounded corners keep their outline),
- * or null when they do not meet.
+ * the island's straight top edge (a rounded corner keeps its outline; a
+ * squared one is straight edge too), or null when they do not meet.
  */
-export function seamRowFor(hole: TabHole, island: IslandEdge): TabSeamRow | null {
-  const radius = Math.min(nonNegative(island.radius), (island.right - island.left) / 2);
-  const left = Math.max(hole.left, island.left + radius);
-  const right = Math.min(hole.right, island.right - radius);
+export function seamRowFor(hole: TabHole, island: IslandEdge, square: IslandSquare = ROUND): TabSeamRow | null {
+  const radius = Math.min(nonNegative(island.radius), Math.max(0, (island.right - island.left) / 2));
+  const left = Math.max(hole.left, island.left + (square.left ? 0 : radius));
+  const right = Math.min(hole.right, island.right - (square.right ? 0 : radius));
   return right > left ? { left, right } : null;
+}
+
+/**
+ * The gutters the tab's foot bridges: between two islands of its kind whose
+ * facing corners are both squared under it, the tab's fill continues across
+ * the gap at the seam's depth, so the foot is one straight run.
+ */
+export function gutterRowsFor(
+  hole: TabHole,
+  islands: readonly (IslandEdge & { readonly square: IslandSquare })[],
+): TabSeamRow[] {
+  const sorted = [...islands].sort((a, b) => a.left - b.left);
+  const rows: TabSeamRow[] = [];
+  for (let i = 1; i < sorted.length; i++) {
+    const [a, b] = [sorted[i - 1], sorted[i]];
+    if (!a.square.right || !b.square.left || b.left <= a.right) continue;
+    const left = Math.max(hole.left, a.right);
+    const right = Math.min(hole.right, b.left);
+    if (right > left) rows.push({ left, right });
+  }
+  return rows;
 }
 
 /**
@@ -293,4 +336,27 @@ export function tabFillPath(c: TabContour, rows: readonly TabSeamRow[], depth: n
 /** Pick the island whose top edge spans `x` on the strip base, if any. */
 export function islandAt(islands: readonly IslandEdge[], x: number): IslandEdge | null {
   return islands.find((island) => island.left <= x && x <= island.right) ?? null;
+}
+
+/** Padding a tab strip keeps before its first tab when nothing aligns it. */
+export const TAB_STRIP_PADDING = 12;
+
+/**
+ * Left padding that puts the tab strip over the content islands (#1734).
+ *
+ * Tabs belong to the content they open, so in Floating Islands the strip
+ * starts over the leftmost content island, as Safari's and VS Code's do
+ * beside a sidebar: a fused tab then never straddles the gutter beside the
+ * sidebar, and the first tab's fillet lands on the island's straight top
+ * edge, past its rounded corner. `areaLeft` is where the strip's padding
+ * box starts, in the same coordinates as the island.
+ */
+export function tabStripPadding(
+  content: IslandEdge | null | undefined,
+  areaLeft: number,
+  minimum = TAB_STRIP_PADDING,
+): number {
+  const floor = Math.max(0, num(minimum, TAB_STRIP_PADDING));
+  if (!content || !Number.isFinite(content.left) || !Number.isFinite(areaLeft)) return floor;
+  return Math.max(floor, content.left + nonNegative(content.radius) + TAB_FILLET - areaLeft);
 }

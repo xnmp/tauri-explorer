@@ -287,6 +287,17 @@
   visibility: hidden;
 }
 
+/* A tab's foot never lands on a rounded corner: where it reaches into one
+   (straddling the gutter between two content islands), that corner is
+   squared while the tab stands there (domain/tab-seam.ts). */
+:root[data-layout-base="floating-islands"] [data-tab-square~="left"] {
+  border-top-left-radius: 0 !important;
+}
+
+:root[data-layout-base="floating-islands"] [data-tab-square~="right"] {
+  border-top-right-radius: 0 !important;
+}
+
 /* Seam extents change every frame of a tab slide: registered as
    non-inherited so updating them restyles the island alone, never the file
    list inside it. */

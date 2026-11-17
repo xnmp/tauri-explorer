@@ -82,7 +82,8 @@
     height: 34px;
     flex: 0 1 auto;
     min-width: 0;
-    padding-left: 12px;
+    /* Floating Islands aligns the strip with the content islands (#1734). */
+    padding-left: var(--tab-strip-pad, 12px);
     gap: 1px;
     position: relative;
     /* No background of its own: the titlebar owns the strip surface. Painting

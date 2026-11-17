@@ -17,23 +17,11 @@
  * Geometry is pure (`domain/tab-seam.ts`); colours come from CSS.
  */
 import {
-  TAB_SEAM_DEPTH, islandAt, islandUnder, seamRowFor, stripShadePath, tabContour, tabEdgePath, tabFillPath,
-  tabHoleFor, tabKeyShadow, type IslandEdge, type TabContour, type TabSeamRow,
+  TAB_SEAM_DEPTH, gutterRowsFor, islandAt, islandSquareFor, islandUnder, seamRowFor, stripShadePath, tabContour, tabEdgePath, tabFillPath,
+  tabHoleFor, tabKeyShadow, type IslandEdge, type IslandSquare, type TabContour, type TabSeamRow,
 } from "$lib/domain/tab-seam";
 import { getZoomFactor } from "$lib/domain/zoom";
-
-/** Island surfaces whose top edge can meet the strip base. */
-const ISLANDS = [
-  '[data-region="sidebar"]',
-  '[data-region="miller-island"]',
-  '[data-region="panes"]:not([data-split])',
-  '[data-region="panes"][data-split] [data-region="pane"]',
-  '[data-region="preview"]',
-  '[data-region="scm"][data-island]',
-].join(",");
-
-/** Structural islands wear a heavier surface than content islands. */
-const STRUCTURAL = '[data-region="sidebar"]';
+import { ISLANDS, STRUCTURAL } from "./island-regions";
 
 /** Frames to keep measuring after the last change, to catch layout that settles late. */
 const SETTLE_FRAMES = 3;
@@ -75,6 +63,7 @@ export function attachTabSeam(titlebar: HTMLElement): TabSeam {
     for (const el of shadowLayer?.querySelectorAll(".tab-fill path") ?? []) set(el, "d", "");
     for (const el of [svg(shadowLayer, ".tab-key"), svg(shadowLayer, ".tab-lift"), svg(edgeLayer, ".tab-edge-stroke")]) set(el, "d", "");
     clearSeams(new Set());
+    for (const el of document.querySelectorAll("[data-tab-square]")) el.removeAttribute("data-tab-square");
   }
 
   function measure(): string {
@@ -123,7 +112,9 @@ export function attachTabSeam(titlebar: HTMLElement): TabSeam {
         structural: el.matches(STRUCTURAL),
         left: css(r.left, bar.left),
         right: css(r.right, bar.left),
-        radius: parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0,
+        // The layout's radius, not the rendered one: a corner squared under
+        // the tab must not read as an island without corners.
+        radius: parseFloat(getComputedStyle(el).getPropertyValue("--layout-radius")) || parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0,
       });
     }
     const edges: IslandEdge[] = islands;
@@ -132,18 +123,24 @@ export function attachTabSeam(titlebar: HTMLElement): TabSeam {
     const home = islandUnder(islands, hole);
     const kind = home ? (home.structural ? "structural" : "content") : "none";
     const seams: { el: HTMLElement; row: TabSeamRow; left: number }[] = [];
+    const squared: (IslandEdge & { el: HTMLElement; square: IslandSquare })[] = [];
     for (const island of islands) {
-      const row = home && island.structural === home.structural ? seamRowFor(hole, island) : null;
+      if (!home || island.structural !== home.structural) continue;
+      const square = islandSquareFor(hole, island);
+      if (square.left || square.right) squared.push({ ...island, square });
+      const row = seamRowFor(hole, island, square);
       if (row) seams.push({ el: island.el, row, left: island.left });
     }
-    const fill = tabFillPath(contour, seams.map((seam) => seam.row), TAB_SEAM_DEPTH);
+    const bridges = gutterRowsFor(hole, squared);
+    const fill = tabFillPath(contour, [...seams.map((seam) => seam.row), ...bridges], TAB_SEAM_DEPTH);
+    const squares = squared.map(({ el, square }) => `${el.dataset.region}:${square.left ? "l" : ""}${square.right ? "r" : ""}`).join(",");
     // The edge continues along the top of the tab's own kind of island only.
     const kin = home ? edges.filter((_, i) => islands[i].structural === home.structural) : [];
     const edge = tabEdgePath(contour, { left: islandAt(kin, hole.left), right: islandAt(kin, hole.right) });
     const shadow = tabKeyShadow(contour);
     const shade = stripShadePath(width, height, contour, { left: viewLeft, right: viewRight });
 
-    const key = `${shade}|${fill}|${edge.d}|${kind}|${viewLeft},${viewRight}|${presence}`;
+    const key = `${shade}|${fill}|${edge.d}|${kind}|${viewLeft},${viewRight}|${presence}|${squares}`;
     if (key === previous) return key;
 
     set(titlebar, "data-tab-hole", `${Math.round(hole.left * 100) / 100} ${Math.round(hole.right * 100) / 100}`);
@@ -184,6 +181,10 @@ export function attachTabSeam(titlebar: HTMLElement): TabSeam {
       el.style.setProperty("--tab-seam-depth", `${TAB_SEAM_DEPTH}px`);
     }
     clearSeams(seamed);
+    // Corners the foot reaches into are squared while it stands there.
+    const square = new Map(squared.map(({ el, square }) => [el as Element, [square.left ? "left" : "", square.right ? "right" : ""].filter(Boolean).join(" ")]));
+    for (const el of document.querySelectorAll<HTMLElement>("[data-tab-square]")) if (!square.has(el)) el.removeAttribute("data-tab-square");
+    for (const [el, sides] of square) set(el, "data-tab-square", sides);
     previous = key;
     return key;
   }

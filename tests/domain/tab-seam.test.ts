@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  TAB_FILLET, TAB_LIGHT, islandAt, islandUnder, seamRowFor, tabFillPath, stripShadePath, tabContour, tabEdgePath, tabHoleFor, tabKeyShadow, tabSilhouettePath,
+  TAB_FILLET, TAB_LIGHT, TAB_STRIP_PADDING, gutterRowsFor, islandAt, islandSquareFor, islandUnder, seamRowFor, tabFillPath, tabStripPadding, stripShadePath, tabContour, tabEdgePath, tabHoleFor, tabKeyShadow, tabSilhouettePath,
 } from "$lib/domain/tab-seam";
 
 /** Endpoints of every segment (M/L/A/H/V/Z) plus each arc's radius. */
@@ -193,5 +193,52 @@ describe("seams and fill", () => {
     expect(Math.max(...points.map(p => p.y))).toBe(40);
     expect(points).toContainEqual({ x: 232, y: 40 });
     expect(tabFillPath(c, [{ left: 86, right: 232 }], Number.NaN)).toBe(tabSilhouettePath(c, 0, 0));
+  });
+});
+
+describe("the foot always stands on a straight top edge (#1734)", () => {
+  const sidebar = { left: 6, right: 246, radius: 14 };
+  const panes = { left: 254, right: 804, radius: 14 };
+  const preview = { left: 812, right: 1094, radius: 14 };
+
+  it("starts the strip over the content island, its first fillet past the island's corner", () => {
+    // Strip padding box at x=0: the first tab starts at 254 + 14 + 14.
+    const padding = tabStripPadding(panes, 0);
+    expect(padding).toBe(254 + 14 + TAB_FILLET);
+    const hole = tabHoleFor({ left: padding, width: 200 }, TAB_FILLET)!;
+    expect(hole.left).toBe(panes.left + panes.radius);
+    expect(islandSquareFor(hole, panes)).toEqual({ left: false, right: false });
+    // The sidebar island lies wholly before the strip.
+    expect(hole.left).toBeGreaterThan(sidebar.right);
+  });
+
+  it("keeps the default padding without a content island, and never goes below it", () => {
+    expect(tabStripPadding(null, 0)).toBe(TAB_STRIP_PADDING);
+    expect(tabStripPadding({ left: 6, right: 900, radius: 14 }, 70)).toBe(TAB_STRIP_PADDING);
+    expect(tabStripPadding(panes, Number.NaN)).toBe(TAB_STRIP_PADDING);
+    expect(tabStripPadding({ left: Number.POSITIVE_INFINITY, right: 0, radius: 0 }, 0)).toBe(TAB_STRIP_PADDING);
+    expect(tabStripPadding(panes, 0, -5)).toBe(254 + 28);
+  });
+
+  it("squares the corners a straddling foot reaches into, and only those", () => {
+    const hole = { left: 678, right: 910 };
+    expect(islandSquareFor(hole, panes)).toEqual({ left: false, right: true });
+    expect(islandSquareFor(hole, preview)).toEqual({ left: true, right: false });
+    expect(islandSquareFor(hole, sidebar)).toEqual({ left: false, right: false });
+    // A foot ending exactly where the straight edge starts squares nothing.
+    expect(islandSquareFor({ left: 268, right: 500 }, panes)).toEqual({ left: false, right: false });
+    // Islands without corners are never squared.
+    expect(islandSquareFor(hole, { ...panes, radius: 0 })).toEqual({ left: false, right: false });
+  });
+
+  it("opens squared corners as straight edge and bridges the gutter between them", () => {
+    const hole = { left: 678, right: 910 };
+    const square = (island: typeof panes) => ({ ...island, square: islandSquareFor(hole, island) });
+    expect(seamRowFor(hole, panes, square(panes).square)).toEqual({ left: 678, right: 804 });
+    expect(seamRowFor(hole, preview, square(preview).square)).toEqual({ left: 812, right: 910 });
+    expect(gutterRowsFor(hole, [square(preview), square(panes)])).toEqual([{ left: 804, right: 812 }]);
+    // No bridge unless both facing corners are squared under the foot.
+    expect(gutterRowsFor({ left: 500, right: 790 }, [square(panes), { ...preview, square: { left: false, right: false } }])).toEqual([]);
+    expect(gutterRowsFor(hole, [])).toEqual([]);
   });
 });

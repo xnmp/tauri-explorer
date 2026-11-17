@@ -16,6 +16,7 @@
   import { observeWindowChrome } from "$lib/state/window-chrome";
   import { layoutStore } from "$lib/state/layout.svelte";
   import { useTabSeam } from "$lib/composables/use-tab-seam.svelte";
+  import { attachTabStripStart } from "$lib/composables/tab-strip-start";
   import WindowTabBar from "./WindowTabBar.svelte";
 
   const tabStripVisible = $derived(
@@ -51,6 +52,15 @@
   // strip shade, key shadow and edge highlight are the inline SVG layers
   // below, kept in step with the strip by the lazily loaded seam marks.
   useTabSeam(() => titlebarEl, () => [windowTabsManager.tabs, windowTabsManager.activeTabId, tabStripVisible]);
+
+  // Floating Islands: the strip starts over the content islands, so a fused
+  // tab always stands on one island's straight top edge (#1734).
+  $effect(() => {
+    const bar = titlebarEl;
+    if (!bar || !layoutStore.islands || !tabStripVisible) return;
+    const start = attachTabStripStart(bar);
+    return () => start.destroy();
+  });
 
   onMount(() => {
     if (!appWindow) return;

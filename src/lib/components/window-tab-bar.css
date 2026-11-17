@@ -1,6 +1,88 @@
 /* Window tab strip chrome; scoped to its single .tab-area owner (#1705). */
-  .tab-area .tab-scroll-group { display: flex; flex: 0 1 auto; min-width: 0; height: 100%; align-items: flex-end; }
-  .tab-area .tab-viewport { flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+
+/* Enter/exit progress of a sliding tab (domain/tab-slide.ts, #1734).
+   Registered so the slide's keyframes interpolate it smoothly; 1 at rest. */
+@property --tab-slide {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 1;
+}
+/* Tab widths ease to a new tab count instead of snapping: while one tab
+   slides in or out, the others make or take its room over the same time
+   with the same curve (--tab-width-ease, set by the strip), so the strip's
+   total changes one way only and the new-tab button rides behind the last
+   tab without dipping back (#1734). A momentary excess is shared by
+   flex-shrink (below). Only while the tabs fit
+   (an overflowing strip reveals the active tab from its final geometry) and
+   after the strip's first layout (mounting never animates).
+   The strip publishes the width as a unitless --tab-px: WebKit zooms a
+   registered <length> when it computes it, and the zoomed value was zoomed
+   again where it is used, so tabs grew under CSS zoom. */
+@property --tab-px {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+  .tab-area .tab { --tab-width: calc(var(--tab-px) * 1px); }
+  .tab-area .tab-viewport.bleed.ease-widths .tab { transition: --tab-px var(--tab-width-ease, 180ms) cubic-bezier(0.33, 1, 0.68, 1); }
+  @media (prefers-reduced-motion: reduce) {
+    .tab-area .tab-viewport.bleed.ease-widths .tab { transition: none; }
+  }
+/* Floating Islands starts the strip over the content islands where its tabs
+   can afford it (tabStripStart, #1734). A tab sliding in or out can move that
+   start: it eases with the tab (--tab-start-ease, the slide's duration), so
+   the first tab glides instead of jumping; a window resize moves it at once
+   (0ms). Unitless for the same CSS-zoom reason as --tab-px. */
+@property --tab-strip-start {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 12;
+}
+/* A reveal that follows a sliding tab glides with it: the tab list is
+   shifted back by the distance scrolled and eases to rest (#1734). */
+@property --tab-list-shift {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+  .tab-area .tab-list.shifted { transform: translateX(calc(var(--tab-list-shift) * 1px)); }
+  .tab-area .tab-list.shifted.glide { transition: --tab-list-shift var(--tab-width-ease, 180ms) cubic-bezier(0.33, 1, 0.68, 1); }
+  .tab-area.aligned {
+    padding-left: calc(var(--tab-strip-start) * 1px);
+    transition: --tab-strip-start var(--tab-start-ease, 0ms) cubic-bezier(0.33, 1, 0.68, 1);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .tab-area.aligned { transition: none; }
+  }
+  .tab-area .tab-scroll-group { position: relative; display: flex; flex: 0 1 auto; min-width: 0; height: 100%; align-items: flex-end; }
+  /* The scroller clips at its padding box, but the active tab's fillets and
+     their ring hang TAB_BLEED outside it (#1734): pad the viewport by that
+     much (and 1px below for the ring), cancelled by negative margins so the
+     layout is unchanged. The same geometry holds once the strip overflows,
+     so crossing into overflow moves no tab: the scroll buttons overlay the
+     strip's ends, and the tabs fade out under them on each side that has
+     more to scroll to. */
+  .tab-area .tab-viewport {
+    flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none;
+    padding: 0 var(--tab-bleed, 0px) 1px;
+    margin: 0 calc(-1 * var(--tab-bleed, 0px)) -1px;
+    --tab-fade-in: calc(var(--tab-bleed, 0px) + var(--tab-scroll-btn-w, 0px));
+    --tab-fade-out: calc(var(--tab-fade-in) + 24px);
+    --tab-edge-fade: linear-gradient(to right,
+      transparent calc(var(--tab-fade-start, 0) * var(--tab-fade-in)),
+      #000 calc(var(--tab-fade-start, 0) * var(--tab-fade-out)),
+      #000 calc(100% - var(--tab-fade-end, 0) * var(--tab-fade-out)),
+      transparent calc(100% - var(--tab-fade-end, 0) * var(--tab-fade-in)));
+  }
+  .tab-area .tab-viewport.fade-start, .tab-area .tab-viewport.fade-end {
+    -webkit-mask-image: var(--tab-edge-fade);
+    mask-image: var(--tab-edge-fade);
+  }
+  .tab-area .tab-viewport.fade-start { --tab-fade-start: 1; }
+  .tab-area .tab-viewport.fade-end { --tab-fade-end: 1; }
+  .tab-area .tab-scroll-btn { position: absolute; bottom: 0; z-index: 3; }
+  .tab-area .tab-scroll-btn.start { left: 0; }
+  .tab-area .tab-scroll-btn.end { right: 0; }
   .tab-area .tab-viewport::-webkit-scrollbar { display: none; }
   .tab-area .tab-scroll-btn, .tab-area .tab-picker-btn {
     display: flex; align-items: center; justify-content: center; flex: none;
@@ -11,10 +93,14 @@
   }
   .tab-area .tab-picker-btn { width: 30px; }
   .tab-area .tab-scroll-btn:hover:not(:disabled), .tab-area .tab-picker-btn:hover, .tab-area .tab-picker-btn[aria-expanded="true"] { background: var(--control-fill-secondary); color: var(--text-primary); }
-  .tab-area .tab-scroll-btn:disabled { opacity: 0.35; cursor: default; }
-  .tab-area .tab.compact { padding: 0; justify-content: center; gap: 0; }
+  /* An end with nothing more to scroll to has no button over its tab. */
+  .tab-area .tab-scroll-btn:disabled { visibility: hidden; }
+  /* Icon-only tabs keep their icon where it was and centre it only once the
+     tab is too narrow for the usual padding, so crossing into icon-only mode
+     moves nothing; the title has already faded to nothing by then (#1734). */
+  .tab-area .tab.compact { --tab-pad-l: clamp(0px, calc((var(--tab-width) - 16px) / 2), 12px); --tab-pad-r: 0px; gap: 0; }
   .tab-area .tab.compact .tab-title, .tab-area .tab.compact .tab-close { display: none; }
-  .tab-area .tab.active.narrow { padding: 0 6px; gap: 0; }
+  .tab-area .tab.active.narrow { --tab-pad-l: 6px; --tab-pad-r: 6px; gap: 0; }
   .tab-area .tab.active.narrow .tab-icon, .tab-area .tab.active.narrow .tab-icon-special, .tab-area .tab.active.narrow .tab-close { display: none; }
   .tab-area {
     display: flex;
@@ -45,13 +131,49 @@
     display: none;
   }
 
+  /* While the tabs fit, they share any room the strip briefly lacks: a new
+     active tab appears at its seed width on the frame the others only start
+     easing narrower, and in a compressed strip that seed would overflow and
+     scroll the whole strip sideways for a few frames. Shrinking every tab
+     a little instead keeps the strip in place (#1734). An overflowing strip
+     scrolls, and its tabs keep their widths. */
+  .tab-area .tab-viewport.bleed .tab-list { max-width: 100%; }
+  .tab-area .tab-viewport.bleed .tab { flex-shrink: 1; }
+  /* An overflowing strip is as wide as its tabs at rest: a tab sliding in or
+     out shares its excess with the others the same way, so the last tab is
+     never pushed past the scroller's edge mid-slide. */
+  .tab-area .tab-viewport:not(.bleed) .tab-list { width: var(--tab-list-width, max-content); }
+  .tab-area .tab-viewport:not(.bleed) .tab { flex-shrink: 1; }
+  /* The scroll extent's end bleed belongs to the list, not the scroller:
+     WebKit leaves a scroller's inline-end padding out of its scroll width,
+     so there the last tab's fillet could never scroll into view (#1734). */
+  .tab-area .tab-viewport:not(.bleed) { padding-right: 0; }
+  .tab-area .tab-viewport:not(.bleed) .tab-list {
+    box-sizing: content-box;
+    padding-right: var(--tab-bleed, 0px);
+  }
+  /* While a revealing scroll glides, the list keeps its scroll extent but
+     its tabs fit inside the rest position's end: the end of the strip (often
+     the new active tab and its fillet) stays put and whole while the start
+     slides away, instead of the end being pushed past the scroller (#1734). */
+  .tab-area .tab-viewport:not(.bleed) .tab-list.shifted {
+    width: calc(var(--tab-list-width) - max(0, var(--tab-list-shift)) * 1px);
+    padding-right: calc(var(--tab-bleed, 0px) + max(0, var(--tab-list-shift)) * 1px);
+  }
+
   .tab-area .tab {
     box-sizing: border-box;
     display: flex;
     align-items: center;
     gap: 8px;
     height: 30px;
-    padding: 0 5px 0 12px;
+    /* Padding grows with a sliding tab so it starts from nothing (#1734).
+       Named, so a slide-out can scale it in its own keyframes. */
+    --tab-pad-l: 12px;
+    --tab-pad-r: 5px;
+    padding: 0 calc(var(--tab-pad-r) * var(--tab-slide)) 0 calc(var(--tab-pad-l) * var(--tab-slide));
+    /* Content fades in once the growing tab has room for it. */
+    --tab-content-alpha: clamp(0, calc(var(--tab-slide) * 2.5 - 1), 1);
     /* Subtle-but-visible fill: --background was undefined outside the tahoe
        theme, leaving unfocused tabs transparent and indistinct (#238). */
     background: var(--control-fill-tertiary);
@@ -61,7 +183,22 @@
     letter-spacing: -0.01em;
     color: var(--text-secondary);
     cursor: pointer;
-    flex-shrink: 0;
+    /* The strip publishes each tab's width as --tab-width; a slide animates
+       the registered --tab-slide, and the size follows it through var() (an
+       animated width on an explicitly sized flex item is ignored by WebKit).
+       The explicit width also makes the tab's intrinsic contribution its real
+       width, so the content-sized strip and the new-tab button behind it
+       follow a slide every frame (#1734). min-width: 0 lets the 100-tab
+       strip shrink tabs below their content.
+       A tab grows from --tab-seed: nothing for a tab opening behind the
+       active one, but the active tab starts as a small tab that already
+       shows its icon and carries the seam, so some tab owns the island on
+       every frame of an opening (see .tab.active). */
+    --tab-seed: 0px;
+    --tab-grown: calc(var(--tab-seed) + (var(--tab-width) - var(--tab-seed)) * var(--tab-slide, 1));
+    flex: 0 0 var(--tab-grown);
+    width: var(--tab-grown);
+    min-width: 0;
     max-width: 220px;
     position: relative;
     border: none;
@@ -71,9 +208,13 @@
     overflow: hidden;
   }
 
-  /* Subtle gradient overlay for depth */
+  /* Subtle gradient overlay for depth. It is the hover pill too, so it
+     paints under the tab's own icon and title: the tab isolates a stacking
+     context and the overlay sits below its content (#1734). */
+  .tab-area .tab { isolation: isolate; }
   .tab-area .tab::before {
     content: "";
+    z-index: -1;
     position: absolute;
     inset: 0;
     border-radius: 6px 6px 0 0;
@@ -108,6 +249,10 @@
     border-radius: var(--radius-sm);
     background: var(--control-fill-secondary);
   }
+  /* Beside the active tab its fillet flares about 5px into this tab at the
+     pill's lower corner: keep the pill clear of it with room to spare. */
+  .tab-area .tab.before-active:hover:not(.active)::before { right: 10px; }
+  .tab-area .tab.after-active:hover:not(.active)::before { left: 10px; }
 
   .tab-area .tab:hover {
     color: var(--text-primary);
@@ -149,7 +294,18 @@
   }
 
   .tab-area .tab.active {
-    --fillet: 14px;
+    /* A new active tab opens from a seed wide enough for its padding and
+       icon, with whole fillets, padding and content, and grows from there:
+       the title is revealed by the tab's own clip. Growing from nothing,
+       the strip had frames with no visible active tab, then an empty
+       silhouette (#1734). Fillets only shrink for a tab narrower than two
+       of them. */
+    --tab-seed: min(var(--tab-width), 34px);
+    --tab-surface: var(--background-card);
+    --tab-surface-base: var(--background-solid);
+    --tab-content-alpha: 1;
+    padding: 0 var(--tab-pad-r) 0 var(--tab-pad-l);
+    --fillet: min(14px, calc(var(--tab-grown) / 2));
     /* --background-card is translucent in every theme; painted straight over
        the titlebar's own card layer it composites into a DIFFERENT color
        than the pane below (and reads as see-through, #243). Layering it
@@ -167,8 +323,8 @@
         1px calc(100% - var(--fillet)) no-repeat,
       linear-gradient(var(--surface-stroke), var(--surface-stroke)) right top /
         1px calc(100% - var(--fillet)) no-repeat,
-      linear-gradient(var(--background-card), var(--background-card)),
-      var(--background-solid);
+      linear-gradient(var(--tab-surface), var(--tab-surface)),
+      var(--tab-surface-base);
     color: var(--text-primary);
     font-weight: var(--font-weight-semibold);
     border-top: 2px solid var(--accent);
@@ -181,6 +337,15 @@
     /* Fillets render outside the tab box; text clipping is handled by
        .tab-title's own overflow. */
     overflow: visible;
+  }
+
+  /* Under the macOS material the window is translucent: an opaque tab over
+     the translucent pane read as a white (or black) card on glass. The
+     title bar is already the pane's card, so the tab adds exactly what the
+     navigation bar below adds to the pane, and no solid base (#1734). */
+  :root[data-macos-material] .tab-area .tab.active {
+    --tab-surface: var(--layout-chrome-surface, var(--background-card-secondary));
+    --tab-surface-base: transparent;
   }
 
   /* Chrome-style fillets (#157): concave quarter-circles that flare the
@@ -228,12 +393,12 @@
       radial-gradient(
         circle var(--fillet) at 0 0,
         transparent calc(var(--fillet) - 0.5px),
-        var(--background-card) var(--fillet)
+        var(--tab-surface) var(--fillet)
       ),
       radial-gradient(
         circle var(--fillet) at 0 0,
         transparent calc(var(--fillet) - 0.5px),
-        var(--background-solid) var(--fillet)
+        var(--tab-surface-base) var(--fillet)
       );
   }
 
@@ -250,12 +415,12 @@
       radial-gradient(
         circle var(--fillet) at 100% 0,
         transparent calc(var(--fillet) - 0.5px),
-        var(--background-card) var(--fillet)
+        var(--tab-surface) var(--fillet)
       ),
       radial-gradient(
         circle var(--fillet) at 100% 0,
         transparent calc(var(--fillet) - 0.5px),
-        var(--background-solid) var(--fillet)
+        var(--tab-surface-base) var(--fillet)
       );
   }
 
@@ -265,6 +430,13 @@
 
   .tab-area .tab-icon {
     flex-shrink: 0;
+  }
+
+  .tab-area .tab > .tab-icon,
+  .tab-area .tab > .tab-icon-special,
+  .tab-area .tab > .tab-title,
+  .tab-area .tab > .tab-rename-input {
+    opacity: var(--tab-content-alpha);
   }
 
   /* Dynamic folder icon color using CSS filter - adapts to theme accent */
@@ -289,6 +461,10 @@
     opacity: 1;
   }
 
+  /* A title that does not fit fades out at its right edge (Chrome) instead
+     of ellipsizing: a tab growing or shrinking reveals or hides its title
+     smoothly, where an ellipsis re-truncated it every frame ("D." "Docu…"),
+     and a narrow tab shows no clipped half letters (#1734). */
   .tab-area .tab-title {
     flex: 1;
     display: flex;
@@ -298,6 +474,40 @@
     min-width: 0;
     overflow: hidden;
     white-space: nowrap;
+    --tab-title-fade: linear-gradient(to right, #000 calc(100% - 16px), transparent);
+    -webkit-mask-image: var(--tab-title-fade);
+    mask-image: var(--tab-title-fade);
+    -webkit-mask-composite: source-in;
+    mask-composite: intersect;
+  }
+  /* The active tab grows from a sliver as it opens, with its content at
+     full strength, and a closing tab (inert while it leaves) shrinks to
+     one. Their title's fade is intersected with a gate whose
+     edge moves at 3.5 times the box's rate: nothing shows below 24px,
+     where a growing tab painted a lone glyph stem, the title is revealed
+     from its first letter, and from 40px the gate is solid, so a settled
+     tab's title is untouched (#1744 review). */
+  .tab-area .tab.active .tab-title,
+  .tab-area .tab[inert] .tab-title {
+    --tab-title-fade:
+      linear-gradient(to right, #000 calc(100% - 16px), transparent),
+      linear-gradient(to right, #000 calc(350% - 100px), transparent calc(350% - 84px));
+  }
+  /* A title that fits keeps every letter (WindowTabBar marks it). */
+  .tab-area .tab-title.fits { -webkit-mask-image: none; mask-image: none; }
+
+  /* An inactive tab's close button overlays the end of its title (it only
+     shows on hover), so it reserves no room; the title fades out under it. */
+  .tab-area .tab:not(.active) .tab-close {
+    position: absolute;
+    right: var(--tab-pad-r);
+    top: calc(50% - 9px);
+  }
+  .tab-area .tab:not(.active):hover .tab-title,
+  .tab-area .tab:not(.active):hover .tab-title.fits {
+    --tab-title-fade: linear-gradient(to right, #000 calc(100% - 34px), transparent calc(100% - 16px));
+    -webkit-mask-image: var(--tab-title-fade);
+    mask-image: var(--tab-title-fade);
   }
 
   .tab-area .tab-rename-input {
@@ -330,12 +540,12 @@
     opacity: 0.5;
   }
 
-  /* Current folder: shrinks only after the repo has fully collapsed. */
+  /* Current folder: shrinks only after the repo has fully collapsed, and
+     fades with the title rather than ellipsizing. */
   .tab-area .tab-cwd {
     flex: 0 1 auto;
     min-width: 0;
     overflow: hidden;
-    text-overflow: ellipsis;
   }
 
   /* Git icon uses stroked shapes in the accent colour (override the folder
@@ -377,8 +587,16 @@
 
   .tab-area .tab:hover .tab-close,
   .tab-area .tab.active .tab-close {
-    opacity: 1;
+    opacity: var(--tab-content-alpha);
     transform: scale(1);
+  }
+
+  /* A new active tab opens from a seed narrower than its contents: its close
+     button would draw past the tab's edge (or be cut by its curve) until the
+     tab has room for it, so it fades in over the last third of the slide
+     (#1734). */
+  .tab-area .tab.active .tab-close {
+    opacity: clamp(0, calc(var(--tab-slide, 1) * 3 - 2), 1);
   }
 
   .tab-area .tab-close:hover {

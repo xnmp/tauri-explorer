@@ -53,3 +53,14 @@ describe("settingsSectionRows", () => {
     for (const section of Object.values(rows)) expect(sectionMatches(section, "")).toBe(true);
   });
 });
+
+describe("Show Window Controls row (#1756)", () => {
+  const terms = SETTINGS_ROWS.windowControls;
+  it("is listed on Linux and Windows", () => {
+    expect(settingsSectionRows(linux).appearance).toContain(terms);
+    expect(settingsSectionRows(windows).appearance).toContain(terms);
+  });
+  it("is absent on macOS, which always has native traffic lights", () => {
+    expect(settingsSectionRows(mac).appearance).not.toContain(terms);
+  });
+});

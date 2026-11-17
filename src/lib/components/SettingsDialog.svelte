@@ -217,9 +217,7 @@
             hidden={!matchesSearch(...rows.nativeBlur)}>
             <SettingToggle checked={settingsStore.vibrancyBlur} onchange={() => settingsStore.update({ vibrancyBlur: !settingsStore.vibrancyBlur })} />
           </SettingRow>
-          {#if macMaterial}
-          <TranslucencyOpacitySetting hidden={!matchesSearch(...rows.translucencyOpacity)} />
-          {/if}
+          <TranslucencyOpacitySetting applies={macMaterial} hidden={!matchesSearch(...rows.translucencyOpacity)} />
           {/if}
           {/if}
 

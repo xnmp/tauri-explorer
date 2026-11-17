@@ -8,10 +8,13 @@
   import { TRANSLUCENCY_OPACITY_MAX, TRANSLUCENCY_OPACITY_MIN } from "$lib/domain/vibrancy-opacity";
   import SettingRow from "./SettingRow.svelte";
 
-  const { hidden }: { hidden: boolean } = $props();
+  // `applies`: only the macOS material backdrop has a coverage to adjust;
+  // otherwise the row is not rendered at all.
+  const { applies, hidden }: { applies: boolean; hidden: boolean } = $props();
   const [label] = SETTINGS_ROWS.translucencyOpacity;
 </script>
 
+{#if applies}
 <SettingRow {label}
   description="How much of the frosted-glass material the panels hide ({settingsStore.translucencyOpacity}%, lower = more see-through)"
   {hidden}>
@@ -25,6 +28,7 @@
     oninput={(e) => settingsStore.update({ translucencyOpacity: Number(e.currentTarget.value) })}
   />
 </SettingRow>
+{/if}
 
 <style>
   .translucency-opacity-input {

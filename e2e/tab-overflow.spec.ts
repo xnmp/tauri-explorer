@@ -1,5 +1,6 @@
 import { test, expect, type Page } from './fixtures';
-import { BUILT_IN_THEMES, seedSettings, VIEW_MODES, waitForEntries } from './helpers';
+import { BUILT_IN_THEMES, pressShortcut, seedSettings, VIEW_MODES, waitForEntries } from './helpers';
+import { framesOfNewTab } from './tab-frames';
 
 const PATHS = ['/home/user', '/home/user/Downloads', '/home/user/Documents', '/home/user/Pictures', '/home/user/Documents/project/src', '/home/user/my-project/src'];
 const SHOTS = 'screenshots/feat/tab-overflow';
@@ -197,4 +198,45 @@ for (const theme of BUILT_IN_THEMES) test(`compression and tab search remain usa
   await expect(page.locator('.tab.active')).toHaveAttribute('data-tab-id', 'overflow-1');
   await expect(page.locator('.pane-tree:not(.retained) .entry-item').filter({ hasText: 'installer.exe' }).first()).toBeVisible();
   await expectActiveVisible(page);
+});
+
+/** Both fillets of the active tab lie inside the strip's clip (#1734). */
+async function expectFilletsUnclipped(page: Page) {
+  await expect.poll(() => page.locator('.tab.active').evaluate(el => {
+    const viewport = el.closest('.tab-viewport')!.getBoundingClientRect();
+    return [...el.querySelectorAll('[data-region="tab-fillet"]')].map(fillet => {
+      const box = fillet.getBoundingClientRect();
+      return box.width > 1 && box.left >= viewport.left - 0.5 && box.right <= viewport.right + 0.5;
+    });
+  })).toEqual([true, true]);
+}
+
+for (const [label, count, width] of [['fitting', 3, 1000], ['overflowing', 40, 680]] as const) {
+  test(`first and last tabs keep both fillets in a ${label} strip`, async ({ page }) => {
+    await openTabs(page, count, width);
+    await expectFilletsUnclipped(page);
+    await page.keyboard.press('Control+Tab');
+    await expect(page.locator('.tab.active')).toHaveAttribute('data-tab-id', 'overflow-0');
+    await expectActiveVisible(page);
+    await expectFilletsUnclipped(page);
+    await page.keyboard.press('Control+Shift+Tab');
+    await expect(page.locator('.tab.active')).toHaveAttribute('data-tab-id', `overflow-${count - 1}`);
+    await expectActiveVisible(page);
+    await expectFilletsUnclipped(page);
+  });
+}
+
+test('a new tab slides from nothing to its full width with no jump', async ({ page }) => {
+  await openTabs(page, 3);
+  await page.waitForTimeout(300);
+  const frames = await framesOfNewTab(page, () => pressShortcut(page, 't', { ctrlKey: true }));
+  expect(frames.length).toBeGreaterThanOrEqual(4);
+  const final = frames[frames.length - 1].active!.width;
+  expect(frames[0].active!.width).toBeLessThanOrEqual(final * 0.35);
+  let previous = 0;
+  for (const { t, active } of frames) {
+    expect(active!.width, `t=${t}`).toBeGreaterThanOrEqual(previous - 0.5);
+    expect(active!.width - previous, `t=${t}`).toBeLessThanOrEqual(final * 0.5);
+    previous = active!.width;
+  }
 });

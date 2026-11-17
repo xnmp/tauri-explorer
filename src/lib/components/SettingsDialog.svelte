@@ -119,6 +119,7 @@
       <header class="dialog-header">
         <h2 id="settings-title">Settings</h2>
         <input
+          autocorrect="off" autocapitalize="none"
           type="text"
           class="settings-search"
           placeholder="Filter settings..."
@@ -460,6 +461,7 @@
             hidden={!matchesSearch(...rows.backgroundImage)}>
             <div class="wallpaper-controls">
               <input
+                autocorrect="off" autocapitalize="none" spellcheck="false"
                 class="text-input wallpaper-input"
                 type="text"
                 value={settingsStore.backgroundImage}
@@ -531,6 +533,7 @@
             description="Path to ffmpeg for video/audio thumbnails (empty = auto-detect)"
             hidden={!matchesSearch(...rows.ffmpegPath)}>
             <input
+              autocorrect="off" autocapitalize="none" spellcheck="false"
               class="text-input"
               type="text"
               value={settingsStore.ffmpegPath}

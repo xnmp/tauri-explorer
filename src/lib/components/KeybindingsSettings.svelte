@@ -248,6 +248,9 @@
 <div class="keybindings-settings">
   <div class="keybindings-header">
     <input
+      autocorrect="off"
+      autocapitalize="none"
+      spellcheck="false"
       type="text"
       class="search-input"
       data-autofocus

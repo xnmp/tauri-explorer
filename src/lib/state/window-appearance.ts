@@ -6,7 +6,9 @@
  */
 
 import type { Color } from "@tauri-apps/api/webviewWindow";
+import type { Effect, EffectState, Effects } from "@tauri-apps/api/window";
 import { isMac, isWindows } from "$lib/domain/platform";
+import { macOsWindowVibrancy } from "$lib/domain/macos-vibrancy";
 import { E2E_HOOKS_ENABLED } from "$lib/api/e2e-hooks";
 import { windowsBackdropEffects } from "./window-backdrop";
 import { settingsStore } from "./settings.svelte";
@@ -17,13 +19,31 @@ function getPersistedBgColor(): Color | undefined {
   return rgba ?? undefined;
 }
 
+/** macOS vibrancy for a JS-created window, matching the Rust-built main
+ *  window (#1733). The domain names the material by Tauri's serialized enum
+ *  value; the `satisfies` checks keep those names valid for this Tauri API. */
+function macOsVibrancyOptions(): { windowEffects?: Effects } | undefined {
+  const vibrancy = macOsWindowVibrancy(isMac, settingsStore);
+  if (!vibrancy) return undefined;
+  if (!vibrancy.effects) return {};
+  const { material, state } = vibrancy.effects;
+  return {
+    windowEffects: {
+      effects: [(material satisfies `${Effect}`) as Effect],
+      state: (state satisfies `${EffectState}`) as EffectState,
+    },
+  };
+}
+
 /** Appearance/behavior options for a new explorer window. Mirrors the main
- *  window's backdrop so new windows match (issue: Windows Mica/Acrylic). A
- *  translucent backdrop needs a transparent window and no opaque background
- *  color; the DWM system backdrop still rounds the corners. */
+ *  window's backdrop so new windows match (Windows Mica/Acrylic, macOS
+ *  vibrancy). A translucent backdrop needs a transparent window and no opaque
+ *  background color; the DWM system backdrop still rounds the corners. */
 export function explorerWindowAppearance(title: string) {
-  const windowEffects = windowsBackdropEffects();
-  const winBackdrop = windowEffects !== undefined;
+  const winEffects = windowsBackdropEffects();
+  const winBackdrop = winEffects !== undefined;
+  // Undefined everywhere but macOS with Window Vibrancy on.
+  const macVibrancy = macOsVibrancyOptions();
   // The public JS options omit this field, but Tauri's creation command
   // deserializes WindowConfig.additionalBrowserArgs. The Windows-only Cargo
   // attach feature injects the exact main-window string into every page.
@@ -35,15 +55,16 @@ export function explorerWindowAppearance(title: string) {
   return {
     ...(isWindows && typeof browserArgs === "string" ? { additionalBrowserArgs: browserArgs } : {}),
     title,
-    backgroundColor: winBackdrop ? undefined : getPersistedBgColor(),
+    // A transparent window's persisted opaque colour would hide the material.
+    backgroundColor: winBackdrop || macVibrancy ? undefined : getPersistedBgColor(),
     decorations: isMac,
     // Windows 11 only rounds corners (and draws the DWM shadow) on opaque
     // windows OR ones with a system backdrop. So an opaque window OR a
     // Mica/Acrylic backdrop keeps rounded corners; a plain transparent window
     // (no backdrop) is what produced the sharp-corner bug.
-    transparent: winBackdrop ? true : !isMac && !isWindows,
+    transparent: winBackdrop || macVibrancy ? true : !isMac && !isWindows,
     shadow: isMac || isWindows,
-    windowEffects,
+    windowEffects: macVibrancy?.windowEffects ?? winEffects,
     dragDropEnabled: true,
     acceptFirstMouse: true,
     titleBarStyle: isMac && settingsStore.integratedTitleBar ? ("overlay" as const) : undefined,

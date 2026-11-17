@@ -141,6 +141,9 @@ import { checkPathsExist } from "$lib/api/files";
           <div class="prompt-field">
             <label for="nano-banana-prompt" class="prompt-label">Edit prompt</label>
             <input
+              autocorrect="off"
+              autocapitalize="none"
+              spellcheck="false"
               id="nano-banana-prompt"
               type="text"
               class="prompt-input"
@@ -154,6 +157,9 @@ import { checkPathsExist } from "$lib/api/files";
           <div class="prompt-field">
             <label for="nano-banana-output" class="prompt-label">Output filename</label>
             <input
+              autocorrect="off"
+              autocapitalize="none"
+              spellcheck="false"
               id="nano-banana-output"
               type="text"
               class="prompt-input"

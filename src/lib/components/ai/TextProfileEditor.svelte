@@ -14,19 +14,19 @@
 </script>
 <fieldset {disabled} class="profile-fields settings-group">
   <legend>Connection details</legend>
-  <label class="settings-field">Name <input class="settings-input" value={profile.name} maxlength="512" oninput={e => onchange({ ...profile, name: e.currentTarget.value })} /></label>
+  <label class="settings-field">Name <input autocorrect="off" autocapitalize="none" spellcheck="false" class="settings-input" value={profile.name} maxlength="512" oninput={e => onchange({ ...profile, name: e.currentTarget.value })} /></label>
   <label class="settings-field">Protocol
     <select class="settings-select" value={profile.transport} onchange={e => onchange(changeTransport(profile, e.currentTarget.value as TextTransport))}>
       <option value="codex-cli">Codex CLI</option><option value="claude-code-cli">Claude Code CLI</option>
       <option value="openai-chat-completions">OpenAI-compatible Chat Completions</option><option value="anthropic-messages">Anthropic Messages</option>
     </select>
   </label>
-  <label class="settings-field">Model ID <input class="settings-input" value={profile.model} maxlength="512" placeholder="Enter the provider's model identifier" spellcheck="false" oninput={e => onchange({ ...profile, model: e.currentTarget.value })} /></label>
+  <label class="settings-field">Model ID <input autocorrect="off" autocapitalize="none" class="settings-input" value={profile.model} maxlength="512" placeholder="Enter the provider's model identifier" spellcheck="false" oninput={e => onchange({ ...profile, model: e.currentTarget.value })} /></label>
   {#if cli}
-    <label class="settings-field">Executable path <input class="settings-input" value={cli.executablePath} placeholder="Empty uses desktop CLI discovery" spellcheck="false" oninput={e => onchange({ ...cli, executablePath: e.currentTarget.value })} /></label>
+    <label class="settings-field">Executable path <input autocorrect="off" autocapitalize="none" class="settings-input" value={cli.executablePath} placeholder="Empty uses desktop CLI discovery" spellcheck="false" oninput={e => onchange({ ...cli, executablePath: e.currentTarget.value })} /></label>
     <p class="settings-help">Uses the CLI's saved login. API keys are not read from this form.</p>
   {:else if http}
-    <label class="settings-field">API root <input class="settings-input" type="url" value={http.baseUrl} placeholder="https://example.test/v1" spellcheck="false" oninput={e => onchange({ ...http, baseUrl: e.currentTarget.value })} /></label>
+    <label class="settings-field">API root <input autocorrect="off" autocapitalize="none" class="settings-input" type="url" value={http.baseUrl} placeholder="https://example.test/v1" spellcheck="false" oninput={e => onchange({ ...http, baseUrl: e.currentTarget.value })} /></label>
     <p class="settings-help">Include the version and any path prefix. The adapter appends {http.transport === "anthropic-messages" ? "messages" : "chat/completions"}. DeepSeek and compatible local endpoints support custom roots and model IDs.</p>
     <label class="settings-switch-row"><span>Allow HTTP for this endpoint</span><input type="checkbox" class="settings-switch" checked={http.allowInsecureHttp} onchange={e => onchange({ ...http, allowInsecureHttp: e.currentTarget.checked })} /></label>
     <label class="settings-field">Credential source
@@ -36,7 +36,7 @@
       </select>
     </label>
     {#if http.credential.kind === "environment"}
-      <label class="settings-field">Environment variable <input class="settings-input" value={http.credential.name} placeholder="DEEPSEEK_API_KEY" spellcheck="false" oninput={e => onchange({ ...http, credential: { kind: "environment", name: e.currentTarget.value } })} /></label>
+      <label class="settings-field">Environment variable <input autocorrect="off" autocapitalize="none" class="settings-input" value={http.credential.name} placeholder="DEEPSEEK_API_KEY" spellcheck="false" oninput={e => onchange({ ...http, credential: { kind: "environment", name: e.currentTarget.value } })} /></label>
     {/if}
   {/if}
   <label class="settings-field">Timeout (seconds) <input class="settings-input" type="number" min="1" max="45" step="1" value={profile.timeoutMs / 1000} oninput={e => onchange({ ...profile, timeoutMs: e.currentTarget.valueAsNumber * 1000 })} /></label>

@@ -361,7 +361,9 @@ jobs:
             local status=$?
             while read -r _ mount _; do
               case "$mount" in "$native_profile"/*) fusermount3 -uz "$mount" 2>/dev/null || fusermount -uz "$mount" 2>/dev/null || true ;; esac
-            done < /proc/self/mounts
+            # Not every host exposes /proc/self/mounts; an unreadable mount
+            # table must not abort cleanup under `set -e` before rm runs.
+            done < /proc/self/mounts || true
             rm -rf "$native_profile" || echo "::warning::Could not remove $native_profile"
             exit "$status"
           }

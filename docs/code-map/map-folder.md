@@ -20,6 +20,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `+page.svelte` — app root. Global keyboard shortcuts, store init, layout composition (TitleBar > toolbar > Sidebar + PaneContainer > StatusBar), overlay dialogs. Open for global shortcut wiring / top-level layout.
 - `+layout.ts` — SvelteKit adapter-static SPA config (prerender/ssr flags). Rarely touched.
 - `src/hooks.client.ts` — SPA client entry; installs global crash/error handlers before the app mounts (catches early init errors).
+- `src/app.d.ts` — ambient type augmentation: adds `autocorrect` to `svelte/elements` `HTMLTextareaAttributes` (Svelte types it only for `<input>`); guarded by `tests/text-input-autocorrect.test.ts` (#1726).
 
 ## src/lib/components/ — Svelte 5 UI. Views, dialogs, panels, item chrome.
 
@@ -331,7 +332,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `warm-activation.ts` — owns parked-window observation, reveal/navigation admission, acknowledged activation and retirement.
 - `warm-window.ts` — native warm-pool adapters and acknowledged reuse; integrates the activation owner.
 - `page-foreground.ts` — `warmMode()` and the page's one foreground gate: a parked or measuring warm window defers drive pushes/poll and file-operation recovery until its activation commits (#931).
-- `window-appearance.ts` — shared window creation options, including exact feature-injected WebView2 environment arguments in Windows E2E.
+- `window-appearance.ts` — shared window creation options for fresh and warm windows: Windows backdrop, macOS vibrancy transparency + material (`domain/macos-vibrancy.ts`, #1733), and exact feature-injected WebView2 environment arguments in Windows E2E.
 - `window-title.svelte.ts` — resolves launch-home context and keeps the native OS title synchronized with the active pane directory.
 - `window-close.ts` — owns synchronous close admission, native close requests, terminal destruction and failure recovery.
 - `window-chrome.ts` — owns native maximize-state observation, resize query coalescing, and late listener/read retirement.
@@ -613,6 +614,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `settings-migration.ts` — versioned one-shot migrations for the persisted settings blob; `migrateSettings` + the append-only ledger (#506).
 - `layout-theme.ts` — layout-theme catalog (#1306): built-ins, leading-comment metadata, user-file validation, resolution/fallback reasons, row-height parsing.
 - `layout-theme-ids.ts` — eager built-in layout ids and the legacy Floating Islands → `layoutTheme` mapping used by settings migration.
+- `macos-vibrancy.ts` — macOS vibrancy mode (off / transparent / material) and the Sidebar material shared by JS-created windows (`state/window-appearance.ts`) and the page tint attribute; kept in step with `lib.rs` `MACOS_VIBRANCY_MATERIAL` by `tests/domain/macos-vibrancy.test.ts` (#1733).
 - `miller-placement.ts` — `millerHoistedToIsland`: whether Miller columns hoist to the left island (island layout, no sidebar, single-pane tab only); shared by `+page.svelte` and `ExplorerPane.svelte` (#434, #1699).
 - `settings-numbers.ts` — Numeric preference consumer contracts shared by persisted validation and interactive setters.
 - `folder-preview.ts` — folder preview image selection (#146).
@@ -652,7 +654,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `terminal-shell.ts` — shell dialect profile + WSL↔Windows path translation (#409/#418).
 - `terminal-theme.ts` — map CSS theme vars → xterm.js theme (pane-surface background, ANSI palette from status colours or `--terminal-*` overrides).
 - `content-search.ts` — `ContentMatch`/`ContentSearchResult` types for ripgrep results; re-exported by `api/search.ts`.
-- `crash-report.ts` — pure crash-dedupe helper behind `api/crash.ts`.
+- `crash-report.ts` — pure crash-dedupe + benign-browser-notice (ResizeObserver) helpers behind `api/crash.ts` (#1725).
 - `crash-report-draft.ts` — pure crash → report title/draft update (#1684), loaded only when reporting.
 - `report-diagnostics.ts` — Report Issue diagnostic sections (kinds mirror `user_report.rs` `DiagnosticKind`), shared relay budget and head-keeping text fitting (#1022, #1684).
 - `user-report.ts` — report contracts and pure prefilled-GitHub fallback URL builder.

@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import {
-  chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync,
+  chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
@@ -62,6 +62,22 @@ describe("cache access", () => {
     expect(() => assertOutsideWorkspace("/repo", "/repo")).toThrow(/inside the checkout/);
     expect(() => assertOutsideWorkspace("/runner/_temp/turbo-test-cache", "/repo")).not.toThrow();
     expect(() => assertOutsideWorkspace("/repo-cache", "/repo")).not.toThrow();
+  });
+
+  it("resolves symlinks on both sides (macOS /var -> /private/var)", () => {
+    const real = realpathSync(mkdtempSync(join(tmpdir(), "tc-real-")));
+    const alias = join(mkdtempSync(join(tmpdir(), "tc-alias-")), "link");
+    symlinkSync(real, alias);
+    try {
+      // Cache spelled through the symlink, workspace spelled by its real path.
+      expect(() => assertOutsideWorkspace(join(alias, "not-yet-created", "cache"), real)).toThrow(/inside the checkout/);
+      expect(() => assertOutsideWorkspace(join(real, "cache"), alias)).toThrow(/inside the checkout/);
+      expect(() => assertOutsideWorkspace(alias, real)).toThrow(/inside the checkout/);
+      const other = realpathSync(mkdtempSync(join(tmpdir(), "tc-other-")));
+      expect(() => assertOutsideWorkspace(join(other, "cache"), alias)).not.toThrow();
+    } finally {
+      rmSync(real, { recursive: true, force: true });
+    }
   });
 });
 

@@ -63,6 +63,9 @@
     </button>
   </div>
   <textarea
+    autocorrect="off"
+    autocapitalize="none"
+    spellcheck="false"
     class="commit-message"
     placeholder={scmStore.amend
       ? "Amend commit message (optional)"

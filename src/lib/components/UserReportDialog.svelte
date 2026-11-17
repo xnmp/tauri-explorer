@@ -277,6 +277,9 @@
       <span>Title</span>
       <!-- svelte-ignore a11y_autofocus -- Modal traps and restores focus; the title is the deliberate first step in this short report flow. -->
       <input
+        autocorrect="off"
+        autocapitalize="none"
+        spellcheck="false"
         bind:value={() => textDraft.title, (title) => userReportDraftStore.update({ title })}
         maxlength={MAX_USER_REPORT_TITLE_UNITS}
         required
@@ -286,6 +289,9 @@
     <label>
       <span>Description (optional)</span>
       <textarea
+        autocorrect="off"
+        autocapitalize="none"
+        spellcheck="false"
         bind:value={() => textDraft.body, (body) => userReportDraftStore.update({ body })}
         maxlength={MAX_USER_REPORT_DESCRIPTION_UNITS}
         rows="8"
@@ -294,6 +300,9 @@
     <label>
       <span>How can we reach you? (GitHub handle, email — optional)</span>
       <input
+        autocorrect="off"
+        autocapitalize="none"
+        spellcheck="false"
         bind:value={() => textDraft.contact, (contact) => userReportDraftStore.update({ contact })}
         maxlength={MAX_USER_REPORT_CONTACT_UNITS}
       />

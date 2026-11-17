@@ -74,7 +74,7 @@
 }}>
   <div class="tab-search-header">
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.3" /><path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" /></svg>
-    <input bind:this={input} bind:value={query} oninput={() => { highlighted = 0; }} type="text" role="combobox" aria-label="Search open tabs" aria-autocomplete="list" aria-expanded="true" aria-controls={`${uid}-results`} aria-activedescendant={matches.length ? `${uid}-${selectedIndex}` : undefined} placeholder="Search open tabs…" />
+    <input autocorrect="off" autocapitalize="none" spellcheck="false" bind:this={input} bind:value={query} oninput={() => { highlighted = 0; }} type="text" role="combobox" aria-label="Search open tabs" aria-autocomplete="list" aria-expanded="true" aria-controls={`${uid}-results`} aria-activedescendant={matches.length ? `${uid}-${selectedIndex}` : undefined} placeholder="Search open tabs…" />
     <button aria-label="Close tab search" onclick={() => onClose(true)}>×</button>
   </div>
   <div class="tab-search-count" aria-live="polite">{matches.length} {matches.length === 1 ? 'tab' : 'tabs'}</div>

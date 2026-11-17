@@ -12,6 +12,7 @@
   import { applyWindowsBackdrop } from "$lib/state/window-backdrop";
   import { isMac } from "$lib/domain/platform";
   import { macOsVibrancyMode } from "$lib/domain/macos-vibrancy";
+  import { vibrancyCoverageVariables } from "$lib/domain/vibrancy-opacity";
   import { layoutStore } from "$lib/state/layout.svelte";
   import "$lib/layouts/floating-islands.css";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
@@ -134,6 +135,22 @@
     // their own strength tint (window-backdrop.ts).
     document.documentElement.toggleAttribute("data-macos-material",
       macOsVibrancyMode(isMac, settingsStore) === "material");
+  });
+
+  // Translucency Opacity (#1735): inline on the root so the setting beats a
+  // colour theme's own --island-*coverage* values. Only under the macOS
+  // material (the only place those variables are read); removed otherwise so
+  // themes keep their contract. prefers-reduced-transparency still wins: its
+  // rule overrides the derived fills, not these inputs.
+  $effect(() => {
+    const style = document.documentElement.style;
+    const vars = vibrancyCoverageVariables(settingsStore.translucencyOpacity);
+    const names = Object.keys(vars) as (keyof typeof vars)[];
+    if (macOsVibrancyMode(isMac, settingsStore) === "material") {
+      for (const name of names) style.setProperty(name, vars[name]);
+    } else {
+      for (const name of names) style.removeProperty(name);
+    }
   });
 
   // Windows Mica/Acrylic: apply the native backdrop with a theme-matched tint

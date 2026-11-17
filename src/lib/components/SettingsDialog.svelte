@@ -7,12 +7,14 @@
   import { ICON_THEMES } from './icons/icon-theme-options';
   import { themeStore } from "$lib/state/theme.svelte";
   import { isMac, isWindows } from "$lib/domain/platform";
+  import { macOsVibrancyMode } from "$lib/domain/macos-vibrancy";
   import { listInstalledTerminals } from "$lib/api/open";
   import { warmPoolShutdown } from "$lib/api/warm-pool";
   import { spawnWarmWindow } from "$lib/state/warm-window";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import Modal from "./Modal.svelte";
   import SettingRow from "./settings/SettingRow.svelte";
+  import TranslucencyOpacitySetting from "./settings/TranslucencyOpacitySetting.svelte";
   import SettingToggle from "./settings/SettingToggle.svelte";
   import TerminalShortcutSettings from "./settings/TerminalShortcutSettings.svelte";
   import LayoutThemeSetting from "./settings/LayoutThemeSetting.svelte";
@@ -77,11 +79,10 @@
     return terms.some((t) => matchesSearch(...t));
   }
 
-  // Searchable terms per setting row and per-section row lists live in
-  // domain/settings-rows; they drive row and section visibility.
+  // Row search terms and per-section row lists: domain/settings-rows.
   const rows = SETTINGS_ROWS;
-  const { appearance: appearanceRows, navBar: navBarRows, behavior: behaviorRows, terminal: terminalRows } =
-    settingsSectionRows({ isMac, isWindows });
+  const macMaterial = $derived(macOsVibrancyMode(isMac, settingsStore) === "material");
+  const sectionRows = $derived(settingsSectionRows({ isMac, isWindows, macMaterial }));
 
   // Escape clears the search filter before closing, so the Modal default
   // (close on Escape) is disabled and Escape is handled here instead.
@@ -144,7 +145,7 @@
         {/if}
 
         <!-- Appearance Section -->
-        <section class="settings-section" class:hidden={!sectionVisible(...appearanceRows)}>
+        <section class="settings-section" class:hidden={!sectionVisible(...sectionRows.appearance)}>
           <h3 class="section-title">Appearance</h3>
 
           <SettingRow label="Theme"
@@ -216,6 +217,9 @@
             hidden={!matchesSearch(...rows.nativeBlur)}>
             <SettingToggle checked={settingsStore.vibrancyBlur} onchange={() => settingsStore.update({ vibrancyBlur: !settingsStore.vibrancyBlur })} />
           </SettingRow>
+          {#if macMaterial}
+          <TranslucencyOpacitySetting hidden={!matchesSearch(...rows.translucencyOpacity)} />
+          {/if}
           {/if}
           {/if}
 
@@ -271,7 +275,7 @@
         </section>
 
         <!-- Navigation Bar Section -->
-        <section class="settings-section" class:hidden={!sectionVisible(...navBarRows)}>
+        <section class="settings-section" class:hidden={!sectionVisible(...sectionRows.navBar)}>
           <h3 class="section-title">Navigation Bar Buttons</h3>
           <SettingRow label="Back"
             description="Show the back navigation button"
@@ -296,7 +300,7 @@
         </section>
 
         <!-- Behavior Section -->
-        <section class="settings-section" class:hidden={!sectionVisible(...behaviorRows)}>
+        <section class="settings-section" class:hidden={!sectionVisible(...sectionRows.behavior)}>
           <h3 class="section-title">Behavior</h3>
 
           <SettingRow label="Show Hidden Files"
@@ -546,7 +550,7 @@
         </section>
 
         <!-- Terminal Section -->
-        <section class="settings-section" class:hidden={!sectionVisible(...terminalRows)}>
+        <section class="settings-section" class:hidden={!sectionVisible(...sectionRows.terminal)}>
           <h3 class="section-title">Terminal</h3>
 
           <SettingRow label="Terminal Follows Explorer"
@@ -782,7 +786,6 @@
     accent-color: var(--accent);
     cursor: pointer;
   }
-
 
   /* The confirm-delete row keeps its original `.setting-item` markup;
      SettingRow owns the equivalent rules for converted rows. */

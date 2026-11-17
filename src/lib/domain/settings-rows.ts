@@ -19,6 +19,7 @@ export const SETTINGS_ROWS = {
   layoutTheme: ["Layout", "Panel spacing, borders, rounding and density. Add your own CSS layouts to the layouts folder", "floating islands", "hairline ledger", "island", "css", "custom"],
   premiumTheme: ["Premium Theme Effects", "Aurora-style surface treatment: accent-tinted hairlines, soft glow shadows, breadcrumb pills, translucent panels and a subtle depth backdrop. Off = flatter, higher-contrast look", "aurora", "glow", "gradient", "glass"],
   nativeBlur: ["Native Blur", "Use macOS frosted glass blur (off = theme background, requires restart)"],
+  translucencyOpacity: ["Translucency Opacity", "How much of the frosted-glass material the panels hide (lower = more see-through)", "vibrancy", "transparency", "blur"],
   windowsBackdrop: ["Window Backdrop", "Windows translucent Mica/Acrylic frosted-glass effect (enabling from Off requires restart)"],
   windowsBackdropOpacity: ["Backdrop Opacity", "How see-through the app is over the Mica/Acrylic backdrop — islands included (lower = more transparent)"],
   addressBar: ["Show Address Bar", "Display the breadcrumb/path bar above the file list"],
@@ -67,12 +68,13 @@ export interface SettingsSectionRows {
 }
 
 /** Rows per section; platform-only rows appear only on their platform. */
-export function settingsSectionRows(platform: { isMac: boolean; isWindows: boolean }): SettingsSectionRows {
+export function settingsSectionRows(platform: { isMac: boolean; isWindows: boolean; macMaterial?: boolean }): SettingsSectionRows {
   const r = SETTINGS_ROWS;
   const appearance = [
     r.theme, r.layoutTheme, r.iconTheme, r.thumbnailSize, r.rowThumbnails, r.showSidebar,
     ...(platform.isMac ? [] : [r.windowControls]),
     ...(platform.isMac ? [r.integratedTitleBar, r.vibrancy, r.nativeBlur] : []),
+    ...(platform.isMac && platform.macMaterial ? [r.translucencyOpacity] : []),
     ...(platform.isWindows ? [r.windowsBackdrop, r.windowsBackdropOpacity] : []),
     r.premiumTheme,
     r.addressBar, r.statusBar,

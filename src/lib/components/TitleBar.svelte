@@ -16,18 +16,21 @@
   import { observeWindowChrome } from "$lib/state/window-chrome";
   import WindowTabBar from "./WindowTabBar.svelte";
 
+  const windowControls = $derived(
+    titlebar.effectiveWindowControls(settingsStore.showWindowControls, isMac),
+  );
   const tabStripVisible = $derived(
     titlebar.showTabStrip(
       windowTabsManager.tabs.length,
       windowTabsManager.activeTab?.kind === "explorer" &&
         windowTabsManager.canRenameTab(windowTabsManager.activeTab.id),
-      settingsStore.showWindowControls,
+      windowControls,
     ),
   );
   const showTitleBar = $derived(
     titlebar.showTitleBar(
       settingsStore.integratedTitleBar,
-      settingsStore.showWindowControls,
+      windowControls,
       tabStripVisible,
     ),
   );
@@ -82,7 +85,7 @@
     {/if}
     <div class="spacer"></div>
 
-    {#if settingsStore.showWindowControls}
+    {#if windowControls}
       <div class="window-controls">
         <button
           class="control-btn"

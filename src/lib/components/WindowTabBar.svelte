@@ -19,7 +19,8 @@
   import { tabDragState, windowAtScreenPos, sendTabToWindow } from "$lib/state/tab-transfer";
   import { clientToCSSRelative, getZoomFactor } from "$lib/domain/zoom";
   import { openNewWindow } from "$lib/state/commands/shared";
-  import { showTabStrip } from "$lib/domain/titlebar";
+  import { effectiveWindowControls, showTabStrip } from "$lib/domain/titlebar";
+  import { isMac } from "$lib/domain/platform";
   import { stepTabDrag, TAB_DRAG_IDLE, type TabDrag, type TabDragEffect, type TabDragEvent } from "$lib/domain/tab-drag";
   import { tabStripLayout, tabEdgeScrollSpeed, TAB_MAX_WIDTH, TAB_GAP } from "$lib/domain/tab-strip";
   import WindowTabPicker from "./WindowTabPicker.svelte";
@@ -99,7 +100,7 @@
       tabs.length,
       windowTabsManager.activeTab?.kind === "explorer" &&
         windowTabsManager.canRenameTab(windowTabsManager.activeTab.id),
-      settingsStore.showWindowControls,
+      effectiveWindowControls(settingsStore.showWindowControls, isMac),
     ),
   );
 

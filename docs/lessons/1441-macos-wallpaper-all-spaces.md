@@ -1,9 +1,5 @@
 # #1441 — macOS "Set as Wallpaper" on every display and Space
 
-> Updated by #1731 (`1731-macos-wallpaper-all-spaces.md`): the per-display
-> step is now objc2 AppKit rather than JXA, macOS 26 stores the image URL in
-> `Configuration`, and the toast notices changed.
-
 ## Symptom
 On macOS, Set as Wallpaper changed only the current Space and only one
 display. System Events' `tell every desktop` reaches only the desktops of the

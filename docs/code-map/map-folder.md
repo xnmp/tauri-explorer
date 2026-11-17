@@ -524,7 +524,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/domain/workspace-selection.ts` — pure cross-pane click focus policy and focused-first, path-deduplicated active-tab selection.
 - `file-list-navigation.ts` — independent path cursor and pure keyboard movement/selection intents for all file-list views.
 
-- `window-keys.ts` — pure ordered window-key routing policy for native button activation, terminal, modal, editable and filter contexts.
+- `window-keys.ts` — pure ordered window-key routing policy for native button activation, terminal, modal, editable and filter contexts; `isWindowShortcutInField` decides which Ctrl/Cmd chords a non-modal text field yields.
 - `window-launch-plan.ts` — pure initial-directory/view and restoration policy across main and child windows.
 - `window-input.ts` — launch, warm-window and directory-seed validation; shared parse/producer budgets and canonical explorer seed shape.
 

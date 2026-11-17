@@ -53,6 +53,9 @@ async function openCell(page: Page, cell: Cell, { count = 3, active = Math.min(c
     layoutTheme: cell.layout,
     theme: cell.theme,
     showWindowControls: true,
+    // As on the real Mac capture: the integrated row holds the lone tab, since
+    // the custom controls never render on macOS (#1756).
+    integratedTitleBar: cell.platform !== "opaque",
     tabTitleGitRoot: false,
     zoomLevel: zoom,
     macOsVibrancy: cell.material,

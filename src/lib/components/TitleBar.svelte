@@ -27,7 +27,7 @@
       windowTabsManager.tabs.length,
       windowTabsManager.activeTab?.kind === "explorer" &&
         windowTabsManager.canRenameTab(windowTabsManager.activeTab.id),
-      windowControls,
+      titlebar.titleRowHeldOpen(settingsStore.integratedTitleBar, settingsStore.showWindowControls, isMac),
     ),
   );
   const showTitleBar = $derived(

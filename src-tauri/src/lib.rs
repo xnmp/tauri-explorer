@@ -130,6 +130,28 @@ fn e2e_webview2_browser_args() -> String {
 }
 mod wsl;
 
+/// The macOS window material behind a vibrant window (#1733). `Sidebar`, not
+/// `UnderWindowBackground`, which looked opaque in dark mode.
+///
+/// Windows created from JS (fresh children, parked warm windows) cannot call
+/// this; they take the same material from `src/lib/domain/macos-vibrancy.ts`
+/// (`MACOS_VIBRANCY_MATERIAL`, Tauri's serialized name for this variant).
+/// `tests/domain/macos-vibrancy.test.ts` reads this constant to keep the two
+/// in step, so change both together.
+#[cfg(target_os = "macos")]
+const MACOS_VIBRANCY_MATERIAL: tauri::utils::WindowEffect = tauri::utils::WindowEffect::Sidebar;
+
+#[cfg(target_os = "macos")]
+fn macos_vibrancy_effects() -> tauri::utils::config::WindowEffectsConfig {
+    tauri::utils::config::WindowEffectsConfig {
+        effects: vec![MACOS_VIBRANCY_MATERIAL],
+        // Keep the material lit while the window is inactive (the JS
+        // `MACOS_VIBRANCY_STATE`).
+        state: Some(tauri::utils::WindowEffectState::Active),
+        ..Default::default()
+    }
+}
+
 use system::{
     get_log_dir, log_startup_progress, log_startup_timing, open_recycle_bin, set_window_theme,
 };
@@ -709,13 +731,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
                 if vibrancy {
                     builder = builder.transparent(true);
                     if vibrancy_blur {
-                        use tauri::utils::config::WindowEffectsConfig;
-                        use tauri::utils::{WindowEffect, WindowEffectState};
-                        builder = builder.effects(WindowEffectsConfig {
-                            effects: vec![WindowEffect::UnderWindowBackground],
-                            state: Some(WindowEffectState::Active),
-                            ..Default::default()
-                        });
+                        builder = builder.effects(macos_vibrancy_effects());
                     }
                 }
             }

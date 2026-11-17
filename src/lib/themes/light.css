@@ -114,7 +114,7 @@
   /* --theme-icon-pack: 'default'; themes can suggest: 'default', 'material', 'minimal' */
 
   /* Vibrancy: more transparent islands for light backgrounds */
-  --vibrancy-island-card: rgba(255, 255, 255, 0.45);
+  --vibrancy-island-card: rgba(255, 255, 255, 0.3);
 }
 /* --- #437: non-premium (flat / high-contrast) fallback --- */
 [data-theme="light"]:not([data-premium="true"]) {

@@ -70,7 +70,8 @@ export interface SettingsSectionRows {
 export function settingsSectionRows(platform: { isMac: boolean; isWindows: boolean }): SettingsSectionRows {
   const r = SETTINGS_ROWS;
   const appearance = [
-    r.theme, r.layoutTheme, r.iconTheme, r.thumbnailSize, r.rowThumbnails, r.showSidebar, r.windowControls,
+    r.theme, r.layoutTheme, r.iconTheme, r.thumbnailSize, r.rowThumbnails, r.showSidebar,
+    ...(platform.isMac ? [] : [r.windowControls]),
     ...(platform.isMac ? [r.integratedTitleBar, r.vibrancy, r.nativeBlur] : []),
     ...(platform.isWindows ? [r.windowsBackdrop, r.windowsBackdropOpacity] : []),
     r.premiumTheme,

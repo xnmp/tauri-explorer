@@ -4,9 +4,13 @@
  * components, composables, and state modules.
  */
 
+/** Whether a `navigator.platform` string names macOS (or iOS). */
+export function isMacPlatform(platform: string | null | undefined): boolean {
+  return typeof platform === "string" && platform.startsWith("Mac");
+}
+
 /** Whether the current platform is macOS (or iOS). */
-export const isMac: boolean =
-  typeof navigator !== "undefined" && navigator.platform.startsWith("Mac");
+export const isMac: boolean = typeof navigator !== "undefined" && isMacPlatform(navigator.platform);
 
 /** Whether the current platform is Windows. */
 export const isWindows: boolean =

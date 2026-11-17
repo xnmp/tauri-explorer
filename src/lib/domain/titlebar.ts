@@ -8,6 +8,16 @@
  * something to show.
  */
 
+/**
+ * Whether the custom min/max/close controls render. macOS windows always have
+ * native traffic lights (`decorations(true)` + overlay title bar), so the
+ * custom set never renders there regardless of the setting (#1756). Every
+ * reader of the setting must go through this, not the raw value.
+ */
+export function effectiveWindowControls(showWindowControls: boolean, isMac: boolean): boolean {
+  return !isMac && showWindowControls;
+}
+
 /** Whether the title bar row renders at all. */
 export function showTitleBar(
   integratedTitleBar: boolean,

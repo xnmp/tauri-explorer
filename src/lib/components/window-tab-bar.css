@@ -8,9 +8,11 @@
   initial-value: 1;
 }
 /* Tab widths ease to a new tab count instead of snapping: while one tab
-   slides in or out, the others make or take its room over a shorter time
-   with the same curve, so the strip never outgrows its room and the
-   new-tab button rides behind the last tab (#1734). Only while the tabs fit
+   slides in or out, the others make or take its room over the same time
+   with the same curve (--tab-width-ease, set by the strip), so the strip's
+   total changes one way only and the new-tab button rides behind the last
+   tab without dipping back (#1734). A momentary excess is shared by
+   flex-shrink (below). Only while the tabs fit
    (an overflowing strip reveals the active tab from its final geometry) and
    after the strip's first layout (mounting never animates).
    The strip publishes the width as a unitless --tab-px: WebKit zooms a
@@ -22,7 +24,7 @@
   initial-value: 0;
 }
   .tab-area .tab { --tab-width: calc(var(--tab-px) * 1px); }
-  .tab-area .tab-viewport.bleed.ease-widths .tab { transition: --tab-px 150ms cubic-bezier(0.33, 1, 0.68, 1); }
+  .tab-area .tab-viewport.bleed.ease-widths .tab { transition: --tab-px var(--tab-width-ease, 180ms) cubic-bezier(0.33, 1, 0.68, 1); }
   @media (prefers-reduced-motion: reduce) {
     .tab-area .tab-viewport.bleed.ease-widths .tab { transition: none; }
   }
@@ -138,9 +140,13 @@
     overflow: hidden;
   }
 
-  /* Subtle gradient overlay for depth */
+  /* Subtle gradient overlay for depth. It is the hover pill too, so it
+     paints under the tab's own icon and title: the tab isolates a stacking
+     context and the overlay sits below its content (#1734). */
+  .tab-area .tab { isolation: isolate; }
   .tab-area .tab::before {
     content: "";
+    z-index: -1;
     position: absolute;
     inset: 0;
     border-radius: 6px 6px 0 0;

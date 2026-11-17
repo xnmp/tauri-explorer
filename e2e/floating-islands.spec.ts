@@ -59,7 +59,7 @@ test.describe("Fused active tab (#1734)", () => {
     }`;
   const PATHS = ["/home/user", "/home/user/Downloads", "/home/user/Documents"];
 
-  async function openIslands(page: Page, { theme = "dark", material = false, count = 3 } = {}): Promise<void> {
+  async function openIslands(page: Page, { theme = "dark", material = false, count = 3, layout = "floating-islands", active = count - 1, settings = {} as Record<string, unknown> } = {}): Promise<void> {
     await page.setViewportSize({ width: 1100, height: 600 });
     if (material) {
       await page.addInitScript(() => {
@@ -67,27 +67,28 @@ test.describe("Fused active tab (#1734)", () => {
       });
     }
     await seedSettings(page, {
-      layoutTheme: "floating-islands",
+      layoutTheme: layout,
       theme,
       showWindowControls: true,
       tabTitleGitRoot: false,
       ...(material ? { macOsVibrancy: true, vibrancyBlur: true } : {}),
+      ...settings,
     });
     // The last tab is active: with three it stands over the panes island.
-    await page.addInitScript(({ paths, count }) => {
+    await page.addInitScript(({ paths, count, active }) => {
       localStorage.setItem("explorer-tabs", JSON.stringify({
         version: 3,
         tabs: Array.from({ length: count }, (_, i) => ({ id: `fused-${i}`, kind: "explorer", activePaneId: `fused-pane-${i}`, layout: { type: "leaf", id: `fused-pane-${i}`, path: paths[i % paths.length] } })),
-        activeTabId: `fused-${count - 1}`,
+        activeTabId: `fused-${active}`,
       }));
-    }, { paths: PATHS, count });
+    }, { paths: PATHS, count, active });
     await page.goto("/");
     await waitForEntries(page);
     if (material) {
       await expect(page.locator("html")).toHaveAttribute("data-macos-material", "");
       await page.addStyleTag({ content: SIMULATED_MATERIAL });
     }
-    await expect(page.locator('[data-region="titlebar"]')).toHaveAttribute("data-tab-island", "content");
+    if (layout === "floating-islands") await expect(page.locator('[data-region="titlebar"]')).toHaveAttribute("data-tab-island", "content");
   }
 
   /** RGB pixels of a page region at device scale 1, row-major. */
@@ -272,5 +273,46 @@ test.describe("Fused active tab (#1734)", () => {
     await page.mouse.move(5, 400);
     expectOneActiveTab(await steppedFrames(page, () => pressShortcut(page, "Tab", { ctrlKey: true }), { steps: 8 }));
     await expect(page.locator('.tab-viewport [data-region="tab"]').nth(1)).toHaveAttribute("aria-selected", "true");
+  });
+
+  /** Strongest luminance step between any pixel of a box and its first pixel (its background). */
+  async function glyphContrast(page: Page, box: { x: number; y: number; width: number; height: number }, background?: number[]) {
+    const region = await pixels(page, { x: Math.round(box.x), y: Math.round(box.y), width: Math.round(box.width), height: Math.round(box.height) });
+    const reference = luminance(background ?? region[0]);
+    return Math.max(...region.map((pixel) => Math.abs(luminance(pixel) - reference)));
+  }
+
+  // The window controls sit above the strip shade: their glyphs are as legible
+  // as in the default layout (the shade once painted over them).
+  for (const theme of ["light", "dark"]) test(`window control glyphs are not under the strip shade (${theme})`, async ({ page }) => {
+    const measure = async (layout: string) => {
+      await openIslands(page, { theme, layout });
+      await page.mouse.move(5, 400);
+      const contrasts: number[] = [];
+      for (const button of await page.locator(".window-controls .control-btn svg").all()) {
+        contrasts.push(await glyphContrast(page, (await button.boundingBox())!));
+      }
+      return Math.min(...contrasts);
+    };
+    const reference = await measure("default");
+    const islands = await measure("floating-islands");
+    expect(reference).toBeGreaterThan(20);
+    expect(islands, `islands ${islands.toFixed(1)} vs default ${reference.toFixed(1)}`).toBeGreaterThanOrEqual(reference * 0.85);
+  });
+
+  // Hovering an inactive tab lays its pill under the title, never over it, and
+  // brings the title up rather than washing it out.
+  for (const layout of ["floating-islands", "default"]) for (const theme of ["light", "dark"]) test(`hovering an inactive tab brightens its title (${layout}, ${theme})`, async ({ page }) => {
+    await openIslands(page, { theme, layout });
+    const tab = page.locator('.tab-viewport [data-region="tab"]').first();
+    const title = (await tab.locator(".tab-title").boundingBox())!;
+    const sample = { x: title.x, y: title.y, width: Math.min(40, title.width), height: title.height };
+    await page.mouse.move(5, 400);
+    const [restBg] = await pixels(page, { x: Math.round(title.x + 2), y: Math.round(title.y - 2), width: 1, height: 1 });
+    const rest = await glyphContrast(page, sample, restBg);
+    await tab.hover({ position: { x: 80, y: 4 } });
+    const [hoverBg] = await pixels(page, { x: Math.round(title.x + 2), y: Math.round(title.y - 2), width: 1, height: 1 });
+    const hovered = await glyphContrast(page, sample, hoverBg);
+    expect(hovered, `hovered ${hovered.toFixed(1)} vs rest ${rest.toFixed(1)}`).toBeGreaterThanOrEqual(rest - 2);
   });
 });

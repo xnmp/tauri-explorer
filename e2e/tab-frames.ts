@@ -132,7 +132,8 @@ async function holdTitlebarAnimations(page: Page): Promise<void> {
     const seconds = tab ? parseFloat(getComputedStyle(tab).transitionDuration) || 0 : 0;
     if (seconds > 0) {
       const style = document.createElement("style");
-      style.textContent = `[data-region="titlebar"] [data-region="tab"] { transition-duration: ${seconds * 1000}s !important; }`;
+      // Scale the strip's own duration (it is 0 while a tab closes).
+      style.textContent = `[data-region="titlebar"] [data-region="tab"] { transition-duration: calc(var(--tab-width-ease, ${seconds}s) * 1000) !important; }`;
       document.head.appendChild(style);
     }
   });

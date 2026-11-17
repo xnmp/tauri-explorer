@@ -247,6 +247,18 @@
   border-top-color: transparent;
 }
 
+/* The strip shade is deeper than the default title bar, so the window
+   controls step up to the primary text colour to keep their contrast. */
+:root[data-layout-base="floating-islands"] [data-region="titlebar"] .control-btn:not(:hover) {
+  color: var(--text-primary);
+}
+
+/* Hovering an inactive tab brings its title up to full strength (the dimmed
+   colour above outranks the tab bar's own hover colour). */
+:root[data-layout-base="floating-islands"] [data-region="tab"]:not([aria-selected="true"]):hover {
+  color: var(--text-primary);
+}
+
 /* No separator beside the active tab: its fillet takes that corner. */
 :root[data-layout-base="floating-islands"] [data-region="tab"]:has(+ [data-region="tab"][aria-selected="true"])::after {
   opacity: 0;

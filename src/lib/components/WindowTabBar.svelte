@@ -8,7 +8,7 @@
   (double-click) — renaming also saves the layout as a workspace.
 -->
 <script lang="ts">
-  import { tick, onDestroy } from "svelte";
+  import { tick, onDestroy, untrack } from "svelte";
   import { dragState } from "$lib/state/drag.svelte";
   import { cubicOut } from "svelte/easing";
   import { MediaQuery } from "svelte/reactivity";
@@ -44,17 +44,31 @@
   // full width, clipping the strip and stalling the new-tab button (#1734).
   // A new tab's slide-in holds zero width over that frame, so growth applies
   // at once.
-  let layoutCount = $state(windowTabsManager.tabs.length);
-  $effect(() => {
-    const count = tabs.length;
-    if (count >= layoutCount) {
-      layoutCount = count;
+  // The strip's total width must change one way only, or the new-tab button
+  // dips back. A sliding tab's own animation starts one frame after it is
+  // inserted or removed (Svelte runs a zero-length placeholder first), so the
+  // strip lays out the new count and active tab one frame late too, then:
+  // - opening, the other tabs ease narrower over the new tab's own duration
+  //   and curve, never giving up its room before it takes it (any excess is
+  //   shared by flex-shrink, see window-tab-bar.css);
+  // - closing, they take their wider width at once and flex-shrink hands
+  //   them exactly the room the sliding tab frees, frame by frame.
+  // Two independent eases undershot by up to 12px (#1734). Switching tabs
+  // swaps the active and inactive widths with one ease, at once.
+  let stripTabs = $state({ count: windowTabsManager.tabs.length, activeId: windowTabsManager.activeTabId });
+  let widthEaseMs = $state(TAB_SLIDE_IN_MS);
+  $effect.pre(() => {
+    const next = { count: tabs.length, activeId: activeTabId };
+    const previous = untrack(() => stripTabs.count);
+    widthEaseMs = next.count < previous ? 0 : TAB_SLIDE_IN_MS;
+    if (next.count === previous) {
+      stripTabs = next;
       return;
     }
-    const frame = requestAnimationFrame(() => { layoutCount = count; });
+    const frame = requestAnimationFrame(() => { stripTabs = next; });
     return () => cancelAnimationFrame(frame);
   });
-  const stripLayout = $derived(tabStripLayout(layoutCount, tabSpaceWidth, Math.min(renamingTabId ? 180 : 120, tabSpaceWidth || 120)));
+  const stripLayout = $derived(tabStripLayout(stripTabs.count, tabSpaceWidth, Math.min(renamingTabId ? 180 : 120, tabSpaceWidth || 120)));
   const showScrollButtons = $derived(stripLayout.overflowing && tabSpaceWidth >= 240);
   let pickerButton: HTMLButtonElement | undefined = $state();
   let pickerOpen = $state(false);
@@ -611,7 +625,7 @@
       {#if showScrollButtons}
         <button class="tab-scroll-btn" aria-label="Scroll tabs left" disabled={tabScrollLeft < 1} onclick={() => scrollTabs(-1)}>‹</button>
       {/if}
-      <div class="tab-viewport" class:bleed={!stripLayout.overflowing} class:ease-widths={easeWidths} style:--tab-bleed={`${TAB_BLEED}px`} bind:this={tabViewport} bind:clientWidth={tabViewportWidth} onscroll={() => { tabScrollLeft = tabViewport?.scrollLeft ?? 0; }} onwheel={handleTabWheel}>
+      <div class="tab-viewport" class:bleed={!stripLayout.overflowing} class:ease-widths={easeWidths} style:--tab-bleed={`${TAB_BLEED}px`} style:--tab-width-ease={`${widthEaseMs}ms`} bind:this={tabViewport} bind:clientWidth={tabViewportWidth} onscroll={() => { tabScrollLeft = tabViewport?.scrollLeft ?? 0; }} onwheel={handleTabWheel}>
     <!-- A tablist owns only tabs; the new-tab button sits beside it (#785). -->
     <div class="tab-list" role="tablist" aria-label="Tabs">
     {#each tabs as tab (tab.id)}
@@ -622,7 +636,7 @@
         class:active={tab.id === activeTabId}
         class:compact={tab.id !== activeTabId && stripLayout.iconOnly}
         class:narrow={tab.id === activeTabId && stripLayout.activeWidth < 90}
-        style:--tab-px={tab.id === activeTabId ? stripLayout.activeWidth : stripLayout.inactiveWidth}
+        style:--tab-px={tab.id === stripTabs.activeId ? stripLayout.activeWidth : stripLayout.inactiveWidth}
         class:drag-over={dropTargetTabId === tab.id}
         class:file-drop-target={fileDropTargetTabId === tab.id}
         class:dragging={draggingTabId === tab.id}

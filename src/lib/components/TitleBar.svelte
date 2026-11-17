@@ -235,6 +235,13 @@
     z-index: 3;
   }
 
+  /* The shade layer is positioned, so it paints over every unpositioned
+     sibling: position the bar's own content (tab strip, window controls) so
+     it paints above the shade, in document order (#1734). */
+  .titlebar > :not(.tab-seam-layer) {
+    position: relative;
+  }
+
   .titlebar.integrated {
     padding-left: 70px;
   }

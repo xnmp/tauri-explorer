@@ -172,8 +172,13 @@ windows = { version = "0.62.2", features = ["Wdk_Foundation", "Wdk_Storage_FileS
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "2.11"
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSData", "NSString", "NSURL"] }
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSEvent", "NSPasteboard", "NSPasteboardItem"] }
+# NSScreen/NSWorkspace/NSError/NSDictionary: the per-display desktop image
+# for Set as Wallpaper (wallpaper/macos.rs, #1731).
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSData", "NSDictionary", "NSError", "NSString", "NSURL"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSEvent", "NSPasteboard", "NSPasteboardItem", "NSScreen", "NSWorkspace"] }
+# The main dispatch queue for that AppKit work; already in the tree through
+# tao/objc2 at this version.
+dispatch2 = "0.3"
 # The private Sonoma+ wallpaper store (wallpaper/macos_store.rs, #1441).
 # Already in the tree through tauri; listed so we can read/write it directly.
 plist = "1.8"

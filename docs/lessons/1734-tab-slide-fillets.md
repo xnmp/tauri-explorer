@@ -205,5 +205,11 @@ both axes. `clip`, not `hidden`, so a narrow window's sideways overflow (the
 preview at 420px) creates no scroll container. `overflow-clip-margin` would
 have kept the clip on `main`, but WebKit 26 does not support it.
 `e2e/floating-islands.spec.ts` pins the contract: no ancestor of a seamed
-island clips one axis only. The remaining one-level shade inside each island
-edge at 1x is the `inset 0 -0.5px` hairline, which predates #1744.
+island clips one axis only.
+
+That left a fainter ring (4/255 in light themes) along the composited
+island's whole inner edge, under the tab too: the `inset 0 -0.5px` contact
+line. Below 2x its offset is a fraction of a device pixel, which WebKit on
+macOS resamples around the edge. Below 2dppx the line is
+`inset 0 -1px 0` at half the alpha (the same ink on one whole pixel); the
+probe capture showed the top and sides clean and a crisp bottom line.

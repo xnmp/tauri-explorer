@@ -34,8 +34,10 @@
      island the active tab opens into drops its top highlight (the tab's
      edge stroke owns that edge). */
   --layout-shadow-top: inset 0 0.5px 0 rgba(255, 255, 255, 0.09);
+  /* A one-device-pixel contact line along the bottom edge. */
+  --layout-shadow-contact: inset 0 -0.5px 0 rgba(0, 0, 0, 0.2);
   --layout-shadow-body:
-    inset 0 -0.5px 0 rgba(0, 0, 0, 0.2),
+    var(--layout-shadow-contact),
     0.5px 1px 3px rgba(0, 0, 0, 0.15),
     2px 4px 12px rgba(0, 0, 0, 0.2),
     5px 12px 32px rgba(0, 0, 0, 0.15);
@@ -123,6 +125,16 @@
     color-mix(in srgb, var(--islands-strip-shade-color) 35%, transparent),
     color-mix(in srgb, var(--islands-strip-shade-color) 50%, transparent)
   );
+}
+
+/* Below 2x a half-pixel offset is a fraction of a device pixel: WebKit on
+   macOS resamples it around a composited island's whole inner edge, a
+   one-pixel ring that showed under the active tab (#1744). The same ink on
+   one whole device pixel stays a bottom line. */
+@media (max-resolution: 1.99dppx) {
+  :root[data-layout-base="floating-islands"] {
+    --layout-shadow-contact: inset 0 -1px 0 rgba(0, 0, 0, 0.1);
+  }
 }
 
 /* Translucent surfaces go solid when the user asks for it. The selectors

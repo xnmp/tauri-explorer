@@ -418,7 +418,10 @@ for (const cell of CELLS) {
     test.use({ deviceScaleFactor: 1 });
     test.describe.configure({ timeout: 120_000 });
     test("at rest with 1, 3 and 12 tabs, and on hover", async ({ page }) => {
-      for (const count of [1, 3, 12]) {
+      // macOS never renders custom window controls (#1756), so nothing holds
+      // the title row open for a lone tab there and the strip is absent.
+      const counts = cell.platform === "opaque" ? [1, 3, 12] : [3, 12];
+      for (const count of counts) {
         await openCell(page, cell, { count, active: count === 12 ? 9 : Math.min(count - 1, 1) });
         await expectStatic(page, cell, `${count} tabs`);
         await expectBackdrop(page, cell, `${count} tabs`);

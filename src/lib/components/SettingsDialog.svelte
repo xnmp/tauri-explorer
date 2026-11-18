@@ -304,7 +304,7 @@
           </SettingRow>
 
           <SettingRow label="Use OS Recent Files for Date Opened"
-            description="Also read the operating system's own record of files opened in other applications (read-only, local). Off: Date opened shows only files opened in Tauri Explorer"
+            description="Linux only for now: also read the desktop's recent-files list (recently-used.xbel) for files opened in other applications. Read-only and local. Off: Date opened shows only files opened in Tauri Explorer"
             hidden={!matchesSearch(...rows.osRecentSources)}>
             <SettingToggle
               class="os-recent-sources-toggle"

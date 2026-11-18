@@ -196,7 +196,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
 
   // Only Details has sortable headers; List and Tiles sort by name ascending whatever the folder's
   // Details sort. Lineage prompts (#1449), lengths (#1531, requested folder-wide) and open history (#1525) are sort keys.
-  const sortKeys: SortKeys = { promptOf: (entry) => lineage.labels?.prompt(entry.path), lengthOf: entryLengthSeconds, openedAt: (entry) => lastOpenedAt(entry.path) };
+  const sortKeys: SortKeys = { promptOf: (entry) => lineage.labels?.prompt(entry.path), lengthOf: entryLengthSeconds, openedAt: (entry) => entry.kind === "file" ? lastOpenedAt(entry.path) : undefined };
   const peekSort = (): [SortField, boolean, SortKeys] => coreState.viewMode === "details" ? [coreState.sortBy, coreState.sortAscending, sortKeys] : ["name", true, sortKeys];
   const stopLengthSort = trackLengthSort({ active: () => peekSort()[0] === "length", path: () => coreState.currentPath, entries: () => visibleEntriesFor(coreState.entries, coreState.currentPath) });
   const ownDisplayEntries = $derived.by(() => {

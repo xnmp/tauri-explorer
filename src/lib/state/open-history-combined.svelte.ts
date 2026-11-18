@@ -32,21 +32,28 @@ export function createOsOpenedResolver({ fetch, enabled, now = () => Date.now(),
   const pending = new Map<string, string>();
   let timer: ReturnType<typeof setTimeout> | null = null;
 
+  /** Fetch one batch. Each chunk publishes into the *current* map when it
+   * settles, so overlapping flushes cannot overwrite one another. A failed
+   * chunk keeps what is known and is retried on a later read. */
   async function flush(): Promise<void> {
     if (timer) { clearTimeout(timer); timer = null; }
     const batch = [...pending.values()];
     pending.clear();
-    const found = new Map(times);
     for (let start = 0; start < batch.length; start += BATCH_SIZE) {
       const chunk = batch.slice(start, start + BATCH_SIZE);
-      const result = await fetch(chunk).catch((): Record<string, number> => ({}));
+      let result: Record<string, number>;
+      try { result = await fetch(chunk); } catch {
+        for (const path of chunk) requestedAt.delete(directoryKey(path));
+        continue;
+      }
+      const next = new Map(times);
       for (const path of chunk) {
         const at = result[path];
-        if (typeof at === "number") found.set(directoryKey(path), at);
-        else found.delete(directoryKey(path));
+        if (typeof at === "number") next.set(directoryKey(path), at);
+        else next.delete(directoryKey(path));
       }
+      times = next;
     }
-    times = found;
   }
 
   return {

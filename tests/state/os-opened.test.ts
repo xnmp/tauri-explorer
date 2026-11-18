@@ -63,11 +63,41 @@ describe("OS opened resolver", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("treats a failing backend as no OS data", async () => {
-    const fetch = vi.fn(async () => { throw new Error("boom"); });
+  it("keeps known values and retries on a later read when a fetch fails", async () => {
+    let fail = false;
+    const fetch = vi.fn(async (paths: readonly string[]) => {
+      if (fail) throw new Error("boom");
+      return Object.fromEntries(paths.map((p) => [p, 7]));
+    });
+    let clock = 0;
+    const resolver = createOsOpenedResolver({ fetch, enabled: () => true, now: () => clock, ttlMs: 1000, delayMs: 10 });
+    resolver.get("/d/a");
+    await vi.advanceTimersByTimeAsync(10);
+    expect(resolver.get("/d/a")).toBe(7);
+    clock += 2000;
+    fail = true;
+    resolver.get("/d/a");
+    await vi.advanceTimersByTimeAsync(10);
+    expect(resolver.get("/d/a")).toBe(7); // known value survives the failure
+    fail = false;
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fetch.mock.calls.length).toBeGreaterThanOrEqual(3); // the failed read was retried, not blocked for the TTL
+    expect(resolver.get("/d/a")).toBe(7);
+  });
+
+  it("publishes overlapping flushes without one overwriting the other", async () => {
+    const gates: Array<(value: Record<string, number>) => void> = [];
+    const fetch = vi.fn(() => new Promise<Record<string, number>>((resolve) => gates.push(resolve)));
     const resolver = createOsOpenedResolver({ fetch, enabled: () => true, delayMs: 10 });
     resolver.get("/d/a");
     await vi.advanceTimersByTimeAsync(10);
-    expect(resolver.get("/d/a")).toBeUndefined();
+    resolver.get("/d/b");
+    await vi.advanceTimersByTimeAsync(10);
+    expect(gates).toHaveLength(2);
+    gates[1]({ "/d/b": 2 }); // the later request settles first
+    await vi.advanceTimersByTimeAsync(0);
+    gates[0]({ "/d/a": 1 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect([resolver.get("/d/a"), resolver.get("/d/b")]).toEqual([1, 2]);
   });
 });

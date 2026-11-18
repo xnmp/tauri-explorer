@@ -1,8 +1,10 @@
 //! Linux adapter: the freedesktop/GTK `recently-used.xbel` bookmark file.
 //!
 //! Each `<bookmark href="file:///…" modified="…" visited="…">` records a file
-//! some application registered as recently used. The newest of `visited` and
-//! `modified` is the last-open time. The parsed index is cached keyed by the
+//! some application registered as recently used. `visited` is the last-open
+//! time; `modified` (which also changes when an application merely
+//! re-registers the entry) is used only when there is no valid `visited`.
+//! Times later than now plus a small clock skew are ignored. The parsed index is cached keyed by the
 //! file's identity (path, mtime, size) so repeated batches never reparse, and
 //! the file is read only up to [`MAX_BYTES`].
 use super::OsRecentSource;
@@ -16,6 +18,7 @@ use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io::Read;
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -55,24 +58,29 @@ fn parse_time(value: &str) -> Option<i64> {
         .filter(|at| *at > 0)
 }
 
-fn bookmark(tag: &BytesStart<'_>) -> Option<(Vec<u8>, i64)> {
-    let (mut href, mut at) = (None, None::<i64>);
+/// A recorded open this far past the present is a bogus clock, not an open.
+const FUTURE_SKEW_MS: i64 = 5 * 60 * 1000;
+
+fn bookmark(tag: &BytesStart<'_>, latest: i64) -> Option<(Vec<u8>, i64)> {
+    let (mut href, mut visited, mut modified) = (None, None::<i64>, None::<i64>);
     for attribute in tag.attributes().flatten() {
         let Ok(value) = attribute.normalized_value(XmlVersion::Implicit1_0) else {
             continue;
         };
         match attribute.key.as_ref() {
             "href" => href = href_to_path(&value),
-            "visited" | "modified" => at = at.max(parse_time(&value)),
+            "visited" => visited = parse_time(&value).filter(|at| *at <= latest),
+            "modified" => modified = parse_time(&value).filter(|at| *at <= latest),
             _ => {}
         }
     }
-    Some((href?, at?))
+    Some((href?, visited.or(modified)?))
 }
 
 /// Parse a document. A malformed tail keeps the bookmarks read before it;
 /// duplicate hrefs keep the newest time.
-pub(super) fn parse(bytes: &[u8]) -> Index {
+pub(super) fn parse(bytes: &[u8], now_ms: i64) -> Index {
+    let latest = now_ms.saturating_add(FUTURE_SKEW_MS);
     let mut reader = Reader::from_reader(bytes);
     let mut index = Index::new();
     let mut buffer = Vec::new();
@@ -81,7 +89,7 @@ pub(super) fn parse(bytes: &[u8]) -> Index {
             Ok(Event::Start(tag) | Event::Empty(tag))
                 if tag.local_name().as_ref() == "bookmark" =>
             {
-                if let Some((path, at)) = bookmark(&tag) {
+                if let Some((path, at)) = bookmark(&tag, latest) {
                     index
                         .entry(path)
                         .and_modify(|current| *current = (*current).max(at))
@@ -101,6 +109,8 @@ struct Identity {
     path: PathBuf,
     modified: Option<SystemTime>,
     len: u64,
+    /// A file replaced by rename can keep its size and mtime; its inode differs.
+    file_id: (u64, u64),
 }
 
 /// Parsed-file cache: reparses only when the file's identity changes.
@@ -137,6 +147,7 @@ impl XbelCache {
             path: path.to_path_buf(),
             modified: metadata.modified().ok(),
             len: metadata.len(),
+            file_id: (metadata.dev(), metadata.ino()),
         };
         let mut slot = self
             .entry
@@ -151,7 +162,7 @@ impl XbelCache {
         let read = std::fs::File::open(path)
             .and_then(|file| file.take(MAX_BYTES + 1).read_to_end(&mut bytes));
         let index = match read {
-            Ok(_) if bytes.len() as u64 <= MAX_BYTES => Arc::new(parse(&bytes)),
+            Ok(_) if bytes.len() as u64 <= MAX_BYTES => Arc::new(parse(&bytes, now_ms())),
             Ok(_) => {
                 self.warn_once("recently-used.xbel grew past its size limit; skipped");
                 Arc::default()
@@ -164,6 +175,10 @@ impl XbelCache {
         *slot = Some((identity, Arc::clone(&index)));
         index
     }
+}
+
+fn now_ms() -> i64 {
+    chrono::Utc::now().timestamp_millis()
 }
 
 static SYSTEM_CACHE: XbelCache = XbelCache::new();
@@ -219,19 +234,23 @@ mod tests {
         format!("{HEAD}{body}</xbel>")
     }
 
+    fn parse_now(bytes: &[u8]) -> Index {
+        parse(bytes, now_ms())
+    }
+
     fn at(iso: &str) -> i64 {
         parse_time(iso).unwrap()
     }
 
     #[test]
-    fn visited_and_modified_use_the_newest() {
-        let index = parse(
+    fn visited_wins_and_modified_is_only_a_fallback() {
+        let index = parse_now(
             doc(r#"<bookmark href="file:///a.txt" added="2020-01-01T00:00:00Z" modified="2024-03-01T10:00:00Z" visited="2024-02-01T10:00:00Z"><info/></bookmark>
                    <bookmark href="file:///b.txt" visited="2024-05-01T00:00:00.5Z"/>
                    <bookmark href="file:///c.txt" modified="2023-01-01T00:00:00Z"/>"#)
             .as_bytes(),
         );
-        assert_eq!(index[b"/a.txt".as_slice()], at("2024-03-01T10:00:00Z"));
+        assert_eq!(index[b"/a.txt".as_slice()], at("2024-02-01T10:00:00Z"));
         assert_eq!(
             index[b"/b.txt".as_slice()],
             at("2024-05-01T00:00:00Z") + 500
@@ -241,7 +260,7 @@ mod tests {
 
     #[test]
     fn hrefs_are_percent_decoded_including_non_utf8_bytes() {
-        let index = parse(
+        let index = parse_now(
             doc(r#"<bookmark href="file:///home/me/My%20Doc%C3%A9.txt" visited="2024-01-01T00:00:00Z"/>
                    <bookmark href="file:///tmp/bad%FF%FEname" visited="2024-01-02T00:00:00Z"/>
                    <bookmark href="file://localhost/srv/a&amp;b.txt" visited="2024-01-03T00:00:00Z"/>"#)
@@ -254,7 +273,7 @@ mod tests {
 
     #[test]
     fn non_file_missing_and_bad_entries_are_ignored() {
-        let index = parse(
+        let index = parse_now(
             doc(
                 r#"<bookmark href="https://example.com/x" visited="2024-01-01T00:00:00Z"/>
                    <bookmark href="file://remote-host/x" visited="2024-01-01T00:00:00Z"/>
@@ -270,8 +289,23 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_hrefs_keep_the_newest_time() {
+    fn future_dated_times_are_ignored_but_the_other_attribute_still_counts() {
+        let now = at("2024-06-01T00:00:00Z");
         let index = parse(
+            doc(r#"<bookmark href="file:///future" visited="2030-01-01T00:00:00Z"/>
+                   <bookmark href="file:///fallback" visited="2030-01-01T00:00:00Z" modified="2024-05-01T00:00:00Z"/>
+                   <bookmark href="file:///skew" visited="2024-06-01T00:02:00Z"/>"#)
+            .as_bytes(),
+            now,
+        );
+        assert!(!index.contains_key(b"/future".as_slice()));
+        assert_eq!(index[b"/fallback".as_slice()], at("2024-05-01T00:00:00Z"));
+        assert_eq!(index[b"/skew".as_slice()], at("2024-06-01T00:02:00Z"));
+    }
+
+    #[test]
+    fn duplicate_hrefs_keep_the_newest_time() {
+        let index = parse_now(
             doc(
                 r#"<bookmark href="file:///d" visited="2024-06-01T00:00:00Z"/>
                    <bookmark href="file:///d" visited="2022-06-01T00:00:00Z"/>"#,
@@ -285,10 +319,10 @@ mod tests {
     #[test]
     fn malformed_documents_keep_what_preceded_the_damage() {
         let good = r#"<bookmark href="file:///ok" visited="2024-01-01T00:00:00Z"/>"#;
-        let index = parse(format!("{HEAD}{good}<bookmark href=\"file:///x\" <<<").as_bytes());
+        let index = parse_now(format!("{HEAD}{good}<bookmark href=\"file:///x\" <<<").as_bytes());
         assert!(index.contains_key(b"/ok".as_slice()));
-        assert!(parse(b"not xml at all \xff\x00").is_empty());
-        assert!(parse(b"").is_empty());
+        assert!(parse_now(b"not xml at all \xff\x00").is_empty());
+        assert!(parse_now(b"").is_empty());
     }
 
     fn write(path: &Path, body: &str) {
@@ -344,6 +378,43 @@ mod tests {
         handle
             .set_modified(SystemTime::now() + std::time::Duration::from_secs(5))
             .unwrap();
+        assert_eq!(
+            source.opened_at(&["/a".into()])["/a"],
+            at("2021-01-01T00:00:00Z")
+        );
+    }
+
+    #[test]
+    fn replacing_the_file_with_same_size_and_mtime_invalidates() {
+        static LOCAL: XbelCache = XbelCache::new();
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("x.xbel");
+        let body = |year: &str| {
+            format!(r#"<bookmark href="file:///a" visited="{year}-01-01T00:00:00Z"/>"#)
+        };
+        write(&file, &body("2020"));
+        let pinned = SystemTime::now() - std::time::Duration::from_secs(3600);
+        std::fs::File::options()
+            .write(true)
+            .open(&file)
+            .unwrap()
+            .set_modified(pinned)
+            .unwrap();
+        let source = XbelSource::at(file.clone(), &LOCAL);
+        assert_eq!(
+            source.opened_at(&["/a".into()])["/a"],
+            at("2020-01-01T00:00:00Z")
+        );
+        // Atomic replace (as GTK saves): new inode, identical size and mtime.
+        let staged = dir.path().join("staged");
+        write(&staged, &body("2021"));
+        std::fs::File::options()
+            .write(true)
+            .open(&staged)
+            .unwrap()
+            .set_modified(pinned)
+            .unwrap();
+        std::fs::rename(&staged, &file).unwrap();
         assert_eq!(
             source.opened_at(&["/a".into()])["/a"],
             at("2021-01-01T00:00:00Z")

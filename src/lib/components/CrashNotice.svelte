@@ -1,5 +1,6 @@
 <!--
-  Crash notice banner (#184). Shown once after a crash: offers to report it
+  Crash notice banner (#184). Shown once after a crash, or after a session
+  that did not exit cleanly (#1686, `session_marker.rs`): offers to report it
   through the Report Issue dialog (#1684), where the crash file is a
   previewed, opt-in section sent through the relay (no GitHub account
   needed), or to dismiss it.
@@ -7,6 +8,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { takeCrashReport } from "$lib/api/crash";
+  import { crashNoticeLead } from "$lib/domain/crash-report";
   import { crashReportStore } from "$lib/state/crash-report.svelte";
 
   const report = $derived(crashReportStore.offered);
@@ -32,7 +34,7 @@
 {#if report}
   <div class="crash-notice" role="alert" data-testid="crash-notice">
     <span class="crash-message">
-      Tauri Explorer crashed last time. A report was saved locally to
+      {crashNoticeLead(report.kind)}
       <code>{report.fileName}</code> — nothing was sent anywhere.
     </span>
     <div class="crash-actions">

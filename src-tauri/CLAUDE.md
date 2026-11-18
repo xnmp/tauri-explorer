@@ -17,6 +17,17 @@ Window creation paths (Rust main, fresh child, parked warm window: `main.rs`,
 visibility; the page's reactive `window-title` sync then follows the active
 explorer path (`src/lib/state/CLAUDE.md`).
 
+## Unclean-exit marker (`session_marker.rs`, #1686)
+
+Every orderly exit path must run `release_process_resources` (it disarms the
+session marker first): `RunEvent::Exit`, the updater's Windows `on_before_exit`,
+and the Unix signal path in `termination_signals.rs`. A new path that exits
+without it makes the next launch report "did not exit cleanly". Only the main
+process arms or reviews markers (`start` sits after the portal branch in
+setup); liveness is the OS file lock, never a PID. In-process tests release a
+marker with `abandon`, not `drop`: a sibling test's fork can share the
+descriptor, and so the lock, until it execs.
+
 ## Crate and test layout
 
 - Rust test modules included with `#[path]` from production modules belong in `src-tauri/test_support/`, not Cargo's auto-discovered `src-tauri/tests/`. Keeping source-included modules under `tests/` makes `cargo clippy --all-targets` compile them again as standalone integration crates, where their `super`/`crate` imports are invalid.

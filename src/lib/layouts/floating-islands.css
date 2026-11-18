@@ -12,14 +12,16 @@
  * with it the islands are translucent over the OS material; without it they
  * are opaque over a themed depth gradient, so the layout works everywhere.
  *
- * The active tab owns the window (#1734): the strip is shaded except for the
- * tab and its fillets, which wear the surface of the island the tab stands
- * on; that island opens its top edge under the tab, which reaches down into
- * it, so tab and island are one surface. Surfaces are flat (no per-box sheen)
- * so the joins cannot show. The hole, key shadow and edge
- * highlight are inline SVG in the title bar ([data-region="tab-key-shadow"],
- * [data-region="tab-edge"]) kept in step by composables/tab-seam-marks.ts;
- * this file only colours them. Light comes from the top left.
+ * The active tab owns the whole window below the strip (#1734, #1785): the
+ * strip is shaded except for the tab and its fillets, a hole through which
+ * the window body shows. That body is the tab's surface: it runs edge to
+ * edge under every island (sidebar, Miller columns, panes, preview) and the
+ * status bar, with rounded top corners where the strip shade wraps round it.
+ * The only outline is the tab plus the surface's top edge and corners. The
+ * hole, corner pockets, key shadow and outline are inline SVG in the title
+ * bar ([data-region="tab-key-shadow"], [data-region="tab-edge"]) kept in step
+ * by composables/tab-seam-marks.ts; this file only colours them. Light comes
+ * from the top left.
  */
 
 :root[data-layout-base="floating-islands"] {
@@ -27,12 +29,11 @@
   --sidebar-opacity: 0;
   --statusbar-opacity: 0;
   --layout-gap: 8px;
-  --layout-inset: 0 6px 6px 6px;
+  /* The islands sit on the tab's surface, a gap below its top edge. */
+  --layout-inset: 8px 6px 6px 6px;
   --layout-radius: 14px;
   --layout-border: 1px solid var(--surface-stroke);
-  /* Shadows fall down and to the right, away from the top-left light. An
-     island the active tab opens into drops its top highlight (the tab's
-     edge stroke owns that edge). */
+  /* Shadows fall down and to the right, away from the top-left light. */
   --layout-shadow-top: inset 0 0.5px 0 rgba(255, 255, 255, 0.09);
   /* A one-device-pixel contact line along the bottom edge. */
   --layout-shadow-contact: inset 0 -0.5px 0 rgba(0, 0, 0, 0.2);
@@ -42,8 +43,7 @@
     2px 4px 12px rgba(0, 0, 0, 0.2),
     5px 12px 32px rgba(0, 0, 0, 0.15);
   --layout-shadow: var(--layout-shadow-top), var(--layout-shadow-body);
-  /* Island material: a panel colour over a base colour, both flat, so the
-     active tab (inline SVG fill) can wear exactly the same surface. Colour
+  /* Island material: a panel colour over a base colour, both flat. Colour
      themes tune it through --vibrancy-island-card. */
   --islands-fill-base: transparent;
   --islands-fill: color-mix(in srgb, var(--vibrancy-island-card, var(--background-card)) 98%, transparent);
@@ -95,8 +95,9 @@
   --islands-structural-alpha-d: calc(1 - (1 - var(--island-structural-coverage-dark, 0.48)) / (1 - var(--islands-body-d)));
   --islands-panel-l: var(--island-surface, var(--vibrancy-island-card, var(--background-card)));
   --islands-panel-d: var(--island-surface, color-mix(in srgb, var(--background-solid) 90%, white));
-  /* The window body: the theme base nudged toward the accent. The active tab
-     and its fillets show it through the strip. A theme's own tint wins. */
+  /* The window body: the theme base nudged toward the accent. It is the
+     active tab's surface (#1785): the tab and its fillets show it through the
+     strip, and the gaps between islands show it. A theme's own tint wins. */
   --islands-body-color: color-mix(in srgb, var(--background-solid) 94%, var(--accent));
   --layout-app-surface: var(
     --vibrancy-tint,
@@ -198,24 +199,8 @@
   fill: var(--islands-strip-shade);
 }
 
-:root[data-layout-base="floating-islands"] [data-tab-island="content"] .tab-fill-base {
-  fill: var(--islands-fill-base);
-}
-
-:root[data-layout-base="floating-islands"] [data-tab-island="content"] .tab-fill-panel {
-  fill: var(--islands-fill);
-}
-
-:root[data-layout-base="floating-islands"] [data-tab-island="structural"] .tab-fill-base {
-  fill: var(--islands-structural-fill-base);
-}
-
-:root[data-layout-base="floating-islands"] [data-tab-island="structural"] .tab-fill-panel {
-  fill: var(--islands-structural-fill);
-}
-
-:root[data-layout-base="floating-islands"] [data-tab-island="none"] .tab-fill {
-  display: none;
+:root[data-layout-base="floating-islands"] [data-region="tab-key-shadow"] .surface-pockets {
+  fill: var(--islands-strip-shade);
 }
 
 :root[data-layout-base="floating-islands"] [data-region="tab-key-shadow"] .tab-key {
@@ -227,7 +212,7 @@
 }
 
 :root[data-layout-base="floating-islands"] [data-region="tab-edge"] .tab-edge-stroke {
-  /* The marks set each run's island border colour and painted width. */
+  /* The marks set its painted width. */
   stroke: var(--surface-stroke);
 }
 
@@ -268,7 +253,7 @@
 }
 
 /* The active tab is a hole in the strip: it, its fillets and the window body
-   are one surface. Nothing paints over it; its outline is the edge layer.
+   are one surface (#1785). Nothing paints over it; its outline is the edge layer.
    It clips its own content, as the fillets paint nothing. */
 :root[data-layout-base="floating-islands"] [data-region="tab"][aria-selected="true"] {
   background: transparent;
@@ -288,53 +273,6 @@
    1px ring column overlaps the tab, so hide the boxes instead. */
 :root[data-layout-base="floating-islands"] [data-region="tab-fillet"] {
   visibility: hidden;
-}
-
-/* A tab's foot never lands on a rounded corner: where it reaches into one
-   (straddling the gutter between two content islands), that corner is
-   squared while the tab stands there (domain/tab-seam.ts). */
-:root[data-layout-base="floating-islands"] [data-tab-square~="left"] {
-  border-top-left-radius: 0 !important;
-}
-
-:root[data-layout-base="floating-islands"] [data-tab-square~="right"] {
-  border-top-right-radius: 0 !important;
-}
-
-/* The seam clip changes every frame of a tab slide: registered as
-   non-inherited so updating it restyles the island alone, never the file
-   list inside it. */
-@property --tab-seam-clip {
-  syntax: "*";
-  inherits: false;
-}
-
-/* The island the tab stands on opens into it (domain/island-outline.ts):
-   its top edge and top corners belong to the tab's edge stroke, which runs
-   on round the corners down to the straight sides, where the island's own
-   border takes over. The clip removes, on device pixels, its top border row
-   and the ring of each corner the stroke owns (the tab's fill repaints
-   them) and everything above the notch under the tab (the island's shadow
-   there would darken the tab); its top highlight goes along the whole
-   width. The clip reaches far past the island, so overlays inside it are
-   never cut.
-   A fullscreen preview covers the window and keeps its whole box. The seam
-   follows a sliding tab every frame: will-change gives the island its own
-   layer so a moving notch only re-clips it (WebKit otherwise repaints the
-   whole island, ~45ms a frame in software). Opacity, unlike transform,
-   does not make the island the containing block of fixed overlays.
-   Both still make the island a stacking context, which would trap its
-   context menus under later sibling islands (the preview) they overhang:
-   lift the island above its siblings. Islands never overlap one another,
-   and menus from other islands stay in main's own stacking context. */
-:root[data-layout-base="floating-islands"] [data-tab-seam] {
-  --layout-shadow: var(--layout-shadow-body);
-}
-
-:root[data-layout-base="floating-islands"]:not([data-preview-fullscreen]) [data-tab-seam] {
-  z-index: 1;
-  will-change: opacity;
-  clip-path: var(--tab-seam-clip, none);
 }
 
 /* Structural island: the sidebar. Radius, border and shadow come from the
@@ -457,10 +395,9 @@
    status bar's top edge (#1734). The window box clips instead, on both
    axes: a narrow window's sideways overflow stops at the window edge, and
    clip (unlike hidden) leaves no scroll container that focus could scroll.
-   Never clip one axis only: WKWebView then places a composited island (the
-   one the active tab opens into) a fraction of a pixel off the device grid,
-   so its clipped top row bleeds into the row below as a line and its
-   content is resampled soft (#1744). min-height: 0 keeps a long listing
+   Never clip one axis only: WKWebView then places a composited island a
+   fraction of a pixel off the device grid, so its content is resampled
+   soft (#1744). min-height: 0 keeps a long listing
    from growing the area and pushing the islands past the window bottom.
    With the status bar shown, the islands keep a 4px bottom inset above it. */
 :root[data-layout-base="floating-islands"] [data-region="app"] {

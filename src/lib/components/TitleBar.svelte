@@ -51,15 +51,15 @@
   let isMaximized = $state(false);
   let titlebarEl: HTMLDivElement | undefined = $state();
 
-  // Floating Islands: the active tab owns the window (#1734). Its hole in the
-  // strip shade, key shadow and edge highlight are the inline SVG layers
-  // below, kept in step with the strip by the lazily loaded seam marks.
+  // Floating Islands: the active tab owns the window (#1734, #1785). Its hole
+  // in the strip shade, key shadow and the outline it shares with its surface
+  // are the inline SVG layers below, kept in step by the lazily loaded marks.
   useTabSeam(() => titlebarEl, () => [windowTabsManager.tabs, windowTabsManager.activeTabId, tabStripVisible]);
 
-  // Floating Islands: the strip starts over the content islands where its
-  // tabs can afford it (WindowTabBar, `tabStripStart`), so a fused tab stands
-  // over the content it opens (#1734). Keyed on a boolean so re-applying the
-  // same layout does not detach and re-measure the strip.
+  // Floating Islands: the strip starts past the surface's rounded top-left
+  // corner where its tabs can afford it (WindowTabBar, `tabStripStart`), so
+  // the first tab keeps its whole curve (#1785). Keyed on a boolean so
+  // re-applying the same layout does not detach and re-measure the strip.
   let alignedStart = $state<number | null>(null);
   const alignStrip = $derived(Boolean(titlebarEl) && layoutStore.islands && tabStripVisible);
   $effect(() => {
@@ -105,8 +105,9 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="titlebar" data-region="titlebar" bind:this={titlebarEl} class:integrated={isMac && settingsStore.integratedTitleBar} onmousedown={handleDragStart}>
     {#if layoutStore.islands}
-      <!-- Strip shade with the active tab's hole, then the tab's lift and key
-           shadow (light from the top left), cut out under the tab itself. -->
+      <!-- Strip shade with the active tab's hole (the tab's surface, the
+           window body, shows through it), then the tab's lift and key shadow
+           (light from the top left), cut out under the tab itself. -->
       <svg class="tab-seam-layer" data-region="tab-key-shadow" aria-hidden="true">
         <defs>
           <filter id="tab-lift-blur" x="-20%" y="-60%" width="140%" height="220%">
@@ -117,25 +118,13 @@
           </filter>
           <clipPath id="tab-shadow-view"><rect class="tab-view-clip" x="0" y="0" width="0" height="0" /></clipPath>
           <clipPath id="tab-shadow-cut"><path class="tab-cutout" clip-rule="evenodd" /></clipPath>
-          <clipPath id="tab-fill-view">
-            <rect class="tab-view-clip" x="0" y="0" width="0" height="0" />
-            <rect class="tab-below-clip" x="-4096" y="0" width="8192" height="4096" />
-          </clipPath>
           <!-- The shade stays inside the bar: the tab's hole reaches below
                it, and outside the bar's rectangle that hole would be painted. -->
           <clipPath id="tab-strip-clip"><rect class="tab-bar-clip" x="0" y="0" width="0" height="0" /></clipPath>
         </defs>
         <path class="strip-shade" clip-path="url(#tab-strip-clip)" />
-        <!-- The tab wears its island's surface: base layer, then panel layer;
-             also over the island pixels its edge stroke takes over. -->
-        <g class="tab-fill tab-body" clip-path="url(#tab-fill-view)">
-          <path class="tab-fill-base" />
-          <path class="tab-fill-panel" />
-        </g>
-        <g class="tab-fill tab-corners">
-          <path class="tab-fill-base" />
-          <path class="tab-fill-panel" />
-        </g>
+        <!-- The strip shade outside the surface's rounded top corners. -->
+        <path class="surface-pockets" />
         <g class="tab-shadows" clip-path="url(#tab-shadow-view)">
           <g clip-path="url(#tab-shadow-cut)">
             <path class="tab-lift" filter="url(#tab-lift-blur)" />
@@ -155,20 +144,16 @@
       <div class="spacer" data-tab-room></div>
     </div>
     {#if layoutStore.islands}
-      <!-- One stroke over the tab, its fillets and the top edges and corners
-           of the islands it opens into, in their border colour; split in
-           three runs only when those islands' borders differ. -->
+      <!-- The one outline (#1785): the tab, its fillets and the surface's top
+           edge and rounded top corners, a single seamless stroke. -->
       <svg class="tab-seam-layer tab-edge-layer" data-region="tab-edge" aria-hidden="true">
         <defs>
-          <!-- Above the base, the strip's view; below it, only the island
-               pixels the stroke owns (the islands paint the rest). One path:
-               WebKit bounds a clip of several shapes by its target's
+          <!-- Above the base, the strip's view; below it, the whole width.
+               One path: WebKit bounds a clip of several shapes by its target's
                geometry, which would cut the stroke's lower half. -->
           <clipPath id="tab-edge-view"><path class="tab-edge-clip" /></clipPath>
         </defs>
         <g clip-path="url(#tab-edge-view)">
-          <path class="tab-edge-stroke" fill="none" />
-          <path class="tab-edge-stroke" fill="none" />
           <path class="tab-edge-stroke" fill="none" />
         </g>
       </svg>
@@ -248,8 +233,8 @@
   }
 
   /* Tab seam layers (#1734): drawn in title bar CSS pixels, colours from the
-     layout stylesheet. The edge rides above the tabs and runs along the
-     islands' top edges below the bar. */
+     layout stylesheet. The outline rides above the tabs and runs along the
+     surface's top edge below the bar (#1785). */
   .tab-seam-layer {
     position: absolute;
     inset: 0;

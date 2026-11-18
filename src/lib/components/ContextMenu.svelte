@@ -886,19 +886,18 @@
     z-index: var(--z-menu);
     min-width: 220px;
     padding: 6px;
-    background: var(--background-acrylic);
-    backdrop-filter: blur(20px) saturate(180%);
-    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    /* Opaque flyout tint over the solid base (#1734): no backdrop filter. */
+    background: linear-gradient(var(--background-acrylic), var(--background-acrylic)), var(--background-solid);
     border: 1px solid var(--surface-stroke-flyout);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-flyout);
   }
   /* Entrance: a downward clip reveal plus a short slide. Never animate
-     opacity, transform or filter on a blurred menu surface or its contents:
-     WebKitGTK composites those animations, and when one ends it drops the
-     backdrop-filter surface for a frame, so the menu blinked see-through
-     ~100 ms after opening (#1062). clip-path and margin repaint on the main
-     thread instead, with no layer to tear down. The menu is mounted hidden for
+     opacity, transform or filter on the menu surface or its contents:
+     WebKitGTK composites those animations, and when the menu was blurred it
+     dropped the backdrop-filter surface for a frame when one ended, so the
+     menu blinked see-through ~100 ms after opening (#1062). clip-path and
+     margin repaint on the main thread instead, with no layer to tear down. The menu is mounted hidden for
      one measuring frame (clamp effect), so the reveal starts only once it is
      visible. */
   .context-menu.revealed {
@@ -1009,9 +1008,7 @@
     top: -6px;
     min-width: 120px;
     padding: 6px;
-    background: var(--background-acrylic);
-    backdrop-filter: blur(20px) saturate(180%);
-    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    background: linear-gradient(var(--background-acrylic), var(--background-acrylic)), var(--background-solid);
     border: 1px solid var(--surface-stroke-flyout);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-flyout);

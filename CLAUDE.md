@@ -617,8 +617,3 @@ List peek admission consolidation pushed gzip to 281,985 bytes against the
 281,984-byte cap. Reproduce with `bun run check:bundle` on the locked dependencies;
 unit tests alone cannot verify this contract. #1357 reverts that refactor rather
 than increasing the budget.
-
-For CI recovery after Floating Islands tab changes, a local isolated pass does
-not establish deterministic screenshot sampling: PR #1744 failed all three CI
-attempts while its closing-tab test passed locally. See
-`docs/lessons/1769-ci-floating-islands-rollback.md` before reintroducing that PR.

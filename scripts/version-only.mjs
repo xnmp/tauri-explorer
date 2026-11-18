@@ -8,10 +8,13 @@
 // a file that does not parse, or a missing side means "not version-only",
 // so the callers fall back to their ordinary (full) selection.
 
-/** Files a version bump edits, each with a comparator for its format. */
+/**
+ * Files a version bump edits (scripts/bump-version.mjs), each with a
+ * comparator for its format. tauri.conf.json reads package.json's version
+ * (#1800), so a diff to it is never version-only.
+ */
 export const VERSION_FILES = {
   "package.json": "json",
-  "src-tauri/tauri.conf.json": "json",
   "src-tauri/Cargo.toml": "cargo-toml",
   "src-tauri/Cargo.lock": "cargo-lock",
   PKGBUILD: "pkgbuild",

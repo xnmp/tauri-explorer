@@ -2,6 +2,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    // First, so a launch that cannot start a window can still report (#1687).
+    if let Some(status) = tauri_explorer_lib::run_diagnostics_cli() {
+        std::process::exit(status);
+    }
     if let Some(status) = tauri_explorer_lib::run_process_supervisor() {
         std::process::exit(status);
     }

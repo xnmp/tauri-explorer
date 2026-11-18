@@ -4,12 +4,39 @@ name: Performance Tests
 on:
   push:
     branches: [dev]
+    # Path-scoped on dev pushes (#1801); the nightly schedule and dispatch
+    # run regardless, catching anything outside these paths within a day.
+    # The perf benches (tests/perf through vitest.perf.config.ts and
+    # scripts/perf-check.ts) and the Tiles scroll spec on the dev server.
+    paths:
+      - "src/**"
+      - "static/**"
+      - "tests/**"
+      - "e2e/**"
+      - "scripts/**"
+      - "perf-baseline.json"
+      - "package.json"
+      - "bun.lock"
+      - "*.config.ts"
+      - "*.config.js"
+      - "tsconfig.json"
+      - ".github/workflows/perf.yml"
+  schedule:
+    - cron: "53 4 * * *"
   workflow_dispatch:
 
 env:
   # Bun for the Playwright container job; must equal ci.yml's pin
   # (tests/ci-playwright-container.test.ts).
   CONTAINER_BUN_VERSION: "1.4.3"
+
+# PRs share a group per PR ref and dev pushes one group per workflow, both
+# cancelling in progress: a newer commit cancels its superseded run (#1798).
+# Every other event (main pushes, schedule, dispatch) gets a unique run-ID
+# group, so it never cancels or replaces another run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || (github.event_name == 'push' && github.ref == 'refs/heads/dev') && 'dev-push' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/dev') }}
 
 jobs:
   perf-check:

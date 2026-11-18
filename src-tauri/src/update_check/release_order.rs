@@ -84,56 +84,32 @@ pub fn is_newer(candidate: &str, current: &str) -> bool {
 mod tests {
     use super::is_newer;
 
+    /// Era, version and pre-release order, shared with release.yml's
+    /// `isReleasedAfter` (scripts/update-channel.mjs) so the two cannot drift
+    /// (#1803): each vector is `[candidate, current, expected]`.
     #[test]
-    fn ordinary_version_order_within_a_line() {
-        assert!(is_newer("0.9.1", "0.9.0"));
-        assert!(is_newer("0.10.0", "0.9.9"));
-        assert!(is_newer("1.28.1", "1.28.0"));
-        assert!(is_newer("0.28.1", "0.28.0"));
-        assert!(is_newer("0.29.0", "0.28.9"));
-        assert!(!is_newer("1.27.0", "1.28.0"));
-        assert!(!is_newer("0.28.0", "0.28.1"));
+    fn shared_release_order_vectors() {
+        let vectors: Vec<(String, String, bool)> = serde_json::from_str(include_str!(
+            "../../test_support/release-order-vectors.json"
+        ))
+        .unwrap();
+        assert!(vectors.len() > 30, "{} vectors", vectors.len());
+        for (candidate, current, expected) in vectors {
+            assert_eq!(
+                is_newer(&candidate, &current),
+                expected,
+                "is_newer({candidate:?}, {current:?})"
+            );
+        }
     }
 
+    /// Lenient inputs only the updater accepts (the release tooling refuses
+    /// anything but SemVer): missing segments compare as 0.
     #[test]
-    fn the_alpha_line_follows_every_one_x_release() {
-        // The bridge and every older 1.x install must accept the alpha line.
-        assert!(is_newer("0.28.0", "1.28.2"));
-        assert!(is_newer("0.28.0", "1.0.0"));
-        assert!(!is_newer("1.28.2", "0.28.0"));
-        assert!(!is_newer("1.28.9", "0.28.0"));
-    }
-
-    #[test]
-    fn the_one_x_line_follows_the_first_zero_x_line() {
-        assert!(is_newer("1.0.0", "0.9.0"));
-        assert!(is_newer("v1.0.0", "0.9.0"));
-        assert!(!is_newer("0.9.0", "1.28.1"));
-    }
-
-    #[test]
-    fn leaving_alpha_is_newer_than_every_alpha_release() {
-        assert!(is_newer("1.29.0", "0.99.0"));
-        assert!(is_newer("2.0.0", "0.28.5"));
-        assert!(!is_newer("0.99.0", "1.29.0"));
-    }
-
-    #[test]
-    fn equal_releases_are_not_newer() {
-        assert!(!is_newer("0.28.0", "0.28.0"));
-        assert!(!is_newer("1.28.2", "v1.28.2"));
+    fn missing_segments_compare_as_zero() {
         assert!(!is_newer("0.9", "0.9.0"));
         assert!(!is_newer("", ""));
-    }
-
-    #[test]
-    fn a_pre_release_precedes_its_release() {
-        assert!(is_newer("0.29.0", "0.29.0-rc.1"));
-        assert!(!is_newer("0.29.0-rc.1", "0.29.0"));
-        assert!(is_newer("0.29.0-rc.1", "0.28.9"));
-        assert!(!is_newer("0.29.0-rc.2", "0.29.0-rc.1"));
-        assert!(!is_newer("0.29.0+build.5", "0.29.0"));
-        assert!(is_newer("0.28.0-rc.1", "1.28.2"));
+        assert!(is_newer("0.10", "0.9.9"));
     }
 
     #[test]

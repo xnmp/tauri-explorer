@@ -9,6 +9,7 @@ import { cubicOut } from "svelte/easing";
 import { TAB_BLEED } from "$lib/domain/tab-strip";
 import { TAB_STRIP_PADDING } from "$lib/domain/tab-seam";
 import { tabSlideCss } from "$lib/domain/tab-slide";
+import { rectDimToCSS } from "$lib/domain/zoom";
 
 /** The selected state Svelte last rendered on a leaving tab, kept while
  *  `tabSlide` shows it unselected. */
@@ -125,4 +126,67 @@ export function tabRoomAtFloor(tabArea: HTMLElement, group: HTMLElement): { room
   const padding = parseFloat(getComputedStyle(tabArea).paddingLeft) || 0;
   const buttons = Math.max(0, tabArea.offsetWidth - padding - group.offsetWidth);
   return { room: box.clientWidth - spacerMin - TAB_STRIP_PADDING - buttons, box };
+}
+
+/** The tab drag ghost (#1749): the tab's icon and title in a floating pill.
+ *  The icon is a clone; its scoped strip styles do not reach the ghost, so
+ *  each painted shape keeps its computed fill, colour and opacity inline. */
+export function makeTabGhost(tab: HTMLElement | null, title: string): HTMLElement {
+  const el = document.createElement("div");
+  el.className = "tab-drag-ghost";
+  el.style.cssText =
+    "position:fixed;pointer-events:none;z-index:2147483647;opacity:0.92;padding:4px 12px 4px 10px;" +
+    "display:flex;align-items:center;gap:6px;" +
+    "border-radius:6px;background:var(--background-card-secondary,#2a2a2a);" +
+    "color:var(--text-primary,#eee);font-size:13px;white-space:nowrap;" +
+    "box-shadow:0 4px 14px rgba(0,0,0,0.35);border:1px solid var(--divider,rgba(255,255,255,0.1));";
+  const icon = tab?.querySelector<HTMLElement>(".tab-icon, .tab-icon-special");
+  if (icon) {
+    const clone = icon.cloneNode(true) as HTMLElement;
+    clone.classList.add("tab-drag-ghost-icon");
+    const sources = [icon, ...icon.querySelectorAll<Element>("*")];
+    const copies = [clone, ...clone.querySelectorAll<HTMLElement | SVGElement>("*")];
+    sources.forEach((source, i) => {
+      const style = getComputedStyle(source);
+      const copy = copies[i];
+      copy.style.fill = style.fill;
+      copy.style.color = style.color;
+      copy.style.opacity = style.opacity;
+    });
+    clone.style.flexShrink = "0";
+    clone.style.transform = "none";
+    el.appendChild(clone);
+  }
+  const label = document.createElement("span");
+  label.textContent = title;
+  el.appendChild(label);
+  document.body.appendChild(el);
+  return el;
+}
+
+/** Each tab's on-screen box, by tab id. */
+export function tabRects(list: HTMLElement): Map<string, DOMRect> {
+  const rects = new Map<string, DOMRect>();
+  for (const el of list.querySelectorAll<HTMLElement>(".tab[data-tab-id]")) rects.set(el.dataset.tabId!, el.getBoundingClientRect());
+  return rects;
+}
+
+/** The id of a tab's FLIP glide, so a new drag can finish it before it
+ *  measures the tabs' resting boxes. */
+export const TAB_FLIP_ID = "tab-flip";
+
+/** FLIP (#1749): after the strip re-renders, each tab glides along the strip
+ *  from the box it showed in `before` to where it now rests. */
+export function flipTabs(list: HTMLElement, before: ReadonlyMap<string, DOMRect>, duration: number): void {
+  if (duration <= 0 || typeof Element.prototype.animate !== "function") return;
+  for (const el of list.querySelectorAll<HTMLElement>(".tab[data-tab-id]")) {
+    const from = before.get(el.dataset.tabId!);
+    if (!from) continue;
+    const dx = rectDimToCSS(from.left - el.getBoundingClientRect().left);
+    if (Math.abs(dx) < 0.5) continue;
+    el.animate(
+      [{ transform: `translateX(${dx}px)` }, { transform: "translateX(0)" }],
+      { id: TAB_FLIP_ID, duration, easing: "cubic-bezier(0.33, 1, 0.68, 1)" },
+    );
+  }
 }

@@ -11,8 +11,9 @@
 //     Run by ci-auto-rerun.yml on `workflow_run: completed`. Re-runs the failed
 //     jobs of a failed first attempt once, and only when every failed job
 //     stopped at an install or setup step (the slow-mirror class of failure).
-//     A failure in a test step, a superseded (cancelled) run, or any later
-//     attempt is left alone, so the workflow cannot loop.
+//     A failure in a test step, a superseded (cancelled) run, a failed run
+//     that a newer PR or dev push run has superseded, or any later attempt is
+//     left alone, so the workflow cannot loop or cancel the newer run.
 //
 // Environment: GITHUB_REPOSITORY, GH_TOKEN (or GITHUB_TOKEN), GITHUB_API_URL;
 // report also reads GITHUB_RUN_ID and GITHUB_RUN_ATTEMPT, auto-rerun reads
@@ -35,10 +36,12 @@ export const SETUP_STEP =
   /^(set up job|initialize containers|run actions\/(checkout|cache|download-artifact)\b|run oven-sh\/setup-bun\b|run dtolnay\/rust-toolchain\b|run swatinem\/rust-cache\b)|\binstall\b|refresh apt|^restore .*cache|cache key$|^probe test-result cache$/i;
 
 /**
- * Gate and report jobs that fail only because an upstream job did. They are
- * re-run with their upstream jobs and never decide whether to re-run.
+ * Gate jobs that fail only because an upstream job did. They are re-run with
+ * their upstream jobs and never decide whether to re-run. Each also carries
+ * its targets' test-result cache report, and `frontend` the dev-push impact
+ * map (#1802), all as continue-on-error steps.
  */
-export const AGGREGATE_JOBS = new Set(["frontend", "webkit", "rust", "test-cache"]);
+export const AGGREGATE_JOBS = new Set(["frontend", "webkit", "rust"]);
 
 /**
  * The step a job stopped at: its first unsuccessful step, else the first one
@@ -121,22 +124,36 @@ export function rerunDecision({ conclusion, runAttempt, jobs, maxAttempt = 1 }) 
  *   workflow_id?: number, pull_requests?: { number: number }[] }} RunInfo
  */
 
+/** The branch whose push runs share one cancel-in-progress group per workflow (#1798). */
+export const SUPERSEDED_PUSH_BRANCH = "dev";
+
+/** @param {RunInfo} run */
+const isDevPush = (run) => run.event === "push" && run.head_branch === SUPERSEDED_PUSH_BRANCH;
+
 /**
- * Why re-running a pull_request run would be wrong, or null when it is still
- * the PR's current run. A re-run joins the PR's cancel-in-progress
- * concurrency group, so re-running a superseded run would cancel the newer
- * run for the PR's latest commit. Push runs use unique groups and are never
- * stale here.
+ * Why re-running a failed run would be wrong, or null when it is still the
+ * current run of its concurrency group. pull_request runs share a
+ * cancel-in-progress group per PR, and dev push runs one per workflow
+ * (#1798): a re-run joins that group, so re-running a superseded run would
+ * cancel the newer run for the latest commit. Other runs (main pushes, the
+ * schedule, dispatch) use unique groups and are never stale here.
  * @param {RunInfo} run the failed run
- * @param {{ newerRuns: { id: number }[], prHeads: string[] }} context
- *   newerRuns: the same workflow's pull_request runs for run.head_branch;
- *   prHeads: the current head SHA of each PR the run belongs to
+ * @param {{ newerRuns: { id: number }[], prHeads: string[], branchHead?: string | null }} context
+ *   newerRuns: the same workflow's runs of the same event for run.head_branch;
+ *   prHeads: the current head SHA of each PR the run belongs to;
+ *   branchHead: the dev branch's current head SHA (dev push runs)
  * @returns {string | null}
  */
-export function staleRunReason(run, { newerRuns, prHeads }) {
-  if (run.event !== "pull_request") return null;
+export function staleRunReason(run, { newerRuns, prHeads, branchHead }) {
+  const devPush = isDevPush(run);
+  if (run.event !== "pull_request" && !devPush) return null;
   const newer = newerRuns.filter((r) => r.id > run.id);
   if (newer.length > 0) return `run ${newer[0].id} is a newer run of this workflow for ${run.head_branch ?? "the PR branch"}`;
+  if (devPush) {
+    if (!branchHead) return `${SUPERSEDED_PUSH_BRANCH}'s head could not be read, so the run cannot be confirmed current`;
+    if (branchHead !== run.head_sha) return `${SUPERSEDED_PUSH_BRANCH} moved from ${run.head_sha} to ${branchHead}`;
+    return null;
+  }
   if (prHeads.length === 0) return "no open pull request is associated with the run, so it cannot be confirmed current";
   const moved = prHeads.find((sha) => sha !== run.head_sha);
   if (moved) return `the pull request's head moved from ${run.head_sha} to ${moved}`;
@@ -194,15 +211,21 @@ async function report(/** @type {string[]} */ needed) {
 }
 
 /**
- * Evidence for staleRunReason: newer pull_request runs of the same workflow on
- * the run's head branch, and the live head SHA of each associated PR.
+ * Evidence for staleRunReason: newer runs of the same workflow and event on
+ * the run's head branch, plus the live head of each associated PR (a
+ * pull_request run) or of dev (a dev push run).
  * @param {RunInfo} run
  */
 async function currentness(run) {
-  if (run.event !== "pull_request") return { newerRuns: [], prHeads: [] };
+  const devPush = isDevPush(run);
+  if (run.event !== "pull_request" && !devPush) return { newerRuns: [], prHeads: [] };
   const branch = encodeURIComponent(run.head_branch ?? "");
   const { workflow_runs: newerRuns } =
-    await github(`/actions/workflows/${run.workflow_id}/runs?event=pull_request&branch=${branch}&per_page=20`);
+    await github(`/actions/workflows/${run.workflow_id}/runs?event=${run.event}&branch=${branch}&per_page=20`);
+  if (devPush) {
+    const head = await github(`/branches/${SUPERSEDED_PUSH_BRANCH}`);
+    return { newerRuns, prHeads: [], branchHead: head?.commit?.sha ?? null };
+  }
   /** @type {string[]} */
   const prHeads = [];
   for (const pr of run.pull_requests ?? []) {

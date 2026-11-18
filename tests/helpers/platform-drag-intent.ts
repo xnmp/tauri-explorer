@@ -190,8 +190,10 @@ impl DragDropTarget {
       let controller = Controller { state: Cell::new(DragControllerState::Left),
         paths: UnsafeCell::new(None), delivered: Cell::new(false), enters: Cell::new(0), leaves: Cell::new(0), context: RefCell::new(Some(context(1))),
         source: Cell::new(drag_drop_snapshot::SourceSnapshot { local: Some(local), ..source_snapshot() }), inside: Cell::new(true), generation: Cell::new(0), entered_at: Cell::new(200), position: Cell::new((0,0)), snapshot_local: Cell::new(None), accepted: true };
-      gtk_received(&controller, &View { modifiers: 0 }, &context(1), &SelectionData { length, uris: uris.into_iter().map(str::to_owned).collect() }, 2, time);
+      let ctx = context(1);
+      gtk_received(&controller, &View { modifiers: 0 }, &ctx, &SelectionData { length, uris: uris.into_iter().map(str::to_owned).collect() }, 2, time);
       assert_eq!(controller.enters.get(), u32::from(admitted));
+      assert_eq!(ctx.status.get(), admitted.then_some(2), "stale or invalid URI data must not acknowledge");
     }
   }
   fn gtk_result(uri: bool) -> (bool, bool, Option<bool>) {
@@ -200,6 +202,26 @@ impl DragDropTarget {
     let ctx = Context { id: 1, window: 77, actions: 2, source_local: Cell::new(true), finished: Cell::new(None), status: Cell::new(None) };
     let consumed = gtk_drop(&controller, &View { modifiers: 0 }, &ctx, 0, 0, 0);
     (controller.delivered.get(), consumed, ctx.finished.get())
+  }
+  #[test] fn gtk_delayed_selection_acknowledges_without_another_pointer_motion() {
+    for (path, accepted, actions, expected) in [
+      ("/a file#ñ", true, 2, Some(2)),
+      ("/file", true, 4, Some(0)),
+      ("/file", false, 2, None),
+      ("urn:tauri-explorer:drag:recent", true, 2, None),
+    ] {
+      let controller = Controller { state: Cell::new(DragControllerState::Left),
+        paths: UnsafeCell::new(None), delivered: Cell::new(false), enters: Cell::new(0), leaves: Cell::new(0), context: RefCell::new(None), source: Cell::new(source_snapshot()), inside: Cell::new(false), generation: Cell::new(0), entered_at: Cell::new(0), position: Cell::new((0,0)), snapshot_local: Cell::new(None), accepted };
+      let ctx = Context { id: 1, window: 77, actions, source_local: Cell::new(true), finished: Cell::new(None), status: Cell::new(None) };
+      // The cursor has stopped by the time GTK's asynchronous URI reply arrives.
+      assert!(!gtk_motion(&controller, &View { modifiers: 0 }, &ctx, 10, 20, 100));
+      assert_eq!(ctx.status.get(), None);
+      gtk_received(&controller, &View { modifiers: 0 }, &ctx,
+        &SelectionData { length: 5, uris: vec![path.into()] }, 2, 100);
+      assert_eq!(controller.enters.get(), 1);
+      assert_eq!(ctx.status.get(), expected, "URI receipt must negotiate before release, without another motion");
+      assert_eq!(ctx.finished.get(), None, "acknowledgement must not complete the drag");
+    }
   }
   #[test] fn gtk_filesystem_motion_owns_copy_ack_but_nonfiles_keep_dom_transport() {
     for (path, accepted, actions, id, owns, status) in [

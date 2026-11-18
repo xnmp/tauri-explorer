@@ -166,7 +166,7 @@ pub(crate) fn connect_drag_event(webview: &WebView, handler: Box<dyn Fn(DragDrop
         }
         let paths = uris.iter().map(path_buf_from_uri).collect::<Vec<_>>();
         controller.enter();
-        controller.call(
+        let accepted = controller.call(
           webview,
           DragDropEvent::Enter {
             paths: paths.clone(),
@@ -175,6 +175,16 @@ pub(crate) fn connect_drag_event(webview: &WebView, handler: Box<dyn Fn(DragDrop
           context,
         );
         controller.store_paths(paths, context);
+        if accepted && controller.filesystem_paths() {
+          // URI delivery is asynchronous and can follow the last pointer motion.
+          // Negotiate now too: a stationary cursor may be released without Over.
+          let action = if context.actions().contains(gtk::gdk::DragAction::COPY) {
+            gtk::gdk::DragAction::COPY
+          } else {
+            gtk::gdk::DragAction::empty()
+          };
+          context.drag_status(action, time);
+        }
       }
     });
   }

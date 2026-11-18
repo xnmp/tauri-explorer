@@ -1,7 +1,7 @@
 # Tauri Explorer alpha testing
 
 Thanks for helping test Tauri Explorer. Use the exact release and platform
-listed in your invitation; the [latest release page](https://github.com/xnmp/tauri-explorer/releases/latest)
+listed in your invitation; the [releases page](https://github.com/xnmp/tauri-explorer/releases) (newest at the top)
 is the supported download route. The first cohort is intentionally small, and
 an invitation does not imply that every operating system or desktop environment
 has been qualified.

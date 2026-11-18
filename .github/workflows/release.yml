@@ -282,22 +282,57 @@ jobs:
           VERSION: ${{ needs.version-check.outputs.version }}
         run: >-
           node scripts/updater-manifest.mjs --tag "$VERSION" --dir artifacts
-          --notes release-notes.md --repo "$GITHUB_REPOSITORY" --out latest.json
+          --notes release-notes.md --repo "$GITHUB_REPOSITORY" --out latest-alpha.json
 
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.version-check.outputs.version }}
         run: |
-          # latest.json drives self-update (#1679); the signatures it embeds
-          # are also published beside each signed bundle.
+          set -euo pipefail
+          # The signatures the updater manifest embeds are also published
+          # beside each signed bundle.
           mapfile -t assets < <(find artifacts -type f \( \
             -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \
             -o -name '*.dmg' -o -name '*.app.tar.gz' \
             -o -name '*.msi' -o -name '*-setup.exe' -o -name '*.sig' \))
-          assets+=(latest.json)
+          assets+=(latest-alpha.json)
+          # GitHub "Latest" stays on a release every 1.x install sees as newer
+          # in plain version order (#1783); only such a release publishes the
+          # latest.json that 1.26–1.28.1 self-updating installs read.
+          latest=$(node scripts/update-channel.mjs github-latest "$VERSION")
+          if [[ $latest == true ]]; then
+            cp latest-alpha.json latest.json
+            assets+=(latest.json)
+          fi
           gh release create "$VERSION" \
             --title "$VERSION" \
+            --latest="$latest" \
             --target "$GITHUB_SHA" \
             --notes-file release-notes.md \
             "${assets[@]}"
+
+      # The bridge and every later build read only update-channel's
+      # latest-alpha.json (scripts/update-channel.mjs). Updated after the
+      # release exists, so the manifest never names missing assets.
+      - name: Publish to the update channel
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.version-check.outputs.version }}
+        run: |
+          set -euo pipefail
+          channel=update-channel
+          if ! names=$(gh release view "$channel" --json assets --jq '.assets[].name' 2>view-error.txt); then
+            grep -qi 'release not found' view-error.txt || { cat view-error.txt >&2; exit 1; }
+            gh release create "$channel" --prerelease --latest=false --target "$GITHUB_SHA" \
+              --title "Update channel" \
+              --notes "Not a release: installed copies of Tauri Explorer read latest-alpha.json here to find the newest release (#1783)."
+            names=
+          fi
+          current=()
+          if grep -qx latest-alpha.json <<<"$names"; then
+            gh release download "$channel" --pattern latest-alpha.json --output channel-latest-alpha.json
+            current=(--channel channel-latest-alpha.json)
+          fi
+          node scripts/update-channel.mjs check --version "$VERSION" "${current[@]}"
+          gh release upload "$channel" latest-alpha.json --clobber

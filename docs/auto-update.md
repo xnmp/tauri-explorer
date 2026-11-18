@@ -57,16 +57,52 @@ policy declines them, so enabling them later needs no release-format change.
   stapling the notarization ticket, re-signs it, and verifies the archived app.
 - The release job renames the macOS archive to
   `tauri-explorer_<version>_aarch64.app.tar.gz`, runs
-  `scripts/updater-manifest.mjs` to produce `latest.json`, and uploads it with
-  the bundles and signatures. The script verifies every signature against
+  `scripts/updater-manifest.mjs` to produce `latest-alpha.json`, and uploads
+  it with the bundles and signatures. The script verifies every signature against
   `plugins.updater.pubkey` first: tauri-cli only warns when the signing secret
   does not match the embedded key, and such a release would be rejected by
-  every install.
+  every install. A release marked GitHub "Latest" also uploads it as
+  `latest.json` (see "Version reset" below). The next step copies it to the
+  `update-channel` release.
 - Installed apps fetch
-  `https://github.com/xnmp/tauri-explorer/releases/latest/download/latest.json`
-  (`plugins.updater.endpoints` in `tauri.conf.json`). Platform keys are
+  `https://github.com/xnmp/tauri-explorer/releases/download/update-channel/latest-alpha.json`
+  (`plugins.updater.endpoints` in `tauri.conf.json`, also read by the
+  notify-only notice). 1.26–1.28.1 read
+  `releases/latest/download/latest.json`. Platform keys are
   bundle-specific (`linux-x86_64-deb`, `windows-x86_64-nsis`, …) and the
   manifest deliberately has no generic `linux-x86_64` entry.
+
+## Version reset (#1783)
+
+Versions went from 1.28 back to the 0.28 alpha line. The updater only offers a
+release it considers newer, and 1.28.1 and earlier compare plain versions
+against `releases/latest` (both the self-update `latest.json` and the GitHub
+API for the notice). Three rules keep every install moving:
+
+- **Release order.** `update_check/release_order.rs` orders versions by era
+  (0.0–0.27, then 1.0–1.28, then 0.28 onwards in version order, a pre-release
+  before its release). It is the updater's `version_comparator` and the
+  notice's comparison. `scripts/update-channel.mjs` mirrors it.
+- **GitHub "Latest" stays on the bridge.** v1.28.2 is the first release with
+  that order. Only a release that every 1.x install sees as newer in plain
+  version order becomes "Latest" and publishes `latest.json`: the bridge, and
+  later only 1.29 or above. Every 0.x release is published with
+  `--latest=false`. An old install, self-updating or notify-only, therefore
+  always finds the bridge, and the bridge moves on to the 0.28 line.
+- **The update channel.** The `update-channel` prerelease is never "Latest". Its
+  `latest-alpha.json` always describes the newest release. The bridge and
+  every later build read only that file. `release.yml` updates it after
+  publishing the release, and refuses to replace it with a release that is
+  not newer in release order.
+
+Because "Latest" stays on 1.28.2, links meant for new users must point at the
+releases list or the channel, not `releases/latest` (README, website,
+`arch_install.sh`).
+
+Package managers need an epoch for the lower number. From 0.28.0 the
+`PKGBUILD` and RPM carry `epoch=1`. Tauri cannot set a Debian epoch, so
+`dpkg -i` installs the lower version with a downgrade warning. Windows MSI
+and NSIS allow downgrades (`bundle.windows.allowDowngrades` defaults to true).
 
 Releases published before this feature have no `latest.json`. The app then logs
 `Update(self-update-unavailable)` and falls back to the notify-only notice.

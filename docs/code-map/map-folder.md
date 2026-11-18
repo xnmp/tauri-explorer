@@ -121,7 +121,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `SettingsDialog.svelte` — general settings dialog; links to dedicated Keyboard Shortcuts and Plugins dialogs.
 - `settings/SettingRow.svelte` — one Settings row (label, description, optional `info` snippet, control slot); `hidden` while the search filter excludes it.
 - `settings/SettingToggle.svelte` — the Settings switch (restyled checkbox; extra input attributes forwarded).
-- `settings/TranslucencyOpacitySetting.svelte` — macOS Native Blur "Translucency Opacity" slider row (#1735).
+- `settings/TranslucencyOpacitySetting.svelte` — "Translucency Opacity" slider row under the Translucency toggle (#1735, #1757).
 - `settings/TerminalShortcutSettings.svelte` — terminal line-editing shortcut list and key recorder (#375/#404); recording ends on dialog close or window blur.
 - `settings/GitHubReportTokenSetting.svelte` — Settings → Issue Reports: write-only GitHub token entry (save/replace/remove) showing only whether one is saved (#1455).
 - `settings/ExperimentalSettings.svelte` — Settings → Experimental feature-flag rows (integrated terminal, git graph).

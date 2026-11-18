@@ -267,6 +267,20 @@ describe("settingsStore.translucency migration (#1757)", () => {
     expect(mac.translucencyOpacity).toBe(30);
   });
 
+  it("carries a Windows Backdrop Opacity over a translucencyOpacity some earlier save wrote by default", async () => {
+    // The slider was macOS-only before #1757, so a Windows blob's value is the
+    // default that a whole-object save (or the localStorage promotion) wrote.
+    readConfigFileMock.mockResolvedValue({
+      ok: true,
+      data: JSON.stringify({
+        windowsBackdrop: "mica", windowsBackdropOpacity: 65, translucencyOpacity: 55, settingsVersion: 0,
+      }),
+    });
+    const store = await freshStore();
+    await store.init();
+    expect(store.translucencyOpacity).toBe(81);
+  });
+
   it("never re-derives Translucency the user turned off after migrating", async () => {
     readConfigFileMock.mockResolvedValue({
       ok: true,

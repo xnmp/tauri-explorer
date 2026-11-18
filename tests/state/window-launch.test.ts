@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import type { ExplorerSeed } from "$lib/domain/window-input";
+import type { TranslucencyMaterial } from "$lib/domain/translucency";
 import {
   createWindowLauncher,
   type LaunchWindow,
@@ -43,6 +44,7 @@ function fixture(options: {
   handoff?: WindowLaunchDependencies["requestHandoff"];
   warm?: boolean;
   consumeWarm?: () => Promise<string | null>;
+  material?: TranslucencyMaterial | null;
 } = {}) {
   const storage = new Map<string, unknown>();
   const windows: Array<{ label: string; window: FakeWindow }> = [];
@@ -67,7 +69,8 @@ function fixture(options: {
     sourceWindow: () => "source",
     homePath: () => "/home",
     baseUrl: () => "http://localhost/",
-    appearance: () => ({}),
+    material: () => options.material ?? null,
+    appearance: vi.fn((title: string, material: TranslucencyMaterial | null) => ({ title, transparent: material !== null })),
     save: vi.fn((key, value) => storage.set(key, value)),
     remove: vi.fn((key) => storage.delete(key)),
     uuid: () => `id-${++id}`,
@@ -92,6 +95,24 @@ describe("window launch owner", () => {
     f.windows[1].window.emit("tauri://created");
     expect(await first).toEqual({ kind: "fresh", label: f.windows[0].label, window: f.windows[0].window });
     expect(await second).toEqual({ kind: "fresh", label: f.windows[1].label, window: f.windows[1].window });
+  });
+
+  it("builds a window and its URL for the same material, so the page knows what it got (#1757)", async () => {
+    const f = fixture({ material: "acrylic" });
+    const opened = f.open("/repo");
+    await vi.waitFor(() => expect(f.windows).toHaveLength(1));
+    const [, options] = vi.mocked(f.dependencies.createWindow).mock.calls[0];
+    expect(new URL(String(options.url)).searchParams.get("material")).toBe("acrylic");
+    expect(options).toMatchObject({ transparent: true });
+    f.windows[0].window.emit("tauri://created");
+    await opened;
+
+    const opaque = fixture({ material: null });
+    void opaque.open("/repo");
+    await vi.waitFor(() => expect(opaque.windows).toHaveLength(1));
+    const [, opaqueOptions] = vi.mocked(opaque.dependencies.createWindow).mock.calls[0];
+    expect(new URL(String(opaqueOptions.url)).searchParams.get("material")).toBe("none");
+    expect(opaqueOptions).toMatchObject({ transparent: false });
   });
 
   it("does not publish a seed when geometry preparation fails", async () => {

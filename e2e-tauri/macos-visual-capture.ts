@@ -69,9 +69,12 @@ const LAYOUTS = {
   islands: { name: "Floating Islands", settings: { layoutTheme: "floating-islands", floatingIslands: true } },
   default: { name: "Default layout", settings: { layoutTheme: "default", floatingIslands: false } },
 } as const;
+// The pre-#1757 keys too, so a ref from before the single Translucency
+// setting still captures its material (a newer ref ignores them: the
+// `translucency` key wins).
 const VIBRANCY = {
-  vibrancy: { name: "Translucency", settings: { translucency: true } },
-  opaque: { name: "translucency off", settings: { translucency: false } },
+  vibrancy: { name: "Translucency", settings: { translucency: true, macOsVibrancy: true, vibrancyBlur: true } },
+  opaque: { name: "translucency off", settings: { translucency: false, macOsVibrancy: false } },
 } as const;
 const THEMES = ["dark", "light"] as const;
 

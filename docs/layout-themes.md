@@ -134,6 +134,12 @@ Root (`<html>`) attributes describe the window and can scope rules:
 | `data-material` | Which material: `vibrancy` (macOS), `acrylic` (Windows 11 22H2+) or `mica` (earlier Windows 11). The page tints the window body with the theme base. |
 | `data-preview-fullscreen` | A preview is fullscreen. |
 
+Before #1757 these were platform-specific attributes. A user layout that
+targeted them needs updating:
+- `data-macos-material` and `data-transparent-window` are now `[data-material="vibrancy"]`.
+- `data-win-backdrop` is now `[data-material="acrylic"]` or `[data-material="mica"]`.
+- `[data-native-backdrop]` still matches all of them.
+
 ### Floating Islands surfaces
 
 Under a window material (any `data-material`), Floating Islands reads a

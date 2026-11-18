@@ -150,8 +150,9 @@ predate it, or lack newer settings, still capture. The driver sets a
 high-contrast wallpaper, then for each scenario seeds `settings.json` (theme,
 layout, Translucency, integrated title bar,
 `translucencyOpacity`) before launching through Appium Mac2. The `matrix`
-preset covers every layout (Floating Islands, default) x translucency (Window
-Vibrancy + Native Blur on, off) x theme (dark, light) cell; the `extras` are
+preset covers every layout (Floating Islands, default) x Translucency
+(on, off; the pre-#1757 Window Vibrancy + Native Blur keys are seeded too, so
+older refs capture their material) x theme (dark, light) cell; the `extras` are
 islands at `translucencyOpacity` 20 and 100, the Settings dialog filtered to
 the material rows, and islands with the native title bar. Each still is saved three ways:
 `screencapture -R` (the screen under the window: judge vibrancy here),

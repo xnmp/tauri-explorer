@@ -15,6 +15,7 @@ import { listUserThemes } from "$lib/api/config";
 import { setWindowTheme } from "$lib/api/system";
 import { EXPLORER_BG_RGBA_KEY, loadPersisted, removePersisted, savePersisted, savePersistedRaw } from "./persisted";
 import { settingsStore } from "./settings.svelte";
+import { windowMaterial } from "./window-translucency.svelte";
 
 interface ThemeColors {
   backgroundSolid: string;
@@ -163,6 +164,10 @@ function createThemeState() {
     document.documentElement.classList.toggle("hljs-dark", scheme !== "light");
     appliedThemeRevision = {};
     requestAnimationFrame(() => {
+      // These keys hold the opaque theme background that the next opaque
+      // window paints before it boots. A translucent window's body is
+      // transparent (#1757), and would erase it.
+      if (windowMaterial() !== null) return;
       const raw = getComputedStyle(document.body).backgroundColor || "";
       // Raw CSS color string, not JSON — app.html's pre-paint script reads
       // this key directly, so the exact format must be preserved.

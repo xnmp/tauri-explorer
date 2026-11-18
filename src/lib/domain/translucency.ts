@@ -51,6 +51,42 @@ export function platformMaterial(
   return null;
 }
 
+/**
+ * Launch-URL parameter naming the material a JS-created window was built
+ * with ("none" for an opaque window). Unlike a one-shot launch request it
+ * describes the window itself, so a reload or renderer recovery keeps
+ * reading it (not through `launchRequest`).
+ */
+export const WINDOW_MATERIAL_PARAM = "material";
+const NO_MATERIAL = "none";
+
+/** `params` plus the material a window is being built with. */
+export function withWindowMaterial(
+  params: URLSearchParams,
+  material: TranslucencyMaterial | null,
+): URLSearchParams {
+  const next = new URLSearchParams(params);
+  next.set(WINDOW_MATERIAL_PARAM, material ?? NO_MATERIAL);
+  return next;
+}
+
+/**
+ * The material this page's window was actually built with, as its creator
+ * published it: the Rust main window injects `__WINDOW_MATERIAL__`, a
+ * JS-created window carries `material=` in its URL. Undefined when neither
+ * says (the browser build), and the page must infer it from its settings.
+ * `src/app.html` repeats this read for its pre-paint background.
+ */
+export function builtWindowMaterial(
+  injected: unknown,
+  search: string,
+): TranslucencyMaterial | null | undefined {
+  if (injected === null || isTranslucencyMaterial(injected)) return injected;
+  const param = new URLSearchParams(search).get(WINDOW_MATERIAL_PARAM);
+  if (param === NO_MATERIAL) return null;
+  return isTranslucencyMaterial(param) ? param : undefined;
+}
+
 /** The material actually behind a window: the platform's, when the setting
  *  is on. Anything but `true` counts as off, so a malformed settings blob can
  *  never make a window transparent. */

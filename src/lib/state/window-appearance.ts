@@ -8,7 +8,7 @@
 import type { Color } from "@tauri-apps/api/webviewWindow";
 import type { Effect, EffectState, Effects } from "@tauri-apps/api/window";
 import { isMac, isWindows } from "$lib/domain/platform";
-import { materialEffects } from "$lib/domain/translucency";
+import { materialEffects, type TranslucencyMaterial } from "$lib/domain/translucency";
 import { E2E_HOOKS_ENABLED } from "$lib/api/e2e-hooks";
 import { settingsStore } from "./settings.svelte";
 import { newWindowMaterial } from "./window-translucency.svelte";
@@ -19,11 +19,11 @@ function getPersistedBgColor(): Color | undefined {
   return rgba ?? undefined;
 }
 
-/** The native material for a JS-created window, matching the Rust-built
- *  main window (#1757). The domain names effects by Tauri's serialized enum
- *  values; the `satisfies` checks keep those names valid for this Tauri API. */
-function materialOptions(): Effects | undefined {
-  const material = newWindowMaterial();
+/** The native effects for a JS-created window's material, matching the
+ *  Rust-built main window (#1757). The domain names effects by Tauri's
+ *  serialized enum values; the `satisfies` checks keep those names valid for
+ *  this Tauri API. */
+function materialOptions(material: TranslucencyMaterial | null): Effects | undefined {
   if (!material) return undefined;
   const { effects, state } = materialEffects(material);
   return {
@@ -35,9 +35,11 @@ function materialOptions(): Effects | undefined {
 /** Appearance/behavior options for a new explorer window. Mirrors the main
  *  window's material so new windows match (macOS vibrancy, Windows acrylic or
  *  Mica). A material needs a transparent window and no opaque background
- *  colour; the DWM system backdrop still rounds the corners. */
-export function explorerWindowAppearance(title: string) {
-  const windowEffects = materialOptions();
+ *  colour; the DWM system backdrop still rounds the corners. The caller also
+ *  puts `material` in the window's URL (`withWindowMaterial`), so pass the
+ *  same value to both. */
+export function explorerWindowAppearance(title: string, material: TranslucencyMaterial | null = newWindowMaterial()) {
+  const windowEffects = materialOptions(material);
   const translucent = windowEffects !== undefined;
   // The public JS options omit this field, but Tauri's creation command
   // deserializes WindowConfig.additionalBrowserArgs. The Windows-only Cargo

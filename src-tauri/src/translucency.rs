@@ -120,8 +120,20 @@ pub fn effects(material: Material) -> WindowEffectsConfig {
 /// Publishes the platform's material to every page, before its scripts run,
 /// as `window.__TRANSLUCENCY_MATERIAL__` (a name, or null for none).
 pub fn init_script(material: Option<Material>) -> String {
+    define_global("__TRANSLUCENCY_MATERIAL__", material)
+}
+
+/// Tells one window's page which material that window was built with, as
+/// `window.__WINDOW_MATERIAL__` (null for an opaque window). JS-created
+/// windows say the same through their URL (`builtWindowMaterial` in
+/// `domain/translucency.ts`).
+pub fn window_init_script(material: Option<Material>) -> String {
+    define_global("__WINDOW_MATERIAL__", material)
+}
+
+fn define_global(name: &str, material: Option<Material>) -> String {
     let value = material.map_or("null".to_string(), |m| format!("\"{}\"", m.name()));
-    format!("Object.defineProperty(window, '__TRANSLUCENCY_MATERIAL__', {{ value: {value} }});")
+    format!("Object.defineProperty(window, '{name}', {{ value: {value} }});")
 }
 
 #[cfg(test)]
@@ -196,5 +208,10 @@ mod tests {
             "Object.defineProperty(window, '__TRANSLUCENCY_MATERIAL__', { value: \"acrylic\" });"
         );
         assert!(init_script(None).contains("{ value: null }"));
+        assert_eq!(
+            window_init_script(Some(Material::Vibrancy)),
+            "Object.defineProperty(window, '__WINDOW_MATERIAL__', { value: \"vibrancy\" });"
+        );
+        assert!(window_init_script(None).contains("'__WINDOW_MATERIAL__', { value: null }"));
     }
 }

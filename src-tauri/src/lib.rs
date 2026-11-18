@@ -674,10 +674,6 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
 
             // Create window programmatically so we can inject initialization_script.
             // This replaces the static window definition in tauri.conf.json.
-            // `mut` is used by the macOS (title bar / vibrancy) and Windows
-            // (Mica/Acrylic backdrop) blocks below; allow the otherwise-unused
-            // mut on Linux so clippy -D warnings stays green there.
-            #[cfg_attr(target_os = "linux", allow(unused_mut))]
             let mut builder = tauri::WebviewWindowBuilder::new(
                 app,
                 "main",
@@ -725,21 +721,25 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             // Translucency (#1757): the platform's window material (macOS
             // vibrancy, Windows acrylic or Mica). Window transparency is fixed
             // at creation, so the setting reaches this window on the next
-            // launch. A system backdrop keeps Windows' rounded corners; the
-            // frontend's [data-native-backdrop] CSS makes the page
-            // transparent so the material shows through.
-            #[cfg(any(target_os = "macos", target_os = "windows"))]
-            if let Some(material) = translucency::platform_material() {
+            // launch. A system backdrop keeps Windows' rounded corners. The
+            // page learns which material this window got from its own
+            // initialization script rather than inferring it from settings,
+            // which may have changed (or failed to load) since.
+            let window_material = translucency::platform_material().filter(|_| {
                 let settings_json = config::config_dir()
                     .ok()
                     .and_then(|dir| std::fs::read_to_string(dir.join("settings.json")).ok())
                     .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
-                if translucency::translucency_enabled(settings_json.as_ref()) {
-                    builder = builder
-                        .transparent(true)
-                        .effects(translucency::effects(material));
-                }
+                translucency::translucency_enabled(settings_json.as_ref())
+            });
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            if let Some(material) = window_material {
+                builder = builder
+                    .transparent(true)
+                    .effects(translucency::effects(material));
             }
+            builder =
+                builder.initialization_script(translucency::window_init_script(window_material));
 
             builder.build()?;
             let t_window_built = std::time::Instant::now();

@@ -135,6 +135,10 @@
     root.toggleAttribute("data-native-backdrop", material !== null);
     if (material) root.setAttribute("data-material", material);
     else root.removeAttribute("data-material");
+    // app.html paints the cached opaque theme background inline before boot.
+    // It skips a window whose creator named its material; a page that had to
+    // infer it (the browser build) clears it here.
+    if (material) root.style.removeProperty("background");
     const vars = vibrancyCoverageVariables(settingsStore.translucencyOpacity);
     for (const [name, value] of Object.entries(vars)) {
       if (material) root.style.setProperty(name, value);
@@ -617,6 +621,14 @@
         )
       )
     );
+  }
+
+  /* The user asked for solid surfaces: no window shows the material behind
+     the app. Floating Islands also solidifies its islands (its own rule). */
+  @media (prefers-reduced-transparency: reduce) {
+    :global([data-material]) .explorer {
+      background: var(--background-solid);
+    }
   }
 
   /* Miller columns hoisted beside the panes (island arrangement only). Its

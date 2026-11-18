@@ -10,10 +10,12 @@ import { describe, expect, it } from "vitest";
 import {
   MACOS_VIBRANCY_MATERIAL,
   activeMaterial,
+  builtWindowMaterial,
   isTranslucencyMaterial,
   legacyTranslucency,
   materialEffects,
   platformMaterial,
+  withWindowMaterial,
 } from "$lib/domain/translucency";
 
 // Literal path so the unit-test selector's text scan finds this input.
@@ -67,6 +69,35 @@ describe("materialEffects", () => {
   });
 });
 
+describe("builtWindowMaterial", () => {
+  it("reads what a JS window's creator put in its launch URL", () => {
+    const launch = new URLSearchParams({ path: "/a b", warm: "1" });
+    for (const material of ["vibrancy", "acrylic", "mica", null] as const) {
+      const search = `?${withWindowMaterial(launch, material).toString()}`;
+      expect(builtWindowMaterial(undefined, search)).toBe(material);
+      // The other launch parameters are untouched, and so is the input.
+      expect(new URLSearchParams(search).get("path")).toBe("/a b");
+    }
+    expect(launch.has("material")).toBe(false);
+  });
+
+  it("prefers the Rust main window's injected material", () => {
+    expect(builtWindowMaterial("vibrancy", "?material=none")).toBe("vibrancy");
+    expect(builtWindowMaterial(null, "?material=acrylic")).toBeNull();
+  });
+
+  it("is unknown when neither says, or says something malformed (browser build)", () => {
+    expect(builtWindowMaterial(undefined, "")).toBeUndefined();
+    expect(builtWindowMaterial(undefined, "?path=/x")).toBeUndefined();
+    expect(builtWindowMaterial(undefined, "?material=frosted")).toBeUndefined();
+    expect(builtWindowMaterial(42, "?material=")).toBeUndefined();
+  });
+
+  it("survives a renderer recovery reload, which keeps all but the parking parameter", () => {
+    expect(builtWindowMaterial(undefined, "?path=/x&material=mica&rendererRecovery=1")).toBe("mica");
+  });
+});
+
 describe("legacyTranslucency", () => {
   it("keeps a translucent window for anyone who had macOS vibrancy or a Windows backdrop", () => {
     expect(legacyTranslucency({ macOsVibrancy: true })).toBe(true);
@@ -99,5 +130,14 @@ describe("parity with the native side", () => {
       expect(isTranslucencyMaterial(name)).toBe(true);
     }
     expect(source).toContain("__TRANSLUCENCY_MATERIAL__");
+  });
+
+  it("names the per-window material the way the page and its pre-paint read it", () => {
+    expect(source).toContain("\"__WINDOW_MATERIAL__\"");
+    // app.html cannot import this module, so it repeats builtWindowMaterial.
+    const prePaint = readFileSync(new URL("../../src/app.html", import.meta.url), "utf8");
+    expect(prePaint).toContain("window.__WINDOW_MATERIAL__");
+    expect(prePaint).toContain("get('material')");
+    for (const name of ["vibrancy", "acrylic", "mica"]) expect(prePaint).toContain(`'${name}'`);
   });
 });

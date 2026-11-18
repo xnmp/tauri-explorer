@@ -70,7 +70,10 @@ const SETTINGS_MIGRATIONS: readonly SettingsMigration[] = [
     resetToDefault: [],
     derive: (persisted) => ({
       ...(Object.hasOwn(persisted, "translucency") ? {} : { translucency: legacyTranslucency(persisted) }),
-      ...(Object.hasOwn(persisted, "translucencyOpacity") ? {} : legacyWindowsOpacity(persisted)),
+      // Before #1757 the opacity slider was macOS-only, so a Windows blob's
+      // translucencyOpacity is a default written by a whole-object save, never
+      // a choice: a Windows backdrop opacity replaces it.
+      ...legacyWindowsOpacity(persisted),
     }),
     reason:
       "#1757 replaced macOS Window Vibrancy + Native Blur and the Windows " +

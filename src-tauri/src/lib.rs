@@ -713,15 +713,17 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
 
             // Unclean-exit detection (#1686): main process only, so after the
             // portal branch; single-instance hand-offs never reach setup.
-            if let Ok(log_dir) = tauri::Manager::path(app).app_log_dir() {
-                session_marker::start(log_dir);
-            }
+            // Signals first: an armed marker must never meet a stop request
+            // under the default action, which skips every cleanup.
             #[cfg(unix)]
             {
                 let handle = app.handle().clone();
                 if let Err(error) = termination_signals::install(move || handle.exit(0)) {
                     log::warn!("Termination signal handling is unavailable: {error}");
                 }
+            }
+            if let Ok(log_dir) = tauri::Manager::path(app).app_log_dir() {
+                session_marker::start(log_dir);
             }
 
             // Create window programmatically so we can inject initialization_script.

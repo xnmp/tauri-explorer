@@ -2,8 +2,10 @@
 //!
 //! The reporter can opt in to a short excerpt of WARN/ERROR records: this
 //! session's, from a bounded in-memory ring fed by a `log` target (no file
-//! parsing), and the previous session's, read on demand from the end of the
-//! log file as it stood when this session started. Forwarded frontend errors
+//! parsing), and the previous session's, read once at startup (off the main
+//! thread) from the end of the log as it stood when this session started.
+//! Reading at startup, not on demand, matters: the log rotates at 10 MB, and
+//! an offset into the old file means nothing once a new one replaces it. Forwarded frontend errors
 //! already reach `log::error!` (`crash_report::log_frontend_error`), so the
 //! ring sees them too.
 //!
@@ -11,11 +13,13 @@
 //! stored or read, and the excerpt is size-capped so it fits the report body.
 #![allow(clippy::disallowed_methods)] // Retire-when: #1638 closed (non-UTF-8 names, ADR 0031)
 
-use crate::diagnostics_cli::{display, log_file, quote_line, warn_error_tail};
+use crate::diagnostics_cli::{quote_line, warn_error_tail, LOG_FILE};
+use crate::report_redaction::Redactor;
 use std::collections::VecDeque;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
+use std::time::SystemTime;
 
 const MAX_RING_ENTRIES: usize = 100;
 const MAX_RING_BYTES: usize = 24 * 1024;
@@ -26,6 +30,24 @@ pub(crate) const MAX_PREVIOUS_LINES: usize = 20;
 pub(crate) const MAX_EXCERPT_UNITS: usize = 5000;
 /// How much of the previous session's log is scanned.
 const PREVIOUS_SCAN_BYTES: u64 = 256 * 1024;
+
+/// The plugin's line format is `[date][time][target][LEVEL] message`: two
+/// records differing only in their timestamp are the same message.
+fn same_message(a: &str, b: &str) -> bool {
+    fn without_timestamp(line: &str) -> &str {
+        let mut rest = line;
+        for _ in 0..2 {
+            match rest.strip_prefix('[').and_then(|r| r.split_once(']')) {
+                Some((group, after)) if group.starts_with(|c: char| c.is_ascii_digit()) => {
+                    rest = after;
+                }
+                _ => return line,
+            }
+        }
+        rest
+    }
+    without_timestamp(a) == without_timestamp(b)
+}
 
 /// Bounded, de-duplicating record of recent log lines. Consecutive repeats
 /// collapse into one entry so a tight error loop cannot evict everything else.
@@ -38,7 +60,7 @@ pub(crate) struct Ring {
 impl Ring {
     pub(crate) fn push(&mut self, line: String) {
         if let Some(last) = self.entries.back_mut() {
-            if last.0 == line {
+            if same_message(&last.0, &line) {
                 last.1 = last.1.saturating_add(1);
                 return;
             }
@@ -69,14 +91,12 @@ static RING: Mutex<Ring> = Mutex::new(Ring {
     entries: VecDeque::new(),
     bytes: 0,
 });
-/// The log file and its length when this session started: everything before
-/// that offset belongs to earlier sessions.
-static SESSION_START: OnceLock<Option<(PathBuf, u64)>> = OnceLock::new();
-static HOME: OnceLock<Option<String>> = OnceLock::new();
+/// The previous session's WARN/ERROR lines, read once at startup.
+static PREVIOUS: OnceLock<Vec<String>> = OnceLock::new();
+static REDACTOR: OnceLock<Redactor> = OnceLock::new();
 
-fn home() -> Option<&'static str> {
-    HOME.get_or_init(|| dirs::home_dir().map(|home| display(&home)))
-        .as_deref()
+fn redactor() -> &'static Redactor {
+    REDACTOR.get_or_init(Redactor::for_current_user)
 }
 
 /// A `log` sink for `tauri_plugin_log::TargetKind::Dispatch` that records
@@ -92,15 +112,9 @@ impl log::Log for RingLog {
         if !self.enabled(record.metadata()) {
             return;
         }
-        let line = quote_line(
-            &format!(
-                "[{}][{}] {}",
-                record.level(),
-                record.target(),
-                record.args()
-            ),
-            home(),
-        );
+        // The plugin's formatter has already put the timestamp, target and
+        // level in the message every target receives: store it as delivered.
+        let line = quote_line(&redactor().redact(&record.args().to_string()), None);
         // A poisoned lock only means another logger panicked mid-push.
         let mut ring = RING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         ring.push(line);
@@ -109,20 +123,69 @@ impl log::Log for RingLog {
     fn flush(&self) {}
 }
 
-/// Remember where this session's log output begins. Call once, first in setup.
-pub(crate) fn mark_session_start(log_dir: &Path) {
-    let _ = SESSION_START.set(log_file(log_dir).and_then(|(_, path)| {
-        let length = std::fs::metadata(&path).ok()?.len();
-        Some((path, length))
-    }));
+fn modified(path: &Path) -> Option<SystemTime> {
+    std::fs::metadata(path).ok()?.modified().ok()
 }
 
-/// WARN/ERROR lines from the bytes of `path` before `end`: the newest
+/// The file holding the previous session's output and its length now: the
+/// current log when it has content, otherwise the newest rotated file (the
+/// plugin rotates at startup when the log was over its size cap, moving the
+/// previous session to a dated file before this session writes anything).
+pub(crate) fn previous_log_source(log_dir: &Path) -> Option<(PathBuf, u64)> {
+    let current = log_dir.join(LOG_FILE);
+    let length = |path: &Path| {
+        std::fs::metadata(path)
+            .ok()
+            .map(|m| m.len())
+            .filter(|len| *len > 0)
+    };
+    if let Some(len) = length(&current) {
+        return Some((current, len));
+    }
+    std::fs::read_dir(log_dir)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            *path != current && path.extension().is_some_and(|ext| ext == "log") && path.is_file()
+        })
+        .max_by_key(|path| modified(path))
+        .and_then(|path| length(&path).map(|len| (path, len)))
+}
+
+/// The previous session's WARN/ERROR lines, redacted and bounded.
+#[cfg(test)]
+pub(crate) fn load_previous_session(log_dir: &Path, redactor: &Redactor) -> Vec<String> {
+    previous_log_source(log_dir)
+        .map(|(path, end)| previous_session_lines(&path, end, redactor))
+        .unwrap_or_default()
+}
+
+/// Capture the previous session's tail. Call first in setup, before this
+/// session logs: the source is chosen synchronously, so nothing this session
+/// writes can land in it; the read itself runs off the setup thread. The
+/// result is a snapshot, immune to later rotation, and no file handle is kept
+/// (an open handle would block Windows from renaming the log).
+pub(crate) fn capture_previous_session(log_dir: PathBuf) {
+    let Some((path, end)) = previous_log_source(&log_dir) else {
+        let _ = PREVIOUS.set(Vec::new());
+        return;
+    };
+    let spawned = std::thread::Builder::new()
+        .name("previous-session-log".into())
+        .spawn(move || {
+            let _ = PREVIOUS.set(previous_session_lines(&path, end, redactor()));
+        });
+    if spawned.is_err() {
+        let _ = PREVIOUS.set(Vec::new());
+    }
+}
+
+/// WARN/ERROR lines from the first `end` bytes of `path`: the newest
 /// `MAX_PREVIOUS_LINES`, redacted and bounded.
-pub(crate) fn previous_session_lines(path: &Path, end: u64, home: Option<&str>) -> Vec<String> {
+pub(crate) fn previous_session_lines(path: &Path, end: u64, redactor: &Redactor) -> Vec<String> {
     let read = || -> Option<String> {
         let mut file = std::fs::File::open(path).ok()?;
-        // The file may have been rotated or truncated since `end` was taken.
         let end = end.min(file.metadata().ok()?.len());
         let start = end.saturating_sub(PREVIOUS_SCAN_BYTES);
         file.seek(SeekFrom::Start(start)).ok()?;
@@ -143,7 +206,7 @@ pub(crate) fn previous_session_lines(path: &Path, end: u64, home: Option<&str>) 
         .map(|text| {
             warn_error_tail(&text, MAX_PREVIOUS_LINES)
                 .into_iter()
-                .map(|line| quote_line(line, home))
+                .map(|line| quote_line(&redactor.redact(line), None))
                 .collect()
         })
         .unwrap_or_default()
@@ -196,10 +259,7 @@ fn excerpt() -> String {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .lines();
-    let previous = match SESSION_START.get() {
-        Some(Some((path, end))) => previous_session_lines(path, *end, home()),
-        _ => Vec::new(),
-    };
+    let previous = PREVIOUS.get().cloned().unwrap_or_default();
     render_excerpt(&previous, &current, MAX_EXCERPT_UNITS)
 }
 

@@ -1,8 +1,10 @@
 /** Slow-load watchdog: capture while stuck, finalise on settle (#1022). */
 import { describe, expect, it, vi } from "vitest";
 import type { FrontendSlowLoadRecord } from "$lib/domain/load-diagnostics";
-import { createLoadWatchdog } from "$lib/state/load-watchdog";
+import { recordAction } from "$lib/api/action-trail";
+import { createLoadWatchdog, loadWatchdog } from "$lib/state/load-watchdog";
 
+vi.mock("$lib/api/action-trail", () => ({ recordAction: vi.fn() }));
 vi.mock("$lib/api/load-diagnostics", () => ({ recordSlowLoad: vi.fn(async () => {}) }));
 
 /** A deterministic clock whose timers fire only when advanced past them. */
@@ -196,5 +198,20 @@ describe("slow-load watchdog bounds", () => {
     expect(h.pendingTimers()).toBe(64);
     for (const load of loads) load.finish("ok");
     expect(h.watchdog.inFlight()).toEqual([]);
+  });
+});
+
+describe("recent-actions trail (#1688)", () => {
+  it("records the kind of each navigation, never its path, and skips the initial load", () => {
+    vi.mocked(recordAction).mockClear();
+    const secret = "/home/alex/taxes";
+    for (const reason of ["initial", "navigate", "history", "parent-fallback"] as const) {
+      loadWatchdog.begin({ path: secret, pane: "p", reason, spinnerVisible: false }).finish("ok");
+    }
+    expect(vi.mocked(recordAction).mock.calls.map(([kind]) => kind)).toEqual([
+      "nav:navigate",
+      "nav:history",
+      "nav:parent-fallback",
+    ]);
   });
 });

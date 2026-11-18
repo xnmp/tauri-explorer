@@ -26,6 +26,7 @@ mod open_history;
 mod os_recent;
 mod recent_actions;
 mod recent_errors;
+mod report_redaction;
 mod shared_history;
 // pub: criterion benches (src-tauri/benches/) call into
 // files::dir_listing::{scan_directory_parallel, sort_entries} directly.
@@ -638,7 +639,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         .setup(move |app| {
             // Before anything this session logs: earlier lines are the previous session's (#1685).
             if let Ok(log_dir) = tauri::Manager::path(app).app_log_dir() {
-                recent_errors::mark_session_start(&log_dir);
+                recent_errors::capture_previous_session(log_dir);
             }
             native_file_drag::install_snapshots(app.handle().clone());
             let t_setup = std::time::Instant::now();

@@ -176,7 +176,9 @@ export const systemCommands: Record<string, CommandHandler> = {
   // Report trails (#1685, #1688).
   recent_errors: () => localStorage.getItem(MOCK_LOCAL_KEYS.recentErrors) ?? "",
   record_action: (args) => {
-    mockActions.push(String(args.kind));
+    // Same rule as the native `sanitize`: identifiers only, never user text.
+    const kind = String(args.kind ?? "").trim();
+    mockActions.push(/^[A-Za-z0-9._:-]{1,64}$/.test(kind) ? kind : "(unrecognized)");
     mockActions.splice(0, mockActions.length - 30);
     return undefined;
   },

@@ -296,6 +296,38 @@ pub async fn log_frontend_error(message: String) {
     log::error!("[frontend] {}", truncated);
 }
 
+/// The crash file body for an uncaught webview error. Carries the recent
+/// actions like the panic hook's file does (#1688).
+pub(crate) fn frontend_crash_report(
+    message: &str,
+    stack: &str,
+    epoch_secs: u64,
+    environment: &str,
+    recent_actions: &str,
+) -> String {
+    let backtrace = if stack.is_empty() {
+        "<no stack captured>"
+    } else {
+        stack
+    };
+    format!(
+        "tauri-explorer {} crash report\n\
+         {}\n\
+         time: {} (unix)\n\
+         source: frontend (webview)\n\
+         panic: {}\n\
+         location: webview\n\n\
+         recent actions (newest last):\n{}\n\n\
+         backtrace:\n{}\n",
+        env!("CARGO_PKG_VERSION"),
+        environment,
+        epoch_secs,
+        message,
+        recent_actions,
+        backtrace
+    )
+}
+
 /// Persist a crash report for an uncaught webview error (#302), in the same
 /// file format the panic hook uses so `take_crash_report` and the next-launch
 /// crash notice treat it identically. The frontend dedupes bursts, so this is
@@ -316,24 +348,12 @@ pub async fn record_frontend_crash(
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let backtrace = if stack.is_empty() {
-            "<no stack captured>".to_string()
-        } else {
-            stack
-        };
-        let report = format!(
-            "tauri-explorer {} crash report\n\
-             {}\n\
-             time: {} (unix)\n\
-             source: frontend (webview)\n\
-             panic: {}\n\
-             location: webview\n\n\
-             backtrace:\n{}\n",
-            env!("CARGO_PKG_VERSION"),
-            crate::environment::render_crash_lines(crate::environment::summary()),
+        let report = frontend_crash_report(
+            &message,
+            &stack,
             epoch_secs,
-            message,
-            backtrace
+            &crate::environment::render_crash_lines(crate::environment::summary()),
+            &crate::recent_actions::render_for_crash(),
         );
         persist_crash_report(&dir, epoch_secs, report.as_bytes())
             .map_err(|e| AppError::Other(format!("Failed to write crash report: {}", e)))?;
@@ -435,6 +455,22 @@ mod tests {
         mark_seen(&file).unwrap();
         assert!(!file.exists());
         assert!(crashes.join("crash-1000.txt.seen").exists());
+    }
+
+    #[test]
+    fn frontend_crash_report_carries_the_recent_actions_before_the_stack() {
+        let report = frontend_crash_report(
+            "boom",
+            "at x",
+            1,
+            "os: linux",
+            "1. view.list\n2. help.reportIssue",
+        );
+        let actions = report.find("2. help.reportIssue").expect("actions missing");
+        assert!(actions < report.find("backtrace:").unwrap());
+        assert!(report.contains("source: frontend (webview)"));
+        let empty = frontend_crash_report("boom", "", 1, "os: linux", "");
+        assert!(empty.contains("<no stack captured>"));
     }
 
     #[test]

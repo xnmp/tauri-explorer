@@ -89,7 +89,7 @@ test("the actions trail lists what the reporter did, by identifier only", async 
   await expect(section.getByLabel("Include my recent actions")).not.toBeChecked();
   await section.getByText("Show what will be sent").click();
   const preview = section.locator(".diagnostics-preview");
-  await expect(preview).toContainText("view:list");
+  await expect(preview).toContainText("view.list");
   await expect(preview).toContainText("help.reportIssue");
   const text = (await preview.textContent()) ?? "";
   expect(text).not.toMatch(/[/\\]/); // no paths

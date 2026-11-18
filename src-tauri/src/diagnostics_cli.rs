@@ -25,7 +25,7 @@ pub const DIAGNOSTICS_FLAG: &str = "--diagnostics";
 /// generated context this mode exists to avoid depending on.
 const IDENTIFIER: &str = "io.github.xnmp.tauri-explorer";
 /// `tauri-plugin-log`'s `LogDir { file_name: None }` file: the product name.
-const LOG_FILE: &str = "tauri-explorer.log";
+pub(crate) const LOG_FILE: &str = "tauri-explorer.log";
 const CRASH_PREFIX: &str = "crash-";
 
 /// WARN/ERROR lines quoted from the log.

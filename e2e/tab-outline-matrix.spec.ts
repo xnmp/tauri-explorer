@@ -58,8 +58,7 @@ async function openCell(page: Page, cell: Cell, { count = 3, active = Math.min(c
     integratedTitleBar: cell.platform !== "opaque",
     tabTitleGitRoot: false,
     zoomLevel: zoom,
-    macOsVibrancy: cell.material,
-    vibrancyBlur: cell.material,
+    translucency: cell.material,
   });
   await page.addInitScript(({ paths, count, active }) => {
     localStorage.setItem("explorer-tabs", JSON.stringify({
@@ -71,10 +70,10 @@ async function openCell(page: Page, cell: Cell, { count = 3, active = Math.min(c
   await page.goto("/");
   await waitForEntries(page);
   if (cell.material) {
-    await expect(page.locator("html")).toHaveAttribute("data-macos-material", "");
+    await expect(page.locator("html")).toHaveAttribute("data-material", "vibrancy");
     await page.addStyleTag({ content: SIMULATED_MATERIAL });
   } else {
-    await expect(page.locator("html")).not.toHaveAttribute("data-macos-material", "");
+    await expect(page.locator("html")).not.toHaveAttribute("data-material");
   }
   if (cell.layout === "floating-islands") await expect(page.locator("[data-tab-seam]").first()).toBeAttached();
   await page.mouse.move(5, 590);

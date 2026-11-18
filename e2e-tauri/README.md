@@ -148,7 +148,7 @@ The app comes from `ref`; the tooling (`macos-visual-capture.ts`, its Swift and
 Python helpers) always comes from the workflow's own commit, so refs that
 predate it, or lack newer settings, still capture. The driver sets a
 high-contrast wallpaper, then for each scenario seeds `settings.json` (theme,
-layout, Window Vibrancy + Native Blur, integrated title bar,
+layout, Translucency, integrated title bar,
 `translucencyOpacity`) before launching through Appium Mac2. The `matrix`
 preset covers every layout (Floating Islands, default) x translucency (Window
 Vibrancy + Native Blur on, off) x theme (dark, light) cell; the `extras` are

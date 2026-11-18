@@ -48,14 +48,14 @@ body:
     id: environment
     attributes:
       label: Environment
-      description: Copy the list from Command Palette → "About" (distro, webview version, session, install method). If the app won't open, tell us your distro or OS version and how you installed it (AppImage, .deb, .rpm, AUR, .dmg, .msi, setup.exe).
+      description: Copy the list from Command Palette → "About" (distro, webview version, session, install method). If the app won't open, run `tauri-explorer --diagnostics` in a terminal and paste its output here and below (Windows: `tauri-explorer.exe --diagnostics | more`). Otherwise tell us your distro or OS version and how you installed it (AppImage, .deb, .rpm, AUR, .dmg, .msi, setup.exe).
       render: text
   - type: textarea
     id: logs
     attributes:
       label: Logs / crash report
       description: |
-        If the app crashed, the next launch offers a locally saved crash report. Otherwise, Command Palette → "Open Logs Folder", or look in:
+        If the app crashed, the next launch offers a locally saved crash report. If it won't start at all, `tauri-explorer --diagnostics` prints the log folder, newest crash report and recent warnings/errors. Otherwise, Command Palette → "Open Logs Folder", or look in:
         - Linux: `~/.local/share/io.github.xnmp.tauri-explorer/logs/`
         - macOS: `~/Library/Logs/io.github.xnmp.tauri-explorer/`
         - Windows: `%LOCALAPPDATA%\io.github.xnmp.tauri-explorer\logs\`

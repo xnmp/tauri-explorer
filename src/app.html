@@ -33,8 +33,18 @@
           }
         } catch (e) {}
 
+        // The opaque theme background, painted before the app boots. A
+        // translucent window (#1757) must not get it: it would cover the
+        // material for the whole session. Its creator names the material it
+        // was built with, as builtWindowMaterial (domain/translucency.ts)
+        // reads it: Rust's __WINDOW_MATERIAL__, else the URL's material=.
+        var material = window.__WINDOW_MATERIAL__;
+        if (material === undefined) {
+          try { material = new URLSearchParams(location.search).get('material'); } catch (e) {}
+        }
+        var translucent = material === 'vibrancy' || material === 'acrylic' || material === 'mica';
         var bg = localStorage.getItem('explorer-bg');
-        if (bg) document.documentElement.style.background = bg;
+        if (bg && !translucent) document.documentElement.style.background = bg;
       })();
     </script>
     %sveltekit.head%

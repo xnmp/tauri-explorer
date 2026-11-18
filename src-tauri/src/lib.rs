@@ -128,29 +128,8 @@ fn e2e_webview2_browser_args() -> String {
          --remote-debugging-port={port}"
     )
 }
+pub mod translucency;
 mod wsl;
-
-/// The macOS window material behind a vibrant window (#1733). `Sidebar`, not
-/// `UnderWindowBackground`, which looked opaque in dark mode.
-///
-/// Windows created from JS (fresh children, parked warm windows) cannot call
-/// this; they take the same material from `src/lib/domain/macos-vibrancy.ts`
-/// (`MACOS_VIBRANCY_MATERIAL`, Tauri's serialized name for this variant).
-/// `tests/domain/macos-vibrancy.test.ts` reads this constant to keep the two
-/// in step, so change both together.
-#[cfg(target_os = "macos")]
-const MACOS_VIBRANCY_MATERIAL: tauri::utils::WindowEffect = tauri::utils::WindowEffect::Sidebar;
-
-#[cfg(target_os = "macos")]
-fn macos_vibrancy_effects() -> tauri::utils::config::WindowEffectsConfig {
-    tauri::utils::config::WindowEffectsConfig {
-        effects: vec![MACOS_VIBRANCY_MATERIAL],
-        // Keep the material lit while the window is inactive (the JS
-        // `MACOS_VIBRANCY_STATE`).
-        state: Some(tauri::utils::WindowEffectState::Active),
-        ..Default::default()
-    }
-}
 
 use system::{
     get_log_dir, log_startup_progress, log_startup_timing, open_recycle_bin, set_window_theme,
@@ -305,6 +284,13 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
     let builder = builder.plugin(renderer_owner::termination_recovery());
     #[cfg(target_os = "linux")]
     let builder = builder.plugin(native_file_drag::html5_source_lifecycle());
+    // Every page learns the platform's window material before its scripts
+    // run (#1757), so fresh and warm windows build and style alike.
+    let builder = builder.plugin(
+        tauri::plugin::Builder::<_, ()>::new("translucency")
+            .js_init_script(translucency::init_script(translucency::platform_material()))
+            .build(),
+    );
     // Every WebView sharing Windows' data directory must use the exact same
     // environment options. Inject the main window's attach-build arguments
     // into every spawning page so fresh and warm descendants preserve them.
@@ -688,10 +674,6 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
 
             // Create window programmatically so we can inject initialization_script.
             // This replaces the static window definition in tauri.conf.json.
-            // `mut` is used by the macOS (title bar / vibrancy) and Windows
-            // (Mica/Acrylic backdrop) blocks below; allow the otherwise-unused
-            // mut on Linux so clippy -D warnings stays green there.
-            #[cfg_attr(target_os = "linux", allow(unused_mut))]
             let mut builder = tauri::WebviewWindowBuilder::new(
                 app,
                 "main",
@@ -720,28 +702,9 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
                         .hidden_title(true);
                 }
 
-                let vibrancy = settings_json
-                    .as_ref()
-                    .and_then(|v| v.get("macOsVibrancy")?.as_bool())
-                    .unwrap_or(false);
-                let vibrancy_blur = settings_json
-                    .as_ref()
-                    .and_then(|v| v.get("vibrancyBlur")?.as_bool())
-                    .unwrap_or(true);
-                if vibrancy {
-                    builder = builder.transparent(true);
-                    if vibrancy_blur {
-                        builder = builder.effects(macos_vibrancy_effects());
-                    }
-                }
             }
 
-            // Windows: apply a translucent Mica/Acrylic system backdrop when
-            // enabled. Like macOS vibrancy this is a startup decision (the
-            // transparent flag can't be toggled at runtime), so it requires a
-            // restart. The DWM system backdrop keeps the window's rounded
-            // corners; the frontend's [data-native-backdrop] CSS makes the app
-            // background transparent so the effect shows through.
+            // Windows: E2E WebView2 attach arguments.
             #[cfg(target_os = "windows")]
             {
                 // GitHub's Windows runner starts the host elevated. WebView2
@@ -753,27 +716,30 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
                 {
                     builder = builder.additional_browser_args(&e2e_webview2_browser_args());
                 }
+            }
 
-                let backdrop = config::config_dir()
+            // Translucency (#1757): the platform's window material (macOS
+            // vibrancy, Windows acrylic or Mica). Window transparency is fixed
+            // at creation, so the setting reaches this window on the next
+            // launch. A system backdrop keeps Windows' rounded corners. The
+            // page learns which material this window got from its own
+            // initialization script rather than inferring it from settings,
+            // which may have changed (or failed to load) since.
+            let window_material = translucency::platform_material().filter(|_| {
+                let settings_json = config::config_dir()
                     .ok()
                     .and_then(|dir| std::fs::read_to_string(dir.join("settings.json")).ok())
-                    .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-                    .and_then(|v| v.get("windowsBackdrop")?.as_str().map(String::from));
-
-                use tauri::utils::WindowEffect;
-                let effect = match backdrop.as_deref() {
-                    Some("mica") => Some(WindowEffect::Mica),
-                    Some("acrylic") => Some(WindowEffect::Acrylic),
-                    _ => None,
-                };
-                if let Some(effect) = effect {
-                    use tauri::utils::config::WindowEffectsConfig;
-                    builder = builder.transparent(true).effects(WindowEffectsConfig {
-                        effects: vec![effect],
-                        ..Default::default()
-                    });
-                }
+                    .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+                translucency::translucency_enabled(settings_json.as_ref())
+            });
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            if let Some(material) = window_material {
+                builder = builder
+                    .transparent(true)
+                    .effects(translucency::effects(material));
             }
+            builder =
+                builder.initialization_script(translucency::window_init_script(window_material));
 
             builder.build()?;
             let t_window_built = std::time::Instant::now();

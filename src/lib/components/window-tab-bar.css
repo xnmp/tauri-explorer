@@ -339,11 +339,11 @@
     overflow: visible;
   }
 
-  /* Under the macOS material the window is translucent: an opaque tab over
+  /* Under a window material the window is translucent: an opaque tab over
      the translucent pane read as a white (or black) card on glass. The
      title bar is already the pane's card, so the tab adds exactly what the
      navigation bar below adds to the pane, and no solid base (#1734). */
-  :root[data-macos-material] .tab-area .tab.active {
+  :root[data-material] .tab-area .tab.active {
     --tab-surface: var(--layout-chrome-surface, var(--background-card-secondary));
     --tab-surface-base: transparent;
   }

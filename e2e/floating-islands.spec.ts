@@ -74,7 +74,7 @@ test.describe("Fused active tab (#1734)", () => {
       theme,
       showWindowControls: true,
       tabTitleGitRoot: false,
-      ...(material ? { macOsVibrancy: true, vibrancyBlur: true } : {}),
+      ...(material ? { translucency: true } : {}),
       ...settings,
     });
     // The last tab is active: with three it stands over the panes island.
@@ -88,7 +88,7 @@ test.describe("Fused active tab (#1734)", () => {
     await page.goto("/");
     await waitForEntries(page);
     if (material) {
-      await expect(page.locator("html")).toHaveAttribute("data-macos-material", "");
+      await expect(page.locator("html")).toHaveAttribute("data-material", "vibrancy");
       await page.addStyleTag({ content: SIMULATED_MATERIAL });
     }
     if (layout === "floating-islands") await expect(page.locator('[data-region="titlebar"]')).toHaveAttribute("data-tab-island", "content");

@@ -222,10 +222,83 @@ describe("settingsStore.layoutTheme migration (#1306)", () => {
     readConfigFileMock.mockResolvedValue({ ok: false, error: "not found" });
     const store = await freshStore();
 
-    store.update({ layoutTheme: "hairline-ledger", macOsVibrancy: true });
+    store.update({ layoutTheme: "hairline-ledger", translucency: true });
 
     expect(store.layoutTheme).toBe("hairline-ledger");
-    expect(store.macOsVibrancy).toBe(true);
+    expect(store.translucency).toBe(true);
+  });
+});
+
+describe("settingsStore.translucency migration (#1757)", () => {
+  it.each([
+    [{ macOsVibrancy: true, vibrancyBlur: true }, true],
+    [{ macOsVibrancy: true, vibrancyBlur: false }, true],
+    [{ windowsBackdrop: "mica" }, true],
+    [{ windowsBackdrop: "acrylic" }, true],
+    [{ windowsBackdrop: "off", macOsVibrancy: false }, false],
+  ])("migrates %j to Translucency %s once, and writes it back", async (legacy, expected) => {
+    readConfigFileMock.mockResolvedValue({ ok: true, data: JSON.stringify({ ...legacy, settingsVersion: 2 }) });
+    const store = await freshStore();
+
+    await store.init();
+
+    expect(store.translucency).toBe(expected);
+    const written = JSON.parse(writeConfigQueuedMock.mock.calls.at(-1)![1] as string);
+    expect(written.translucency).toBe(expected);
+    expect(written.settingsVersion).toBe(3);
+  });
+
+  it("keeps a macOS Translucency Opacity and carries a Windows Backdrop Opacity over by island alpha", async () => {
+    readConfigFileMock.mockResolvedValue({
+      ok: true,
+      data: JSON.stringify({ windowsBackdrop: "acrylic", windowsBackdropOpacity: 65, settingsVersion: 2 }),
+    });
+    const windows = await freshStore();
+    await windows.init();
+    // 65% island alpha is the slider's 81 (domain/vibrancy-opacity).
+    expect(windows.translucencyOpacity).toBe(81);
+
+    readConfigFileMock.mockResolvedValue({
+      ok: true,
+      data: JSON.stringify({ macOsVibrancy: true, translucencyOpacity: 30, settingsVersion: 2 }),
+    });
+    const mac = await freshStore();
+    await mac.init();
+    expect(mac.translucencyOpacity).toBe(30);
+  });
+
+  it("carries a Windows Backdrop Opacity over a translucencyOpacity some earlier save wrote by default", async () => {
+    // The slider was macOS-only before #1757, so a Windows blob's value is the
+    // default that a whole-object save (or the localStorage promotion) wrote.
+    readConfigFileMock.mockResolvedValue({
+      ok: true,
+      data: JSON.stringify({
+        windowsBackdrop: "mica", windowsBackdropOpacity: 65, translucencyOpacity: 55, settingsVersion: 0,
+      }),
+    });
+    const store = await freshStore();
+    await store.init();
+    expect(store.translucencyOpacity).toBe(81);
+  });
+
+  it("never re-derives Translucency the user turned off after migrating", async () => {
+    readConfigFileMock.mockResolvedValue({
+      ok: true,
+      data: JSON.stringify({ macOsVibrancy: true, translucency: false, settingsVersion: 3 }),
+    });
+    const store = await freshStore();
+
+    await store.init();
+
+    expect(store.translucency).toBe(false);
+  });
+
+  it("derives Translucency from a legacy localStorage cache before settings.json loads", async () => {
+    localStorage.setItem("explorer-settings", JSON.stringify({ windowsBackdrop: "mica" }));
+    readConfigFileMock.mockReturnValue(new Promise(() => {}));
+    const store = await freshStore();
+
+    expect(store.translucency).toBe(true);
   });
 });
 

@@ -1,6 +1,7 @@
 <!--
-  Translucency Opacity (#1735): the macOS Native Blur slider. The page maps
-  its percent to the island coverage variables (domain/vibrancy-opacity).
+  Translucency Opacity (#1735; every platform's material since #1757). The
+  page maps its percent to the material coverage variables
+  (domain/vibrancy-opacity).
 -->
 <script lang="ts">
   import { settingsStore } from "$lib/state/settings.svelte";
@@ -8,8 +9,8 @@
   import { TRANSLUCENCY_OPACITY_MAX, TRANSLUCENCY_OPACITY_MIN } from "$lib/domain/vibrancy-opacity";
   import SettingRow from "./SettingRow.svelte";
 
-  // `applies`: only the macOS material backdrop has a coverage to adjust;
-  // otherwise the row is not rendered at all.
+  // `applies`: only a window material has a coverage to adjust (Translucency
+  // on); otherwise the row is not rendered at all.
   const { applies, hidden }: { applies: boolean; hidden: boolean } = $props();
   const [label] = SETTINGS_ROWS.translucencyOpacity;
 </script>

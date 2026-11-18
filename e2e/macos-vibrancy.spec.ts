@@ -6,23 +6,31 @@ import { test, expect, type Page } from "./fixtures";
 import { HOME_URL, applySettingsAndReload, waitForEntries } from "./helpers";
 
 test.describe("macOS vibrancy", () => {
-  test("data-native-backdrop is set when macOsVibrancy is enabled", async ({ page }) => {
+  // The browser publishes no native material, so the platform fallback decides:
+  // macOS gets vibrancy.
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(window.navigator, "platform", { get: () => "MacIntel", configurable: true });
+    });
+  });
+
+  test("data-native-backdrop is set when translucency is enabled", async ({ page }) => {
     await page.goto(HOME_URL);
-    await applySettingsAndReload(page, { macOsVibrancy: true });
+    await applySettingsAndReload(page, { translucency: true });
     await waitForEntries(page);
     await expect(page.locator("html")).toHaveAttribute("data-native-backdrop", "");
   });
 
-  test("data-native-backdrop is absent when macOsVibrancy is disabled", async ({ page }) => {
+  test("data-native-backdrop is absent when translucency is disabled", async ({ page }) => {
     await page.goto(HOME_URL);
-    await applySettingsAndReload(page, { macOsVibrancy: false });
+    await applySettingsAndReload(page, { translucency: false });
     await waitForEntries(page);
     await expect(page.locator("html")).not.toHaveAttribute("data-native-backdrop");
   });
 
   test("vibrancy CSS makes body transparent when enabled", async ({ page }) => {
     await page.goto(HOME_URL);
-    await applySettingsAndReload(page, { macOsVibrancy: true });
+    await applySettingsAndReload(page, { translucency: true });
     await waitForEntries(page);
 
     const bodyBg = await page.evaluate(() =>
@@ -34,7 +42,7 @@ test.describe("macOS vibrancy", () => {
   test("native backdrop works under every layout, including Default", async ({ page }) => {
     await page.goto(HOME_URL);
     for (const layoutTheme of ["default", "floating-islands", "hairline-ledger", "compact", "soft-cards"]) {
-      await applySettingsAndReload(page, { macOsVibrancy: true, layoutTheme });
+      await applySettingsAndReload(page, { translucency: true, layoutTheme });
       await waitForEntries(page);
       const html = page.locator("html");
       await expect(html).toHaveAttribute("data-layout", layoutTheme);
@@ -63,16 +71,16 @@ test.describe("theme tint over the macOS material (#1733)", () => {
       background-attachment: fixed !important;
     }`;
 
-  async function openVibrant(page: Page, theme: string, platform = "MacIntel", layoutTheme = "default"): Promise<void> {
+  async function openVibrant(page: Page, theme: string, platform = "MacIntel", layoutTheme = "default", extra: Record<string, unknown> = {}): Promise<void> {
     await page.addInitScript((value) => {
       Object.defineProperty(window.navigator, "platform", { get: () => value, configurable: true });
     }, platform);
     await page.goto(HOME_URL);
     await applySettingsAndReload(page, {
-      macOsVibrancy: true,
-      vibrancyBlur: true,
+      translucency: true,
       layoutTheme,
       theme,
+      ...extra,
     });
     await waitForEntries(page);
   }
@@ -94,13 +102,14 @@ test.describe("theme tint over the macOS material (#1733)", () => {
         light: mix(15),
         dark: mix(55),
         islandsDark: mix(30),
+        full: mix(100),
       };
     }, color);
   }
 
   test("dark themes paint 55% of the theme base over the material", async ({ page }) => {
     await openVibrant(page, "dark");
-    await expect(page.locator("html")).toHaveAttribute("data-macos-material", "");
+    await expect(page.locator("html")).toHaveAttribute("data-material", "vibrancy");
     const { body, light, dark } = await tint(page);
     expect(light).not.toBe(dark);
     expect(body).toBe(dark);
@@ -114,7 +123,7 @@ test.describe("theme tint over the macOS material (#1733)", () => {
 
   test("light themes paint 15% of the theme base over the material", async ({ page }) => {
     await openVibrant(page, "light");
-    await expect(page.locator("html")).toHaveAttribute("data-macos-material", "");
+    await expect(page.locator("html")).toHaveAttribute("data-material", "vibrancy");
     const { body, light, dark } = await tint(page);
     expect(light).not.toBe(dark);
     expect(body).toBe(light);
@@ -153,18 +162,33 @@ test.describe("theme tint over the macOS material (#1733)", () => {
     expect(body).toBe("rgb(1, 2, 3)");
   });
 
-  test("off macOS the vibrancy setting adds no tint", async ({ page }) => {
+  test("on Linux the translucency setting adds no tint", async ({ page }) => {
     await openVibrant(page, "dark", "Linux x86_64");
-    await expect(page.locator("html")).not.toHaveAttribute("data-macos-material");
-    expect((await tint(page)).body).toBe("rgba(0, 0, 0, 0)");
+    await expect(page.locator("html")).not.toHaveAttribute("data-material");
+    // No material: the window keeps the opaque theme, not the translucent tint.
+    const { body, dark } = await tint(page);
+    expect(body).not.toBe(dark);
+    expect(body).not.toBe("rgba(0, 0, 0, 0)");
   });
 
-  test("Native Blur off adds no tint: the window stays the opaque theme", async ({ page }) => {
+  test("translucency off adds no tint: the window stays the opaque theme", async ({ page }) => {
     await openVibrant(page, "dark");
-    await applySettingsAndReload(page, { vibrancyBlur: false });
+    await applySettingsAndReload(page, { translucency: false });
     await waitForEntries(page);
-    await expect(page.locator("html")).not.toHaveAttribute("data-macos-material");
+    await expect(page.locator("html")).not.toHaveAttribute("data-material");
     const opaque = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
     expect(opaque).not.toBe("rgba(0, 0, 0, 0)");
+  });
+
+  test("the non-island tint follows the opacity slider (--material-window-coverage)", async ({ page }) => {
+    await openVibrant(page, "dark", "MacIntel", "default", { translucencyOpacity: 100 });
+    const full = await tint(page);
+    // Slider 100: the theme base at 100%, i.e. fully opaque.
+    expect(full.body).toBe(full.full);
+    await applySettingsAndReload(page, { translucencyOpacity: 55 });
+    await waitForEntries(page);
+    const normal = await tint(page);
+    expect(normal.body).toBe(normal.dark);
+    expect(normal.body).not.toBe(full.body);
   });
 });

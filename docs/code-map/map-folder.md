@@ -121,7 +121,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `SettingsDialog.svelte` — general settings dialog; links to dedicated Keyboard Shortcuts and Plugins dialogs.
 - `settings/SettingRow.svelte` — one Settings row (label, description, optional `info` snippet, control slot); `hidden` while the search filter excludes it.
 - `settings/SettingToggle.svelte` — the Settings switch (restyled checkbox; extra input attributes forwarded).
-- `settings/TranslucencyOpacitySetting.svelte` — macOS Native Blur "Translucency Opacity" slider row (#1735).
+- `settings/TranslucencyOpacitySetting.svelte` — "Translucency Opacity" slider row under the Translucency toggle (#1735, #1757).
 - `settings/TerminalShortcutSettings.svelte` — terminal line-editing shortcut list and key recorder (#375/#404); recording ends on dialog close or window blur.
 - `settings/GitHubReportTokenSetting.svelte` — Settings → Issue Reports: write-only GitHub token entry (save/replace/remove) showing only whether one is saved (#1455).
 - `settings/ExperimentalSettings.svelte` — Settings → Experimental feature-flag rows (integrated terminal, git graph).
@@ -334,11 +334,11 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `warm-activation.ts` — owns parked-window observation, reveal/navigation admission, acknowledged activation and retirement.
 - `warm-window.ts` — native warm-pool adapters and acknowledged reuse; integrates the activation owner.
 - `page-foreground.ts` — `warmMode()` and the page's one foreground gate: a parked or measuring warm window defers drive pushes/poll and file-operation recovery until its activation commits (#931).
-- `window-appearance.ts` — shared window creation options for fresh and warm windows: Windows backdrop, macOS vibrancy transparency + material (`domain/macos-vibrancy.ts`, #1733), and exact feature-injected WebView2 environment arguments in Windows E2E.
+- `window-appearance.ts` — shared window creation options for fresh and warm windows: the Translucency material's transparency + effects (`domain/translucency.ts`, #1733, #1757), and exact feature-injected WebView2 environment arguments in Windows E2E.
 - `window-title.svelte.ts` — resolves launch-home context and keeps the native OS title synchronized with the active pane directory.
 - `window-close.ts` — owns synchronous close admission, native close requests, terminal destruction and failure recovery.
 - `window-chrome.ts` — owns native maximize-state observation, resize query coalescing, and late listener/read retirement.
-- `window-backdrop.ts` — Windows Mica/Acrylic translucent backdrop (CSS strength).
+- `window-translucency.svelte.ts` — the platform's window material (published by `src-tauri/src/translucency.rs`) and this window's own, fixed once its settings load; drives `data-native-backdrop`/`data-material` and the Settings rows (#1757).
 - `workspaces.svelte.ts` — save/restore named workspaces.
 - `bookmarks.svelte.ts` — sidebar bookmarks store.
 - `config-document.ts` — `createConfigDocument`: shared init/migrate/reload/write-through lifecycle for bookmarks.json and folder-views.json (#1568); shape gates and the migration value are per-file options.
@@ -626,8 +626,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `settings-migration.ts` — versioned one-shot migrations for the persisted settings blob; `migrateSettings` + the append-only ledger (#506).
 - `layout-theme.ts` — layout-theme catalog (#1306): built-ins, leading-comment metadata, user-file validation, resolution/fallback reasons, row-height parsing.
 - `layout-theme-ids.ts` — eager built-in layout ids and the legacy Floating Islands → `layoutTheme` mapping used by settings migration.
-- `vibrancy-opacity.ts` — Translucency Opacity slider (20-100%, default 55) to the six `--island-*coverage*` values; default reproduces the fixed theme defaults exactly (#1735).
-- `macos-vibrancy.ts` — macOS vibrancy mode (off / transparent / material) and the Sidebar material shared by JS-created windows (`state/window-appearance.ts`) and the page tint attribute; kept in step with `lib.rs` `MACOS_VIBRANCY_MATERIAL` by `tests/domain/macos-vibrancy.test.ts` (#1733).
+- `vibrancy-opacity.ts` — Translucency Opacity slider (20-100%, default 55) to the six `--island-*coverage*` values and the `--material-window-coverage*` tint; default reproduces the fixed theme defaults exactly (#1735); `opacityForIslandAlpha` maps a pre-#1757 Windows Backdrop Opacity.
+- `translucency.ts` — one cross-platform Translucency setting (#1757): material names (vibrancy / acrylic / mica), the published-or-platform material, window effects per material, and the legacy-settings rule; kept in step with `src-tauri/src/translucency.rs` by `tests/domain/translucency.test.ts`.
 - `miller-placement.ts` — `millerHoistedToIsland`: whether Miller columns hoist to the left island (island layout, no sidebar, single-pane tab only); shared by `+page.svelte` and `ExplorerPane.svelte` (#434, #1699).
 - `settings-numbers.ts` — Numeric preference consumer contracts shared by persisted validation and interactive setters.
 - `folder-preview.ts` — folder preview image selection (#146).
@@ -762,6 +762,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `terminal.rs` — embedded terminal (PTY) backend (#139).
 - `terminal/input.rs` — per-terminal input sequencer: admits `terminal_write` in sequence-number order (early arrivals held, repeats ignored), holds 64 KiB of pre-start typeahead (an overflow discards all of it), and feeds one writer thread per PTY through a channel (#882).
 - `system.rs` — native launch context, Recycle Bin launcher, window theme and log-path commands.
+- `translucency.rs` — the window material for the Translucency setting (#1757): macOS vibrancy, Windows acrylic (22H2+) or Mica by OS build, none elsewhere; legacy-key fallback for an unmigrated settings.json, the main window's effects, and the `__TRANSLUCENCY_MATERIAL__` init script every page reads.
 - `user_report.rs` — typed async report relay command, full-description/environment body assembly without log tails, and ureq transport with uncertain-response handling.
 - `user_report_github.rs` — optional GitHub token for reports (#1455): keyring-backed write-only token commands and direct GitHub REST issue creation as the token's user, with definite/uncertain failure classification.
 - `process_ext.rs` — suppress console-window flash and own cancellable process trees; drain both pipes with optional output limits and continue cancellation after launcher exit.

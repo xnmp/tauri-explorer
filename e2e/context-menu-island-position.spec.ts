@@ -13,7 +13,7 @@ import { HOME_URL, pressShortcut, seedSettings, waitForEntries } from "./helpers
 
 const MATERIALS = [
   { name: "opaque window", platform: undefined, settings: {} },
-  { name: "macOS material", platform: "MacIntel", settings: { macOsVibrancy: true, vibrancyBlur: true } },
+  { name: "macOS material", platform: "MacIntel", settings: { translucency: true } },
 ] as const;
 
 async function openIslands(page: Page, material: (typeof MATERIALS)[number]): Promise<void> {
@@ -31,7 +31,7 @@ async function openIslands(page: Page, material: (typeof MATERIALS)[number]): Pr
   });
   await page.goto(HOME_URL);
   await waitForEntries(page);
-  if (material.platform) await expect(page.locator("html")).toHaveAttribute("data-macos-material", "");
+  if (material.platform) await expect(page.locator("html")).toHaveAttribute("data-material", "vibrancy");
 }
 
 for (const material of MATERIALS) {

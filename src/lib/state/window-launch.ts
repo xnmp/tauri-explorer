@@ -6,6 +6,8 @@ import type { ExplorerSeed } from "$lib/domain/window-input";
 import { directorySeedFitsBudget, normalizeDirectorySeed, windowSeedFitsBudget } from "$lib/domain/window-input";
 import { formatWindowTitle } from "$lib/domain/tab-title";
 import { explorerWindowAppearance } from "$lib/state/window-appearance";
+import { newWindowMaterial } from "$lib/state/window-translucency.svelte";
+import { withWindowMaterial, type TranslucencyMaterial } from "$lib/domain/translucency";
 import { requestWindowHandoff, type WindowHandoff } from "$lib/state/window-handoff";
 import { resolveLaunchHomePath } from "$lib/state/window-title.svelte";
 import { windowTabsManager, type TabSnapshot } from "$lib/state/window-tabs.svelte";
@@ -54,7 +56,9 @@ export interface WindowLaunchDependencies {
   sourceWindow(): string;
   homePath(): string | undefined;
   baseUrl(): string;
-  appearance(title: string): Record<string, unknown>;
+  /** The material a window created now gets (#1757). */
+  material(): TranslucencyMaterial | null;
+  appearance(title: string, material: TranslucencyMaterial | null): Record<string, unknown>;
   save(key: string, value: unknown): void;
   remove(key: string): void;
   uuid(): string;
@@ -92,7 +96,8 @@ const defaultDependencies: WindowLaunchDependencies = {
   sourceWindow: () => windowTabsManager.windowLabel,
   homePath: resolveLaunchHomePath,
   baseUrl: () => window.location.origin + window.location.pathname,
-  appearance: (title) => explorerWindowAppearance(title),
+  material: newWindowMaterial,
+  appearance: (title, material) => explorerWindowAppearance(title, material),
   save: savePersisted,
   remove: removePersisted,
   uuid: () => crypto.randomUUID(),
@@ -197,17 +202,19 @@ export function createWindowLauncher(overrides: Partial<WindowLaunchDependencies
       return null;
     }
 
-    const params = new URLSearchParams({ path, focusAddressBar: "1" });
+    const launch = new URLSearchParams({ path, focusAddressBar: "1" });
     const homePath = dependencies.homePath();
-    if (homePath) params.set("home", homePath);
-    if (viewMode) params.set("viewMode", viewMode);
+    if (homePath) launch.set("home", homePath);
+    if (viewMode) launch.set("viewMode", viewMode);
+    const material = dependencies.material();
+    const params = withWindowMaterial(launch, material);
     const options: WindowOptions = {
       url: `${dependencies.baseUrl()}?${params.toString()}`,
       width: geometry.width,
       height: geometry.height,
       x: at ? Math.round(at.x - 120) : geometry.x + 30,
       y: at ? Math.round(at.y - 16) : geometry.y + 30,
-      ...dependencies.appearance(formatWindowTitle(path, homePath)),
+      ...dependencies.appearance(formatWindowTitle(path, homePath), material),
     };
 
     let child: WebviewWindow | null = null;

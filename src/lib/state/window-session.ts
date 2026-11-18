@@ -15,6 +15,7 @@ import { pluginRegistry } from "$lib/plugins/registry.svelte";
 import { startWindowStartup } from "./window-startup";
 import { windowTabsManager } from "./window-tabs.svelte";
 import { startWindowTitleSync } from "./window-title.svelte";
+import { settleWindowMaterial } from "./window-translucency.svelte";
 import { warmMode, runWarmWindow, spawnWarmWindow } from "./warm-window";
 import { pageForeground } from "./page-foreground";
 import { bookmarksStore } from "./bookmarks.svelte";
@@ -73,6 +74,8 @@ export function startWindowSession(options: WindowSessionOptions) {
       loadSettings: () => settingsStore.init(),
       synchronizeTheme: () => themeStore.syncFromSettings(),
       publishSettingsReady: () => {
+        // The native window was built with these settings (#1757).
+        settleWindowMaterial();
         markStartup("settings-ready");
         options.settingsReady();
       },

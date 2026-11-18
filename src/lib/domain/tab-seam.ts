@@ -1,9 +1,13 @@
 /**
- * Geometry of the Floating Islands active tab (#1734): the hole it cuts in
- * the strip shade, the outline its edge highlight strokes, and the key shadow
- * it casts. Pure: every length is a CSS pixel in the title bar's coordinate
- * space (x right, y down), and `base` is the strip base, where the tabs end
- * and the islands' top edges begin.
+ * Geometry of the Floating Islands active tab (#1734, #1785): the hole it
+ * cuts in the strip shade, the outline its edge highlight strokes, and the
+ * key shadow it casts. Pure: every length is a CSS pixel in the title bar's
+ * coordinate space (x right, y down), and `base` is the strip base, where the
+ * tabs end and the tab's surface begins.
+ *
+ * The active tab owns the whole window below the strip (#1785): its surface
+ * runs edge to edge with rounded top corners, and every island sits on it.
+ * The one outline is the tab plus the surface's top edge and corners.
  *
  * The silhouette is the tab box with rounded top corners plus two concave
  * fillets: true quarter circles tangent to the tab side and to the base.
@@ -12,8 +16,6 @@
  * stroke continues the islands' 1px inside border, and the strip shade's hole
  * is half a pixel smaller, so the shade runs under the tab's anti-aliased edge.
  */
-
-import type { CornerOwnership } from "./island-outline";
 
 /** Concave fillet radius of a fully open active tab. */
 export const TAB_FILLET = 14;
@@ -45,12 +47,21 @@ export interface TabContour {
   readonly fillet: number;
 }
 
-/** An island whose top edge meets the strip base under a fillet foot. */
-export interface IslandEdge {
+/** The tab's surface: the window below the strip base, its top corners rounded. */
+export interface Surface {
   readonly left: number;
   readonly right: number;
   readonly radius: number;
 }
+
+/** The radius of each of the surface's top corners. */
+export interface SurfaceCorners {
+  readonly left: number;
+  readonly right: number;
+}
+
+/** Straight run between the surface's top corner and the first tab's foot. */
+export const SURFACE_TAB_GAP = 2;
 
 const num = (value: number, fallback = 0): number => (Number.isFinite(value) ? value : fallback);
 const nonNegative = (value: number): number => Math.max(0, num(value));
@@ -157,57 +168,92 @@ export function stripShadePath(
 }
 
 /**
- * Where the tab's edge stroke takes over an island's outline
- * (`domain/island-outline.ts`): at a rounded corner's end on the top edge,
- * or round a squared corner from the island's side.
+ * The radius of each top corner of the surface. A corner never meets the
+ * tab's foot: where the foot (clamped to the strip's viewport) reaches into
+ * a corner, as in a narrow window that gives the band before the first tab
+ * back to its tabs, that corner narrows to end where the foot begins.
  */
-export type EdgeCorner =
-  | { readonly kind: "round"; readonly x: number }
-  | { readonly kind: "square"; readonly edge: number; readonly handover: number };
-
-export interface TabEdge {
-  /** One open path: island top edge, tab outline, island top edge. */
-  readonly d: string;
-  /** The same stroke in three runs, for islands whose borders differ in colour. */
-  readonly left: string;
-  readonly tab: string;
-  readonly right: string;
+export function surfaceCorners(surface: Surface, foot: TabHole | null): SurfaceCorners {
+  const width = Math.max(0, num(surface.right) - num(surface.left));
+  const radius = Math.min(nonNegative(surface.radius), width / 2);
+  if (!foot) return { left: radius, right: radius };
+  return {
+    left: Math.max(0, Math.min(radius, num(foot.left) - num(surface.left))),
+    right: Math.max(0, Math.min(radius, num(surface.right) - num(foot.right))),
+  };
 }
 
 /**
- * The tab's edge stroke, `width` wide: along a seamed island's top edge from
- * where the island hands it over, up the fillet, over the tab and back
- * down, then on along the next island's top edge to its handover. `c.base`
- * is the islands' painted top edge, so the stroke covers their top border
- * row exactly. A foot with no island to continue along (a gutter, or an
- * island of another kind) ends the stroke at the foot.
+ * The strip shade outside the surface's rounded top corners, below the base
+ * (fill-rule nonzero). Each pocket's arc sits half a pixel inside the
+ * corner, so the shade runs under the edge stroke's anti-aliased outer edge.
  */
-export function tabEdgePath(
-  c: TabContour,
-  width: number,
-  corners: { readonly left?: EdgeCorner | null; readonly right?: EdgeCorner | null } = {},
-): TabEdge {
+export function surfacePocketsPath(surface: Surface, base: number, corners: SurfaceCorners): string {
+  const l = num(surface.left);
+  const r = num(surface.right);
+  const y = num(base);
+  const pocket = (radius: number, side: "left" | "right"): string => {
+    const k = nonNegative(radius);
+    if (k <= 0.5) return "";
+    const inner = k - 0.5;
+    return side === "left"
+      ? `M${n(l)} ${n(y)}H${n(l + k)}V${n(y + 0.5)}A${n(inner)} ${n(inner)} 0 0 0 ${n(l + 0.5)} ${n(y + k)}H${n(l)}Z`
+      : `M${n(r)} ${n(y)}V${n(y + k)}H${n(r - 0.5)}A${n(inner)} ${n(inner)} 0 0 0 ${n(r - k)} ${n(y + 0.5)}V${n(y)}Z`;
+  };
+  return `${pocket(corners.left, "left")}${pocket(corners.right, "right")}`;
+}
+
+/**
+ * The one outline (#1785), `width` wide: up the surface's left corner from
+ * the window's left edge, along its top edge to the active tab's left foot,
+ * over the tab, on from its right foot and down the right corner to the
+ * window's right edge. The top edge breaks under the tab, whose hole is the
+ * surface itself. Its centre line sits half a stroke inside the surface, so
+ * the stroke covers the surface's top pixel row. Without a shown tab (`c`
+ * null) the top edge runs straight. A foot that lies past a corner (a tab
+ * scrolled out of the strip's viewport, where `outlineClips` hides it) starts
+ * a subpath of its own, so the edge never runs back across the corner.
+ */
+export function surfaceEdgePath(c: TabContour | null, width: number, surface: Surface, base: number, corners: SurfaceCorners): string {
   const half = Math.max(0, num(width, 1)) / 2;
-  const { start, end, body } = outline(c, -half);
-  const y = start.y;
-  const lead = (corner: EdgeCorner, x: number) =>
-    corner.kind === "round"
-      ? `${n(corner.x)} ${n(y)}`
-      : `${n(corner.edge + (x > corner.edge ? half : -half))} ${n(corner.handover)}V${n(y)}`;
-  const lc = corners.left;
-  const left = lc && (lc.kind === "round" ? lc.x : lc.edge) < start.x ? `M${lead(lc, start.x)}L${n(start.x)} ${n(y)}` : "";
-  const rc = corners.right;
-  let right = "";
-  if (rc && (rc.kind === "round" ? rc.x : rc.edge) > end.x) {
-    right = rc.kind === "round"
-      ? `L${n(rc.x)} ${n(y)}`
-      : `L${n(rc.edge - half)} ${n(y)}V${n(rc.handover)}`;
-  }
+  const l = num(surface.left);
+  const r = num(surface.right);
+  const b = num(base);
+  const y = b + half;
+  const rl = nonNegative(corners.left);
+  const rr = nonNegative(corners.right);
+  const leftEnd = rl > half ? l + rl : l;
+  const rightStart = rr > half ? r - rr : r;
+  const lead = rl > half
+    ? `M${n(l + half)} ${n(b + rl)}A${n(rl - half)} ${n(rl - half)} 0 0 1 ${n(leftEnd)} ${n(y)}`
+    : `M${n(l)} ${n(y)}`;
+  const tail = rr > half
+    ? `A${n(rr - half)} ${n(rr - half)} 0 0 1 ${n(r - half)} ${n(b + rr)}`
+    : "";
+  if (!c) return `${lead}L${n(rightStart)} ${n(y)}${tail}`;
+  const { start, end, body } = outline({ ...c, base: b }, -half);
+  const toTab = start.x >= leftEnd ? `L${n(start.x)} ${n(y)}` : `M${n(start.x)} ${n(y)}`;
+  const fromTab = end.x <= rightStart ? `L${n(rightStart)} ${n(y)}` : `M${n(rightStart)} ${n(y)}`;
+  return `${lead}${toTab}${body}${fromTab}${tail}`;
+}
+
+/**
+ * Clips for the outline's two strokes, complementary columns of the strip's
+ * viewport (`view`, snapped to device pixels so they meet without a seam):
+ * inside it, the outline with the tab (`surfaceEdgePath(c, ...)`); outside
+ * it, the surface's straight edge (`surfaceEdgePath(null, ...)`), since the
+ * tab's hole opens only inside the viewport. A tab half scrolled under a
+ * scroll button is cut at the viewport's edge, its hidden foot never
+ * strokes over the strip or across a rounded corner, and the surface's top
+ * edge runs on beside it.
+ */
+export function outlineClips(view: { readonly left: number; readonly right: number }): { readonly inside: string; readonly outside: string } {
+  const left = num(view.left);
+  const right = Math.max(left, num(view.right, left));
+  const far = 8192;
   return {
-    d: `${left || `M${n(start.x)} ${n(y)}`}${body}${right}`,
-    left,
-    tab: `M${n(start.x)} ${n(y)}${body}`,
-    right: right ? `M${n(end.x)} ${n(y)}${right}` : "",
+    inside: `M${n(left)} ${-far}H${n(right)}V${far}H${n(left)}Z`,
+    outside: `M${-far} ${-far}H${n(left)}V${far}H${-far}ZM${n(right)} ${-far}H${far}V${far}H${n(right)}Z`,
   };
 }
 
@@ -235,70 +281,16 @@ export function tabKeyShadow(c: TabContour, light: typeof TAB_LIGHT = TAB_LIGHT)
   };
 }
 
+/** A horizontal span on the strip. */
 export interface TabSeamRow {
   readonly left: number;
   readonly right: number;
 }
 
-/** Which top corners of an island are squared under the tab's foot. */
-export interface IslandSquare {
-  readonly left: boolean;
-  readonly right: boolean;
-}
-
-const ROUND: IslandSquare = { left: false, right: false };
-
-/**
- * The top corners of an island the tab stands on that its foot (the hole)
- * reaches into. A foot never lands on a rounded corner (#1734): such a corner
- * is squared while the tab stands there, so the foot always meets a straight
- * top edge. That happens where the tab straddles the gutter between two
- * islands of its kind (split panes, panes and preview); the strip itself
- * starts past the first island's corner (`tabStripPadding`).
- */
-export function islandSquareFor(hole: TabHole, island: IslandEdge): IslandSquare {
-  const radius = Math.min(nonNegative(island.radius), Math.max(0, (island.right - island.left) / 2));
-  if (!(hole.right > island.left && hole.left < island.right) || radius === 0) return ROUND;
-  return { left: hole.left < island.left + radius, right: hole.right > island.right - radius };
-}
-
-/**
- * Where an island opens its top edge under the tab: the hole's overlap with
- * the island's straight top edge (a rounded corner keeps its outline; a
- * squared one is straight edge too), or null when they do not meet.
- */
-export function seamRowFor(hole: TabHole, island: IslandEdge, square: IslandSquare = ROUND): TabSeamRow | null {
-  const radius = Math.min(nonNegative(island.radius), Math.max(0, (island.right - island.left) / 2));
-  const left = Math.max(hole.left, island.left + (square.left ? 0 : radius));
-  const right = Math.min(hole.right, island.right - (square.right ? 0 : radius));
-  return right > left ? { left, right } : null;
-}
-
-/**
- * The gutters the tab's foot bridges: between two islands of its kind whose
- * facing corners are both squared under it, the tab's fill continues across
- * the gap at the seam's depth, so the foot is one straight run.
- */
-export function gutterRowsFor(
-  hole: TabHole,
-  islands: readonly (IslandEdge & { readonly square: IslandSquare })[],
-): TabSeamRow[] {
-  const sorted = [...islands].sort((a, b) => a.left - b.left);
-  const rows: TabSeamRow[] = [];
-  for (let i = 1; i < sorted.length; i++) {
-    const [a, b] = [sorted[i - 1], sorted[i]];
-    if (!a.square.right || !b.square.left || b.left <= a.right) continue;
-    const left = Math.max(hole.left, a.right);
-    const right = Math.min(hole.right, b.left);
-    if (right > left) rows.push({ left, right });
-  }
-  return rows;
-}
-
 /**
  * The span of the active tab its scroller shows, or null when it shows none
- * of it (#1734): islands open only under a tab the strip shows, so a tab
- * scrolled out of view never leaves a seam with nothing above it.
+ * of it (#1734): a tab scrolled out of view leaves the surface's top edge
+ * straight, with no outline rising out of it toward nothing.
  */
 export function tabShownSpan(
   tab: { readonly left: number; readonly right: number },
@@ -310,74 +302,11 @@ export function tabShownSpan(
   return right - left >= 1 ? { left, right } : null;
 }
 
-/** An island under the strip, and whether it is the kind the tab wears. */
-export interface FootIsland extends IslandEdge {
-  readonly home: boolean;
-}
-
-export interface TabFoot<T extends FootIsland> {
-  /** Islands with a corner squared under the foot. */
-  readonly squared: readonly (T & { readonly square: IslandSquare })[];
-  /** Islands of the tab's own kind that open their top edge under it. */
-  readonly seams: readonly { readonly island: T; readonly row: TabSeamRow }[];
-  /** Gutters the tab's fill bridges between squared neighbours. */
-  readonly bridges: readonly TabSeamRow[];
-}
-
 /**
- * Where the tab's foot (its hole) meets the islands below (#1734). The foot
- * always stands on straight top edges: every island it reaches over has the
- * corners under it squared, whatever the island's kind, and the gutter
- * between two squared neighbours is bridged by the tab's fill. Only islands
- * of the tab's own kind (`home`) open their top edge into it; another kind
- * keeps its edge, which the tab then sits on. The strip normally starts past
- * the content island's corner, but a narrow window gives that room back to
- * the tabs (`tabStripStart`), so any tab can stand over any gutter.
- */
-export function tabFootFor<T extends FootIsland>(hole: TabHole, islands: readonly T[]): TabFoot<T> {
-  const squared: (T & { square: IslandSquare })[] = [];
-  const seams: { island: T; row: TabSeamRow }[] = [];
-  for (const island of islands) {
-    const square = islandSquareFor(hole, island);
-    if (square.left || square.right) squared.push({ ...island, square });
-    if (!island.home) continue;
-    const row = seamRowFor(hole, island, square);
-    if (row) seams.push({ island, row });
-  }
-  return { squared, seams, bridges: gutterRowsFor(hole, squared) };
-}
-
-/**
- * The island the tab stands on, whose surface it wears: the one under most
- * of the tab's hole. Ties keep the earlier island.
- */
-export function islandUnder<T extends IslandEdge>(islands: readonly T[], hole: TabHole): T | null {
-  let best: T | null = null;
-  let most = 0;
-  for (const island of islands) {
-    const overlap = Math.min(hole.right, island.right) - Math.max(hole.left, island.left);
-    if (overlap > most) { best = island; most = overlap; }
-  }
-  return best;
-}
-
-/**
- * The tab's painted fill: its silhouette ending on the base, plus the seam
- * rows it reaches down into, `depth` pixels deep.
- */
-export function tabFillPath(c: TabContour, rows: readonly TabSeamRow[], depth: number): string {
-  const d = Math.max(0, num(depth));
-  const seams = d > 0
-    ? rows.map((row) => `M${n(row.left)} ${n(c.base)}H${n(row.right)}V${n(c.base + d)}H${n(row.left)}Z`).join("")
-    : "";
-  return `${tabSilhouettePath(c, 0, 0)}${seams}`;
-}
-
-/**
- * How strongly the tab's outline and shadows show. An active tab opens from
- * a seed and is drawn whole from its first frame; only a tab narrower than
- * that (a layout without the seed) fades them, over its first 16px past 2px,
- * which would otherwise collapse into a 1px vertical sliver.
+ * How strongly the tab's shadows show. An active tab opens from a seed and
+ * is drawn whole from its first frame; only a tab narrower than that (a
+ * layout without the seed) fades them, over its first 16px past 2px, where
+ * they would otherwise collapse into a dark vertical sliver.
  */
 export function tabPresence(width: number): number {
   return Number.isFinite(width) ? Math.min(1, Math.max(0, (width - 2) / 16)) : 0;
@@ -398,77 +327,30 @@ export function stripShownView(
 }
 
 /**
- * The part of the tab's hole over the viewport (#1734). The tab stands on,
- * wears and opens into islands only there: a tab half scrolled out of view
- * neither opens an island beyond the viewport's edge nor wears the surface
- * of one under its hidden part.
+ * The part of the tab's hole over the viewport (#1734): the surface's top
+ * corners make room only for the foot the strip shows (`surfaceCorners`).
  */
 export function tabFootHole(hole: TabHole, view: { readonly left: number; readonly right: number }): TabHole {
   return { left: Math.max(hole.left, view.left), right: Math.min(hole.right, view.right) };
-}
-
-/** Which kind of island the tab stands on, and so the surface it wears. */
-export type TabIslandKind = "structural" | "content" | "none";
-
-/**
- * The tab's home: the island under most of its foot, whose surface it wears,
- * and the islands under the strip marked with whether they are that kind
- * (only those open their top edge into the tab, `tabFootFor`).
- */
-export function tabHome<T extends IslandEdge & { readonly structural: boolean }>(
-  islands: readonly T[],
-  foot: TabHole,
-): { readonly home: T | null; readonly kind: TabIslandKind; readonly islands: readonly (T & { readonly home: boolean })[] } {
-  const home = islandUnder(islands, foot);
-  return {
-    home,
-    kind: home ? (home.structural ? "structural" : "content") : "none",
-    islands: islands.map((island) => ({ ...island, home: home !== null && island.structural === home.structural })),
-  };
-}
-
-/**
- * How the edge stroke meets one top corner of a seamed island: none unless
- * that island is the one at the hole's edge on that side (`edgeIsland`, from
- * `islandAt`) with its corner beyond the hole; then the island's own rounded
- * corner, or a squared one the stroke turns while the foot stands beside it.
- */
-export function cornerOwnership(
-  side: "left" | "right",
-  island: IslandEdge,
-  edgeIsland: IslandEdge | null,
-  hole: TabHole,
-  square: IslandSquare,
-): CornerOwnership {
-  if (edgeIsland !== island) return null;
-  if (side === "left" ? island.left >= hole.left : island.right <= hole.right) return null;
-  return square[side] ? "square" : "round";
-}
-
-/** Pick the island whose top edge spans `x` on the strip base, if any. */
-export function islandAt(islands: readonly IslandEdge[], x: number): IslandEdge | null {
-  return islands.find((island) => island.left <= x && x <= island.right) ?? null;
 }
 
 /** Padding a tab strip keeps before its first tab when nothing aligns it. */
 export const TAB_STRIP_PADDING = 12;
 
 /**
- * Left padding that puts the tab strip over the content islands (#1734).
- *
- * Tabs belong to the content they open, so in Floating Islands the strip
- * starts over the leftmost content island, as Safari's and VS Code's do
- * beside a sidebar: a fused tab then never straddles the gutter beside the
- * sidebar, and the first tab's fillet lands on the island's straight top
- * edge, past its rounded corner. `areaLeft` is where the strip's padding
- * box starts, in the same coordinates as the island.
+ * Left padding that puts the first tab's foot past the surface's rounded
+ * top-left corner (#1785), so even the first tab shows its whole left curve.
+ * `areaLeft` is where the strip's padding box starts, in the same
+ * coordinates as the surface. On macOS the traffic lights already push the
+ * strip further right, so the floor applies.
  */
 export function tabStripPadding(
-  content: IslandEdge | null | undefined,
+  surface: Surface | null | undefined,
   areaLeft: number,
   minimum = TAB_STRIP_PADDING,
+  fillet = TAB_FILLET,
 ): number {
   const floor = Math.max(0, num(minimum, TAB_STRIP_PADDING));
-  if (!content || !Number.isFinite(content.left) || !Number.isFinite(areaLeft)) return floor;
-  return Math.max(floor, content.left + nonNegative(content.radius) + TAB_FILLET - areaLeft);
+  if (!surface || !Number.isFinite(surface.left) || !Number.isFinite(areaLeft)) return floor;
+  return Math.max(floor, surface.left + nonNegative(surface.radius) + SURFACE_TAB_GAP + nonNegative(fillet) - areaLeft);
 }

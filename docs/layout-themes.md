@@ -94,14 +94,14 @@ names are internal and change without notice; `data-region` names do not.
 | --- | --- | --- |
 | `backdrop` | Decorative background layer behind the app | |
 | `app` | The whole window surface | |
-| `titlebar` | Title bar containing the tab strip | Floating Islands: `data-tab-hole="left right"` (the active tab's opening, CSS px), `data-tab-island="content\|structural\|none"` (the surface it wears) |
+| `titlebar` | Title bar containing the tab strip | Floating Islands: `data-tab-hole="left right"` (the active tab's opening, CSS px) |
 | `tab-strip` | Window tab strip | |
 | `tab` | One window tab | `aria-selected="true"` on the active tab |
 | `tab-fillet` | Curves joining the active tab to the content | `data-side="left\|right"` |
-| `tab-key-shadow` | Floating Islands: inline SVG under the tab strip holding the strip shade, the active tab's fill and its key shadow | |
-| `tab-edge` | Floating Islands: inline SVG edge highlight around the active tab and along its island's top edge | |
+| `tab-key-shadow` | Floating Islands: inline SVG under the tab strip holding the strip shade (with the active tab's hole and the shade pockets outside the surface's rounded top corners) and the tab's key shadow | |
+| `tab-edge` | Floating Islands: inline SVG outline, the active tab plus the top edge and corners of its surface (#1785) | |
 | `main` | Area below the title bar | |
-| `sidebar` | Sidebar container (outer box) | Floating Islands: `data-tab-seam` while the active tab opens into it (also on `panes`, `pane`, `preview`, `miller-island`) |
+| `sidebar` | Sidebar container (outer box) | |
 | `sidebar-body` | Sidebar painted body | |
 | `sidebar-section-header` | Section headings (Quick Access, Drives, ...) | |
 | `sidebar-item` | One sidebar entry | |
@@ -167,9 +167,13 @@ nudged 6% toward the accent; a theme's `--vibrancy-tint` or a layout's
 `--layout-app-surface` still wins. Under `prefers-reduced-transparency`
 every surface is opaque.
 
-The active tab owns the window: it wears the surface of the island it
-stands on, that island opens its top edge under the tab (a 2px notch,
-`data-tab-seam`), and the rest of the strip is shaded (35% light, 50% dark).
+The active tab owns the whole window below the strip (#1785): the tab is a
+hole in the strip shade through which the window body, its surface, shows.
+That surface runs edge to edge under every island and the status bar, with
+rounded top corners (`--layout-radius`) where the shade wraps round it, and
+the only outline is the tab plus the surface's top edge. The rest of the
+strip is shaded (35% light, 50% dark). Islands keep their own outlines and
+sit `--layout-gap` below the strip.
 Islands carry no `backdrop-filter`: it made each island the containing block
 of fixed overlays, so menus opened offset, and the webview cannot sample the
 native material anyway. Context menus and modal cards are opaque.

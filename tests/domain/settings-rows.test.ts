@@ -27,6 +27,15 @@ describe("settingsSectionRows", () => {
     expect(settingsSectionRows(windows).appearance).not.toContain(SETTINGS_ROWS.vibrancy);
   });
 
+  it("shows Translucency Opacity only on macOS with the Native Blur material", () => {
+    const row = SETTINGS_ROWS.translucencyOpacity;
+    expect(settingsSectionRows({ ...mac, macMaterial: true }).appearance).toContain(row);
+    expect(settingsSectionRows(mac).appearance).not.toContain(row);
+    expect(settingsSectionRows({ ...mac, macMaterial: false }).appearance).not.toContain(row);
+    expect(settingsSectionRows({ ...linux, macMaterial: true }).appearance).not.toContain(row);
+    expect(settingsSectionRows({ ...windows, macMaterial: true }).appearance).not.toContain(row);
+  });
+
   it("shows Windows-only appearance rows only on Windows", () => {
     expect(settingsSectionRows(windows).appearance).toContain(SETTINGS_ROWS.windowsBackdrop);
     expect(settingsSectionRows(mac).appearance).not.toContain(SETTINGS_ROWS.windowsBackdrop);

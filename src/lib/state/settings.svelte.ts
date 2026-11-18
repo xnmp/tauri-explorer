@@ -119,6 +119,7 @@ export interface Settings {
   floatingIslands: boolean;
   layoutTheme: string; // layout theme id: a built-in ("default", "floating-islands", "hairline-ledger", "compact", "soft-cards") or a `<config>/layouts/*.css` file name (#1306)
   windowsBackdrop: WindowsBackdrop; // Windows: translucent system backdrop (Mica/Acrylic), requires restart
+  translucencyOpacity: number; // macOS Native Blur: content islands' total material coverage 20-100 (%), see domain/vibrancy-opacity
   windowsBackdropOpacity: number; // Windows: acrylic tint opacity 0-100 (lower = more see-through)
   yaziNavigation: boolean; // left/right arrows navigate up/into folders in Details view (and List when folderPeek is off)
   folderPeek: boolean; // folder peek (inline expansion, List column flow); off = classic views (#1238)
@@ -200,6 +201,7 @@ const DEFAULT_SETTINGS: Settings = {
   layoutTheme: DEFAULT_LAYOUT_ID,
   windowsBackdrop: "off",
   windowsBackdropOpacity: 65,
+  translucencyOpacity: 55,
   yaziNavigation: true,
   folderPeek: true,
   folderPeekCarets: true,
@@ -598,6 +600,9 @@ function createSettingsStore() {
     },
     setWindowsBackdrop(value: WindowsBackdrop): void {
       update({ windowsBackdrop: value });
+    },
+    get translucencyOpacity() {
+      return settings.translucencyOpacity;
     },
     get windowsBackdropOpacity() {
       return settings.windowsBackdropOpacity;

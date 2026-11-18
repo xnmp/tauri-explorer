@@ -148,6 +148,11 @@ Set these on `:root` in a colour theme; unset, the defaults apply.
 | `--island-coverage` / `-dark` | `0.983` / `0.545` | Total share a content island (panes, preview, Miller) hides, body included. |
 | `--island-structural-coverage` / `-dark` | `0.762` / `0.48` | Total share the sidebar hides, body included. |
 
+The macOS-only "Translucency Opacity" setting (Appearance, Native Blur on,
+default 55%) overrides all six values inline on the root, so it beats a
+theme's own; `domain/vibrancy-opacity.ts` maps the slider and its default
+reproduces the table above. The variables are removed when the material is off.
+
 Alphas compound over the body, so an island's own alpha is derived:
 `island alpha = 1 - (1 - coverage) / (1 - body coverage)`. The light defaults
 reproduce the earlier alphas exactly. The window body is the theme base

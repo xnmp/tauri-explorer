@@ -104,7 +104,7 @@ Feature rules live in `CLAUDE.md` files next to the code they govern; Claude Cod
 ## Releases
 
 - **Versioning:** a minor release (0.x.0) only for relatively large features; a patch release (0.x.y) for everything else. The renumbering from the 1.x line to the 0.x alpha line is tracked in #1783.
-- **Prepare** on a `chore/release-vX.Y.Z` branch, in a PR to `dev` that bumps the version and the changelog and nothing else (CONTRIBUTING.md): `package.json`, `src-tauri/Cargo.toml`, the app's own entry in `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json` and `PKGBUILD`, plus a `CHANGELOG.md` entry.
+- **Prepare** on a `chore/release-vX.Y.Z` branch, in a PR to `dev` that bumps the version and the changelog and nothing else (CONTRIBUTING.md): write the dated `## vX.Y.Z — YYYY-MM-DD` entry in `CHANGELOG.md`, then run `bun run bump-version X.Y.Z` (`scripts/bump-version.mjs`, #1800). `package.json` is the version source: `src-tauri/tauri.conf.json` reads it (`"version": "../package.json"`), and the script copies it into `src-tauri/Cargo.toml`, the app's own entry in `src-tauri/Cargo.lock` and `PKGBUILD`'s fallback `pkgver`. It refuses a non-SemVer version or one without that changelog entry; `tests/bump-version.test.ts` fails when the sources disagree. Never hand-edit a version.
 - **Publish** once dev-push CI is green for that tree: open a `dev` → `main` PR ("Release vX.Y.Z") and merge it when its `release-gate` check passes. The push to `main` runs `release.yml`, which builds, tags and publishes only when `package.json`'s version is not yet tagged, and refuses any tree without green dev-push CI. Gate details: [.github/workflows/CLAUDE.md](.github/workflows/CLAUDE.md).
 
 ## Verification

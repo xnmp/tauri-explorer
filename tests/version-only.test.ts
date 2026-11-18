@@ -1,5 +1,6 @@
-import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { BUMP_FILES, bumpVersion, type VersionSources } from "../scripts/bump-version.mjs";
 import {
   cargoLockVersionOnly,
   cargoTomlVersionOnly,
@@ -87,7 +88,6 @@ describe("per-format version comparison", () => {
 describe("classifyVersionOnly", () => {
   const files: Record<string, [string | null, string | null]> = {
     "package.json": [pkg("1.0.0"), pkg("1.0.1")],
-    "src-tauri/tauri.conf.json": [pkg("1.0.0"), pkg("1.0.1")],
     "src-tauri/Cargo.toml": [toml("1.0.0"), toml("1.0.1")],
     "src-tauri/Cargo.lock": [lock("1.0.0"), lock("1.0.1")],
     PKGBUILD: [pkgbuild("1.0.0"), pkgbuild("1.0.1")],
@@ -99,8 +99,15 @@ describe("classifyVersionOnly", () => {
   it("recognises a release bump across every aligned file plus release notes", () => {
     expect(classifyVersionOnly(Object.keys(files), reader())).toEqual({
       versionOnly: true,
-      reason: "version-only change: package.json, src-tauri/tauri.conf.json, src-tauri/Cargo.toml, src-tauri/Cargo.lock, PKGBUILD",
+      reason: "version-only change: package.json, src-tauri/Cargo.toml, src-tauri/Cargo.lock, PKGBUILD",
     });
+  });
+
+  it("does not treat tauri.conf.json as a version file: it reads package.json's version (#1800)", () => {
+    const conf = (version: string) => `${JSON.stringify({ productName: "tauri-explorer", version }, null, 2)}\n`;
+    const overrides = { "src-tauri/tauri.conf.json": [conf("1.0.0"), conf("1.0.1")] as [string, string] };
+    expect(classifyVersionOnly(["package.json", "src-tauri/tauri.conf.json"], reader(overrides)))
+      .toEqual({ versionOnly: false, reason: "not a version-file-only diff" });
   });
 
   it("recognises a Cargo.lock-only version change", () => {
@@ -127,37 +134,35 @@ describe("classifyVersionOnly", () => {
     expect(classifyVersionOnly(["PKGBUILD"], reader({ PKGBUILD: [pkgbuild("1.0.0"), null] })).versionOnly).toBe(false);
   });
 
-  it("recognises the real v1.13.2 release bump commit", () => {
-    const commit = "f26f1ae87c61b2cdb4a3c0b2065e867fedece047";
-    let changed: string[];
-    try {
-      changed = execFileSync("git", ["diff", "--name-only", `${commit}^`, commit], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
-        .trim().split("\n");
-    } catch {
-      return; // shallow checkout without that history
+  it("recognises scripts/bump-version.mjs's edit of the checked-in files plus a changelog entry", () => {
+    const read = (rel: string) => readFileSync(new URL(`../${rel}`, import.meta.url), "utf8");
+    const sources = Object.fromEntries(Object.entries(BUMP_FILES).map(([key, rel]) => [key, read(rel)])) as VersionSources;
+    const changelog = read("CHANGELOG.md");
+    const bumpedChangelog = `## v99.0.0 — 2099-01-01\n\n- Release notes.\n\n${changelog}`;
+    const bumped = bumpVersion(sources, bumpedChangelog, "99.0.0");
+    const byPath: Record<string, [string, string]> = { "CHANGELOG.md": [changelog, bumpedChangelog] };
+    for (const [key, rel] of Object.entries(BUMP_FILES)) {
+      byPath[rel] = [sources[key as keyof VersionSources], bumped[key as keyof VersionSources]];
     }
-    const read = (side: "base" | "head", path: string) => {
-      try {
-        return execFileSync("git", ["show", `${side === "base" ? `${commit}^` : commit}:${path}`], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-      } catch {
-        return null;
-      }
-    };
-    expect(classifyVersionOnly(changed, read).versionOnly).toBe(true);
+    const verdict = classifyVersionOnly(Object.keys(byPath), (side, path) => byPath[path]?.[side === "base" ? 0 : 1] ?? null);
+    expect(verdict).toEqual({
+      versionOnly: true,
+      reason: "version-only change: package.json, src-tauri/Cargo.toml, src-tauri/Cargo.lock, PKGBUILD",
+    });
   });
 });
 
 describe("tier selections for a version-only diff", () => {
-  const bump = ["CHANGELOG.md", "PKGBUILD", "package.json", "src-tauri/Cargo.lock", "src-tauri/Cargo.toml", "src-tauri/tauri.conf.json"];
+  const bump = ["CHANGELOG.md", "PKGBUILD", "package.json", "src-tauri/Cargo.lock", "src-tauri/Cargo.toml"];
   const tests = [
-    { rel: "tests/version-alignment.test.ts", content: 'readFileSync("src-tauri/tauri.conf.json")', scansDirs: false },
+    { rel: "tests/version-alignment.test.ts", content: 'readFileSync("src-tauri/Cargo.toml")', scansDirs: false },
     { rel: "tests/unrelated.test.ts", content: "expect(1).toBe(1)", scansDirs: false },
   ];
 
   it("runs only the unit tests that read the bumped files", () => {
     expect(selectUnit(bump, tests, { maxFiles: 50, versionOnly: true })).toEqual({
       mode: "selected",
-      reason: "version-only change: tests related to 1 input(s) from 6 changed file(s)",
+      reason: "version-only change: tests related to 1 input(s) from 5 changed file(s)",
       items: ["tests/version-alignment.test.ts"],
     });
   });

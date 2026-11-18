@@ -12,17 +12,19 @@
  * - the shade pockets outside the surface's rounded top corners;
  * - the key shadow and lift (inline SVG paths, `[data-region="tab-key-shadow"]`);
  * - the one outline (`[data-region="tab-edge"]`): the tab plus the surface's
- *   top edge and corners, a single seamless stroke.
+ *   top edge and corners; inside the strip's viewport one stroke with the
+ *   tab, outside it the surface's edge alone (`outlineClips`).
  *
  * Everything is an attribute or path update on long-lived inline elements:
  * never a per-frame `url(data:...)`, which WKWebView drops while it changes.
  * Geometry is pure (`domain/tab-seam.ts`); colours come from CSS.
  */
 import {
-  stripShadePath, stripShownView, surfaceCorners, surfaceEdgePath, surfacePocketsPath, tabContour, tabFootHole,
+  outlineClips, stripShadePath, stripShownView, surfaceCorners, surfaceEdgePath, surfacePocketsPath, tabContour, tabFootHole,
   tabHoleFor, tabKeyShadow, tabPresence, tabShownSpan, type Surface, type TabContour, type TabHole,
 } from "$lib/domain/tab-seam";
-import { paintedWidth, snapY, type DeviceGrid } from "$lib/domain/device-grid";
+import { paintedWidth, snapX, snapY, type DeviceGrid } from "$lib/domain/device-grid";
+import { surfaceRadius } from "./tab-strip-start";
 import { getZoomFactor, isChromiumEngine } from "$lib/domain/zoom";
 
 /** Frames to keep measuring after the last change, to catch layout that settles late. */
@@ -63,6 +65,7 @@ export function attachTabSeam(titlebar: HTMLElement): TabSeam {
     for (const el of [
       svg(shadowLayer, ".strip-shade"), svg(shadowLayer, ".surface-pockets"), svg(shadowLayer, ".tab-key"),
       svg(shadowLayer, ".tab-lift"), svg(edgeLayer, ".tab-edge-clip"), svg(edgeLayer, ".tab-edge-stroke"),
+      svg(edgeLayer, ".surface-edge-clip"), svg(edgeLayer, ".surface-edge-stroke"),
     ]) set(el, "d", "");
     previous = "";
   }
@@ -80,7 +83,7 @@ export function attachTabSeam(titlebar: HTMLElement): TabSeam {
     const surface: Surface = {
       left: 0,
       right: width,
-      radius: parseFloat(getComputedStyle(titlebar).getPropertyValue("--layout-radius")) || 0,
+      radius: surfaceRadius(titlebar),
     };
     const tabEl = titlebar.querySelector<HTMLElement>('.tab-viewport [data-region="tab"][aria-selected="true"]');
     const viewport = tabEl?.closest<HTMLElement>(".tab-viewport") ?? null;
@@ -102,8 +105,9 @@ export function attachTabSeam(titlebar: HTMLElement): TabSeam {
       const left = css(box.left, bar.left);
       const tabWidth = box.width / zoom;
       base = snapY(grid, css(box.bottom, bar.top));
-      viewLeft = css(view.left, bar.left);
-      viewRight = css(view.right, bar.left);
+      // On device pixels, so the outline's two strokes meet without a seam.
+      viewLeft = snapX(grid, css(view.left, bar.left));
+      viewRight = snapX(grid, css(view.right, bar.left));
       const contour = tabContour(
         { left, width: tabWidth, top: css(box.top, bar.top), base },
         parseFloat(getComputedStyle(tabEl).borderTopLeftRadius) || 0,
@@ -125,10 +129,12 @@ export function attachTabSeam(titlebar: HTMLElement): TabSeam {
     const shade = strip ? stripShadePath(width, height, shown?.contour ?? null, { left: viewLeft, right: viewRight }) : "";
     const pockets = surfacePocketsPath(surface, base, corners);
     const edge = surfaceEdgePath(shown?.contour ?? null, stroke, surface, base, corners);
+    const surfaceEdge = surfaceEdgePath(null, stroke, surface, base, corners);
+    const clips = outlineClips({ left: viewLeft, right: viewRight });
     const shadow = shown ? tabKeyShadow(shown.contour) : null;
     const presence = shown?.presence ?? 0;
 
-    const key = `${shade}|${pockets}|${edge}|${stroke}|${viewLeft},${viewRight}|${presence}|${width}x${height}`;
+    const key = `${shade}|${pockets}|${edge}|${surfaceEdge}|${stroke}|${viewLeft},${viewRight}|${presence}|${width}x${height}`;
     if (key === previous) return key;
 
     if (shown) set(titlebar, "data-tab-hole", `${Math.round(shown.hole.left * 100) / 100} ${Math.round(shown.hole.right * 100) / 100}`);
@@ -153,13 +159,16 @@ export function attachTabSeam(titlebar: HTMLElement): TabSeam {
       set(clip, "height", String(Math.max(0, base)));
     }
     set(svg(shadowLayer, ".tab-shadows"), "opacity", String(r3(presence)));
-    // The outline: above the base only inside the strip's viewport (a tab
-    // half under a scroll button is cut there); below it, everywhere, so
-    // the surface's top edge and corners run the whole window width.
-    set(svg(edgeLayer, ".tab-edge-clip"), "d", `M${r3(viewLeft)} 0H${r3(Math.max(viewLeft, viewRight))}V${r3(base)}H${r3(viewLeft)}ZM-4096 ${r3(base)}H8192V8192H-4096Z`);
-    const path = svg(edgeLayer, ".tab-edge-stroke");
-    set(path, "d", edge);
-    set(path, "stroke-width", String(r3(stroke)));
+    // The outline: inside the strip's viewport, the surface's edge with the
+    // tab (a tab half under a scroll button is cut there); outside it, the
+    // surface's edge alone, so its top edge and corners run the whole width.
+    set(svg(edgeLayer, ".tab-edge-clip"), "d", clips.inside);
+    set(svg(edgeLayer, ".surface-edge-clip"), "d", clips.outside);
+    for (const [selector, d] of [[".tab-edge-stroke", edge], [".surface-edge-stroke", surfaceEdge]] as const) {
+      const path = svg(edgeLayer, selector);
+      set(path, "d", d);
+      set(path, "stroke-width", String(r3(stroke)));
+    }
     previous = key;
     return key;
   }

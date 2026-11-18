@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  SURFACE_TAB_GAP, TAB_FILLET, TAB_LIGHT, TAB_STRIP_PADDING, stripShadePath, surfaceCorners, surfaceEdgePath, surfacePocketsPath,
+  SURFACE_TAB_GAP, TAB_FILLET, outlineClips, TAB_LIGHT, TAB_STRIP_PADDING, stripShadePath, surfaceCorners, surfaceEdgePath, surfacePocketsPath,
   tabContour, tabHoleFor, tabKeyShadow, tabShownSpan, tabSilhouettePath, tabStripPadding,
 } from "$lib/domain/tab-seam";
 
@@ -179,22 +179,36 @@ describe("the tab's surface (#1785)", () => {
     expect(surfacePocketsPath(surface, 38, { left: 0, right: 14 }).startsWith("M800 38")).toBe(true);
   });
 
-  it("strokes one open outline: up the left corner, along the top edge, over the tab, down the right corner", () => {
+  it("strokes the surface's whole edge, then the tab from foot to foot, as one path", () => {
     const d = surfaceEdgePath(c, 1, surface, 38, { left: 14, right: 14 });
-    expect(d.match(/M/g)).toHaveLength(1);
-    const { points, arcs, first, last } = walk(d);
-    // From the window's left edge, half a stroke in, round the corner...
-    expect(first).toEqual({ x: 0.5, y: 52 });
-    expect(points[1]).toEqual({ x: 14, y: 38.5 });
-    expect(arcs[0]).toBe(13.5);
-    // ...along the top edge on the stroke's centre line to the tab's left foot...
-    expect(points[2]).toEqual({ x: 86, y: 38.5 });
-    // ...over the tab (half a stroke inside its top)...
-    expect(Math.min(...points.map((p) => p.y))).toBe(8.5);
-    // ...and round the right corner down to the window's right edge.
-    expect(last).toEqual({ x: 799.5, y: 52 });
-    expect(arcs[arcs.length - 1]).toBe(13.5);
-    expect(points).toContainEqual({ x: 786, y: 38.5 });
+    const [edge, tab] = d.split(/(?=M)/);
+    // The surface's edge: up the left corner from the window's left edge,
+    // half a stroke in, along the whole top edge, down the right corner.
+    expect(edge).toBe(surfaceEdgePath(null, 1, surface, 38, { left: 14, right: 14 }));
+    // The tab, from its left foot on the top edge's centre line...
+    const t = walk(tab);
+    expect(t.first).toEqual({ x: 86, y: 38.5 });
+    // ...over its top (half a stroke inside it)...
+    expect(Math.min(...t.points.map((p) => p.y))).toBe(8.5);
+    // ...to its right foot, back on the top edge.
+    expect(t.last).toEqual({ x: 314, y: 38.5 });
+  });
+
+  it("never strokes back across a corner when the tab's hidden foot lies past it (#1785 review)", () => {
+    // A tab scrolled left under the strip's start (macOS traffic lights),
+    // its foot beyond the left corner: the edge still turns at the corner.
+    const hidden = tabContour({ left: 10, width: 140, top: 8, base: 38 }, 14, 14);
+    const [edge] = surfaceEdgePath(hidden, 1, surface, 38, { left: 14, right: 14 }).split(/(?=M)/);
+    for (const p of walk(edge).points.slice(1)) expect(p.x).toBeGreaterThanOrEqual(14);
+  });
+
+  it("clips the two strokes to complementary columns of the viewport", () => {
+    const { inside, outside } = outlineClips({ left: 67, right: 940 });
+    expect(inside).toBe("M67 -8192H940V8192H67Z");
+    expect(outside).toBe("M-8192 -8192H67V8192H-8192ZM940 -8192H8192V8192H940Z");
+    // An inverted or malformed view leaves the inside empty, never inverted.
+    expect(outlineClips({ left: 500, right: 400 }).inside).toBe("M500 -8192H500V8192H500Z");
+    expect(outlineClips({ left: Number.NaN, right: Number.NaN }).inside).toBe("M0 -8192H0V8192H0Z");
   });
 
   it("runs the top edge straight between the corners with no shown tab", () => {

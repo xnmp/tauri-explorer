@@ -98,8 +98,8 @@ names are internal and change without notice; `data-region` names do not.
 | `tab-strip` | Window tab strip | |
 | `tab` | One window tab | `aria-selected="true"` on the active tab |
 | `tab-fillet` | Curves joining the active tab to the content | `data-side="left\|right"` |
-| `tab-key-shadow` | Floating Islands: inline SVG under the tab strip holding the strip shade, the active tab's fill and its key shadow | |
-| `tab-edge` | Floating Islands: inline SVG edge highlight around the active tab and along its island's top edge | |
+| `tab-key-shadow` | Floating Islands: inline SVG under the tab strip holding the strip shade (with the active tab's hole and the shade pockets outside the surface's rounded top corners) and the tab's key shadow | |
+| `tab-edge` | Floating Islands: inline SVG outline, the active tab plus the top edge and corners of its surface (#1785) | |
 | `main` | Area below the title bar | |
 | `sidebar` | Sidebar container (outer box) | |
 | `sidebar-body` | Sidebar painted body | |

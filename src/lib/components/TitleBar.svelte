@@ -61,7 +61,8 @@
   // the first tab keeps its whole curve (#1785). Keyed on a boolean so
   // re-applying the same layout does not detach and re-measure the strip.
   let alignedStart = $state<number | null>(null);
-  const alignStrip = $derived(Boolean(titlebarEl) && layoutStore.islands && tabStripVisible);
+  // The strip itself mounts only with an active tab: measure once it is there.
+  const alignStrip = $derived(Boolean(titlebarEl) && layoutStore.islands && tabStripVisible && Boolean(windowTabsManager.activeTab));
   $effect(() => {
     const bar = titlebarEl;
     if (!alignStrip || !bar) return;
@@ -148,13 +149,19 @@
            edge and rounded top corners, a single seamless stroke. -->
       <svg class="tab-seam-layer tab-edge-layer" data-region="tab-edge" aria-hidden="true">
         <defs>
-          <!-- Above the base, the strip's view; below it, the whole width.
-               One path: WebKit bounds a clip of several shapes by its target's
+          <!-- Complementary columns of the strip's viewport. One path per
+               clip: WebKit bounds a clip of several shapes by its target's
                geometry, which would cut the stroke's lower half. -->
           <clipPath id="tab-edge-view"><path class="tab-edge-clip" /></clipPath>
+          <clipPath id="surface-edge-view"><path class="surface-edge-clip" /></clipPath>
         </defs>
+        <!-- Inside the strip's viewport: the surface's edge with the tab, one
+             stroke. Outside it: the surface's edge alone. -->
         <g clip-path="url(#tab-edge-view)">
           <path class="tab-edge-stroke" fill="none" />
+        </g>
+        <g clip-path="url(#surface-edge-view)">
+          <path class="surface-edge-stroke" fill="none" />
         </g>
       </svg>
     {/if}

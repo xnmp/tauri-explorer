@@ -24,14 +24,23 @@
  * from the top left.
  */
 
+@property --islands-surface-radius {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 14px;
+}
+
 :root[data-layout-base="floating-islands"] {
   --titlebar-opacity: 0;
   --sidebar-opacity: 0;
   --statusbar-opacity: 0;
   --layout-gap: 8px;
   /* The islands sit on the tab's surface, a gap below its top edge. */
-  --layout-inset: 8px 6px 6px 6px;
+  --layout-inset: var(--layout-gap) 6px 6px 6px;
   --layout-radius: 14px;
+  /* The surface's top corners (#1785): the layout radius, resolved to px
+     for the tab marks whatever unit a layout gives it. */
+  --islands-surface-radius: var(--layout-radius);
   --layout-border: 1px solid var(--surface-stroke);
   /* Shadows fall down and to the right, away from the top-left light. */
   --layout-shadow-top: inset 0 0.5px 0 rgba(255, 255, 255, 0.09);
@@ -211,7 +220,7 @@
   fill: var(--islands-tab-lift);
 }
 
-:root[data-layout-base="floating-islands"] [data-region="tab-edge"] .tab-edge-stroke {
+:root[data-layout-base="floating-islands"] [data-region="tab-edge"] :is(.tab-edge-stroke, .surface-edge-stroke) {
   /* The marks set its painted width. */
   stroke: var(--surface-stroke);
 }
@@ -267,7 +276,7 @@
   display: none;
 }
 
-/* The fillets paint nothing here (the tab fill path draws their flare), but
+/* The fillets paint nothing here (the strip shade's hole shapes their flare), but
    stay laid out: the marks read their width as the resolved --fillet. The
    tab bar's scoped fillet backgrounds outrank a layout override, and their
    1px ring column overlaps the tab, so hide the boxes instead. */

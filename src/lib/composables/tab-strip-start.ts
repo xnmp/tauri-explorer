@@ -14,6 +14,15 @@
 import { tabStripPadding } from "$lib/domain/tab-seam";
 import { getZoomFactor } from "$lib/domain/zoom";
 
+/**
+ * The surface's corner radius in CSS pixels: `--islands-surface-radius`, a
+ * registered length the layout sets from `--layout-radius`, so any unit a
+ * layout uses (rem, em, calc) arrives resolved.
+ */
+export function surfaceRadius(titlebar: HTMLElement): number {
+  return parseFloat(getComputedStyle(titlebar).getPropertyValue("--islands-surface-radius")) || 0;
+}
+
 export interface TabStripStart {
   destroy(): void;
 }
@@ -25,7 +34,7 @@ export function attachTabStripStart(titlebar: HTMLElement, onAligned: (start: nu
     const area = titlebar.querySelector<HTMLElement>('[data-region="tab-strip"]');
     const zoom = getZoomFactor() || 1;
     const bar = titlebar.getBoundingClientRect();
-    const radius = parseFloat(getComputedStyle(titlebar).getPropertyValue("--layout-radius")) || 0;
+    const radius = surfaceRadius(titlebar);
     // The strip area's own left edge (its padding is the strip start).
     const aligned = area
       ? Math.round(tabStripPadding({ left: 0, right: bar.width / zoom, radius }, (area.getBoundingClientRect().left - bar.left) / zoom) * 100) / 100

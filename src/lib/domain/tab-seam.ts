@@ -204,12 +204,14 @@ export function surfacePocketsPath(surface: Surface, base: number, corners: Surf
 }
 
 /**
- * The one outline (#1785), `width` wide, as a single open path: up the
- * surface's left corner from the window's left edge, along its top edge, up
- * the active tab's fillet, over the tab and back down, on along the top edge
- * and down the right corner to the window's right edge. Its centre line sits
- * half a stroke inside the surface, so the stroke covers the surface's top
- * pixel row. Without a shown tab (`c` null) the top edge runs straight.
+ * The one outline (#1785), `width` wide: the surface's edge (up its left
+ * corner from the window's left edge, along its whole top edge, down its
+ * right corner to the window's right edge) plus, as a second subpath of the
+ * same path, the active tab from foot to foot. A path's stroke is painted as
+ * one shape, so where the tab's feet run into the top edge nothing is drawn
+ * twice. The centre line sits half a stroke inside the surface, so the
+ * stroke covers the surface's top pixel row. Without a shown tab (`c` null)
+ * it is the surface's edge alone.
  */
 export function surfaceEdgePath(c: TabContour | null, width: number, surface: Surface, base: number, corners: SurfaceCorners): string {
   const half = Math.max(0, num(width, 1)) / 2;
@@ -227,7 +229,26 @@ export function surfaceEdgePath(c: TabContour | null, width: number, surface: Su
     : `L${n(r)} ${n(y)}`;
   if (!c) return `${lead}${tail}`;
   const { start, body } = outline({ ...c, base: b }, -half);
-  return `${lead}L${n(start.x)} ${n(y)}${body}${tail}`;
+  return `${lead}${tail}M${n(start.x)} ${n(start.y)}${body}`;
+}
+
+/**
+ * Clips for the outline's two strokes, complementary columns of the strip's
+ * viewport (`view`, snapped to device pixels so they meet without a seam):
+ * inside it, the outline with the tab (`surfaceEdgePath(c, ...)`); outside
+ * it, the surface's edge alone (`surfaceEdgePath(null, ...)`). A tab half
+ * scrolled under a scroll button is cut at the viewport's edge, its hidden
+ * foot never strokes over the strip or across a rounded corner, and the
+ * surface's top edge runs on beyond it.
+ */
+export function outlineClips(view: { readonly left: number; readonly right: number }): { readonly inside: string; readonly outside: string } {
+  const left = num(view.left);
+  const right = Math.max(left, num(view.right, left));
+  const far = 8192;
+  return {
+    inside: `M${n(left)} ${-far}H${n(right)}V${far}H${n(left)}Z`,
+    outside: `M${-far} ${-far}H${n(left)}V${far}H${-far}ZM${n(right)} ${-far}H${far}V${far}H${n(right)}Z`,
+  };
 }
 
 export interface TabKeyShadow {
@@ -276,10 +297,10 @@ export function tabShownSpan(
 }
 
 /**
- * How strongly the tab's outline and shadows show. An active tab opens from
- * a seed and is drawn whole from its first frame; only a tab narrower than
- * that (a layout without the seed) fades them, over its first 16px past 2px,
- * which would otherwise collapse into a 1px vertical sliver.
+ * How strongly the tab's shadows show. An active tab opens from a seed and
+ * is drawn whole from its first frame; only a tab narrower than that (a
+ * layout without the seed) fades them, over its first 16px past 2px, where
+ * they would otherwise collapse into a dark vertical sliver.
  */
 export function tabPresence(width: number): number {
   return Number.isFinite(width) ? Math.min(1, Math.max(0, (width - 2) / 16)) : 0;

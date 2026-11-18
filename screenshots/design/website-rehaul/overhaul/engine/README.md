@@ -33,6 +33,8 @@ The container needs a size; the app fills it (100% × 100%) and re-lays out in C
   (default `<html>`, so the whole page is dressed; pass the container to keep the host page untouched).
 - `assetBase` – prefix for engine-generated images (plugin results); default `"../peel-mock/assets/"`.
 - `tabs` – array of start paths for the tabs (default: start path plus two picked folders).
+- `handoff` – `true`: opening a file (double-click, Enter, Open in the menu) only selects it and emits
+  `open {how: "open", handoff: true}`; the host plays the system's default app. No preview, film viewer or toast.
 
 ## Setup `{ parts, theme, layout, icons, view, path, keys?, hidden? }`
 - `parts`: ids from `TX.parts`. Panels: `tabs address sidebar miller preview split terminal status`.
@@ -68,14 +70,15 @@ with CSS transitions; `prefers-reduced-motion` cuts them to ~0.
 | `registerCommand({id, title, keys?, run, cat?, global?})` | adds to the palette + keymap; `run(app)` |
 | `run(id)` / `commands()` | run / list commands |
 | `on(ev, fn)` / `off(ev, fn)` | events below |
-| `openKeys(commandId?)` | the Keyboard Shortcuts dialog, optionally scrolled to and recording that command |
+| `openKeys(commandId?)` | the Keyboard Shortcuts dialog, with that command selected (Enter records a new key) |
 | `read(path)` | a file's text, or `null` (folders, binaries, missing) |
+| `stat(path)` | `{path, name, dir, kind, text, src, poster, size, date, px, duration}` for a file (`src` is the picture or the film), `{path, name, dir: true, date}` for a folder, or `null` |
 | `list(path)` | `[{name, path, dir, kind, image, video, repo, hidden}]` for a folder (hidden included), or `null` |
 | `repoRoot(path)` / `binCount()` | the repository containing a path (or `null`) / items in the Recycle Bin |
 | `playFilm(path)` / `closeFilm()` / `filmOpen()` | open the film viewer on a video (false if not one) / close it / the open film's path or `null` |
 | `focus()` / `toast(text)` / `destroy()` | misc |
 
-Events: `navigate {path, pane}`, `open {path, how: "select"|"open", pane}`, `setup` (full setup, coalesced; not fired by
+Events: `navigate {path, pane}`, `open {path, how: "select"|"open", pane, handoff?}`, `setup` (full setup, coalesced; not fired by
 plain navigation), `command {id, via}`, `search {kind, query, count}`, `fs-change {op, path, to}`
 (`rename trash restore copy move add write`), `user {id, name, home}`, `film {path, open}` (the viewer
 opened or closed; a host page can dim itself around it).

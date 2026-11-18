@@ -36,8 +36,9 @@ function cssValue(style: CSSStyleDeclaration, prop: string): string {
 }
 
 /** Strip CSS string quotes: "Foo" -> Foo */
+/** A CSS string token's text: outer quotes removed, backslash escapes decoded. */
 function unquote(s: string): string {
-  return s.replace(/^["']|["']$/g, "");
+  return s.replace(/^["']|["']$/g, "").replace(/\\(.)/g, "$1");
 }
 
 /** Parse int with a fallback (parseInt returns NaN for empty/missing values). */

@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Real app harness</title>
+<style>
+  :root { color-scheme: light dark; --strip: #1c1f24; --ink: #e7e9ec; --muted: #9aa1ab; --line: #333842; }
+  html, body { margin: 0; height: 100%; background: var(--strip); color: var(--ink); font: 12px/1.4 system-ui, sans-serif; }
+  body { display: grid; grid-template-rows: 1fr auto; }
+  #stage { min-height: 0; background: #0b0c0e; }
+  #debug { border-top: 1px solid var(--line); display: grid; grid-template-columns: 1fr minmax(260px, 38%); max-height: 34vh; min-height: 120px; }
+  #controls { padding: 6px 8px; overflow: auto; display: flex; flex-wrap: wrap; gap: 4px; align-content: flex-start; }
+  #controls .label { width: 100%; color: var(--muted); margin-top: 2px; }
+  button { font: inherit; color: var(--ink); background: #2a2e36; border: 1px solid var(--line); border-radius: 4px; padding: 3px 8px; cursor: pointer; }
+  button:hover { background: #343944; }
+  #log { margin: 0; padding: 6px 8px; overflow: auto; border-left: 1px solid var(--line); font: 11px/1.35 ui-monospace, monospace; white-space: pre-wrap; word-break: break-all; }
+  #log .ev { color: #8fc1ff; } #log .res { color: #a6e3a1; } #log .err { color: #f38ba8; }
+  @media (max-width: 700px) { #debug { grid-template-columns: 1fr; } #log { border-left: 0; border-top: 1px solid var(--line); } }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="debug">
+  <div id="controls"></div>
+  <pre id="log" aria-live="polite"></pre>
+</div>
+<script src="bridge/tx-bridge.js"></script>
+<script>
+(function () {
+  var params = new URLSearchParams(location.search);
+  var fsName = params.get("fs") || "station";
+  var logEl = document.getElementById("log");
+  var controls = document.getElementById("controls");
+
+  function log(kind, text) {
+    var line = document.createElement("div");
+    line.className = kind;
+    line.textContent = new Date().toLocaleTimeString() + "  " + text;
+    logEl.appendChild(line);
+    while (logEl.childNodes.length > 300) logEl.removeChild(logEl.firstChild);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  var short = function (v) { var s = JSON.stringify(v); return s && s.length > 400 ? s.slice(0, 400) + "…" : s; };
+
+  function loadFixture(name) {
+    return new Promise(function (resolve) {
+      var script = document.createElement("script");
+      script.src = "content/fs-" + encodeURIComponent(name) + ".js";
+      script.onload = function () { resolve((window.TX_FS || {})[name]); };
+      script.onerror = function () { resolve(undefined); };
+      document.head.appendChild(script);
+    });
+  }
+
+  function button(label, fn) {
+    var b = document.createElement("button");
+    b.textContent = label;
+    b.onclick = function () {
+      Promise.resolve().then(fn).then(function (r) { if (r !== undefined) log("res", label + " → " + short(r)); },
+        function (e) { log("err", label + " ✗ " + e.message); });
+    };
+    controls.appendChild(b);
+  }
+  function section(text) { var d = document.createElement("div"); d.className = "label"; d.textContent = text; controls.appendChild(d); }
+
+  loadFixture(fsName).then(function (fixture) {
+    if (!fixture) log("err", "fixture '" + fsName + "' not found; the app serves its built-in fixtures");
+    return TXBridge.mount(document.getElementById("stage"), { appUrl: "/app/", fixture: fixture });
+  }).then(function (stage) {
+    window.stage = stage;
+    stage.on("*", function (event, data) { log("ev", event + " " + short(data)); });
+    log("res", "ready: " + stage.catalog.themes.length + " themes, " + stage.catalog.commands.length + " commands; boot " + short(stage.boot));
+    var cat = stage.catalog;
+    var cycle = function (list, current) { var i = list.indexOf(current); return list[(i + 1) % list.length]; };
+    var settings = function () { return stage.getState().then(function (s) { return s.settings; }); };
+
+    section("State");
+    button("getState", stage.getState);
+    button("getCatalog", function () { return stage.getCatalog().then(function (c) { return { themes: c.themes.map(function (t) { return t.id; }), layouts: c.layouts.map(function (l) { return l.id; }), panels: c.panels.map(function (p) { return p.id; }) }; }); });
+
+    section("Panels (setPanel / setSplit / setTerminalOpen)");
+    cat.panels.forEach(function (p) {
+      button(p.name, function () { return stage.getState().then(function (s) { return stage.setPanel(p.id, !s.panels[p.id]); }); });
+    });
+    button("Split on", function () { return stage.setSplit(true); });
+    button("Split off", function () { return stage.setSplit(false); });
+    button("Split at home (keep focus)", function () { return stage.getState().then(function (s) { return stage.setSplit(true, { path: s.panes[0].path.split("/").slice(0, 3).join("/") || "/", focus: false }); }); });
+    button("Pane 2 → tiles", function () { return stage.setViewMode("tiles", 1); });
+    button("Terminal on", function () { return stage.setTerminalOpen(true); });
+
+    section("Settings (setSettings)");
+    button("Theme ›", function () { return settings().then(function (s) { return stage.setSettings({ theme: cycle(cat.themes.map(function (t) { return t.id; }), s.theme) }).then(function (r) { return r.theme; }); }); });
+    button("Layout ›", function () { return settings().then(function (s) { return stage.setSettings({ layoutTheme: cycle(cat.layouts.map(function (l) { return l.id; }), s.layoutTheme) }).then(function (r) { return r.layoutTheme; }); }); });
+    button("Icons ›", function () { return settings().then(function (s) { return stage.setSettings({ iconTheme: cycle(cat.iconThemes.map(function (t) { return t.id; }), s.iconTheme) }).then(function (r) { return r.iconTheme; }); }); });
+    button("Hidden files", function () { return settings().then(function (s) { return stage.setSettings({ showHidden: !s.showHidden }).then(function (r) { return r.showHidden; }); }); });
+    button("Sidebar via setting", function () { return settings().then(function (s) { return stage.setSettings({ showSidebar: !s.showSidebar }).then(function (r) { return r.showSidebar; }); }); });
+    button("View mode via setting", function () { return settings().then(function (s) { return stage.setSettings({ viewMode: s.viewMode === "list" ? "details" : "list" }).then(function (r) { return r.viewMode; }); }); });
+    button("Miller via setting", function () { return settings().then(function (s) { return stage.setSettings({ millerLayers: s.millerLayers ? 0 : 3 }).then(function (r) { return r.millerLayers; }); }); });
+    button("Custom theme", function () { return stage.setCustomTheme({ name: "Harbour Dusk", dark: true, v: ["#16202a", "#1f2c38", "#e6edf3", "#93a4b5", "#f2a65a", "#7fb3d5"] }); });
+
+    section("Commands and keys");
+    ["view.details", "view.list", "view.tiles", "general.openQuickOpen", "general.openContentSearch", "general.openCommandPalette", "git.showGraph", "navigation.goBack"].forEach(function (id) {
+      button("run " + id, function () { return stage.run(id); });
+    });
+    button("Bind sidebar → Ctrl+Shift+Y", function () { return stage.setKeybinding("view.toggleSidebar", "Ctrl+Shift+Y").then(stage.getState).then(function (s) { return s.keybindings; }); });
+    button("Unbind sidebar", function () { return stage.setKeybinding("view.toggleSidebar", null); });
+    button("Reset keys", stage.resetKeybindings);
+
+    section("Navigation and files");
+    button("Home", function () { return stage.getState().then(function (s) { return stage.navigate(s.panes[0] ? s.panes[0].path.split("/").slice(0, 3).join("/") : "/"); }); });
+    button("Recycle Bin", function () { return stage.navigate("trash://"); });
+    button("readFile(selected)", function () { return stage.getState().then(function (s) { var p = s.panes.find(function (x) { return x.active; }); return p && p.selection[0] ? stage.readFile(p.selection[0]) : "nothing selected"; }); });
+  }).catch(function (e) { log("err", "mount failed: " + e.message); });
+})();
+</script>
+</body>
+</html>

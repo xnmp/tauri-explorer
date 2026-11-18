@@ -9,6 +9,18 @@ import type { SearchFilter } from "./search";
 import type { CommandHandler } from "./mock-dispatch";
 import { mockWrittenFiles } from "./mock-files";
 
+/**
+ * Whether `path` is, or lies inside, a dot-named entry below `root`. The real
+ * walkers never visit those whatever the Show Hidden setting says: Quick Open
+ * walks with jwalk's `skip_hidden` and drops dot names (`search.rs`), and
+ * content search uses `ignore`'s `hidden(true)` (`content_search.rs`). A
+ * hidden root itself is still searched.
+ */
+function hiddenBelow(root: string, path: string): boolean {
+  const prefix = root.endsWith("/") ? root : `${root}/`;
+  if (!path.startsWith(prefix)) return false;
+  return path.slice(prefix.length).split("/").some((segment) => segment.startsWith("."));
+}
 
 export const searchCommands: Record<string, CommandHandler> = {
 
@@ -31,6 +43,7 @@ export const searchCommands: Record<string, CommandHandler> = {
     for (const [dirPath, entries] of Object.entries(mockFiles)) {
       if (!dirPath.startsWith(root)) continue;
       for (const entry of entries) {
+        if (hiddenBelow(root, entry.path)) continue;
         if (filter?.directoriesOnly && entry.kind !== "directory") continue;
         if (!matchesPickerExtensions(entry, filter?.extensions)) continue;
         if (entry.name.toLowerCase().includes(query)) {
@@ -111,7 +124,7 @@ export const searchCommands: Record<string, CommandHandler> = {
     for (const [dirPath, entries] of Object.entries(mockFiles)) {
       if (dirPath !== root && !dirPath.startsWith(rootPrefix)) continue;
       for (const entry of entries) {
-        if (entry.kind !== "file" || totalMatches >= maxResults) continue;
+        if (entry.kind !== "file" || totalMatches >= maxResults || hiddenBelow(root, entry.path)) continue;
         const content = mockWrittenFiles[entry.path] ?? mockFileContent[entry.path];
         if (content === undefined) continue;
         filesSearched++;

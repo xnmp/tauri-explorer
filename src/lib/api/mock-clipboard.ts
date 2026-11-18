@@ -5,6 +5,7 @@
 import { MOCK_LOCAL_KEYS } from "./mock-control";
 import { file, mockFiles } from "./mock-fixtures";
 import type { CommandHandler } from "./mock-dispatch";
+import { publishMockFsChange } from "./mock-fs-changes";
 
 
 /** In-memory OS clipboard file list, round-tripped by the clipboard_* mocks. */
@@ -89,6 +90,7 @@ export const clipboardCommands: Record<string, CommandHandler> = {
     if (!entries.some((e) => e.path === path)) {
       entries.push(file(filename, path, 4096));
     }
+    publishMockFsChange({ op: "create", path });
     return path;
   },
 };

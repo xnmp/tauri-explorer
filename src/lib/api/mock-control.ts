@@ -97,6 +97,10 @@ export interface MockControl {
     prewarmSize?: number,
     prewarmQuality?: number,
   ) => string | Promise<string>;
+  /** Overrides `get_thumbnail_data` (a data URI for the path at `size`). */
+  thumbnail?: (path: string, size: number, quality: number) => string | Promise<string>;
+  /** Overrides `get_media_durations` per path (seconds, or null when unknown). */
+  mediaDuration?: (path: string) => number | null;
   /** Overrides `get_video_thumbnail_data`. */
   videoThumbnail?: (path: string, size?: number) => string | Promise<string>;
   /** Real browser media URL; tests can delay source admission, not fake playback. */
@@ -146,6 +150,13 @@ export interface MockControl {
   ejectDrive?: (path: string) => void;
   /** Installed suitable applications for browser Open with acceptance. */
   openWithApplications?: Array<{ id: string; name: string }>;
+
+  // ----- Fixture-world observers -----
+  /** Called when the app hands a file to the system handler (`open_file`,
+   *  `open_image_with_siblings`, `open_file_at_line`); the mock still succeeds. */
+  openFile?: (path: string, command: string) => void;
+  // Filesystem changes are observed through `mock-fs-changes.ts`, which every
+  // mutation path (commands, sessions, undo/redo) publishes to.
 
   // ----- Cross-cutting test instrumentation -----
   /** Per-command invocation counter, incremented by every `mockInvoke` call. */

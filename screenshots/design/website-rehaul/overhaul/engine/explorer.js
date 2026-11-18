@@ -546,6 +546,7 @@ TX.mount = function mount(container, opts = {}) {
     P.open = p => {
       if (isDir(p)) return P.go(p);
       const n = nodeAt(p);
+      if (n && opts.handoff) { P.select(p); emit("open", { path: p, how: "open", pane: P.name, handoff: true }); return; }   // the host plays the system's default app
       if (n?.k === "video") { P.select(p); emit("open", { path: p, how: "open", pane: P.name }); return film.open(p); }   // a film plays in the viewer
       const shows = !!n && (n.text != null || !!n.src);   // something the preview can show opens there
       if (shows) ensure("preview");
@@ -2225,6 +2226,12 @@ TX.mount = function mount(container, opts = {}) {
     selection: () => active().picked(),
     // read-only views of the filesystem, as the app currently has it (after any renames, writes or deletes)
     read(path) { const n = nodeAt(norm(untilde(String(path)))); return n && !n.kids ? (n.text ?? null) : null; },
+    stat(path) {
+      const p = norm(untilde(String(path))), n = nodeAt(p);
+      if (!n) return null;
+      if (n.kids) return { path: p, name: n.n, dir: true, date: n.d || "" };
+      return { path: p, name: n.n, dir: false, kind: n.k, text: n.text ?? null, src: n.vid || n.src || null, poster: n.poster || null, size: n.s || "", date: n.d || "", px: n.px || null, duration: n.dur || null };
+    },
     list(path) {
       const d = norm(untilde(String(path)));
       if (!isDir(d)) return null;

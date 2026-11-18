@@ -72,6 +72,25 @@ let mockRecoveryRecords: MockRecoveryRecord[] = [
 let mockRecoveryError: string | null = null;
 let mockRecoveryReceive: ((snapshot: unknown) => void) | null = null;
 
+/**
+ * Start with nothing to recover (an installed fixture world has none of the
+ * built-in records' paths); returns the way back to the built-in records.
+ */
+export function clearMockRecoveryRecords(): () => void {
+  const records = mockRecoveryRecords;
+  const error = mockRecoveryError;
+  mockRecoveryRecords = [];
+  mockRecoveryError = null;
+  mockRecoveryRevision += 1n;
+  mockRecoveryPublish();
+  return () => {
+    mockRecoveryRecords = records;
+    mockRecoveryError = error;
+    mockRecoveryRevision += 1n;
+    mockRecoveryPublish();
+  };
+}
+
 function mockRecoverySnapshot(): unknown {
   const used = mockRecoveryRecords.reduce((total, record) => total + Number(record.retainedBytes ?? 0), 0);
   const unmeasured = mockRecoveryRecords.filter((record) => record.retainedBytes === null).length;

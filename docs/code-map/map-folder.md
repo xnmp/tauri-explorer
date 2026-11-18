@@ -11,6 +11,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `arch_install.sh`, `PKGBUILD` — Arch source installation: early sudo authentication, checkout installation lock, isolated makepkg staging, locked dependency preparation, verified local frontend reuse and unchanged native release compilation; after installing, per-user copies that shadow `/usr` are moved aside so the package is the only install. `--rebuild` forces frontend regeneration; ordinary makepkg builds remain fresh. `--build-only` / `--install-only` split the build (recorded with its source identity in `.arch-build/package-source`) from the sudo install.
 - `scripts/check-file-size.mjs`, `scripts/file-size-allowlist.json` — frontend file-size ratchet run by `bun run lint:arch` (#1372): `src/` `.ts`/`.js`/`.mjs`/`.svelte` files stay at or below 800 lines; pre-existing larger files are allowlisted at their line count, may shrink but never grow, and an entry fails once its file is at or below the limit or gone.
 - `scripts/build-arch-frontend.mjs` — content- and environment-verified local frontend build receipt; hashes source/config/dependencies/tool versions and output, locks builders through completion, and never publishes interrupted/changed-input builds.
+- `screenshots/design/website-rehaul/overhaul/bridge/serve.ts` — `bun run demo:serve`: serves the website-rehaul mocks at `/` and `build-demo/` (`bun run build:demo`) at `/app/` on port 1455.
 - `tests/arch-frontend-build.test.ts`, `tests/arch-install-script.test.ts` — frontend reuse/invalidation/failure/concurrency outcomes and the actual PKGBUILD preparation/native-build contract without package installation.
 - `windows_install.ps1` — Windows PowerShell source installer: validates Git/Rust/Bun and the VC toolchain, uses an existing checkout or temporary HTTPS clone, builds the MSI, invokes elevated `msiexec`, reports reboot-required success, and cleans temporary clones. Governed by `docs/adr/0003-windows-installer-trust-boundary.md`.
 - `tests/windows-install-script.test.ts` — README and Windows-only invocation seam for `windows_install.ps1`; mocks prerequisite, source-build, clone, and MSI outcomes (including reboot-required `3010`) without installing software.
@@ -20,6 +21,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `+page.svelte` — app root. Global keyboard shortcuts, store init, layout composition (TitleBar > toolbar > Sidebar + PaneContainer > StatusBar), overlay dialogs. Open for global shortcut wiring / top-level layout.
 - `+layout.ts` — SvelteKit adapter-static SPA config (prerender/ssr flags). Rarely touched.
 - `src/hooks.client.ts` — SPA client entry; installs global crash/error handlers before the app mounts (catches early init errors).
+  In the site-demo build (`VITE_SITE_DEMO=1`, `bun run build:demo`) its awaited `init` runs `state/site-demo-boot.ts` before any route loads; the constant gate drops all demo code from the release bundle.
 - `src/app.d.ts` — ambient type augmentation: adds `autocorrect` to `svelte/elements` `HTMLTextareaAttributes` (Svelte types it only for `<input>`); guarded by `tests/text-input-autocorrect.test.ts` (#1726).
 
 ## src/lib/components/ — Svelte 5 UI. Views, dialogs, panels, item chrome.
@@ -71,7 +73,6 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `FileIcon.svelte` — shared Material/Classic/Minimal/Catppuccin dispatch; optional pack override supplies stable picker previews across every file view.
 - `MaterialFileIcon.svelte`, `CatppuccinFileIcon.svelte` — pack-specific SVG artwork using the shared file identity/category descriptor and existing tint tokens; Catppuccin uses vendored CSS-variable SVGs and light/dark palettes.
 - `FolderIcon.svelte`, `FolderDecoration.svelte` — shared folder silhouettes and link/repository decoration, including outlined packs and photo-folder previews; repository folders are Git-tinted with a pack-styled branch glyph on the folder body (`repositoryFolderStyle` / `repositoryEmblem`), never in the bottom-right peek-caret corner (#1477, #1490).
-- `icons/icon-theme-options.ts` — lazy dialog labels and descriptions for icon pack choices.
 - `icons/large-file-art.svelte.ts`, `icons/LargeFileArt.svelte` — large (Tiles) built-in file artwork (#1532): the startup seam lazily loads the renderer (Tiles view loaders await it), which draws each glyph twice — a static offset black copy as its shadow — instead of a per-frame CSS `filter: drop-shadow`.
 - `icons/special-folder-icons.svelte.ts`, `icons/SpecialFolderArt.svelte` — special folder icons (#1491): the startup seam lazily loads the renderer, which draws each pack's kind badge (from `domain/special-folders.ts`) in the bottom-left corner of the unchanged FolderIcon/CatppuccinFileIcon folder (#1527); original glyph art lives in `icons/folder-glyphs/` (sprite `icons/folder-glyphs-sprite.svg`), Catppuccin's in `icons/catppuccin/folder-*.svg`.
 - `NamedFolderIcon.svelte` — folder icon for surfaces that know a folder only by name (tab bar, sidebar bookmark/recent rows): a special name (`specialFolderIconEntry`, via the lazy seam) draws through FileIcon in the active pack, otherwise the host's own art (#1499).
@@ -370,6 +371,10 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `layout-controller.svelte.ts` — lazy layout-theme half (#1306): lists `layouts/`, resolves/falls back with one notice, loads the lazy built-in sheets (Hairline Ledger, Compact, Soft Cards), detects rule-less user CSS, generation-guards concurrent applications; used by the settings UI and layout picker.
 - `config-watch.ts` — applies `config-file-changed` to the settings/theme stores; `handleConfigFileChanged` is the routing seam (#599).
 - `terminal.svelte.ts` — embedded terminal panel state (#139).
+- `site-demo-boot.ts` — site-demo build only: separate in-memory local/session storage, `hello`/`init` handshake with a same-origin parent (timeout → built-in fixtures), seeds the `domain/demo-boot.ts` plan, installs the fixture world (failing closed to the built-in fixtures) and demo shell, starts the bridge with the boot report.
+- `site-demo-bridge.svelte.ts` — site-demo host bridge: same-origin postMessage requests (settings, keybindings, commands, navigation, panels, custom theme, readFile) and store-derived events (`ready`, `settings`, `panels`, `navigate`, `select`, `fs-change`, `overlay`, `open-external`). Protocol doc: `screenshots/design/website-rehaul/overhaul/bridge/README.md`.
+- `site-demo-catalog.ts` — site-demo catalog (themes with probed colours, layouts, icon themes, commands with keybindings) and the panel ↔ setting/command map.
+- `site-demo-terminal.ts` — site-demo shell behind the mock PTY: `ShellFs` over the mock filesystem, mutations through mock commands, panes refreshed via `directoryChanged`.
 - `jobs.svelte.ts` — background jobs store (Ctrl+J); `retryJob` runs a failed job's `retry` once, then drops the entry or keeps it with the new error; a retrying entry is active (`isJobActive`: not dismissable or cleared); `dropRetries(owner)` for retired plugins.
 - `toast.svelte.ts` — toast notification store.
 - `rename-suggestion.svelte.ts` — inline-rename autocomplete providers (#215).
@@ -418,7 +423,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `mock-git.ts` — mock Git working-tree family: status, stage/discard, commit, diffs, aborts, watching, cancellable fetch/pull.
 - `mock-git-history.ts` — mock Git history family: log, refs, branches/tags, checkout/merge/rebase/reset, undo, comparisons, PR/CI.
 - `mock-clipboard.ts` — mock OS clipboard family: published file list, cut leases, report attachments.
-- `mock-search.ts` — mock search family: Quick Open, streaming name search, content search.
+- `mock-search.ts` — mock search family: Quick Open, streaming name search, content search; like the native walkers, skips dot-named entries below the root.
 - `mock-ai.ts` — mock AI and plugin-job family: operations, connections, presentation, generation jobs.
 - `mock-system.ts` — mock app/system family: drives, startup/crash diagnostics, updates, warm windows, terminals, config, plugins, themes.
 - `mock-control.ts` — single typed control surface (`MockControl`, `getMockControl()`) e2e specs/tests use to set fixture overrides, failure/latency injection, and call mock-invoke's test hooks, replacing ad hoc `globalThis.__mockXxx` globals; also `MOCK_LOCAL_KEYS`, the named localStorage flag keys mock-invoke reads/writes (#869).
@@ -435,6 +440,12 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `layouts.ts` — `list_user_layouts` / `ensure_layouts_dir` IPC for user layout themes (#1306).
 - `os-clipboard.ts` — native file clipboard publish/snapshot/CAS IPC plus text and image helpers.
 - `terminal.ts` — embedded terminal spawn/write/resize IPC (#139).
+  Terminal output/exit/cwd events go through `listenTerminal`: Tauri events natively, `mock-terminal.ts` in the browser.
+- `mock-terminal.ts` — mock PTY: terminal commands with seq-ordered input admission and an in-memory output/exit/cwd event channel; an installed backend (the site demo's shell) answers, otherwise the terminal stays silent.
+- `mock-git-fixture.ts` — fixture repositories for the mock backend: wraps the command table so git queries under an installed fixture repo answer from its commits/diffs (mutations refused); everything else falls through to the built-in repo.
+- `mock-world.ts` — installs a converted fixture world into the mock backend (listings, text, trash, home, drives, repos; clears File Recovery records) and per-file media hooks that follow renames/moves/copies; `uninstall()` restores everything it replaced.
+- `mock-fs-changes.ts` — the mock filesystem's change feed: every mock mutation (commands, copy/move sessions, undo/redo) publishes `{op, path, from?}` once; observers run isolated and never change an outcome.
+- `mock-world-media.ts` — fetch-once media loader for fixture assets: downscaled JPEG thumbnails, data URLs and bytes; failures are not cached.
 - `activate.ts` — resolve what double-click/Enter activation targets.
 - `ai-organize.ts` — AI "where does this file belong" IPC (#158).
 - `ai-rename.ts` — AI rename suggestion IPC (#145).
@@ -652,6 +663,14 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `raf-coalesce.ts` — coalesce high-freq value streams via rAF.
 - `scroll-jank-monitor.ts` — pure rAF-gap sampler (rAF/cancel injected) reporting long-frame counts for scroll-jank diagnostics; wired into `TilesView.svelte` (#593).
 - `theme-from-palette.ts` — build theme from extracted image palette (#203); text tokens solved in OKLCH for WCAG AA on every composited surface (#791).
+- `icon-theme-options.ts` — icon pack choices with labels and descriptions (`ICON_THEMES`), imported lazily by the settings/picker dialogs and the site-demo catalog.
+- `demo-boot.ts` — site demo: the total boot plan from a host `init` (world, storage seed incl. bookmarks and hidden system folders, launch path, `{fixture, error, warnings}` report); never throws, falls back to the built-in fixtures.
+- `demo-fixture.ts` — site demo: converts a `TX_FS` fixture into the mock world (listings, text, media, trash, users, drives, bookmarks, repos); never throws, bounded, warns on malformed input.
+- `demo-fixture-values.ts` — fixture value parsing: sizes, dates (absolute, year-less, relative), durations, pixel sizes, asset URLs.
+- `demo-fixture-git.ts` — fixture repositories: commit/ref/diff conversion with stable OIDs, paged log queries with branch/file filters, comparisons, merge base.
+- `demo-protocol.ts` — site demo bridge protocol v1: message parsing, custom theme CSS, open-external kinds, `fs-change` derivation.
+- `demo-shell.ts` — site demo in-memory shell session: line parsing, editing, history, Tab completion, typeahead while busy.
+- `demo-shell-commands.ts` — the demo shell's commands (ls, cd, cat, grep, find, tree, mkdir, mv, cp, rm, git log/status, …) over a narrow `ShellFs` port.
 - `ai-rename.ts` — pure AI-rename suggestion logic (#145).
 - `terminal-command.ts` — shell command construction/quoting for terminal.
 - `terminal-cwd-sync.ts` — "terminal follows explorer" cwd decision (#149).

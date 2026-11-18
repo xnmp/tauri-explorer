@@ -6,7 +6,8 @@
  * `terminal-exit-{id}` (exit code or null).
  */
 
-import { invoke } from "./common";
+import { listen } from "@tauri-apps/api/event";
+import { invoke, isTauri } from "./common";
 import type { ShellKind } from "$lib/domain/terminal-shell";
 import type { TerminalInputReceipt } from "$lib/domain/terminal-input-queue";
 
@@ -69,4 +70,21 @@ export interface TerminalStatus {
 /** Query whether the shell is busy and its last-known cwd. */
 export async function terminalStatus(id: number): Promise<TerminalStatus> {
   return invoke<TerminalStatus>("terminal_status", { id });
+}
+
+export type TerminalEventChannel = "output" | "exit" | "cwd";
+
+/**
+ * Subscribe to terminal `id`'s output, exit or OSC 7 cwd reports. Native
+ * windows receive the per-terminal Tauri events; the browser fixture backend
+ * delivers the same payloads through its in-memory channel.
+ */
+export async function listenTerminal<T>(
+  channel: TerminalEventChannel,
+  id: number,
+  handler: (payload: T) => void,
+): Promise<() => void> {
+  if (isTauri()) return listen<T>(`terminal-${channel}-${id}`, (event) => handler(event.payload));
+  const { listenMockTerminal } = await import("./mock-terminal");
+  return listenMockTerminal<T>(channel, id, handler);
 }

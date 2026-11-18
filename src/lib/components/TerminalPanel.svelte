@@ -19,11 +19,10 @@
   import { Terminal } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
   import "@xterm/xterm/css/xterm.css";
-  import { listen } from "@tauri-apps/api/event";
   import { onMount, untrack } from "svelte";
   import { useControlledSize } from "$lib/composables/use-controlled-size.svelte";
   import { NUMERIC_SETTINGS } from "$lib/domain/settings-numbers";
-  import { terminalSpawn, terminalReserveId, terminalWrite, terminalResize, terminalKill, terminalStatus } from "$lib/api/terminal";
+  import { terminalSpawn, terminalReserveId, terminalWrite, terminalResize, terminalKill, terminalStatus, listenTerminal } from "$lib/api/terminal";
   import { buildTerminalTheme } from "$lib/domain/terminal-theme";
   import { buildCdSyncSequence, buildPathsInsertion } from "$lib/domain/terminal-command";
   import { defaultShellProfile, fromShellCwd, type ShellProfile } from "$lib/domain/terminal-shell";
@@ -159,9 +158,9 @@
   const terminalSession = createTerminalSession(
     {
       reserveId: terminalReserveId,
-      listenOutput: async (id, handler) => listen<string>(`terminal-output-${id}`, (event) => handler(event.payload)),
-      listenExit: async (id, handler) => listen<number | null>(`terminal-exit-${id}`, handler),
-      listenCwd: async (id, handler) => listen<string>(`terminal-cwd-${id}`, (event) => handler(event.payload)),
+      listenOutput: (id, handler) => listenTerminal<string>("output", id, handler),
+      listenExit: (id, handler) => listenTerminal<number | null>("exit", id, () => handler()),
+      listenCwd: (id, handler) => listenTerminal<string>("cwd", id, handler),
       spawn: terminalSpawn,
       kill: terminalKill,
       write: terminalWrite,

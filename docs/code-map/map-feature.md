@@ -559,7 +559,7 @@ backend for E2E/browser).
 - `themes/*.css` — theme variable sets (dark, light, ocean-blue, tahoe, …); `themes/index.css` aggregates. Text drawn in a status colour uses `--accent-text` / `--system-caution-text` / `--system-critical-text` (falling back to the fill token), defined only where the fill falls below AA (#785)
 - `e2e/theme-accessibility.spec.ts` — axe WCAG 2.1 AA scan of every built-in theme × premium × view mode, plus the recovery notice's error state; documents each accommodation it makes for axe (#785)
 - Focus rings: one inset `:focus-visible` ring on `--focus-stroke-outer` (`routes/+page.svelte`); components that draw their own also use the focus token, never `--accent` (guarded in `tests/themes/theme-token-contrast.test.ts`). `e2e/keyboard-traversal.spec.ts` walks the default Details-view Tab cycle region by region in every built-in theme, checks exposed adjacent surfaces, and separately verifies each file-list renderer's roving entry and focus indicator (#797)
-- `components/ThemePicker.svelte` — shared color/icon selection UI; `view.switchIconTheme` opens the four-pack menu with live samples. `domain/icon-themes.ts` owns types/resolution; `components/icons/icon-theme-options.ts` supplies the UI catalog. `state/icon-theme.svelte.ts` holds transient previews separately from persisted settings, and `theme.svelte.ts` publishes a revision for every CSS application, including same-ID reloads.
+- `components/ThemePicker.svelte` — shared color/icon selection UI; `view.switchIconTheme` opens the four-pack menu with live samples. `domain/icon-themes.ts` owns types/resolution; `domain/icon-theme-options.ts` supplies the UI catalog. `state/icon-theme.svelte.ts` holds transient previews separately from persisted settings, and `theme.svelte.ts` publishes a revision for every CSS application, including same-ID reloads.
 - `domain/theme-from-palette.ts`, `src-tauri/src/palette.rs`, `plugins/theme-from-image/` — generate theme from image palette
 - `state/window-backdrop.ts`, `state/window-appearance.ts`, `domain/macos-vibrancy.ts` (macOS material for JS-created windows + `data-macos-material` page tint, #1733), `components/AnimatedBackground.svelte`, `background-animations/` (particles, starfield, registry) — window backdrop + animated bg
 - FLOW: themeStore sets CSS vars / `data-theme`; `set_window_theme`/`set_window_backdrop` for native chrome. Theme application is imperative, not reactive, so anything that changes `settings.theme` behind the store's back must call `themeStore.syncFromSettings()` — config autoreload does (#599), as does `settingsStore.init()`. A `themes/*.css` edit re-runs `initTheme()` to re-inject and re-discover.
@@ -602,6 +602,16 @@ backend for E2E/browser).
 - `state/terminal.svelte.ts`; `domain/terminal-*.ts` (command, cwd-sync, keys, shell dialect/WSL path translation, theme)
 - `api/terminal.ts`; `src-tauri/src/terminal.rs` — PTY spawn/write/resize/kill
 - FLOW: terminal_spawn/write/resize (terminal.rs) ↔ TerminalPanel; cwd synced to active pane via terminal-cwd-sync. Input: xterm `onData`/paste/insertion → `session.write` → input queue → `terminal_write(seq)` → `terminal/input.rs` sequencer → PTY writer thread.
+
+## Site demo (marketing-site embed of the real app)
+
+- Build: `VITE_SITE_DEMO=1` → `svelte.config.js` base `/app`, output `build-demo/`; `src/hooks.client.ts` awaits `state/site-demo-boot.ts` before routes load (constant gate, absent from the release bundle).
+- Fixture → mock: `domain/demo-boot.ts` plans the boot (total; fails closed to built-in fixtures) → `domain/demo-fixture.ts` (+ `demo-fixture-values.ts`, `demo-fixture-git.ts`) → `api/mock-world.ts` (+ `mock-world-media.ts`, `mock-git-fixture.ts`). Mutations publish to `api/mock-fs-changes.ts` (media map + bridge `fs-change`).
+- Terminal: `domain/demo-shell.ts` + `demo-shell-commands.ts` behind `api/mock-terminal.ts`, wired by `state/site-demo-terminal.ts`; `api/terminal.ts` `listenTerminal` picks Tauri events or the mock channel.
+- Host bridge: `domain/demo-protocol.ts`, `state/site-demo-bridge.svelte.ts`, `state/site-demo-catalog.ts`; host side `screenshots/design/website-rehaul/overhaul/bridge/tx-bridge.js`, harness `screenshots/design/website-rehaul/overhaul/real.html`, protocol `screenshots/design/website-rehaul/overhaul/bridge/README.md`; serve with `screenshots/design/website-rehaul/overhaul/bridge/serve.ts` (`bun run demo:serve`).
+- FLOW: iframe boots → `hello` → host `init` (fixture) → world + shell installed → app mounts → bridge `ready`; requests drive stores/commands; events derive from stores; `open_file` → `open-external`.
+- Release guard: `scripts/site-demo-leaks.mjs`, run by `check:bundle` (`tests/site-demo-leaks.test.ts`).
+- Tests: `tests/domain/demo-boot.test.ts`, `demo-fixture.test.ts`, `demo-fixture-git.test.ts`, `demo-shell.test.ts`, `demo-protocol.test.ts`, `tests/api/mock-site-demo.test.ts`, `tests/api/mock-world-media.test.ts`.
 
 ## Archives, external apps, wallpaper, system
 

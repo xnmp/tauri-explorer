@@ -15,6 +15,7 @@ import { getMockControl } from "./mock-control";
 import { createMockFileHistory } from "./mock-file-history";
 import { dir, file, mockDirEmpty, mockFileContent, mockFiles, TIMESTAMP_BASE } from "./mock-fixtures";
 import { type CommandHandler, invokeMockCommand, waitForMockLatency } from "./mock-dispatch";
+import { publishMockFsChange } from "./mock-fs-changes";
 
 
 interface MockCopyControl {
@@ -24,6 +25,17 @@ interface MockCopyControl {
 const mockCopyControls = new Map<string, MockCopyControl>();
 
 const mutationReceipt = (entry: FileEntry): FileMutationReceipt => ({ path: entry.path, entry });
+
+/** Carry text content of `from` (a file, or a folder's descendants) to `to`. */
+function relocateMockContent(from: string, to: string, copy: boolean): void {
+  for (const store of [mockFileContent, mockWrittenFiles]) {
+    for (const [path, content] of Object.entries(store)) {
+      if (path !== from && !path.startsWith(`${from}/`)) continue;
+      if (!copy) delete store[path];
+      store[to + path.slice(from.length)] = content;
+    }
+  }
+}
 
 /** Relocate one entry's mock listing state. Backs the `move_entries` session
  *  mock's per-item relocation, and is injected into `createMockFileHistory`
@@ -45,12 +57,42 @@ function relocateMockEntry(source: string, destDir: string): FileMutationReceipt
   const newEntry: FileEntry = { ...entry, path: newPath };
   if (!mockFiles[destDir]) mockFiles[destDir] = [];
   mockFiles[destDir].push(newEntry);
+  for (const [directory, children] of Object.entries(mockFiles)) {
+    if (directory !== source && !directory.startsWith(`${source}/`)) continue;
+    delete mockFiles[directory];
+    mockFiles[newPath + directory.slice(source.length)] = children.map((child) => ({ ...child, path: newPath + child.path.slice(source.length) }));
+  }
+  relocateMockContent(source, newPath, false);
+  publishMockFsChange({ op: "move", path: newPath, from: source });
   return mutationReceipt(newEntry);
 }
 
 interface MockTrashItem { entry: FileEntry; listings: [string, FileEntry[]][]; id: string; deletedAt: string }
 const mockTrash = new Map<string, MockTrashItem[]>();
 let mockTrashSequence = 0;
+
+/** Capture the Trash as it is now; the returned function puts exactly that back. */
+export function snapshotMockTrash(): () => void {
+  const saved = [...mockTrash].map(([path, versions]): [string, MockTrashItem[]] => [path, [...versions]]);
+  return () => {
+    mockTrash.clear();
+    for (const [path, versions] of saved) mockTrash.set(path, [...versions]);
+  };
+}
+
+/** How many items the Recycle Bin holds (each trashed version counts). */
+export const mockTrashCount = (): number => [...mockTrash.values()].reduce((total, versions) => total + versions.length, 0);
+
+/** Replace the Trash with a fixture world's items, each restorable to `entry.path`. */
+export function seedMockTrash(items: readonly { entry: FileEntry; listings: Readonly<Record<string, FileEntry[]>>; deletedAt: string }[]): void {
+  mockTrash.clear();
+  for (const item of items) {
+    const versions = mockTrash.get(item.entry.path) ?? [];
+    const listings = Object.entries(item.listings).map(([directory, entries]): [string, FileEntry[]] => [directory, [...entries]]);
+    versions.push({ entry: item.entry, listings, id: `mock-trash-${++mockTrashSequence}`, deletedAt: item.deletedAt });
+    mockTrash.set(item.entry.path, versions);
+  }
+}
 
 function removeMockEntry(path: string, toTrash: boolean): void {
   const parent = parentDir(path);
@@ -65,6 +107,7 @@ function removeMockEntry(path: string, toTrash: boolean): void {
   }
   mockFiles[parent] = entries.filter((candidate) => candidate.path !== path);
   for (const [directory] of listings) delete mockFiles[directory];
+  publishMockFsChange({ op: toTrash ? "trash" : "delete", path });
 }
 
 function restoreMockEntry(path: string): void {
@@ -79,6 +122,7 @@ function restoreMockEntry(path: string): void {
   for (const [directory, listing] of item.listings) mockFiles[directory] = listing;
   versions!.pop();
   if (!versions!.length) mockTrash.delete(path);
+  publishMockFsChange({ op: "restore", path });
 }
 
 /** In-app Trash view (#863): the mock trash as `list_trash` reports it. */
@@ -117,6 +161,7 @@ function restoreMockTrashItems(ids: string[]): FileBatchOutcome {
     mockFiles[parent] = [...entries, item.entry];
     for (const [directory, listing] of item.listings) mockFiles[directory] = listing;
     result.succeeded.push(path);
+    publishMockFsChange({ op: "restore", path });
   }
   return result;
 }
@@ -158,6 +203,7 @@ function restoreMockTrashItemsTo(ids: string[], destination: string): FileBatchO
       mockFiles[relocate(directory)] = listing.map((entry) => ({ ...entry, path: relocate(entry.path) }));
     }
     result.succeeded.push(target);
+    publishMockFsChange({ op: "restore", path: target });
   }
   return result;
 }
@@ -175,6 +221,7 @@ function deleteMockTrashItems(ids: string[]): FileBatchOutcome {
     if (remaining.length) mockTrash.set(path, remaining);
     else mockTrash.delete(path);
     result.succeeded.push(id);
+    publishMockFsChange({ op: "purge", path });
   }
   return result;
 }
@@ -304,9 +351,15 @@ function copySessionEntry(source: string, destDir: string, overwrite: boolean): 
     }
   }
   const newEntry: FileEntry = { ...sourceEntry, name: finalName, path: `${destDir}/${finalName}` };
+  for (const [directory, children] of Object.entries(mockFiles)) {
+    if (directory !== source && !directory.startsWith(`${source}/`)) continue;
+    mockFiles[newEntry.path + directory.slice(source.length)] = children.map((child) => ({ ...child, path: newEntry.path + child.path.slice(source.length) }));
+  }
+  relocateMockContent(source, newEntry.path, true);
   const existing = dest.findIndex((entry) => entry.name === finalName);
   if (existing >= 0) dest[existing] = newEntry;
   else dest.push(newEntry);
+  publishMockFsChange({ op: "copy", path: newEntry.path, from: source });
   return {
     ...mutationReceipt(newEntry),
     ...(existing >= 0 ? { replacement: { id: crypto.randomUUID().replaceAll("-", "").repeat(2) } } : {}),
@@ -531,6 +584,7 @@ export const fileCommands: Record<string, CommandHandler> = {
     if (!mockFiles[parentPath]) mockFiles[parentPath] = [];
     mockFiles[parentPath].push(entry);
     mockFiles[newPath] = [];
+    publishMockFsChange({ op: "mkdir", path: newPath });
     return mutationReceipt(entry);
   },
 
@@ -548,6 +602,7 @@ export const fileCommands: Record<string, CommandHandler> = {
     const entry = file(name, newPath, 0);
     if (!mockFiles[parentPath]) mockFiles[parentPath] = [];
     mockFiles[parentPath].push(entry);
+    publishMockFsChange({ op: "create", path: newPath });
     return mutationReceipt(entry);
   },
 
@@ -568,10 +623,9 @@ export const fileCommands: Record<string, CommandHandler> = {
           delete mockFiles[directory];
           mockFiles[newPath + directory.slice(path.length)] = children.map(child => ({ ...child, path: newPath + child.path.slice(path.length) }));
         }
-        for (const [contentPath, content] of Object.entries(mockFileContent)) {
-          if (contentPath.startsWith(`${path}/`)) { delete mockFileContent[contentPath]; mockFileContent[newPath + contentPath.slice(path.length)] = content; }
-        }
       }
+      relocateMockContent(path, newPath, false);
+      if (newPath !== path) publishMockFsChange({ op: "rename", path: newPath, from: path });
       return mutationReceipt(newEntry);
     }
     throw new Error("Entry not found");
@@ -589,6 +643,7 @@ export const fileCommands: Record<string, CommandHandler> = {
     const entry = file(basename(path), path, content.length);
     if (existingIndex >= 0) entries[existingIndex] = entry;
     else entries.push(entry);
+    publishMockFsChange({ op: existingIndex >= 0 ? "write" : "create", path });
     return mutationReceipt(entry);
   },
 
@@ -632,6 +687,7 @@ export const fileCommands: Record<string, CommandHandler> = {
     };
     const entries = mockFiles[parentPath] || (mockFiles[parentPath] = []);
     entries.push(entry);
+    publishMockFsChange({ op: "symlink", path: linkPath });
     return mutationReceipt(entry);
   },
 
@@ -676,6 +732,7 @@ export const fileCommands: Record<string, CommandHandler> = {
     if (!entries.some((e) => e.path === zipPath)) {
       entries.push(file(zipName, zipPath, 1024));
     }
+    publishMockFsChange({ op: "compress", path: zipPath });
     return zipPath;
   },
 
@@ -698,6 +755,7 @@ export const fileCommands: Record<string, CommandHandler> = {
         if (!entries.some((x) => x.path === e.path)) entries.push(e);
       }
       mockFiles[`${parentPath}/src`] ||= [];
+      publishMockFsChange({ op: "extract", path: parentPath });
       return parentPath;
     }
     const folderName = basename(archivePath).replace(/\.zip$/i, "");
@@ -707,6 +765,7 @@ export const fileCommands: Record<string, CommandHandler> = {
       entries.push(dir(folderName, destPath, true));
       mockFiles[destPath] = [];
     }
+    publishMockFsChange({ op: "extract", path: destPath });
     return destPath;
   },
 

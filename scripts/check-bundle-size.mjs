@@ -25,6 +25,7 @@ import { gzipSync } from "node:zlib";
 import { collectStartupFiles, normalizeHashedNames } from "./startup-bundle.mjs";
 import { findLightDarkPolyfill } from "./css-polyfill-leaks.mjs";
 import { findHookLeaks } from "./release-hook-leaks.mjs";
+import { findSiteDemoLeaks } from "./site-demo-leaks.mjs";
 
 // Measured 2026-07-12 (chore/perf-regression-guards, post merge of dev):
 // main chunk _app/immutable/chunks/*.js was 691,381 bytes raw / 217,992
@@ -227,6 +228,21 @@ if (process.env.VITE_E2E_HOOKS !== "1") {
     process.exit(1);
   }
   console.log(`Hook check:  no test-support chunk or e2e marker in ${scripts.length} scripts`);
+}
+
+// Nor may it carry the marketing site's embedded demo (`hooks.client.ts`).
+if (process.env.VITE_SITE_DEMO !== "1") {
+  const scripts = readdirSync(clientDir, { recursive: true })
+    .map(String)
+    .filter((file) => file.endsWith(".js"))
+    .map((file) => ({ file, text: readFileSync(resolve(clientDir, file), "utf-8") }));
+  const leaks = findSiteDemoLeaks(manifest, scripts);
+  if (leaks.length > 0) {
+    console.error("FAIL: the release build contains site-demo code (see src/hooks.client.ts):");
+    for (const leak of leaks) console.error(`  ${leak}`);
+    process.exit(1);
+  }
+  console.log(`Demo check:  no site-demo chunk or marker in ${scripts.length} scripts`);
 }
 
 // Lightning CSS must not rewrite light-dark() into variables that user themes

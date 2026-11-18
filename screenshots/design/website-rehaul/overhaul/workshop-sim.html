@@ -1,0 +1,1384 @@
+<!doctype html>
+<html lang="en" data-scheme="light">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tauri Explorer</title>
+<meta name="description" content="Tauri Explorer is a keyboard-driven file explorer you can rearrange. A live copy runs in this page.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,400..800&family=Instrument+Sans:wdth,wght@75..100,400..700&family=Martian+Mono:wdth,wght@75..112.5,400..700&family=Newsreader:ital,opsz,wght@0,6..72,400..600;1,6..72,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="engine/explorer.css">
+<link rel="stylesheet" href="host-apps.css">
+<style>
+/* The workbench. The page keeps its own copy of the active theme's six colours (--h-*), set from the setup by the
+   stage adapter's catalogue, so it never reads tokens from the embedded window. Every surface is mixed from them:
+   the bench re-materialises with whatever theme the window wears. */
+@property --h-paper  { syntax: "<color>"; inherits: true; initial-value: #f4f4f2; }
+@property --h-side   { syntax: "<color>"; inherits: true; initial-value: #e8e8e4; }
+@property --h-ink    { syntax: "<color>"; inherits: true; initial-value: #1d1f22; }
+@property --h-ink-2  { syntax: "<color>"; inherits: true; initial-value: #5d636b; }
+@property --h-acc    { syntax: "<color>"; inherits: true; initial-value: #11806a; }
+@property --h-folder { syntax: "<color>"; inherits: true; initial-value: #e0a72e; }
+:root {
+  transition: --h-paper .45s, --h-side .45s, --h-ink .45s, --h-ink-2 .45s, --h-acc .45s, --h-folder .45s;
+  /* type */
+  --wb-display: "Bricolage Grotesque", "Instrument Sans", system-ui, sans-serif;
+  --wb-font: "Instrument Sans", system-ui, sans-serif;
+  --wb-mono: "Martian Mono", ui-monospace, Menlo, Consolas, monospace;
+  /* rhythm: one 4px scale */
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 20px; --s6: 24px; --s8: 32px;
+  --wb-r: 12px; --wb-gut: 16px; --wb-rail: 436px; --wb-strip: 72px;
+  /* text */
+  --h-text: var(--h-ink);
+  --h-text-2: color-mix(in srgb, var(--h-ink-2) 72%, var(--h-ink));
+  --h-acc-text: color-mix(in srgb, var(--h-acc) 68%, var(--h-ink));
+  --h-on-acc: #fff;
+  /* materials (light) */
+  --m-ground: color-mix(in srgb, var(--h-paper) 93%, var(--h-ink));
+  --m-pool: color-mix(in srgb, var(--h-paper) 70%, #fff);
+  --m-plate: color-mix(in srgb, var(--h-paper) 72%, #fff);
+  --m-plate-2: color-mix(in srgb, var(--h-paper) 88%, #fff);
+  --m-raise: color-mix(in srgb, var(--h-paper) 55%, #fff);
+  --m-well: color-mix(in srgb, var(--h-paper) 91%, var(--h-ink));
+  --m-line: color-mix(in srgb, var(--h-ink) 12%, transparent);
+  --m-line-2: color-mix(in srgb, var(--h-ink) 22%, transparent);
+  --m-grid: color-mix(in srgb, var(--h-ink) 8%, transparent);
+  --m-hi: rgba(255, 255, 255, .85);
+  --m-shade: color-mix(in srgb, var(--h-ink) 16%, transparent);
+  --m-shade-2: color-mix(in srgb, var(--h-ink) 26%, transparent);
+  --m-hover: color-mix(in srgb, var(--h-ink) 5%, transparent);
+  --m-acc-soft: color-mix(in srgb, var(--h-acc) 14%, transparent);
+  --m-glow: color-mix(in srgb, var(--h-acc) 45%, transparent);
+  --m-cap: color-mix(in srgb, var(--h-paper) 45%, #fff);
+  --m-cap-side: color-mix(in srgb, var(--h-ink) 24%, var(--h-paper));
+  --m-thumb: linear-gradient(180deg, #fff, color-mix(in srgb, var(--h-paper) 60%, #fff));
+  --ease: cubic-bezier(.22, .8, .18, 1);
+  --spring: cubic-bezier(.3, 1.45, .55, 1);
+}
+:root[data-scheme="light"] { --m-ground: color-mix(in srgb, color-mix(in srgb, var(--h-paper) 92%, var(--h-ink)) 90%, var(--h-acc)); }
+:root[data-scheme="dark"] {
+  --m-ground: color-mix(in srgb, var(--h-paper) 80%, #000);
+  --m-pool: color-mix(in srgb, var(--h-paper) 92%, #fff);
+  --m-plate: color-mix(in srgb, var(--h-paper) 93%, #fff);
+  --m-plate-2: color-mix(in srgb, var(--h-paper) 96%, #fff);
+  --m-raise: color-mix(in srgb, var(--h-paper) 86%, #fff);
+  --m-well: color-mix(in srgb, var(--h-paper) 78%, #000);
+  --m-line: color-mix(in srgb, var(--h-ink) 11%, transparent);
+  --m-line-2: color-mix(in srgb, var(--h-ink) 19%, transparent);
+  --m-grid: color-mix(in srgb, var(--h-ink) 5%, transparent);
+  --m-hi: rgba(255, 255, 255, .07);
+  --m-shade: rgba(0, 0, 0, .35);
+  --m-shade-2: rgba(0, 0, 0, .55);
+  --m-hover: color-mix(in srgb, var(--h-ink) 7%, transparent);
+  --m-acc-soft: color-mix(in srgb, var(--h-acc) 18%, transparent);
+  --m-cap: color-mix(in srgb, var(--h-paper) 80%, #fff);
+  --m-cap-side: color-mix(in srgb, var(--h-paper) 70%, #000);
+  --m-thumb: linear-gradient(180deg, #d9dbde, #a7abb1);   /* brushed metal: neutral in every theme, so off never reads as lit */
+  --h-acc-text: color-mix(in srgb, var(--h-acc) 78%, #fff);
+}
+:root[data-on-acc="dark"] { --h-on-acc: #111; }
+:root[data-layout="floating-islands"] { --wb-r: 16px; }
+:root[data-layout="soft-cards"] { --wb-r: 14px; }
+:root[data-layout="compact"] { --wb-r: 7px; --wb-gut: 12px; }
+:root[data-layout="hairline-ledger"] { --wb-r: 0px; }
+:root[data-mono] { --wb-font: var(--wb-mono); --wb-display: var(--wb-mono); }
+:root[data-mono] .strip .line { font-size: 11.5px; letter-spacing: -.02em; max-width: 66ch; }
+:root[data-mono] .pitch h1 { font-size: 16px; letter-spacing: -.03em; }
+:root[data-mono] .mark b { font-size: 19px; letter-spacing: -.04em; }
+:root[data-mono] .sw .nm { font-size: 12px; letter-spacing: -.03em; }
+:root[data-mono] .sect-h p, :root[data-mono] .act .run .d { font-size: 11.5px; letter-spacing: -.015em; }
+@media (min-width: 1700px) { :root { --wb-rail: 480px; --wb-gut: 20px; } }
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+@media (min-width: 861px) { html { overflow: hidden; } }
+body {
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .075 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background: var(--grain), radial-gradient(1000px 560px at 8% -12%, color-mix(in srgb, var(--h-acc) 13%, transparent), transparent 70%), radial-gradient(1100px 760px at 36% 46%, var(--m-pool), transparent 72%), var(--m-ground);
+  color: var(--h-text); font: 400 14px/1.45 var(--wb-font); font-variation-settings: "wdth" 100;
+  display: grid; grid-template-rows: var(--wb-strip) minmax(0, 1fr); overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+button, input, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--h-acc); outline-offset: 2px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+svg.g .f { fill: currentColor; } svg.g .o { stroke: currentColor; }
+svg.g .l { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+
+/* keycaps: a top face, a side, and a little travel */
+kbd { display: inline-grid; place-items: center; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 5px; font: 500 10px/1 var(--wb-mono); font-variation-settings: "wdth" 87; letter-spacing: -.01em; color: var(--h-text); white-space: nowrap;
+  background: linear-gradient(180deg, var(--m-cap), color-mix(in srgb, var(--m-cap) 88%, var(--h-ink)));
+  box-shadow: inset 0 0 0 1px var(--m-line-2), inset 0 1px 0 var(--m-hi), 0 2px 0 var(--m-cap-side), 0 2.5px 3px var(--m-shade);
+  transform: translateY(-1px); transition: transform .09s var(--ease), box-shadow .09s var(--ease); }
+kbd + kbd { margin-left: 3px; }
+
+/* buttons */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 34px; padding: 0 14px; border-radius: max(5px, calc(var(--wb-r) * .6)); border: 0; text-decoration: none; font: 600 13.5px/1 var(--wb-font); white-space: nowrap; color: var(--h-text);
+  background: linear-gradient(180deg, var(--m-raise), var(--m-plate-2)); box-shadow: inset 0 0 0 1px var(--m-line-2), inset 0 1px 0 var(--m-hi), 0 1px 2px var(--m-shade);
+  transition: transform .1s var(--ease), box-shadow .12s, background-color .12s; }
+.btn:hover { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--h-ink) 34%, transparent), inset 0 1px 0 var(--m-hi), 0 2px 5px var(--m-shade); }
+.btn:active { transform: translateY(1px); box-shadow: inset 0 0 0 1px var(--m-line-2), inset 0 1px 2px var(--m-shade); }
+.btn svg { width: 15px; height: 15px; flex: none; }
+.btn.primary { color: var(--h-on-acc); background: linear-gradient(180deg, color-mix(in srgb, var(--h-acc) 88%, #fff), var(--h-acc)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--h-acc) 70%, #000), inset 0 1px 0 rgba(255,255,255,.28), 0 1px 2px var(--m-shade), 0 6px 16px -6px var(--m-glow); }
+.btn.primary:hover { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--h-acc) 60%, #000), inset 0 1px 0 rgba(255,255,255,.32), 0 2px 4px var(--m-shade), 0 8px 22px -6px var(--m-glow); }
+.btn.ghost { background: none; box-shadow: none; color: var(--h-text-2); padding: 0 10px; }
+.btn.ghost:hover { background: var(--m-hover); color: var(--h-text); }
+.btn.ghost:active { box-shadow: none; }
+.btn.small { height: 28px; padding: 0 10px; font-size: 12.5px; }
+.btn[data-done] { color: var(--h-acc-text); }
+
+/* an LED: lit means "this is on", or "this is worth a look" */
+.led { display: inline-block; width: 6px; height: 6px; border-radius: 50%; flex: none; background: color-mix(in srgb, var(--h-ink) 18%, transparent); box-shadow: inset 0 1px 1px rgba(0,0,0,.25); transition: background-color .2s, box-shadow .2s; }
+.led.on { background: var(--h-acc); box-shadow: 0 0 0 1px color-mix(in srgb, var(--h-acc) 50%, transparent), 0 0 8px 1px var(--m-glow); }
+
+/* ---------- the strip: mark, one line, and the way to the binary ---------- */
+.strip { position: relative; z-index: 3; display: flex; align-items: center; gap: var(--s5); min-width: 0; padding: 0 var(--wb-gut) 0 calc(var(--wb-gut) + 4px);
+  background: linear-gradient(180deg, var(--m-plate), var(--m-plate-2)); box-shadow: 0 1px 0 var(--m-line-2), 0 1px 0 var(--m-hi) inset, 0 6px 18px -12px var(--m-shade-2); }
+.mark { display: flex; align-items: center; gap: 10px; flex: none; color: var(--h-text); text-decoration: none; }
+.mark svg { width: 28px; height: 28px; flex: none; filter: drop-shadow(0 1px 1.5px var(--m-shade)); }
+.mark b { font: 760 23px/1 var(--wb-display); font-variation-settings: "wdth" 78, "opsz" 48; letter-spacing: -.015em; }
+.strip .line { margin: 0; min-width: 0; max-width: 52ch; padding-left: var(--s5); border-left: 1px solid var(--m-line-2); color: var(--h-text-2); font-size: 13px; line-height: 1.32; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; text-wrap: pretty; }
+.acts { margin-left: auto; display: flex; align-items: center; gap: var(--s2); flex: none; }
+.acts .sep { width: 1px; height: 22px; margin: 0 var(--s1); background: var(--m-line-2); }
+
+/* ---------- the floor: a cutting mat for the window, and the rail ---------- */
+.floor { overflow: clip; display: grid; grid-template-columns: minmax(0, 1fr) var(--wb-rail); gap: 44px; padding: 34px var(--wb-gut) 42px 44px; min-height: 0; }
+.stage { position: relative; min-width: 0; min-height: 0; }
+.stage { isolation: isolate; }
+/* the product stage: light blooms behind the window in the theme's own colours, and a shadow pools on the floor under it */
+.stage::before { content: ""; position: absolute; inset: -150px -130px -160px; z-index: -2; pointer-events: none;
+  -webkit-mask-image: radial-gradient(closest-side, #000 62%, transparent); mask-image: radial-gradient(closest-side, #000 62%, transparent);
+  background: radial-gradient(46% 40% at 26% 18%, color-mix(in srgb, var(--h-acc) 58%, transparent), transparent 72%),
+    radial-gradient(42% 38% at 82% 86%, color-mix(in srgb, var(--h-folder) 46%, transparent), transparent 72%),
+    radial-gradient(62% 56% at 52% 52%, color-mix(in srgb, var(--h-acc) 18%, transparent), transparent 76%); }
+:root[data-scheme="dark"] .stage::before { background: radial-gradient(46% 40% at 26% 18%, color-mix(in srgb, var(--h-acc) 42%, transparent), transparent 72%),
+    radial-gradient(42% 38% at 82% 86%, color-mix(in srgb, var(--h-folder) 30%, transparent), transparent 72%),
+    radial-gradient(62% 56% at 52% 52%, color-mix(in srgb, var(--h-acc) 16%, transparent), transparent 76%); }
+.stage::after { content: ""; position: absolute; left: 5%; right: 5%; bottom: -30px; height: 44px; z-index: -1; pointer-events: none; background: radial-gradient(closest-side, var(--m-shade-2), transparent); }
+/* the accent follows the pointer around the window's edge */
+.glint { position: absolute; left: 0; top: 0; width: 420px; height: 420px; margin: -210px 0 0 -210px; z-index: -1; pointer-events: none; border-radius: 50%;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--h-acc) 55%, transparent), transparent); opacity: 0; transition: opacity .4s var(--ease); }
+.stage.lit .glint { opacity: .85; }
+/* rim light: the theme's accent catches the top edge of the bezel, its folder colour the bottom */
+.bezel::before { content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1.5px; pointer-events: none;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--h-acc) 85%, #fff), color-mix(in srgb, var(--h-acc) 30%, transparent) 30%, transparent 50%, color-mix(in srgb, var(--h-folder) 30%, transparent) 72%, var(--h-folder));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0); opacity: .75; }
+/* one pass of light across the window as it arrives */
+.sheen { position: absolute; inset: 0; z-index: 2; overflow: hidden; border-radius: var(--win-r, 10px); pointer-events: none; }
+.sheen i { position: absolute; top: -20%; bottom: -20%; left: 0; width: 38%; background: linear-gradient(100deg, transparent, rgba(255, 255, 255, .22) 45%, rgba(255, 255, 255, .32) 50%, rgba(255, 255, 255, .22) 55%, transparent); transform: translateX(-120%) skewX(-12deg); opacity: 0; }
+body.enter .sheen i { animation: wb-sheen 1.25s cubic-bezier(.45, .05, .25, 1) .55s; }
+@keyframes wb-sheen { 0% { opacity: 1; transform: translateX(-120%) skewX(-12deg); } 100% { opacity: 1; transform: translateX(340%) skewX(-12deg); } }
+/* the frame is the page's own: it does not depend on how the window inside draws itself */
+#app { position: absolute; inset: 0; border-radius: var(--win-r, 10px); isolation: isolate;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--h-ink) 26%, transparent), 0 1px 2px var(--m-shade-2);
+  transition: box-shadow .5s var(--ease); }
+:root[data-layout="hairline-ledger"] #app, :root[data-layout="hairline-ledger"] .bezel { --win-r: 0px; }
+/* the bezel the window is seated in: a machined plate, a hairline lip, a shadow onto the mat */
+.bezel { position: absolute; inset: -7px; border-radius: calc(var(--win-r, 10px) + 7px); pointer-events: none;
+  background: linear-gradient(180deg, var(--m-raise), var(--m-plate-2));
+  box-shadow: 0 0 0 1px var(--m-line-2), inset 0 1px 0 var(--m-hi), inset 0 -1px 0 var(--m-line), 0 2px 3px var(--m-shade), 0 24px 50px -18px var(--m-shade-2), 0 70px 120px -50px var(--m-shade-2); }
+
+.rail { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-radius: var(--wb-r); overflow: hidden; background: var(--m-plate);
+  box-shadow: 0 0 0 1px var(--m-line-2), inset 0 1px 0 var(--m-hi), 0 1px 2px var(--m-shade), 0 18px 44px -18px var(--m-shade-2); }
+
+/* tabs: a recessed track with a raised thumb that slides to the open page */
+.tabs { position: relative; display: grid; grid-template-columns: 1fr 1fr; flex: none; margin: var(--s3) var(--s3) 0; padding: 3px; border-radius: max(6px, calc(var(--wb-r) * .75)); background: var(--m-well); box-shadow: inset 0 1px 2px var(--m-shade), inset 0 0 0 1px var(--m-line); }
+.tabs .thumb { position: absolute; top: 3px; bottom: 3px; left: 3px; width: calc(50% - 3px); border-radius: max(4px, calc(var(--wb-r) * .55)); background: linear-gradient(180deg, var(--m-raise), var(--m-plate)); box-shadow: 0 0 0 1px var(--m-line-2), inset 0 1px 0 var(--m-hi), 0 1px 2px var(--m-shade), 0 4px 10px -4px var(--m-shade-2); transition: transform .34s var(--spring); }
+.tabs .thumb::after { content: ""; position: absolute; left: 50%; bottom: 5px; width: 20px; height: 2px; margin-left: -10px; border-radius: 2px; background: var(--h-acc); box-shadow: 0 0 6px var(--m-glow); }
+.tabs[data-at="1"] .thumb { transform: translateX(100%); }
+.tabs button { position: relative; z-index: 1; display: flex; align-items: center; justify-content: center; gap: 8px; height: 38px; border: 0; background: none; border-radius: max(4px, calc(var(--wb-r) * .55)); font: 650 14.5px/1 var(--wb-font); color: var(--h-text-2); transition: color .2s; }
+.tabs button:hover { color: var(--h-text); }
+.tabs button[aria-selected="true"] { color: var(--h-text); }
+:root[data-scheme="light"] .tabs { background: color-mix(in srgb, var(--h-paper) 84%, var(--h-ink)); }
+.tabs button:focus-visible { outline-offset: -2px; }
+.tabs .led { opacity: 0; transition: opacity .25s; } .tabs .led.on { opacity: 1; }
+
+.pages { position: relative; z-index: 2; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.panel { flex: 1 1 auto; min-height: 0; overflow: auto; -webkit-mask-image: linear-gradient(#000 calc(100% - 22px), transparent); mask-image: linear-gradient(#000 calc(100% - 22px), transparent); overscroll-behavior: contain; padding: 0 var(--s4) var(--s6); scrollbar-width: thin; scrollbar-color: var(--m-line-2) transparent; }
+.panel[hidden] { display: none; }
+
+/* sections: a confident title, a quiet line under it, and air between */
+.sect { position: relative; }
+.sect + .sect { margin-top: var(--s4); padding-top: var(--s1); border-top: 1px solid var(--m-line); }
+.sect-h { position: sticky; top: 0; z-index: 3; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; column-gap: var(--s3); padding: var(--s4) 0 var(--s3); background: var(--m-plate); }
+.sect-h h3 { display: flex; align-items: center; gap: 9px; margin: 0; font: 720 20px/1.05 var(--wb-display); font-variation-settings: "wdth" 80, "opsz" 36; letter-spacing: -.012em; color: var(--h-text); }
+.sect-h p { grid-column: 1; margin: 5px 0 0; font-size: 12.5px; line-height: 1.35; color: var(--h-text-2); }
+.sect-h .btn { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
+.sect-h .led { opacity: 0; } .sect-h .led.on { opacity: 1; }
+
+/* ---------- panels: eight switches ---------- */
+.switches { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s2); margin: 0; padding: 0; list-style: none; }
+.sw { all: unset; box-sizing: border-box; position: relative; display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%; height: 50px; padding: 0 9px 0 11px; cursor: pointer;
+  border-radius: max(5px, calc(var(--wb-r) * .7)); background: linear-gradient(180deg, var(--m-raise), var(--m-plate-2));
+  box-shadow: inset 0 0 0 1px var(--m-line-2), inset 0 1px 0 var(--m-hi), 0 1px 2px var(--m-shade); transition: box-shadow .2s, transform .1s var(--ease), background-color .2s; }
+.sw:hover { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--h-ink) 32%, transparent), inset 0 1px 0 var(--m-hi), 0 2px 6px var(--m-shade); }
+.sw:active { transform: translateY(1px); box-shadow: inset 0 0 0 1px var(--m-line-2), inset 0 1px 2px var(--m-shade); }
+.sw:focus-visible { outline: 2px solid var(--h-acc); outline-offset: 2px; }
+.sw svg.g { width: 24px; height: 18px; color: var(--h-text-2); transition: color .25s; overflow: visible; }
+.sw svg.g .frame { fill: none; stroke: currentColor; stroke-width: 1.2; opacity: .5; }
+.sw .nm { font: 600 13.5px/1.15 var(--wb-font); color: var(--h-text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: color .25s; }
+.sw[aria-checked="true"] svg.g { color: var(--h-acc-text); }
+.sw[aria-checked="true"] .nm { color: var(--h-text); }
+/* the switch itself: a recessed track, a thumb with real travel, lit when on */
+.tog { position: relative; width: 38px; height: 22px; border-radius: 11px; background: var(--m-well); box-shadow: inset 0 1px 3px var(--m-shade-2), inset 0 0 0 1px var(--m-line-2); transition: background-color .22s var(--ease), box-shadow .22s; }
+.tog::before { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--m-thumb);
+  box-shadow: 0 0 0 .5px rgba(0,0,0,.18), 0 1px 2px rgba(0,0,0,.3), inset 0 1px 0 rgba(255,255,255,.6); transition: transform .38s var(--spring); }
+.sw[aria-checked="true"] .tog { background: var(--h-acc); box-shadow: inset 0 1px 2px rgba(0,0,0,.28), inset 0 0 0 1px color-mix(in srgb, var(--h-acc) 70%, #000), 0 0 12px -2px var(--m-glow); }
+.sw[aria-checked="true"] .tog::before { transform: translateX(16px); background: linear-gradient(180deg, #fff, #ececec); }
+.sw.hint { box-shadow: inset 0 0 0 1.5px var(--h-acc), inset 0 1px 0 var(--m-hi), 0 0 0 4px var(--m-acc-soft), 0 2px 6px var(--m-shade); }
+.sw.hint::after { content: ""; position: absolute; top: 7px; right: 7px; width: 5px; height: 5px; border-radius: 50%; background: var(--h-acc); box-shadow: 0 0 6px var(--m-glow); }
+.sw.arrive { animation: wb-arrive .9s var(--ease); }
+@keyframes wb-arrive { 0% { background-color: var(--m-acc-soft); box-shadow: inset 0 0 0 1.5px var(--h-acc), 0 0 0 5px var(--m-acc-soft); } }
+
+/* ---------- actions ---------- */
+.acts-list { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.act { position: relative; border-radius: max(4px, calc(var(--wb-r) * .55)); transition: background-color .15s; }
+.act:hover { background: var(--m-hover); }
+.act .run { all: unset; box-sizing: border-box; display: block; width: 100%; min-width: 0; padding: 9px 12px 10px 44px; border-radius: inherit; cursor: pointer; }
+.act .run:focus-visible { outline: 2px solid var(--h-acc); outline-offset: -2px; }
+.act .go { position: absolute; left: 10px; top: 10px; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; color: var(--h-text-2); box-shadow: inset 0 0 0 1px var(--m-line-2); transition: background-color .15s, color .15s, box-shadow .15s, transform .15s var(--spring); pointer-events: none; }
+.act .go svg { width: 10px; height: 10px; margin-left: 1px; }
+.act:hover .go, .act .run:focus-visible + .keys + .go, .act:focus-within .go { background: var(--h-acc); color: var(--h-on-acc); box-shadow: 0 0 0 1px color-mix(in srgb, var(--h-acc) 70%, #000), 0 2px 8px -2px var(--m-glow); transform: scale(1.06); }
+.act .run b { display: block; padding-right: var(--kw, 150px); font: 650 14px/1.25 var(--wb-font); }
+.act .run b em { font: 600 11.5px/1 var(--wb-font); font-style: normal; color: var(--h-acc-text); margin-left: 8px; padding: 2px 6px; border-radius: 4px; background: var(--m-acc-soft); }
+.act .run b em:empty { display: none; }
+.act .run .d { display: block; margin-top: 2px; font-size: 12.5px; line-height: 1.35; color: var(--h-text-2); }
+.act .keys { position: absolute; top: 8px; right: 10px; display: flex; align-items: center; gap: 6px; pointer-events: none; }
+.act .keys .chg { position: absolute; right: calc(100% + 6px); top: -1px; }
+.act .keys > * { pointer-events: auto; }
+.act.wide .run { padding-bottom: 40px; }
+.act.wide .keys { top: auto; bottom: 9px; left: 44px; right: 8px; flex-wrap: wrap; }
+.act.wide .keys .chg { position: static; margin-left: auto; order: 2; }
+.act .keys .none { font-size: 11.5px; color: var(--h-text-2); }
+.act:hover kbd { transform: translateY(0); box-shadow: inset 0 0 0 1px var(--m-line-2), inset 0 1px 0 var(--m-hi), 0 1px 0 var(--m-cap-side), 0 1px 2px var(--m-shade); }
+.act .run:active ~ .keys kbd { transform: translateY(1px); box-shadow: inset 0 0 0 1px var(--m-line-2), 0 0 0 var(--m-cap-side); }
+.act .chg { all: unset; box-sizing: border-box; height: 24px; padding: 0 8px; border-radius: 5px; font: 600 12px/24px var(--wb-font); color: var(--h-text-2); cursor: pointer; opacity: 0; transition: opacity .12s, color .12s, background-color .12s; }
+.act:hover .chg, .act .chg:focus-visible, .act:focus-within .chg { opacity: 1; }
+.act .chg:hover { color: var(--h-text); background: var(--m-hover); box-shadow: inset 0 0 0 1px var(--m-line-2); }
+.act .chg:focus-visible { outline: 2px solid var(--h-acc); }
+.act.hint { background: var(--m-acc-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--h-acc) 45%, transparent); }
+.act.hint .go { color: var(--h-acc-text); box-shadow: inset 0 0 0 1.5px var(--h-acc); }
+.act.flash { animation: wb-flash .7s var(--ease); }
+@keyframes wb-flash { 0% { background: color-mix(in srgb, var(--h-acc) 26%, transparent); } }
+
+/* ---------- look ---------- */
+.look-h { display: flex; align-items: baseline; justify-content: space-between; margin: var(--s4) 0 var(--s2); font: 650 13px/1 var(--wb-font); color: var(--h-text); }
+.look-h:first-of-type { margin-top: 2px; }
+.look-h small { font: 500 12px/1 var(--wb-font); color: var(--h-text-2); }
+.chips { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--s3) var(--s2); }
+.chip { all: unset; box-sizing: border-box; position: relative; cursor: pointer; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.chip i { position: relative; display: block; height: 46px; border-radius: max(4px, calc(var(--wb-r) * .5)); background: var(--c0); overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.12), 0 1px 2px var(--m-shade); transition: box-shadow .15s, transform .15s var(--ease); }
+.chip i::before { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 30%; background: linear-gradient(90deg, var(--c1) 0 34%, var(--c4) 34% 74%, var(--c5) 74%); }
+.chip i::after { content: "Aa"; position: absolute; left: 7px; top: 5px; font: 680 15px/1 var(--wb-display); font-variation-settings: "wdth" 80; color: var(--c2); }
+.chip small { font-size: 11.5px; line-height: 1.15; color: var(--h-text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chip:hover i { transform: translateY(-1px); box-shadow: inset 0 0 0 1px rgba(0,0,0,.14), 0 4px 10px -3px var(--m-shade-2); }
+.chip[aria-pressed="true"] i { box-shadow: 0 0 0 2px var(--m-plate), 0 0 0 4px var(--h-acc), 0 4px 12px -3px var(--m-glow); }
+.chip[aria-pressed="true"] small { color: var(--h-text); font-weight: 650; }
+.chip:focus-visible { outline: none; } .chip:focus-visible i { outline: 2px solid var(--h-acc); outline-offset: 5px; }
+.chip.found i { box-shadow: inset 0 0 0 1px rgba(0,0,0,.12), 0 0 0 1.5px var(--m-plate), 0 0 0 3px color-mix(in srgb, var(--h-folder) 70%, var(--h-ink)); }
+.chip.found[aria-pressed="true"] i { box-shadow: 0 0 0 2px var(--m-plate), 0 0 0 4px var(--h-acc); }
+.chip.found small::before { content: ""; display: inline-block; width: 5px; height: 5px; margin-right: 4px; border-radius: 50%; background: color-mix(in srgb, var(--h-folder) 70%, var(--h-ink)); vertical-align: 1px; }
+
+/* segmented controls with pictograms */
+.seg { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 2px; padding: 3px; border-radius: max(6px, calc(var(--wb-r) * .7)); background: var(--m-well); box-shadow: inset 0 1px 2px var(--m-shade), inset 0 0 0 1px var(--m-line); }
+.seg button { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 5px; min-width: 0; padding: 8px 2px 7px; border: 0; border-radius: max(4px, calc(var(--wb-r) * .5)); background: none; color: var(--h-text-2); font: 600 11px/1.15 var(--wb-font); text-align: center; transition: color .15s, background-color .15s, box-shadow .15s; }
+.seg button svg { width: 28px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
+.seg button span { display: block; max-width: 100%; overflow-wrap: anywhere; }
+.seg button:hover { color: var(--h-text); background: var(--m-hover); }
+.seg button[aria-pressed="true"] { color: var(--h-text); background: linear-gradient(180deg, var(--m-raise), var(--m-plate)); box-shadow: 0 0 0 1px var(--m-line-2), inset 0 1px 0 var(--m-hi), 0 1px 3px var(--m-shade); }
+.seg button[aria-pressed="true"] svg { color: var(--h-acc-text); }
+.seg button:focus-visible { outline-offset: -2px; }
+
+/* ---------- shelf ---------- */
+.now { display: grid; grid-template-columns: 132px minmax(0, 1fr); align-items: start; gap: var(--s3) var(--s4); padding: var(--s4) 0 var(--s5); border-bottom: 1px solid var(--m-line); }
+.now .now-mini { align-self: start; }
+.now .now-mini .mini { box-shadow: 0 0 0 1px var(--m-line-2), 0 8px 20px -10px var(--m-shade-2); }
+.now .tx { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.now h2 { margin: 0; font: 760 26px/1.02 var(--wb-display); font-variation-settings: "wdth" 78, "opsz" 48; letter-spacing: -.015em; overflow-wrap: anywhere; }
+.now p { margin: 0; color: var(--h-text-2); font-size: 13px; line-height: 1.4; min-height: 2.8em; overflow-wrap: anywhere; }
+.now p b { color: var(--h-text); font-weight: 650; }
+.now .btn { align-self: flex-start; margin-top: 2px; }
+.shuffle svg { transition: transform .5s var(--ease); } .shuffle:active svg { transform: rotate(180deg); }
+.shelf { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s3); margin: 0; padding: 0; list-style: none; }
+.card { all: unset; box-sizing: border-box; position: relative; display: flex; flex-direction: column; gap: 8px; width: 100%; cursor: pointer; padding: 6px 6px 10px; border-radius: max(5px, calc(var(--wb-r) * .75));
+  background: linear-gradient(180deg, var(--m-raise), var(--m-plate-2)); box-shadow: inset 0 0 0 1px var(--m-line-2), inset 0 1px 0 var(--m-hi), 0 1px 2px var(--m-shade);
+  transition: transform .2s var(--ease), box-shadow .2s var(--ease); }
+.card:hover { transform: translateY(-2px); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--h-ink) 30%, transparent), inset 0 1px 0 var(--m-hi), 0 3px 6px var(--m-shade), 0 14px 26px -12px var(--m-shade-2); }
+.card:active { transform: translateY(0); transition-duration: .06s; }
+.card:focus-visible { outline: 2px solid var(--h-acc); outline-offset: 2px; }
+.card .mini { border-radius: max(3px, calc(var(--wb-r) * .45)); }
+.card .row { display: flex; align-items: center; gap: 8px; padding: 0 4px; min-width: 0; }
+.card .nm { flex: 1; min-width: 0; font: 680 14px/1.15 var(--wb-font); letter-spacing: -.005em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .by { margin-top: -4px; padding: 0 4px; font-size: 12px; color: var(--h-text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .led { margin-right: 2px; }
+.card[aria-pressed="true"] { box-shadow: inset 0 0 0 1.5px var(--h-acc), inset 0 1px 0 var(--m-hi), 0 0 0 4px var(--m-acc-soft), 0 2px 6px var(--m-shade); }
+.card[aria-pressed="true"] .nm { color: var(--h-acc-text); }
+.card.found { background: var(--m-well); box-shadow: inset 0 0 0 1px var(--m-line-2), inset 0 1px 3px var(--m-shade); }
+.card.found::before { content: ""; position: absolute; top: 0; right: 14px; width: 12px; height: 16px; background: color-mix(in srgb, var(--h-folder) 72%, var(--h-ink)); clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 72%, 0 100%); z-index: 1; }
+.card.found[aria-pressed="true"] { box-shadow: inset 0 0 0 1.5px var(--h-acc), 0 0 0 4px var(--m-acc-soft); }
+.card.pop .mini { animation: wb-pop .5s var(--ease); }
+@keyframes wb-pop { 30% { transform: scale(1.03); } }
+.found-sect[hidden] { display: none; }
+.found-sect .chips { margin-top: var(--s4); }
+.forget { margin-top: var(--s4); }
+
+/* a card's thumbnail: a schematic of the window it describes, in that setup's own colours */
+/* a card's thumbnail: a schematic of the window it describes, in that setup's own colours */
+.mini { --w: color-mix(in srgb, var(--p), #fff 72%); --ln: color-mix(in srgb, var(--i) 11%, var(--w)); --tx: color-mix(in srgb, var(--m) 55%, var(--w));
+  position: relative; aspect-ratio: 16 / 10.5; background: var(--p); border-radius: 6px; padding: 7%; overflow: hidden; box-shadow: 0 0 0 1px var(--m-line-2); }
+.mini.dk { --w: color-mix(in srgb, var(--p), #fff 4%); --ln: color-mix(in srgb, var(--i) 14%, var(--w)); --tx: color-mix(in srgb, var(--m) 45%, var(--w)); }
+.mw { height: 100%; display: flex; flex-direction: column; background: var(--w); border-radius: 4px; overflow: hidden; box-shadow: 0 0 0 .5px var(--ln), 0 3px 8px -3px rgba(0,0,0,.35); }
+.mw > *, .mb > * { flex: none; }
+.mm-tabs { height: 11%; display: flex; gap: 3%; padding: 2.4% 4% 0; background: var(--s); }
+.mm-tabs i { width: 20%; background: var(--ln); border-radius: 2px 2px 0 0; } .mm-tabs i:first-child { background: var(--w); }
+.mm-addr { height: 10%; padding: 2.4% 4%; border-bottom: .5px solid var(--ln); } .mm-addr i { display: block; height: 100%; width: 62%; border-radius: 2px; background: var(--ln); }
+.mb { flex: 1 1 auto; display: flex; min-height: 0; }
+.mm-side { width: 21%; background: var(--s); padding: 5% 3%; display: flex; flex-direction: column; gap: 9%; }
+.mm-side i { height: 5%; border-radius: 2px; background: var(--tx); } .mm-side i:nth-child(-n+2) { background: var(--f); width: 60%; }
+.mm-mill { width: 11%; border-right: .5px solid var(--ln); padding: 4% 1.5%; display: flex; flex-direction: column; gap: 8%; }
+.mm-mill i { height: 5%; border-radius: 2px; background: var(--tx); } .mm-mill i:nth-child(2) { background: var(--a); }
+.mm-panes { flex: 1 1 auto; display: flex; min-width: 0; }
+.mm-pane { flex: 1 1 0; min-width: 0; padding: 4%; display: flex; flex-direction: column; gap: 7%; overflow: hidden; }
+.mm-pane + .mm-pane { border-left: .5px solid var(--ln); }
+.mm-pane i { display: flex; align-items: center; gap: 6%; height: 7%; flex: none; }
+.mm-pane i b { height: 100%; aspect-ratio: 1; border-radius: 1.5px; background: var(--f); }
+.mm-pane i s { height: 70%; flex: 1; border-radius: 2px; background: var(--tx); max-width: 70%; }
+.mm-pane i u { height: 60%; width: 14%; border-radius: 2px; background: var(--ln); margin-left: auto; }
+.mm-pane i:nth-child(n+4) b { background: var(--m); opacity: .55; }
+.mm-pane.v-list { display: grid; grid-template-columns: 1fr 1fr; grid-auto-rows: 9%; gap: 6% 8%; align-content: start; }
+.mm-pane.v-list i { height: 100%; } .mm-pane.v-list i s { max-width: none; }
+.mm-pane.v-tiles { display: grid; grid-template-columns: repeat(3, 1fr); grid-auto-rows: 38%; gap: 7%; align-content: start; }
+.mm-pane.v-tiles i { height: 100%; border-radius: 2px; background: linear-gradient(160deg, var(--f), color-mix(in srgb, var(--a) 70%, var(--p))); }
+.mm-pane.v-tiles i:nth-child(3n+2) { background: linear-gradient(200deg, color-mix(in srgb, var(--a) 80%, #fff), var(--m)); }
+.mm-pane.v-tiles i:nth-child(n+4) { opacity: .75; }
+.split .mm-pane.v-tiles { grid-template-columns: repeat(2, 1fr); grid-auto-rows: 30%; }
+.mm-prev { width: 27%; border-left: .5px solid var(--ln); padding: 5%; display: flex; flex-direction: column; gap: 6%; }
+.mm-prev b { display: block; aspect-ratio: 4 / 3; border-radius: 2px; background: linear-gradient(170deg, color-mix(in srgb, var(--a) 70%, #fff), var(--a) 60%, color-mix(in srgb, var(--f) 70%, var(--p))); }
+.mm-prev i { height: 5%; border-radius: 2px; background: var(--tx); } .mm-prev i:last-child { width: 60%; }
+.mm-term { height: 25%; background: color-mix(in srgb, var(--p) 50%, var(--s)); border-top: .5px solid var(--ln); padding: 2.5% 4%; display: flex; flex-direction: column; gap: 9%; }
+.mm-term i { height: 10%; width: 40%; border-radius: 1px; background: var(--a); opacity: .8; } .mm-term i + i { width: 62%; background: var(--tx); }
+.mm-stat { height: 6.5%; border-top: .5px solid var(--ln); background: var(--s); display: flex; align-items: center; padding: 0 4%; } .mm-stat i { height: 40%; width: 24%; border-radius: 2px; background: var(--tx); }
+.mini[data-layout="floating-islands"] .mw, .mini[data-layout="soft-cards"] .mw { background: transparent; box-shadow: none; gap: 4%; border-radius: 0; overflow: visible; }
+.mini[data-layout="floating-islands"] .mb, .mini[data-layout="soft-cards"] .mb { gap: 3%; }
+.mini[data-layout="floating-islands"] :is(.mm-tabs, .mm-addr, .mm-side, .mm-mill, .mm-pane, .mm-prev, .mm-term, .mm-stat),
+.mini[data-layout="soft-cards"] :is(.mm-tabs, .mm-addr, .mm-side, .mm-mill, .mm-pane, .mm-prev, .mm-term, .mm-stat) { background: var(--w); border: 0; border-radius: 3.5px; }
+.mini[data-layout="floating-islands"] :is(.mm-tabs, .mm-addr, .mm-side, .mm-mill, .mm-pane, .mm-prev, .mm-term, .mm-stat) { box-shadow: 0 2px 5px -1px rgba(0,0,0,.3); }
+.mini[data-layout="soft-cards"] :is(.mm-side, .mm-tabs, .mm-stat) { background: var(--s); }
+.mini[data-layout="floating-islands"] .mm-term, .mini[data-layout="soft-cards"] .mm-term { background: color-mix(in srgb, var(--p) 50%, var(--s)); }
+.mini[data-layout="compact"] :is(.mm-tabs, .mm-addr) { height: 8%; } .mini[data-layout="compact"] .mm-pane { gap: 4%; } .mini[data-layout="compact"] .mm-pane i { height: 5.5%; }
+.mini[data-layout="hairline-ledger"], .mini[data-layout="hairline-ledger"] * { border-radius: 0 !important; }
+.mini[data-layout="hairline-ledger"] .mw { box-shadow: 0 0 0 .75px color-mix(in srgb, var(--i) 30%, transparent); }
+.mini[data-layout="hairline-ledger"] .mm-pane i { border-bottom: .5px solid var(--ln); height: 8%; }
+.mini.mono .mm-pane i s { background: repeating-linear-gradient(90deg, var(--tx) 0 3px, transparent 3px 4px); }
+
+/* ---------- the hint marker, when something lit is out of view ---------- */
+.more { position: absolute; right: 52px; bottom: -14px; z-index: 4; display: flex; align-items: center; gap: 7px; height: 28px; padding: 0 11px 0 10px; border: 0; border-radius: 14px;
+  background: linear-gradient(180deg, var(--m-raise), var(--m-plate)); color: var(--h-text-2); box-shadow: 0 0 0 1px var(--m-line-2), inset 0 1px 0 var(--m-hi), 0 4px 14px -4px var(--m-shade-2);
+  opacity: 0; visibility: hidden; transform: translateY(6px); transition: opacity .2s, transform .25s var(--ease), visibility 0s .25s; }
+
+.more.on { opacity: 1; visibility: visible; transform: none; transition: opacity .2s, transform .25s var(--ease); }
+.more svg { width: 11px; height: 11px; transition: transform .2s; } .more.up svg { transform: rotate(180deg); }
+.more:hover { color: var(--h-text); }
+
+/* ---------- a found file, offered beside the window ---------- */
+.offer { position: absolute; right: 16px; bottom: 16px; z-index: 5; display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 4px 14px; align-items: center; width: min(360px, calc(100% - 32px)); padding: 14px; border-radius: max(6px, var(--wb-r));
+  background: linear-gradient(180deg, var(--m-raise), var(--m-plate)); color: var(--h-text); box-shadow: 0 0 0 1px var(--m-line-2), inset 0 1px 0 var(--m-hi), 0 22px 48px -14px var(--m-shade-2);
+  transform: translateY(0); opacity: 1; transition: transform .3s var(--spring), opacity .2s; }
+.offer[hidden] { display: grid; transform: translateY(14px); opacity: 0; visibility: hidden; pointer-events: none; transition: transform .2s, opacity .15s, visibility 0s .2s; }
+.offer .art { grid-row: 1 / span 3; }
+.offer .sw6 { height: 60px; border-radius: 6px; overflow: hidden; display: grid; grid-template-columns: repeat(6, 1fr); box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); }
+.offer b { font: 700 16px/1.15 var(--wb-display); font-variation-settings: "wdth" 82; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 22px; }
+.offer small { font-size: 12px; color: var(--h-text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.offer .go { justify-self: start; margin-top: 4px; }
+.offer .x { position: absolute; top: 8px; right: 8px; width: 26px; height: 26px; border: 0; border-radius: 6px; background: none; color: var(--h-text-2); font-size: 17px; line-height: 1; }
+.offer .x:hover { background: var(--m-hover); color: var(--h-text); }
+
+/* ---------- setup.json: the setup as a file ---------- */
+.file { flex: none; display: flex; flex-direction: column; height: clamp(150px, 22vh, 300px); background: var(--m-plate-2); box-shadow: 0 -1px 0 var(--m-line-2), inset 0 1px 0 var(--m-hi); transition: height .28s var(--ease); }
+.file.shut { height: 46px; }
+.file header { display: flex; align-items: center; gap: 10px; height: 46px; padding: 0 8px 0 14px; flex: none; }
+.file header .ficon { width: 16px; height: 16px; color: var(--h-text-2); flex: none; }
+.file header .fn { font: 600 12.5px/1 var(--wb-mono); font-variation-settings: "wdth" 87; color: var(--h-text); }
+.file header .st { display: flex; align-items: center; gap: 6px; min-width: 0; margin-right: auto; padding: 3px 8px; border-radius: 10px; font-size: 12px; color: var(--h-text-2); background: var(--m-well); box-shadow: inset 0 0 0 1px var(--m-line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.file header .st .led { background: color-mix(in srgb, var(--h-acc) 55%, transparent); box-shadow: none; }
+.file header .st.bad { color: var(--h-text); }
+.file header .st.bad .led { background: #e0533d; box-shadow: 0 0 6px rgba(224, 83, 61, .6); }
+.file header .tog-f { width: 32px; padding: 0; }
+.file header .tog-f svg { transition: transform .25s; } .file.shut header .tog-f svg { transform: rotate(180deg); }
+.ed { position: relative; flex: 1; min-height: 0; margin: 0 var(--s2); border-radius: max(4px, calc(var(--wb-r) * .6)) max(4px, calc(var(--wb-r) * .6)) 0 0; background: color-mix(in srgb, var(--m-well) 70%, var(--h-paper)); box-shadow: inset 0 0 0 1px var(--m-line-2), inset 0 2px 4px var(--m-shade); overflow: hidden; }
+.ed pre, .ed textarea { position: absolute; inset: 0; margin: 0; padding: 10px 12px 10px 44px; font: 400 12px/19px var(--wb-mono); font-variation-settings: "wdth" 85; tab-size: 2; white-space: pre; overflow: auto; border: 0; }
+.ed pre { pointer-events: none; color: var(--h-text); scrollbar-width: none; }
+.ed pre::-webkit-scrollbar { display: none; }
+.ed textarea { background: transparent; color: transparent; caret-color: var(--h-acc); resize: none; outline: none; scrollbar-width: thin; }
+.ed:focus-within { box-shadow: inset 0 0 0 1px var(--m-line-2), 0 0 0 2px var(--h-acc); }
+.ed textarea::selection { background: color-mix(in srgb, var(--h-acc) 30%, transparent); color: transparent; }
+.ed .ln { display: block; min-height: 19px; position: relative; margin-left: -44px; padding-left: 44px; transition: background-color 1.4s var(--ease), box-shadow 1.4s var(--ease); }
+.ed .ln::before { content: attr(data-n); position: absolute; left: 0; width: 32px; text-align: right; color: var(--h-text-2); opacity: .55; }
+.ed .ln.chg { background: color-mix(in srgb, var(--h-acc) 20%, transparent); box-shadow: inset 3px 0 0 var(--h-acc); transition: none; }
+.ed .ln.bad { background: color-mix(in srgb, #e0533d 22%, transparent); box-shadow: inset 3px 0 0 #e0533d; }
+.ed .hk { color: var(--h-acc-text); } .ed .hs { color: var(--h-text); } .ed .hv { color: color-mix(in srgb, var(--h-folder) 70%, var(--h-ink)); } .ed .hp { color: var(--h-text-2); }
+.note { flex: none; padding: 0 14px; font-size: 12.5px; line-height: 1.35; color: var(--h-text-2); }
+.note:not(:empty) { padding: 7px 14px 9px; }
+.note.bad { color: var(--h-text); background: color-mix(in srgb, #e0533d 14%, transparent); }
+
+
+/* ================= showmanship ================= */
+/* the wordmark and the line */
+.logo { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; color: var(--h-on-acc);
+  background: linear-gradient(145deg, color-mix(in srgb, var(--h-acc) 72%, #fff), var(--h-acc) 52%, color-mix(in srgb, var(--h-acc) 72%, #000));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35), inset 0 -1px 0 rgba(0, 0, 0, .2), 0 0 0 1px color-mix(in srgb, var(--h-acc) 60%, #000), 0 6px 16px -6px var(--m-glow); }
+.logo svg { width: 26px; height: 26px; }
+.mark b { font: 800 25px/1 var(--wb-display); font-variation-settings: "wdth" 75, "opsz" 48; letter-spacing: -.02em; }
+.pitch { min-width: 0; display: grid; gap: 4px; padding-left: var(--s5); border-left: 1px solid var(--m-line-2); }
+.pitch h1 { margin: 0; font: 700 21px/1.05 var(--wb-display); font-variation-settings: "wdth" 80, "opsz" 36; letter-spacing: -.018em; color: var(--h-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.strip .pitch .line { padding: 0; border: 0; max-width: none; font-size: 12.5px; -webkit-line-clamp: 1; line-clamp: 1; }
+.strip::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 1px; pointer-events: none; background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--h-acc) 55%, transparent) 30%, color-mix(in srgb, var(--h-folder) 45%, transparent) 70%, transparent); opacity: .7; }
+/* the button people want to press */
+.btn.dl { position: relative; overflow: hidden; height: 40px; padding: 0 20px 0 16px; font-size: 14.5px; border-radius: max(7px, calc(var(--wb-r) * .7)); }
+.btn.dl svg { width: 17px; height: 17px; }
+.btn.dl::after { content: ""; position: absolute; top: 0; bottom: 0; left: -60%; width: 50%; background: linear-gradient(100deg, transparent, rgba(255, 255, 255, .38), transparent); transform: skewX(-18deg); transition: transform .7s var(--ease); pointer-events: none; }
+.btn.dl:hover { transform: translateY(-1px); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--h-acc) 60%, #000), inset 0 1px 0 rgba(255,255,255,.34), 0 3px 6px var(--m-shade), 0 12px 28px -8px var(--m-glow); }
+.btn.dl:hover::after { transform: translateX(420%) skewX(-18deg); }
+.btn.dl:active { transform: translateY(1px); }
+
+/* arrival: the window rises onto its stage, the light comes up, then the strip and the rail settle */
+body.pre :is(.stage, .strip, .rail) { opacity: 0; }
+body.enter .stage { animation: wb-rise 1s cubic-bezier(.16, .9, .24, 1) backwards; }
+body.enter .stage::before { animation: wb-bloom 1.7s ease-out .1s backwards; }
+body.enter .strip { animation: wb-drop .7s var(--ease) .45s backwards; }
+body.enter .rail { animation: wb-slide .8s var(--ease) .55s backwards; }
+@keyframes wb-rise { from { opacity: 0; transform: translateY(34px) scale(.96); } }
+@keyframes wb-bloom { from { opacity: 0; transform: scale(.82); } }
+@keyframes wb-drop { from { opacity: 0; transform: translateY(-12px); } }
+@keyframes wb-slide { from { opacity: 0; transform: translateX(22px); } }
+
+/* a theme change sweeps across the whole page */
+.wash { position: fixed; inset: 0; z-index: 30; pointer-events: none;
+  background: linear-gradient(104deg, transparent 32%, color-mix(in srgb, var(--wa) 26%, transparent) 44%, color-mix(in srgb, var(--wa) 40%, var(--wp)) 50%, color-mix(in srgb, var(--wa) 22%, transparent) 56%, transparent 68%); opacity: .55;
+  transform: translateX(-100%); animation: wb-wash .95s cubic-bezier(.55, .1, .3, 1) forwards; }
+@keyframes wb-wash { to { transform: translateX(100%); } }
+
+/* switches: jewel finish, a lit glow when on, and a tick when flipped */
+.sw { overflow: hidden; }
+.sw[aria-checked="true"] { background: linear-gradient(180deg, color-mix(in srgb, var(--h-acc) 9%, var(--m-raise)), color-mix(in srgb, var(--h-acc) 5%, var(--m-plate-2))); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--h-acc) 38%, var(--m-line-2)), inset 0 1px 0 var(--m-hi), 0 1px 2px var(--m-shade), 0 6px 16px -10px var(--m-glow); }
+.sw[aria-checked="true"] svg.g { filter: drop-shadow(0 0 5px color-mix(in srgb, var(--h-acc) 45%, transparent)); }
+.sw[aria-checked="true"] .tog { background: linear-gradient(180deg, color-mix(in srgb, var(--h-acc) 80%, #000), var(--h-acc)); box-shadow: inset 0 1px 2px rgba(0,0,0,.3), inset 0 0 0 1px color-mix(in srgb, var(--h-acc) 65%, #000), 0 0 14px -1px var(--m-glow), 0 0 4px var(--m-acc-soft); }
+.sw.tick .tog::before { animation: wb-squish .4s var(--ease); }
+.sw.tick svg.g { animation: wb-tick .45s var(--spring); }
+@keyframes wb-squish { 35% { scale: 1.3 .88; } }
+@keyframes wb-tick { 40% { scale: 1.2; } }
+/* a control that has something to say gets one pass of light */
+.sw.hint::before, .act.hint::before { content: ""; position: absolute; inset: 0; z-index: 0; pointer-events: none; border-radius: inherit;
+  background: linear-gradient(100deg, transparent 30%, color-mix(in srgb, var(--h-acc) 22%, transparent) 50%, transparent 70%); transform: translateX(-110%); animation: wb-shimmer 1.3s var(--ease) .1s forwards; }
+.act { overflow: hidden; }
+@keyframes wb-shimmer { to { transform: translateX(110%); } }
+
+/* keycaps with real depth */
+kbd { height: 23px; border-radius: 6px; background: linear-gradient(180deg, color-mix(in srgb, var(--m-cap) 70%, #fff), var(--m-cap) 55%, color-mix(in srgb, var(--m-cap) 90%, var(--h-ink)));
+  box-shadow: inset 0 0 0 1px var(--m-line-2), inset 0 1px 0 var(--m-hi), inset 0 -2px 0 color-mix(in srgb, var(--h-ink) 7%, transparent), 0 2.5px 0 var(--m-cap-side), 0 3px 5px var(--m-shade); }
+:root[data-scheme="dark"] kbd { background: linear-gradient(180deg, color-mix(in srgb, var(--m-cap) 88%, #fff), var(--m-cap)); }
+
+/* shelf: cards with presence */
+.shelf { gap: var(--s3) var(--s3); }
+.card { padding: 7px 7px 11px; transform: perspective(700px) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg)) translateY(var(--ty, 0px)); transition: transform .3s var(--ease), box-shadow .25s var(--ease); will-change: auto; }
+.card::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; opacity: 0; transition: opacity .25s;
+  background: linear-gradient(115deg, transparent calc(var(--lx, 50%) - 28%), rgba(255, 255, 255, .26) var(--lx, 50%), transparent calc(var(--lx, 50%) + 28%)); mix-blend-mode: soft-light; }
+:root[data-scheme="dark"] .card::after { background: linear-gradient(115deg, transparent calc(var(--lx, 50%) - 28%), rgba(255, 255, 255, .12) var(--lx, 50%), transparent calc(var(--lx, 50%) + 28%)); mix-blend-mode: normal; }
+.card:hover { --ty: -3px; transform: perspective(700px) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg)) translateY(var(--ty)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--h-ink) 30%, transparent), inset 0 1px 0 var(--m-hi), 0 4px 8px var(--m-shade), 0 20px 34px -14px var(--m-shade-2); }
+.card:hover::after { opacity: 1; }
+.card:active { --ty: 0px; transform: perspective(700px) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg)) scale(.975); transition-duration: .08s; }
+.card .mini { box-shadow: 0 0 0 1px var(--m-line-2), 0 6px 14px -8px var(--m-shade-2); }
+.card[aria-pressed="true"] { box-shadow: inset 0 0 0 1.5px var(--h-acc), inset 0 1px 0 var(--m-hi), 0 0 0 4px var(--m-acc-soft), 0 10px 26px -12px var(--m-glow); }
+.card.pop { animation: wb-applied .75s var(--spring); }
+.card.pop .mini { animation: none; }
+@keyframes wb-applied { 0% { scale: .95; } 45% { scale: 1.035; box-shadow: inset 0 0 0 1.5px var(--h-acc), 0 0 0 7px var(--m-acc-soft), 0 0 30px -4px var(--m-glow); } }
+/* found items: a prize finish */
+.card.found { background: linear-gradient(150deg, color-mix(in srgb, var(--h-folder) 20%, var(--m-raise)), var(--m-plate-2) 48%, color-mix(in srgb, var(--h-folder) 14%, var(--m-plate-2)));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--h-folder) 55%, var(--m-line-2)), inset 0 1px 0 var(--m-hi), 0 1px 2px var(--m-shade), 0 8px 20px -12px color-mix(in srgb, var(--h-folder) 60%, transparent); }
+.card.found::before { background: linear-gradient(180deg, color-mix(in srgb, var(--h-folder) 90%, #fff), color-mix(in srgb, var(--h-folder) 70%, var(--h-ink))); }
+.card.found[aria-pressed="true"] { box-shadow: inset 0 0 0 1.5px var(--h-acc), 0 0 0 4px var(--m-acc-soft), 0 10px 26px -12px var(--m-glow); }
+.card.found .by { color: color-mix(in srgb, var(--h-folder) 45%, var(--h-text)); font-weight: 600; }
+.reveal { animation: wb-reveal 1s var(--spring) .15s backwards; }
+.card.reveal::after { opacity: 1; animation: wb-foil 1.3s var(--ease) .35s both; }
+@keyframes wb-reveal { from { opacity: 0; transform: perspective(700px) rotateX(24deg) translateY(14px) scale(.9); } }
+@keyframes wb-foil { from { --lx: -30%; } to { --lx: 130%; opacity: 0; } }
+@property --lx { syntax: "<percentage>"; inherits: false; initial-value: 50%; }
+.chip.found.reveal i { animation: wb-reveal 1s var(--spring) .15s backwards; }
+
+/* ---------- narrower windows ---------- */
+@media (max-width: 1240px) { :root { --wb-rail: 384px; } .strip .line { display: none; } .pitch h1 { font-size: 18px; } }
+@media (max-width: 1060px) { .pitch { display: none; } }
+@media (max-width: 860px) {
+  body { display: block; overflow: auto; height: auto; min-height: 100%; }
+  .strip { position: relative; flex-wrap: wrap; gap: 10px 12px; padding: 12px 16px; }
+  .pitch { display: grid; flex: 1 1 100%; order: 2; padding-left: 0; border-left: 0; }
+  .pitch h1 { white-space: normal; font-size: 22px; }
+  .strip .pitch .line { display: block; -webkit-line-clamp: 3; line-clamp: 3; }
+  .acts { order: 3; margin-left: 0; flex: 1 1 100%; flex-wrap: wrap; }
+  .acts .sep { display: none; }
+  .floor { display: block; padding: 16px 16px 24px; }
+  .stage { height: 72vh; min-height: 460px; margin-bottom: 18px; }
+  .stage::before { inset: -40px -16px; }
+  .glint { display: none; }
+  .rail { overflow: visible; }
+  .panel { overflow: visible; }
+  .sect-h { position: static; }
+  .file { height: 340px; }
+  .chips { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .act .chg { opacity: 1; }
+  .more { display: none; }
+  .panel { -webkit-mask-image: none; mask-image: none; }
+}
+@media (max-width: 420px) { .switches { grid-template-columns: 1fr; } .seg button span { font-size: 10.5px; } }
+@media (prefers-reduced-motion: reduce) {
+  :root { transition: none; }
+  *, *::before, *::after { transition-duration: 0s !important; transition-delay: 0s !important; animation: none !important; }
+}
+</style>
+<body class="pre">
+<script>setTimeout(() => document.body.classList.remove("pre"), 5000);   /* never leave the page blank */</script>
+<header class="strip">
+  <a class="mark" href="#" aria-label="Tauri Explorer">
+    <span class="logo" aria-hidden="true"><svg viewBox="0 0 32 32"><rect x="6" y="8" width="20" height="16" rx="3.2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12.5 8v16" stroke="currentColor" stroke-width="2"/><path d="M16 13h6.5M16 16.5h4.5M16 20h5.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" opacity=".85"/></svg></span>
+    <b>Tauri Explorer</b>
+  </a>
+  <div class="pitch">
+    <h1>Every panel optional. Every key yours.</h1>
+    <p class="line">A file explorer you drive from the keyboard. Free and open source, for Linux, Windows and macOS.</p>
+  </div>
+  <nav class="acts" aria-label="Get it">
+    <button class="btn ghost" id="copy-link" type="button"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="M6.8 9.2a2.6 2.6 0 0 0 3.7 0l2.2-2.2a2.6 2.6 0 0 0-3.7-3.7l-.8.8M9.2 6.8a2.6 2.6 0 0 0-3.7 0L3.3 9a2.6 2.6 0 0 0 3.7 3.7l.8-.8"/></svg><span>Copy link</span></button>
+    <button class="btn ghost" id="copy-json" type="button"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M5.5 2.5H5c-1 0-1.5.6-1.5 1.5v2.2C3.5 7.4 2.8 8 2 8c.8 0 1.5.6 1.5 1.8V12c0 .9.5 1.5 1.5 1.5h.5m5-11h.5c1 0 1.5.6 1.5 1.5v2.2c0 1.2.7 1.8 1.5 1.8-.8 0-1.5.6-1.5 1.8V12c0 .9-.5 1.5-1.5 1.5h-.5"/></svg><span>Copy JSON</span></button>
+    <span class="sep" aria-hidden="true"></span>
+    <a class="btn" href="#"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 .8a7.2 7.2 0 0 0-2.3 14c.4.1.5-.2.5-.4v-1.3c-2 .4-2.4-.9-2.4-.9-.3-.8-.8-1.1-.8-1.1-.7-.5 0-.5 0-.5.7.1 1.1.8 1.1.8.6 1.1 1.7.8 2.1.6.1-.5.3-.8.5-1-1.6-.2-3.3-.8-3.3-3.6 0-.8.3-1.4.8-2-.1-.2-.3-.9.1-1.9 0 0 .6-.2 2 .7a6.8 6.8 0 0 1 3.6 0c1.4-.9 2-.7 2-.7.4 1 .2 1.7.1 1.9.5.5.8 1.2.8 2 0 2.8-1.7 3.4-3.3 3.6.3.2.5.7.5 1.4v2c0 .2.1.5.6.4A7.2 7.2 0 0 0 8 .8z"/></svg>GitHub</a>
+    <a class="btn primary dl" href="#"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M8 2.5v8m-3.3-3.2L8 10.6l3.3-3.3M3 13.5h10"/></svg>Download</a>
+  </nav>
+</header>
+
+<main class="floor">
+  <section class="stage" aria-label="Tauri Explorer, running in this page">
+    <div class="glint" aria-hidden="true"></div>
+    <div class="bezel" aria-hidden="true"></div>
+    <div id="app"></div>
+    <div class="sheen" aria-hidden="true"><i></i></div>
+    <aside class="offer" id="offer" hidden aria-live="polite">
+      <div class="art" id="offer-art"></div>
+      <b id="offer-name"></b>
+      <small id="offer-by"></small>
+      <button class="btn small primary go" id="offer-go" type="button"></button>
+      <button class="x" id="offer-x" type="button" aria-label="Dismiss">×</button>
+    </aside>
+  </section>
+
+  <aside class="rail" aria-label="Setup">
+    <div class="tabs" role="tablist" aria-label="Bench and shelf" data-at="0">
+      <span class="thumb" aria-hidden="true"></span>
+      <button role="tab" id="tab-bench" aria-controls="p-bench" aria-selected="true">Bench<i class="led" id="bench-led" aria-hidden="true"></i></button>
+      <button role="tab" id="tab-shelf" aria-controls="p-shelf" aria-selected="false" tabindex="-1">Shelf</button>
+    </div>
+
+    <div class="pages">
+      <section class="panel" id="p-bench" role="tabpanel" aria-labelledby="tab-bench">
+        <div class="sect" data-sect="panels">
+          <header class="sect-h"><h3 id="h-panels">Panels <i class="led" aria-hidden="true"></i></h3><p>What sits around your files in the window.</p></header>
+          <ul class="switches" id="switches" aria-labelledby="h-panels"></ul>
+        </div>
+        <div class="sect" data-sect="actions">
+          <header class="sect-h"><h3 id="h-actions">Actions <i class="led" aria-hidden="true"></i></h3><p>Always there, whichever panels are in. Each key can be changed.</p></header>
+          <ul class="acts-list" id="actions" aria-labelledby="h-actions"></ul>
+        </div>
+        <div class="sect" data-sect="look">
+          <header class="sect-h"><h3>Look</h3><p>Colours, shape, icons and how files are laid out.</p><button class="btn small" type="button" id="open-themes">Theme picker</button></header>
+          <div class="look-h" id="lbl-colours">Colours</div>
+          <div class="chips" id="chips" role="group" aria-labelledby="lbl-colours"></div>
+          <div class="look-h" id="lbl-layout">Layout</div>
+          <div class="seg" id="seg-layout" role="group" aria-labelledby="lbl-layout"></div>
+          <div class="look-h" id="lbl-icons">Icons</div>
+          <div class="seg" id="seg-icons" role="group" aria-labelledby="lbl-icons"></div>
+          <div class="look-h" id="lbl-view">View</div>
+          <div class="seg" id="seg-view" role="group" aria-labelledby="lbl-view"></div>
+        </div>
+      </section>
+
+      <section class="panel" id="p-shelf" role="tabpanel" aria-labelledby="tab-shelf" hidden>
+        <div class="now" aria-live="polite">
+          <div class="now-mini" id="now-mini" aria-hidden="true"></div>
+          <div class="tx">
+            <h2 id="now-name">Setup</h2>
+            <p id="now-line"></p>
+            <button class="btn small shuffle" id="shuffle" type="button"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M2 4.5h2.4c1.4 0 2.3.6 3 1.7l1.2 1.9c.7 1.1 1.6 1.6 3 1.6H14m0 0-2-2m2 2-2 2M2 11.5h2.4c1 0 1.7-.3 2.3-.9M9.3 5.4c.6-.6 1.3-.9 2.3-.9H14m0 0-2-2m2 2-2 2"/></svg>Shuffle</button>
+          </div>
+        </div>
+        <div class="sect" data-sect="setups">
+          <header class="sect-h"><h3 id="h-setups">Setups</h3><p>Whole windows, ready to fit. You stay in the same folder.</p></header>
+          <ul class="shelf" id="shelf" aria-labelledby="h-setups"></ul>
+        </div>
+        <div class="sect found-sect" id="found" data-sect="found" hidden>
+          <header class="sect-h"><h3 id="h-found">Found</h3><p>Picked up from files you opened, with who made them.</p></header>
+          <ul class="shelf" id="shelf-found" aria-labelledby="h-found"></ul>
+          <div class="chips" id="chips-found" role="group" aria-label="Found colours"></div>
+          <button class="btn small ghost forget" id="forget" type="button">Forget found items</button>
+        </div>
+      </section>
+      <button class="more" id="more" type="button" aria-label="Show the lit item"><i class="led on" aria-hidden="true"></i><svg viewBox="0 0 12 12" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="m3 4.5 3 3 3-3"/></svg></button>
+    </div>
+
+    <section class="file" id="file" aria-label="The setup as a file">
+      <header>
+        <svg class="ficon" viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" d="M4 1.8h5.2L12.5 5v9.2H4z"/><path fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" d="M6.3 8.2 5.2 9.6l1.1 1.4M9.7 8.2l1.1 1.4-1.1 1.4"/></svg>
+        <span class="fn">setup.json</span>
+        <span class="st" id="file-st"><i class="led" aria-hidden="true"></i><span id="file-st-t">in step with the window</span></span>
+        <button class="btn ghost tog-f" id="file-tog" type="button" aria-expanded="true" aria-controls="ed"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="m4 6 4 4 4-4"/></svg><span class="sr">Fold the file</span></button>
+      </header>
+      <div class="ed" id="ed">
+        <pre id="hl" aria-hidden="true"></pre>
+        <textarea id="json" spellcheck="false" autocapitalize="off" autocomplete="off" wrap="off" aria-label="setup.json, editable"></textarea>
+      </div>
+      <div class="note" id="note" aria-live="polite"></div>
+    </section>
+  </aside>
+</main>
+
+<script src="engine/explorer.js"></script>
+<script src="host-apps.js"></script>
+<script>
+"use strict";
+/* =====================================================================================================
+   THE STAGE ADAPTER. Everything the page knows about the running explorer goes through `stage`.
+   Today it wraps the in-page engine (engine/explorer.js). To embed the real app in an iframe, rewrite
+   only this function with a postMessage bridge: every method may return a promise, and the page awaits them.
+   Contract:
+     catalog()                -> { parts:[{id,kind,name,short,desc,glyph}], themes:[{id,name,note,dark,swatch:[paper,side,ink,ink2,accent,folder]}],
+                                   layouts:[{id,name,note}], iconsets:[{id,name,note}], users:[{id,name,home}] }
+     getSetup() / setSetup(s, {animate}) / setPart(id, on)   setups list panels only in "parts"; a setup with "parts" is complete, one without is a patch
+     run(actionId)            -> goto search palette hidden peek views graph plugins keys themes
+     openKeys(commandId?) / commands() -> [{id,title,keys}]
+     snapshot()               -> { setup, path, home, entries:[{name,path,dir,kind,image,video,repo,hidden}], selected, selectedText, binCount, repo }
+     index()                  -> { folders:[[name, path]], files:[name] }   (the whole filesystem, for cross-folder hints)
+     read(path) -> text|null ; focus() ; on(event, fn) for setup navigate open command search fs-change user open-external
+     locate(path)             -> {x, y, w, h} of that file's row on screen (viewport pixels, for the open/close motion), or null
+   open-external { path, name, kind, text, src, poster, size, date, px, duration }: a file was opened (double-click, Enter,
+     Open); the page shows it in the program the system would use. kind: md txt csv code img video audio pdf app file.
+     text is the whole file or null; src a URL the page can load (picture or film); size/date/px/duration display strings.
+   ===================================================================================================== */
+function engineStage(container, opts) {
+  // The engine models always-on features as parts; the page's setups list panels only. Translate at the boundary.
+  const FEATURES = TX.parts.filter(p => p.kind === "feature").map(p => p.id), PANELS = TX.parts.filter(p => p.kind === "panel").map(p => p.id);
+  const inward = s => Array.isArray(s.parts) ? { ...s, parts: [...s.parts.filter(p => PANELS.includes(p)), ...FEATURES] } : { ...s };
+  const outward = s => ({ ...s, parts: (s.parts || []).filter(p => PANELS.includes(p)) });
+  const app = TX.mount(container, { ...opts, setup: inward(opts.setup || { parts: [] }), themeRoot: container, handoff: true });   // the engine dresses only its own box; opened files come to the page
+  const peek = () => {
+    const go = () => { const c = app.el.querySelector('[data-host="main"] [data-caret][aria-expanded="false"]'); if (c) c.click(); else app.toast("No folders here to open in place"); };
+    if (app.getSetup().view !== "details") { app.setSetup({ view: "details" }); requestAnimationFrame(go); } else go();
+  };
+  const ACTION = {
+    goto: () => app.openQuickOpen(""), search: () => app.openSearch(""), palette: () => app.openPalette(""),
+    hidden: () => app.run("toggleHidden"), peek, graph: () => app.run("gitGraph"), plugins: () => app.run("plugins"),
+    keys: () => app.openKeys(), themes: () => app.run("themes"),
+    views: () => { const v = ["details", "list", "tiles"], now = app.getSetup().view; app.setSetup({ view: v[(v.indexOf(now) + 1) % 3] }); },
+  };
+  return {
+    catalog: () => ({
+      parts: TX.parts.map(({ id, kind, name, short, desc, glyph }) => ({ id, kind, name, short, desc, glyph })),
+      themes: TX.themes.map(({ id, name, note, dark, swatch }) => ({ id, name, note, dark: !!dark, swatch })),
+      layouts: TX.layouts.map(({ id, name, note }) => ({ id, name, note })),
+      iconsets: TX.iconsets.map(({ id, name, note }) => ({ id, name, note })),
+      users: app.users().map(({ id, name, home }) => ({ id, name, home })),
+    }),
+    getSetup: () => outward(app.getSetup()),
+    setSetup: (s, o) => app.setSetup(inward(s), o),
+    setPart: (id, on) => app.setPart(id, on),
+    run: id => { ACTION[id]?.(); },
+    openKeys: id => app.openKeys(id),
+    commands: () => app.commands().map(({ id, title, keys }) => ({ id, title, keys })),
+    snapshot: () => {
+      const setup = outward(app.getSetup()), path = app.path(), sel = app.selection().find(p => !app.list(p)) || null;
+      return { setup, path, home: app.user()?.home || "", entries: app.list(path) || [], selected: sel, selectedText: sel ? app.read(sel) : null, binCount: app.binCount(), repo: app.repoRoot(path) };
+    },
+    index: () => {
+      const folders = [], files = [];
+      (function walk(d, depth) {
+        if (depth > 14) return;
+        for (const e of app.list(d) || []) { if (e.dir) { folders.push([e.name, e.path]); if (e.path !== "/.recycle-bin") walk(e.path, depth + 1); } else files.push(e.name); }
+      })("/", 0);
+      return { folders, files };
+    },
+    read: p => app.read(p),
+    focus: () => app.focus(),
+    locate: path => {
+      for (const r of app.el.querySelectorAll(`[data-row="${CSS.escape(path)}"]`)) {
+        const b = r.getBoundingClientRect();
+        if (b.width && b.height) return { x: b.left, y: b.top, w: b.width, h: b.height };
+      }
+      return null;
+    },
+    on: (ev, fn) => {
+      if (ev === "open-external") return app.on("open", e => {
+        if (e.how !== "open" || !e.handoff) return;
+        const s = app.stat(e.path);
+        if (s && !s.dir) fn({ path: s.path, name: s.name, kind: s.kind, text: s.text, src: s.src, poster: s.poster, size: s.size, date: s.date, px: s.px, duration: s.duration });
+      });
+      return app.on(ev, ev === "setup" ? s => fn(outward(s)) : fn);
+    },
+  };
+}
+
+/* ======================= content: whichever filesystems exist, loaded without console noise ======================= */
+// An <object> probe reports a missing file through its error event without the browser logging a failed request;
+// only files that answer are then loaded as scripts.
+const CONTENT = ["expedition", "case", "station"];
+const probe = url => new Promise(res => {
+  const o = document.createElement("object");
+  o.type = "text/plain"; o.data = url; o.setAttribute("aria-hidden", "true"); o.tabIndex = -1;
+  o.style.cssText = "position:absolute;width:0;height:0;visibility:hidden;pointer-events:none";
+  const done = ok => { o.remove(); res(ok); };
+  o.onload = () => done(true); o.onerror = () => done(false);
+  document.body.append(o);
+  setTimeout(() => done(null), 2500);   // no answer either way: try the script
+});
+const loadScript = url => new Promise(res => { const s = document.createElement("script"); s.src = url; s.onload = () => res(true); s.onerror = () => res(false); document.body.append(s); });
+(async () => {
+  const urls = CONTENT.map(id => `content/fs-${id}.js`);
+  const have = await Promise.all(urls.map(probe));
+  for (let i = 0; i < urls.length; i++) if (have[i] !== false) await loadScript(urls[i]);
+  await main();
+})();
+
+async function main() {
+try { history.scrollRestoration = "manual"; } catch (_) { /* older browsers */ }
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const pick = a => a[Math.floor(Math.random() * a.length)];
+const chance = p => Math.random() < p;
+const ROOT = document.documentElement;
+const RAIL = $(".rail");
+
+/* ======================= mount ======================= */
+const qs = new URLSearchParams(location.search);
+const ALL_FS = window.TX_FS || {};
+const fsId = [qs.get("fs"), ...CONTENT, "default"].find(id => id && ALL_FS[id]);
+const FS = ALL_FS[fsId];
+const u0 = (FS.users || [])[0] || {};
+// The link carries the setup as base64url JSON.
+const encodeSetup = s => btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(s)))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const decodeSetup = x => { try { const b = atob(String(x).replace(/-/g, "+").replace(/_/g, "/")); const o = JSON.parse(new TextDecoder().decode(Uint8Array.from(b, c => c.charCodeAt(0)))); return o && typeof o === "object" && !Array.isArray(o) ? o : null; } catch (_) { return null; } };
+const fromUrl = qs.get("setup") ? decodeSetup(qs.get("setup")) : null;
+const start = fromUrl ? { ...fromUrl } : { ...(u0.setup || {}), parts: [] };   // the user's look and place, no panels
+if (!Array.isArray(start.parts)) start.parts = [];
+const stage = window.stage = engineStage($("#app"), { fs: FS, user: qs.get("user") || u0.id, setup: start });
+
+/* ======================= domain: panels, features, setups ======================= */
+const CAT = await stage.catalog();
+const PANEL_ORDER = ["address", "sidebar", "miller", "status", "preview", "tabs", "split", "terminal"];
+const PART = Object.fromEntries(CAT.parts.map(p => [p.id, p]));
+const PANEL_IDS = CAT.parts.filter(p => p.kind === "panel").map(p => p.id);
+const PANELS = PANEL_ORDER.filter(id => PANEL_IDS.includes(id)).map(id => PART[id]);
+const FEATURE_IDS = CAT.parts.filter(p => p.kind === "feature").map(p => p.id);
+const THEME = Object.fromEntries(CAT.themes.map(t => [t.id, t]));
+const VIEWS = ["details", "list", "tiles"];
+
+const shape = s => JSON.stringify({ parts: [...(s.parts || [])].filter(p => PANEL_IDS.includes(p)).sort(), theme: s.theme, layout: s.layout || "default", icons: s.icons || "material", view: s.view || "details", keys: s.keys || {} });
+const isThemeObj = t => !!t && typeof t === "object" && Array.isArray(t.v) && t.v.length >= 6 && t.v.slice(0, 6).every(c => /^#[0-9a-f]{6}$/i.test(String(c)));
+const swatchOf = theme => isThemeObj(theme) ? { v: theme.v.slice(0, 6), dark: !!theme.dark, mono: false } : { v: (THEME[theme] || THEME["ink-wash"] || CAT.themes[0]).swatch, dark: !!(THEME[theme] || {}).dark, mono: theme === "hacker" };
+const themeName = t => isThemeObj(t) ? (t.name || "a custom theme") : (THEME[t] || {}).name || String(t);
+
+// The page's own dress, from the theme's six colours: nothing is read back from the window.
+const lum = hex => { const n = parseInt(hex.slice(1), 16), c = [n >> 16, (n >> 8) & 255, n & 255].map(v => { v /= 255; return v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4; }); return .2126 * c[0] + .7152 * c[1] + .0722 * c[2]; };
+let dressedAs = "";
+function wash(acc, paper) {   // a theme change is a small event: one sweep of the new colours across the page and the window
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const w = document.createElement("div");
+  w.className = "wash"; w.style.setProperty("--wa", acc); w.style.setProperty("--wp", paper);
+  w.addEventListener("animationend", () => w.remove(), { once: true });
+  setTimeout(() => w.remove(), 1600);
+  document.body.append(w);
+}
+function dress(s) {
+  const sw = swatchOf(s.theme), [paper, side, ink, ink2, acc, folder] = sw.v;
+  const key = sw.v.join();
+  if (dressedAs && dressedAs !== key) wash(acc, paper);
+  dressedAs = key;
+  for (const [k, v] of Object.entries({ paper, side, ink, "ink-2": ink2, acc, folder })) ROOT.style.setProperty("--h-" + k, v);
+  ROOT.dataset.scheme = sw.dark ? "dark" : "light";
+  ROOT.dataset.onAcc = (lum(acc) + .05) / .05 > 1.05 / (lum(acc) + .05) ? "dark" : "light";   // whichever of black or white reads better on the accent
+  ROOT.dataset.layout = s.layout || "default";
+  if (sw.mono) ROOT.dataset.mono = ""; else delete ROOT.dataset.mono;
+}
+
+// Built-in shelf: eight setups chosen to differ on every axis. None carries a path, so fitting one never moves you.
+const SHELF = [
+  { id: "blank", name: "Blank page", line: "The folder you are in, and nothing around it.",
+    setup: { parts: [], theme: "light", layout: "default", icons: "minimal", view: "list" } },
+  { id: "night", name: "Night shift", line: "Two panes, a shell and F-keys for new folders and deleting. The mouse is optional.",
+    setup: { parts: ["address", "split", "terminal", "status"], theme: "gruvbox", layout: "hairline-ledger", icons: "classic", view: "details", keys: { newFolder: "F7", delete: "F8", toggleTerminal: "Ctrl+O" } } },
+  { id: "contact", name: "Contact sheet", line: "Big tiles and a preview, floating over the dark.",
+    setup: { parts: ["tabs", "address", "preview"], theme: "dark", layout: "floating-islands", icons: "catppuccin", view: "tiles" } },
+  { id: "phosphor", name: "Phosphor", line: "Green on black, monospace throughout, the command palette on Alt+X.",
+    setup: { parts: ["address", "terminal", "status"], theme: "hacker", layout: "compact", icons: "default", view: "list", keys: { palette: "Alt+X" } } },
+  { id: "slow", name: "Slow water", line: "Miller columns, so the way back is always on screen. Pale and unhurried.",
+    setup: { parts: ["address", "miller", "preview", "status"], theme: "tahoe", layout: "soft-cards", icons: "classic", view: "list" } },
+  { id: "tree", name: "Working tree", line: "Tabs, a sidebar of places and a shell, with the commit graph on Alt+G.",
+    setup: { parts: ["tabs", "address", "sidebar", "terminal", "status"], theme: "catppuccin", layout: "default", icons: "material", view: "details", keys: { gitGraph: "Alt+G" } } },
+  { id: "notebook", name: "Field notebook", line: "Paper colours, a sidebar of places, and notes open beside the list.",
+    setup: { parts: ["tabs", "sidebar", "preview", "status"], theme: "solarized-light", layout: "soft-cards", icons: "catppuccin", view: "list" } },
+  { id: "kit", name: "Every panel", line: "Everything fitted at once, in this site's own Ink Wash.",
+    setup: { parts: PANEL_IDS.slice(), theme: "ink-wash", layout: "default", icons: "material", view: "details" } },
+];
+
+// Shuffle: random, but built by rules so the result is a window someone might use.
+const SAFE_REBINDS = [{ toggleTerminal: "Alt+T" }, { palette: "Alt+X" }, { newFolder: "F7" }, { gitGraph: "Alt+G" }, { toggleSidebar: "Alt+B" }, { quickOpen: "Alt+O" }];
+const ADJ = ["Copper", "Salt", "Lantern", "Static", "Tidal", "Velvet", "Iron", "Paper", "Ember", "Moss", "Signal", "Quiet", "Chalk", "Night"];
+const NOUN = ["relay", "ledger", "harbour", "orchard", "circuit", "atlas", "drift", "index", "loft", "kiln", "switchyard", "cabin"];
+function shuffleSetup(current) {
+  for (let tries = 0; tries < 30; tries++) {
+    const view = pick(VIEWS), p = new Set();
+    if (chance(.75)) p.add("address");
+    if (chance(.5)) p.add("tabs");
+    if (chance(.55)) p.add("sidebar");
+    if (chance(.55)) p.add("status");
+    const r = Math.random(); if (r < .25) p.add("miller"); else if (r < .55) p.add("split");
+    if (chance(view === "tiles" ? .65 : .35)) p.add("preview");
+    if (chance(.35)) p.add("terminal");
+    const theme = pick(CAT.themes).id;
+    const s = { parts: PANEL_IDS.filter(id => p.has(id)), theme, layout: pick(CAT.layouts).id, icons: theme === "hacker" ? "default" : pick(CAT.iconsets.filter(i => i.id !== "default")).id, view };
+    if (chance(.4)) s.keys = { ...pick(SAFE_REBINDS) };
+    if (shape(s) !== shape(current) && p.size > 1) return { id: "shuffle", name: `${pick(ADJ)} ${pick(NOUN)}`, line: describe(s), setup: s };
+  }
+  return SHELF[1];
+}
+function describe(s) {   // plain, from the data
+  const names = PANELS.filter(p => (s.parts || []).includes(p.id)).map(p => p.short.toLowerCase());
+  const list = names.length ? names.length === 1 ? names[0] : names.slice(0, -1).join(", ") + " and " + names.at(-1) : "no panels";
+  const lay = (CAT.layouts.find(l => l.id === s.layout) || {}).name || "Default";
+  const v = s.view || "details";
+  return `${v[0].toUpperCase() + v.slice(1)} view with ${list}. ${themeName(s.theme)}, ${lay}.`;
+}
+
+/* ======================= domain: found files ======================= */
+// A *.setup.json or *.theme.json somewhere in the filesystem can be tried on. Only what the visitor opened is ever listed.
+function readFound(path, text) {
+  let o; try { o = JSON.parse(text); } catch (_) { return null; }
+  if (!o || typeof o !== "object" || Array.isArray(o)) return null;
+  const file = path.split("/").pop();
+  if (/\.theme\.json$/i.test(path)) {
+    const t = { name: String(o.name || file.replace(/\.theme\.json$/i, "")).slice(0, 48), dark: !!o.dark, v: Array.isArray(o.v) ? o.v.slice(0, 6) : [] };
+    return isThemeObj(t) ? { kind: "theme", id: path, name: t.name, by: o.by ? String(o.by).slice(0, 48) : "", theme: t } : null;
+  }
+  if (/\.setup\.json$/i.test(path)) {
+    const s = {};
+    s.parts = Array.isArray(o.parts) ? o.parts.filter(p => PANEL_IDS.includes(p)) : [];
+    if (isThemeObj(o.theme) || THEME[o.theme]) s.theme = isThemeObj(o.theme) ? { name: String(o.theme.name || "Found"), dark: !!o.theme.dark, v: o.theme.v.slice(0, 6) } : o.theme;
+    if (CAT.layouts.some(l => l.id === o.layout)) s.layout = o.layout;
+    if (CAT.iconsets.some(l => l.id === o.icons)) s.icons = o.icons;
+    if (VIEWS.includes(o.view)) s.view = o.view;
+    if (o.keys && typeof o.keys === "object") s.keys = Object.fromEntries(Object.entries(o.keys).filter(([, k]) => k === null || typeof k === "string"));
+    const name = String(o.name || file.replace(/\.setup\.json$/i, "")).slice(0, 48);
+    return { kind: "setup", id: path, name, by: o.by ? String(o.by).slice(0, 48) : "", line: describe(s), setup: s };
+  }
+  return null;
+}
+const STORE = "tx-workshop-found-v1";
+const store = {
+  load() { try { const o = JSON.parse(localStorage.getItem(STORE) || "{}"); return { setups: Array.isArray(o.setups) ? o.setups : [], themes: Array.isArray(o.themes) ? o.themes : [] }; } catch (_) { return { setups: [], themes: [] }; } },
+  save(f) { try { localStorage.setItem(STORE, JSON.stringify(f)); } catch (_) { /* storage blocked: found items last for this visit */ } },
+  clear() { try { localStorage.removeItem(STORE); } catch (_) { /* nothing to clear */ } },
+};
+let found = store.load();
+found.setups = found.setups.filter(x => x && x.setup && Array.isArray(x.setup.parts));
+found.themes = found.themes.filter(x => x && isThemeObj(x.theme));
+
+/* ======================= domain: resonance ======================= */
+// What the place you are in suggests. Each rule reads a context derived from one snapshot of the window; the first two
+// that match light up on the bench. The terminal and the commit graph are deliberately last: they only fill a spare slot.
+const RULES = [
+  { target: "act:hidden",     when: c => c.hiddenHere > 0 && !c.hiddenShown },                          // this folder has dot-files
+  { target: "act:goto",       when: c => c.mentionsElsewhere || c.entries >= 25 },                      // a file names another file, or the folder is long
+  { target: "act:search",     when: c => c.textFilesHere >= 4 },                                         // many readable files: search inside them
+  { target: "part:address",   when: c => c.mentionsPath && !c.on("address") },                          // a file quotes an absolute path
+  { target: "part:split",     when: c => c.twinElsewhere && !c.on("split") },                           // the same folder name lives on another drive
+  { target: "part:tabs",      when: c => c.bouncing && !c.on("tabs") },                                 // back and forth between folders
+  { target: "part:miller",    when: c => c.depth >= 5 && !c.on("miller") },                             // deep: keep the parents in view
+  { target: "act:peek",       when: c => c.depth >= 5 && c.subfolders >= 2 },
+  { target: "part:sidebar",   when: c => (c.binGrew || c.wandered >= 5) && !c.on("sidebar") },           // something went to the Recycle Bin, or many places visited
+  { target: "part:preview",   when: c => c.images >= 3 && !c.on("preview") },                           // a folder of pictures
+  { target: "act:views",      when: c => c.images >= 3 && c.view !== "tiles" },
+  { target: "part:terminal",  when: c => c.longText && !c.on("terminal"), weak: true },                 // a long file
+  { target: "act:graph",      when: c => c.inRepo, weak: true },                                        // inside a repository
+];
+const MAX_GLOW = 2;
+function resonate(c, used) {
+  const hits = RULES.filter(r => !used.has(r.target) && r.when(c));
+  return [...hits.filter(r => !r.weak), ...hits.filter(r => r.weak)].slice(0, MAX_GLOW).map(r => r.target);
+}
+const TEXTY = /\.(txt|md|markdown|log|csv|tsv|json|ya?ml|toml|ini|conf|cfg|eml|html?|rtf|tex|py|js|ts|rs|sh)$/i;
+function context(snap, idx, visits, binStart) {   // pure: a snapshot plus what the page remembers
+  const s = snap.setup, path = snap.path, kids = snap.entries;
+  const shown = kids.filter(k => !k.hidden || s.hidden);
+  const text = snap.selectedText;
+  const here = new Set(kids.map(k => k.name));
+  const top = p => p.split("/")[1] || "";
+  const name = path.split("/").pop();
+  const recent = visits.slice(-10), distinct = new Set(recent);
+  let returns = 0;   // back and forth: three or more folders, and at least two returns to one already visited
+  recent.forEach((p, i) => { if (i >= 2 && recent.lastIndexOf(p, i - 2) >= 0) returns++; });
+  const mentioned = text ? [...new Set(text.match(/[\w][\w.-]*\.[a-z0-9]{2,5}\b/gi) || [])] : [];
+  return {
+    on: id => s.parts.includes(id), view: s.view, hiddenShown: !!s.hidden,
+    depth: path.split("/").filter(Boolean).length,
+    entries: shown.length,
+    subfolders: shown.filter(k => k.dir).length,
+    images: shown.filter(k => k.image).length,
+    textFilesHere: shown.filter(k => !k.dir && TEXTY.test(k.name)).length,
+    hiddenHere: kids.filter(k => k.hidden).length,
+    binGrew: snap.binCount > binStart,
+    wandered: new Set(visits).size,
+    inRepo: !!snap.repo,
+    twinElsewhere: !!name && idx.folders.some(([n, p]) => n === name && p !== path && top(p) !== top(path)),
+    bouncing: distinct.size >= 3 && returns >= 2,
+    mentionsPath: !!text && /(^|[\s"'(<:=])(~?\/[\w.-]+){2,}/m.test(text),
+    mentionsElsewhere: mentioned.some(m => idx.fileSet.has(m) && !here.has(m)),
+    longText: !!text && text.split("\n").length > 150,
+  };
+}
+
+/* ======================= the setup as text ======================= */
+const ORDER = ["parts", "theme", "layout", "icons", "view", "path", "keys", "hidden"];
+function pretty(s) {   // short arrays stay on one line, long ones wrap
+  const ordered = {}; for (const k of ORDER) if (k in s) ordered[k] = s[k]; for (const k in s) if (!(k in ordered)) ordered[k] = s[k];
+  const inl = (arr, ind) => { const parts = arr.map(x => JSON.stringify(x)); const lines = []; let cur = ""; for (const p of parts) { if (cur && (cur + ", " + p).length > 34) { lines.push(cur + ","); cur = p; } else cur = cur ? cur + ", " + p : p; } if (cur) lines.push(cur); return lines.length <= 1 ? `[${lines[0] || ""}]` : `[\n${lines.map(l => ind + "  " + l).join("\n")}\n${ind}]`; };
+  const val = (v, ind) => {
+    if (Array.isArray(v) && v.every(x => typeof x !== "object" || x === null)) return inl(v, ind);
+    if (v && typeof v === "object") { const ks = Object.keys(v); if (!ks.length) return "{}"; return `{\n${ks.map(k => `${ind}  ${JSON.stringify(k)}: ${val(v[k], ind + "  ")}`).join(",\n")}\n${ind}}`; }
+    return JSON.stringify(v);
+  };
+  return val(ordered, "");
+}
+function highlight(text, { changed = new Set(), bad = -1 } = {}) {
+  return text.split("\n").map((line, i) => {
+    const body = line.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]).replace(/("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|(-?\d+(?:\.\d+)?)|([{}\[\],])/g, (m, str, colon, lit, num, punc) =>
+      str ? (colon ? `<span class="hk">${str}</span><span class="hp">${colon}</span>` : `<span class="hs">${str}</span>`) : lit || num ? `<span class="hv">${m}</span>` : `<span class="hp">${punc}</span>`);
+    return `<span class="ln${changed.has(i) ? " chg" : ""}${i === bad ? " bad" : ""}" data-n="${i + 1}">${body}</span>`;
+  }).join("");
+}
+function parseError(text, e) {
+  const msg = String(e.message || e);
+  let line, col;
+  const lc = msg.match(/line (\d+) column (\d+)/);
+  if (lc) { line = +lc[1]; col = +lc[2]; }
+  else { const m = msg.match(/position (\d+)/); if (m) { const before = text.slice(0, +m[1]).split("\n"); line = before.length; col = before.at(-1).length + 1; } }
+  const what = msg.replace(/^JSON\.parse: /, "").replace(/ in JSON at position \d+.*$/, "").replace(/ at line \d+ column \d+.*$/, "").replace(/\s*\(line \d+ column \d+\)/, "");
+  return { line, col, what };
+}
+function checkSetup(o, commandIds) {
+  const notes = [];
+  if (Array.isArray(o.parts)) {
+    const feats = o.parts.filter(p => FEATURE_IDS.includes(p)), bad = o.parts.filter(p => !PART[p]);
+    if (feats.length) notes.push(`Only panels go in "parts"; ${feats.map(b => JSON.stringify(b)).join(", ")} ${feats.length > 1 ? "are" : "is"} always on.`);
+    if (bad.length) notes.push(`Not a panel, ignored: ${bad.map(b => JSON.stringify(b)).join(", ")}.`);
+  } else if ("parts" in o) notes.push(`"parts" should be a list, like ["tabs", "sidebar"].`);
+  if ("theme" in o && !isThemeObj(o.theme) && !THEME[o.theme]) notes.push(typeof o.theme === "object" ? `A theme needs six hex colours in "v", like "#1e1e2e".` : `No theme called ${JSON.stringify(o.theme)}; the colours stay as they were.`);
+  if ("layout" in o && !CAT.layouts.some(l => l.id === o.layout)) notes.push(`No layout called ${JSON.stringify(o.layout)}.`);
+  if ("icons" in o && !CAT.iconsets.some(l => l.id === o.icons)) notes.push(`No icon set called ${JSON.stringify(o.icons)}.`);
+  if ("view" in o && !VIEWS.includes(o.view)) notes.push(`"view" is one of "details", "list" or "tiles".`);
+  if (o.keys && typeof o.keys === "object") { const bad = Object.keys(o.keys).filter(k => !commandIds.includes(k)); if (bad.length) notes.push(`No command called ${bad.map(b => JSON.stringify(b)).join(", ")}; that key is ignored.`); }
+  return notes;
+}
+
+/* ======================= state the page keeps ======================= */
+let setup = await stage.getSetup();   // the last setup the window reported
+let commands = await stage.commands();
+let idx = { folders: [], fileSet: new Set() };
+async function buildIndex() { const r = await stage.index(); idx = { folders: r.folders, fileSet: new Set(r.files) }; }
+const visits = [];
+let binStart = 0;   // Recycle Bin size when the visit began
+let used = new Set();
+
+/* ======================= view: panel switches ======================= */
+// the part's own glyph, drawn inside a little window so its position reads
+const glyph = p => `<svg class="g" viewBox="0 0 24 18" aria-hidden="true"><rect class="frame" x=".6" y=".6" width="22.8" height="16.8" rx="2.6"/>${p.glyph}</svg>`;
+const LABEL = { address: "Address bar", sidebar: "Sidebar", miller: "Miller columns", status: "Status bar", preview: "Preview", tabs: "Tabs", split: "Split", terminal: "Terminal" };
+function renderSwitches() {
+  $("#switches").innerHTML = PANELS.map(p => `<li><button class="sw" type="button" role="switch" aria-checked="false" data-p="${p.id}" title="${esc(p.desc)}">${glyph(p)}<span class="nm">${esc(LABEL[p.id] || p.name)}</span><span class="tog" aria-hidden="true"></span></button></li>`).join("");
+}
+$("#switches").addEventListener("click", e => {
+  const b = e.target.closest("[data-p]"); if (!b) return;
+  b.classList.remove("tick"); void b.offsetWidth; b.classList.add("tick");
+  stage.setPart(b.dataset.p, b.getAttribute("aria-checked") !== "true");
+});
+let lastParts = null;
+function paintSwitches(s) {
+  for (const p of PANELS) {
+    const on = s.parts.includes(p.id), b = $(`#switches [data-p="${p.id}"]`);
+    b.setAttribute("aria-checked", String(on));
+    // brought in by something the visitor did in the window, not by this switch: flip with a flash
+    if (lastParts && on && !lastParts.includes(p.id) && document.activeElement !== b) { b.classList.remove("arrive"); void b.offsetWidth; b.classList.add("arrive"); }
+  }
+  lastParts = s.parts.slice();
+}
+
+/* ======================= view: actions ======================= */
+const ACTIONS = [
+  { id: "goto", name: "Go to file", line: "Jump to any file by typing part of its name.", cmds: ["quickOpen"] },
+  { id: "search", name: "Search in files", line: "Find words inside files, with each line that matches.", cmds: ["search"] },
+  { id: "palette", name: "Command palette", line: "Every command, in one searchable list.", cmds: ["palette"] },
+  { id: "hidden", name: "Hidden files", line: "Show or hide names that start with a dot.", cmds: ["toggleHidden"], state: s => s.hidden ? "shown" : "" },
+  { id: "peek", name: "Folder peek", line: "Open a folder in place, inside the list.", cmds: [] },
+  { id: "views", name: "View modes", line: "Details, list or tiles. Each pane keeps its own.", cmds: ["viewDetails", "viewList", "viewTiles"], state: s => s.view },
+  { id: "graph", name: "Commit graph", line: "The history of the repository you are in.", cmds: ["gitGraph"] },
+  { id: "plugins", name: "Plugins", line: "Add-ons for menus, columns, previews and views.", cmds: ["plugins"] },
+  { id: "keys", name: "Keybindings", line: "Change the key for any command.", cmds: ["keys"] },
+];
+const PLAY = `<svg viewBox="0 0 10 10" aria-hidden="true"><path fill="currentColor" d="M2.5 1.4v7.2c0 .4.4.6.7.4l5.6-3.6a.5.5 0 0 0 0-.8L3.2 1c-.3-.2-.7 0-.7.4z"/></svg>`;
+const caps = combo => combo.split(" ").map(part => part.split("+").map(k => `<kbd>${esc(k)}</kbd>`).join("")).join(" ");
+function renderActions() {
+  $("#actions").innerHTML = ACTIONS.map(a => `<li class="act" data-a="${a.id}"><button class="run" type="button"><span class="go" aria-hidden="true">${PLAY}</span><b>${esc(a.name)}<em></em></b><span class="d">${esc(a.line)}</span></button><div class="keys"><span class="k"></span>${a.cmds.length ? `<button class="chg" type="button" aria-label="Change the key for ${esc(a.name.toLowerCase())}">Change</button>` : ""}</div></li>`).join("");
+}
+$("#actions").addEventListener("click", e => {
+  const li = e.target.closest("[data-a]"); if (!li) return;
+  const a = ACTIONS.find(x => x.id === li.dataset.a);
+  if (e.target.closest(".chg")) { stage.openKeys(a.cmds[0]); return; }
+  if (e.target.closest(".run")) { used.add("act:" + a.id); stage.run(a.id); li.classList.remove("flash"); void li.offsetWidth; li.classList.add("flash"); hintsSoon(); }
+});
+function paintActions(s) {
+  const keys = Object.fromEntries(commands.map(c => [c.id, c.keys]));
+  for (const a of ACTIONS) {
+    const li = $(`#actions [data-a="${a.id}"]`);
+    const bound = a.cmds.filter(id => keys[id]);
+    li.querySelector(".k").innerHTML = bound.length ? bound.map(id => caps(keys[id])).join(" ") : `<span class="none">no key</span>`;
+    li.querySelector("em").textContent = a.state ? a.state(s) : "";
+  }
+  fitKeys();
+}
+// Long chords move below the description rather than covering the name. Measured, so it follows fonts, themes and widths.
+function fitKeys() {
+  for (const li of document.querySelectorAll("#actions .act")) {
+    if (!li.clientWidth) continue;
+    const chg = li.querySelector(".chg"), w = li.querySelector(".keys").offsetWidth + (chg ? chg.offsetWidth + 6 : 0), wide = w > li.clientWidth * .55;
+    li.classList.toggle("wide", wide);
+    li.style.setProperty("--kw", wide ? "0px" : `${w + 16}px`);
+  }
+}
+try { new ResizeObserver(fitKeys).observe($("#actions")); } catch (_) { /* old engines: the 150px default stays */ }
+
+/* ======================= view: look ======================= */
+const P = d => `<svg viewBox="0 0 28 20" aria-hidden="true">${d}</svg>`;
+const PICTO = {
+  layout: {
+    default: P(`<rect x="2.5" y="2.5" width="23" height="15" rx="2.5"/><path d="M9.5 2.5v15M12.5 7h10M12.5 10.5h10M12.5 14h7"/>`),
+    "floating-islands": P(`<rect x="2.5" y="3" width="6.5" height="14" rx="2.2"/><rect x="11" y="3" width="14.5" height="14" rx="2.2"/><path d="M14 7.5h8.5M14 11h8.5" opacity=".8"/>`),
+    "soft-cards": P(`<rect x="2.5" y="2.5" width="23" height="15" rx="5" fill="currentColor" fill-opacity=".14"/><rect x="6" y="6" width="16" height="8" rx="3"/>`),
+    compact: P(`<rect x="2.5" y="2.5" width="23" height="15" rx="1.5"/><path d="M5.5 5.8h17M5.5 8.6h17M5.5 11.4h17M5.5 14.2h17"/>`),
+    "hairline-ledger": P(`<path d="M2.5 2.5h23v15h-23z" stroke-width="1"/><path d="M2.5 7.5h23M2.5 12.5h23M19 2.5v15" stroke-width=".8"/>`),
+  },
+  icons: {
+    material: P(`<path d="M4 6c0-.9.6-1.5 1.5-1.5h5.2l2 2h9.8c.8 0 1.5.7 1.5 1.5v7.5c0 .8-.7 1.5-1.5 1.5h-17C4.6 17 4 16.3 4 15.5z" fill="currentColor" fill-opacity=".9" stroke="none"/>`),
+    classic: P(`<path d="M4 6c0-.9.6-1.5 1.5-1.5h5.2l2 2h9.8c.8 0 1.5.7 1.5 1.5v7.5c0 .8-.7 1.5-1.5 1.5h-17C4.6 17 4 16.3 4 15.5z"/><path d="M4 9.5h20"/>`),
+    minimal: P(`<path d="M10 3h6.5L20 6.5V17h-10z"/><path d="M16.5 3v3.5H20"/>`),
+    catppuccin: P(`<path d="M4 6.5c0-1.1.9-2 2-2h4.5l2 2H22c1.1 0 2 .9 2 2V15c0 1.1-.9 2-2 2H6c-1.1 0-2-.9-2-2z"/><circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none"/>`),
+    default: P(`<circle cx="14" cy="10" r="6.5"/><path d="M14 3.5a6.5 6.5 0 0 0 0 13z" fill="currentColor" stroke="none"/>`),
+  },
+  view: {
+    details: P(`<path d="M3 4.5h22" stroke-width="1"/><path d="M3 8.5h13M20 8.5h5M3 12h13M20 12h5M3 15.5h13M20 15.5h5"/>`),
+    list: P(`<path d="M3 5h9M16 5h9M3 10h9M16 10h9M3 15h9M16 15h9"/>`),
+    tiles: P(`<rect x="3" y="3" width="6" height="6" rx="1.2"/><rect x="11" y="3" width="6" height="6" rx="1.2"/><rect x="19" y="3" width="6" height="6" rx="1.2"/><rect x="3" y="11" width="6" height="6" rx="1.2"/><rect x="11" y="11" width="6" height="6" rx="1.2"/><rect x="19" y="11" width="6" height="6" rx="1.2"/>`),
+  },
+};
+const SHORT = { "floating-islands": "Islands", "soft-cards": "Soft cards", "hairline-ledger": "Ledger", default: null };
+const chipStyle = v => v.map((c, i) => `--c${i}:${c}`).join(";");
+const chip = (key, name, v, note, cls = "") => `<button class="chip${cls}" type="button" data-theme="${esc(key)}" aria-pressed="false" title="${esc(name)}${note ? ", " + esc(note) : ""}"><i style="${chipStyle(v)}"></i><small>${esc(name.replace(/ \(.*\)$/, ""))}</small></button>`;
+const segBtn = (kind, id, label, note) => `<button type="button" data-${kind}="${id}" title="${esc(note || label)}" aria-pressed="false">${PICTO[kind][id] || ""}<span>${esc(label)}</span></button>`;
+function renderLook() {
+  $("#chips").innerHTML = CAT.themes.map(t => chip(t.id, t.name, t.swatch, t.note)).join("") + found.themes.map(f => chip("found:" + f.id, f.name, f.theme.v, f.by ? "by " + f.by : "", " found")).join("");
+  $("#seg-layout").innerHTML = CAT.layouts.map(l => segBtn("layout", l.id, SHORT[l.id] || l.name, `${l.name}: ${l.note}`)).join("");
+  $("#seg-icons").innerHTML = CAT.iconsets.map(l => segBtn("icons", l.id, l.id === "default" ? "Theme" : l.name, l.note)).join("");
+  $("#seg-view").innerHTML = VIEWS.map(v => segBtn("view", v, v[0].toUpperCase() + v.slice(1))).join("");
+}
+function themeFromKey(key) {
+  if (key.startsWith("found:")) { const f = found.themes.find(x => x.id === key.slice(6)); return f ? f.theme : null; }
+  return key;
+}
+RAIL.addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.theme) { const t = themeFromKey(b.dataset.theme); if (t) stage.setSetup({ theme: t }); }
+  else if (b.dataset.layout) stage.setSetup({ layout: b.dataset.layout });
+  else if (b.dataset.icons) stage.setSetup({ icons: b.dataset.icons });
+  else if (b.dataset.view) stage.setSetup({ view: b.dataset.view });
+});
+$("#open-themes").addEventListener("click", () => stage.run("themes"));
+function paintLook(s) {
+  const custom = isThemeObj(s.theme) ? s.theme : null;
+  RAIL.querySelectorAll(".chip").forEach(c => {
+    const t = themeFromKey(c.dataset.theme);
+    c.setAttribute("aria-pressed", String(custom ? isThemeObj(t) && JSON.stringify(t.v) === JSON.stringify(custom.v) : t === s.theme));
+  });
+  for (const k of ["layout", "icons", "view"]) RAIL.querySelectorAll(`#seg-${k} button`).forEach(b => b.setAttribute("aria-pressed", String(b.dataset[k] === s[k])));
+}
+
+/* ======================= view: shelf ======================= */
+let named = null;   // the last card fitted, while the window still matches it
+const allShelf = () => [...SHELF, ...found.setups.map(f => ({ ...f, found: true }))];
+function nameNow(s) {
+  if (named && shape(named.setup) === shape(s)) return named;
+  return allShelf().find(x => shape(x.setup) === shape(s)) || { id: null, name: "Your setup", line: describe(s) };
+}
+function mini(s) {
+  const sw = swatchOf(s.theme), [p, side, ink, muted, acc, fold] = sw.v, on = id => (s.parts || []).includes(id), view = s.view || "details";
+  const rows = n => Array.from({ length: n }, () => "<i><b></b><s></s><u></u></i>").join("");
+  const pane = () => `<div class="mm-pane v-${view}">${view === "tiles" ? "<i></i>".repeat(6) : rows(view === "list" ? 10 : 7)}</div>`;
+  return `<div class="mini${sw.dark ? " dk" : ""}${sw.mono ? " mono" : ""}" data-layout="${esc(s.layout || "default")}" style="--p:${p};--s:${side};--i:${ink};--m:${muted};--a:${acc};--f:${fold}">
+    <div class="mw">${on("tabs") ? "<div class=mm-tabs><i></i><i></i><i></i></div>" : ""}${on("address") ? "<div class=mm-addr><i></i></div>" : ""}
+      <div class="mb">${on("sidebar") ? "<div class=mm-side><i></i><i></i><i></i><i></i><i></i></div>" : ""}${on("miller") ? "<div class=mm-mill><i></i><i></i><i></i><i></i></div>" : ""}
+        <div class="mm-panes${on("split") ? " split" : ""}">${pane()}${on("split") ? pane() : ""}</div>${on("preview") ? "<div class=mm-prev><b></b><i></i><i></i></div>" : ""}</div>
+      ${on("terminal") ? "<div class=mm-term><i></i><i></i></div>" : ""}${on("status") ? "<div class=mm-stat><i></i></div>" : ""}</div></div>`;
+}
+const cardHTML = x => `<li><button class="card${x.found ? " found" : ""}" type="button" data-id="${esc(x.id)}" aria-pressed="false" title="${esc(x.line)}">${mini(x.setup)}<span class="row"><span class="nm">${esc(x.name)}</span><i class="led" aria-hidden="true"></i></span>${x.found ? `<span class="by">${x.by ? "by " + esc(x.by) : esc(x.id.split("/").pop())}</span>` : ""}</button></li>`;
+function renderShelf() {
+  $("#shelf").innerHTML = SHELF.map(cardHTML).join("");
+  $("#shelf-found").innerHTML = found.setups.map(f => cardHTML({ ...f, found: true })).join("");
+  $("#chips-found").innerHTML = found.themes.map(f => chip("found:" + f.id, f.name, f.theme.v, f.by ? "by " + f.by : "", " found")).join("");
+  $("#found").hidden = !found.setups.length && !found.themes.length;
+  $("#shelf-found").hidden = !found.setups.length; $("#chips-found").hidden = !found.themes.length;
+}
+function fit(entry) {
+  named = entry;
+  stage.setSetup({ ...entry.setup }, { animate: true });   // no path: you stay where you are
+  const card = RAIL.querySelector(`.card[data-id="${CSS.escape(entry.id)}"]`);
+  if (card) { card.classList.remove("pop"); void card.offsetWidth; card.classList.add("pop"); }
+}
+$("#p-shelf").addEventListener("click", e => { const b = e.target.closest(".card"); if (b) { const x = allShelf().find(s => s.id === b.dataset.id); if (x) fit(x); } });
+let hoverLine = null;
+$("#p-shelf").addEventListener("pointerover", e => { const b = e.target.closest(".card"); const x = b && allShelf().find(s => s.id === b.dataset.id); if (x && hoverLine !== x) { hoverLine = x; paintNow(); } });
+$("#p-shelf").addEventListener("pointerleave", () => { hoverLine = null; paintNow(); });
+$("#shuffle").addEventListener("click", () => fit(shuffleSetup(setup)));
+// cards lean toward the pointer and catch the light
+let tiltF = 0;
+$("#p-shelf").addEventListener("pointermove", e => {
+  const c = e.target.closest(".card"); if (!c || e.pointerType !== "mouse" || tiltF) return;
+  tiltF = requestAnimationFrame(() => {
+    tiltF = 0;
+    const r = c.getBoundingClientRect(), x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
+    c.style.setProperty("--ry", ((x - .5) * 9).toFixed(2) + "deg"); c.style.setProperty("--rx", ((.5 - y) * 7).toFixed(2) + "deg"); c.style.setProperty("--lx", (x * 100).toFixed(1) + "%");
+  });
+});
+$("#p-shelf").addEventListener("pointerout", e => { const c = e.target.closest(".card"); if (c && !c.contains(e.relatedTarget)) for (const k of ["--rx", "--ry", "--lx"]) c.style.removeProperty(k); });
+$("#forget").addEventListener("click", () => { found = { setups: [], themes: [] }; store.clear(); renderShelf(); renderLook(); onSetup(setup); });
+function paintNow() {
+  const s = setup, now = nameNow(s);
+  $("#now-name").textContent = now.name;
+  const key = shape(s); if ($("#now-mini").dataset.k !== key) { $("#now-mini").innerHTML = mini(s); $("#now-mini").dataset.k = key; }
+  $("#now-line").innerHTML = hoverLine && hoverLine.id !== now.id ? `<b>${esc(hoverLine.name)}.</b> ${esc(hoverLine.line)}` : esc(now.line) + (now.found && now.by ? ` <b>By ${esc(now.by)}.</b>` : "");
+  RAIL.querySelectorAll(".card").forEach(c => { const on = c.dataset.id === now.id; c.setAttribute("aria-pressed", String(on)); c.querySelector(".led").classList.toggle("on", on); });
+}
+
+/* ======================= view: offers for found files ======================= */
+let offering = null;
+function offer(item) {
+  offering = item;
+  const have = item.kind === "setup" ? found.setups.some(f => f.id === item.id) : found.themes.some(f => f.id === item.id);
+  $("#offer-art").innerHTML = item.kind === "setup" ? mini(item.setup) : `<div class="sw6">${item.theme.v.map(c => `<i style="background:${c}"></i>`).join("")}</div>`;
+  $("#offer-name").textContent = item.name;
+  $("#offer-by").textContent = item.by ? `by ${item.by}` : item.id.split("/").pop();
+  $("#offer-go").textContent = item.kind === "setup" ? (have ? "Try this window again" : "Try this window") : (have ? "Wear this again" : "Wear this");
+  $("#offer").hidden = false;
+}
+// a newly found item makes an entrance wherever it appears (in a hidden panel it plays when that panel is shown)
+function revealFound(sel) {
+  for (const el of RAIL.querySelectorAll(sel)) {
+    el.classList.add("reveal");
+    const panel = el.closest(".panel");
+    if (panel && !panel.hidden) { const r = el.getBoundingClientRect(), pr = panel.getBoundingClientRect(); if (r.bottom > pr.bottom - 24 || r.top < pr.top) panel.scrollTo({ top: panel.scrollTop + r.top - pr.top - 80, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }); } el.addEventListener("animationend", e => { if (e.target === el || e.animationName === "wb-foil") el.classList.remove("reveal"); }); }
+}
+const hideOffer = () => { $("#offer").hidden = true; offering = null; };
+$("#offer-x").addEventListener("click", hideOffer);
+$("#offer-go").addEventListener("click", () => {
+  const it = offering; if (!it) return;
+  if (it.kind === "setup") {
+    const isNew = !found.setups.some(f => f.id === it.id);
+    found.setups = [...found.setups.filter(f => f.id !== it.id), { id: it.id, name: it.name, by: it.by, line: it.line, setup: it.setup }];
+    store.save(found); renderShelf(); fit({ ...it, found: true });
+    if (isNew) revealFound(`.card[data-id="${CSS.escape(it.id)}"]`);
+  } else {
+    const isNew = !found.themes.some(f => f.id === it.id);
+    found.themes = [...found.themes.filter(f => f.id !== it.id), { id: it.id, name: it.name, by: it.by, theme: it.theme }];
+    store.save(found); renderShelf(); renderLook();
+    if (isNew) revealFound(`.chip[data-theme="${CSS.escape("found:" + it.id)}"]`);
+    stage.setSetup({ theme: it.theme });
+  }
+  $("#offer-go").textContent = it.kind === "setup" ? "On your shelf" : "In your colours";
+  setTimeout(() => { if (offering === it) hideOffer(); }, 1600);
+});
+
+/* ======================= hints (resonance) ======================= */
+let glowing = [], hintSeq = 0;
+async function paintHints() {
+  const seq = ++hintSeq, snap = await stage.snapshot();
+  if (seq !== hintSeq) return;   // a newer request superseded this one
+  glowing = resonate(context(snap, idx, visits, binStart), used);
+  const lit = new Set(glowing.map(t => { const [kind, id] = t.split(":"); return kind === "part" ? $(`#switches [data-p="${id}"]`) : $(`#actions [data-a="${id}"]`); }).filter(Boolean));
+  RAIL.querySelectorAll(".hint").forEach(x => { if (!lit.has(x)) x.classList.remove("hint"); });
+  for (const el of lit) el.classList.add("hint");   // already lit stays as it is, so its light plays once
+  RAIL.querySelectorAll("[data-sect]").forEach(sec => sec.querySelector(".sect-h .led")?.classList.toggle("on", !!sec.querySelector(".hint")));
+  paintMore();
+}
+let hintT = 0;
+const hintsSoon = () => { clearTimeout(hintT); hintT = setTimeout(paintHints, 60); };
+// A lit item scrolled out of view leaves a marker at that edge of the rail; the Bench tab carries the light when the Shelf is open.
+function paintMore() {
+  const bench = $("#p-bench"), open = !bench.hidden, more = $("#more");
+  $("#bench-led").classList.toggle("on", glowing.length > 0 && !open);
+  let dir = null, target = null;
+  if (open) {
+    const box = bench.getBoundingClientRect();
+    for (const el of bench.querySelectorAll(".hint")) {
+      const r = el.getBoundingClientRect(), head = 64;   // the sticky title covers the top of the scroller
+      if (r.bottom > box.bottom - 8) { dir = dir || "down"; target = target || el; }
+      else if (r.top < box.top + head) { dir = dir || "up"; target = target || el; }
+    }
+  }
+  more.classList.toggle("on", !!dir); more.classList.toggle("up", dir === "up"); more._target = target;
+}
+$("#p-bench").addEventListener("scroll", () => requestAnimationFrame(paintMore), { passive: true });
+// scroll only the bench (scrollIntoView would also nudge the page itself)
+$("#more").addEventListener("click", () => {
+  const el = $("#more")._target, bench = $("#p-bench"); if (!el) return;
+  const top = el.getBoundingClientRect().top - bench.getBoundingClientRect().top + bench.scrollTop - bench.clientHeight / 2 + el.offsetHeight / 2;
+  bench.scrollTo({ top, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+});
+try { new ResizeObserver(() => paintMore()).observe($("#p-bench")); } catch (_) { /* no marker updates on resize */ }
+
+/* ======================= tabs, file fold ======================= */
+const TABS = [...RAIL.querySelectorAll('[role="tab"]')];
+function selectTab(t) {
+  TABS.forEach((x, i) => { const on = x === t; x.setAttribute("aria-selected", String(on)); x.tabIndex = on ? 0 : -1; $("#" + x.getAttribute("aria-controls")).hidden = !on; if (on) $(".tabs").dataset.at = i; });
+  paintMore();
+}
+TABS.forEach((t, i) => {
+  t.addEventListener("click", () => selectTab(t));
+  t.addEventListener("keydown", e => { if (e.key === "ArrowRight" || e.key === "ArrowLeft") { const n = TABS[(i + (e.key === "ArrowRight" ? 1 : -1) + TABS.length) % TABS.length]; selectTab(n); n.focus(); e.preventDefault(); } });
+});
+$("#file-tog").addEventListener("click", () => { const shut = $("#file").classList.toggle("shut"); $("#file-tog").setAttribute("aria-expanded", String(!shut)); $("#file-tog .sr").textContent = shut ? "Unfold the file" : "Fold the file"; });
+
+/* ======================= setup.json ======================= */
+const ta = $("#json"), hl = $("#hl");
+let shown = "", editing = false, editT = 0;
+const setNote = (text, bad) => { const n = $("#note"); n.textContent = text || ""; n.classList.toggle("bad", !!bad); };
+const setStatus = (text, bad) => { $("#file-st-t").textContent = text; $("#file-st").classList.toggle("bad", !!bad); };
+function writeFile(s) {
+  const text = pretty(s), old = shown.split("\n"), now = text.split("\n");
+  const changed = new Set(); if (shown) now.forEach((l, i) => { if (old[i] !== l) changed.add(i); });
+  shown = text; ta.value = text;
+  hl.innerHTML = highlight(text, { changed });
+  if (changed.size) setTimeout(() => hl.querySelectorAll(".chg").forEach(x => x.classList.remove("chg")), 60);
+  syncScroll();
+}
+function syncScroll() { hl.scrollTop = ta.scrollTop; hl.scrollLeft = ta.scrollLeft; }
+ta.addEventListener("scroll", syncScroll);
+ta.addEventListener("focus", () => { editing = true; });
+ta.addEventListener("blur", () => { editing = false; clearTimeout(editT); applyEdit(); if (!$("#note").classList.contains("bad") && !$("#file-st").classList.contains("bad")) writeFile(setup); });
+ta.addEventListener("input", () => { hl.innerHTML = highlight(ta.value); syncScroll(); clearTimeout(editT); editT = setTimeout(applyEdit, 260); });
+ta.addEventListener("keydown", e => { if (e.key === "Tab" && !e.shiftKey && !e.ctrlKey) { e.preventDefault(); document.execCommand("insertText", false, "  "); } if (e.key === "Escape") ta.blur(); });
+async function applyEdit() {
+  const text = ta.value;
+  if (text === shown) { setStatus("in step with the window"); setNote(""); return; }
+  let o;
+  try { o = JSON.parse(text); }
+  catch (e) {
+    const { line, col, what } = parseError(text, e);
+    hl.innerHTML = highlight(text, { bad: line ? line - 1 : -1 }); syncScroll();
+    setStatus(line ? `error near line ${line}` : "not valid JSON", true);
+    setNote(`${what || "This is not valid JSON"}${line ? ` (near line ${line}, column ${col})` : ""}. The window keeps the last setup that read correctly.`, true);
+    return;
+  }
+  if (!o || typeof o !== "object" || Array.isArray(o)) { setStatus("not a setup", true); setNote("A setup is one JSON object, wrapped in { }. The window keeps the last one that read correctly.", true); return; }
+  const notes = checkSetup(o, commands.map(c => c.id));
+  const patch = { ...o };
+  if (patch.path === setup.path) delete patch.path;   // re-applying the current folder would only reset the view
+  named = null;
+  await stage.setSetup(patch, { animate: true });
+  const after = await stage.getSetup();
+  if (patch.path && after.path !== String(patch.path).replace(/\/+$/, "")) notes.push(`Nothing at ${JSON.stringify(patch.path)}; staying in ${after.path}.`);
+  shown = text;
+  setStatus(notes.length ? "applied, with notes" : "applied");
+  setNote(notes.join(" "));
+}
+
+/* ======================= keep everything in step with the window ======================= */
+function syncUrl() {
+  const p = new URLSearchParams(location.search);
+  p.set("setup", encodeSetup(setup));
+  try { history.replaceState(null, "", "?" + p.toString() + location.hash); } catch (_) { /* some embeds forbid it */ }
+}
+async function onSetup(full) {
+  setup = full;
+  commands = await stage.commands();
+  dress(setup); paintSwitches(setup); paintActions(setup); paintLook(setup); paintNow(); syncUrl(); hintsSoon();
+  if (!editing) { writeFile(setup); setStatus("in step with the window"); setNote(""); }
+}
+stage.on("setup", onSetup);
+stage.on("navigate", ({ path }) => {
+  if (visits.at(-1) !== path) visits.push(path);
+  if (visits.length > 30) visits.splice(0, visits.length - 30);
+  used = new Set();   // a new place: suggestions start fresh
+  setup = { ...setup, path }; syncUrl(); hintsSoon();
+  if (!editing) writeFile(setup);
+});
+stage.on("open", async ({ path }) => {
+  hintsSoon();
+  if (!/\.(setup|theme)\.json$/i.test(path)) return;
+  const item = readFound(path, (await stage.read(path)) || "");
+  if (item) offer(item);
+});
+stage.on("command", ({ id }) => { const a = ACTIONS.find(x => x.cmds.includes(id)); if (a) used.add("act:" + a.id); hintsSoon(); });
+stage.on("user", async () => { visits.length = 0; visits.push(setup.path); binStart = (await stage.snapshot()).binCount; used = new Set(); hintsSoon(); });
+// An opened file goes to the program the system would use; the explorer's own setup and theme files are offered instead.
+stage.on("open-external", async file => {
+  if (/\.(setup|theme)\.json$/i.test(file.name)) return;
+  HostApps.open(file, {
+    origin: await stage.locate(file.path),
+    locate: p => stage.locate(p),
+    inert: [$(".strip"), $(".floor")],
+    onClose: () => stage.focus(),
+  });
+});
+stage.on("search", () => { used.add("act:goto"); used.add("act:search"); hintsSoon(); });
+let idxT = 0;
+stage.on("fs-change", () => { clearTimeout(idxT); idxT = setTimeout(async () => { await buildIndex(); hintsSoon(); }, 200); });
+
+/* ======================= taking it with you ======================= */
+async function copy(text, btn, done) {
+  let ok = false;
+  try { await navigator.clipboard.writeText(text); ok = true; } catch (_) {
+    const t = document.createElement("textarea"); t.value = text; t.style.cssText = "position:fixed;opacity:0"; document.body.append(t); t.select();
+    try { ok = document.execCommand("copy"); } catch (__) { ok = false; } t.remove();
+  }
+  const label = btn.querySelector("span"), was = label.dataset.was || label.textContent; label.dataset.was = was;
+  label.textContent = ok ? done : "Copy failed: select the text instead"; btn.dataset.done = "";
+  clearTimeout(btn._t); btn._t = setTimeout(() => { label.textContent = was; delete btn.dataset.done; }, 1800);
+}
+$("#copy-link").addEventListener("click", e => { syncUrl(); copy(location.href, e.currentTarget, "Link copied"); });
+$("#copy-json").addEventListener("click", e => copy(pretty(setup) + "\n", e.currentTarget, "JSON copied"));
+
+// the accent follows the pointer along the window's edge
+{
+  const st = $(".stage"), gl = $(".glint"); let f = 0, at = null;
+  st.addEventListener("pointermove", e => {
+    if (e.pointerType !== "mouse") return;
+    at = e; st.classList.add("lit");
+    if (!f) f = requestAnimationFrame(() => { f = 0; const r = st.getBoundingClientRect(); gl.style.transform = `translate(${at.clientX - r.left}px, ${at.clientY - r.top}px)`; });
+  });
+  st.addEventListener("pointerleave", () => st.classList.remove("lit"));
+}
+await buildIndex();
+const snap0 = await stage.snapshot();
+visits.push(snap0.path); binStart = snap0.binCount;
+renderSwitches(); renderActions(); renderLook(); renderShelf();
+await onSetup(await stage.getSetup());
+document.body.classList.replace("pre", "enter") || document.body.classList.add("enter");
+setTimeout(() => document.body.classList.remove("enter"), 2400);
+stage.focus();
+}
+</script>
+</body>
+</html>

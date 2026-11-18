@@ -9,7 +9,7 @@
   import { themeStore } from "$lib/state/theme.svelte";
   import { iconThemeStore } from '$lib/state/icon-theme.svelte';
   import type { IconTheme, IconPack } from '$lib/domain/icon-themes';
-  import { ICON_THEMES } from './icons/icon-theme-options';
+  import { ICON_THEMES } from '$lib/domain/icon-theme-options';
   import type { FileEntry } from '$lib/domain/file';
   import FileIcon from './FileIcon.svelte';
   import { settingsStore } from "$lib/state/settings.svelte";

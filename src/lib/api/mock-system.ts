@@ -9,6 +9,7 @@ import { getMockControl, MOCK_LOCAL_KEYS } from "./mock-control";
 import { mockDrivesFixture } from "./mock-fixtures";
 import type { CommandHandler } from "./mock-dispatch";
 import { MOCK_REPO_ROOT } from "./mock-git-state";
+import { terminalCommands } from "./mock-terminal";
 
 
 const mockSlowLoads: SlowLoadRecord[] = [];
@@ -20,6 +21,21 @@ const mockSlowLoads: SlowLoadRecord[] = [];
 // binding doesn't try to rebind mock-fixtures.ts's export.
 let mockDrives: { name: string; path: string; kind: string; detail?: string; provider?: string }[] =
   [...mockDrivesFixture];
+
+let mockHomeDirectory = "/home/user";
+
+export const getMockHomeDirectory = (): string => mockHomeDirectory;
+
+/** Replace the home directory and drive list a fixture world reports. */
+export function setMockHomeDirectory(path: string): void {
+  mockHomeDirectory = path;
+}
+
+export const getMockDrives = (): readonly typeof mockDrives[number][] => [...mockDrives];
+
+export function setMockDrives(drives: readonly { name: string; path: string; kind: string; detail?: string; provider?: string }[]): void {
+  mockDrives = [...drives];
+}
 
 if (typeof window !== "undefined") {
   const control = getMockControl();
@@ -78,7 +94,7 @@ export const systemCommands: Record<string, CommandHandler> = {
   native_file_drag_clock: () => ({ id: `browser:${performance.timeOrigin}`, now: performance.timeOrigin + performance.now() }),
   start_file_drag: () => { throw "Native file dragging is unavailable in the browser"; },
   end_html5_file_drag: () => undefined,
-  get_home_directory: () => "/home/user",
+  get_home_directory: () => mockHomeDirectory,
   list_drives: () => {
     const control = getMockControl();
     const drives = control.linuxVolumes ?? mockDrives;
@@ -234,27 +250,16 @@ export const systemCommands: Record<string, CommandHandler> = {
   warm_pool_discard: () => undefined,
   warm_pool_shutdown: () => undefined,
 
-  open_file: () => {
-    // No-op for mock
-  },
+  // The browser has no system handler: opening succeeds without launching
+  // anything, and a fixture world may observe the request.
+  open_file: (args) => { getMockControl().openFile?.(String(args.path), "open_file"); },
+  open_file_at_line: (args) => { getMockControl().openFile?.(String(args.path), "open_file_at_line"); },
+  open_image_with_siblings: (args) => { getMockControl().openFile?.(String(args.path), "open_image_with_siblings"); },
 
-  open_file_at_line: () => {
-    // No-op for mock
-  },
-
-  open_image_with_siblings: () => {
-    // No-op for mock
-  },
-
-  // Embedded terminal: a PTY can't be faked meaningfully in the browser —
+  // Embedded terminal: see mock-terminal.ts. Without an installed backend,
   // spawn "succeeds" (so the panel renders and e2e can exercise the toggle)
-  // but never emits output. Real terminal behavior is covered by e2e-tauri.
-  terminal_reserve_id: () => 1,
-  terminal_spawn: () => ({ id: 1, shellKind: "posix", wslDistro: null }),
-  terminal_write: () => ({ droppedBytes: 0 }),
-  terminal_resize: () => {},
-  terminal_kill: () => {},
-  terminal_status: () => ({ busy: false, cwd: null }),
+  // but the shell never emits output. Real PTYs are covered by e2e-tauri.
+  ...terminalCommands,
 
   // Config file persistence (in-memory mock)
   read_config_file: (args) => {

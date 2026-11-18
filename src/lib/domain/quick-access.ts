@@ -29,6 +29,9 @@ const SYSTEM_FOLDERS: readonly Omit<QuickAccessFolder, "path">[] = [
   { name: "Music", icon: "music", color: "#f472b6" },
 ];
 
+/** The default rows' names (also the keys the sidebar uses to hide one). */
+export const QUICK_ACCESS_FOLDER_NAMES: readonly string[] = SYSTEM_FOLDERS.map((folder) => folder.name);
+
 /**
  * Build the default Quick Access rows under `homeDir`.
  *

@@ -4,7 +4,7 @@
 -->
 <script lang="ts">
   import { settingsStore, type IconTheme, type WindowsBackdrop, type PaneLayoutMode } from "$lib/state/settings.svelte";
-  import { ICON_THEMES } from './icons/icon-theme-options';
+  import { ICON_THEMES } from '$lib/domain/icon-theme-options';
   import { themeStore } from "$lib/state/theme.svelte";
   import { isMac, isWindows } from "$lib/domain/platform";
   import { listInstalledTerminals } from "$lib/api/open";

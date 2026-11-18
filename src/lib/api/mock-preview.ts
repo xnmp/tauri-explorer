@@ -12,6 +12,7 @@ import { getMockControl } from "./mock-control";
 import { mockFiles, nextTimestamp } from "./mock-fixtures";
 import { createMockImageCrop } from "./mock-image-crop";
 import { invokeMockCommand, type CommandHandler } from "./mock-dispatch";
+import { publishMockFsChange } from "./mock-fs-changes";
 
 const mockVideoCapabilities = new Set<string>();
 const mockImageCrop = createMockImageCrop(mockFiles, nextTimestamp);
@@ -105,7 +106,7 @@ export const previewCommands: Record<string, CommandHandler> = {
   // Details Length column (#995): fixed durations so views render stable text;
   // `unreadable.avi` models a video whose container metadata cannot be read.
   get_media_durations: (args) =>
-    (args.paths as string[]).map((path) => MOCK_MEDIA_DURATIONS[path] ?? null),
+    (args.paths as string[]).map((path) => getMockControl().mediaDuration?.(path) ?? MOCK_MEDIA_DURATIONS[path] ?? null),
 
   // Source header fixture is intentionally independent of thumbnail dimensions.
   get_image_resolution: (args) => getMockControl().imageResolution
@@ -116,6 +117,8 @@ export const previewCommands: Record<string, CommandHandler> = {
   get_thumbnail_data: (args) => {
     const cropped = mockImageCrop.read((args.path as string) ?? "");
     if (cropped) return cropped;
+    const hook = getMockControl().thumbnail;
+    if (hook) return hook((args.path as string) ?? "", (args.size as number) ?? 128, (args.quality as number) ?? 90);
     // #593 regression guard: a single hardcoded JPEG for every path let the
     // browser satisfy N tiles from ONE cached decoded bitmap, hiding scroll
     // jank that only appears when N distinct images must each be decoded.
@@ -204,7 +207,12 @@ export const previewCommands: Record<string, CommandHandler> = {
   },
 
   capture_image_crop: (args) => getMockControl().imageCropCapture?.(args.path as string) ?? mockImageCrop.capture(args.path as string),
-  save_image_crop: (args) => getMockControl().imageCropSave?.(args.request as ImageCropSave) ?? mockImageCrop.save(args.request as ImageCropSave),
+  save_image_crop: async (args) => {
+    const request = args.request as ImageCropSave;
+    const receipt = await (getMockControl().imageCropSave?.(request) ?? mockImageCrop.save(request));
+    if (receipt?.path) publishMockFsChange({ op: receipt.path === request.path ? "write" : "create", path: receipt.path });
+    return receipt;
+  },
 
   get_video_thumbnail_data: (args) => {
     const videoThumbnailMock = getMockControl().videoThumbnail;

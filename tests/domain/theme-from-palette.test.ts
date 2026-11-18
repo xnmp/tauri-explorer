@@ -69,3 +69,17 @@ describe("color primitives", () => {
     expect(hexToRgb("red")).toBeNull();
   });
 });
+
+describe("buildTheme with a hostile source name", () => {
+  it("keeps the name inside its comment and its CSS string", () => {
+    const name = `evil */ body { display: none } /* "quoted" \\ back`;
+    const css = buildTheme(["#336699", "#ffcc00"], "img-evil", name)!.css;
+    const header = css.slice(0, css.indexOf('[data-theme="img-evil"]'));
+    expect(header.trim()).toMatch(/^\/\*[\s\S]*\*\/$/);
+    expect(header.indexOf("*/")).toBe(header.lastIndexOf("*/"));
+    expect(css).not.toMatch(/^\s*body\s*\{/m);
+    const declared = /--theme-name: "((?:[^"\\\n]|\\.)*)";/.exec(css);
+    expect(declared).not.toBeNull();
+    expect(declared![1].replace(/\\(.)/g, "$1")).toBe(name);
+  });
+});

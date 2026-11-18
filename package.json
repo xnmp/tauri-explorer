@@ -7,6 +7,8 @@
     "dev": "bun run prepare:pdf && vite dev",
     "build": "bun run prepare:pdf && vite build",
     "preview": "vite preview",
+    "build:demo": "VITE_SITE_DEMO=1 bun run build",
+    "demo:serve": "bun screenshots/design/website-rehaul/overhaul/bridge/serve.ts",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "test": "vitest run && vitest run -c vitest.client.config.ts && vitest run -c vitest.perf.config.ts",

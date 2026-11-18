@@ -188,6 +188,8 @@ impl Serialize for SubmitReportError {
 pub enum DiagnosticKind {
     CrashReport,
     SlowLoads,
+    RecentErrors,
+    RecentActions,
 }
 
 impl DiagnosticKind {
@@ -195,6 +197,8 @@ impl DiagnosticKind {
         match self {
             DiagnosticKind::CrashReport => "Crash report",
             DiagnosticKind::SlowLoads => "Slow folder-load diagnostics",
+            DiagnosticKind::RecentErrors => "Recent errors",
+            DiagnosticKind::RecentActions => "Recent actions",
         }
     }
 }
@@ -1459,6 +1463,35 @@ mod tests {
             !body.contains("Slow folder-load diagnostics"),
             "no room left"
         );
+    }
+
+    #[test]
+    fn recent_errors_and_actions_sections_are_titled_and_bounded_with_the_rest() {
+        let parsed: Vec<ReportDiagnostic> = serde_json::from_str(
+            r#"[{"kind":"recent-errors","text":"[ERROR][a] boom"},{"kind":"recent-actions","text":"1. view:list"}]"#,
+        )
+        .unwrap();
+        assert_eq!(parsed[0].kind, DiagnosticKind::RecentErrors);
+        assert_eq!(parsed[1].kind, DiagnosticKind::RecentActions);
+        validate_diagnostics(&parsed).unwrap();
+        let filler = |label: &str| format!("{label} {}", "x".repeat(MIN_DIAGNOSTICS_UNITS));
+        let sections = [
+            ReportDiagnostic {
+                kind: DiagnosticKind::RecentErrors,
+                text: filler("err"),
+            },
+            ReportDiagnostic {
+                kind: DiagnosticKind::RecentActions,
+                text: filler("act"),
+            },
+        ];
+        let body = append_diagnostics("body".into(), &sections);
+        assert!(body.contains("<summary>Recent errors</summary>"));
+        assert!(body.contains("<summary>Recent actions</summary>"));
+        assert!(units(&body) <= MAX_RELAY_BODY_UNITS);
+        // Unselected sections are simply absent from the body.
+        let none = append_diagnostics("body".into(), &[]);
+        assert_eq!(none, "body");
     }
 
     #[test]

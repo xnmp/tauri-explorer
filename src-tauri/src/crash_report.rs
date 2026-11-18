@@ -48,6 +48,8 @@ fn write_crash_report(crash_dir: &Path, info: &std::panic::PanicHookInfo) -> std
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
+    // Identifiers only (#1688); try_lock, so a panic while recording cannot deadlock.
+    let recent_actions = crate::recent_actions::render_for_crash();
     // Cache read only: probing inside a panic hook could re-enter the probe.
     let report = format!(
         "tauri-explorer {} crash report\n\
@@ -55,12 +57,14 @@ fn write_crash_report(crash_dir: &Path, info: &std::panic::PanicHookInfo) -> std
          time: {} (unix)\n\
          panic: {}\n\
          location: {}\n\n\
+         recent actions (newest last):\n{}\n\n\
          backtrace:\n{}\n",
         env!("CARGO_PKG_VERSION"),
         crate::environment::crash_header(),
         epoch_secs,
         message,
         location,
+        recent_actions,
         backtrace
     );
 
@@ -442,6 +446,7 @@ mod tests {
         // files here. Assert only that OUR panic produced a report — never
         // an exact file count.
         install_panic_hook(crashes.clone());
+        crate::recent_actions::record_for_test("crash.trail_marker");
         let _ = std::thread::spawn(|| panic!("test crash")).join();
         let ours = std::fs::read_dir(&crashes)
             .unwrap()
@@ -450,6 +455,8 @@ mod tests {
             .find(|c| c.contains("panic: test crash"));
         let contents = ours.expect("no crash report written for the test panic");
         assert!(contents.contains("location:"));
+        // The recent-actions trail rides along (#1688).
+        assert!(contents.contains("crash.trail_marker"));
     }
 
     #[test]

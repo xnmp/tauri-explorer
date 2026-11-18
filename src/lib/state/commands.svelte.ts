@@ -7,6 +7,7 @@
  */
 
 import { admitsCommandDestination, type CommandDestination } from "$lib/domain/command-admission";
+import { recordAction } from "$lib/api/action-trail";
 import { dialogStore } from "./dialogs.svelte";
 import { windowTabsManager } from "./window-tabs.svelte";
 import { createReactiveRegistry } from "./reactive-registry.svelte";
@@ -181,6 +182,7 @@ export async function executeCommand(id: string): Promise<boolean> {
     return false;
   }
 
+  recordAction(id); // identifier only (#1688)
   try {
     await command.handler();
     if (command.trackFrecency !== false) trackCommandUsage(id);

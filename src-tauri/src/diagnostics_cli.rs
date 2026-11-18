@@ -117,7 +117,7 @@ pub(crate) fn warn_error_tail(text: &str, max: usize) -> Vec<&str> {
     lines
 }
 
-fn quote_line(line: &str, home: Option<&str>) -> String {
+pub(crate) fn quote_line(line: &str, home: Option<&str>) -> String {
     let line = match home.filter(|home| home.len() > 1) {
         Some(home) => line.replace(home, "~"),
         None => line.to_owned(),
@@ -219,7 +219,7 @@ pub(crate) fn render(input: &Input) -> String {
     out
 }
 
-fn display(path: &Path) -> String {
+pub(crate) fn display(path: &Path) -> String {
     wire_path::lossy(&wire_path::encode_path(path)).into_owned()
 }
 
@@ -269,7 +269,7 @@ fn crash_files(dir: &Path) -> Vec<(CrashFile, PathBuf)> {
 }
 
 /// The current log file, or the newest rotated one when it is missing.
-fn log_file(dir: &Path) -> Option<(String, PathBuf)> {
+pub(crate) fn log_file(dir: &Path) -> Option<(String, PathBuf)> {
     let current = dir.join(LOG_FILE);
     if current.is_file() {
         return Some((LOG_FILE.to_owned(), current));

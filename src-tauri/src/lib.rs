@@ -24,6 +24,8 @@ mod file_mutation;
 mod file_picker;
 mod open_history;
 mod os_recent;
+mod recent_actions;
+mod recent_errors;
 mod shared_history;
 // pub: criterion benches (src-tauri/benches/) call into
 // files::dir_listing::{scan_directory_parallel, sort_entries} directly.
@@ -333,6 +335,11 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             let mut targets = vec![
                 Target::new(TargetKind::LogDir { file_name: None }),
                 Target::new(TargetKind::Webview),
+                // In-memory WARN/ERROR ring for the report dialog (#1685).
+                Target::new(TargetKind::Dispatch(
+                    tauri_plugin_log::fern::Dispatch::new()
+                        .chain(Box::new(recent_errors::RingLog) as Box<dyn log::Log>),
+                )),
             ];
             // Opt-in stream capture lets the qualification runner measure the
             // shipping release profile using the same native readiness logs.
@@ -403,6 +410,9 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             crash_report::log_frontend_error,
             crash_report::record_frontend_crash,
             crash_report::open_external_url,
+            recent_errors::recent_errors,
+            recent_actions::record_action,
+            recent_actions::recent_actions,
             palette::extract_palette,
             config::write_theme_file,
             update_check::prepare_update,
@@ -626,6 +636,10 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             terminal::terminal_status,
         ])
         .setup(move |app| {
+            // Before anything this session logs: earlier lines are the previous session's (#1685).
+            if let Ok(log_dir) = tauri::Manager::path(app).app_log_dir() {
+                recent_errors::mark_session_start(&log_dir);
+            }
             native_file_drag::install_snapshots(app.handle().clone());
             let t_setup = std::time::Instant::now();
             // First in setup: portal mode returns early below, and a renderer

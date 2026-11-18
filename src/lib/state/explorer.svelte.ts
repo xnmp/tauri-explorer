@@ -66,6 +66,7 @@ import { createPaneMutations } from "./pane-mutations";
 import { undoActionLabel } from "./undo-helpers";
 import { loadWatchdog, type LoadTraceHandle } from "./load-watchdog";
 import type { LoadReason } from "$lib/domain/load-diagnostics";
+import { recordAction } from "$lib/api/action-trail";
 import type { ExplorerSeed } from "$lib/domain/window-input";
 import type { PreviewTarget } from "$lib/plugins/preview-registry.svelte";
 
@@ -477,6 +478,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
     trace?: LoadTraceHandle,
     focusIntent?: NavigationFocusIntent,
   ): Promise<"ok" | "error" | "stale"> {
+    if (reason !== "initial") recordAction(`nav:${reason}`); // kind only, never the path (#1688)
     // Normalize separators to the platform-native style up front. The backend
     // echoes the requested path back verbatim as `currentPath`, so this is the
     // single chokepoint that keeps the address bar (and everything that records
@@ -847,7 +849,7 @@ function createExplorerState(seed?: ExplorerSeed, isFileListingSurface: () => bo
   // new panes) changes solely via the explicit "Set Current View Mode as
   // Default" command, never as a side effect of switching one pane's view.
   function setViewMode(mode: ViewMode) {
-    if (mode !== coreState.viewMode) peekIntent++;
+    if (mode !== coreState.viewMode) { peekIntent++; recordAction(`view:${mode}`); }
     const before = peekTree;
     coreState.viewMode = mode;
     pruneHiddenChildren(before, displayEntries);

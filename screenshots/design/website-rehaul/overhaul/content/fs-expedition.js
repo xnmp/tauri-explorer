@@ -166,10 +166,11 @@
   Rugged, refurbished, veteran of two expeditions and one bath.
 
   - The clock is UTC. The radio is UTC. Camp is UTC+2. Write Z after your times.
-  - Shared work: /srv/expedition. Your own: /home/you. 1962: /srv/expedition/1962.
+  - One account, one home: /home/varda. Your folder is your name. Shared work in
+    expedition/. Sandvik's 1962 papers in 1962/. Everything else: ask Jonas.
   - Back up to the SD card. Every tenth day. I will remind you. (JR)
   - If the screen goes dark it is the cold, not you. Put it inside your jacket.
-  - Card game ledger: /srv/expedition/team. Disputes to Ruth. Ruth's ruling is final.
+  - Card game ledger: expedition/team. Disputes to Ruth. Ruth's ruling is final.
 
   73 de JR
 `),
@@ -182,16 +183,13 @@
 `),
     T("passwd", "2026-08-01T12:00:00", `
 root:x:0:0:root:/root:/bin/bash
-ruth:x:1001:1001:Dr Ruth Okonkwo (field biology; medic):/home/ruth:/bin/bash
-ansel:x:1002:1002:Ansel Moreau (leader; geology):/home/ansel:/bin/bash
-tamsin:x:1003:1003:Tamsin Hale (glaciology):/home/tamsin:/bin/bash
-jonas:x:1004:1004:Jonas Reiter (radio; acoustics):/home/jonas:/bin/bash
-mirela:x:1005:1005:Mirela Costa (photography; words):/home/mirela:/bin/bash
+varda:x:1000:1000:Varda Icefield Resurvey 2026 (all five of us):/home/varda:/bin/bash
+# one account for five people. a folder each. Jonas: "it's a field laptop, not a bank."
 `),
     T("fstab", "2026-08-01T12:00:00", `
 # <device>       <mount>         <type>  <options>
 /dev/nvme0n1p2   /               ext4    defaults,noatime          0 1
-/dev/mmcblk0p1   /media/sdcard   exfat   defaults,nofail,uid=1004  0 0
+/dev/mmcblk0p1   /media/sdcard   exfat   defaults,nofail,uid=1000  0 0
 # the grey backup drive comes and goes as it pleases (JR)
 `),
     T("os-release", "2026-07-30T10:00:00", `
@@ -282,16 +280,16 @@ ${iso(10)}T20:31:10Z varde kernel: mmc0: new SD card at address 0001 (/media/sdc
 ${iso(10)}T20:58:41Z varde rsync[2211]: backup-day-10 complete (JR)
 ${iso(18)}T03:01:09Z varde kernel: battery critical (cold). suspend.
 ${iso(18)}T06:44:20Z varde kernel: resume. someone put me inside their jacket. thank you.
-${iso(38)}T19:40:02Z varde systemd-logind: user ansel: session closed
+${iso(38)}T19:40:02Z varde systemd-logind: user varda: session closed
 ${iso(38)}T19:41:15Z varde systemd[1]: Reached target sleep (nobody at camp until Day 40; AWS and acoudet keep running)
 ${iso(40)}T21:12:55Z varde kernel: resume
 ${iso(41)}T20:14:30Z varde kernel: mmc0: new SD card at address 0001 (/media/sdcard)
 ${iso(41)}T20:22:03Z varde rsync[3480]: copy to /media/sdcard/.cal complete (JR, for MC)
-${iso(41)}T23:58:11Z varde systemd-logind: 5 users had sessions today. A busy evening.
+${iso(41)}T23:58:11Z varde systemd-logind: user varda: 5 people typing at once on one keyboard. A busy evening.
 ${iso(FLY_OUT)}T06:58:40Z varde systemd[1]: Powering off. (flight out)
 2026-10-21T09:02:12Z varde kernel: Linux varde 6.8.0-varde (warm boot, +21 C, an office)
-2026-11-16T15:40:03Z varde systemd-logind: user ansel: session opened
-2026-11-16T16:22:47Z varde systemd-logind: user ansel: session closed
+2026-11-16T15:40:03Z varde systemd-logind: user varda: session opened (Ansel)
+2026-11-16T16:22:47Z varde systemd-logind: user varda: session closed
 `),
       D("acoustic", at(58, "10:05"), [
         T("README", at(20, "13:50"), `
@@ -299,7 +297,7 @@ acoudet: the acoustic detector at Cairn 19 (J. Reiter)
 
 The recorder at Cairn 19 listens for icequakes (Tamsin's request) and wind.
 It classifies what it hears and writes one line per event to detector-C19.log.
-Audio itself is in /home/jonas/acoustics/recorder-C19, one file per detection
+Audio itself is in /home/varda/jonas/acoustics/recorder-C19, one file per detection
 worth keeping. The laptop cannot play them. Neither, frankly, can I, out here.
 
 Classes: WIND, ICE, GUY (a guy-line humming), SNOW-BUNTING, RAVEN, and UNK-n
@@ -441,7 +439,7 @@ as tenths. Do not eat the treats and then count them. You know who you are.
   var BACKUP_NOTE = `
 BACKUP, DAY 10 (Wednesday 19 August 2026), 20:58Z.  JR
 
-Copied: /srv/expedition/plan, /stores, /survey. Not copied: /1962 (it's on
+Copied: ~/expedition/plan, /stores, /survey. Not copied: ~/1962 (it's on
 the grey drive and it doesn't change, which is the point of 1962).
 
 Every tenth day, as promised. The card is 128 GB, which sounded like a lot
@@ -600,7 +598,7 @@ Mirela's, tested on five scientists. All of these work. Some of them work well.
 - One tin of peaches (Day 44). Not lost. Eaten. Birthday. Case closed (RO).
 - Jonas's good mood: never lost.
 - Mirela's lens cap: lost Day 2, Day 8, Day 15, Day 27, Day 33. Found every time in Mirela's pocket.
-- Sandvik's dignity (1962): see the cook's menu, /srv/expedition/1962/misc.
+- Sandvik's dignity (1962): see the cook's menu, in 1962/misc.
 `;
 
   var ROTA = `
@@ -663,9 +661,9 @@ MAMMALS, for completeness
   humans: five, Day 1 to Day 60, behaving well on the whole
 `;
 
-  var expeditionShared = D("expedition", at(41, "22:41"), [
+  var expeditionShared = D("expedition", at(58, "17:30"), [
     T("README.md", at(1, "18:30"), `
-# /srv/expedition
+# expedition
 
 Shared work for the Varda Icefield Resurvey 2026. Everybody can read it all.
 
@@ -710,7 +708,6 @@ Shared work for the Varda Icefield Resurvey 2026. Everybody can read it all.
       T("birds of the Varda region - checklist.txt", "2026-07-21T10:00:00", BIRDS),
       B("Varda geology 1:250000 (scan).pdf", "2026-07-21T10:05:00", "18.4 MB")
     ])
-    /* 1962 is appended below */
   ]);
 
   /* ================= /media/sdcard ================= */
@@ -789,7 +786,7 @@ The valley has been protected since 12 November 2026 by order of the county. Its
     { name: "as if we were late.mp4", kind: "file", type: "video", src: "assets-expedition/the-valley.mp4", poster: "assets-expedition/the-valley-poster.webp", size: "13.6 MB", date: at(40, "04:02"), px: "1920x1080" }
   ];
 
-  /* ================= /home/ruth (the visitor starts here) ================= */
+  /* ================= ~/ruth ================= */
   var HOOK = `
 # Day 41. Saturday 19 September. Late.
 
@@ -809,9 +806,8 @@ I counted them twice. I am not writing the number either.
 R.
 `;
   function rlog(n, mod, text) { return T("day " + dn(n) + ".md", mod, "# Day " + n + ", " + longDay(n) + "\n\n" + body(text)); }
-  var ruth = D("ruth", at(44, "22:10"), [
-    D("Desktop", at(41, "21:58"), [
-      T("day 41 - nobody say the word yet.md", at(41, "21:58"), HOOK),
+  var ruth = D("ruth", at(58, "21:00"), [
+    G([
       T("medical kit count.csv", at(43, "19:30"), `
 item,count,expiry,note
 plasters (assorted),142,2028-03,Tamsin uses them as sample labels. Stop it
@@ -858,7 +854,7 @@ FLY OUT, DAY 60 - Ruth's list
 [ ] Tamsin (she will want to measure one more thing)
 `)
     ]),
-    D("Documents", at(44, "22:10"), [
+    G([
       D("log", at(44, "22:10"), [
         rlog(1, at(1, "20:40"), `
 Flown in. Five well people, one well-stocked medical box, and an icefield the size of a small country.
@@ -1020,7 +1016,7 @@ She drew a better one in 1962. Plate 14. I've seen it now.
     cfg("ruth", "2026-08-02T10:00:00")
   ]);
 
-  /* ================= /home/ansel ================= */
+  /* ================= ~/ansel ================= */
   function alog(n, mod, text) { return T("day " + dn(n) + ".md", mod, "# Day " + n + ". " + longDay(n) + ".\n\n" + body(text)); }
   var ansel = D("ansel", "2026-11-16T16:22:00", [
     D("journal", at(45, "21:30"), [
@@ -1116,7 +1112,7 @@ The Department thanks the applicants for applying before announcing, which
 the Department wishes more people would do.
 `)
       ]),
-      D("Mail", at(45, "15:00"), [
+      D("mail", at(45, "15:00"), [
         G([
           T("2026-08-08 Per Halvorsen - good luck.eml", "2026-08-08T17:40:00", `
 From: Per Halvorsen <p.halvorsen@halvorsenfoundation.no>
@@ -1186,7 +1182,7 @@ Ansel Moreau
       cfg("ansel", "2026-08-02T10:05:00")
     ]);
 
-  /* ================= /home/tamsin ================= */
+  /* ================= ~/tamsin ================= */
   function tlog(n, mod, text) { return T("day " + dn(n) + ".md", mod, "# Day " + n + " (" + shortDay(n) + ")\n\n" + body(text)); }
   var tamsin = D("tamsin", "2026-11-03T22:15:00", [
     D("notes", at(45, "20:30"), [
@@ -1355,7 +1351,7 @@ Thermistor and ablation analysis, Varda Icefield Resurvey 2026. T. Hale.
 - It is Item A.
 
 ## Run
-    python3 analyse.py ~/survey/ice-temp\\ C17-C19.csv
+    python3 analyse.py ~/tamsin/survey/ice-temp\\ C17-C19.csv
 `),
         T("analyse.py", at(41, "22:45"), `
 import csv, sys
@@ -1404,14 +1400,14 @@ T8,-0.01
     cfg("tamsin", "2026-08-02T10:10:00", [JS("whiteout.theme.json", at(18, "22:00"), { name: "Whiteout", dark: false, v: ["#f6f8f9", "#e5ebee", "#122029", "#4a5b66", "#2b78ad", "#8aa6b6"] })])
   ]);
 
-  /* ================= /home/jonas ================= */
+  /* ================= ~/jonas ================= */
   function jlog(n, mod, text) { return T("day " + dn(n) + ".md", mod, "# Day " + n + ", " + longDay(n) + "\n\n" + body(text) + "\n\n73"); }
   var UNK_SUMMARY = `
 # UNK-7, by hand (J.R.)
 
 The recorder at Cairn 19 was there for icequakes. It found something else.
-The full log is /var/log/acoustic/detector-C19.log (hundreds of lines; grep it
-if you can, search it if you can't). This is the short version, counted by hand.
+The full log is /var/log/acoustic/detector-C19.log: hundreds of lines, one per
+sound. grep it from the terminal if you like. This is the short version, counted by hand.
 
 ## Detections of UNK-7 per dawn
 | day | date | count |
@@ -1563,9 +1559,9 @@ Day 41 0800Z: back. "All five back and very well." Kari: "you sound different." 
     T(".bash_history", at(58, "10:40"), `
 cd /var/log/acoustic
 grep -c UNK-7 detector-C19.log
-grep UNK-7 detector-C19.log | grep ${iso(26)}
+grep -n NOTE detector-C19.log
 grep NOTE detector-C19.log
-cd ~/acoustics
+cd ~/jonas/acoustics
 ls recorder-C19/2026-09
 mkdir /media/sdcard/.cal
 cp /mnt/mc-card1/D40_0611.webp /media/sdcard/.cal/cal-0611.webp
@@ -1577,7 +1573,7 @@ grep -c UNK-7 /var/log/acoustic/detector-C19.log
     cfg("jonas", "2026-08-02T10:15:00", [JS("tent at 3 a.m..theme.json", at(24, "01:00"), { name: "Tent at 3 a.m. (headlamp)", dark: true, v: ["#120e0a", "#1c1610", "#ffdcaa", "#c09468", "#ff9a3c", "#c7782e"] })])
   ]);
 
-  /* ================= /home/mirela ================= */
+  /* ================= ~/mirela ================= */
   function mlog(n, mod, text) { return T("day " + dn(n) + ".md", mod, "# " + longDay(n) + " (day " + n + ")\n\n" + body(text)); }
   var mirela = D("mirela", at(46, "21:00"), [
     D("notebook", at(46, "21:00"), [
@@ -1687,7 +1683,7 @@ There is nothing here from Days 39 and 40. That is not a mistake.
     cfg("mirela", "2026-08-02T10:20:00", [JS("item A at dawn.theme.json", at(41, "23:50"), { name: "Item A at dawn", dark: true, v: ["#13201c", "#1b2c27", "#f3efe0", "#a9bdb2", "#f0a35e", "#6fa38a"] })])
   ]);
 
-  /* ================= /srv/expedition/1962 ================= */
+  /* ================= ~/1962 (Sandvik's papers) ================= */
   // Sandvik's line: Cairn 1 at the Lund snout to Cairn 19 at the east rim. Built by Ingrid Holm, Jul-Aug 1962.
   var C62 = [null,
     ["Lund snout", "12 Jul", 1.6, "on the moraine rib, left bank. The glacier tongue 40 m away."],
@@ -1978,10 +1974,10 @@ Transcribed by T. Hale, with help from R. Okonkwo (who can read doctors' handwri
 - misc: the menu.
 `;
 
-  var y1962 = D("1962", at(41, "23:30"), [
+  var y1962 = D("1962", "2026-11-16T16:20:00", [
     T("README.md", at(15, "22:10"), README_1962),
     D("diary", at(15, "21:00"), diaryFolders()),
-    D("cairns", at(41, "23:30"), [
+    D("cairns", "2026-11-16T16:20:00", [
       D("west line", at(58, "19:00"), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(cairnFile)),
       D("east line", "2026-11-16T16:20:00", [
         T("Cairn 11 - Camp.txt", at(1, "20:30"), cairnSheet(11)),
@@ -2057,7 +2053,8 @@ paper, survey                    2 reams (of which the artist used one)
   ]);
 
   /* ================= Tamsin's analysis repo: conceding, one commit at a time ================= */
-  var R = "/home/tamsin/varda-thermal";
+  var H = "/home/varda";
+  var R = H + "/tamsin/varda-thermal";
   var commits = [
     { hash: "e41c0de", author: "Tamsin Hale", date: "2026-11-03T22:15:00", parents: ["a7f19b2"], refs: ["main"],
       msg: "README: it is not the instrument\n\nRepeat ice bath at the lab on 30 October, with the lab's reference probe. All eight within 0.05 C.\nI have now tested these thermistors more than anything I have ever owned. They were right on Day 22.\nThe C19 reading is real. It is Item A. That's all this README is going to say until 1 December.",
@@ -2093,38 +2090,49 @@ paper, survey                    2 reams (of which the artist used one)
   ];
 
   /* ================= the tree ================= */
-  expeditionShared.kids.push(y1962);
-  var home = D("home", "2026-08-01T12:00:00", [ansel, jonas, mirela, ruth, tamsin]);
-  var media = D("media", at(41, "20:14"), [sdcard]);
-  var srv = D("srv", at(1, "18:30"), [expeditionShared]);
+  // One shared field laptop, one account. The visitor starts in this folder; searches from here reach everything but the card.
+  var varda = D("varda", "2026-11-16T16:22:00", [
+    T("day 41 - nobody say the word yet.md", at(41, "21:58"), HOOK),
+    T("laptop rules - read me (JR).txt", at(1, "19:30"), `
+LAPTOP RULES (JR)
 
-  function userSetup(id, path) {
-    var s = SETUP[id];
-    return { parts: s.parts.slice(), theme: s.theme, layout: s.layout, icons: s.icons, view: s.view, keys: s.keys, path: path };
-  }
+1. One account, five folders. Your folder is your name. Write in your own folder.
+2. Shared work goes in expedition/. Sandvik's papers are in 1962/. Don't edit 1962; it's 1962.
+3. Times in Z. The laptop runs on UTC. Camp is UTC+2.
+4. It lives in the dry bag when nobody is typing.
+5. Backups to the SD card every tenth day. I'll do it. You'll forget.
+6. Do not put tea on it. Tamsin, this means mugs with labels too.
+
+73
+`),
+    T("there is no wifi.txt", at(3, "20:02"), `
+There is no wifi.
+
+There has never been wifi. We are on an icefield. The nearest router is in
+the Lund hut, 60 km away, and it doesn't work either.
+
+Please stop asking the laptop.   (JR)
+`),
+    ansel, jonas, mirela, ruth, tamsin, expeditionShared, y1962
+  ]);
+  var home = D("home", "2026-08-01T12:00:00", [varda]);
+  var media = D("media", at(41, "20:14"), [sdcard]);
+
 
   // a few folders above are written as bare arrays for brevity; the engine wants flat kids
-  (function flatten(n) { if (n.kids) { n.kids = n.kids.flat(Infinity).filter(Boolean); n.kids.forEach(flatten); } })({ kids: [etc, home, media, srv, usr, varDir] });
+  (function flatten(n) { if (n.kids) { n.kids = n.kids.flat(Infinity).filter(Boolean); n.kids.forEach(flatten); } })({ kids: [etc, home, media, usr, varDir] });
 
   TX.expedition = {
     title: "Varda Icefield Resurvey",
     users: [
-      { id: "ruth", name: "Dr. Ruth Okonkwo", home: "/home/ruth", blurb: "Field biologist and medic. Counts everything twice. Writes the number down only when she is allowed to.",
-        bookmarks: ["/home/ruth", "/home/ruth/Desktop", "/home/ruth/Documents", "/srv/expedition"],
-        setup: { parts: [], theme: "light", layout: "default", icons: "material", view: "details", path: "/home/ruth/Desktop" } },
-      { id: "ansel", name: "Ansel Moreau", home: "/home/ansel", blurb: "Leader and geologist. Three rock hammers, one for each mood.",
-        bookmarks: ["/home/ansel", "/home/ansel/journal", "/home/ansel/Documents", "/srv/expedition", "/srv/expedition/1962"], setup: userSetup("ansel", "/home/ansel/journal") },
-      { id: "tamsin", name: "Tamsin Hale", home: "/home/tamsin", blurb: "Glaciologist. Two decimal places or it didn't happen.",
-        bookmarks: ["/home/tamsin", "/home/tamsin/notes", "/home/tamsin/survey", "/srv/expedition/survey"], setup: userSetup("tamsin", "/home/tamsin/survey") },
-      { id: "jonas", name: "Jonas Reiter", home: "/home/jonas", blurb: "Radio and acoustics. Signs everything 73.",
-        bookmarks: ["/home/jonas", "/home/jonas/acoustics", "/var/log/acoustic", "/srv/expedition"], setup: userSetup("jonas", "/home/jonas/acoustics") },
-      { id: "mirela", name: "Mirela Costa", home: "/home/mirela", blurb: "Photographer and writer. Notices people. Loses lens caps.",
-        bookmarks: ["/home/mirela", "/home/mirela/notebook", "/home/mirela/Pictures/2026 Varda", "/srv/expedition/1962"], setup: userSetup("mirela", "/home/mirela/Pictures/2026 Varda/selects") }
+      { id: "varda", name: "Varda field laptop", home: H, blurb: "The shared field laptop of the Varda Icefield Resurvey 2026. One account, five people, a folder each.",
+        bookmarks: [H, H + "/expedition", H + "/expedition/survey", H + "/1962"],
+        setup: { parts: [], theme: "light", layout: "default", icons: "material", view: "details", path: H } }
     ],
-    tree: { name: "", kind: "dir", kids: [etc, home, media, srv, usr, varDir] },
+    tree: { name: "", kind: "dir", kids: [etc, home, media, usr, varDir] },
     trash: [
       {
-        node: T("to Per - DO NOT SEND.txt", at(40, "21:40"), `
+        node: T("to Per - DO NOT SEND (far too excited).txt", at(40, "21:40"), `
 Per!!!
 
 Sit down. Are you sitting down? I'm not. I can't.
@@ -2146,16 +2154,16 @@ right.)
 
 Ansel
 `),
-        from: "/home/ansel/.drafts",
+        from: H + "/ansel/mail",
         deleted: at(41, "20:50")
       },
       {
         node: B("D40_0558_first frame (too blurred).raw", at(40, "03:58"), "23.2 MB"),
-        from: "/home/mirela/Pictures/2026 Varda/raw",
+        from: H + "/mirela/Pictures/2026 Varda/raw",
         deleted: at(41, "19:10")
       },
       {
-        node: T("complaint to the manufacturer - probe T7.txt", at(23, "21:40"), `
+        node: T("complaint to the manufacturer - probe T7 (draft 3, furious).txt", at(23, "21:40"), `
 To: Customer Services, Polar Thermometry Ltd
 Re: Thermistor probe T7, serial PT-4417-07. Formal complaint (draft 3)
 
@@ -2176,12 +2184,12 @@ T. Hale (Dr)
 
 [draft 4 will be firmer]
 `),
-        from: "/home/tamsin/notes",
+        from: H + "/tamsin/notes",
         deleted: at(36, "21:30")
       },
       {
         node: B("snoring - exhibit A (D22, 03:14).m4a", at(22, "01:14"), "11.8 MB"),
-        from: "/srv/expedition/team",
+        from: H + "/expedition/team",
         deleted: at(33, "09:02")
       }
     ],

@@ -131,9 +131,11 @@ test('edge dragging reaches distant tabs and releases all scrolling on drop or E
     return point;
   };
   const point = await dragToEdge();
-  const target = await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('.tab')?.getAttribute('data-tab-id'), point);
-  expect(target).toBeTruthy();
-  const targetIndex = before.indexOf(target!);
+  // The strip shows the insertion position live (#1749): tabs it passed
+  // move aside, so the tab under the pointer is no longer the target.
+  void point;
+  await expect.poll(() => scroller.evaluate(el => el.scrollWidth - el.clientWidth - el.scrollLeft)).toBeLessThan(1);
+  const targetIndex = Number(await page.locator('.tab-list').getAttribute('data-reorder-to'));
   expect(targetIndex).toBeGreaterThan(0);
   await page.mouse.up();
   const expected = [...before.slice(1)]; expected.splice(targetIndex, 0, before[0]);

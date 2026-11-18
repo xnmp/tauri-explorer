@@ -148,6 +148,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `TitleBar.svelte` — window title bar + tab strip host + window controls.
 - `WindowTabBar.svelte` — compressed window tab strip, active-tab reveal and edge scrolling; executes the domain tab-drag reducer effects.
 - `WindowTabPicker.svelte` — searchable all-tabs combobox with full pane paths, keyboard selection and anchored positioning.
+- `WindowTabMenu.svelte` — lazy-loaded tab right-click menu (Close, Close Others, Close to the Right, Duplicate, Reopen Closed Tab); items supplied by `WindowTabBar` (#1749).
 - `window-tab-bar.css` — tab strip chrome scoped to `.tab-area`, including compression and persistent controls.
 - `JobsPanel.svelte` — background jobs viewer (Ctrl+J); Retry on failed jobs that carry `retry`.
 - `ToastOverlay.svelte` — stacked toast notifications.
@@ -326,6 +327,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `keybindings.svelte.ts` — customizable keybinding store (chords, conflicts, persistence).
 - `shortcut-recorder.ts` — owned shortcut recording timer, cancellation and completion callbacks.
 - `window-tabs.svelte.ts` — tab management (open/close/reorder/active). Central for tabs.
+- `window-tab-actions.ts` — tab context-menu actions on the manager: Close Others / Close to the Right (anchor activated first, each close restorable), Duplicate, and the menu's item list (#1749).
 - `window-tabs-pane-prefs.ts` — per-pane commit graph (#272) and SCM panel override (#434) accessors for the tab strip, split from `window-tabs.svelte.ts`.
 - `window-tabs-persistence.ts` — persist/migrate window tab tree (PersistedNode).
 - `tab-transfer.ts` — window-local pointer marker identity and acknowledged native tab transfer.
@@ -472,7 +474,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-sidebar-drag.svelte.ts` — lightweight sidebar-item pointer drag (macOS).
 - `src/lib/composables/tab-seam-marks.ts` — lazily loaded Floating Islands tab marks: measures the active tab and title bar, updates the inline SVG strip shade (with the tab's hole and the surface's corner pockets), key shadow and the one outline (tab plus the surface's top edge, #1785) in place.
 - `src/lib/composables/use-tab-seam.svelte.ts` — loads and attaches `tab-seam-marks` while the islands layout is active; repaints on tab changes.
-- `src/lib/composables/tab-strip-dom.ts` — window tab strip DOM helpers: slide transition (restoring a reversed leaving tab's selected state), reveal glide, title-fade fit check, and the strip's room measured on the title bar's room box so its own writes never loop a ResizeObserver (#1734).
+- `src/lib/composables/tab-reorder.svelte.ts` — live tab drag-reorder state: captures resting slots, shows the insertion index and per-tab displacement, and ends with the move plus the FLIP glide (#1749).
+- `src/lib/composables/tab-strip-dom.ts` — window tab strip DOM helpers: slide transition (restoring a reversed leaving tab's selected state), reveal glide, title-fade fit check, and the strip's room measured on the title bar's room box so its own writes never loop a ResizeObserver (#1734); the icon-carrying drag ghost and the drop/cancel FLIP glide (#1749).
 - `src/lib/composables/tab-strip-motion.svelte.ts` — window tab strip motion state: the tabs the strip lays out (a frame late while a tab slides), width/start eases and the reveal glide flag, on an injectable frame scheduler (#1734).
 - `src/lib/composables/tab-strip-start.ts` — Floating Islands tab strip start (#1785): measures the strip area against the title bar and reports the padding that puts the first tab's foot past the surface's rounded top-left corner.
 - `src/lib/composables/use-sidebar-drag-end.ts` — source-bound document dragend capture, bookmark fallback and gesture retirement.
@@ -508,6 +511,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `tab-slide.ts` — tab insert/remove slide timing and per-frame flex-basis CSS (fillets and content scale with `--tab-slide`).
 - `tab-strip-motion.ts` — pure tab strip transition decisions: which eases a tab-count change uses, whether it slides, and each tab's width (laid out vs entering).
 - `tab-drag.ts` — pure tab-drag lifecycle and effects, including session-qualified asynchronous detach settlement (#1642).
+- `tab-reorder.ts` — live drag-reorder geometry: insertion index from the pointer over the tabs' resting slots, and each tab's displacement while the dragged tab is shown there (#1749).
 - `src/lib/domain/job-presentation.ts` — validates optional job cost/reveal metadata and formats exact decimal money.
 - `src/lib/domain/job-reveal.ts` — pure pane choice, present-file selection, reveal routing and latest-click cancellation policy.
 
@@ -616,7 +620,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `pane-presentation.ts` — flat constrained placement with readiness pruning and pure single-leaf-creation policy, independent of renderer ancestry (#1703).
 - `pane-motion.ts` — pure stable-size reveal plan and clipped visible rectangles, reveal timing and the held extent the file view treats as paint-only room; preserves interruption geometry (#1709, #1718).
 - `entry-reflow.ts` — pure FLIP plan for entries keyed by path across one reflow: glide offsets for painted entries, none for newly mounted or departed ones (#1718).
-- `window-tab-order.ts` — tab-strip index arithmetic: insertion after the active tab, Ctrl+Tab wrapping, drag reordering.
+- `window-tab-order.ts` — tab-strip index arithmetic: insertion after the active tab, Ctrl+Tab wrapping, drag reordering, right-neighbour activation on close and Close Others/Right sets (#1749).
 - `closed-panes.ts` — bounded closed-pane stack, pane-vs-tab restore precedence, repeated last-tab close detection (#229).
 - `tab-title.ts` — VS Code-style tab title disambiguation.
 - `retained-tabs.ts` — which recently active tabs keep their pane tree mounted while hidden: stable render order plus LRU eviction (#1173).

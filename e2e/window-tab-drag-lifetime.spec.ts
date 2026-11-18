@@ -55,6 +55,7 @@ async function dispatchWindowMouse(
 }
 
 async function dragTab(page: Page, from: number, to: number): Promise<void> {
+  await settleTabs(page);
   const source = await tabCenter(page, from);
   const target = await tabCenter(page, to);
   await page.mouse.move(source.x, source.y);
@@ -63,6 +64,14 @@ async function dragTab(page: Page, from: number, to: number): Promise<void> {
   await expect(page.locator(".tab").nth(from)).toHaveClass(/dragging/);
   await page.mouse.up();
   await expect(page.locator(".tab-drag-ghost")).toHaveCount(0);
+}
+
+/** A drop or cancel glides tabs into place (#1749); measure them at rest. */
+async function settleTabs(page: Page): Promise<void> {
+  await page.locator(".tab-list").evaluate(async (list) => {
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    await Promise.all(list.getAnimations({ subtree: true }).map((a) => a.finished.catch(() => {})));
+  });
 }
 
 test.describe("Window tab pointer-drag lifetime", () => {
@@ -112,6 +121,7 @@ test.describe("Window tab pointer-drag lifetime", () => {
     await expect(page.locator(".tab").nth(0)).toHaveClass(/dragging/);
 
     await dispatchTabMouseDown(page, 1);
+    await settleTabs(page); // the cancelled drag's tabs glide back first
     const replacementTarget = await tabCenter(page, 2);
     await dispatchWindowMouse(page, "mousemove", replacementTarget);
     await expect(page.locator(".tab").nth(1)).toHaveClass(/dragging/);

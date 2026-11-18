@@ -34,7 +34,7 @@ import {
   focusAfterClosing,
   reinsertLeaf,
 } from "$lib/domain/pane-layout";
-import { cycledTabIndex, movedItem, tabInsertIndex } from "$lib/domain/window-tab-order";
+import { activationAfterClose, cycledTabIndex, movedItem, tabInsertIndex } from "$lib/domain/window-tab-order";
 import {
   type ClosedPaneSnapshot,
   prefersPaneRestore,
@@ -799,8 +799,8 @@ function createWindowTabsManager(options: {
 
     const newTabs = tabs.filter((t) => t.id !== tabId);
     if (activeTabId === tabId) {
-      const newIndex = Math.max(0, tabIndex - 1);
-      activeTabId = newTabs[newIndex]?.id ?? null;
+      // The right neighbour takes over (left for the last tab), #1749.
+      activeTabId = newTabs[activationAfterClose(tabs.length, tabIndex)]?.id ?? null;
     }
     tabs = newTabs;
     activateTabResources(activeTabId);

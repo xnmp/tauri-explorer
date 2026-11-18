@@ -16,6 +16,7 @@ import {
   type PersistedWindowTab,
 } from "$lib/state/window-tabs.svelte";
 import { persistedLeaves } from "$lib/state/window-tabs-persistence";
+import { closeOtherTabs, closeTabsToRight, duplicateTab } from "$lib/state/window-tab-actions";
 import { workspacesStore } from "$lib/state/workspaces.svelte";
 import { settingsStore } from "$lib/state/settings.svelte";
 
@@ -522,6 +523,68 @@ describe("cross-window tab transfer primitives", () => {
     expect(manager.tabs.some((t) => t.id === moved.id)).toBe(false);
     // The tab moved elsewhere — Ctrl+Shift+T must not resurrect it here.
     expect(manager.canRestoreTab).toBe(false);
+  });
+});
+
+describe("closing tabs from the strip (#1749)", () => {
+  /** Manager with tabs [a, b, c, d] (a = the init tab). */
+  function fourTabs() {
+    const manager = freshManager();
+    const [b, c, d] = ["/srv/b", "/srv/c", "/srv/d"].map((path) => manager.createTab(path));
+    return { manager, a: manager.tabs[0], b, c, d };
+  }
+
+  it("closing the active middle tab activates its right neighbour", () => {
+    const { manager, b, c } = fourTabs();
+    manager.setActiveTab(b.id);
+    manager.closeTab(b.id);
+    expect(manager.activeTabId).toBe(c.id);
+  });
+
+  it("closing the active last tab activates its left neighbour", () => {
+    const { manager, c, d } = fourTabs();
+    manager.closeTab(d.id);
+    expect(manager.activeTabId).toBe(c.id);
+  });
+
+  it("closing an inactive tab keeps the active one", () => {
+    const { manager, a, d } = fourTabs();
+    manager.closeTab(a.id);
+    expect(manager.activeTabId).toBe(d.id);
+  });
+
+  it("Close others keeps and activates only the anchor tab, each close restorable", () => {
+    const { manager, b } = fourTabs();
+    closeOtherTabs(manager, b.id);
+    expect(manager.tabs.map((t) => t.id)).toEqual([b.id]);
+    expect(manager.activeTabId).toBe(b.id);
+    manager.restoreClosedTab();
+    expect(manager.tabs).toHaveLength(2);
+  });
+
+  it("Close to the right keeps the anchor and the tabs before it", () => {
+    const { manager, a, b } = fourTabs();
+    closeTabsToRight(manager, b.id);
+    expect(manager.tabs.map((t) => t.id)).toEqual([a.id, b.id]);
+    expect(manager.activeTabId).toBe(b.id);
+  });
+
+  it("Close to the right keeps an active tab left of the anchor active", () => {
+    const { manager, a, b } = fourTabs();
+    manager.setActiveTab(a.id);
+    closeTabsToRight(manager, b.id);
+    expect(manager.activeTabId).toBe(a.id);
+  });
+
+  it("Duplicate opens a copy of the tab right after it and activates it", () => {
+    const { manager, a, b } = fourTabs();
+    manager.splitPane("right", "/srv/extra");
+    const copy = duplicateTab(manager, a.id)!;
+    expect(manager.tabs[1].id).toBe(copy.id);
+    expect(manager.activeTabId).toBe(copy.id);
+    expect(manager.getTabPath(copy.id)).toBe(manager.getTabPath(a.id));
+    expect(copy.id).not.toBe(a.id);
+    expect(manager.tabs[2].id).toBe(b.id);
   });
 });
 

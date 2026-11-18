@@ -69,6 +69,8 @@ export function renameThumbnailCache(oldPath: string, newPath: string): void {
     const start = key.indexOf(":") + 1;
     const newKey = key.slice(0, start) + newPath + path.slice(oldPath.length) + key.slice(start + path.length);
     cache.delete(key);
+    const displaced = cache.get(newKey);
+    if (displaced && displaced !== value) revokeEntry(displaced);
     cache.set(newKey, value);
   }
 }

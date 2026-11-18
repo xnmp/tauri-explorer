@@ -6,6 +6,7 @@
   import { settingsStore, type IconTheme, type PaneLayoutMode } from "$lib/state/settings.svelte";
   import { ICON_THEMES } from './icons/icon-theme-options';
   import { themeStore } from "$lib/state/theme.svelte";
+  import { shortcutSuffix } from "$lib/state/command-shortcut-label";
   import { isMac, isWindows } from "$lib/domain/platform";
   import { availableMaterial } from "$lib/state/window-translucency.svelte";
   import { listInstalledTerminals } from "$lib/api/open";
@@ -267,7 +268,7 @@
           <h3 class="section-title">Behavior</h3>
 
           <SettingRow label="Show Hidden Files"
-            description="Show files and folders starting with a dot (Ctrl+H)"
+            description={`Show files and folders starting with a dot${shortcutSuffix("view.toggleHidden")}`}
             hidden={!matchesSearch(...rows.showHidden)}>
             <SettingToggle checked={settingsStore.showHidden} onchange={() => settingsStore.toggleHidden()} />
           </SettingRow>
@@ -346,7 +347,7 @@
           </SettingRow>
 
           <SettingRow label="Pre-warm New Windows"
-            description="Keep a hidden window ready so opening a new window (Ctrl+N) is near-instant. Uses extra memory for one background window. The first new window after enabling still opens cold."
+            description={`Keep a hidden window ready so opening a new window${shortcutSuffix("window.newWindow")} is near-instant. Uses extra memory for one background window. The first new window after enabling still opens cold.`}
             hidden={!matchesSearch(...rows.warmWindow)}>
             <SettingToggle
               checked={settingsStore.warmWindow}
@@ -408,7 +409,7 @@
           </SettingRow>
 
           <SettingRow label="QuickOpen Debug Scores"
-            description="Show score breakdown (name, frecency, dir bonus) in Ctrl+P results"
+            description={`Show score breakdown (name, frecency, dir bonus) in Quick Open${shortcutSuffix("general.openQuickOpen")} results`}
             hidden={!matchesSearch(...rows.quickOpenDebug)}>
             <SettingToggle checked={settingsStore.quickOpenDebug} onchange={() => settingsStore.toggleQuickOpenDebug()} />
           </SettingRow>

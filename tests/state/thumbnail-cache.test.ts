@@ -185,3 +185,15 @@ describe("invalidateThumbnailCache", () => {
     expect(seen).toEqual(["/crop/c.png"]);
   });
 });
+
+describe("renameThumbnailCache blob lifetime (#1823)", () => {
+  it("revokes a blob URL it overwrites at the destination key", () => {
+    setThumbnailCache("thumb:/r/old.png:256:80", entry("old"));
+    setThumbnailCache("thumb:/r/new.png:256:80", entry("clobbered"));
+    renameThumbnailCache("/r/old.png", "/r/new.png");
+    expect(getThumbnailCache("thumb:/r/new.png:256:80")).toEqual(entry("old"));
+    expect(revokeSpy).toHaveBeenCalledWith("blob:micro-clobbered");
+    expect(revokeSpy).toHaveBeenCalledWith("blob:full-clobbered");
+    expect(revokeSpy).not.toHaveBeenCalledWith("blob:micro-old");
+  });
+});

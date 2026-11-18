@@ -116,6 +116,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `ContentSearchDialog.svelte` — Ctrl+Shift+F grep-across-files dialog + streamed results.
 - `OptionPicker.svelte` — generic secondary list picker.
 - `ContextMenu.svelte` — right-click menu renderer (items from context-menu stores).
+- `ContextMenuHint.svelte` — command-owned shortcut hint for a context-menu item (`getCommandShortcut`).
 - `Modal.svelte` + `modal.css` — base modal shell + shared modal styling.
 - `UserReportDialog.svelte` — in-app issue form; closes optimistically, submits through Rust, toasts background failures, and restores saved failed drafts when reopened.
 - `SettingsDialog.svelte` — general settings dialog; links to dedicated Keyboard Shortcuts and Plugins dialogs.
@@ -325,6 +326,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `commands/general-commands.ts` — misc app commands (settings, palette, etc).
 - `commands/system-actions.ts` — system actions not touching pane state (open terminal, reveal).
 - `keybindings.svelte.ts` — customizable keybinding store (chords, conflicts, persistence).
+- `command-shortcut-label.ts` — `shortcutSuffix(commandId)`: " (Ctrl+H)" prose hint from the effective binding, empty when unbound.
 - `shortcut-recorder.ts` — owned shortcut recording timer, cancellation and completion callbacks.
 - `window-tabs.svelte.ts` — tab management (open/close/reorder/active). Central for tabs.
 - `window-tab-actions.ts` — tab context-menu actions on the manager: Close Others / Close to the Right (anchor activated first, each close restorable), Duplicate, and the menu's item list (#1749).

@@ -124,10 +124,9 @@
   async function loadDir(path: string): Promise<void> {
     if (entriesByPath[path]) return;
     const result = await fetchDirectory(path);
-    if (!result.ok) {
-      entriesByPath = { ...entriesByPath, [path]: [] };
-      return;
-    }
+    // A failed listing is not cached: caching [] would show the folder as
+    // empty until the picker closes. The next navigation retries it.
+    if (!result.ok) return;
     const visible = result.data.entries
       .filter((e) => !e.name.startsWith("."))
       .filter((e) => !info.directory || e.kind === "directory")

@@ -174,6 +174,8 @@ export function createQuickOpenSession(deps: QuickOpenSessionDeps) {
   }
 
   function apply(run: StreamRun, event: QuickOpenStreamEvent): void {
+    // `done` is final for a search id: later snapshots must not replace rows.
+    if (streamingFor(run)?.settled !== false) return;
     publishBackend(run, event.results);
     totalScanned = event.totalScanned;
     if (event.done) settle(run);
@@ -185,9 +187,10 @@ export function createQuickOpenSession(deps: QuickOpenSessionDeps) {
   }
 
   async function runFallback(run: StreamRun, root: string): Promise<void> {
-    const found = await deps.fallbackSearch(run.query, root, QUICK_OPEN_RESULT_LIMIT);
+    // A rejected IPC is a failed search: keep local matches, stop loading.
+    const found = await deps.fallbackSearch(run.query, root, QUICK_OPEN_RESULT_LIMIT).catch(() => null);
     if (!isCurrent(run)) return;
-    if (found.ok) publishBackend(run, found.data);
+    if (found?.ok) publishBackend(run, found.data);
     stream = IDLE;
   }
 

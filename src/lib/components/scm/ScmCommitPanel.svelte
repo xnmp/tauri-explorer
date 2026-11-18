@@ -130,7 +130,7 @@
   }
 
   .branch-name.detached {
-    color: var(--system-warning, #f59e0b);
+    color: var(--system-caution-text, var(--system-caution));
   }
 
   .view-toggle {

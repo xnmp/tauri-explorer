@@ -26,11 +26,13 @@ on:
         required: true
         default: 1
 
-# Only PRs share a group. Unique non-PR groups preserve every dev run,
-# including pending runs that GitHub would otherwise replace.
+# PRs share a group per PR ref and dev pushes one group per workflow, both
+# cancelling in progress: a newer commit cancels its superseded run (#1798).
+# Every other event (main pushes, schedule, dispatch) gets a unique run-ID
+# group, so it never cancels or replaces another run.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || (github.event_name == 'push' && github.ref == 'refs/heads/dev') && 'dev-push' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/dev') }}
 
 # Note: macOS is deliberately omitted. Official `tauri-driver` has no
 # WKWebView support (tauri-apps/tauri#7068). Re-add when a stable driver

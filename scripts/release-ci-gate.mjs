@@ -12,6 +12,9 @@
 //       succeeded (the required native context; Windows remains advisory).
 //   While a matching run is still queued or in progress it waits, polling
 //   every minute, for up to --wait-minutes (default 60). Anything else fails.
+//   A newer dev push cancels an older commit's runs (#1798), so a tree that
+//   is no longer dev's newest can fail here; any other candidate commit with
+//   the same tree that passed still wins (combine).
 //
 // Environment: GITHUB_SHA (released commit), GITHUB_REPOSITORY, GH_TOKEN,
 // GITHUB_API_URL. Needs the dev history fetched as origin/dev.
@@ -62,7 +65,14 @@ export function judgeCommit(runs, jobsOf, repository) {
   if ((!ciPassed && ciPending) || (!nativePassed && nativePending)) {
     return { verdict: "pending", reason: "dev push CI or native smoke is still running" };
   }
-  const missing = [!ciPassed && "CI did not succeed", !nativePassed && `${NATIVE_REQUIRED_JOB} did not succeed`].filter(Boolean);
+  // Dev pushes cancel superseded runs (#1798): a cancelled commit's tree was
+  // never verified, and only a newer candidate with the same tree can pass.
+  const superseded = (/** @type {Run[]} */ rs) => rs.every((r) => r.conclusion === "cancelled") ?
+    " (cancelled: a newer dev push superseded it; release dev's newest tree once its CI passes)" : "";
+  const missing = [
+    !ciPassed && `CI did not succeed${superseded(ci)}`,
+    !nativePassed && `${NATIVE_REQUIRED_JOB} did not succeed${superseded(native)}`,
+  ].filter(Boolean);
   return { verdict: "fail", reason: missing.join("; ") };
 }
 

@@ -34,11 +34,13 @@ env:
   TEST_CACHE_WRITE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
   TEST_CACHE_READ: ${{ vars.TEST_CACHE != 'off' && github.event_name != 'schedule' && !(github.event_name == 'workflow_dispatch' && !inputs.test_cache) }}
 
-# Only PRs share a group. Unique non-PR groups preserve every dev run,
-# including pending runs that GitHub would otherwise replace.
+# PRs share a group per PR ref and dev pushes one group per workflow, both
+# cancelling in progress: a newer commit cancels its superseded run (#1798).
+# Every other event (main pushes, schedule, dispatch) gets a unique run-ID
+# group, so it never cancels or replaces another run.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || (github.event_name == 'push' && github.ref == 'refs/heads/dev') && 'dev-push' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/dev') }}
 
 jobs:
   # Docs-only PRs skip the heavy suites. Required status contexts must still
@@ -899,8 +901,8 @@ jobs:
 
   # WebKit ≈ WKWebView — the closest automated proxy for the macOS webview
   # (no WKWebView WebDriver exists). Catches Safari-family CSS/JS breakage.
-  # Keep one worker on each runner and the per-runner bound (#932); five
-  # duration-balanced shards (#1123). Dev pushes, nightly runs and dispatches
+  # Keep one worker on each runner and the per-runner bound (#932); eight
+  # duration-balanced shards (#1123, #1798). Dev pushes, nightly runs and dispatches
   # run every spec; a PR runs scripts/e2e-affected.mjs --webkit (#1367): the
   # cluster-mapped and curated engine-specific specs, or every spec for a
   # WKWebView-sensitive change. Skipped when that selects nothing.
@@ -923,17 +925,18 @@ jobs:
     defaults:
       run:
         shell: bash
-    # Shards are planned at ~24 min, but container runs of the same plan took
-    # 22-30 min. Headroom first (#1367): browser, Rust and smoke jobs already
-    # queue for runners on a full PR run, and each extra shard adds its own
-    # setup. The sixth shard came when the tab seam matrices (#1772) raised
+    # Container runs take longer than their plan (a ~24 min plan ran 22-30
+    # min), and each extra shard adds its own setup and queues for a runner
+    # (#1367). The sixth shard came when the tab seam matrices (#1772) raised
     # the plan to ~137 min, ~27 min a shard: runs of 26-35 min left retries
-    # no room under the 40-minute budget (#1775).
+    # no room under the 40-minute budget (#1775). Eight shards (#1798) plan
+    # ~144 min at ~18 min a shard: six-shard runs of 21-36 min made WebKit
+    # the dev-push critical path a release waits on.
     timeout-minutes: 46
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     # Job-wide so the cache probe and the run hash the same environment. The
     # container, not the runner image, is this job's environment: name it in
     # the test-result cache's platform identity.

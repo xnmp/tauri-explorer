@@ -352,3 +352,16 @@ check workflow uses its own cache key so a dev run cannot seed the release
 job's cached tauri-cli binary.
 The script runs under macOS's stock bash 3.2 (no `mapfile`). Runbook and
 secret list: `docs/macos-signing.md`.
+
+# Native E2E target cache (ADR 0022)
+
+Per ADR 0022, the native E2E target cache (`e2e-tauri.yml`) is keyed by the
+exact Rust compiler identity as well as target inputs. Keep its restore and
+save actions separate: save only after the native contracts and embedded build
+succeed, but allow a later GUI failure to retain those safe build products.
+Contract/provenance diagnostics upload before GUI execution so a failed
+contract remains inspectable while independent native checks run (#694).
+GitHub's explicit Bash shell enables `-e -o pipefail`; disable errexit only
+around a piped diagnostic command, capture `PIPESTATUS[0]`, then restore
+errexit before writing its timing artifact and returning that exact status
+(#697).

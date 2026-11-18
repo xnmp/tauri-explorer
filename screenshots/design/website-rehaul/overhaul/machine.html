@@ -1,0 +1,706 @@
+<!doctype html>
+<html lang="en" class="at-login">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tauri Explorer</title>
+<meta name="description" content="Tauri Explorer, a keyboard-driven file explorer for Linux, Windows and macOS. One shared computer, several people, the same app set up their own way.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,400..700&family=Newsreader:opsz,wght@6..72,400..700&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="engine/explorer.css">
+<style>
+/* ---------- the machine's own palette (the greeter); in a session the page wears the user's --tx-* theme ---------- */
+:root {
+  --m-bg: #DCE2E1; --m-bg-2: #CDD5D4; --m-card: #E7ECEB; --m-ink: #182124; --m-ink-2: #4F5C5F; --m-ink-3: #7D898B;
+  --m-line: rgba(24, 33, 36, .15); --m-accent: #2743C4; --m-on-accent: #fff; --m-shadow: 20, 32, 36;
+  --font: "Bricolage Grotesque", "Hanken Grotesk", system-ui, sans-serif;
+  --strip-h: 48px;
+  --ease: cubic-bezier(.2, .75, .15, 1);
+}
+@media (prefers-color-scheme: dark) {
+  :root { --m-bg: #172022; --m-bg-2: #1F2A2D; --m-card: #213033; --m-ink: #E2E9E8; --m-ink-2: #A3B1B2; --m-ink-3: #75858A;
+    --m-line: rgba(226, 233, 232, .14); --m-accent: #8EA4FF; --m-on-accent: #0F1730; --m-shadow: 0, 0, 0; }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--tx-paper, var(--m-bg)); color: var(--m-ink); font: 400 15px/1.45 var(--font); overflow: hidden; -webkit-font-smoothing: antialiased; }
+html.at-login body { background: var(--m-bg); }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--focus, var(--m-accent)); outline-offset: 2px; }
+
+/* ---------- the strip: always there, wears the machine at the login screen and the user's theme in a session ---------- */
+#strip {
+  --s-bg: var(--m-bg); --s-ink: var(--m-ink); --s-ink-2: var(--m-ink-2); --s-line: var(--m-line); --s-acc: var(--m-accent); --s-on-acc: var(--m-on-accent);
+  position: fixed; inset: 0 0 auto 0; z-index: 60; min-height: var(--strip-h);
+  display: flex; align-items: center; gap: 10px 18px; padding: 7px 16px; flex-wrap: nowrap;
+  background: var(--s-bg); color: var(--s-ink); border-bottom: 1px solid var(--s-line);
+  font-size: 13.5px; line-height: 1.2; transition: background-color .4s, color .4s, border-color .4s;
+}
+html.in-session #strip { --s-bg: var(--tx-paper); --s-ink: var(--tx-ink); --s-ink-2: var(--tx-ink-2); --s-line: var(--tx-hair); --s-acc: var(--tx-teal); --s-on-acc: var(--tx-on-accent, #fff); --focus: var(--tx-teal); }
+.brand { display: flex; align-items: baseline; gap: 12px; min-width: 0; flex: 0 1 auto; }
+.brand b { font-weight: 700; font-size: 16px; font-variation-settings: "wdth" 84; letter-spacing: -.01em; white-space: nowrap; }
+.brand .os { font-style: normal; }
+@media (max-width: 1760px) { html.in-session .brand .os { display: none; } }
+.brand span { color: var(--s-ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.who { display: none; align-items: center; gap: 8px; margin-left: auto; min-width: 0; }
+html.in-session .who { display: flex; }
+.who .machine { color: var(--s-ink-2); white-space: nowrap; margin-right: 4px; }
+.chips { display: flex; gap: 3px; padding: 3px; border-radius: 999px; background: color-mix(in oklab, var(--s-ink) 7%, transparent); }
+.chip { all: unset; cursor: pointer; display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px 0 4px; border-radius: 999px; color: var(--s-ink-2); white-space: nowrap; }
+.chip i { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font: 650 10.5px/1 var(--font); font-style: normal; color: var(--ci); background: var(--cp); box-shadow: inset 0 0 0 1.5px var(--c), 0 0 0 1px rgba(0,0,0,.1); }
+.chip:hover { color: var(--s-ink); }
+.chip[aria-pressed="true"] { background: var(--s-bg); color: var(--s-ink); box-shadow: 0 1px 2px rgba(0,0,0,.14); }
+.chip:focus-visible { outline: 2px solid var(--s-acc); outline-offset: 1px; }
+.icon-btn { all: unset; cursor: pointer; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; color: var(--s-ink-2); }
+.icon-btn:hover { color: var(--s-ink); background: color-mix(in oklab, var(--s-ink) 8%, transparent); }
+.icon-btn:focus-visible { outline: 2px solid var(--s-acc); }
+.icon-btn svg { width: 17px; height: 17px; }
+.tools { display: flex; align-items: center; gap: 10px; margin-left: auto; flex: none; }
+html.in-session .tools { margin-left: 6px; }
+.pill { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; height: 30px; padding: 0 12px; border-radius: 999px; white-space: nowrap; color: var(--s-ink); border: 1px solid var(--s-line); }
+.pill:hover { border-color: color-mix(in oklab, var(--s-ink) 35%, transparent); }
+.pill:focus-visible { outline: 2px solid var(--s-acc); outline-offset: 1px; }
+.pill[aria-expanded="true"] { background: color-mix(in oklab, var(--s-ink) 8%, transparent); }
+#found .dots { display: flex; gap: 3px; }
+#found .dots i { width: 6px; height: 6px; border-radius: 50%; border: 1.3px solid color-mix(in oklab, var(--s-ink) 45%, transparent); }
+#found .dots i.on { background: var(--s-acc); border-color: var(--s-acc); }
+#found .lbl { color: var(--s-ink-2); min-width: 0; }
+#found.just .lbl { color: var(--s-ink); }
+#tune { display: none; }
+html.in-session #tune { display: inline-flex; }
+#tune svg { width: 15px; height: 15px; }
+#tune[aria-expanded="true"] { background: var(--s-ink); color: var(--s-bg); border-color: var(--s-ink); }
+.dl { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 15px; border-radius: 999px; background: var(--s-ink); color: var(--s-bg); font-weight: 600; white-space: nowrap; }
+.dl svg { width: 14px; height: 14px; }
+.dl:focus-visible, .gh:focus-visible { outline: 2px solid var(--s-acc); outline-offset: 2px; }
+.gh { color: var(--s-ink); text-decoration: none; font-weight: 500; white-space: nowrap; padding: 6px 2px; }
+.gh:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+/* ---------- the stage: the live app, framed by the user's own backdrop ---------- */
+#stage { position: fixed; inset: var(--strip-h) 0 0 0; display: flex; gap: 0; padding: 8px; transform-origin: 0 0; }
+#appwrap { position: relative; flex: 1; min-width: 0; min-height: 0; }
+#app { position: absolute; inset: 0; }
+
+/* ---------- make it yours: a drawer that takes room from the app rather than covering it ---------- */
+#drawer {
+  flex: none; width: 0; overflow: hidden; transition: width .32s var(--ease), margin .32s var(--ease); margin-left: 0;
+  color: var(--tx-ink); font-size: 13.5px;
+}
+#drawer.open { width: 344px; margin-left: 8px; }
+#drawer .d-in { width: 344px; height: 100%; display: flex; flex-direction: column; background: var(--tx-app); border-radius: 11px; box-shadow: 0 0 0 1px var(--tx-hair); }
+.d-head { padding: 16px 18px 12px; display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; align-items: start; border-bottom: 1px solid var(--tx-app-line); }
+.d-head h2 { margin: 0; font: 650 21px/1.1 var(--font); font-variation-settings: "wdth" 86; letter-spacing: -.01em; }
+.d-head p { grid-column: 1; margin: 0; color: var(--tx-ink-2); font-size: 13px; }
+.d-head .icon-btn { grid-row: 1 / span 2; grid-column: 2; color: var(--tx-ink-2); --s-acc: var(--tx-teal); }
+.d-scroll { flex: 1; overflow: auto; padding: 4px 18px 18px; scrollbar-width: thin; }
+.d-scroll h3 { margin: 18px 0 8px; font: 600 13.5px/1 var(--font); color: var(--tx-ink); }
+.parts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
+.part { all: unset; cursor: pointer; display: grid; justify-items: center; gap: 5px; padding: 9px 4px 8px; border-radius: 9px; border: 1px solid var(--tx-app-line); color: var(--tx-ink-2); font-size: 12px; text-align: center; }
+.part svg { width: 30px; height: 22px; }
+.part svg .f { fill: currentColor; opacity: .32; }
+.part svg .l { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; opacity: .55; }
+.part svg .o { stroke: currentColor; opacity: .55; }
+.part svg .frame { fill: none; stroke: currentColor; stroke-width: 1.2; opacity: .35; }
+.part:hover { border-color: color-mix(in oklab, var(--tx-ink) 30%, transparent); color: var(--tx-ink); }
+.part[aria-pressed="true"] { background: var(--tx-app-sel); border-color: var(--tx-teal); color: var(--tx-ink); }
+.part[aria-pressed="true"] svg .f { fill: var(--tx-teal); opacity: 1; }
+.part[aria-pressed="true"] svg .l, .part[aria-pressed="true"] svg .o { stroke: var(--tx-teal); opacity: 1; }
+.part:focus-visible, .opt:focus-visible, .sw:focus-visible, .d-foot button:focus-visible { outline: 2px solid var(--tx-teal); outline-offset: 1px; }
+.readout { min-height: 2.9em; margin: 8px 0 0; color: var(--tx-ink-2); font-size: 12.5px; line-height: 1.45; }
+.swatches { display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px; }
+.sw { all: unset; cursor: pointer; display: flex; align-items: center; gap: 9px; padding: 5px 8px 5px 5px; border-radius: 8px; font-size: 12.5px; color: var(--tx-ink-2); white-space: nowrap; overflow: hidden; }
+.sw b { flex: none; width: 26px; height: 18px; border-radius: 5px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.18); background: linear-gradient(90deg, var(--a) 0 34%, var(--b) 34% 67%, var(--c) 67%); }
+.sw:hover { color: var(--tx-ink); background: color-mix(in oklab, var(--tx-ink) 6%, transparent); }
+.sw[aria-pressed="true"] { color: var(--tx-ink); background: var(--tx-app-sel); font-weight: 600; }
+.opts { display: flex; flex-wrap: wrap; gap: 4px; }
+.opt { all: unset; cursor: pointer; padding: 6px 10px; border-radius: 7px; border: 1px solid var(--tx-app-line); font-size: 12.5px; color: var(--tx-ink-2); }
+.opt:hover { color: var(--tx-ink); border-color: color-mix(in oklab, var(--tx-ink) 30%, transparent); }
+.opt[aria-pressed="true"] { background: var(--tx-ink); color: var(--tx-app); border-color: var(--tx-ink); }
+.d-foot { padding: 12px 18px 16px; border-top: 1px solid var(--tx-app-line); display: grid; gap: 8px; }
+.d-foot .copy { all: unset; cursor: pointer; text-align: center; padding: 10px; border-radius: 9px; background: var(--tx-ink); color: var(--tx-app); font-weight: 600; }
+.d-foot .reset { all: unset; cursor: pointer; text-align: center; padding: 4px; color: var(--tx-ink-2); font-size: 12.5px; }
+.d-foot .reset:hover { color: var(--tx-ink); text-decoration: underline; text-underline-offset: 3px; }
+.d-foot .note { min-height: 1.2em; margin: 0; text-align: center; font-size: 12px; color: var(--tx-ink-2); }
+
+/* ---------- the borrow offer: appears only after someone else's settings file is opened ---------- */
+#borrow { position: absolute; right: 18px; bottom: 44px; z-index: 30; width: 300px; padding: 12px; display: grid; grid-template-columns: 112px 1fr; gap: 10px 12px; align-items: center;
+  background: var(--tx-app); color: var(--tx-ink); border-radius: 12px; box-shadow: 0 0 0 1px var(--tx-hair), 0 18px 40px -16px rgba(var(--tx-shadow-rgb, 20, 30, 32), .45); }
+#borrow[hidden] { display: none; }
+#borrow .win { font-size: 3.9px; }
+#borrow p { margin: 0; font-size: 13px; line-height: 1.35; color: var(--tx-ink-2); }
+#borrow p b { display: block; color: var(--tx-ink); font-size: 14px; font-weight: 600; margin-bottom: 2px; }
+#borrow .row { grid-column: 1 / -1; display: flex; gap: 8px; justify-content: flex-end; }
+#borrow .use { all: unset; cursor: pointer; padding: 7px 13px; border-radius: 8px; background: var(--tx-teal); color: var(--tx-on-accent, #fff); font-weight: 600; font-size: 13px; }
+#borrow .no { all: unset; cursor: pointer; padding: 7px 10px; border-radius: 8px; color: var(--tx-ink-2); font-size: 13px; }
+#borrow .no:hover { color: var(--tx-ink); }
+#borrow button:focus-visible { outline: 2px solid var(--tx-teal); outline-offset: 2px; }
+
+/* ---------- found things ---------- */
+#foundpop { position: fixed; z-index: 70; top: calc(var(--strip-h) + 6px); right: 16px; width: 300px; padding: 16px 16px 12px; border-radius: 12px;
+  background: var(--p-bg); color: var(--p-ink); box-shadow: 0 0 0 1px var(--p-line), 0 22px 50px -18px rgba(0,0,0,.45);
+  --p-bg: var(--m-card); --p-ink: var(--m-ink); --p-ink-2: var(--m-ink-2); --p-line: var(--m-line); --p-acc: var(--m-accent); }
+html.in-session #foundpop { --p-bg: var(--tx-app); --p-ink: var(--tx-ink); --p-ink-2: var(--tx-ink-2); --p-line: var(--tx-hair); --p-acc: var(--tx-teal); }
+#foundpop[hidden] { display: none; }
+#foundpop h2 { margin: 0 0 10px; font: 650 17px/1.15 var(--font); font-variation-settings: "wdth" 88; }
+#foundpop ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; }
+#foundpop li { display: flex; align-items: center; gap: 10px; min-height: 27px; font-size: 14px; }
+#foundpop li::before { content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%; border: 1.4px solid color-mix(in oklab, var(--p-ink) 35%, transparent); }
+#foundpop li.got::before { background: var(--p-acc); border-color: var(--p-acc); }
+#foundpop li.blank span { display: block; height: 7px; border-radius: 4px; background: color-mix(in oklab, var(--p-ink) 10%, transparent); }
+#foundpop footer { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--p-line); font-size: 12.5px; color: var(--p-ink-2); }
+#foundpop footer button { all: unset; cursor: pointer; color: var(--p-ink-2); text-decoration: underline; text-underline-offset: 3px; }
+#foundpop footer button:hover { color: var(--p-ink); }
+#foundpop footer button:focus-visible { outline: 2px solid var(--p-acc); }
+
+/* ---------- the login screen ---------- */
+#login { position: fixed; inset: var(--strip-h) 0 0 0; z-index: 40; overflow: auto; background: var(--m-bg); color: var(--m-ink);
+  display: flex; flex-direction: column; }
+#login[hidden] { display: none; }
+.greet { flex: 1; width: min(1720px, 100% - 48px); margin: 0 auto; display: flex; flex-direction: column; justify-content: center; padding: 40px 0 24px; }
+.greet .machine { margin: 0; color: var(--m-ink-2); font-size: 17px; text-align: center; }
+.greet h1 { margin: 6px 0 clamp(28px, 5vh, 56px); text-align: center; font: 620 clamp(38px, 5.4vw, 80px)/.98 var(--font); font-variation-settings: "wdth" 78, "opsz" 96; letter-spacing: -.02em; text-wrap: balance; }
+.accounts { display: grid; grid-template-columns: repeat(var(--n), minmax(0, clamp(260px, 21vw, 400px))); justify-content: center; gap: clamp(18px, 2.4vw, 36px); }
+.acct { all: unset; cursor: pointer; display: grid; align-content: start; gap: 6px; min-width: 0; }
+.acct .win { font-size: clamp(6px, .62vw, 9.6px); margin-bottom: 12px; transition: transform .18s var(--ease), box-shadow .18s var(--ease); }
+.acct:hover .win { transform: translateY(-4px); box-shadow: 0 0 0 1px rgba(0,0,0,.14), 0 26px 46px -20px rgba(var(--m-shadow), .55); }
+.acct:focus-visible { outline: none; }
+.acct:focus-visible .win { outline: 3px solid var(--m-accent); outline-offset: 5px; }
+.acct .nm { font: 600 21px/1.15 var(--font); font-variation-settings: "wdth" 90; letter-spacing: -.01em; display: flex; align-items: center; gap: 9px; }
+.acct .nm em { font: 500 12px/1 var(--font); font-style: normal; color: var(--m-ink-2); display: inline-flex; align-items: center; gap: 5px; }
+.acct .nm em::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #3BAA6B; }
+.acct .bl { color: var(--m-ink-2); font-size: 14.5px; line-height: 1.45; max-width: 30ch; }
+.acct.guest .win { outline: 1.5px dashed color-mix(in oklab, var(--m-ink) 30%, transparent); outline-offset: 5px; }
+.greet .under { margin: clamp(28px, 5vh, 52px) 0 0; text-align: center; color: var(--m-ink-2); font-size: 15px; }
+.machines { display: flex; justify-content: center; align-items: center; gap: 10px; padding: 14px 16px 18px; color: var(--m-ink-3); font-size: 13px; }
+.machines .seg { display: flex; padding: 3px; gap: 2px; border-radius: 999px; background: color-mix(in oklab, var(--m-ink) 7%, transparent); }
+.machines a { color: var(--m-ink-2); text-decoration: none; padding: 5px 11px; border-radius: 999px; }
+.machines a:hover { color: var(--m-ink); }
+.machines a[aria-current="page"] { background: var(--m-card); color: var(--m-ink); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+
+/* ---------- the schematic window, drawn from a setup (sizes in em so one rule scales every thumbnail) ---------- */
+.win { --g: 0em; --rr: 0em; --bar: 1.5em; position: relative; aspect-ratio: 16 / 10.4; width: 100%; display: flex; flex-direction: column; gap: var(--g); padding: var(--g);
+  background: var(--p); border-radius: .9em; overflow: hidden; box-shadow: 0 0 0 1px rgba(0,0,0,.12), 0 18px 40px -22px rgba(var(--m-shadow), .5); }
+.win > *, .w-body > * { background: var(--p); border-radius: var(--rr); min-width: 0; min-height: 0; }
+.w-body { flex: 1; display: flex; gap: var(--g); background: none !important; }
+.w-tabs { flex: none; height: var(--bar); display: flex; align-items: flex-end; gap: .3em; padding: 0 .7em; background: var(--s) !important; }
+.w-tabs i { width: 5.2em; height: 1.05em; border-radius: .35em .35em 0 0; background: color-mix(in oklab, var(--i) 9%, var(--s)); }
+.w-tabs i.on { background: var(--p); }
+.w-addr { flex: none; height: calc(var(--bar) * 1.05); display: flex; align-items: center; padding: 0 .7em; gap: .4em; border-bottom: 1px solid color-mix(in oklab, var(--i) 10%, transparent); }
+.w-addr i { height: .9em; flex: 1; border-radius: .45em; background: color-mix(in oklab, var(--i) 8%, var(--p)); position: relative; }
+.w-addr i::before { content: ""; position: absolute; left: .6em; top: .3em; width: 9em; height: .3em; border-radius: .15em; background: color-mix(in oklab, var(--i) 45%, transparent); }
+.w-side { flex: none; width: 18%; background: var(--s) !important; padding: .9em .7em; display: grid; align-content: start; gap: .62em; }
+.w-side i { height: .34em; border-radius: .2em; background: color-mix(in oklab, var(--i) 30%, transparent); }
+.w-side i:nth-child(1) { width: 50%; background: var(--a); }
+.w-side i:nth-child(3n) { width: 70%; } .w-side i:nth-child(3n+2) { width: 85%; }
+.w-mill { flex: none; width: 13%; padding: .9em .6em; display: grid; align-content: start; gap: .7em; border-right: 1px solid color-mix(in oklab, var(--i) 10%, transparent); }
+.w-mill i { height: .34em; border-radius: .2em; background: color-mix(in oklab, var(--i) 25%, transparent); }
+.w-mill i:nth-child(2) { background: var(--a); }
+.w-pane { flex: 1; padding: .8em .9em; display: grid; align-content: start; gap: .58em; overflow: hidden; }
+.w-pane + .w-pane { border-left: 1px solid color-mix(in oklab, var(--i) 12%, transparent); }
+.w-pane .r { display: grid; grid-template-columns: .85em 1fr 22%; gap: .6em; align-items: center; }
+.w-pane .r b { width: .85em; height: .7em; border-radius: .15em; background: var(--f); }
+.w-pane .r b.doc { background: color-mix(in oklab, var(--i) 30%, transparent); height: .85em; width: .68em; }
+.w-pane .r i { height: .34em; border-radius: .2em; background: color-mix(in oklab, var(--i) 55%, transparent); }
+.w-pane .r u { height: .3em; border-radius: .2em; background: color-mix(in oklab, var(--i) 22%, transparent); }
+.w-pane .r.sel { background: color-mix(in oklab, var(--a) 22%, transparent); margin: -.25em -.4em; padding: .25em .4em; border-radius: .25em; }
+.w-pane.list { grid-template-columns: repeat(3, 1fr); column-gap: 1.2em; }
+.w-pane.list .r { grid-template-columns: .85em 1fr; }
+.w-pane.list .r u { display: none; }
+.w-pane.tiles { grid-template-columns: repeat(4, 1fr); gap: .55em; }
+.w-pane.tiles .t { aspect-ratio: 1; border-radius: .3em; background: var(--img, color-mix(in oklab, var(--f) 80%, var(--p))); }
+.w-prev { flex: none; width: 25%; padding: .9em; display: grid; align-content: start; gap: .6em; border-left: 1px solid color-mix(in oklab, var(--i) 12%, transparent); }
+.w-prev b { aspect-ratio: 4/3; border-radius: .3em; background: linear-gradient(160deg, color-mix(in oklab, var(--a) 55%, var(--p)), color-mix(in oklab, var(--f) 55%, var(--i))); }
+.w-prev i { height: .34em; border-radius: .2em; background: color-mix(in oklab, var(--i) 30%, transparent); }
+.w-prev i:last-child { width: 60%; }
+.w-term { flex: none; height: 22%; background: var(--t) !important; padding: .7em .9em; display: grid; align-content: start; gap: .5em; }
+.w-term i { height: .32em; border-radius: .2em; width: 40%; background: color-mix(in oklab, var(--a) 70%, transparent); }
+.w-term i:nth-child(2) { width: 62%; background: rgba(255,255,255,.3); } .w-term i:nth-child(3) { width: 30%; background: rgba(255,255,255,.3); }
+.w-stat { flex: none; height: calc(var(--bar) * .8); display: flex; align-items: center; padding: 0 .8em; gap: .6em; background: var(--s) !important; }
+.w-stat i { height: .3em; width: 12%; border-radius: .2em; background: color-mix(in oklab, var(--i) 35%, transparent); }
+.w-stat i + i { margin-left: auto; width: 8%; background: var(--a); }
+/* layout themes, in miniature */
+.win[data-layout="floating-islands"] { --g: .5em; --rr: .55em; background: color-mix(in oklab, var(--a) 16%, var(--s)); }
+.win[data-layout="floating-islands"] > *:not(.w-body), .win[data-layout="floating-islands"] .w-body > * { box-shadow: 0 .15em .5em rgba(0,0,0,.12); border: 0; }
+.win[data-layout="floating-islands"] .w-tabs, .win[data-layout="floating-islands"] .w-side, .win[data-layout="floating-islands"] .w-stat { background: var(--p) !important; }
+.win[data-layout="soft-cards"] { --g: .38em; --rr: .38em; background: var(--s); }
+.win[data-layout="soft-cards"] .w-side, .win[data-layout="soft-cards"] .w-stat, .win[data-layout="soft-cards"] .w-tabs { background: color-mix(in oklab, var(--p) 60%, var(--s)) !important; }
+.win[data-layout="soft-cards"] .w-body > * { border: 0; }
+.win[data-layout="hairline-ledger"] { border-radius: .2em; --bar: 1.25em; }
+.win[data-layout="hairline-ledger"] .w-pane { gap: .42em; }
+.win[data-layout="hairline-ledger"] .w-side { border-right: 1px solid color-mix(in oklab, var(--i) 18%, transparent); }
+.win[data-layout="hairline-ledger"] .w-tabs i { border-radius: 0; }
+.win[data-layout="hairline-ledger"] .w-stat { border-top: 1px solid color-mix(in oklab, var(--i) 18%, transparent); }
+.win[data-layout="compact"] { --bar: 1.15em; }
+.win[data-layout="compact"] .w-pane { gap: .4em; }
+
+/* ---------- smaller screens ---------- */
+@media (max-width: 1500px) { .chip:not([aria-pressed="true"]) span { display: none; } .chip:not([aria-pressed="true"]) { padding: 0 4px; } }
+@media (max-width: 1180px) {
+  #strip { flex-wrap: wrap; }
+  html.in-session .who { order: 3; flex-basis: 100%; margin-left: 0; }
+  html.in-session .tools { margin-left: auto; }
+  .brand span { white-space: normal; }
+}
+@media (max-width: 760px) {
+  body { font-size: 14px; }
+  #strip, html.in-session #strip { flex-wrap: wrap; padding: 8px 12px; gap: 8px 10px; }
+  .tools, html.in-session .tools { display: contents; }
+  .brand { order: 0; flex: 1 1 0; flex-direction: column; gap: 2px; }
+  .brand span { white-space: normal; font-size: 12.5px; line-height: 1.3; }
+  .brand .os { display: none; }
+  .dl { order: 1; height: 30px; padding: 0 12px; } .gh { order: 2; }
+  #strip::after { content: ""; order: 3; flex-basis: 100%; height: 0; }
+  html.in-session .who { order: 4; flex-basis: auto; margin: 0; }
+  .who .machine { display: none; }
+  #found { order: 5; margin-left: auto; height: 28px; }
+  #tune { order: 6; height: 28px; }
+  #found .dots, #tune .t { display: none; }
+  .chip span, .chip:not([aria-pressed="true"]) span { display: none; } .chip, .chip:not([aria-pressed="true"]) { padding: 0 4px; }
+  #found, #tune { padding: 0 10px; }
+  #stage { padding: 0; }
+  #drawer.open { position: absolute; inset: auto 0 0 0; width: auto; height: 62%; margin: 0; z-index: 35; }
+  #drawer .d-in { width: 100%; border-radius: 14px 14px 0 0; }
+  .accounts { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 26px 16px; }
+  .acct .win { font-size: 5.6px; }
+  .acct .nm { font-size: 17px; }
+  .acct .bl { font-size: 13px; }
+  .greet { padding-top: 24px; width: calc(100% - 32px); }
+  #borrow { right: 8px; left: 8px; width: auto; }
+  #foundpop { right: 8px; left: 8px; width: auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #drawer, .acct .win, #strip { transition: none; }
+}
+</style>
+<body>
+
+<header id="strip">
+  <div class="brand"><b>Tauri Explorer</b><span>A keyboard-driven file explorer you set up your way<i class="os">, for Linux, Windows and macOS</i>.</span></div>
+  <div class="who">
+    <span class="machine" id="machine-name"></span>
+    <div class="chips" id="chips" role="group" aria-label="Switch account"></div>
+    <button type="button" class="icon-btn" id="lock" title="Back to the login screen" aria-label="Back to the login screen">
+      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="4.5" y="9" width="11" height="8" rx="2"/><path d="M7 9V6.5a3 3 0 0 1 6 0V9"/></svg>
+    </button>
+  </div>
+  <div class="tools">
+    <button type="button" class="pill" id="found" aria-expanded="false" aria-controls="foundpop"><span class="dots" aria-hidden="true"></span><span class="lbl"></span></button>
+    <button type="button" class="pill" id="tune" aria-expanded="false" aria-controls="drawer">
+      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M3 6h8M15 6h2M3 14h2M9 14h8"/><circle cx="13" cy="6" r="2"/><circle cx="7" cy="14" r="2"/></svg>
+      <span class="t">Make it yours</span>
+    </button>
+    <a class="dl" href="#"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>Download</a>
+    <a class="gh" href="#">GitHub</a>
+  </div>
+</header>
+
+<main id="stage">
+  <div id="appwrap">
+    <div id="app"></div>
+    <div id="borrow" hidden role="region" aria-live="polite"></div>
+  </div>
+  <aside id="drawer" aria-label="Make it yours" inert>
+    <div class="d-in">
+      <div class="d-head">
+        <h2>Make it yours</h2>
+        <p id="d-who"></p>
+        <button type="button" class="icon-btn" id="d-close" aria-label="Close">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="m5.5 5.5 9 9m0-9-9 9"/></svg>
+        </button>
+      </div>
+      <div class="d-scroll">
+        <h3>Panels</h3>
+        <div class="parts" id="d-panels"></div>
+        <h3>Features</h3>
+        <div class="parts" id="d-features"></div>
+        <p class="readout" id="d-readout"></p>
+        <h3>Colours</h3>
+        <div class="swatches" id="d-themes"></div>
+        <h3>Layout</h3>
+        <div class="opts" id="d-layouts"></div>
+        <h3>Icons</h3>
+        <div class="opts" id="d-icons"></div>
+        <h3>View</h3>
+        <div class="opts" id="d-views"></div>
+      </div>
+      <div class="d-foot">
+        <button type="button" class="copy" id="d-copy">Copy link to this setup</button>
+        <button type="button" class="reset" id="d-reset"></button>
+        <p class="note" id="d-note" aria-live="polite"></p>
+      </div>
+    </div>
+  </aside>
+</main>
+
+<section id="login" aria-labelledby="login-h">
+  <div class="greet">
+    <p class="machine" id="login-machine"></p>
+    <h1 id="login-h">Who's using this computer?</h1>
+    <div class="accounts" id="accounts"></div>
+    <p class="under" id="login-under"></p>
+  </div>
+  <nav class="machines" aria-label="Computer">
+    <span>Computer</span>
+    <div class="seg" id="machines"></div>
+  </nav>
+</section>
+
+<div id="foundpop" hidden role="dialog" aria-labelledby="foundpop-h">
+  <h2 id="foundpop-h">Found on this computer</h2>
+  <ol id="found-list"></ol>
+  <footer><span id="found-count"></span><button type="button" id="found-reset">Forget all</button></footer>
+</div>
+
+<script src="content/fs-station.js"></script>
+<script src="content/fs-archive.js"></script>
+<script src="engine/explorer.js"></script>
+<script>
+"use strict";
+(() => {
+/* ================= data: which computer, who uses it, and what can be found on it ================= */
+const MACHINES = ["station", "archive"].filter(id => window.TX_FS && TX_FS[id]);
+const qs = new URLSearchParams(location.search);
+const fsId = MACHINES.includes(qs.get("fs")) ? qs.get("fs") : MACHINES[0];
+const FS = TX_FS[fsId];
+const MACHINE = FS.title || "This computer";
+
+// Guest has no home in the data: an account the page adds, with one bare pane at the top of the disk.
+const GUEST = { id: "guest", name: "Guest", home: "/", blurb: "No account and nothing set up. One bare pane at the top of the disk.",
+  setup: { parts: [], theme: "light", layout: "default", icons: "default", view: "details", path: "/" } };
+const PEOPLE = [...(FS.users || []), GUEST];
+const person = id => PEOPLE.find(u => u.id === id);
+const firstName = u => (u.name || u.id).split(/\s+/)[0];
+const possessive = u => { const n = u.name || u.id; return u.id === "guest" ? "the guest" : /s$/i.test(n) ? `${n}'` : `${n}'s`; };
+
+const base = p => String(p || "").split("/").pop();
+// Each find is a pure predicate over one app event. Titles are what you'd call it after finding it; nothing here is shown before then.
+const FINDS = {
+  station: [
+    { id: "bin", title: "The frame that went in the bin", "fs-change": e => e.op === "restore" && /2026-10-11_0541_north-pool_soft/.test(`${e.to} ${e.path}`) },
+    { id: "revert", title: "Unconfirmed, 21:48", graph: "crane-counts" },
+    { id: "call", title: "One call before light", open: e => e.path === "/home/wren/journal/2026-10-11.md" },
+    { id: "nape", title: "Grey on the nape", search: e => e.kind === "content" && /nape/i.test(e.query) && e.count > 0 },
+    { id: "lodger", title: "The Lodger", open: e => base(e.path) === "the-lodger.txt" },
+    { id: "names", title: "Goodnight, Seventeen", open: e => e.path === "/media/backup/Photos 2023/2023-10-04 ringing/names.txt" },
+    { id: "dots", title: "Everything that starts with a dot", setup: s => !!s.hidden },
+    { id: "motd", title: "All logins are from the kitchen", open: e => e.path === "/etc/motd" },
+    { id: "ubend", title: "Quarter turn. Wait for water.", navigate: e => base(e.path) === "behind-the-u-bend" },
+    { id: "chair", title: "Someone else's chair", borrow: true },
+  ],
+  archive: [
+    { id: "1202", title: "Twelve oh two", search: e => /1202/.test(e.query) && e.count > 0 },
+    { id: "burn", title: "Burn, baby, burn", open: e => base(e.path) === "BURN_BABY_BURN--MASTER_IGNITION_ROUTINE.agc" },
+    { id: "boot", title: "A bootprint in the soil", open: e => base(e.path) === "AS11-40-5878.webp" },
+    { id: "earth", title: "Earth over Smyth's Sea", open: e => base(e.path) === "AS11-44-6552.webp" },
+    { id: "step", title: "One small step", open: e => /first-step\.txt$/.test(e.path) },
+    { id: "kept", title: "How the code was kept", graph: "flight-software" },
+  ],
+}[fsId] || [];
+
+const store = {   // localStorage can be missing or throw (private windows, blocked storage); the page works without it
+  key: `tx-machine:found:${fsId}`,
+  read() { try { const v = JSON.parse(localStorage.getItem(this.key) || "[]"); return Array.isArray(v) ? v : []; } catch (_) { return []; } },
+  write(ids) { try { localStorage.setItem(this.key, JSON.stringify(ids)); } catch (_) { /* not persisted; fine */ } },
+};
+let found = new Set(store.read().filter(id => FINDS.some(f => f.id === id)));
+
+/* ================= small helpers ================= */
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const RM = matchMedia("(prefers-reduced-motion: reduce)");
+const withoutPath = s => { const o = Object.assign({}, s); delete o.path; return o; };
+function swatch(theme) {
+  if (theme && typeof theme === "object" && Array.isArray(theme.v)) return { v: theme.v, dark: !!theme.dark };
+  const t = TX.themes.find(x => x.id === theme) || TX.themes.find(x => x.id === "light");
+  return { v: t.swatch, dark: t.dark };
+}
+
+/* ================= the schematic window: a setup drawn in CSS ================= */
+const rows = (n, sel) => Array.from({ length: n }, (_, i) => `<div class="r${i === sel ? " sel" : ""}"><b class="${i > 2 && i % 2 ? "doc" : ""}"></b><i style="width:${42 + ((i * 37) % 45)}%"></i><u></u></div>`).join("");
+const TILE_IMG = ["linear-gradient(150deg, color-mix(in oklab, var(--a) 45%, var(--p)), color-mix(in oklab, var(--i) 35%, var(--p)))", "linear-gradient(200deg, color-mix(in oklab, var(--f) 50%, var(--p)), color-mix(in oklab, var(--i) 25%, var(--p)))", "linear-gradient(170deg, color-mix(in oklab, var(--i2) 30%, var(--p)), color-mix(in oklab, var(--a) 30%, var(--i)))"];
+const tiles = n => Array.from({ length: n }, (_, i) => `<div class="t" style="--img:${TILE_IMG[i % 3]}"></div>`).join("");
+function paneHTML(view, sel) {
+  if (view === "tiles") return `<div class="w-pane tiles">${tiles(12)}</div>`;
+  if (view === "list") return `<div class="w-pane list">${rows(15, sel)}</div>`;
+  return `<div class="w-pane">${rows(9, sel)}</div>`;
+}
+function thumb(setup) {
+  const on = new Set(setup.parts || []), { v, dark } = swatch(setup.theme);
+  const el = document.createElement("div");
+  el.className = "win"; el.dataset.layout = setup.layout || "default";
+  el.setAttribute("aria-hidden", "true");
+  const term = dark ? `color-mix(in oklab, ${v[0]} 60%, #000)` : `color-mix(in oklab, ${v[2]} 92%, ${v[0]})`;
+  el.style.cssText = `--p:${v[0]};--s:${v[1]};--i:${v[2]};--i2:${v[3]};--a:${v[4]};--f:${v[5]};--t:${term}`;
+  const line = n => "<i></i>".repeat(n);
+  el.innerHTML =
+    (on.has("tabs") ? `<div class="w-tabs"><i class="on"></i><i></i><i></i></div>` : "") +
+    (on.has("address") ? `<div class="w-addr"><i></i></div>` : "") +
+    `<div class="w-body">` +
+      (on.has("sidebar") ? `<div class="w-side">${line(8)}</div>` : "") +
+      (on.has("miller") ? `<div class="w-mill">${line(6)}</div>` : "") +
+      paneHTML(setup.view || "details", 2) +
+      (on.has("split") ? paneHTML("details", -1) : "") +
+      (on.has("preview") ? `<div class="w-prev"><b></b>${line(3)}</div>` : "") +
+    `</div>` +
+    (on.has("terminal") ? `<div class="w-term">${line(3)}</div>` : "") +
+    (on.has("status") ? `<div class="w-stat">${line(2)}</div>` : "");
+  return el;
+}
+
+/* ================= the app: mounted once, kept for the whole visit, so nothing done in it is lost ================= */
+const linkSetup = TX.decodeSetup(qs.get("setup"));
+const linkUser = person(qs.get("user")) ? qs.get("user") : (linkSetup ? "guest" : null);
+const app = window.app = TX.mount($("#app"), {
+  fs: Object.assign({}, FS, { users: PEOPLE }),
+  user: linkUser || PEOPLE[0].id,
+  setup: linkSetup || undefined,
+  themeRoot: document.documentElement,
+});
+const custom = {};             // per account: what the visitor changed this visit
+let sessionStarted = false;
+let atLogin = true;
+
+/* ================= the strip ================= */
+function coloursOf(u) { const v = swatch((custom[u.id] || u.setup || {}).theme).v; return `--c:${v[4]};--cp:${v[0]};--ci:${v[2]}`; }
+function renderChips() {
+  const cur = app.user()?.id;
+  $("#chips").innerHTML = PEOPLE.map(u => `<button type="button" class="chip" data-user="${esc(u.id)}" aria-pressed="${u.id === cur}" title="${esc(u.name)}" style="${esc(coloursOf(u))}"><i>${esc((u.name || u.id)[0])}</i><span>${esc(firstName(u))}</span></button>`).join("");
+}
+$("#machine-name").textContent = MACHINE;
+$("#chips").addEventListener("click", e => {
+  const b = e.target.closest("[data-user]"); if (!b) return;
+  if (b.dataset.user !== app.user()?.id) switchTo(b.dataset.user, true);
+});
+
+/* measured strip height drives where the stage and login start (the strip wraps on narrow screens) */
+new ResizeObserver(() => document.documentElement.style.setProperty("--strip-h", $("#strip").offsetHeight + "px")).observe($("#strip"));
+
+/* ================= switching accounts ================= */
+function switchTo(id, animate) {
+  hideBorrow();
+  app.setUser(id, { animate });
+  if (custom[id]) app.setSetup(withoutPath(custom[id]), { animate });
+  renderChips(); syncDrawer(); writeURL();
+}
+function writeURL() {
+  const p = new URLSearchParams({ fs: fsId });
+  if (!atLogin) { p.set("user", app.user().id); p.set("setup", TX.encodeSetup(app.getSetup())); }
+  try { history.replaceState(null, "", "?" + p.toString()); } catch (_) { /* file:// in some browsers */ }
+}
+
+/* ================= the login screen ================= */
+$("#login-machine").textContent = MACHINE;
+const numberWord = n => ["No one", "One person", "Two people", "Three people", "Four people", "Five people"][n] || `${n} people`;
+$("#login-under").textContent = `${numberWord((FS.users || []).length)} share this computer. Every account runs the same app.`;
+$("#machines").innerHTML = MACHINES.map(id => `<a href="?fs=${id}"${id === fsId ? ' aria-current="page"' : ""}>${esc(TX_FS[id].title || id)}</a>`).join("");
+function renderAccounts() {
+  const box = $("#accounts"), cur = sessionStarted ? app.user()?.id : null;
+  box.style.setProperty("--n", PEOPLE.length);
+  box.innerHTML = "";
+  for (const u of PEOPLE) {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "acct" + (u.id === "guest" ? " guest" : ""); b.dataset.user = u.id;
+    b.append(thumb(custom[u.id] || u.setup || {}));
+    b.insertAdjacentHTML("beforeend", `<span class="nm">${esc(u.name)}${u.id === cur ? "<em>Signed in</em>" : ""}</span><span class="bl">${esc(u.blurb || "")}</span>`);
+    box.append(b);
+  }
+}
+$("#accounts").addEventListener("click", e => { const b = e.target.closest(".acct"); if (b) enter(b.dataset.user, b.querySelector(".win")); });
+
+function setMode(session) {
+  atLogin = !session;
+  document.documentElement.classList.toggle("in-session", session);
+  document.documentElement.classList.toggle("at-login", !session);
+  $("#stage").inert = !session;
+}
+function enter(id, fromEl) {
+  if (!(sessionStarted && app.user()?.id === id)) switchTo(id, false);
+  sessionStarted = true;
+  setMode(true); renderChips(); writeURL();
+  const login = $("#login"), stage = $("#stage");
+  const done = () => { login.hidden = true; stage.style.zIndex = ""; app.focus(); };
+  if (RM.matches || !fromEl || !stage.animate) { done(); return; }
+  // the account's little window grows into the real one: scale the live app down onto the thumbnail, then let it go
+  const st = stage.getBoundingClientRect(), r = fromEl.getBoundingClientRect();
+  const s = r.width / st.width, h = st.height * s, dy = r.top - st.top + (r.height - h) / 2;
+  const cut = Math.max(0, (h - r.height) / 2 / s);
+  stage.style.zIndex = 50;
+  const ease = "cubic-bezier(.2,.75,.15,1)", dur = 640;
+  stage.animate([
+    { transform: `translate(${r.left - st.left}px, ${st.top + dy - st.top}px) scale(${s})`, clipPath: `inset(${cut}px 0px ${cut}px 0px round ${12 / s}px)` },
+    { transform: "translate(0px, 0px) scale(1)", clipPath: "inset(0px 0px 0px 0px round 0px)" },
+  ], { duration: dur, easing: ease });
+  login.animate([{ opacity: 1 }, { opacity: 0 }], { duration: dur * .8, easing: "ease-out", fill: "forwards" })
+    .finished.then(() => { done(); login.getAnimations().forEach(a => a.cancel()); });
+}
+function lock() {
+  closeDrawer(); closePop(); hideBorrow();
+  renderAccounts();
+  setMode(false); writeURL();
+  const login = $("#login");
+  login.hidden = false;
+  if (!RM.matches && login.animate) {
+    login.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 260, easing: "ease-out" });
+    $(".greet").animate([{ transform: "translateY(10px) scale(.99)" }, { transform: "none" }], { duration: 420, easing: "cubic-bezier(.2,.75,.15,1)" });
+  }
+  const cur = login.querySelector(`.acct[data-user="${CSS.escape(app.user().id)}"]`);
+  (cur || login.querySelector(".acct"))?.focus({ preventScroll: true });
+}
+$("#lock").addEventListener("click", lock);
+// while the login screen is up, the app behind it must not take the keyboard
+window.addEventListener("keydown", e => { if (atLogin) e.stopImmediatePropagation(); }, true);
+
+/* ================= make it yours ================= */
+const VIEWS = [["details", "Details"], ["list", "List"], ["tiles", "Tiles"]];
+const frame = `<rect class="frame" x="1.5" y="1.5" width="21" height="15" rx="2.6"/>`;
+function partBtn(p) { return `<button type="button" class="part" data-part="${p.id}" title="${esc(p.desc)}" aria-pressed="false"><svg viewBox="0 0 24 18" aria-hidden="true">${p.kind === "panel" ? frame : ""}${p.glyph}</svg>${esc(p.short)}</button>`; }
+$("#d-panels").innerHTML = TX.parts.filter(p => p.kind === "panel").map(partBtn).join("");
+$("#d-features").innerHTML = TX.parts.filter(p => p.kind === "feature").map(partBtn).join("");
+$("#d-themes").innerHTML = TX.themes.map(t => `<button type="button" class="sw" data-theme="${t.id}" aria-pressed="false" style="--a:${t.swatch[0]};--b:${t.swatch[4]};--c:${t.swatch[5]}"><b></b>${esc(t.name)}</button>`).join("");
+$("#d-layouts").innerHTML = TX.layouts.map(l => `<button type="button" class="opt" data-layout="${l.id}" title="${esc(l.note)}" aria-pressed="false">${esc(l.name)}</button>`).join("");
+$("#d-icons").innerHTML = TX.iconsets.map(i => `<button type="button" class="opt" data-icons="${i.id}" title="${esc(i.note)}" aria-pressed="false">${esc(i.id === "default" ? "Follow colours" : i.name)}</button>`).join("");
+$("#d-views").innerHTML = VIEWS.map(([id, n]) => `<button type="button" class="opt" data-view="${id}" aria-pressed="false">${n}</button>`).join("");
+const readout = $("#d-readout");
+const describe = el => { const p = el && TX.parts.find(x => x.id === el.dataset.part); readout.textContent = p ? p.desc : ""; };
+$("#drawer").addEventListener("pointerover", e => describe(e.target.closest("[data-part]")));
+$("#drawer").addEventListener("focusin", e => describe(e.target.closest("[data-part]")));
+$("#drawer").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.part) { app.togglePart(b.dataset.part); describe(b); }
+  else if (b.dataset.theme) app.setSetup({ theme: b.dataset.theme });
+  else if (b.dataset.layout) app.setSetup({ layout: b.dataset.layout });
+  else if (b.dataset.icons) app.setSetup({ icons: b.dataset.icons });
+  else if (b.dataset.view) app.setSetup({ view: b.dataset.view });
+});
+function syncDrawer() {
+  const s = app.getSetup(), on = new Set(s.parts), u = person(app.user()?.id) || GUEST;
+  document.querySelectorAll("#drawer [data-part]").forEach(b => b.setAttribute("aria-pressed", on.has(b.dataset.part)));
+  document.querySelectorAll("#drawer [data-theme]").forEach(b => b.setAttribute("aria-pressed", b.dataset.theme === s.theme));
+  document.querySelectorAll("#drawer [data-layout]").forEach(b => b.setAttribute("aria-pressed", b.dataset.layout === s.layout));
+  document.querySelectorAll("#drawer [data-icons]").forEach(b => b.setAttribute("aria-pressed", b.dataset.icons === s.icons));
+  document.querySelectorAll("#drawer [data-view]").forEach(b => b.setAttribute("aria-pressed", b.dataset.view === s.view));
+  $("#d-who").textContent = u.id === "guest" ? "Everything here applies straight away." : `Changes stay with ${possessive(u)} account until you leave this page.`;
+  $("#d-reset").textContent = u.id === "guest" ? "Start again from one bare pane" : `Back to ${possessive(u)} own setup`;
+}
+function openDrawer() { const d = $("#drawer"); d.classList.add("open"); d.inert = false; $("#tune").setAttribute("aria-expanded", "true"); syncDrawer(); }
+function closeDrawer() { const d = $("#drawer"); d.classList.remove("open"); d.inert = true; $("#tune").setAttribute("aria-expanded", "false"); }
+$("#tune").addEventListener("click", () => $("#drawer").classList.contains("open") ? closeDrawer() : openDrawer());
+$("#d-close").addEventListener("click", () => { closeDrawer(); app.focus(); });
+$("#d-reset").addEventListener("click", () => {
+  const u = person(app.user().id);
+  app.setSetup(withoutPath(Object.assign({ hidden: !!app.getSetup().hidden }, u.setup)));
+  $("#d-note").textContent = "";
+});
+$("#d-copy").addEventListener("click", async () => {
+  writeURL();
+  const url = location.href, note = $("#d-note");
+  let ok = false;
+  try { await navigator.clipboard.writeText(url); ok = true; } catch (_) {
+    const t = document.createElement("textarea"); t.value = url; t.style.cssText = "position:fixed;opacity:0"; document.body.append(t); t.select();
+    try { ok = document.execCommand("copy"); } catch (_) { ok = false; }
+    t.remove();
+  }
+  note.textContent = ok ? "Link copied. It opens this computer with this setup." : "Could not copy here. The address bar holds the same link.";
+});
+
+/* ================= borrow a setup through the filesystem (not advertised anywhere) ================= */
+const borrowBox = $("#borrow");
+let borrowFrom = null;
+function offerBorrow(owner) {
+  borrowFrom = owner;
+  borrowBox.innerHTML = "";
+  borrowBox.append(thumb(owner.setup));
+  borrowBox.insertAdjacentHTML("beforeend", `<p><b>${esc(possessive(owner))} setup</b>This file is how ${esc(firstName(owner))} has the app set up.</p><div class="row"><button type="button" class="no">Not now</button><button type="button" class="use">Use this setup</button></div>`);
+  borrowBox.hidden = false;
+  if (!RM.matches && borrowBox.animate) borrowBox.animate([{ opacity: 0, transform: "translateY(8px)" }, { opacity: 1, transform: "none" }], { duration: 240, easing: "cubic-bezier(.2,.75,.15,1)" });
+}
+function hideBorrow() { borrowBox.hidden = true; borrowFrom = null; }
+borrowBox.addEventListener("click", e => {
+  if (e.target.closest(".no")) { hideBorrow(); app.focus(); return; }
+  if (!e.target.closest(".use") || !borrowFrom) return;
+  const owner = borrowFrom;
+  hideBorrow();
+  app.setSetup(withoutPath(Object.assign({}, owner.setup, { hidden: !!app.getSetup().hidden })));
+  app.toast(`Using ${possessive(owner)} setup`);
+  check("borrow", owner);
+  app.focus();
+});
+
+/* ================= found things ================= */
+function renderFound(justFound) {
+  const n = found.size, total = FINDS.length;
+  $("#found").querySelector(".dots").innerHTML = FINDS.map(f => `<i class="${found.has(f.id) ? "on" : ""}"></i>`).join("");
+  const lbl = $("#found .lbl");
+  lbl.textContent = justFound ? justFound.title : `${n} of ${total} found`;
+  $("#found").setAttribute("aria-label", `${n} of ${total} things found on this computer`);
+  $("#found-count").textContent = `${n} of ${total}`;
+  $("#found-reset").hidden = n === 0;
+  $("#found-list").innerHTML = FINDS.map((f, i) => found.has(f.id)
+    ? `<li class="got">${esc(f.title)}</li>`
+    : `<li class="blank" aria-label="Not found yet"><span style="width:${38 + ((i * 29) % 40)}%"></span></li>`).join("");
+}
+let flashT = 0;
+function markFound(f) {
+  if (found.has(f.id)) return;
+  found.add(f.id); store.write([...found]);
+  renderFound(f);
+  const pill = $("#found");
+  pill.classList.add("just");
+  if (!RM.matches && pill.animate) pill.animate([{ transform: "scale(1.06)" }, { transform: "none" }], { duration: 380, easing: "cubic-bezier(.2,.75,.15,1)" });
+  clearTimeout(flashT);
+  flashT = setTimeout(() => { pill.classList.remove("just"); renderFound(); }, 3200);
+}
+function check(kind, ev) { for (const f of FINDS) if (f[kind] && (f[kind] === true || f[kind](ev))) markFound(f); }
+$("#found").addEventListener("click", () => $("#foundpop").hidden ? openPop() : closePop());
+function openPop() {
+  renderFound();
+  const r = $("#found").getBoundingClientRect();
+  $("#foundpop").style.right = innerWidth > 760 ? Math.max(8, innerWidth - r.right) + "px" : "";
+  $("#foundpop").hidden = false; $("#found").setAttribute("aria-expanded", "true"); }
+function closePop() { $("#foundpop").hidden = true; $("#found").setAttribute("aria-expanded", "false"); }
+$("#found-reset").addEventListener("click", () => { found = new Set(); store.write([]); renderFound(); });
+document.addEventListener("pointerdown", e => { if (!$("#foundpop").hidden && !e.target.closest("#foundpop, #found")) closePop(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape" && !$("#foundpop").hidden) { closePop(); $("#found").focus(); } });
+
+// the commit graph has no event of its own: watch the app for a graph view and read which repository it shows
+let graphSeen = "", graphQ = false;
+new MutationObserver(() => {
+  if (graphQ) return; graphQ = true;
+  requestAnimationFrame(() => {
+    graphQ = false;
+    const names = [...app.el.querySelectorAll(".graphv .ghead b")].map(b => b.textContent).join("|");
+    if (names === graphSeen) return; graphSeen = names;
+    for (const n of names.split("|").filter(Boolean)) for (const f of FINDS) if (f.graph === n) markFound(f);
+  });
+}).observe(app.el, { childList: true, subtree: true });
+
+/* ================= app events ================= */
+app.on("open", e => {
+  check("open", e);
+  const m = /^(.*)\/\.config\/tauri-explorer\/settings\.json$/.exec(e.path || "");
+  const owner = m && (FS.users || []).find(u => u.home === m[1]);
+  if (owner && owner.id !== app.user()?.id) offerBorrow(owner);
+});
+app.on("navigate", e => check("navigate", e));
+app.on("search", e => check("search", e));
+app.on("fs-change", e => check("fs-change", e));
+app.on("setup", s => {
+  check("setup", s);
+  if (atLogin) return;
+  custom[app.user().id] = s;
+  syncDrawer(); renderChips(); writeURL();
+});
+app.on("user", () => { renderChips(); syncDrawer(); });
+
+/* ================= start ================= */
+renderFound(); renderChips(); syncDrawer();
+if (linkSetup || linkUser) {          // a copied link lands straight in that setup, no login screen in the way
+  if (linkSetup) custom[app.user().id] = app.getSetup();
+  sessionStarted = true; setMode(true); $("#login").hidden = true; writeURL(); app.focus();
+} else {
+  setMode(false); renderAccounts();
+}
+})();
+</script>
+</body>
+</html>

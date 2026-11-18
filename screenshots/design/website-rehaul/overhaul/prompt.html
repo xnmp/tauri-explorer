@@ -1,0 +1,955 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tauri Explorer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400..700;1,6..72,400..600&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="engine/explorer.css">
+<style>
+/* The page has no palette or typeface of its own: it wears whatever the app wears (themeRoot = <html>).
+   Before a window exists, the engine's :root defaults (Ink Wash) dress it. */
+:root {
+  --strip-h: 46px;
+  --dock-top: 12px;
+  --dock-h: 46px;
+  --gutter: 20px;
+  --ease-out: cubic-bezier(.2, .8, .15, 1);
+  --grow: 780ms;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--tx-paper); color: var(--tx-ink);
+  font: 400 14px/1.5 var(--tx-sans);
+  overflow: hidden;
+  transition: background-color .45s, color .45s;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; }
+button { font: inherit; color: inherit; }
+kbd {
+  font: 500 11px/1 var(--tx-mono); padding: 3px 5px 2px; border-radius: 5px;
+  border: 1px solid var(--tx-app-line); border-bottom-width: 2px; background: var(--tx-paper-hi); color: var(--tx-ink-2);
+}
+:focus-visible { outline: 2px solid var(--tx-teal); outline-offset: 2px; border-radius: 6px; }
+
+/* ---------- the strip: always there, for the visitor who only wants the binary ---------- */
+.strip {
+  position: relative; z-index: 30; height: var(--strip-h);
+  display: flex; align-items: center; gap: 18px; padding: 0 var(--gutter);
+  border-bottom: 1px solid var(--tx-hair);
+  transition: border-color .45s;
+}
+.brand { display: flex; align-items: center; gap: 9px; text-decoration: none; flex: none; }
+.brand svg { width: 20px; height: 20px; color: var(--tx-teal); }
+.brand b { font: 600 18px/1 var(--tx-display); letter-spacing: -.01em; }
+.what { margin: 0; color: var(--tx-ink-2); font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.strip nav { margin-left: auto; display: flex; align-items: center; gap: 6px; flex: none; }
+.strip nav a { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 12px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 13px; }
+.strip nav svg { width: 16px; height: 16px; }
+.gh { color: var(--tx-ink-2); }
+.gh:hover { color: var(--tx-ink); background: rgba(var(--tx-ink-rgb), .06); }
+.dl { background: var(--tx-teal); color: var(--tx-on-accent); }
+.dl:hover { filter: brightness(1.07); }
+
+/* ---------- the field: quiet space with one input ---------- */
+.field { position: relative; height: calc(100% - var(--strip-h)); }
+
+/* a hairline horizon runs through the input; the window opens out of it */
+.horizon {
+  position: absolute; left: 0; right: 0; top: 42%; height: 1px; pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(var(--tx-ink-rgb), .16) 22%, rgba(var(--tx-ink-rgb), .16) 78%, transparent);
+  transition: opacity .5s, transform .7s var(--ease-out);
+}
+.nothing {
+  position: absolute; left: 0; right: 0; top: calc(42% - 86px); margin: 0; text-align: center;
+  font: 400 19px/1.3 var(--tx-display); color: var(--tx-ink-2); letter-spacing: -.005em;
+  transition: opacity .35s, transform .5s var(--ease-out);
+}
+.nothing em { font-style: italic; color: var(--tx-ink-3); }
+
+/* the ask: a command palette with nothing behind it yet */
+.anchor, .ask {
+  position: absolute; left: 50%; top: 42%; width: min(680px, calc(100% - 32px)); translate: -50% -50%;
+}
+.anchor { height: 66px; visibility: hidden; pointer-events: none; }
+.ask { z-index: 20; transition: top var(--grow) var(--ease-out), left var(--grow) var(--ease-out), width var(--grow) var(--ease-out), translate var(--grow) var(--ease-out); }
+.card {
+  position: relative; display: flex; align-items: center; gap: 12px; height: 66px; padding: 0 16px 0 20px;
+  background: var(--tx-app); border: 1px solid var(--tx-app-line); border-radius: 14px;
+  box-shadow: 0 1px 0 rgba(var(--tx-shadow-rgb), .05), 0 28px 70px -30px rgba(var(--tx-shadow-rgb), .45);
+  transition: height var(--grow) var(--ease-out), border-radius var(--grow) var(--ease-out), background-color .45s, border-color .45s, box-shadow .3s;
+}
+.card:focus-within { border-color: rgba(var(--tx-accent-rgb), .55); box-shadow: 0 0 0 3px rgba(var(--tx-accent-rgb), .14), 0 28px 70px -30px rgba(var(--tx-shadow-rgb), .45); }
+.card .chev { flex: none; width: 22px; height: 22px; color: var(--tx-teal); transition: width var(--grow) var(--ease-out), height var(--grow) var(--ease-out); }
+.card input {
+  flex: 1; min-width: 0; height: 100%; border: 0; outline: 0; background: transparent; color: var(--tx-ink);
+  font: 400 25px/1.2 var(--tx-display); letter-spacing: -.01em; caret-color: var(--tx-teal);
+  transition: font-size var(--grow) var(--ease-out);
+}
+.card input::placeholder { color: var(--tx-ink-3); opacity: 1; font-style: italic; }
+.card .slash { flex: none; opacity: 0; transition: opacity .3s; }
+
+/* examples beneath the empty input */
+.chips {
+  position: absolute; left: 50%; top: calc(42% + 52px); translate: -50% 0; width: min(760px, calc(100% - 32px));
+  display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 8px; transition: opacity .3s;
+}
+.chip {
+  display: inline-flex; align-items: center; gap: 7px; max-width: 100%; height: 32px; padding: 0 13px 0 10px;
+  border: 1px solid var(--tx-hair); border-radius: 999px; background: transparent; cursor: pointer;
+  color: var(--tx-ink-2); font-size: 13.5px; white-space: nowrap;
+  transition: background-color .15s, color .15s, border-color .15s, opacity .4s, translate .4s var(--ease-out);
+}
+.chip:hover { background: var(--tx-app); color: var(--tx-ink); border-color: var(--tx-app-line); }
+.chip > span { overflow: hidden; text-overflow: ellipsis; }
+.chip .g { flex: none; width: 15px; height: 15px; color: var(--tx-ink-3); display: grid; place-items: center; }
+.chip .g svg { width: 15px; height: 15px; }
+.chip.phrase span { font: italic 400 15px/1 var(--tx-display); }
+.chip.shell span { font: 500 12.5px/1 var(--tx-mono); }
+.chip.leaving { opacity: 0; translate: 0 -4px; }
+.chip.arriving { opacity: 0; translate: 0 4px; }
+.sw { display: inline-flex; flex: none; }
+.sw i { width: 9px; height: 9px; border-radius: 50%; margin-left: -3px; box-shadow: 0 0 0 1.5px var(--tx-app); }
+.sw i:first-child { margin-left: 0; }
+
+.foot {
+  position: absolute; left: 0; right: 0; bottom: 18px; margin: 0; text-align: center; color: var(--tx-ink-3); font-size: 12.5px;
+  transition: opacity .3s;
+}
+.foot a { color: var(--tx-ink-2); text-underline-offset: 3px; text-decoration-color: rgba(var(--tx-ink-rgb), .25); }
+.foot a[aria-current] { text-decoration: none; color: var(--tx-ink); font-weight: 600; }
+
+/* ---------- results ---------- */
+.results {
+  position: absolute; left: 0; right: 0; top: calc(100% + 8px); margin: 0; padding: 6px; list-style: none;
+  background: var(--tx-app); border: 1px solid var(--tx-app-line); border-radius: 12px;
+  box-shadow: 0 30px 70px -28px rgba(var(--tx-shadow-rgb), .5);
+  max-height: min(470px, calc(100vh - 220px)); overflow-y: auto; overscroll-behavior: contain;
+}
+.results[hidden] { display: none; }
+.row {
+  display: grid; grid-template-columns: 78px minmax(0, 1fr) auto; align-items: center; gap: 12px;
+  min-height: 42px; padding: 6px 10px; border-radius: 8px; cursor: pointer;
+}
+.row.on { background: var(--tx-app-sel); }
+.row .k { font-size: 11.5px; color: var(--tx-ink-3); white-space: nowrap; }
+.row .m { min-width: 0; display: flex; align-items: baseline; gap: 10px; }
+.row .t { color: var(--tx-ink); font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
+.row .s { color: var(--tx-ink-3); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1 1 0; min-width: 40px; }
+.row .t b { font-weight: 650; color: var(--tx-teal); }
+.row .t.quote { font: italic 400 15px/1.35 var(--tx-display); }
+.row .t.quote mark { background: rgba(var(--tx-accent-rgb), .18); color: var(--tx-ink); border-radius: 3px; padding: 0 1px; font-style: normal; }
+.row .t.mono { font: 500 13px/1.35 var(--tx-mono); }
+.row .a { display: flex; align-items: center; gap: 4px; color: var(--tx-ink-3); font-size: 12px; }
+.row .a svg { width: 22px; height: 17px; }
+.row .a kbd { font-size: 10.5px; }
+.note { padding: 9px 10px 7px; color: var(--tx-ink-2); font-size: 12.5px; }
+.note q { font: italic 15px/1 var(--tx-display); color: var(--tx-ink); }
+.legend {
+  display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 6px -6px -6px; padding: 8px 16px 9px;
+  border-top: 1px solid var(--tx-app-line); color: var(--tx-ink-3); font-size: 11.5px;
+}
+.legend code { font: 600 11.5px/1 var(--tx-mono); color: var(--tx-ink-2); margin-right: 3px; }
+.results .examples { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 4px 8px; }
+.results .examples .chip { height: 29px; font-size: 13px; }
+
+/* part glyphs from TX.parts: a little window with the part filled in */
+svg.pg .frame { fill: none; stroke: currentColor; stroke-width: 1.3; opacity: .55; }
+svg.pg .f { fill: currentColor; }
+svg.pg .l { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+svg.pg .o { stroke: currentColor; }
+
+/* ---------- the window and the trail ---------- */
+.stage {
+  position: absolute; z-index: 5; left: var(--gutter); right: var(--gutter); bottom: var(--gutter);
+  top: calc(var(--dock-top) + var(--dock-h) + 12px);
+  border-radius: 12px; background: var(--tx-app);
+  box-shadow: 0 40px 90px -50px rgba(var(--tx-shadow-rgb), .55);
+}
+.stage[hidden] { display: none; }
+.stage > .host { position: absolute; inset: 0; }
+
+.trail {
+  position: absolute; z-index: 10; top: var(--dock-top); height: var(--dock-h); right: var(--gutter);
+  left: calc(var(--gutter) + min(500px, 40%) + 14px);
+  display: flex; align-items: center; gap: 6px; opacity: 0; pointer-events: none; transition: opacity .4s .25s;
+}
+.tokens { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1; overflow-x: auto; scrollbar-width: none; padding: 4px 2px; }
+.tokens::-webkit-scrollbar { display: none; }
+.tokens.cut-l { mask-image: linear-gradient(90deg, transparent, #000 36px); -webkit-mask-image: linear-gradient(90deg, transparent, #000 36px); }
+.tokens.cut-r { mask-image: linear-gradient(90deg, #000 calc(100% - 36px), transparent); -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 36px), transparent); }
+.tokens.cut-l.cut-r { mask-image: linear-gradient(90deg, transparent, #000 36px, #000 calc(100% - 36px), transparent); -webkit-mask-image: linear-gradient(90deg, transparent, #000 36px, #000 calc(100% - 36px), transparent); }
+.tok {
+  display: inline-flex; align-items: center; gap: 6px; flex: none; height: 28px; padding: 0 3px 0 9px;
+  border-radius: 8px; background: var(--tx-app); border: 1px solid var(--tx-app-line); color: var(--tx-ink);
+  font-size: 12.5px; white-space: nowrap; transition: background-color .45s, border-color .45s;
+}
+.tok .g { display: grid; place-items: center; color: var(--tx-ink-3); }
+.tok .g svg { width: 18px; height: 14px; }
+.tok .dim { color: var(--tx-ink-3); }
+.tok button {
+  display: grid; place-items: center; width: 22px; height: 22px; border: 0; border-radius: 6px; background: transparent;
+  color: var(--tx-ink-3); cursor: pointer;
+}
+.tok button:hover { background: rgba(var(--tx-ink-rgb), .08); color: var(--tx-ink); }
+.tok button svg { width: 10px; height: 10px; }
+.tok.fresh { animation: tok-in .5s var(--ease-out); }
+@keyframes tok-in { from { opacity: 0; translate: 0 -6px; background: var(--tx-app-sel); } }
+.trail .act {
+  flex: none; height: 28px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; cursor: pointer;
+  color: var(--tx-ink-2); font-size: 12.5px; font-weight: 600; white-space: nowrap;
+}
+.trail .act:hover { background: rgba(var(--tx-ink-rgb), .07); color: var(--tx-ink); }
+.trail .sep { flex: none; width: 1px; height: 18px; background: var(--tx-hair); margin: 0 4px; }
+
+/* ---------- live: the input has docked, the window exists ---------- */
+.live .ask { top: var(--dock-top); left: var(--gutter); width: min(500px, 40%); translate: 0 0; }
+.live .card { height: var(--dock-h); border-radius: 11px; padding: 0 10px 0 14px; gap: 10px; }
+.live .card .chev { width: 17px; height: 17px; }
+.live .card input { font-size: 17px; }
+.live .card .slash { opacity: 1; }
+.live .card:focus-within .slash { opacity: 0; }
+.live .horizon { opacity: 0; transform: scaleX(.2); }
+.live .nothing { opacity: 0; transform: translateY(-14px); pointer-events: none; }
+.live .chips, .live .foot { opacity: 0; pointer-events: none; visibility: hidden; }
+.live .trail { opacity: 1; pointer-events: auto; }
+.live .results { left: 0; right: auto; width: max(100%, min(660px, calc(100vw - 2 * var(--gutter)))); }
+.open .chips { opacity: 0; pointer-events: none; }
+.open .foot { opacity: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --grow: 1ms; }
+  .chip, .horizon, .nothing, .trail { transition: none; }
+  .tok.fresh { animation: none; }
+}
+
+/* ---------- narrow: a readable fallback ---------- */
+@media (max-width: 760px) {
+  :root { --gutter: 12px; }
+  .what { font-size: 12.5px; }
+  .gh span { display: none; }
+}
+@media (max-width: 600px) {
+  :root { --strip-h: 64px; }
+  .strip { flex-wrap: wrap; align-content: center; gap: 2px 10px; padding: 6px 12px; }
+  .brand b { font-size: 17px; }
+  .what { order: 3; flex-basis: 100%; white-space: normal; line-height: 1.3; }
+  .strip nav a { height: 28px; padding: 0 10px; }
+  .anchor, .ask { width: calc(100% - 24px); top: 36%; }
+  .horizon { top: 36%; }
+  .nothing { top: calc(36% - 78px); font-size: 17px; padding: 0 16px; }
+  .chips { top: calc(36% + 48px); }
+  .card input { font-size: 19px; }
+  .card { height: 58px; } .anchor { height: 58px; }
+  .live .ask { width: calc(100% - 24px); }
+  .trail { top: calc(var(--dock-top) + var(--dock-h) + 6px); height: 34px; left: var(--gutter); }
+  .stage { top: calc(var(--dock-top) + var(--dock-h) + 46px); }
+  .row { grid-template-columns: 62px minmax(0, 1fr); }
+  .row .a { display: none; }
+  .row .m { flex-direction: column; gap: 0; }
+  .row .s { flex: none; width: 100%; }
+  .foot { padding: 0 16px; }
+}
+@media (max-height: 640px) and (min-width: 601px) { .foot { display: none; } }
+</style>
+</head>
+<body>
+<header class="strip">
+  <a class="brand" href="#" aria-label="Tauri Explorer">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3 7.2C3 6 4 5 5.2 5h4.1c.6 0 1.1.3 1.5.7L12.2 7.5h6.6C20 7.5 21 8.5 21 9.7v7.1c0 1.2-1 2.2-2.2 2.2H5.2C4 19 3 18 3 16.8z" opacity=".9"/><path fill="none" stroke="var(--tx-app)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" d="m8.6 11 2.4 2.1-2.4 2.1M12.6 15.4h3"/></svg>
+    <b>Tauri Explorer</b>
+  </a>
+  <p class="what">A keyboard-driven file explorer for Linux, Windows and macOS. Free and open source.</p>
+  <nav>
+    <a class="gh" href="#"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2.5a9.7 9.7 0 0 0-3.07 18.9c.49.09.66-.21.66-.47v-1.66c-2.7.59-3.27-1.3-3.27-1.3-.44-1.12-1.08-1.42-1.08-1.42-.88-.6.07-.59.07-.59.97.07 1.48 1 1.48 1 .87 1.48 2.27 1.05 2.82.8.09-.63.34-1.05.62-1.3-2.15-.24-4.42-1.08-4.42-4.8 0-1.06.38-1.93 1-2.6-.1-.25-.43-1.24.1-2.58 0 0 .82-.26 2.67 1a9.2 9.2 0 0 1 4.86 0c1.85-1.26 2.67-1 2.67-1 .53 1.34.2 2.33.1 2.58.62.67 1 1.54 1 2.6 0 3.73-2.27 4.55-4.43 4.79.35.3.66.9.66 1.81v2.69c0 .26.17.57.67.47A9.7 9.7 0 0 0 12 2.5z"/></svg><span>GitHub</span></a>
+    <a class="dl" href="#"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 4v11m-4.5-4.5L12 15l4.5-4.5M5 19.5h14"/></svg>Download</a>
+  </nav>
+</header>
+
+<main class="field" id="field">
+  <div class="horizon" aria-hidden="true"></div>
+  <p class="nothing">Nothing is open.</p>
+  <div class="anchor" id="anchor" aria-hidden="true"></div>
+
+  <div class="stage" id="stage" hidden><div class="host" id="host"></div></div>
+
+  <div class="ask" id="ask">
+    <div class="card" id="card">
+      <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="m6 6.5 5.5 5.5L6 17.5M13.5 17.5H19"/></svg>
+      <input id="q" type="text" autocomplete="off" spellcheck="false" role="combobox" aria-autocomplete="list"
+        aria-expanded="false" aria-controls="results" aria-label="Ask for a folder, file, command or text"
+        placeholder="A folder, a file, a command, or words inside a file">
+      <kbd class="slash" title="Press / to ask">/</kbd>
+    </div>
+    <ul class="results" id="results" role="listbox" hidden></ul>
+  </div>
+
+  <div class="chips" id="chips" aria-label="Examples"></div>
+
+  <div class="trail" id="trail" aria-label="What this window is made of">
+    <div class="tokens" id="tokens"></div>
+    <span class="sep"></span>
+    <button class="act" id="copy" type="button">Copy link</button>
+    <button class="act" id="over" type="button">Start over</button>
+  </div>
+
+  <p class="foot" id="foot"></p>
+</main>
+
+<script src="content/fs-station.js"></script>
+<script src="content/fs-archive.js"></script>
+<script src="content/fs-default.js"></script>
+<script src="engine/explorer.js"></script>
+<script>
+(function () {
+"use strict";
+
+/* ================= setup: which files, which baseline ================= */
+const qs = new URLSearchParams(location.search);
+const FSID = (window.TX_FS || {})[qs.get("fs")] ? qs.get("fs") : "station";
+const FS = TX_FS[FSID];
+const USERS = FS.users || [];
+const BASE_USER = USERS[0] ? USERS[0].id : null;
+// the bare window: no parts, the site's own colours, nothing chosen yet
+const BASE = { theme: "ink-wash", layout: "default", icons: "material", view: "details" };
+const FS_NAMES = { station: "Hollin Marsh, a made-up field station", archive: "the Apollo 11 archive", default: "a plain home folder" };
+
+const $ = s => document.querySelector(s);
+const field = $("#field"), input = $("#q"), results = $("#results"), chipsEl = $("#chips"), stage = $("#stage"), host = $("#host");
+const tokensEl = $("#tokens");
+const RM = matchMedia("(prefers-reduced-motion: reduce)");
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const pick = a => a[Math.floor(Math.random() * a.length)];
+const shuffle = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+const firstName = n => String(n || "").split(" ")[0];
+const userById = id => USERS.find(u => u.id === id);
+
+let app = null;           // exists only once something has been asked for
+let seat = null;          // { id, before: setup|null, beforeUser } when the visitor sat down as someone
+let order = [];           // trail order, oldest ask first
+
+/* ================= the index: every visible name, and every file's text ================= */
+const entries = [], texts = [];
+(function walk(n, p, depth) {
+  for (const k of n.kids || []) {
+    if (!k || String(k.name).startsWith(".")) continue;   // hidden files stay hidden, as in the app
+    const path = (p === "/" ? "" : p) + "/" + k.name;
+    const dir = k.kind === "dir" || (k.kind !== "file" && Array.isArray(k.kids));
+    entries.push({ path, name: k.name, dir, depth, low: k.name.toLowerCase(), plow: path.toLowerCase() });
+    if (!dir && typeof k.text === "string" && k.text.length) texts.push({ path, name: k.name, text: k.text, low: k.text.toLowerCase() });
+    if (dir) walk(k, path, depth + 1);
+  }
+})(FS.tree, "/", 1);
+const byPath = new Map(entries.map(e => [e.path, e]));
+
+const curUser = () => (app && app.user()) || (USERS[0] ? { id: USERS[0].id, name: USERS[0].name, home: USERS[0].home } : { home: "/" });
+const home = () => curUser().home || "/";
+const tilde = p => { const h = home(); return p === h ? "~" : p.startsWith(h + "/") ? "~" + p.slice(h.length) : p; };
+const parentOf = p => p.replace(/\/[^/]+$/, "") || "/";
+const baseName = p => p === "/" ? "/" : p.split("/").filter(Boolean).pop();
+
+/* ================= matching ================= */
+const BOUND = /[\s\-_./()[\],:]/;
+function fuzzy(q, text) {
+  if (!q) return { s: 0, hits: [] };
+  const t = text.toLowerCase();
+  const i = t.indexOf(q);
+  if (i >= 0) {
+    const atWord = i === 0 || BOUND.test(t[i - 1]);
+    let s = 100 + (atWord ? 40 : 0) + (i === 0 ? 15 : 0) - Math.min(t.length - q.length, 40) * .6;
+    if (t === q) s += 70;
+    return { s, hits: Array.from({ length: q.length }, (_, k) => i + k) };
+  }
+  // in-order characters, rewarded for word starts and runs; try word-start-seeking and plain leftmost, keep the better
+  const a = inOrder(q, t, true), b = inOrder(q, t, false);
+  const best = !a ? b : !b ? a : a.s >= b.s ? a : b;
+  return best && best.s >= 24 ? best : null;
+}
+function inOrder(q, t, seek) {
+  let s = 0, from = 0, prev = -2, n = 0;
+  const hits = [];
+  for (const ch of q) {
+    if (ch === " ") continue;
+    let j = -1;
+    if (seek) for (let x = t.indexOf(ch, from); x >= 0 && x < from + 24; x = t.indexOf(ch, x + 1)) { if (x === prev + 1 || x === 0 || BOUND.test(t[x - 1])) { j = x; break; } }
+    if (j < 0) j = t.indexOf(ch, from);
+    if (j < 0) return null;
+    const b = j === 0 || BOUND.test(t[j - 1]);
+    s += 1 + (j === prev + 1 ? 6 : 0) + (b ? 8 : 0) - Math.min(j - from, 10) * .4;
+    hits.push(j); prev = j; from = j + 1; n++;
+  }
+  return { s: 80 * s / (15 * Math.max(n, 1)), hits };
+}
+const hl = (text, hits) => {
+  const set = new Set(hits || []);
+  let out = "", open = false;
+  [...text].forEach((c, i) => { const h = set.has(i); if (h && !open) { out += "<b>"; open = true; } if (!h && open) { out += "</b>"; open = false; } out += esc(c); });
+  return out + (open ? "</b>" : "");
+};
+function lev(a, b) {
+  if (Math.abs(a.length - b.length) > 3) return 9;
+  const d = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = d[0]; d[0] = i;
+    for (let j = 1; j <= b.length; j++) { const t = d[j]; d[j] = Math.min(d[j] + 1, d[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1)); prev = t; }
+  }
+  return d[b.length];
+}
+const words = s => String(s).toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 1);
+
+/* ================= what can be asked for ================= */
+const P = id => TX.parts.find(p => p.id === id);
+const glyph = id => { const p = P(id); return p ? `<svg class="pg" viewBox="0 0 24 18" aria-hidden="true"><rect class="frame" x="2" y="1.8" width="20" height="14.4" rx="2.6"/>${p.glyph}</svg>` : ""; };
+const swatch = v => `<span class="sw">${v.slice(0, 4).map(c => `<i style="background:${esc(c)}"></i>`).join("")}</span>`;
+const ICON = {
+  folder: `<svg viewBox="0 0 24 24"><path fill="currentColor" d="M3 7.2C3 6 4 5 5.2 5h4.1c.6 0 1.1.3 1.5.7L12.2 7.5h6.6C20 7.5 21 8.5 21 9.7v7.1c0 1.2-1 2.2-2.2 2.2H5.2C4 19 3 18 3 16.8z" opacity=".75"/></svg>`,
+  file: `<svg viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" d="M6.5 3h7l4.5 4.5V20a1 1 0 0 1-1 1h-10a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM13.5 3v4.5H18"/></svg>`,
+  quote: `<svg viewBox="0 0 24 24"><path fill="currentColor" d="M5 17.5c0-4 1.6-7.4 5-9.5l1 1.4c-2 1.6-2.8 3.2-2.9 5.1H11v5.5H5zm8 0c0-4 1.6-7.4 5-9.5l1 1.4c-2 1.6-2.8 3.2-2.9 5.1H19v5.5h-6z" opacity=".7"/></svg>`,
+  shell: `<svg viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="m5 7 5 5-5 5M12.5 17H19"/></svg>`,
+  person: `<svg viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.6" fill="currentColor" opacity=".75"/><path fill="currentColor" opacity=".75" d="M4.5 20c.6-4 3.6-6.2 7.5-6.2s6.9 2.2 7.5 6.2z"/></svg>`,
+  x: `<svg viewBox="0 0 10 10"><path stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="m2 2 6 6M8 2 2 8"/></svg>`,
+};
+
+// every part, phrased the way someone would ask for it
+const PHRASE = {
+  tabs: ["tabs", "the tabs"], address: ["an address bar", "the address bar"], sidebar: ["the sidebar", "the sidebar"],
+  miller: ["Miller columns", "the Miller columns"], status: ["a status bar", "the status bar"], views: ["view switching", "view switching"],
+  preview: ["a preview", "the preview"], terminal: ["a terminal", "the terminal"], peek: ["folder peek", "folder peek"],
+  search: ["search", "search"], git: ["Git", "Git"], plugin: ["plugins", "plugins"], palette: ["the command palette", "the command palette"],
+  themes: ["the theme switcher", "the theme switcher"], hotkeys: ["shortcut hints", "shortcut hints"],
+};
+const isOn = id => !!(app && app.hasPart(id));
+function partCommands() {
+  return TX.parts.map(p => {
+    const on = isOn(p.id), [a, the] = PHRASE[p.id] || [p.short.toLowerCase(), "the " + p.short.toLowerCase()];
+    const base = [p.name, p.short, a.replace(/^(a|an|the) /, "")];
+    let title, alias;
+    if (p.id === "split") {
+      title = on ? "Back to one pane" : "Split in two";
+      alias = on ? ["back to one pane", "one pane", "unsplit", "remove the split", "close split"] : ["split in two", "split", "split panes", "two panes", "dual pane", "side by side"];
+    } else {
+      title = on ? `Remove ${the}` : `Add ${a}`;
+      alias = on ? [`remove ${the}`, `hide ${the}`, `close ${the}`, `no ${base[2]}`, `without ${base[2]}`, ...base]
+                 : [`add ${a}`, `show ${a}`, `open ${a}`, `give me ${a}`, ...base];
+    }
+    return { kind: "Command", title, alias, sub: p.desc, aside: glyph(p.id), key: "part:" + p.id,
+      run: () => on ? app.setPart(p.id, false) : apply({ add: [p.id] }) };
+  });
+}
+function lookCommands() {
+  const s = app ? app.getSetup() : BASE;
+  const out = [];
+  for (const t of TX.themes) {
+    const n = t.name.toLowerCase(), short = n.replace(/\s*\(.*\)/, "");
+    out.push({ kind: "Theme", title: `Wear ${t.name}`, alias: [`wear ${short}`, `wear ${n}`, short, `${short} theme`, `theme ${short}`, t.id.replace(/-/g, " ")],
+      sub: (s.theme === t.id ? "worn now, " : "") + (t.id === "ink-wash" ? "the page's own colours" : t.dark ? "dark colour theme" : "light colour theme"),
+      aside: swatch(t.swatch), key: "theme:" + t.id, run: () => apply({ theme: t.id }) });
+  }
+  for (const l of TX.layouts) {
+    const n = l.name.toLowerCase();
+    out.push({ kind: "Theme", title: `Lay out as ${l.name}`, alias: [`lay out as ${n}`, n, `${n} layout`, `layout ${n}`], sub: l.note, key: "layout:" + l.id, run: () => apply({ layout: l.id }) });
+  }
+  for (const i of TX.iconsets) {
+    const n = i.name.toLowerCase();
+    out.push({ kind: "Theme", title: `Use ${i.name} icons`, alias: [`use ${n} icons`, `${n} icons`, `icons ${n}`, `icon theme ${n}`], sub: i.note, key: "icons:" + i.id, run: () => apply({ icons: i.id }) });
+  }
+  for (const v of ["details", "list", "tiles"]) {
+    out.push({ kind: "Command", title: `Show as ${v}`, alias: [`show as ${v}`, v, `${v} view`, `view ${v}`, `view as ${v}`], sub: "Details, List or Tiles: the same folder three ways", key: "view:" + v, run: () => apply({ view: v }) });
+  }
+  return out;
+}
+function seatCommands() {
+  return USERS.filter(u => !(seat && seat.id === u.id)).map(u => {
+    const f = firstName(u.name).toLowerCase();
+    return { kind: "Account", title: `Sit down as ${firstName(u.name)}`, alias: [`sit down as ${f}`, `sit as ${f}`, `log in as ${f}`, `switch to ${f}`, `be ${f}`, `as ${f}`, f, u.name.toLowerCase(), u.id],
+      sub: `${u.name}. ${u.blurb || ""}`, aside: ICON.person, key: "seat:" + u.id, run: () => sitDown(u.id) };
+  });
+}
+// the app's own commands: only once there is an app, and only those that can act right now
+const MINE = /^(toggle(?!Hidden)|view[A-Z])/;
+const NEEDS_SEL = new Set(["rename", "delete", "copy", "selectAll"]);
+function appCommands() {
+  if (!app) return [];
+  const sel = app.selection().length > 0;
+  return app.commands().filter(c => !MINE.test(c.id) && (sel || !NEEDS_SEL.has(c.id)) && c.id !== "paste").map(c => ({
+    kind: "App", title: c.title.replace(/\.\.\.$/, "…"), alias: [c.title.toLowerCase()], sub: c.cat, aside: keycaps(c.keys), key: "app:" + c.id,
+    run: () => { app.focus(); setTimeout(() => app.run(c.id), 0); },
+  }));
+}
+const keycaps = combo => combo ? combo.split(" ").map(part => part.split("+").map(k => `<kbd>${esc(k.replace("PageUp", "PgUp").replace("PageDown", "PgDn"))}</kbd>`).join("")).join(" ") : "";
+function pageCommands() {
+  if (!app) return [];
+  return [
+    { kind: "Command", title: "Start over", alias: ["start over", "reset", "clear", "nothing", "begin again", "close the window"], sub: "Back to an empty page", key: "page:over", run: startOver },
+    { kind: "Command", title: "Copy link to this window", alias: ["copy link", "share", "link", "copy url"], sub: "The window is kept in the address", key: "page:copy", run: copyLink },
+  ];
+}
+const allCommands = () => [...partCommands(), ...lookCommands(), ...seatCommands(), ...pageCommands(), ...appCommands()];
+
+function scoreCommand(q, c) {
+  let best = null;
+  for (const a of c.alias.concat(c.title.toLowerCase())) { const m = fuzzy(q, a); if (m && (!best || m.s > best.s)) best = m; }
+  if (!best) return null;
+  const onTitle = fuzzy(q, c.title);
+  return { ...c, score: best.s + 4, label: onTitle ? hl(c.title, onTitle.hits) : esc(c.title) };
+}
+
+/* places and files */
+function placeRow(e, label) {
+  return { kind: e.dir ? "Folder" : "File", title: e.name, label, sub: tilde(e.dir ? e.path : parentOf(e.path)), key: "place:" + e.path,
+    aside: e.dir ? "" : "", run: () => goTo(e.path) };
+}
+function searchPlaces(q) {
+  const out = [];
+  for (const e of entries) {
+    const mn = fuzzy(q, e.name);
+    const mp = q.length > 2 ? fuzzy(q, e.path) : null;
+    let s = mn ? mn.s : -1;
+    if (mp && mp.s * .8 > s) s = mp.s * .8;
+    if (s < 0) continue;
+    s += (e.dir ? 3 : 0) - e.depth * .8;
+    out.push({ ...placeRow(e, mn ? hl(e.name, mn.hits) : esc(e.name)), score: s });
+  }
+  return out.sort((a, b) => b.score - a.score);
+}
+
+/* contents */
+function snippet(t, i, len) {
+  let a = Math.max(0, i - 30), b = Math.min(t.length, i + len + 44);
+  while (a > 0 && a > i - 46 && /\S/.test(t[a - 1])) a--;
+  const pre = t.slice(a, i), mid = t.slice(i, i + len), post = t.slice(i + len, b);
+  const clean = s => s.replace(/\s+/g, " ");
+  return `${a > 0 ? "…" : ""}${esc(clean(pre))}<mark>${esc(clean(mid))}</mark>${esc(clean(post))}${b < t.length ? "…" : ""}`;
+}
+function searchContents(q) {
+  if (q.length < 3) return { files: [], total: 0 };
+  const files = [];
+  let total = 0;
+  for (const f of texts) {
+    let i = f.low.indexOf(q), n = 0;
+    if (i < 0) continue;
+    const first = i;
+    while (i >= 0 && n < 99) { n++; i = f.low.indexOf(q, i + q.length); }
+    total += n;
+    files.push({ f, first, n });
+  }
+  files.sort((a, b) => b.n - a.n);
+  return { files, total };
+}
+
+/* ================= the ranked list ================= */
+let rows = [], active = 0, contentsT = 0, lastQ = null;
+function compute(raw, { withContents = true } = {}) {
+  const v = raw.trim();
+  if (v.startsWith("$")) return shellRows(v.slice(1).trim());
+  const cmdOnly = v.startsWith(">");
+  const quoted = /^["“].*["”]?$/.test(v) && v.length > 1;
+  const q = v.replace(/^>\s*/, "").replace(/^["“]|["”]$/g, "").trim().toLowerCase();
+  if (cmdOnly) {
+    const list = allCommands();
+    if (!q) return { rows: list.map(c => ({ ...c, label: esc(c.title) })), note: null };
+    return { rows: list.map(c => scoreCommand(q, c)).filter(Boolean).sort((a, b) => b.score - a.score), note: null };
+  }
+  if (!q) return { rows: [], note: null };
+  const cmds = allCommands().map(c => scoreCommand(q, c)).filter(Boolean).sort((a, b) => b.score - a.score).slice(0, 4);
+  const places = searchPlaces(q).slice(0, 4);
+  let contents = [];
+  if (withContents && (q.length >= 4 || (quoted && q.length >= 3))) {
+    const { files, total } = searchContents(q);
+    const boost = quoted ? 220 : 0;
+    const fileRows = files.slice(0, 2).map((x, k) => ({
+      kind: "In a file", title: x.f.name, label: snippet(x.f.text, x.first, q.length), quote: true,
+      sub: tilde(x.f.path) + (x.n > 1 ? ` (${x.n} times)` : ""), key: "text:" + x.f.path,
+      score: 58 + boost - k * 2 + (files.length === 1 ? 6 : 0), run: () => goTo(x.f.path),
+    }));
+    if (files.length > 1) fileRows.unshift({
+      kind: "Search", title: `Search in Files for “${q}”`, label: `Search in Files for <q>${esc(q)}</q>`, sub: `${total} match${total === 1 ? "" : "es"} in ${files.length} files`,
+      key: "search:" + q, score: 60 + boost, run: () => searchFiles(q),
+    });
+    contents = fileRows;
+  }
+  const merged = [...places, ...cmds, ...contents].sort((a, b) => b.score - a.score).slice(0, 9);
+  if (merged.length) return { rows: merged, note: null };
+  return nearest(q);
+}
+const SHELL_EX = ["ls", "ls -l", "tree -d", "pwd", "whoami", "grep -ri crane .", "cat README.md", "find . -name '*.md'", "git log --oneline"];
+function shellRows(line) {
+  const mk = l => ({ kind: "Shell", title: l, label: esc(l), mono: true, sub: "run in the terminal", key: "shell:" + l, score: 0, run: () => runShell(l) });
+  if (line) return { rows: [mk(line)], note: null };
+  return { rows: SHELL_EX.map(mk), note: null };
+}
+function nearest(q) {
+  const qw = words(q).filter(w => w.length >= 3);
+  const cands = [];
+  const consider = (row, text) => {
+    let best = 9;
+    for (const a of qw) for (const b of words(text)) { if (b.length < 3) continue; const d = lev(a, b); if (d < best && d <= Math.max(1, Math.floor(Math.min(a.length, b.length) / 3))) best = d; }
+    if (best < 9) cands.push({ row, d: best });
+  };
+  for (const e of entries) consider(placeRow(e, esc(e.name)), e.name);
+  for (const c of allCommands()) consider({ ...c, label: esc(c.title) }, c.alias.join(" "));
+  const seen = new Set(), rowsN = [];
+  for (const { row } of cands.sort((a, b) => a.d - b.d)) { if (seen.has(row.key)) continue; seen.add(row.key); rowsN.push(row); if (rowsN.length >= 5) break; }
+  if (rowsN.length) return { rows: rowsN, note: `Nothing is called <q>${esc(q)}</q>. Closest:` };
+  // still nothing near: offer a handful of real things instead of a dead end
+  return { rows: exampleRows(), note: `Nothing is called <q>${esc(q)}</q>, and nothing is close. Some things that are here:` };
+}
+function exampleRows() {
+  return shuffle(makeExamples(6)).map(ex => { const r = compute(ex.text, { withContents: true }).rows[0]; return r ? { ...r, label: r.quote ? r.label : esc(r.title) } : null; }).filter(Boolean).slice(0, 5);
+}
+
+/* ================= rendering the list ================= */
+const LEGEND = `<li class="legend" aria-hidden="true"><span><code>&gt;</code>commands only</span><span><code>$</code>run in the terminal</span><span><code>"…"</code>words inside files first</span><span><kbd>/</kbd> from anywhere on the page</span></li>`;
+function render(v, { withContents = true } = {}) {
+  const res = v.trim() ? compute(v, { withContents }) : { rows: [], note: null };
+  rows = res.rows;
+  active = 0;
+  let html = res.note ? `<li class="note">${res.note}</li>` : "";
+  if (!v.trim() && app) html += `<li class="examples">${makeExamples(7).map(chipHTML).join("")}</li>`;
+  html += rows.map((r, i) => `<li class="row${i === active ? " on" : ""}" role="option" id="opt-${i}" data-i="${i}" aria-selected="${i === active}">
+      <span class="k">${esc(r.kind)}</span>
+      <span class="m"><span class="t${r.quote ? " quote" : ""}${r.mono ? " mono" : ""}">${r.label || esc(r.title)}</span>${r.sub ? `<span class="s">${esc(r.sub)}</span>` : ""}</span>
+      <span class="a">${r.aside || ""}</span></li>`).join("");
+  if (html) html += LEGEND;
+  results.innerHTML = html;
+  bindChips(results);
+  setOpen(!!html);
+  syncActive();
+}
+function syncActive() {
+  results.querySelectorAll(".row").forEach(el => { const on = +el.dataset.i === active; el.classList.toggle("on", on); el.setAttribute("aria-selected", on); if (on) el.scrollIntoView({ block: "nearest" }); });
+  input.setAttribute("aria-activedescendant", rows.length ? "opt-" + active : "");
+}
+function setOpen(open) {
+  results.hidden = !open;
+  input.setAttribute("aria-expanded", open);
+  document.body.classList.toggle("open", open);
+}
+function choose(i) {
+  const r = rows[i];
+  if (!r) return;
+  setOpen(false);
+  input.value = "";
+  input.blur();
+  r.run();
+}
+input.addEventListener("input", () => {
+  render(input.value, { withContents: false });
+  clearTimeout(contentsT);   // the instant list skips contents; this fills them in once typing pauses
+  if (input.value.trim().length >= 3) contentsT = setTimeout(() => { if (document.activeElement === input) render(input.value); }, 110);
+});
+input.addEventListener("focus", () => { if (input.value.trim() || app) render(input.value); });
+input.addEventListener("blur", () => setTimeout(() => { if (document.activeElement !== input && !results.matches(":hover")) setOpen(false); }, 120));
+input.addEventListener("keydown", e => {
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    if (!rows.length) return;
+    e.preventDefault();
+    active = (active + (e.key === "ArrowDown" ? 1 : -1) + rows.length) % rows.length;
+    syncActive();
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    if (input.value.trim() && rows.length) { render(input.value); choose(active); }
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    if (input.value) { input.value = ""; render(""); if (!app) setOpen(false); }
+    else { setOpen(false); input.blur(); if (app) app.focus(); }
+  }
+});
+results.addEventListener("mousedown", e => e.preventDefault());   // keep focus in the input while choosing
+results.addEventListener("click", e => { const row = e.target.closest(".row"); if (row) choose(+row.dataset.i); });
+results.addEventListener("mousemove", e => { const row = e.target.closest(".row"); if (row && +row.dataset.i !== active) { active = +row.dataset.i; syncActive(); } });
+document.addEventListener("mousedown", e => { if (!e.target.closest("#ask")) setOpen(false); });
+
+// "/" from anywhere that is not a text field brings the input back
+window.addEventListener("keydown", e => {
+  if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey) return;
+  const t = e.target;
+  if (t && t.closest && t.closest("input, textarea, select, [contenteditable]")) return;
+  e.preventDefault();
+  input.focus();
+  input.select();
+}, true);
+$("#card").addEventListener("mousedown", e => { if (e.target !== input) { e.preventDefault(); input.focus(); } });
+
+/* ================= examples drawn from the files ================= */
+const DATED = /^\d{4}-\d{2}-\d{2}([_ -]\d{4})?[_ -]?/;
+const ODD = entries.filter(e => {
+  if (/^(IMG|DSC|AS11|S69)/.test(e.name)) return false;
+  const n = e.name.replace(/\.[a-z0-9]+$/i, ""), rest = n.replace(DATED, "");
+  return n.length < 46 && rest.length >= 8 && (/[ ()]/.test(rest) || (rest.match(/[-_]/g) || []).length >= 2);
+});
+const ODD_PLAIN = ODD.filter(e => !DATED.test(e.name));
+const PROSE = texts.filter(t => /\.(md|txt)$/i.test(t.name) && !/^(README|SOURCES)/i.test(t.name));
+const STOP = new Set("a an the of to and in on at for with after before from by was is it its as or but if so that this then than into out up i me my we our you your he him his she her they them their there here what which who".split(" "));
+function phrase() {
+  for (let tries = 0; tries < 40; tries++) {
+    const f = pick(PROSE.length ? PROSE : texts);
+    if (!f) return null;
+    const lines = f.text.split("\n").filter(l => /^[A-Za-z"'“]/.test(l.trim()) && l.length > 24 && !/https?:/.test(l));
+    if (!lines.length) continue;
+    const ws = pick(lines).replace(/[“”"]/g, "").split(/\s+/).filter(Boolean);
+    const len = 2 + Math.floor(Math.random() * 3), at = Math.floor(Math.random() * Math.max(1, ws.length - len));
+    const ph = ws.slice(at, at + len).join(" ").replace(/[.,;:!?)]+$/, "").replace(/^[(]+/, "");
+    const pw = ph.toLowerCase().split(" ");
+    if (ph.length < 11 || ph.length > 34 || !/^[A-Za-z][A-Za-z' -]*$/.test(ph)) continue;
+    if (STOP.has(pw[0]) || STOP.has(pw[pw.length - 1])) continue;
+    if (!texts.some(t => t.low.includes(ph.toLowerCase()))) continue;
+    return ph;
+  }
+  return null;
+}
+const PART_EX = ["split in two", "add a terminal", "add a preview", "add the sidebar", "add Miller columns", "add tabs", "add Git", "add a status bar"];
+function makeExamples(n = 7) {
+  const out = [], seen = new Set();
+  const push = ex => { if (ex && ex.text && !seen.has(ex.text)) { seen.add(ex.text); out.push(ex); } };
+  for (const e of [pick(ODD_PLAIN.length ? ODD_PLAIN : ODD), pick(ODD)]) if (e) push({ kind: "place", text: e.name, dir: e.dir });
+  const ph = phrase(); if (ph) push({ kind: "phrase", text: `"${ph}"`, show: ph });
+  const th = pick(TX.themes.filter(t => t.id !== "ink-wash" && !(app && app.getSetup().theme === t.id)));
+  push({ kind: "theme", text: `wear ${th.name.toLowerCase().replace(/\s*\(.*\)/, "")}`, swatch: th.swatch });
+  push({ kind: "part", text: pick(PART_EX.filter(t => !(t === "split in two" && isOn("split")))) });
+  const u = pick(USERS.filter(x => !(seat && seat.id === x.id)));
+  if (u) push({ kind: "seat", text: `sit down as ${firstName(u.name)}` });
+  push({ kind: "shell", text: "$ " + pick(["ls", "ls -l", "tree -d", "whoami", "pwd"]) });
+  while (out.length < n) { const e = pick(ODD.length ? ODD : entries); if (!e) break; const before = out.length; push({ kind: "place", text: e.name, dir: e.dir }); if (out.length === before && seen.size > 40) break; if (out.length === before) continue; }
+  return shuffle(out).slice(0, n);
+}
+function chipHTML(ex) {
+  const g = ex.kind === "place" ? (ex.dir ? ICON.folder : ICON.file) : ex.kind === "phrase" ? ICON.quote : ex.kind === "shell" ? ICON.shell
+    : ex.kind === "seat" ? ICON.person : ex.kind === "theme" ? swatch(ex.swatch) : glyph(ex.text.includes("split") ? "split" : (PART_EX.indexOf(ex.text) >= 0 ? ({ "add a terminal": "terminal", "add a preview": "preview", "add the sidebar": "sidebar", "add Miller columns": "miller", "add tabs": "tabs", "add Git": "git", "add a status bar": "status" })[ex.text] : ""));
+  return `<button class="chip ${ex.kind}" type="button" data-q="${esc(ex.text)}" title="${esc(ex.text)}"><span class="g" aria-hidden="true">${g}</span><span>${esc(ex.show || ex.text)}</span></button>`;
+}
+function bindChips(root) {
+  root.querySelectorAll(".chip").forEach(b => b.addEventListener("click", () => {
+    input.value = b.dataset.q;
+    const r = compute(input.value).rows;   // exactly what typing it and taking the top result does
+    rows = r;
+    choose(0);
+  }));
+}
+function drawChips() {
+  chipsEl.innerHTML = makeExamples(7).map(chipHTML).join("");
+  bindChips(chipsEl);
+}
+// the spread changes slowly while nothing is happening; one chip at a time, never in an order
+let rotT = 0;
+function rotate() {
+  clearTimeout(rotT);
+  rotT = setTimeout(() => {
+    if (!app && !document.hidden && !chipsEl.matches(":hover") && !chipsEl.contains(document.activeElement) && !document.body.classList.contains("open")) {
+      const chips = [...chipsEl.querySelectorAll(".chip")];
+      const have = new Set(chips.map(c => c.dataset.q));
+      const fresh = makeExamples(9).find(ex => !have.has(ex.text));
+      const old = pick(chips);
+      if (fresh && old) {
+        const swap = () => {
+          const tmp = document.createElement("div");
+          tmp.innerHTML = chipHTML(fresh);
+          const nu = tmp.firstElementChild;
+          if (!RM.matches) nu.classList.add("arriving");
+          old.replaceWith(nu);
+          bindChips({ querySelectorAll: () => [nu] });
+          if (!RM.matches) requestAnimationFrame(() => requestAnimationFrame(() => nu.classList.remove("arriving")));
+        };
+        if (RM.matches) swap(); else { old.classList.add("leaving"); setTimeout(swap, 380); }
+      }
+    }
+    rotate();
+  }, 4200);
+}
+
+/* ================= summoning ================= */
+function setupFor(patch) {
+  const s = { parts: [], ...BASE, path: home() };
+  if (patch.add) s.parts = patch.add.slice();
+  for (const k of ["theme", "layout", "icons", "view", "path"]) if (patch[k]) s[k] = patch[k];
+  return s;
+}
+// apply a patch to the window, creating the window if there is none
+function apply(patch) {
+  if (!app) { materialise({ setup: setupFor(patch) }); return; }
+  const look = {};
+  for (const k of ["theme", "layout", "icons", "view"]) if (patch[k]) look[k] = patch[k];
+  if (Object.keys(look).length) app.setSetup(look);
+  for (const id of patch.add || []) app.setPart(id, true);
+  if (patch.path) app.navigate(patch.path);
+  afterAsk();
+}
+function goTo(path) {
+  const e = byPath.get(path);
+  if (!e) return;
+  if (e.dir) apply({ path });
+  else apply({ path, add: ["preview"] });
+}
+function searchFiles(q) {
+  if (!app) materialise({ setup: setupFor({ add: ["search"] }) });
+  setTimeout(() => app && app.openSearch(q), app && document.body.classList.contains("growing") ? 420 : 0);
+}
+function runShell(line) {
+  if (!app) materialise({ setup: setupFor({ add: ["terminal"] }) });
+  // a hidden terminal has already run ls for the account switch (engine setUser); start the summoned one clean
+  else if (!app.hasPart("terminal")) app.shell("clear");
+  app.shell(line);
+  afterAsk(false);
+}
+function sitDown(id) {
+  if (!app) { seat = { id, before: null, beforeUser: BASE_USER }; materialise({ user: id }); return; }
+  const before = seat ? seat.before : app.getSetup(), beforeUser = seat ? seat.beforeUser : curUser().id;
+  seat = { id, before, beforeUser };
+  app.setUser(id);
+  afterAsk();
+}
+function standUp() {
+  const s = seat;
+  seat = null;
+  app.setUser(s.beforeUser || BASE_USER);
+  app.setSetup(s.before || setupFor({}));
+  sync();
+}
+function afterAsk(focusApp = true) {
+  sync();
+  if (focusApp && app) app.focus();
+}
+
+function materialise({ user = null, setup = null, animate = true } = {}) {
+  const from = $("#anchor").getBoundingClientRect();
+  stage.hidden = false;
+  document.body.classList.add("live");
+  app = TX.mount(host, { fs: FS, user: user || BASE_USER, themeRoot: document.documentElement, setup: setup || undefined });
+  window.app = app;   // handy from the console
+  app.on("setup", sync);
+  app.on("navigate", sync);
+  app.on("user", sync);
+  const play = animate && !RM.matches;
+  if (play) {
+    const s = stage.getBoundingClientRect();
+    const inset = `inset(${from.top - s.top}px ${s.right - from.right}px ${s.bottom - from.bottom}px ${from.left - s.left}px round 14px)`;
+    document.body.classList.add("growing");
+    const a = stage.animate([{ clipPath: inset }, { clipPath: "inset(0px 0px 0px 0px round 12px)" }], { duration: 780, easing: "cubic-bezier(.2,.8,.15,1)" });
+    host.animate([{ opacity: 0, transform: "translateY(10px)" }, { opacity: 1, transform: "none" }], { duration: 560, delay: 200, easing: "cubic-bezier(.2,.8,.15,1)", fill: "backwards" });
+    a.finished.then(() => document.body.classList.remove("growing")).catch(() => {});
+  } else if (animate) {
+    stage.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 160 });
+  }
+  clearTimeout(rotT);
+  sync();
+  setTimeout(() => app && app.focus(), play ? 420 : 0);
+}
+function startOver() {
+  if (!app) return;
+  const done = () => {
+    if (app) app.destroy();
+    app = null; seat = null; order = [];
+    window.app = null;
+    stage.hidden = true;
+    tokensEl.innerHTML = "";
+    writeURL();
+    drawChips(); rotate();
+    input.focus();
+  };
+  document.body.classList.remove("live");
+  setOpen(false);
+  if (RM.matches) return done();
+  const to = $("#anchor").getBoundingClientRect(), s = stage.getBoundingClientRect();
+  const inset = `inset(${to.top - s.top}px ${s.right - to.right}px ${s.bottom - to.bottom}px ${to.left - s.left}px round 14px)`;
+  host.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 260, fill: "forwards" });
+  stage.animate([{ clipPath: "inset(0px 0px 0px 0px round 12px)", opacity: 1 }, { clipPath: inset, opacity: 1, offset: .85 }, { clipPath: inset, opacity: 0 }], { duration: 640, easing: "cubic-bezier(.5,0,.2,1)", fill: "forwards" })
+    .finished.then(() => { stage.getAnimations().forEach(x => x.cancel()); host.getAnimations().forEach(x => x.cancel()); done(); }).catch(done);
+}
+
+/* ================= the trail: what this window is made of, in the order it was asked for ================= */
+function facets() {
+  if (!app) return [];
+  const s = app.getSetup(), out = [];
+  if (seat) { const u = userById(seat.id); out.push({ key: "seat", html: `<span class="g">${ICON.person}</span><span><span class="dim">as</span> ${esc(firstName(u ? u.name : seat.id))}</span>`, undo: standUp, label: `Sat down as ${u ? u.name : seat.id}` }); }
+  if (s.path && s.path !== home()) out.push({ key: "place", html: `<span class="g">${ICON.folder.replace("<svg", '<svg style="width:15px;height:15px"')}</span><span><span class="dim">pane ·</span> ${esc(baseName(s.path))}</span>`, undo: () => app.navigate(home(), { pane: "main" }), label: `Pane at ${tilde(s.path)}` });
+  for (const id of s.parts) { const p = P(id); out.push({ key: "part:" + id, html: `<span class="g">${glyph(id)}</span><span>${esc(id === "split" ? "split" : p.short.toLowerCase())}</span>`, undo: () => app.setPart(id, false), label: p.name }); }
+  if (typeof s.theme === "object" || s.theme !== BASE.theme) {
+    const t = typeof s.theme === "object" ? { name: s.theme.name, swatch: s.theme.v } : TX.themes.find(x => x.id === s.theme);
+    if (t) out.push({ key: "theme", html: `${swatch(t.swatch)}<span>${esc(t.name.replace(/\s*\(.*\)/, "").toLowerCase())}</span>`, undo: () => app.setSetup({ theme: BASE.theme }), label: `${t.name} theme` });
+  }
+  if (s.layout !== BASE.layout) { const l = TX.layouts.find(x => x.id === s.layout); out.push({ key: "layout", html: `<span><span class="dim">layout ·</span> ${esc((l ? l.name : s.layout).toLowerCase())}</span>`, undo: () => app.setSetup({ layout: BASE.layout }), label: `${l ? l.name : s.layout} layout` }); }
+  if (s.icons !== BASE.icons) { const i = TX.iconsets.find(x => x.id === s.icons); out.push({ key: "icons", html: `<span><span class="dim">icons ·</span> ${esc((i ? i.name : s.icons).toLowerCase())}</span>`, undo: () => app.setSetup({ icons: BASE.icons }), label: `${i ? i.name : s.icons} icons` }); }
+  if (s.view !== BASE.view) out.push({ key: "view", html: `<span><span class="dim">view ·</span> ${esc(s.view)}</span>`, undo: () => app.setSetup({ view: BASE.view }), label: `${s.view} view` });
+  return out;
+}
+let lastKeys = "";
+function sync() {
+  if (!app) return;
+  const f = facets(), keys = f.map(x => x.key);
+  const fresh = keys.filter(k => !order.includes(k));
+  order = order.filter(k => keys.includes(k)).concat(fresh);
+  const byKey = new Map(f.map(x => [x.key, x]));
+  const sig = order.map(k => k + "=" + byKey.get(k).html).join("|");
+  if (sig !== lastKeys) {
+    lastKeys = sig;
+    tokensEl.innerHTML = order.map(k => { const x = byKey.get(k); return `<span class="tok${fresh.includes(k) ? " fresh" : ""}" data-key="${esc(k)}">${x.html}<button type="button" aria-label="Remove ${esc(x.label)}" title="Remove">${ICON.x}</button></span>`; }).join("");
+    tokensEl.querySelectorAll(".tok button").forEach(b => b.addEventListener("click", () => { const x = facets().find(y => y.key === b.closest(".tok").dataset.key); if (x) { x.undo(); sync(); } }));
+    const last = [...tokensEl.querySelectorAll(".tok.fresh")].pop();
+    if (last) tokensEl.scrollLeft = tokensEl.scrollWidth;
+    edges();
+  }
+  writeURL();
+}
+
+function edges() {
+  const t = tokensEl;
+  t.classList.toggle("cut-l", t.scrollLeft > 2);
+  t.classList.toggle("cut-r", t.scrollLeft + t.clientWidth < t.scrollWidth - 2);
+}
+tokensEl.addEventListener("scroll", edges, { passive: true });
+tokensEl.addEventListener("wheel", e => { if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) { tokensEl.scrollLeft += e.deltaY; e.preventDefault(); } }, { passive: false });
+addEventListener("resize", edges);
+
+/* ================= the address keeps the window ================= */
+function writeURL() {
+  const p = new URLSearchParams();
+  if (FSID !== "station") p.set("fs", FSID);
+  if (app) {
+    if (seat) p.set("u", seat.id);
+    p.set("s", TX.encodeSetup(app.getSetup()));
+    if (order.length) p.set("o", order.join(","));
+  }
+  const str = p.toString();
+  history.replaceState(null, "", location.pathname + (str ? "?" + str : "") + location.hash);
+}
+function copyLink() {
+  const b = $("#copy"), url = location.href;
+  const ok = () => { b.textContent = "Link copied"; setTimeout(() => { b.textContent = "Copy link"; }, 1600); };
+  const fallback = () => { const t = document.createElement("textarea"); t.value = url; t.style.cssText = "position:fixed;opacity:0"; document.body.append(t); t.select(); try { document.execCommand("copy"); ok(); } catch (_) { b.textContent = "Copy the address bar"; } t.remove(); };
+  try { navigator.clipboard.writeText(url).then(ok, fallback); } catch (_) { fallback(); }
+}
+$("#copy").addEventListener("click", copyLink);
+$("#over").addEventListener("click", startOver);
+
+/* ================= footer: honest about what this is ================= */
+$("#foot").innerHTML = `Whatever opens here is a simulation running in this page, on the files of ${esc(FS_NAMES[FSID] || FS.title)}. Other files:
+  ${["station", "archive", "default"].filter(id => TX_FS[id]).map(id => `<a href="?fs=${id}"${id === FSID ? ' aria-current="page"' : ""}>${{ station: "field station", archive: "Apollo 11 archive", default: "plain home" }[id]}</a>`).join(", ")}. MIT licence.`;
+
+// for checking from the console: what the examples resolve to
+window.__prompt = { compute: q => compute(q).rows.map(r => ({ kind: r.kind, title: r.title })), examples: makeExamples };
+
+const narrow = matchMedia("(max-width: 600px)");
+const placeholder = () => { input.placeholder = narrow.matches ? "A folder, file, command or phrase" : "A folder, a file, a command, or words inside a file"; };
+narrow.addEventListener("change", placeholder); placeholder();
+
+/* ================= start: from the address, or from nothing ================= */
+const fromURL = TX.decodeSetup(qs.get("s"));
+if (fromURL) {
+  const u = qs.get("u");
+  if (u && userById(u)) seat = { id: u, before: null, beforeUser: BASE_USER };
+  order = (qs.get("o") || "").split(",").filter(Boolean);
+  if (!Array.isArray(fromURL.parts)) fromURL.parts = [];
+  materialise({ user: seat ? seat.id : BASE_USER, setup: fromURL, animate: false });
+} else {
+  drawChips();
+  rotate();
+  input.focus({ preventScroll: true });
+}
+})();
+</script>
+</body>
+</html>

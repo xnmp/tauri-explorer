@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tauri Explorer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400..700&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="engine/explorer.css">
+<style>
+  /* The reference harness: the app fills the viewport. The theme dresses the whole page (themeRoot defaults to <html>). */
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--tx-paper); transition: background-color .4s; }
+  #app { position: fixed; inset: 12px; }
+  @media (max-width: 600px) { #app { inset: 0; } }
+</style>
+<body>
+<div id="app"></div>
+
+<!-- filesystems: each defines window.TX_FS.<id>; a missing one is simply skipped -->
+<script src="content/fs-default.js"></script>
+<script src="content/fs-station.js"></script>
+<script src="content/fs-archive.js"></script>
+<script src="engine/explorer.js"></script>
+<script>
+  // ?fs= ?user= ?setup= (TX.encodeSetup string or JSON) ?parts=a,b ?theme= ?layout= ?icons= ?view= ?path=
+  const qs = new URLSearchParams(location.search);
+  const fsId = qs.get("fs") || "default";
+  const fs = (window.TX_FS || {})[fsId] || (console.warn(`base.html: no TX_FS.${fsId}; using the default filesystem`), TX_FS.default);
+  const setup = Object.assign({}, TX.decodeSetup(qs.get("setup")) || {});
+  if (qs.has("parts")) setup.parts = qs.get("parts").split(",").map(s => s.trim()).filter(Boolean);
+  for (const k of ["theme", "layout", "icons", "view", "path"]) if (qs.get(k)) setup[k] = qs.get(k);
+  const app = window.app = TX.mount(document.getElementById("app"), { fs, user: qs.get("user"), setup });
+  app.focus();
+</script>
+</body>
+</html>

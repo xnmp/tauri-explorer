@@ -103,3 +103,14 @@ describe("toNativeSeparators bypass", () => {
     expect(toNativeSeparators("C:\\Users\\x", "/")).toBe("C:/Users/x");
   });
 });
+
+describe("isTrashPath case handling (#1823)", () => {
+  it("treats the URI scheme case-insensitively", async () => {
+    const { isTrashPath } = await import("$lib/domain/virtual-path");
+    expect(isTrashPath("trash://")).toBe(true);
+    expect(isTrashPath("Trash://x")).toBe(true);
+    expect(isTrashPath("TRASH://x/y")).toBe(true);
+    expect(isTrashPath("/home/trash://x")).toBe(false);
+    expect(isTrashPath("")).toBe(false);
+  });
+});

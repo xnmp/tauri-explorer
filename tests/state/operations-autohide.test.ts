@@ -49,3 +49,18 @@ describe("progress dialog auto-hide", () => {
     expect(operationsManager.showProgressDialog).toBe(true);
   });
 });
+
+describe("failOperation after cancel (#1823)", () => {
+  it("does not open the progress dialog for an operation that no longer exists", () => {
+    const op = operationsManager.startOperation("copy", "/x/a");
+    operationsManager.cancelOperation(op.id);
+    operationsManager.failOperation(op.id, "late error");
+    expect(operationsManager.showProgressDialog).toBe(false);
+
+    // The next operation's dialog still waits out its delay.
+    operationsManager.startOperation("copy", "/x/b");
+    expect(operationsManager.showProgressDialog).toBe(false);
+    vi.advanceTimersByTime(1600);
+    expect(operationsManager.showProgressDialog).toBe(true);
+  });
+});

@@ -299,16 +299,18 @@ function createScmStore() {
     });
   }
 
-  async function stage(paths: string[]): Promise<void> {
-    if (!repoRoot || paths.length === 0) return;
-    await gitStage(repoRoot, paths);
+  async function stage(paths: string[]): Promise<{ ok: boolean; error?: string }> {
+    if (!repoRoot || paths.length === 0) return { ok: true };
+    const r = await gitStage(repoRoot, paths);
     await refresh();
+    return r.ok ? { ok: true } : { ok: false, error: r.error };
   }
 
-  async function unstage(paths: string[]): Promise<void> {
-    if (!repoRoot || paths.length === 0) return;
-    await gitUnstage(repoRoot, paths);
+  async function unstage(paths: string[]): Promise<{ ok: boolean; error?: string }> {
+    if (!repoRoot || paths.length === 0) return { ok: true };
+    const r = await gitUnstage(repoRoot, paths);
     await refresh();
+    return r.ok ? { ok: true } : { ok: false, error: r.error };
   }
 
   async function applyPatch(patch: string, action: GitPatchAction): Promise<{ ok: boolean; error?: string }> {

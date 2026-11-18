@@ -308,7 +308,6 @@
     gap: 8px;
     padding: 8px 12px;
     border-radius: var(--radius-sm);
-    transition: background var(--transition-fast);
   }
 
   .workspace-item:hover {

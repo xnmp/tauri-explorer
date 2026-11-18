@@ -193,7 +193,7 @@
   .storage-heading strong { color: var(--text-primary); font-size: var(--font-size-body); }
   .storage-heading span { color: var(--text-secondary); }
   .storage-meter { height: 6px; margin-top: var(--spacing-xs); border-radius: 3px; background: var(--subtle-fill-secondary); overflow: hidden; }
-  .storage-fill { height: 100%; background: var(--accent-default, var(--text-secondary)); }
+  .storage-fill { height: 100%; background: var(--accent); }
   .storage-fill.full { background: var(--system-critical); }
   .storage-note { margin: var(--spacing-xs) 0 0; color: var(--text-secondary); font-size: var(--font-size-caption); }
   .storage-note.critical { color: var(--system-critical-text, var(--system-critical)); }

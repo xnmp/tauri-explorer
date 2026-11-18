@@ -31,6 +31,7 @@
   import { openWithUnavailableReason } from "$lib/domain/open-with";
   import { isMac, isWindows } from "$lib/domain/platform";
   import { isTrashPath } from "$lib/domain/virtual-path";
+  import { getCommandShortcut } from "$lib/state/commands.svelte";
 
   interface Props {
     explorer: ExplorerInstance;
@@ -388,6 +389,12 @@
   });
 </script>
 
+<!-- Command-owned hint: follows persisted overrides, absent when unbound. -->
+{#snippet shortcutHint(commandId: string)}
+  {@const hint = getCommandShortcut(commandId)}
+  {#if hint}<span class="shortcut">{hint}</span>{/if}
+{/snippet}
+
 <svelte:window on:keydown={handleKeydown} />
 
 {#snippet check()}
@@ -470,7 +477,7 @@
             <path d="M6 8L8 10L10 8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
           <span>Open</span>
-          <span class="shortcut">Enter</span>
+          {@render shortcutHint("file.openSelected")}
         </button>
       {/if}
       <button class="menu-item" onclick={handleOpenWith} role="menuitem" disabled={openWithReason !== null} title={openWithReason ?? undefined}>
@@ -497,7 +504,7 @@
           <path d="M6 3L3 6L6 9M10 3L13 6L10 9M4 6H12" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
         <span>Cut</span>
-        <span class="shortcut">Ctrl+X</span>
+        {@render shortcutHint("edit.cut")}
       </button>
 
       <button class="menu-item" onclick={handleCopy} role="menuitem">
@@ -506,7 +513,7 @@
           <path d="M11 5V3C11 2.44772 10.5523 2 10 2H4C3.44772 2 3 2.44772 3 3V11C3 11.5523 3.44772 12 4 12H5" stroke="currentColor" stroke-width="1.25"/>
         </svg>
         <span>Copy</span>
-        <span class="shortcut">Ctrl+C</span>
+        {@render shortcutHint("edit.copy")}
       </button>
 
       {#if explorer.getSelectedEntries().length === 1}
@@ -528,7 +535,7 @@
           <path d="M10 4.5L11.5 3L13 4.5L11.5 6L10 4.5Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
         </svg>
         <span>Rename</span>
-        <span class="shortcut">F2</span>
+        {@render shortcutHint("file.rename")}
       </button>
       {/if}
 
@@ -537,7 +544,7 @@
           <path d="M4 5H12M5 5V13C5 13.5523 5.44772 14 6 14H10C10.5523 14 11 13.5523 11 13V5M6 5V3C6 2.44772 6.44772 2 7 2H9C9.55228 2 10 2.44772 10 3V5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
         <span>Delete</span>
-        <span class="shortcut">Del</span>
+        {@render shortcutHint("file.delete")}
       </button>
 
       {#if allSelectedHidden}
@@ -626,7 +633,7 @@
           <path d="M7 8H10M8.5 6.5V9.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
         </svg>
         <span>Paste</span>
-        <span class="shortcut">Ctrl+V</span>
+        {@render shortcutHint("edit.paste")}
       </button>
       <div class="menu-divider"></div>
 

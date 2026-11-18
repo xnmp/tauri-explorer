@@ -24,6 +24,14 @@ export interface DiscardTarget {
 const countLabel = (paths: string[]) => (paths.length === 1 ? paths[0] : `${paths.length} files`);
 const itemCount = (paths: string[]) => `${paths.length} item${paths.length === 1 ? "" : "s"}`;
 
+type StagingStore = Pick<ScmStore, "stage" | "unstage">;
+
+/** Stage or unstage paths, reporting a failure the store only returns. */
+export async function stagePaths(store: StagingStore, paths: string[], action: "stage" | "unstage"): Promise<void> {
+  const r = await store[action](paths);
+  if (!r.ok) toastStore.error(`${action === "stage" ? "Stage" : "Unstage"} failed: ${r.error}`);
+}
+
 export function createScmSidebarActions(scm: () => ScmActionsStore) {
   async function initRepo(path: string | undefined): Promise<void> {
     if (!path) return;

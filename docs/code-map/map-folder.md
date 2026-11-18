@@ -325,6 +325,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `commands/general-commands.ts` — misc app commands (settings, palette, etc).
 - `commands/system-actions.ts` — system actions not touching pane state (open terminal, reveal).
 - `keybindings.svelte.ts` — customizable keybinding store (chords, conflicts, persistence).
+- `command-shortcut-label.ts` — `shortcutSuffix(commandId)`: " (Ctrl+H)" prose hint from the effective binding, empty when unbound.
 - `shortcut-recorder.ts` — owned shortcut recording timer, cancellation and completion callbacks.
 - `window-tabs.svelte.ts` — tab management (open/close/reorder/active). Central for tabs.
 - `window-tab-actions.ts` — tab context-menu actions on the manager: Close Others / Close to the Right (anchor activated first, each close restorable), Duplicate, and the menu's item list (#1749).

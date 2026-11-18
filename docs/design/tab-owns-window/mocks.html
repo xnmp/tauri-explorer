@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tab Container Mocks</title>
+<style>
+  :root { --bg: #f4f4f6; --fg: #1d1d1f; --muted: #6e6e73; --card: #fff; --line: #d9d9de; --accent: #0a84ff; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #141416; --fg: #f2f2f4; --muted: #9a9aa2; --card: #1f1f23; --line: #333339; --accent: #4aa8ff; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.55 system-ui, -apple-system, sans-serif; padding: 28px 16px 80px; }
+  main { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 26px; margin: 0 0 6px; letter-spacing: -0.01em; }
+  h2 { font-size: 19px; margin: 48px 0 6px; }
+  p, li { color: var(--muted); max-width: 82ch; }
+  p b, li b { color: var(--fg); }
+  figure { margin: 18px 0 0; }
+  figcaption { font-size: 13px; color: var(--muted); margin-top: 8px; }
+  figcaption b { color: var(--fg); }
+  .pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr)); gap: 18px; }
+  .ref img { width: 100%; border-radius: 10px; border: 1px solid var(--line); display: block; }
+  .tag { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; padding: 2px 8px; border-radius: 99px; margin-right: 6px; vertical-align: 2px; }
+  .tag.now { background: #8e8e9333; color: var(--muted); }
+  .tag.new { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--accent); }
+  .open { border-left: 3px solid var(--accent); padding: 4px 0 4px 14px; margin: 12px 0; }
+
+  /* ---- the mock window ---- */
+  .win { position: relative; width: 100%; aspect-ratio: 1000 / 640; border-radius: 12px; overflow: hidden; container-type: inline-size;
+         box-shadow: 0 0 0 1px rgba(0,0,0,.35), 0 18px 50px rgba(0,0,0,.35); }
+  .win .wall { position: absolute; inset: 0;
+    background:
+      radial-gradient(40% 55% at 14% 30%, #3f8f66 0, transparent 70%),
+      radial-gradient(45% 60% at 72% 78%, #9a4a86 0, transparent 70%),
+      radial-gradient(40% 50% at 82% 12%, #4669b8 0, transparent 70%),
+      radial-gradient(35% 45% at 40% 95%, #b07a3a 0, transparent 70%),
+      #3a4150; }
+  .win.light .wall { filter: saturate(.7) brightness(1.55); }
+  .win .material { position: absolute; inset: 0; background: rgba(28,30,36,.06); backdrop-filter: blur(18px); }
+  .win.light .material { background: rgba(246,246,250,.28); }
+  .win svg.frame { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+  .u { position: absolute; }  /* positioned in a 1000x640 coordinate space via inline % */
+  .lights { display: flex; gap: .8cqw; }
+  .lights i { width: 1.25cqw; height: 1.25cqw; border-radius: 50%; display: block; }
+  .tabtext { display: flex; align-items: center; gap: .7cqw; font-size: 1.25cqw; color: rgba(255,255,255,.62); white-space: nowrap; }
+  .tabtext.active { color: #fff; font-weight: 600; }
+  .light .tabtext { color: rgba(0,0,0,.55); } .light .tabtext.active { color: #111; }
+  .tabtext .ic { width: 1.3cqw; height: 1.1cqw; border-radius: 2px; background: #4fb3f0; }
+  .tabtext .x { margin-left: auto; opacity: .6; font-weight: 400; }
+  .island { border-radius: 1.4cqw; background: rgba(38,40,46,.5); overflow: hidden;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.07), inset 0 .5px 0 rgba(255,255,255,.09), .5px 1px 3px rgba(0,0,0,.15), 2px 4px 12px rgba(0,0,0,.2), 5px 12px 32px rgba(0,0,0,.15); }
+  .light .island { background: rgba(255,255,255,.66);
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,.06), .5px 1px 3px rgba(0,0,0,.08), 2px 4px 12px rgba(0,0,0,.1), 5px 12px 32px rgba(0,0,0,.08); }
+  .island .pad { padding: 1.4cqw 1.4cqw; }
+  .lbl { font-size: .95cqw; letter-spacing: .06em; font-weight: 700; color: rgba(255,255,255,.45); text-transform: uppercase; margin-bottom: 1cqw; }
+  .light .lbl { color: rgba(0,0,0,.42); }
+  .side-item { display: flex; align-items: center; gap: 1cqw; font-size: 1.3cqw; color: rgba(255,255,255,.86); padding: .55cqw 0; }
+  .light .side-item { color: rgba(0,0,0,.8); }
+  .side-item i { width: 1.3cqw; height: 1.3cqw; border-radius: 3px; display: block; }
+  .crumb { margin: 1cqw; height: 2.8cqw; border-radius: 1.4cqw; background: rgba(255,255,255,.07); box-shadow: inset 0 0 0 1px rgba(255,255,255,.08);
+           display: flex; align-items: center; padding: 0 1.4cqw; font-size: 1.25cqw; color: #59b9ff; font-weight: 600; }
+  .light .crumb { background: rgba(0,0,0,.04); box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); color: #0a6fd6; }
+  .cols { display: flex; height: calc(100% - 4.8cqw); }
+  .miller { width: 12.5cqw; border-right: 1px solid rgba(255,255,255,.07); padding: .8cqw; }
+  .light .miller { border-color: rgba(0,0,0,.07); }
+  .mrow { font-size: 1.15cqw; color: rgba(255,255,255,.8); padding: .45cqw .6cqw; border-radius: .5cqw; white-space: nowrap; overflow: hidden; }
+  .light .mrow { color: rgba(0,0,0,.75); }
+  .mrow.sel { background: rgba(80,160,255,.22); }
+  .list { flex: 1; min-width: 0; }
+  .hdr { display: flex; font-size: .95cqw; letter-spacing: .05em; font-weight: 700; color: rgba(255,255,255,.62); padding: 1cqw 1.6cqw; background: rgba(0,0,0,.28); text-transform: uppercase; }
+  .light .hdr { background: rgba(0,0,0,.04); color: rgba(0,0,0,.55); }
+  .hdr span:first-child, .row span:first-child { flex: 1; }
+  .hdr span:not(:first-child), .row span:not(:first-child) { width: 18%; }
+  .row { display: flex; font-size: 1.25cqw; color: rgba(255,255,255,.88); padding: .75cqw 1.6cqw; align-items: center; }
+  .light .row { color: rgba(0,0,0,.82); }
+  .row span:not(:first-child) { color: rgba(255,255,255,.45); font-size: 1.1cqw; }
+  .light .row span:not(:first-child) { color: rgba(0,0,0,.45); }
+  .row.sel { background: rgba(80,160,255,.18); box-shadow: inset 3px 0 0 #4aa8ff; }
+  .status { font-size: 1.05cqw; color: rgba(255,255,255,.6); display: flex; justify-content: space-between; }
+  .light .status { color: rgba(0,0,0,.55); }
+  .callout { position: absolute; font: 600 1.15cqw/1.3 system-ui, sans-serif; color: #ffd43b; text-shadow: 0 1px 2px rgba(0,0,0,.8); pointer-events: none; }
+  .light .callout { color: #b25a00; text-shadow: 0 1px 1px rgba(255,255,255,.9); }
+</style>
+</head>
+<body>
+<main>
+  <h1>The active tab owns the window</h1>
+  <p>Mocks for the change you described. Everything keeps today's look: the tab's smooth S-curve sides (16px corner flowing straight into the 14px foot), 14px island radius, and the island and tab shadows. They're drawn over a stand-in for the macOS material. The only differences from today are the tab owning the whole window below it and the surface's rounded top-left and top-right corners. Yellow/orange notes are annotations, not UI.</p>
+
+  <h2><span class="tag now">Today</span>The tab joins only the main island</h2>
+  <p>The tab strip starts where the main island starts. The active tab's feet join <b>only the main pane island</b>, so the sidebar is a separate island standing on the bare window material, outside the tab altogether. Miller columns, when on, sit inside the main island to the left of the file list.</p>
+  <figure><div class="win" id="m-today"></div><figcaption><b>Today</b>, as a mock in the same style as the proposals below</figcaption></figure>
+  <div class="pair ref">
+    <figure><img src="current-no-miller.png" alt=""><figcaption><b>Today, real build</b> (browser), Miller columns off</figcaption></figure>
+    <figure><img src="current-miller.png" alt=""><figcaption><b>Today, real build</b> (browser), Miller columns on, inside the main island</figcaption></figure>
+  </div>
+
+  <h2><span class="tag new">Proposed</span>The active tab owns the whole window below it</h2>
+  <p>The active tab owns <b>the whole window below the tab strip</b>. Its surface runs edge to edge: the window's sides and bottom are its edges, so there is no inset frame and no strip of bare material around it. Every island sits directly on it: the sidebar, the main pane, and any split panes or preview. That leaves two levels of edges, the tab's outline and the islands, instead of three. Specifically:</p>
+  <ul>
+    <li><b>Layers, back to front:</b> window material (visible only in the tab strip), then the tab's surface filling the window below it, then the islands as cards on that surface. The gaps between islands, and the margin to the window edge, show the tab's surface.</li>
+    <li><b>Tab strip:</b> it starts right after the traffic lights, so tabs run over the sidebar too.</li>
+    <li><b>Outline:</b> the only drawn edge is the tab and the top edge of its surface, one continuous SVG path, so the feet are seamless. The #1734 shadows stay on it: light all round, heavier on the right.</li>
+    <li><b>Switching tabs:</b> the surface stays put and only the tab bump slides to the newly active tab. The surface belongs to whichever tab is active.</li>
+  </ul>
+  <figure><div class="win" id="m-new"></div><figcaption><b>Proposed, dark, Miller columns off.</b> Middle tab active. The sidebar sits on the tab's surface like every other island.</figcaption></figure>
+  <figure><div class="win" id="m-new-miller"></div><figcaption><b>Proposed, dark, sidebar shown, Miller columns on.</b> As today, they sit inside the main island.</figcaption></figure>
+  <figure><div class="win" id="m-new-first"></div><figcaption><b>Proposed, Windows/Linux, first tab active.</b> The window controls are on the right there, so the strip starts at the window's left edge and the first tab sits right over the sidebar. Flush with the window edge it has no left foot: the window's left edge runs straight up into the tab. On macOS the strip starts after the traffic lights, so every tab keeps both feet.</figcaption></figure>
+  <figure><div class="win" id="m-new-split"></div><figcaption><b>Proposed, split panes.</b> Each pane is its own island on the tab's surface.</figcaption></figure>
+  <figure><div class="win" id="m-new-nosidebar"></div><figcaption><b>Proposed, sidebar hidden, Miller columns on.</b> As today, the columns become their own island on the left.</figcaption></figure>
+  <figure><div class="win light" id="m-new-light"></div><figcaption><b>Proposed, light theme, Miller columns on.</b></figcaption></figure>
+
+  <h2>Open choices (my defaults in bold)</h2>
+  <div class="open">
+    <ul>
+      <li><b>Status bar sits on the tab's surface</b> at the bottom of the window, since the tab owns everything below the strip.</li>
+      <li><b>Miller columns keep today's placement</b> (<code>domain/miller-placement.ts</code>): their own island on the left when the sidebar is hidden and there is one pane, otherwise inside the main island.</li>
+      <li><b>Inactive tabs stay unboxed text on the material</b>, with the hover pill as today. Only the active tab is a surface.</li>
+      <li><b>When the sidebar is hidden</b>, the main island fills the width.</li>
+      <li><b>Translucency Opacity</b> keeps driving the island fills. The tab's surface gets the lighter coverage that the gaps between islands use today.</li>
+    </ul>
+  </div>
+</main>
+
+<script>
+/* Every mock is a 1000x640 window. Units below are in that space. */
+const W = 1000, H = 640;
+const pct = (v, of) => (v / of * 100) + "%";
+function box(el, x, y, w, h) { Object.assign(el.style, { left: pct(x, W), top: pct(y, H), width: pct(w, W), height: pct(h, H) }); return el; }
+function div(cls, html = "") { const d = document.createElement("div"); d.className = cls; d.innerHTML = html; return d; }
+
+/* One continuous outline: a rounded container with the active tab rising
+   out of its top edge, joined by concave feet. A tab flush with the
+   container's left edge loses its left foot and the side runs straight up. */
+function outline({ x0, x1, y0, y1, r, rb = r, tx, tw, ty, tr, fr }) {
+  const flushLeft = tx <= x0 + r + fr;
+  if (flushLeft) tx = x0;
+  const right = tx + tw;
+  let d;
+  if (flushLeft) {
+    d = `M ${x0} ${ty + tr} A ${tr} ${tr} 0 0 1 ${x0 + tr} ${ty}`;
+  } else {
+    d = `M ${x0} ${y0 + r} A ${r} ${r} 0 0 1 ${x0 + r} ${y0} L ${tx - fr} ${y0}`
+      + ` A ${fr} ${fr} 0 0 0 ${tx} ${y0 - fr} L ${tx} ${ty + tr} A ${tr} ${tr} 0 0 1 ${tx + tr} ${ty}`;
+  }
+  d += ` L ${right - tr} ${ty} A ${tr} ${tr} 0 0 1 ${right} ${ty + tr} L ${right} ${y0 - fr}`
+    + ` A ${fr} ${fr} 0 0 0 ${right + fr} ${y0} L ${x1 - r} ${y0} A ${r} ${r} 0 0 1 ${x1} ${y0 + r}`
+    + ` L ${x1} ${y1 - rb} A ${rb} ${rb} 0 0 1 ${x1 - rb} ${y1} L ${x0 + rb} ${y1} A ${rb} ${rb} 0 0 1 ${x0} ${y1 - rb} Z`;
+  return d;
+}
+
+const SIDEBAR = `<div class="pad"><div class="lbl">Bookmarks</div>
+  <div class="side-item"><i style="background:#4aa8ff"></i>Downloads</div>
+  <div class="side-item"><i style="background:#6c8cff"></i>Documents</div>
+  <div class="side-item"><i style="background:#2fbf8f"></i>Pictures</div>
+  <div class="side-item"><i style="background:#b46cff"></i>Videos</div>
+  <div class="side-item"><i style="background:#ff6cae"></i>Music</div>
+  <div class="side-item"><i style="background:#ff8a3d"></i>Recycle Bin</div>
+  <div class="lbl" style="margin-top:2cqw">Removable drives</div>
+  <div class="side-item"><i style="background:#2fbf8f"></i>USB Backup</div></div>`;
+const ROWS = [["project", "5mo", "File folder", "—"], ["budget.xlsx", "5d", "Spreadsheet", "50 KB"], ["notes.md", "now", "Markdown", "4 KB"],
+  ["presentation.pptx", "1d", "Presentation", "200 KB"], ["report.pdf", "5w", "PDF document", "100 KB"], ["roadmap.md", "2h", "Markdown", "36 KB"],
+  ["release-notes.txt", "3d", "Text document", "24 KB"]];
+function pane(miller, crumb = "Documents") {
+  const m = miller ? `<div class="miller"><div class="lbl">Home</div><div class="mrow sel">user</div></div>
+    <div class="miller"><div class="lbl">User</div>${["Archive", "Documents", "Downloads", "Music", "Pictures", "Videos"].map((n) => `<div class="mrow${n === "Documents" ? " sel" : ""}">${n}</div>`).join("")}</div>` : "";
+  return `<div class="crumb">⌂ &nbsp;›&nbsp; ${crumb}</div><div class="cols">${m}<div class="list">
+    <div class="hdr"><span>Name ↑</span><span>Modified</span><span>Type</span><span>Size</span></div>
+    ${ROWS.map((r, i) => `<div class="row${i === 0 ? " sel" : ""}"><span>${r[0]}</span><span>${r[1]}</span><span>${r[2]}</span><span>${r[3]}</span></div>`).join("")}</div></div>`;
+}
+
+/* tabs: [{x, w}], active index; content: islands [{x,y,w,h,html}] */
+function render(id, { tabs, active, frame, islands, light = false, notes = [], controls = "mac" }) {
+  const root = document.getElementById(id);
+  root.append(div("wall"), div("material"));
+  const fill = light ? "rgba(250,250,252,.42)" : "rgba(30,32,38,.3)";
+  const stroke = light ? "rgba(0,0,0,.10)" : "rgba(255,255,255,.10)";
+  const t = tabs[active];
+  const d = outline({ ...frame, tx: t.x, tw: t.w });
+  root.insertAdjacentHTML("beforeend", `<svg class="frame" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+    <defs><filter id="sh-${id}" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="1" stdDeviation="2.5" flood-color="#000" flood-opacity="${light ? .10 : .28}"/>
+      <feDropShadow dx="3" dy="2" stdDeviation="3.5" flood-color="#000" flood-opacity="${light ? .14 : .36}"/></filter></defs>
+    <path d="${d}" fill="${fill}" filter="url(#sh-${id})"/>
+    <path d="${d}" fill="none" stroke="${stroke}" stroke-width="1"/></svg>`);
+  if (controls === "mac") {
+    root.append(box(div("u lights", `<i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i>`), 18, 15, 70, 14));
+  } else {
+    root.append(box(div("u tabtext", "–&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;▢&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;✕"), 900, TY + 8, 90, 18));
+  }
+  tabs.forEach((tab, i) => {
+    const tx = i === active && tab.x <= frame.x0 + frame.r + frame.fr ? frame.x0 : tab.x;
+    root.append(box(div(`u tabtext${i === active ? " active" : ""}`,
+      `<span class="ic"></span>Documents${i === active ? '<span class="x">✕</span>' : ""}`), tx + 18, frame.ty + 6, tab.w - 34, 18));
+  });
+  root.append(box(div("u tabtext", "＋ &nbsp; ⌄"), tabs.at(-1).x + tabs.at(-1).w + 14, frame.ty + 8, 60, 18));
+  islands.forEach((isl) => root.append(box(div(isl.bare ? "u" : "u island", isl.html), isl.x, isl.y, isl.w, isl.h)));
+  root.append(box(div("u status", "<span>7 items (1 folder, 6 files) — 354 KB</span><span>home/user/Documents/</span>"), 18, H - 22, W - 36, 16));
+  notes.forEach((n) => root.append(box(div("u callout", n.t), n.x, n.y, n.w ?? 260, 40)));
+}
+
+/* Shared geometry */
+/* The app's active tab is ~30px tall: a 14px fillet foot and a 16px top
+   corner meet with no straight run between them, so the whole side is one
+   S-curve (domain/tab-seam.ts narrows the corner to height - fillet). */
+const Y0 = 42, TY = Y0 - 30, Y1 = 612;
+/* The app's geometry: TAB_FILLET 14 (domain/tab-seam.ts) and the islands'
+   14px --layout-radius. */
+const base = { y0: Y0, y1: Y1, r: 14, ty: TY, tr: 16, fr: 14 };
+
+/* Today: the frame is the main island only; the sidebar floats on material. */
+render("m-today", {
+  tabs: [{ x: 232, w: 220 }, { x: 452, w: 220 }, { x: 672, w: 220 }], active: 1,
+  frame: { ...base, x0: 224, x1: 992 },
+  islands: [
+    { x: 8, y: Y0, w: 208, h: Y1 - Y0, html: SIDEBAR },
+    { x: 224, y: Y0, w: 768, h: Y1 - Y0, html: pane(false), bare: true },
+  ],
+  notes: [{ t: "sidebar: outside the tab, on bare material", x: 14, y: Y1 - 70, w: 200 }, { t: "tabs start at the main island", x: 236, y: TY + 34, w: 220 }],
+});
+
+/* Proposed: the frame is the window-wide container; islands inset inside it. */
+/* The container IS the window below the tab strip: its sides and bottom are
+   the window's own edges (drawn 1px past them and clipped by the window), so
+   the only outline is the tab rising out of its top edge. */
+const C = { ...base, x0: 0, x1: W, y1: H + 1, r: 14, rb: 0 };
+const IN = 8, SIDE_W = 200, STATUS_H = 26;
+const inside = (x, w) => ({ x, y: Y0 + IN, w, h: H - STATUS_H - Y0 - IN });
+const sideIsl = { ...inside(IN, SIDE_W), html: SIDEBAR };
+const mainX = IN + SIDE_W + IN;
+const mainIsl = (miller) => ({ ...inside(mainX, W - IN - mainX), html: pane(miller) });
+
+render("m-new", {
+  tabs: [{ x: 92, w: 220 }, { x: 312, w: 220 }, { x: 532, w: 220 }], active: 1, frame: C,
+  islands: [sideIsl, mainIsl(false)],
+  notes: [{ t: "the tab's surface fills the window: no inset, no second frame", x: 560, y: H - STATUS_H - 44, w: 300 }, { t: "tabs run over the sidebar", x: 96, y: TY + 34, w: 200 }],
+});
+render("m-new-miller", {
+  tabs: [{ x: 92, w: 220 }, { x: 312, w: 220 }, { x: 532, w: 220 }], active: 1, frame: C,
+  islands: [sideIsl, mainIsl(true)],
+});
+render("m-new-first", {
+  tabs: [{ x: 0, w: 236 }, { x: 236, w: 220 }, { x: 456, w: 220 }], active: 0, frame: C, controls: "win",
+  islands: [sideIsl, mainIsl(false)],
+  notes: [{ t: "no left foot: the window's left edge runs straight up into the tab", x: 14, y: H - STATUS_H - 64, w: 190 }],
+});
+const splitW = (W - IN - mainX - IN) / 2;
+render("m-new-split", {
+  tabs: [{ x: 92, w: 220 }, { x: 312, w: 220 }, { x: 532, w: 220 }], active: 2, frame: C,
+  islands: [sideIsl, { ...inside(mainX, splitW), html: pane(false) }, { ...inside(mainX + splitW + IN, splitW), html: pane(false, "Downloads") }],
+});
+render("m-new-nosidebar", {
+  tabs: [{ x: 92, w: 220 }, { x: 312, w: 220 }, { x: 532, w: 220 }], active: 1, frame: C,
+  islands: [
+    { ...inside(IN, 250), html: `<div class="cols" style="height:100%">${pane(true).match(/<div class="miller">[\s\S]*?<\/div><\/div>\s*<div class="miller">[\s\S]*?<\/div><\/div>/)[0]}</div>` },
+    { ...inside(IN + 250 + IN, W - IN - (IN + 250 + IN)), html: pane(false) },
+  ],
+});
+render("m-new-light", {
+  tabs: [{ x: 92, w: 220 }, { x: 312, w: 220 }, { x: 532, w: 220 }], active: 1, frame: C, light: true,
+  islands: [sideIsl, mainIsl(true)],
+});
+</script>
+</body>
+</html>

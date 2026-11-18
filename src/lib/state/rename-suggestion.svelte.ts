@@ -10,6 +10,7 @@
  */
 
 import type { FileEntry } from "$lib/domain/file";
+import { displayName } from "$lib/domain/wire-name";
 
 export type RenameSuggestionProvider = (entry: FileEntry) => Promise<string | null>;
 
@@ -27,6 +28,14 @@ function createRenameSuggestionStore() {
     /** Reactive: the suggested full filename for `path`, or null. */
     suggestionFor(path: string): string | null {
       return suggestion?.forPath === path ? suggestion.name : null;
+    },
+
+    /** The suggestion as display text (escaped bytes decoded, ADR 0031): what
+     *  the hint shows and what accepting it puts in the rename box. The model
+     *  and `suggestionFor` keep the wire form. */
+    displaySuggestionFor(path: string): string | null {
+      const wire = this.suggestionFor(path);
+      return wire === null ? null : displayName(wire);
     },
 
     get pending(): boolean {

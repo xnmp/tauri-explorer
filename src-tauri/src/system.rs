@@ -334,6 +334,19 @@ fn is_inside_appimage_mount(cwd: &std::path::Path, appdir: Option<&std::path::Pa
     })
 }
 
+/// Summaries accepted per process; every window logs one, so this is generous.
+const STARTUP_SUMMARY_MAX_LINES: usize = 64;
+/// Longest accepted summary, in characters.
+const STARTUP_SUMMARY_MAX_CHARS: usize = 2048;
+
+/// Bound what `log_startup_timing` writes (#1597): the command is callable by
+/// any page, so a flood or an oversized summary must not grow the log.
+/// `sequence` is the zero-based count of earlier calls.
+fn bound_startup_summary(summary: &str, sequence: usize) -> Option<String> {
+    (sequence < STARTUP_SUMMARY_MAX_LINES)
+        .then(|| summary.chars().take(STARTUP_SUMMARY_MAX_CHARS).collect())
+}
+
 /// Record the frontend cold-start timing summary in the app log. Written next
 /// to the Rust `Startup:` line so the backend (setup→build) and webview
 /// (boot→first directory visible) halves of cold start can be read together
@@ -344,7 +357,11 @@ pub async fn log_startup_timing(
     clock: tauri::State<'_, StartupClock>,
     summary: String,
 ) -> Result<(), AppError> {
-    log::info!("{}", summary);
+    static LOGGED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let sequence = LOGGED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if let Some(line) = bound_startup_summary(&summary, sequence) {
+        log::info!("{}", line);
+    }
     // Child/warm windows share this process clock; only the initial main
     // window can interpret it as startup latency. IPC receipt adds a small
     // scheduling delay, so the receipt epoch is logged alongside it and the
@@ -475,6 +492,20 @@ pub async fn get_log_dir(app: tauri::AppHandle) -> Result<String, AppError> {
 mod tests {
     #[cfg(target_os = "linux")]
     use super::linux_trash_files_directory;
+    use super::{bound_startup_summary, STARTUP_SUMMARY_MAX_CHARS, STARTUP_SUMMARY_MAX_LINES};
+
+    #[test]
+    fn startup_summary_flood_and_oversize_are_bounded() {
+        let accepted = (0..STARTUP_SUMMARY_MAX_LINES * 10)
+            .filter_map(|n| bound_startup_summary("Startup: ok", n))
+            .count();
+        assert_eq!(accepted, STARTUP_SUMMARY_MAX_LINES);
+        let huge = "é".repeat(STARTUP_SUMMARY_MAX_CHARS * 50);
+        let line = bound_startup_summary(&huge, 0).unwrap();
+        assert_eq!(line.chars().count(), STARTUP_SUMMARY_MAX_CHARS);
+        assert_eq!(bound_startup_summary("", 0).as_deref(), Some(""));
+    }
+
     #[cfg(not(target_os = "linux"))]
     use super::recycle_bin_launcher;
     use super::startup_progress_line;

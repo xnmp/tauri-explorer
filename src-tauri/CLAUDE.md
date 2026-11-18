@@ -100,3 +100,12 @@ permanently unwatched, or an error before removal can duplicate native owners.
 If cleaning the returning root removes the previous plan's descendants, restore
 their coverage on registration rollback. The return/failure contracts live in
 `src-tauri/test_support/config_watch_cleanup_return_test.rs` (#938, ADR 0004).
+
+## GTK drag receiver acknowledgement
+
+Vendored Wry must acknowledge accepted filesystem URI receipt as well as later
+motion: GTK delivers selection data asynchronously, potentially after the final
+pointer motion. A stationary release then needs no further Over to negotiate
+Copy. Keep non-file URNs on DOM transport and preserve context/time admission.
+The production callback regression is in `tests/helpers/platform-drag-intent.ts`
+(#1806); real native filesystem outcomes remain in `e2e-tauri/specs/file-drag.spec.ts`.

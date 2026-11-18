@@ -1,12 +1,13 @@
 import { test, expect, type Page } from './fixtures';
-import { BUILT_IN_THEMES, seedSettings, VIEW_MODES, waitForEntries } from './helpers';
+import { BUILT_IN_THEMES, pressShortcut, seedSettings, VIEW_MODES, waitForEntries } from './helpers';
+import { expectSeededGrowth, steppedFrames, steppedFramesOfNewTab, type TabFrame } from './tab-frames';
 
 const PATHS = ['/home/user', '/home/user/Downloads', '/home/user/Documents', '/home/user/Pictures', '/home/user/Documents/project/src', '/home/user/my-project/src'];
 const SHOTS = 'screenshots/feat/tab-overflow';
 
-async function openTabs(page: Page, count: number, width = 1000, viewMode = 'details') {
+async function openTabs(page: Page, count: number, width = 1000, viewMode = 'details', settings: Record<string, unknown> = {}) {
   await page.setViewportSize({ width, height: 720 });
-  await seedSettings(page, { viewMode, showWindowControls: true, tabTitleGitRoot: false });
+  await seedSettings(page, { viewMode, showWindowControls: true, tabTitleGitRoot: false, ...settings });
   await page.addInitScript(({ count, paths }) => {
     localStorage.setItem('explorer-tabs', JSON.stringify({
       version: 3,
@@ -197,4 +198,99 @@ for (const theme of BUILT_IN_THEMES) test(`compression and tab search remain usa
   await expect(page.locator('.tab.active')).toHaveAttribute('data-tab-id', 'overflow-1');
   await expect(page.locator('.pane-tree:not(.retained) .entry-item').filter({ hasText: 'installer.exe' }).first()).toBeVisible();
   await expectActiveVisible(page);
+});
+
+/** Both fillets of the active tab lie inside the strip's clip (#1734). */
+async function expectFilletsUnclipped(page: Page) {
+  await expect.poll(() => page.locator('.tab.active').evaluate(el => {
+    const viewport = el.closest('.tab-viewport')!.getBoundingClientRect();
+    return [...el.querySelectorAll('[data-region="tab-fillet"]')].map(fillet => {
+      const box = fillet.getBoundingClientRect();
+      return box.width > 1 && box.left >= viewport.left - 0.5 && box.right <= viewport.right + 0.5;
+    });
+  })).toEqual([true, true]);
+}
+
+for (const [label, count, width] of [['fitting', 3, 1000], ['overflowing', 40, 680]] as const) {
+  test(`first and last tabs keep both fillets in a ${label} strip`, async ({ page }) => {
+    await openTabs(page, count, width);
+    await expectFilletsUnclipped(page);
+    await page.keyboard.press('Control+Tab');
+    await expect(page.locator('.tab.active')).toHaveAttribute('data-tab-id', 'overflow-0');
+    await expectActiveVisible(page);
+    await expectFilletsUnclipped(page);
+    await page.keyboard.press('Control+Shift+Tab');
+    await expect(page.locator('.tab.active')).toHaveAttribute('data-tab-id', `overflow-${count - 1}`);
+    await expectActiveVisible(page);
+    await expectFilletsUnclipped(page);
+  });
+}
+
+test('a new tab opens from a small seed to its full width with no jump', async ({ page }) => {
+  await openTabs(page, 3);
+  await page.waitForTimeout(300);
+  expectSeededGrowth(await steppedFramesOfNewTab(page, () => pressShortcut(page, 't', { ctrlKey: true })));
+});
+
+/**
+ * The new-tab button keeps its distance from the last tab in every frame,
+ * and travels one way only: it never dips back before reaching its place.
+ */
+function expectPlusFollows(frames: TabFrame[]) {
+  const steady = frames[0];
+  const gap = steady.plusLeft! - steady.lastRight!;
+  expect(gap).toBeGreaterThanOrEqual(0);
+  const direction = Math.sign(frames[frames.length - 1].plusLeft! - steady.plusLeft!);
+  let previous = steady.plusLeft!;
+  for (const frame of frames) {
+    expect(Math.abs(frame.plusLeft! - frame.lastRight! - gap), `t=${frame.t}`).toBeLessThanOrEqual(1);
+    if (direction) expect((frame.plusLeft! - previous) * direction, `+ reverses at t=${frame.t}`).toBeGreaterThanOrEqual(-1);
+    else expect(Math.abs(frame.plusLeft! - steady.plusLeft!), `+ moves at t=${frame.t}`).toBeLessThanOrEqual(1);
+    previous = frame.plusLeft!;
+  }
+}
+
+for (const [label, count, settings] of [['3 tabs', 3, {}], ['12 tabs', 12, {}], ['3 tabs at 125%', 3, { zoomLevel: 125 }]] as const) test(`the new-tab button rides behind a tab sliding in and out (${label})`, async ({ page }) => {
+  // Two slides of 23 stepped frames each: 21-26s on a WebKit CI container,
+  // over the default budget on a loaded one (#1775).
+  test.setTimeout(90_000);
+  await openTabs(page, count, 1000, 'details', settings);
+  await page.waitForTimeout(300);
+  const opening = await steppedFrames(page, () => pressShortcut(page, 't', { ctrlKey: true }));
+  await expect(page.locator('.tab')).toHaveCount(count + 1);
+  expect(opening.some(frame => frame.widths.length === count + 1)).toBe(true);
+  expectPlusFollows(opening);
+
+  await page.waitForTimeout(200);
+  // Close by keyboard: a click would leave the pointer over the shrinking
+  // strip, where it ends up hovering (and rotating) the new-tab button.
+  const closing = await steppedFrames(page, () => pressShortcut(page, 'w', { ctrlKey: true, shiftKey: true }));
+  await expect(page.locator('.tab')).toHaveCount(count);
+  expectPlusFollows(closing);
+});
+
+// Crossing from a fitting strip into an overflowing one moves no tab by
+// layout: the scroll buttons overlay the strip's ends instead of entering
+// its flow, and the viewport keeps its geometry. (Only the strip's own
+// scroll position may move the tabs, to reveal the new one; a reveal that
+// follows a sliding tab glides, holding the list back by a transform.)
+test('a strip crossing into overflow shifts no tab', async ({ page }) => {
+  // Several stepped openings until one crosses: budget for a loaded runner.
+  test.setTimeout(90_000);
+  await openTabs(page, 14, 900);
+  await page.waitForTimeout(300);
+  let crossed = false;
+  for (let i = 0; i < 20 && !crossed; i++) {
+    // The crossing is a layout change: it lands in the first frames.
+    const frames = await steppedFrames(page, () => pressShortcut(page, 't', { ctrlKey: true }), { steps: 10 });
+    crossed = frames.some(frame => frame.overflowing);
+    for (let index = 1; index < frames.length; index++) {
+      const [a, b] = [frames[index - 1], frames[index]];
+      const shift = (b.firstLeft! + b.scrollLeft - b.listShift) - (a.firstLeft! + a.scrollLeft - a.listShift);
+      expect(Math.abs(shift), `first tab shifts ${shift.toFixed(1)}px at t=${b.t} (overflowing ${a.overflowing} -> ${b.overflowing})`).toBeLessThanOrEqual(1);
+    }
+    await page.waitForTimeout(250);
+  }
+  expect(crossed).toBe(true);
+  await expect(page.getByRole('button', { name: 'Scroll tabs left', exact: true })).toBeVisible();
 });

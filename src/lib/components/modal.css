@@ -9,8 +9,11 @@
  */
 
 .modal-card {
-  background: var(--background-acrylic);
-  backdrop-filter: blur(60px) saturate(125%);
+  /* Opaque: the flyout tint over the solid base (#1734); a backdrop filter
+     sampled only the webview, never the native window material. */
+  background:
+    linear-gradient(var(--background-acrylic), var(--background-acrylic)),
+    var(--background-solid);
   border: 1px solid var(--surface-stroke-flyout);
   border-radius: var(--radius-lg);
   padding: var(--spacing-xl);

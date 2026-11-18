@@ -381,3 +381,15 @@ describe("e2e-shard-timings.yml", () => {
     expect(text).toMatch(/::error title=No CI runs to record::[^\n]*\n\s*exit 1/);
   });
 });
+
+describe("WebKit CI capacity", () => {
+  it("plans every current spec within the 24-minute target using the workflow matrix", () => {
+    const workflow = parse(readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8"));
+    const timings = JSON.parse(readFileSync(new URL("../scripts/e2e-shard-timings.json", import.meta.url), "utf8"));
+    const specs = discoverSpecs();
+    const matrix = workflow.jobs["webkit-tests"].strategy.matrix.shard;
+    const shards = planShards(specs, timings.webkit, matrix.length);
+    expect(flatten(shards).sort()).toEqual([...specs].sort());
+    expect(slowest(shards)).toBeLessThanOrEqual(24 * 60);
+  });
+});

@@ -92,10 +92,12 @@ an action reads must come from `$RUNNER_TEMP` inside the container (exported
 to `GITHUB_ENV`), not `${{ runner.temp }}`, which names the host path. Git
 needs `safe.directory` because the container runs as root.
 Chromium runs 2 shards and view modes 1, each with `PW_WORKERS=2`; WebKit
-keeps 5 shards with one worker, because two workers per WebKit runner
+runs 6 shards with one worker, because two workers per WebKit runner
 overran the 40-minute shard budget with new failures (#1368, run
-40068235372). Changing a matrix also changes `EXPECTED_REPORTS` in the
-dev-push impact-map job.
+40068235372); the sixth shard keeps planned shards below 24 minutes after
+the tab seam matrices (#1775). Changing a Chromium matrix also changes
+`EXPECTED_REPORTS` in the dev-push impact-map job; WebKit reports are not
+included in that count.
 `ImageOS`/`ImageVersion` are set to the container so cached results are scoped
 to it. Each shard bounds Playwright with `E2E_GLOBAL_TIMEOUT_MINUTES`, below
 the step `timeout-minutes`, below the job cap.

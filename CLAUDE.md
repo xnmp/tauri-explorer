@@ -618,13 +618,7 @@ List peek admission consolidation pushed gzip to 281,985 bytes against the
 unit tests alone cannot verify this contract. #1357 reverts that refactor rather
 than increasing the budget.
 
-For CI recovery after Floating Islands tab changes, a local isolated pass does
-not establish deterministic screenshot sampling: PR #1744 failed all three CI
-attempts while its closing-tab test passed locally. See
-`docs/lessons/1769-ci-floating-islands-rollback.md` before reintroducing that PR.
-
-The #1772 Floating Islands re-land also timed out in WebKit: the three
-new-tab-button slide cases hung in `steppedFrames` before the shard exhausted
-its total budget. Reintroducing the feature requires qualifying every caller
-of the shared frame helper in both engines, not only the title-pixel cases
-(#1773; `docs/lessons/1773-ci-floating-islands-reland-rollback.md`).
+WebKit stepped tab-slide probes need explicit per-test budgets: sampling every
+frame can approach the default timeout even when animation assertions pass.
+Keep CI shard planning within its documented 24-minute target using the actual
+workflow matrix and recorded timings (`tests/e2e-shards.test.ts`, #1773).

@@ -206,7 +206,7 @@ describe("recent-actions trail (#1688)", () => {
     vi.mocked(recordAction).mockClear();
     const secret = "/home/alex/taxes";
     for (const reason of ["initial", "navigate", "history", "parent-fallback"] as const) {
-      loadWatchdog.begin({ path: secret, pane: "p", reason, spinnerVisible: false }).finish("ok");
+      loadWatchdog.begin({ path: secret, pane: 1, reason, spinnerVisible: false }).finish("ok");
     }
     expect(vi.mocked(recordAction).mock.calls.map(([kind]) => kind)).toEqual([
       "nav:navigate",

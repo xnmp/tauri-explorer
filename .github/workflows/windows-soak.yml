@@ -4,6 +4,26 @@ name: Windows bounded native soak
 on:
   push:
     branches: [dev]
+    # Path-scoped on dev pushes (#1801); the nightly schedule and dispatch
+    # run regardless, catching anything outside these paths within a day.
+    # The full app build (frontend, Rust, the scripts it runs) plus the
+    # native suite that drives it.
+    paths:
+      - "src/**"
+      - "src-tauri/**"
+      - "static/**"
+      - "tests/contract/fixtures/**"
+      - "tests/fixtures/**"
+      - "package.json"
+      - "bun.lock"
+      - "vite.config.ts"
+      - "svelte.config.js"
+      - "tsconfig.json"
+      - "scripts/**"
+      - "e2e-tauri/**"
+      - ".github/workflows/windows-soak.yml"
+  schedule:
+    - cron: "7 4 * * *"
   workflow_dispatch:
 
 # PRs share a group per PR ref and dev pushes one group per workflow, both

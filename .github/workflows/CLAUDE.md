@@ -2,11 +2,33 @@
 
 Only `ci.yml` and the Linux matrix entry in `e2e-tauri.yml` run on PRs into
 dev; PRs into main run only `release-gate.yml`.
-The heavy suites listed in `tests/ci-trigger-policy.test.ts` run on every dev
-push without path filters and retain manual dispatch. Existing schedules stay.
+`ci.yml` and `e2e-tauri.yml` (whose `smoke (ubuntu-latest)` gates releases)
+run on every dev push without path filters. The non-gating suites
+(`pathScoped` in `tests/ci-trigger-policy.test.ts`: macOS Native UI, Windows
+soak, Windows installer, perf, native recovery, Rust platforms, image-crop
+codecs) run on a dev push only when it changes their inputs (push `paths`),
+plus a nightly `schedule` on dev and manual dispatch (#1801); they competed
+with the release path for runners on every push. macOS Smoke builds and
+launches the whole app, so it stays on every dev push.
+A filter lists what the suite builds, drives or reads: its own workflow and
+the scripts and actions it runs; the full app build (`src/**`, `src-tauri/**`,
+`static/**`, `scripts/**`, `package.json`, `bun.lock`, root configs) for a
+suite that builds the app; and for Rust suites the files Rust sources
+`include_*!` from outside `src-tauri` plus `package.json`, which
+`tauri.conf.json` reads for its version. Err wide: a missed input lets a
+regression wait for the nightly. The contract test checks representative
+inputs, every repository path a step's `run` names, and every outside-crate
+Rust include. A push whose changes miss a suite's filter creates no run and
+therefore cancels nothing: an older dev push's run that did match keeps
+running. GitHub evaluates only the first 300 changed files of a push against
+`paths`; the nightly run covers a larger push that slipped through.
+A release-prep push (`bun run bump-version`) changes `package.json` and the
+Cargo manifests, so it still starts these suites; `paths` cannot match only a
+version line. Accepted: release bumps are rare, and the next dev push cancels
+any of their runs still in progress.
 
-Every workflow that runs on dev pushes (ci.yml, e2e-tauri.yml, image-crop.yml
-and the heavy suites) declares the same workflow-level concurrency (#1798):
+Every workflow that runs on dev pushes (ci.yml, e2e-tauri.yml, macOS Smoke
+and the path-scoped suites) declares the same workflow-level concurrency (#1798):
 PRs group by workflow and full PR ref, dev pushes share one
 `<workflow>-dev-push` group, both with `cancel-in-progress: true`, and every
 other event (main pushes, the schedule, dispatch) gets a unique run-ID group.
@@ -58,6 +80,18 @@ newest dev push run of its workflow and dev's head is still its `head_sha`
 and would otherwise cancel the newer run. A run cancelled by supersession
 concludes `cancelled`, which the workflow's `failure`-only condition skips;
 `staleRunReason` covers a run that failed before a newer push arrived.
+
+ci.yml has no report-only jobs (#1802): each runner slot waits in the queue,
+and a seconds-long job once waited 13 minutes for one. The required gates
+(`frontend`, `webkit`, `rust`, `code-maps`; dev branch protection also
+requires e2e-tauri.yml's `smoke (ubuntu-latest)`) carry the diagnostics:
+the upstream-result report, their targets' test-result cache summary and, in
+`frontend`, the dev-push impact map. Every step before a gate's final
+decision step is `continue-on-error` with a step timeout, and the gate's job
+timeout exceeds their sum, so diagnostics can never change a gate's verdict.
+A gate's `needs` lists only the jobs it decides on; adding one to host a
+report would delay that check. The required checks cannot merge into fewer
+jobs: each context is a job name.
 
 `e2e-shard-timings.yml` (weekly) pushes nothing: the repository does not let
 GITHUB_TOKEN open PRs. It uploads the regenerated timings as the
@@ -115,7 +149,7 @@ overran the 40-minute shard budget with new failures (#1368, run
 and ran 21-36, the dev-push critical path). The planner
 (`scripts/e2e-shards.mjs plan`) balances any count from
 `strategy.job-total`. Changing a Chromium matrix also changes
-`EXPECTED_REPORTS` in the dev-push impact-map job (WebKit records no
+`EXPECTED_REPORTS` in the `frontend` gate's impact-map merge step (WebKit records no
 coverage).
 `ImageOS`/`ImageVersion` are set to the container so cached results are scoped
 to it. Each shard bounds Playwright with `E2E_GLOBAL_TIMEOUT_MINUTES`, below
@@ -160,9 +194,11 @@ counts as loading them, so an edit that brings one into the bundle
 over-selects (#1391). Requests are attributed to each spec's own app server
 (the `baseURL` fixture), so specs on the dev server beside the bundle record
 their assets too, and every record names its `server`. Each shard uploads its records and
-Playwright JSON report; the `impact-map` job (`continue-on-error`: an
-advisory artifact must never fail the dev push whose conclusion gates
-releases) merges them with
+Playwright JSON report; the `frontend` gate's impact-map steps (#1802; each
+`continue-on-error` with a step timeout, their sum below the gate's job
+timeout and the gate's decision the last step: an advisory artifact must never
+fail the required check or the dev push whose conclusion gates releases)
+merge them with
 `--commit $GITHUB_SHA` and publishes `e2e-impact-map` only when all
 `EXPECTED_REPORTS` (3, the two matrices) are present: a shard replayed from
 the test-result cache records nothing, and the previous map then stays the
@@ -343,8 +379,10 @@ The artifact retention is also 30 days. Keep cache data names outside the
 `test-cache-*` report-artifact pattern.
 
 Reading the cache: every cached job's step summary has one line per target,
-and the `test-cache` job summarises the hit rate, the targets served from the
-cache, the time saved and the time executed. Each record (hash, hit, duration)
+and each required gate (`frontend`: unit and both Chromium jobs; `webkit`;
+`rust`) summarises its own targets' hit rate, the targets served from the
+cache, the time saved and the time executed, in continue-on-error steps
+(#1802: these replaced a separate `test-cache` job). Each record (hash, hit, duration)
 is uploaded as the `test-cache-<target>` artifact.
 
 Suspected stale hit: check out the commit and run

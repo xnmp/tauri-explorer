@@ -4,12 +4,32 @@
 # TAURI_E2E_REQUIRE_GATED=1 turns any remaining skip into a named failure.
 name: Native recovery (Linux)
 
-# A debug build with three features is ~12 minutes. Every dev push qualifies
-# recovery; the nightly run also catches toolchain and dependency drift (#872).
+# A debug build with three features is ~12 minutes. Every dev push that changes
+# the app qualifies recovery; the nightly run also catches toolchain and
+# dependency drift (#872, #1801).
 # Not a required check, so it runs after merge rather than on PRs (tauri#1133).
 on:
   push:
     branches: [dev]
+    # Path-scoped on dev pushes (#1801); the nightly schedule and dispatch
+    # run regardless, catching anything outside these paths within a day.
+    # The full app build (frontend, Rust, the scripts it runs) plus the
+    # native suite that drives it.
+    paths:
+      - "src/**"
+      - "src-tauri/**"
+      - "static/**"
+      - "tests/contract/fixtures/**"
+      - "tests/fixtures/**"
+      - "package.json"
+      - "bun.lock"
+      - "vite.config.ts"
+      - "svelte.config.js"
+      - "tsconfig.json"
+      - "scripts/**"
+      - "e2e-tauri/**"
+      - ".github/actions/tauri-linux-deps/**"
+      - ".github/workflows/native-recovery.yml"
   schedule:
     - cron: "37 3 * * *"
   workflow_dispatch:
@@ -29,7 +49,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          # Scheduled runs start from the default branch (main); qualify dev.
+          # Scheduled runs use the default branch (dev); name it explicitly anyway.
           ref: ${{ github.event_name == 'schedule' && 'dev' || '' }}
 
       - uses: oven-sh/setup-bun@v2

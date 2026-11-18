@@ -536,7 +536,7 @@ jobs:
           path: ${{ env.TEST_CACHE_REPORT }}/
           if-no-files-found: ignore
 
-      # Records for the impact-map job; none when the cache replayed a pass.
+      # Records for the frontend gate's impact map; none when the cache replayed a pass.
       - name: Upload impact coverage records
         if: always() && env.IMPACT_DIR != ''
         uses: actions/upload-artifact@v7
@@ -758,7 +758,7 @@ jobs:
           path: ${{ env.TEST_CACHE_REPORT }}/
           if-no-files-found: ignore
 
-      # Records for the impact-map job; none when the cache replayed a pass.
+      # Records for the frontend gate's impact map; none when the cache replayed a pass.
       - name: Upload impact coverage records
         if: always() && env.IMPACT_DIR != ''
         uses: actions/upload-artifact@v7
@@ -777,43 +777,81 @@ jobs:
           if-no-files-found: ignore
 
   # Preserve the protected-branch check name and require every Chromium shard.
-  # The dev-push test-impact map (#1386): merges the Chromium shards'
-  # function-level coverage records into the `e2e-impact-map` artifact PRs
-  # select with (scripts/impact-map-source.mjs). Published only when every
-  # shard recorded: a test-cache replay records nothing, and an older complete
-  # map (or the nightly e2e-impact-map.yml one) then stays the newest.
-  impact-map:
-    needs: [chromium, chromium-view-modes]
-    # Advisory: the map only narrows later PRs. A failure here (install,
-    # artifact transfer, a truncated record) must not fail the dev push,
-    # whose conclusion gates releases (scripts/release-ci-gate.mjs).
-    continue-on-error: true
-    if: >-
-      !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/dev' &&
-      needs.chromium.result == 'success' && needs.chromium-view-modes.result == 'success'
+  frontend:
+    if: always()
+    needs: [changes, frontend-checks, chromium, chromium-view-modes]
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    env:
-      # One Playwright report per shard: chromium (2) + chromium-view-modes (1)
-      # (tests/ci-test-selection.test.ts keeps this equal to the matrices).
-      EXPECTED_REPORTS: 3
+    # Above the sum of the advisory steps' timeouts (27 minutes), so a hung
+    # advisory step fails only itself (continue-on-error), never this gate.
+    timeout-minutes: 35
     steps:
+      # Diagnostics only: name each upstream shard's result and the step a
+      # failed or cancelled one stopped at. The check below decides.
       - uses: actions/checkout@v7
-
-      - uses: oven-sh/setup-bun@v2
+        continue-on-error: true
+        timeout-minutes: 3
         with:
-          bun-version: ${{ env.CONTAINER_BUN_VERSION }}
+          sparse-checkout: scripts
+      - name: Report upstream job results
+        continue-on-error: true
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci-jobs.mjs report frontend-checks chromium chromium-view-modes
 
-      - name: Install dependencies
-        run: bun install --frozen-lockfile --ignore-scripts
-
+      # Test-result cache (#1176): hit rate and runner time of the targets
+      # this gate requires (each uploads one test-cache-<target> record;
+      # targets that ran nothing upload none). Diagnostics only.
       - uses: actions/download-artifact@v8
+        continue-on-error: true
+        timeout-minutes: 3
+        with:
+          pattern: test-cache-unit
+          path: ${{ runner.temp }}/test-cache-report
+          merge-multiple: true
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        timeout-minutes: 3
+        with:
+          pattern: test-cache-chromium-*
+          path: ${{ runner.temp }}/test-cache-report
+          merge-multiple: true
+      - name: Report test-result cache hit rate
+        continue-on-error: true
+        timeout-minutes: 2
+        run: node scripts/test-cache.mjs report "$RUNNER_TEMP/test-cache-report"
+
+      # The dev-push test-impact map (#1386): merges the Chromium shards'
+      # function-level coverage records into the `e2e-impact-map` artifact PRs
+      # select with (scripts/impact-map-source.mjs). Published only when every
+      # shard recorded: a test-cache replay records nothing, and an older
+      # complete map (or the nightly e2e-impact-map.yml one) then stays the
+      # newest. Advisory (#1802: folded in from its own job): each step is
+      # continue-on-error with a step timeout, and their timeouts stay well
+      # below the job's, so the map can never fail this gate or the dev push
+      # whose conclusion gates releases (scripts/release-ci-gate.mjs). The
+      # merge needs only Node built-ins and scripts/.
+      - uses: actions/download-artifact@v8
+        if: >-
+          !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/dev' &&
+          needs.chromium.result == 'success' && needs.chromium-view-modes.result == 'success'
+        continue-on-error: true
+        timeout-minutes: 5
         with:
           pattern: impact-records-*
           path: ${{ runner.temp }}/records
 
       - name: Merge the impact map
         id: merge
+        if: >-
+          !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/dev' &&
+          needs.chromium.result == 'success' && needs.chromium-view-modes.result == 'success'
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          # One Playwright report per shard: chromium (2) + chromium-view-modes (1)
+          # (tests/ci-test-selection.test.ts keeps this equal to the matrices).
+          EXPECTED_REPORTS: 3
         run: |
           reports=()
           while IFS= read -r report; do reports+=(--reports "$report"); done \
@@ -838,30 +876,14 @@ jobs:
           echo "publish=true" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v7
-        if: steps.merge.outputs.publish == 'true'
+        if: ${{ !cancelled() && steps.merge.outputs.publish == 'true' }}
+        continue-on-error: true
+        timeout-minutes: 3
         with:
           name: e2e-impact-map
           path: ${{ runner.temp }}/e2e-impact-map.json
           if-no-files-found: error
           retention-days: 14
-
-  frontend:
-    if: always()
-    needs: [changes, frontend-checks, chromium, chromium-view-modes]
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      # Diagnostics only: name each upstream shard's result and the step a
-      # failed or cancelled one stopped at. The check below decides.
-      - uses: actions/checkout@v7
-        continue-on-error: true
-        with:
-          sparse-checkout: scripts
-      - name: Report upstream job results
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: node scripts/ci-jobs.mjs report frontend-checks chromium chromium-view-modes
 
       # Upstream jobs are skipped only on a docs-only PR, or a browser job when
       # its selection is NONE; otherwise every one must succeed, so a failed,
@@ -1106,19 +1128,38 @@ jobs:
     if: always()
     needs: [changes, webkit-tests]
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Above the sum of the diagnostic steps' timeouts, so a hung diagnostic
+    # fails only itself (continue-on-error), never this gate.
+    timeout-minutes: 15
     steps:
       # Diagnostics only: name each upstream shard's result and the step a
       # failed or cancelled one stopped at. The check below decides.
       - uses: actions/checkout@v7
         continue-on-error: true
+        timeout-minutes: 3
         with:
           sparse-checkout: scripts
       - name: Report upstream job results
         continue-on-error: true
+        timeout-minutes: 3
         env:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/ci-jobs.mjs report webkit-tests
+
+      # Test-result cache (#1176): hit rate and runner time of the targets
+      # this gate requires (each uploads one test-cache-<target> record;
+      # targets that ran nothing upload none). Diagnostics only.
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        timeout-minutes: 3
+        with:
+          pattern: test-cache-webkit-*
+          path: ${{ runner.temp }}/test-cache-report
+          merge-multiple: true
+      - name: Report test-result cache hit rate
+        continue-on-error: true
+        timeout-minutes: 2
+        run: node scripts/test-cache.mjs report "$RUNNER_TEMP/test-cache-report"
 
       - name: Require all WebKit browser outcomes
         env:
@@ -1293,19 +1334,38 @@ jobs:
     if: always()
     needs: [changes, rust-suite]
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Above the sum of the diagnostic steps' timeouts, so a hung diagnostic
+    # fails only itself (continue-on-error), never this gate.
+    timeout-minutes: 15
     steps:
       # Diagnostics only: name each suite's result and the step a failed or
       # cancelled one stopped at. The check below decides.
       - uses: actions/checkout@v7
         continue-on-error: true
+        timeout-minutes: 3
         with:
           sparse-checkout: scripts
       - name: Report upstream job results
         continue-on-error: true
+        timeout-minutes: 3
         env:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/ci-jobs.mjs report rust-suite
+
+      # Test-result cache (#1176): hit rate and runner time of the targets
+      # this gate requires (each uploads one test-cache-<target> record;
+      # targets that ran nothing upload none). Diagnostics only.
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        timeout-minutes: 3
+        with:
+          pattern: test-cache-rust-*
+          path: ${{ runner.temp }}/test-cache-report
+          merge-multiple: true
+      - name: Report test-result cache hit rate
+        continue-on-error: true
+        timeout-minutes: 2
+        run: node scripts/test-cache.mjs report "$RUNNER_TEMP/test-cache-report"
 
       # On code every suite must succeed unless the Rust selection is NONE,
       # which skips them; a failed, cancelled or otherwise skipped suite fails
@@ -1335,24 +1395,3 @@ jobs:
             expect rust-suite "$RUST_RESULT" skipped
           fi
           $ok
-
-  # Hit rate and runner time across every cached test target (#1176). Each
-  # target uploads one record; targets that ran nothing upload none.
-  test-cache:
-    if: always()
-    needs: [changes, frontend-checks, chromium, chromium-view-modes, webkit-tests, rust-suite]
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          sparse-checkout: scripts
-
-      - uses: actions/download-artifact@v8
-        with:
-          pattern: test-cache-*
-          path: ${{ runner.temp }}/test-cache-report
-          merge-multiple: true
-
-      - name: Report test-result cache hit rate
-        run: node scripts/test-cache.mjs report "$RUNNER_TEMP/test-cache-report"

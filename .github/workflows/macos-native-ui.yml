@@ -1,12 +1,31 @@
 name: macOS Native UI
 
 # The hosted Mac pilot is the most expensive job and is not a required check.
-# It runs on every dev push and weekly to catch WKWebView regressions (#1133).
+# It runs on dev pushes that change the app and nightly to catch WKWebView
+# regressions (#1133, #1801).
 on:
   push:
     branches: [dev]
+    # Path-scoped on dev pushes (#1801); the nightly schedule and dispatch
+    # run regardless, catching anything outside these paths within a day.
+    # The full app build (frontend, Rust, the scripts it runs) plus the
+    # native suite that drives it.
+    paths:
+      - "src/**"
+      - "src-tauri/**"
+      - "static/**"
+      - "tests/contract/fixtures/**"
+      - "tests/fixtures/**"
+      - "package.json"
+      - "bun.lock"
+      - "vite.config.ts"
+      - "svelte.config.js"
+      - "tsconfig.json"
+      - "scripts/**"
+      - "e2e-tauri/**"
+      - ".github/workflows/macos-native-ui.yml"
   schedule:
-    - cron: "23 4 * * 1"
+    - cron: "23 4 * * *"
   workflow_dispatch:
 
 # PRs share a group per PR ref and dev pushes one group per workflow, both
@@ -24,7 +43,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          # Scheduled runs start from the default branch (main); qualify dev.
+          # Scheduled runs use the default branch (dev); name it explicitly anyway.
           ref: ${{ github.event_name == 'schedule' && 'dev' || '' }}
 
       - name: Record hosted Mac environment

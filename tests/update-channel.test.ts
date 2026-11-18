@@ -11,21 +11,23 @@ import { parse } from "yaml";
 import { CHANNEL_TAG, channelProblem, isReleasedAfter, marksGitHubLatest } from "../scripts/update-channel.mjs";
 
 describe("release order (mirrors release_order.rs)", () => {
-  it("puts the alpha line after every 1.x release", () => {
-    expect(isReleasedAfter("0.28.0", "1.28.2")).toBe(true);
-    expect(isReleasedAfter("1.28.2", "0.28.0")).toBe(false);
-    expect(isReleasedAfter("1.0.0", "0.9.0")).toBe(true);
-    expect(isReleasedAfter("0.28.1", "0.28.0")).toBe(true);
-    expect(isReleasedAfter("0.29.0", "0.28.9")).toBe(true);
-    expect(isReleasedAfter("1.29.0", "0.99.0")).toBe(true);
-    expect(isReleasedAfter("v2.0.0", "0.28.5")).toBe(true);
+  // One vector file serves both implementations (#1803): release_order.rs's
+  // `shared_release_order_vectors` test reads the same file.
+  const vectors = JSON.parse(
+    readFileSync(new URL("../src-tauri/test_support/release-order-vectors.json", import.meta.url), "utf8"),
+  ) as [string, string, boolean][];
+
+  it("has a vector for each era boundary, pre-releases, equal and v-prefixed versions", () => {
+    expect(vectors.length).toBeGreaterThan(30);
+    for (const vector of vectors) {
+      expect(vector).toEqual([expect.any(String), expect.any(String), expect.any(Boolean)]);
+    }
+    expect(vectors.some(([c, i]) => c.startsWith("v") || i.startsWith("v"))).toBe(true);
+    expect(vectors.some(([c, i]) => c.includes("-") || i.includes("-"))).toBe(true);
   });
 
-  it("orders a pre-release before its release and treats equal releases as not newer", () => {
-    expect(isReleasedAfter("0.29.0", "0.29.0-rc.1")).toBe(true);
-    expect(isReleasedAfter("0.29.0-rc.1", "0.29.0")).toBe(false);
-    expect(isReleasedAfter("0.28.0", "0.28.0")).toBe(false);
-    expect(isReleasedAfter("0.29.0+build", "0.29.0")).toBe(false);
+  it.each(vectors)("isReleasedAfter(%j, %j) is %j", (candidate, current, expected) => {
+    expect(isReleasedAfter(candidate, current)).toBe(expected);
   });
 
   it("rejects anything but SemVer", () => {

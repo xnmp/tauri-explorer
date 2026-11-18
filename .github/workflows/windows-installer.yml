@@ -3,6 +3,23 @@ name: Windows installer
 on:
   push:
     branches: [dev]
+    # Path-scoped on dev pushes (#1801); the nightly schedule and dispatch
+    # run regardless, catching anything outside these paths within a day.
+    # The installer script, the README command it is pinned to, and the
+    # one Vitest file (with its config and setup) that runs it.
+    paths:
+      - "windows_install.ps1"
+      - "README.md"
+      - "tests/windows-install-script.test.ts"
+      - "tests/setup.ts"
+      - "tests/serial-unit-files.ts"
+      - "vitest.config.ts"
+      - "svelte.config.js"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/windows-installer.yml"
+  schedule:
+    - cron: "13 5 * * *"
   workflow_dispatch:
 
 # PRs share a group per PR ref and dev pushes one group per workflow, both

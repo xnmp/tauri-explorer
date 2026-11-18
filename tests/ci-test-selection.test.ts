@@ -190,23 +190,52 @@ describe("dev-push impact map (#1386)", () => {
     expect(ci.jobs["webkit-tests"].env.E2E_COVERAGE).toBeUndefined();
   });
 
+  // Folded into the frontend gate's steps (#1802): every impact-map step is
+  // advisory, so the map can never fail that required check or the dev push.
+  const impactSteps = () => {
+    const steps = ci.jobs.frontend.steps as (Step & { uses?: string; with?: Record<string, unknown>; "continue-on-error"?: boolean; "timeout-minutes"?: number })[];
+    const first = steps.findIndex((s) => s.with?.pattern === "impact-records-*");
+    const upload = steps.findIndex((s) => s.with?.name === "e2e-impact-map");
+    expect(first).toBeGreaterThan(-1);
+    expect(upload).toBeGreaterThan(first);
+    return { steps, first, upload, impact: steps.slice(first, upload + 1) };
+  };
+
   it("cannot fail the run: the map is advisory and a dev push's conclusion gates releases", () => {
-    expect(ci.jobs["impact-map"]["continue-on-error"]).toBe(true);
-    // No gate or other job waits on it.
-    for (const [name, job] of Object.entries(ci.jobs as Record<string, { needs?: string | string[] }>)) {
-      if (name !== "impact-map") expect([job.needs ?? []].flat()).not.toContain("impact-map");
+    const { steps, upload, impact } = impactSteps();
+    for (const s of impact) {
+      expect(s["continue-on-error"]).toBe(true);
+      expect(s["timeout-minutes"]).toBeGreaterThan(0);
+    }
+    // Every advisory step is bounded below the gate's own timeout, so a hung
+    // step fails only itself; the gate's decision runs last, after the map.
+    const advisory = steps.slice(0, -1);
+    for (const s of advisory) expect(s["continue-on-error"]).toBe(true);
+    const bounded = advisory.reduce((sum, s) => sum + (s["timeout-minutes"] ?? Number.POSITIVE_INFINITY), 0);
+    expect(bounded).toBeLessThan(ci.jobs.frontend["timeout-minutes"]);
+    expect(upload).toBeLessThan(steps.length - 1);
+    expect(steps.at(-1)?.name).toBe("Require frontend validation and browser outcomes");
+    // No other job publishes it.
+    for (const [name, job] of Object.entries(ci.jobs as Record<string, { steps?: { with?: Record<string, unknown> }[] }>)) {
+      if (name !== "frontend") expect(JSON.stringify(job.steps ?? [])).not.toContain("e2e-impact-map\"");
     }
   });
 
   it("expects one report per Chromium shard", () => {
     const shards = (job: string) => (ci.jobs[job].strategy.matrix.shard as number[]).length;
-    expect(ci.jobs["impact-map"].env.EXPECTED_REPORTS).toBe(shards("chromium") + shards("chromium-view-modes"));
-    expect(ci.jobs["impact-map"].needs).toEqual(["chromium", "chromium-view-modes"]);
-    expect(ci.jobs["impact-map"].if).toContain("github.ref == 'refs/heads/dev'");
+    const merge = step("frontend", (s) => s.id === "merge");
+    expect(merge.env?.EXPECTED_REPORTS).toBe(shards("chromium") + shards("chromium-view-modes"));
+    expect(ci.jobs.frontend.needs).toEqual(expect.arrayContaining(["chromium", "chromium-view-modes"]));
+    // Dev pushes only, and only after both Chromium jobs passed.
+    for (const s of impactSteps().impact.slice(0, 2)) {
+      expect(s.if).toContain("github.event_name == 'push' && github.ref == 'refs/heads/dev'");
+      expect(s.if).toContain("needs.chromium.result == 'success' && needs.chromium-view-modes.result == 'success'");
+    }
+    expect(impactSteps().impact.at(-1)?.if).toContain("steps.merge.outputs.publish == 'true'");
   });
 
   it("publishes nothing unless every shard reported", () => {
-    const merge = step("impact-map", (s) => s.id === "merge");
+    const merge = step("frontend", (s) => s.id === "merge");
     mkdirSync(join(dir, "records/impact-records-chromium-1/records"), { recursive: true });
     writeFileSync(join(dir, "records/impact-records-chromium-1/report-chromium-1.json"), "{}");
     const log = runStep(merge.run as string, { EXPECTED_REPORTS: "3", GITHUB_SHA: "abc" });

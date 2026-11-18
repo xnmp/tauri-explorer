@@ -2,8 +2,6 @@
 //! another executor (the main dispatch queue) and subprocesses. Both are
 //! generic and pure enough to be tested on every host.
 
-use std::io::Read;
-use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
@@ -85,7 +83,15 @@ where
 /// Run `program` with `args`, killing it if it has not exited within
 /// `timeout`. Ok(stdout) on a zero exit; otherwise a reason naming the
 /// program (its stderr, its exit, or the timeout).
+///
+/// Only macOS runs it, and only Unix tests exercise it: this module also
+/// compiles into every host's library tests, where an ungated helper is dead
+/// code on Windows under `clippy --all-targets -D warnings` (#1752).
+#[cfg(any(target_os = "macos", all(test, unix)))]
 pub fn run_command(program: &str, args: &[&str], timeout: Duration) -> Result<String, String> {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+
     let deadline = Instant::now() + timeout;
     let mut child = Command::new(program)
         .args(args)

@@ -8,10 +8,24 @@ on:
       - "src-tauri/src/image_crop/**"
       - "src-tauri/src/image_operation.rs"
       - "src-tauri/src/files/image_crop.rs"
+      # Other modules whose tests match the `image_crop` filter or that the
+      # durable-replacement path runs through (#1801).
+      - "src-tauri/src/files/file_ops.rs"
+      - "src-tauri/src/files/recovery/**"
+      - "src-tauri/src/file_mutation.rs"
+      - "src-tauri/src/thumbnails.rs"
+      - "src-tauri/src/installed_plugins/**"
       - "src-tauri/test_support/image_crop*.rs"
+      - "src-tauri/test_support/recovery_*.rs"
       - "src-tauri/test_support/fixtures/*image-crop*"
+      - "e2e-tauri/fixtures/image-crop/**"
+      # Codecs and build inputs.
+      - "src-tauri/vendor/explorer-avif/**"
+      - "src-tauri/build.rs"
+      - "src-tauri/tauri.conf.json"
       - "src-tauri/Cargo.toml"
       - "src-tauri/Cargo.lock"
+      - ".github/actions/tauri-linux-deps/**"
       - ".github/workflows/image-crop.yml"
   # Not a required check, so it runs after merge (tauri#1133). macOS is
   # nightly/manual only: dev pushes run Linux and Windows.

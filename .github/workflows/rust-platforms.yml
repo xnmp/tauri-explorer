@@ -6,11 +6,25 @@
 # job's native smoke.
 name: Rust platforms
 
-# Runs after every dev merge rather than on PRs (tauri#1133). The nightly
-# run also catches stable-toolchain drift independently of repository pushes.
+# Runs after dev merges that change Rust inputs rather than on PRs (tauri#1133,
+# #1801). The nightly run also catches stable-toolchain drift independently of
+# repository pushes.
 on:
   push:
     branches: [dev]
+    # Path-scoped on dev pushes (#1801); the nightly schedule and dispatch
+    # run regardless, catching anything outside these paths within a day.
+    # Rust sources plus what its tests and build read outside src-tauri:
+    # tauri.conf.json takes its version from package.json (#1800), and
+    # tests include static/, tests/ and e2e-tauri/ fixtures.
+    paths:
+      - "src-tauri/**"
+      - "package.json"
+      - "static/**"
+      - "tests/contract/fixtures/**"
+      - "tests/fixtures/**"
+      - "e2e-tauri/fixtures/**"
+      - ".github/workflows/rust-platforms.yml"
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:

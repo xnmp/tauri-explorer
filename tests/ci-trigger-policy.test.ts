@@ -1,19 +1,26 @@
 import picomatch from "picomatch";
 import { readFileSync, readdirSync } from "node:fs";
+import { dirname, join, posix, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 
 const workflows = new URL("../.github/workflows/", import.meta.url);
 const load = (file: string) => parse(readFileSync(new URL(file, workflows), "utf8"));
-const heavy = [
-  "macos-smoke.yml",
+// Non-gating suites that run on dev pushes only when their inputs change,
+// plus a nightly schedule and manual dispatch (#1801).
+const pathScoped = [
   "macos-native-ui.yml",
   "windows-soak.yml",
   "windows-installer.yml",
   "perf.yml",
   "native-recovery.yml",
   "rust-platforms.yml",
+  "image-crop.yml",
 ];
+// macOS Smoke builds and launches the whole app, so a path filter would admit
+// nearly every code push; it stays on every dev push.
+const heavy = [...pathScoped, "macos-smoke.yml"];
 
 describe("CI admission policy (#1133)", () => {
   it("admits only CI and Linux native smoke on pull requests", () => {
@@ -66,9 +73,20 @@ describe("CI admission policy (#1133)", () => {
     );
   });
 
-  it.each(heavy)("runs %s on every dev push and manual dispatch", (file) => {
+  it("runs macos-smoke.yml on every dev push and manual dispatch", () => {
+    expect(load("macos-smoke.yml").on.push).toEqual({ branches: ["dev"] });
+  });
+
+  it.each(pathScoped)("runs %s on dev pushes that change its inputs, nightly and on dispatch", (file) => {
     const workflow = load(file);
-    expect(workflow.on.push).toEqual({ branches: ["dev"] });
+    expect(Object.keys(workflow.on.push).sort()).toEqual(["branches", "paths"]);
+    expect(workflow.on.push.branches).toEqual(["dev"]);
+    expect(workflow.on.push.paths).toContain(`.github/workflows/${file}`);
+    expect(workflow.on.schedule).toEqual([{ cron: expect.stringMatching(/^\d+ \d+ \* \* \*$/) }]);
+  });
+
+  it.each(heavy)("admits %s only after merge: dev pushes and manual dispatch, never PRs", (file) => {
+    const workflow = load(file);
     expect(Object.hasOwn(workflow.on, "workflow_dispatch")).toBe(true);
     expect(Object.hasOwn(workflow.on, "pull_request")).toBe(false);
     expect(Object.hasOwn(workflow.on, "pull_request_target")).toBe(false);
@@ -222,4 +240,75 @@ describe.each(["ci.yml", "e2e-tauri.yml"])("%s docs-only filter", (file) => {
       expect(turbo.tasks[task].inputs).toEqual(expect.arrayContaining(["!evidence/**", "!screenshots/**"]));
     }
   });
+});
+
+describe("dev-push path filters (#1801)", () => {
+  const root = fileURLToPath(new URL("..", import.meta.url));
+  // GitHub matches push `paths` like picomatch: `*` stops at `/`, `**` spans
+  // directories, and a dotfile directory needs no special pattern.
+  const triggers = (file: string) => {
+    const matchers = (load(file).on.push.paths as string[]).map((p) => picomatch(p, { dot: true }));
+    return (path: string) => matchers.some((match) => match(path));
+  };
+  const app = [
+    "src/routes/+page.svelte", "src/lib/domain/preview-kind.ts", "src-tauri/src/lib.rs", "src-tauri/Cargo.lock",
+    "src-tauri/tauri.conf.json", "src-tauri/vendor/wry/src/lib.rs", "static/favicon.png", "package.json", "bun.lock",
+    "vite.config.ts", "svelte.config.js", "scripts/prepare-pdf-assets.mjs", "e2e-tauri/wdio.conf.ts",
+  ];
+  const expected: Record<string, string[]> = {
+    "macos-native-ui.yml": [...app, "e2e-tauri/macos-ui-smoke.ts", "scripts/grant-macos-accessibility.sh"],
+    "windows-soak.yml": [...app, "scripts/run-native-soak.ts", "scripts/build-native-qualification.ts", "e2e-tauri/soak/x.ts"],
+    "native-recovery.yml": [...app, "e2e-tauri/specs/file-recovery.spec.ts", "e2e-tauri/renderer-recovery.ts",
+      ".github/actions/tauri-linux-deps/apt.sh"],
+    "rust-platforms.yml": ["src-tauri/src/lib.rs", "src-tauri/build.rs", "src-tauri/Cargo.toml", "src-tauri/test_support/x.rs",
+      "src-tauri/tests/fixtures/red32.avif", "package.json"],
+    "perf.yml": ["src/lib/domain/preview-kind.ts", "tests/perf/content-search.bench.ts", "tests/setup.ts",
+      "e2e/tiles-scroll-perf.spec.ts", "e2e/helpers.ts", "perf-baseline.json", "scripts/perf-check.ts",
+      "vitest.perf.config.ts", "playwright.config.ts", "package.json", "bun.lock"],
+    "windows-installer.yml": ["windows_install.ps1", "README.md", "tests/windows-install-script.test.ts", "package.json", "bun.lock"],
+    "image-crop.yml": ["src-tauri/src/image_crop.rs", "src-tauri/src/files/image_crop.rs", "src-tauri/src/files/recovery/runtime.rs",
+      "src-tauri/vendor/explorer-avif/src/lib.rs", "src-tauri/Cargo.lock", "e2e-tauri/fixtures/image-crop/quadrants.png"],
+  };
+
+  it("covers every path-scoped suite", () => {
+    expect(Object.keys(expected).sort()).toEqual([...pathScoped].sort());
+  });
+
+  describe.each(pathScoped)("%s", (file) => {
+    const matches = triggers(file);
+
+    it.each(expected[file])("runs for a change to %s", (path) => {
+      expect(matches(path)).toBe(true);
+    });
+
+    it.each(["docs/guide.md", "CHANGELOG.md", "screenshots/x/a.png", "evidence/ac-1.png", "website/api/report.js"])(
+      "skips a push changing only %s",
+      (path) => { expect(matches(path)).toBe(false); },
+    );
+
+    it("runs for every repository file its steps name", () => {
+      const runs = (Object.values(load(file).jobs) as { steps: { run?: string }[] }[])
+        .flatMap((job) => job.steps.map((step) => step.run ?? ""));
+      const named = runs.join("\n").match(/\b(?:scripts|e2e-tauri|e2e|tests)\/[\w./-]*\w/g) ?? [];
+      for (const path of named.filter((p) => !p.endsWith("/logs"))) expect(matches(path), path).toBe(true);
+    });
+  });
+
+  // Rust tests include files from outside the crate; a suite running them
+  // must re-run when one changes.
+  it.each(["rust-platforms.yml", "macos-native-ui.yml", "windows-soak.yml", "native-recovery.yml"])(
+    "%s runs for every file a Rust source includes from outside src-tauri",
+    (file) => {
+      const matches = triggers(file);
+      const crate = join(root, "src-tauri");
+      const rustFiles = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
+        entry.isDirectory() ? rustFiles(join(dir, entry.name)) : entry.name.endsWith(".rs") ? [join(dir, entry.name)] : []);
+      const outside = ["src", "tests", "test_support"].flatMap((d) => rustFiles(join(crate, d))).flatMap((source) =>
+        [...readFileSync(source, "utf8").matchAll(/include_(?:str|bytes)!\("([^"]+)"\)/g)]
+          .map((m) => relative(root, join(dirname(source), m[1])).split("\\").join(posix.sep))
+          .filter((path) => !path.startsWith("src-tauri/")));
+      expect(outside.length).toBeGreaterThan(0);
+      for (const path of outside) expect(matches(path), path).toBe(true);
+    },
+  );
 });

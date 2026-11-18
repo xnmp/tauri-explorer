@@ -2,11 +2,29 @@
 
 Only `ci.yml` and the Linux matrix entry in `e2e-tauri.yml` run on PRs into
 dev; PRs into main run only `release-gate.yml`.
-The heavy suites listed in `tests/ci-trigger-policy.test.ts` run on every dev
-push without path filters and retain manual dispatch. Existing schedules stay.
+`ci.yml` and `e2e-tauri.yml` (whose `smoke (ubuntu-latest)` gates releases)
+run on every dev push without path filters. The non-gating suites
+(`pathScoped` in `tests/ci-trigger-policy.test.ts`: macOS Native UI, Windows
+soak, Windows installer, perf, native recovery, Rust platforms, image-crop
+codecs) run on a dev push only when it changes their inputs (push `paths`),
+plus a nightly `schedule` on dev and manual dispatch (#1801); they competed
+with the release path for runners on every push. macOS Smoke builds and
+launches the whole app, so it stays on every dev push.
+A filter lists what the suite builds, drives or reads: its own workflow and
+the scripts and actions it runs; the full app build (`src/**`, `src-tauri/**`,
+`static/**`, `scripts/**`, `package.json`, `bun.lock`, root configs) for a
+suite that builds the app; and for Rust suites the files Rust sources
+`include_*!` from outside `src-tauri` plus `package.json`, which
+`tauri.conf.json` reads for its version. Err wide: a missed input lets a
+regression wait for the nightly. The contract test checks representative
+inputs, every repository path a step's `run` names, and every outside-crate
+Rust include. A push whose changes miss a suite's filter creates no run and
+therefore cancels nothing: an older dev push's run that did match keeps
+running. GitHub evaluates only the first 300 changed files of a push against
+`paths`; the nightly run covers a larger push that slipped through.
 
-Every workflow that runs on dev pushes (ci.yml, e2e-tauri.yml, image-crop.yml
-and the heavy suites) declares the same workflow-level concurrency (#1798):
+Every workflow that runs on dev pushes (ci.yml, e2e-tauri.yml, macOS Smoke
+and the path-scoped suites) declares the same workflow-level concurrency (#1798):
 PRs group by workflow and full PR ref, dev pushes share one
 `<workflow>-dev-push` group, both with `cancel-in-progress: true`, and every
 other event (main pushes, the schedule, dispatch) gets a unique run-ID group.

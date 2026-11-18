@@ -251,6 +251,9 @@ function expectPlusFollows(frames: TabFrame[]) {
 }
 
 for (const [label, count, settings] of [['3 tabs', 3, {}], ['12 tabs', 12, {}], ['3 tabs at 125%', 3, { zoomLevel: 125 }]] as const) test(`the new-tab button rides behind a tab sliding in and out (${label})`, async ({ page }) => {
+  // Two slides of 23 stepped frames each: 21-26s on a WebKit CI container,
+  // over the default budget on a loaded one (#1775).
+  test.setTimeout(90_000);
   await openTabs(page, count, 1000, 'details', settings);
   await page.waitForTimeout(300);
   const opening = await steppedFrames(page, () => pressShortcut(page, 't', { ctrlKey: true }));

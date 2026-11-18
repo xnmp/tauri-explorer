@@ -48,6 +48,9 @@ test.describe("Floating islands (#277)", () => {
  * frame of a slide.
  */
 test.describe("Fused active tab (#1734)", () => {
+  // Stepped slides sample 23 frames each: up to 26s on a WebKit CI container,
+  // over the default budget on a loaded one (#1775).
+  test.describe.configure({ timeout: 60_000 });
   const SIMULATED_MATERIAL = `
     html {
       background:

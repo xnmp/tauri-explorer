@@ -68,6 +68,14 @@ describe("rerunDecision", () => {
     expect(rerunDecision({ conclusion: "failure", runAttempt: 1, jobs: [job("x", "failure")] }).rerun).toBe(true);
   });
 
+  it("re-runs a job no hosted runner ever acquired (#1810)", () => {
+    // GitHub cancels a queued job it cannot place on a runner; it has no steps.
+    const unacquired = job("launch-smoke", "cancelled");
+    expect(rerunDecision({ conclusion: "failure", runAttempt: 1, jobs: [unacquired] })).toEqual({
+      rerun: true, reason: 'launch-smoke at "job setup": install/setup failure',
+    });
+  });
+
   it("leaves a real test failure alone, even beside an install failure", () => {
     const result = rerunDecision({ conclusion: "failure", runAttempt: 1, jobs: [installHang, testFailure, gate] });
     expect(result).toEqual({ rerun: false, reason: 'chromium (2) failed at "E2E tests": not an install/setup failure' });
@@ -154,11 +162,12 @@ describe("workflow wiring", () => {
 
   it("re-runs only failed first attempts of CI and native smoke, with minimal permissions", () => {
     const rerun = load("ci-auto-rerun.yml");
-    expect(rerun.on).toEqual({ workflow_run: { workflows: ["CI", "Tauri binary E2E (smoke)"], types: ["completed"] } });
+    expect(rerun.on).toEqual({ workflow_run: { workflows: ["CI", "Tauri binary E2E (smoke)", "macOS Smoke"], types: ["completed"] } });
     expect(rerun.permissions).toEqual({ actions: "write", contents: "read", "pull-requests": "read" });
     expect(rerun.jobs.rerun.if).toBe("github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.run_attempt == 1");
     expect(load("ci.yml").name).toBe("CI");
     expect(load("e2e-tauri.yml").name).toBe("Tauri binary E2E (smoke)");
+    expect(load("macos-smoke.yml").name).toBe("macOS Smoke");
     // Never checks out or runs the triggering run's code.
     for (const s of rerun.jobs.rerun.steps) expect(JSON.stringify(s)).not.toContain("head_sha");
   });

@@ -10,9 +10,12 @@ name: CI auto-rerun
 # run only while it is the newest dev push run of its workflow and dev's head
 # is still its head_sha (#1798). A superseded run that was cancelled concludes
 # `cancelled` and never reaches the re-run job.
+# macOS Smoke is included because hosted macOS arm64 capacity runs short: a
+# job GitHub never hands to a runner fails with no steps, which counts as a
+# setup failure and gets its one re-run (#1810).
 on:
   workflow_run:
-    workflows: [CI, "Tauri binary E2E (smoke)"]
+    workflows: [CI, "Tauri binary E2E (smoke)", "macOS Smoke"]
     types: [completed]
 
 # actions: write for the re-run request; contents: read to check out scripts/

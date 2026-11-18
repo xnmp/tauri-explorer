@@ -284,7 +284,7 @@ body.enter .sheen i { animation: wb-sheen 1.25s cubic-bezier(.45, .05, .25, 1) .
 .seg { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 2px; padding: 3px; border-radius: max(6px, calc(var(--wb-r) * .7)); background: var(--m-well); box-shadow: inset 0 1px 2px var(--m-shade), inset 0 0 0 1px var(--m-line); }
 .seg button { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 5px; min-width: 0; padding: 8px 2px 7px; border: 0; border-radius: max(4px, calc(var(--wb-r) * .5)); background: none; color: var(--h-text-2); font: 600 11px/1.15 var(--wb-font); text-align: center; transition: color .15s, background-color .15s, box-shadow .15s; }
 .seg button svg { width: 28px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
-.seg button span { display: block; max-width: 100%; overflow-wrap: anywhere; }
+.seg button span { display: block; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .seg button:hover { color: var(--h-text); background: var(--m-hover); }
 .seg button[aria-pressed="true"] { color: var(--h-text); background: linear-gradient(180deg, var(--m-raise), var(--m-plate)); box-shadow: 0 0 0 1px var(--m-line-2), inset 0 1px 0 var(--m-hi), 0 1px 3px var(--m-shade); }
 .seg button[aria-pressed="true"] svg { color: var(--h-acc-text); }
@@ -526,6 +526,39 @@ body.offline .floor { grid-template-columns: minmax(0, 1fr); }
 body.offline .rail, body.offline .glint, body.offline .sheen { display: none; }
 body.offline .acts #copy-link, body.offline .acts #copy-json { display: none; }
 
+/* ---------- the rail tucks away: the window takes the floor, the bench waits as a slim tab ---------- */
+.rail { position: relative; }
+.rail-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; transition: opacity .25s var(--ease) .12s; }
+.rail-top { display: flex; align-items: center; gap: 6px; flex: none; margin: var(--s3) var(--s3) 0; }
+.rail-top .tabs { flex: 1 1 auto; margin: 0; }
+.rail-fold { flex: none; display: grid; place-items: center; width: 34px; height: 44px; padding: 0; border: 0; border-radius: max(6px, calc(var(--wb-r) * .75)); background: none; color: var(--h-text-2); cursor: pointer; transition: color .15s, background-color .15s; }
+.rail-fold:hover { color: var(--h-text); background: var(--m-well); }
+.rail-fold svg, .rail-open svg { width: 16px; height: 16px; }
+.rail-tab { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 10px 0 14px; opacity: 0; visibility: hidden; transition: opacity .2s, visibility 0s .2s; }
+.rail-open { all: unset; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; gap: 12px; width: 40px; padding: 12px 0 14px; border-radius: 12px; cursor: pointer; color: var(--h-text-2); transition: color .15s, background-color .15s; }
+.rail-open:hover { color: var(--h-text); background: var(--m-well); }
+.rail-open:focus-visible, .rail-fold:focus-visible, .rail-hints button:focus-visible { outline: 2px solid var(--h-acc); outline-offset: 2px; }
+.rail-word { writing-mode: vertical-rl; transform: rotate(180deg); font: 680 14px/1 var(--wb-display); font-variation-settings: "wdth" 82; letter-spacing: .04em; color: var(--h-text); }
+.rail-hints { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.rail-hints button { all: unset; box-sizing: border-box; position: relative; display: grid; place-items: center; width: 38px; height: 38px; border-radius: 10px; cursor: pointer; color: var(--h-acc-text, var(--h-acc));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--h-acc) 12%, var(--m-raise)), var(--m-plate-2)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--h-acc) 45%, var(--m-line-2)), 0 0 14px -4px var(--m-glow);
+  animation: wb-hint-in .5s var(--spring) backwards; }
+.rail-hints button:hover { background: color-mix(in srgb, var(--h-acc) 20%, var(--m-raise)); }
+.rail-hints svg { width: 22px; height: 17px; overflow: visible; }
+.rail-hints svg .frame { fill: none; stroke: currentColor; stroke-width: 1.2; opacity: .5; }
+.rail-hints svg .f { fill: currentColor; opacity: .85; } .rail-hints svg .l { stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; fill: none; }
+.rail-hints .ai { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+@keyframes wb-hint-in { from { opacity: 0; transform: scale(.6); } }
+@media (min-width: 861px) {
+  .floor { transition: grid-template-columns .5s var(--ease), column-gap .5s var(--ease); }
+  .floor.tucked { grid-template-columns: minmax(0, 1fr) 56px; column-gap: 22px; }
+  .rail-body { min-width: var(--wb-rail); }   /* the bench keeps its layout while it slides; the rail clips it */
+  .floor.tucked .rail-body { opacity: 0; visibility: hidden; transition: opacity .12s, visibility 0s .12s; }
+  .floor.tucked .rail-tab { opacity: 1; visibility: visible; transition: opacity .3s var(--ease) .25s, visibility 0s; }
+  .floor.still, .floor.still * { transition: none !important; }
+}
+@media (max-width: 860px) { .rail-fold, .rail-tab { display: none; } }
+
 /* ---------- narrower windows ---------- */
 @media (max-width: 1240px) { :root { --wb-rail: 384px; } .strip .line { display: none; } .pitch h1 { font-size: 18px; } }
 @media (max-width: 1060px) { .pitch { display: none; } }
@@ -550,7 +583,7 @@ body.offline .acts #copy-link, body.offline .acts #copy-json { display: none; }
   .more { display: none; }
   .panel { -webkit-mask-image: none; mask-image: none; }
 }
-@media (max-width: 420px) { .switches { grid-template-columns: 1fr; } .seg button span { font-size: 10.5px; } }
+@media (max-width: 420px) { .switches { grid-template-columns: 1fr; } .seg button span { font-size: 10px; letter-spacing: -.025em; } .seg button { padding-inline: 1px; } }
 @media (prefers-reduced-motion: reduce) {
   :root { transition: none; }
   *, *::before, *::after { transition-duration: 0s !important; transition-delay: 0s !important; animation: none !important; }
@@ -600,11 +633,24 @@ body.offline .acts #copy-link, body.offline .acts #copy-json { display: none; }
     </aside>
   </section>
 
-  <aside class="rail" aria-label="Setup">
+  <aside class="rail" id="rail" aria-label="Setup">
+    <div class="rail-tab" id="rail-tab">
+      <button class="rail-open" id="rail-open" type="button" aria-expanded="false" aria-controls="rail-body" title="Show the bench">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M9.5 4 5.5 8l4 4M13 4 9 8l4 4"/></svg>
+        <span class="rail-word">Bench</span><i class="led" id="tab-led" aria-hidden="true"></i>
+      </button>
+      <ul class="rail-hints" id="rail-hints" aria-label="Worth trying here"></ul>
+    </div>
+    <div class="rail-body" id="rail-body">
+    <div class="rail-top">
     <div class="tabs" role="tablist" aria-label="Bench and shelf" data-at="0">
       <span class="thumb" aria-hidden="true"></span>
       <button role="tab" id="tab-bench" aria-controls="p-bench" aria-selected="true">Bench<i class="led" id="bench-led" aria-hidden="true"></i></button>
       <button role="tab" id="tab-shelf" aria-controls="p-shelf" aria-selected="false" tabindex="-1">Shelf</button>
+    </div>
+    <button class="rail-fold" id="rail-fold" type="button" aria-expanded="true" aria-controls="rail-body" title="Tuck the bench away and give the window the room">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M6.5 4l4 4-4 4M3 4l4 4-4 4"/></svg><span class="sr">Tuck the bench away</span>
+    </button>
     </div>
 
     <div class="pages">
@@ -666,6 +712,7 @@ body.offline .acts #copy-link, body.offline .acts #copy-json { display: none; }
       </div>
       <div class="note" id="note" aria-live="polite"></div>
     </section>
+    </div>
   </aside>
 </main>
 
@@ -695,9 +742,13 @@ const loadScript = url => new Promise(res => { const s = document.createElement(
 // Shown instead of a blank stage when the real app cannot run here.
 function offline(kind) {
   const n = document.querySelector("#notice");
-  n.querySelector("[data-why]").textContent = kind === "file"
-    ? "This page runs the real app in a frame, and browsers only allow that over http."
-    : "The app in the frame did not report ready. The demo build may be missing or out of date.";
+  const TEXT = {
+    file: ["The live window needs a local server", "This page runs the real app in a frame, and browsers only allow that over http."],
+    ready: ["The live window did not start", "The app in the frame did not report ready. The demo build may be missing or out of date."],
+    boot: ["The live window could not load its files", "The app started but could not read this page's files, so it would have shown a different computer."],
+  }[kind] || [];
+  n.querySelector("h2").textContent = TEXT[0];
+  n.querySelector("[data-why]").textContent = TEXT[1];
   n.querySelector("[data-cmd]").textContent = kind === "file" ? "bun run demo:serve" : "bun run build:demo && bun run demo:serve";
   n.hidden = false;
   document.body.classList.add("offline");
@@ -709,7 +760,7 @@ function offline(kind) {
   const urls = CONTENT.map(id => `content/fs-${id}.js`);
   const have = await Promise.all(urls.map(probe));
   for (let i = 0; i < urls.length; i++) if (have[i] !== false) await loadScript(urls[i]);
-  try { await main(); } catch (e) { console.warn("workshop: the live window failed to start", e); offline("ready"); }
+  try { await main(); } catch (e) { console.warn("workshop: the live window failed to start", e); offline(e && e.boot ? "boot" : "ready"); }
 })();
 
 async function main() {
@@ -736,8 +787,9 @@ const full = s => ({ ...BASE, ...s, keybindings: { ...(s.keybindings || {}) } })
 // Horizon on Floating Islands: warm against the stage's light, and the coloured file icons read at a glance.
 const FIRST = full({ theme: "horizon", layoutTheme: "floating-islands", iconTheme: "material", viewMode: "details", showAddressBar: true,
   showSidebar: !matchMedia("(max-width: 640px)").matches });   // on a phone the sidebar would take the whole window
-// Page-level presentation, not part of the setup: Length and Resolution are empty for every file in the content.
-const PRESENTATION = { columnVisibility: { prompt: true, date: true, type: true, size: true, length: false, resolution: false, opened: false } };
+// Page-level presentation, not part of the setup: Length and Resolution are empty for every file in the content, and the
+// Type column (the icon already says it) would push Details past a pane's width in this frame, scrolling it sideways.
+const PRESENTATION = { columnVisibility: { prompt: true, date: true, type: false, size: true, length: false, resolution: false, opened: false } };
 
 const encodeSetup = s => btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(s)))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 const decodeSetup = x => { try { const b = atob(String(x).replace(/-/g, "+").replace(/_/g, "/")); const o = JSON.parse(new TextDecoder().decode(Uint8Array.from(b, c => c.charCodeAt(0)))); return o && typeof o === "object" && !Array.isArray(o) ? o : null; } catch (_) { return null; } };
@@ -751,30 +803,48 @@ const u0 = ((FS && FS.users) || [])[0] || {};
 const fromUrl = qs.get("setup") ? decodeSetup(qs.get("setup")) : null;
 const startPath = qs.get("at") || (u0.setup && u0.setup.path) || undefined;
 const start = fromUrl ? full(fromUrl) : FIRST;
-// Until the catalog arrives the page cannot read a theme's colours, so the first screen's dress is written down here
-// (Horizon's catalog colours, composited) and a shared custom theme carries its own. Anything else waits for ready.
-const PREDRESS = { horizon: { v: ["rgb(20, 22, 32)", "rgb(31, 33, 46)", "rgb(213, 216, 218)", "rgb(176, 180, 184)", "rgb(233, 86, 120)", "rgb(250, 183, 149)"], dark: true } };
-{ const t = start.theme, pre = t && typeof t === "object" && Array.isArray(t.v) ? t : PREDRESS[t];
-  if (pre) {
-    ["paper", "side", "ink", "ink-2", "acc", "folder"].forEach((k, i) => ROOT.style.setProperty("--h-" + k, pre.v[i]));
-    ROOT.dataset.scheme = pre.dark ? "dark" : "light";
-  }
+// The page's dress before the app is ready. The catalog's colours only arrive with `ready`, so the page dresses from, in
+// order: a custom theme in the setup itself, the `look` parameter a copied link carries, the colours of every catalog
+// theme cached on an earlier visit, and Horizon's (the first screen) written down here. Anything else waits for ready.
+const DRESS_STORE = "tx-workshop-dress-v1";
+const LOOK_RE = /^(?:[0-9a-f]{6}-){6}[dl]$/i;
+const lookParam = sw => sw.v.map(c => String(c).replace("#", "")).join("-") + "-" + (sw.dark ? "d" : "l");
+const PREDRESS = { horizon: { v: ["#141620", "#1f212e", "#d5d8da", "#b0b4b8", "#e95678", "#fab795"], dark: true } };
+const dressCache = { read() { try { const o = JSON.parse(localStorage.getItem(DRESS_STORE) || "{}"); return o && typeof o === "object" ? o : {}; } catch (_) { return {}; } },
+  write(o) { try { localStorage.setItem(DRESS_STORE, JSON.stringify(o)); } catch (_) { /* storage blocked: links still carry their look */ } } };
+function preDress(theme, look, layout) {
+  const fromLook = look && LOOK_RE.test(look) ? (p => ({ v: p.slice(0, 6).map(h => "#" + h), dark: p[6] === "d" }))(look.split("-")) : null;
+  const cached = typeof theme === "string" ? dressCache.read()[theme] : null;
+  const pre = theme && typeof theme === "object" && Array.isArray(theme.v) ? theme : fromLook || (cached && Array.isArray(cached.v) ? cached : null) || PREDRESS[theme];
+  if (!pre) return;
+  ["paper", "side", "ink", "ink-2", "acc", "folder"].forEach((k, i) => ROOT.style.setProperty("--h-" + k, pre.v[i]));
+  ROOT.dataset.scheme = pre.dark ? "dark" : "light";
+  ROOT.dataset.layout = layout || "default";
+  if (theme === "hacker") ROOT.dataset.mono = "";
+}
+preDress(start.theme, qs.get("look"), start.layoutTheme);
+const FLOOR = $(".floor");
+if (qs.get("rail") === "tucked") {   // a shared link with the bench tucked away arrives that way, without the slide
+  FLOOR.classList.add("tucked", "still");
+  requestAnimationFrame(() => requestAnimationFrame(() => FLOOR.classList.remove("still")));
 }
 const initSettings = Object.fromEntries(SETTING_KEYS.filter(k => k in start && typeof start[k] !== "object").map(k => [k, start[k]]));
 initSettings.viewMode = start.viewMode;   // the default for the first pane
 Object.assign(initSettings, PRESENTATION);
 
 const READY_MS = 15000;
-const stage = window.stage = await Promise.race([
-  TXBridge.mount(APP, { appUrl: "/app/", fixture: FS, assetBase: location.href, user: u0.id, startPath, settings: initSettings, keybindings: start.keybindings }),
-  new Promise((_, no) => setTimeout(() => no(new Error("the app did not report ready")), READY_MS)),
-]);
+const stage = window.stage = await TXBridge.mount(APP, { appUrl: "/app/", fixture: FS, assetBase: location.href, user: u0.id, startPath,
+  settings: initSettings, keybindings: start.keybindings, mountTimeoutMs: READY_MS });
+// The app never boots blank: a fixture it could not serve is replaced by its built-in one. That would be a different
+// world from the page's hints and shelf, so it is a failure here, said plainly instead of shown.
+const boot = stage.boot || {};
+for (const w of boot.warnings || []) console.warn("workshop: the app reported", w);
+if (FS && (boot.error || boot.fixture === "builtin")) { stage.destroy(); throw Object.assign(new Error(boot.error || "the app served its built-in files"), { boot: true }); }
 const frame = stage.iframe;
 frame.setAttribute("title", "Tauri Explorer, running in this page");
 const focusApp = () => { try { frame.contentWindow.focus(); } catch (_) { frame.focus(); } };
 
-// The pointer inside the frame: where a handed-off file's window grows from, and the glint on the window's edge.
-let lastPoint = null;
+// The pointer inside the frame lights the glint on the window's edge (cosmetic; a cross-origin frame simply has none).
 const glintAt = (() => { const st = $(".stage"), gl = $(".glint"); let f = 0, at = null;
   st.addEventListener("pointerleave", () => st.classList.remove("lit"));
   return (x, y) => { at = [x, y]; st.classList.add("lit"); if (!f) f = requestAnimationFrame(() => { f = 0; const r = st.getBoundingClientRect(); gl.style.transform = `translate(${at[0] - r.left}px, ${at[1] - r.top}px)`; }); };
@@ -783,15 +853,16 @@ $(".stage").addEventListener("pointermove", e => { if (e.pointerType === "mouse"
 function watchFramePointer() {
   try {
     const w = frame.contentWindow, toPage = e => { const r = frame.getBoundingClientRect(); return [r.left + e.clientX, r.top + e.clientY]; };
-    w.addEventListener("pointerdown", e => { const [x, y] = toPage(e); lastPoint = { x: x - 60, y: y - 12, w: 120, h: 24, t: Date.now() }; }, true);
     w.addEventListener("pointermove", e => { if (e.pointerType === "mouse") { const [x, y] = toPage(e); glintAt(x, y); } }, true);
     w.addEventListener("pointerleave", () => $(".stage").classList.remove("lit"), true);
-  } catch (_) { /* a cross-origin frame: windows grow from the stage's centre */ }
+  } catch (_) { /* a cross-origin frame: no glint */ }
 }
 watchFramePointer();
 frame.addEventListener("load", watchFramePointer);
-const originNow = () => {
-  if (lastPoint && Date.now() - lastPoint.t < 4000) return lastPoint;
+// Where an opened file's window grows from: its row, which the app reports in the frame's coordinates, moved onto the page.
+// With no row on screen (Quick Open, Search in Files, a scrolled list), the stage's centre.
+const onPage = rect => {
+  if (rect && rect.width > 0 && rect.height > 0) { const f = frame.getBoundingClientRect(); return { x: f.left + rect.x, y: f.top + rect.y, w: rect.width, h: rect.height }; }
   const r = APP.getBoundingClientRect(); return { x: r.left + r.width / 2 - 80, y: r.top + r.height / 2 - 14, w: 160, h: 28 };
 };
 // clicking the stage around the frame hands the keyboard to the app
@@ -806,6 +877,7 @@ const over = (top, under) => [0, 1, 2].map(i => top[i] * top[3] + under[i] * (1 
 const swatchFrom = c => { const bg = rgba(c.background); return [hex(bg), hex(over(rgba(c.panel), bg)), hex(over(rgba(c.text), bg)), hex(over(rgba(c.muted), bg)), hex(over(rgba(c.accent), bg)), hex(over(rgba(c.folder), bg))]; };
 const THEMES = CAT.themes.map(t => ({ id: t.id, name: t.name, note: t.description || (t.dark ? "dark" : "light"), dark: !!t.dark, swatch: swatchFrom(t.colors) }));
 const THEME = Object.fromEntries(THEMES.map(t => [t.id, t]));
+dressCache.write(Object.fromEntries(THEMES.map(t => [t.id, { v: t.swatch, dark: t.dark }])));   // the next visit dresses before ready
 const LAYOUTS = CAT.layouts, ICONS = CAT.iconThemes, VIEWS = CAT.viewModes;
 const CMD = Object.fromEntries(CAT.commands.map(c => [c.id, c]));
 const PANEL = Object.fromEntries(CAT.panels.map(p => [p.id, p]));
@@ -861,27 +933,20 @@ function setupFrom(st) {
     keybindings: { ...(st.keybindings || {}) },
   };
 }
-// The real app opens a split's second pane at home and makes it active, and closing the split keeps that pane. The page's
-// promise is that fitting panels never moves you: both panes start in your folder, and you are still there afterwards.
-async function keepPlace(fn) {
-  const before = await stage.getState(), was = (before.panes.find(p => p.active) || before.panes[0] || {}).path, wasSplit = before.panels.split;
-  await fn();
-  if (!was || !was.startsWith("/")) return;
-  const after = await stage.getState(), act = after.panes.find(p => p.active) || after.panes[0];
-  if (!wasSplit && after.panels.split) { for (const p of after.panes) if (p.path !== was) await stage.navigate(was, p.index); }
-  else if (act && act.path !== was) await stage.navigate(was, act.index);
-}
-// Applying a setup: settings in one call, then the runtime panels, the active pane's view, and the keys.
-async function apply(s, opts) { await keepPlace(() => applyNow(s, opts)); await refresh(); }
+// Fitting panels never moves you: a split opens its second pane on the folder you are in, and the first pane keeps the keyboard.
+const setSplit = on => on ? stage.setSplit(true, { path: curPath.startsWith("/") ? curPath : undefined, focus: false }) : stage.setSplit(false);
+// Applying a setup: settings (with the view, which the bridge also gives the open panes) in one call, then the runtime
+// panels and the keys.
+async function apply(s, opts) { await applyNow(s, opts); await refresh(); }
 async function applyNow(s, { complete = false } = {}) {
   const patch = {};
   for (const k of SETTING_KEYS) if (k in s) patch[k] = s[k];
+  if (s.viewMode && VIEWS.some(v => v.id === s.viewMode)) patch.viewMode = s.viewMode;
   if (patch.theme && typeof patch.theme === "object") { const id = await customId(patch.theme); if (id) patch.theme = id; else delete patch.theme; }
   if (Object.keys(patch).length) await stage.setSettings(patch);
   if ("millerLayers" in s) await stage.setPanel("miller", s.millerLayers > 0);
-  if (s.viewMode) { const v = VIEWS.find(x => x.id === s.viewMode); if (v) await stage.run(v.command); }
   if ("terminal" in s) await stage.setPanel("terminal", !!s.terminal);
-  if ("split" in s) await stage.setPanel("split", !!s.split);
+  if ("split" in s && !!s.split !== !!st.panels.split) await setSplit(!!s.split);
   if ("keybindings" in s || complete) {
     await stage.resetKeybindings();
     for (const [id, k] of Object.entries(s.keybindings || {})) if (CMD[id]) await stage.setKeybinding(id, k);
@@ -917,14 +982,14 @@ const glyph = id => `<svg class="g" viewBox="0 0 24 18" aria-hidden="true"><rect
 function renderSwitches() {
   $("#switches").innerHTML = SWITCHES.map(w => `<li><button class="sw" type="button" role="switch" aria-checked="false" data-p="${w.id}" title="${esc(w.note || (PANEL[w.panel] || {}).note || w.label)}">${glyph(w.id)}<span class="nm">${esc(w.label)}</span><span class="tog" aria-hidden="true"></span></button></li>`).join("");
 }
-$("#switches").addEventListener("click", async e => {
-  const b = e.target.closest("[data-p]"); if (!b) return;
+$("#switches").addEventListener("click", e => { const b = e.target.closest("[data-p]"); if (b) flipSwitch(b); });
+async function flipSwitch(b) {
   const w = SWITCHES.find(x => x.id === b.dataset.p), on = b.getAttribute("aria-checked") !== "true";
   b.classList.remove("tick"); void b.offsetWidth; b.classList.add("tick");
   b.setAttribute("aria-checked", String(on));   // answer the press at once; the app's panels event confirms it
-  await keepPlace(() => w.panel ? stage.setPanel(w.panel, on) : stage.setSettings({ [w.setting]: on }));
+  await (w.panel === "split" ? setSplit(on) : w.panel ? stage.setPanel(w.panel, on) : stage.setSettings({ [w.setting]: on }));
   await refresh();
-});
+}
 let lastOn = null;
 function paintSwitches(s) {
   const now = new Set(SWITCHES.filter(w => isOn(s, w)).map(w => w.id));
@@ -964,8 +1029,9 @@ $("#actions").addEventListener("click", e => {
   const li = e.target.closest("[data-a]"); if (!li) return;
   const a = ACTIONS.find(x => x.id === li.dataset.a);
   if (e.target.closest(".chg")) { record(li, a); return; }
-  if (e.target.closest(".run")) { used.add("act:" + a.id); runAction(a); li.classList.remove("flash"); void li.offsetWidth; li.classList.add("flash"); hintsSoon(); }
+  if (e.target.closest(".run")) doAction(li, a);
 });
+function doAction(li, a) { used.add("act:" + a.id); runAction(a); li.classList.remove("flash"); void li.offsetWidth; li.classList.add("flash"); hintsSoon(); }
 // Change: the next key pressed becomes the command's key in the app (Esc cancels). Keys use the app's own syntax.
 let recording = null;
 const KEYNAME = { " ": "Space", ArrowLeft: "Left", ArrowRight: "Right", ArrowUp: "Up", ArrowDown: "Down", Escape: "Escape", Enter: "Enter", Backspace: "Backspace", Delete: "Delete", Tab: "Tab", Home: "Home", End: "End", PageUp: "PageUp", PageDown: "PageDown" };
@@ -1063,7 +1129,7 @@ RAIL.addEventListener("click", async e => {
   if (b.dataset.theme) { const t = foundTheme(b.dataset.theme); await apply({ theme: t || b.dataset.theme }); }
   else if (b.dataset.layout) await apply({ layoutTheme: b.dataset.layout });
   else if (b.dataset.icons) await apply({ iconTheme: b.dataset.icons });
-  else if (b.dataset.view) await apply({ viewMode: b.dataset.view });
+  else if (b.dataset.view) await stage.setViewMode(b.dataset.view);   // the pane you are in, as the app's own view buttons do
 });
 $("#open-themes").addEventListener("click", async () => { await stage.run("view.switchTheme"); focusApp(); });
 const sameTheme = (a, b) => (isThemeObj(a) || isThemeObj(b)) ? isThemeObj(a) && isThemeObj(b) && JSON.stringify(a.v) === JSON.stringify(b.v) : a === b;
@@ -1073,24 +1139,26 @@ function paintLook(s) {
 }
 
 /* ======================= shelf ======================= */
-// Whole windows in the app's own terms. Each was applied in the real app and checked: none relies on hiding tabs.
+// Whole windows in the app's own terms. Each was applied in the real app and checked at the default stage width: no pane
+// scrolls sideways (Details needs about 610px a pane, so the two-pane and Miller setups use List). The one deliberately
+// maximal setup is marked wide: fitting it tucks the bench away so the window has the floor.
 const SHELF = [
   { id: "blank", name: "Blank page", line: "The folder you are in, and nothing around it.",
     setup: full({ theme: "light", layoutTheme: "default", iconTheme: "minimal", viewMode: "list", folderPeek: false }) },
   { id: "night", name: "Night shift", line: "Two panes, a shell and F-keys for new folders and deleting. The mouse is optional.",
-    setup: full({ theme: "gruvbox", layoutTheme: "hairline-ledger", iconTheme: "classic", viewMode: "details", showAddressBar: true, showStatusBar: true, split: true, terminal: true, keybindings: { "file.newFolder": "F7", "file.delete": "F8" } }) },
+    setup: full({ theme: "gruvbox", layoutTheme: "hairline-ledger", iconTheme: "classic", viewMode: "list", showAddressBar: true, showStatusBar: true, split: true, terminal: true, keybindings: { "file.newFolder": "F7", "file.delete": "F8" } }) },
   { id: "contact", name: "Contact sheet", line: "Big tiles and a preview, floating over the dark.",
     setup: full({ theme: "dark", layoutTheme: "floating-islands", iconTheme: "catppuccin", viewMode: "tiles", showAddressBar: true, showPreviewPane: true }) },
   { id: "phosphor", name: "Phosphor", line: "Green on black, monospace throughout, the command palette on Alt+X.",
     setup: full({ theme: "hacker", layoutTheme: "compact", iconTheme: "default", viewMode: "list", showAddressBar: true, showStatusBar: true, terminal: true, keybindings: { "general.openCommandPalette": "Alt+X" } }) },
   { id: "slow", name: "Slow water", line: "Miller columns, so the way back is always on screen. Pale and unhurried.",
-    setup: full({ theme: "tahoe", layoutTheme: "soft-cards", iconTheme: "classic", viewMode: "details", showAddressBar: true, showStatusBar: true, showPreviewPane: true, millerLayers: 2 }) },
+    setup: full({ theme: "tahoe", layoutTheme: "soft-cards", iconTheme: "classic", viewMode: "list", showAddressBar: true, showStatusBar: true, showPreviewPane: true, millerLayers: 2 }) },
   { id: "tree", name: "Working tree", line: "A sidebar of places and a shell, with the commit graph on Alt+G.",
     setup: full({ theme: "catppuccin", layoutTheme: "default", iconTheme: "material", viewMode: "details", showAddressBar: true, showSidebar: true, showStatusBar: true, terminal: true, keybindings: { "git.showGraph": "Alt+G" } }) },
   { id: "notebook", name: "Field notebook", line: "Paper colours, a sidebar of places, and notes open beside the list.",
     setup: full({ theme: "solarized-light", layoutTheme: "soft-cards", iconTheme: "catppuccin", viewMode: "list", showSidebar: true, showStatusBar: true, showPreviewPane: true }) },
-  { id: "kit", name: "Every panel", line: "Everything fitted at once, in Nord.",
-    setup: full({ theme: "nord", layoutTheme: "default", iconTheme: "material", viewMode: "details", showAddressBar: true, showSidebar: true, showStatusBar: true, showPreviewPane: true, millerLayers: 2, split: true, terminal: true }) },
+  { id: "kit", name: "Full kit", line: "Sidebar, two panes, preview, shell and status at once, in Nord. The bench tucks away to give it the room.", wide: true,
+    setup: full({ theme: "nord", layoutTheme: "default", iconTheme: "material", viewMode: "list", showAddressBar: true, showSidebar: true, showStatusBar: true, showPreviewPane: true, split: true, terminal: true }) },
 ];
 const shape = s => JSON.stringify(ORDER.map(k => k === "theme" ? (isThemeObj(s.theme) ? s.theme.v : s.theme) : k === "keybindings" ? Object.entries(s.keybindings || {}).sort() : k === "millerLayers" ? s.millerLayers > 0 : s[k]));
 const ADJ = ["Copper", "Salt", "Lantern", "Static", "Tidal", "Velvet", "Iron", "Paper", "Ember", "Moss", "Signal", "Quiet", "Chalk", "Night"];
@@ -1103,6 +1171,9 @@ function shuffleSetup(current) {
       showAddressBar: chance(.75), showSidebar: chance(.55), showStatusBar: chance(.55), showPreviewPane: chance(v === "tiles" ? .65 : .35), terminal: chance(.35) });
     const r = Math.random(); if (r < .25) s.millerLayers = 2; else if (r < .55) s.split = true;
     if (chance(.4)) s.keybindings = { ...pick(SAFE_REBINDS) };
+    // keep within the stage: Details wants one wide pane, and two panes leave no room for both sidebar and preview
+    if ((s.split || s.millerLayers) && s.viewMode === "details") s.viewMode = "list";
+    if (s.split && s.showSidebar && s.showPreviewPane) s.showPreviewPane = false;
     const count = SWITCHES.filter(w => w.id !== "peek" && isOn(s, w)).length;
     if (shape(s) !== shape(current) && count > 1) return { id: "shuffle", name: `${pick(ADJ)} ${pick(NOUN)}`, line: describe(s), setup: s };
   }
@@ -1143,6 +1214,7 @@ async function fit(entry) {
   named = entry;
   const card = RAIL.querySelector(`.card[data-id="${CSS.escape(entry.id)}"]`);
   if (card) { card.classList.remove("pop"); void card.offsetWidth; card.classList.add("pop"); }
+  if (entry.wide && !tucked) setTucked(true);   // only the maximal setup asks for the whole floor
   await apply(entry.setup, { complete: true });   // the folder stays where it is
 }
 $("#p-shelf").addEventListener("click", e => { const b = e.target.closest(".card"); if (b) { const x = allShelf().find(s => s.id === b.dataset.id); if (x) fit(x); } });
@@ -1306,7 +1378,9 @@ const TREE = FS ? FS.tree : { kids: [] };
 const kidsAt = path => { let n = TREE; for (const s of String(path).split("/").filter(Boolean)) { n = (n.kids || []).find(k => k.name === s); if (!n) return []; } return n.kids || []; };
 const isDirNode = n => n.kind === "dir" || (n.kind !== "file" && Array.isArray(n.kids));
 const IMG_RE = /\.(webp|png|jpe?g|gif|svg|avif)$/i;
-const index = (() => { const folders = [], files = new Set(); (function walk(n, p, d) { if (d > 14) return; for (const k of n.kids || []) { const q = p + "/" + k.name; if (isDirNode(k)) { folders.push([k.name, q]); walk(k, q, d + 1); } else files.add(k.name); } })(TREE, "", 0); return { folders, files }; })();
+// files: names Quick Open can reach. Both searches skip every dot-named file and folder whatever the hidden-files setting
+// says, so nothing under a dot-named folder counts as findable.
+const index = (() => { const folders = [], files = new Set(); (function walk(n, p, d, dotted) { if (d > 14) return; for (const k of n.kids || []) { const q = p + "/" + k.name, dot = dotted || k.name.startsWith("."); if (isDirNode(k)) { folders.push([k.name, q]); walk(k, q, d + 1, dot); } else if (!dot) files.add(k.name); } })(TREE, "", 0, false); return { folders, files }; })();
 const REPOS = Object.keys((FS && FS.repos) || {});
 const TEXTY = /\.(txt|md|markdown|log|csv|tsv|json|ya?ml|toml|ini|conf|cfg|eml|html?|rtf|tex|py|js|ts|rs|sh)$/i;
 function context(snap) {   // pure: a snapshot plus what the page remembers
@@ -1321,7 +1395,8 @@ function context(snap) {   // pure: a snapshot plus what the page remembers
     on: sw, view: s.viewMode, hiddenShown: !!s.showHidden,
     depth: path.split("/").filter(Boolean).length,
     entries: shown.length, subfolders: shown.filter(k => k.dir).length, images: shown.filter(k => k.image).length,
-    textFilesHere: shown.filter(k => !k.dir && TEXTY.test(k.name)).length, hiddenHere: kids.filter(k => k.hidden).length,
+    textFilesHere: kids.filter(k => !k.dir && !k.hidden && TEXTY.test(k.name)).length,   // what Search in Files will read
+    hiddenHere: kids.filter(k => k.hidden).length,   // from the fixture: the app does not list them while they are hidden
     binGrew: snap.trashed > 0, wandered: new Set(snap.visits).size,
     inRepo: REPOS.some(r => path === r || path.startsWith(r + "/")),
     twinElsewhere: !!name && index.folders.some(([n, p]) => n === name && p !== path && top(p) !== top(path)),
@@ -1332,17 +1407,18 @@ function context(snap) {   // pure: a snapshot plus what the page remembers
   };
 }
 const visits = [];
-let trashed = 0, selected = null, selectedText = null, used = new Set();
+let selected = null, selectedText = null, used = new Set();
 let glowing = [], hintSeq = 0;
 async function paintHints() {
   const seq = ++hintSeq;
   const path = curPath;
   const entries = path.startsWith("/") ? kidsAt(path).map(k => ({ name: k.name, dir: isDirNode(k), image: !isDirNode(k) && (!!k.src && !/\.(mp4|webm|mov|m4v)$/i.test(k.src) && k.type !== "video" || IMG_RE.test(k.name)), hidden: k.name.startsWith(".") })) : [];
   if (seq !== hintSeq) return;
-  glowing = resonate(context({ setup, path, entries, selectedText, trashed, visits }), used);
+  glowing = resonate(context({ setup, path, entries, selectedText, trashed: (st.trashCount || 0) - trashAtStart, visits }), used);
   const lit = new Set(glowing.map(t => { const [kind, id] = t.split(":"); return kind === "part" ? $(`#switches [data-p="${id}"]`) : $(`#actions [data-a="${id}"]`); }).filter(Boolean));
   RAIL.querySelectorAll(".hint").forEach(x => { if (!lit.has(x)) x.classList.remove("hint"); });
   for (const el of lit) el.classList.add("hint");
+  paintTab();
   RAIL.querySelectorAll("[data-sect]").forEach(sec => sec.querySelector(".sect-h .led")?.classList.toggle("on", !!sec.querySelector(".hint")));
   paintMore();
 }
@@ -1380,6 +1456,49 @@ TABS.forEach((t, i) => {
   t.addEventListener("click", () => selectTab(t));
   t.addEventListener("keydown", e => { if (e.key === "ArrowRight" || e.key === "ArrowLeft") { const n = TABS[(i + (e.key === "ArrowRight" ? 1 : -1) + TABS.length) % TABS.length]; selectTab(n); n.focus(); e.preventDefault(); } });
 });
+/* ======================= the rail tucks away ======================= */
+// The real app keeps each pane at a working width and scrolls the pane area sideways rather than squeezing it, so a busy
+// window wants the whole floor. Tucked, the bench is a slim tab; what would have glowed on it glows there instead.
+const WIDE = matchMedia("(min-width: 861px)");
+let tucked = FLOOR.classList.contains("tucked");
+function setTucked(on, { focus = false } = {}) {
+  tucked = on;
+  const eff = on && WIDE.matches;   // on a phone the bench sits under the window and never tucks
+  FLOOR.classList.toggle("tucked", on);
+  $("#rail-body").inert = eff; $("#rail-tab").inert = !eff;
+  $("#rail-fold").setAttribute("aria-expanded", String(!on)); $("#rail-open").setAttribute("aria-expanded", String(on));
+  if (focus) (eff ? $("#rail-open") : $("#rail-fold")).focus({ preventScroll: true });
+  syncUrl(); paintTab(); paintMore();
+}
+$("#rail-fold").addEventListener("click", () => setTucked(true, { focus: true }));
+$("#rail-open").addEventListener("click", () => setTucked(false, { focus: true }));
+WIDE.addEventListener?.("change", () => setTucked(tucked));
+const ACT_ICON = {
+  goto: `<path class="ai" d="M6 2.5h7.5l3.5 3.5v9.5H6z"/><path class="ai" d="M9 9.5h5M11.5 7l2.5 2.5-2.5 2.5"/>`,
+  search: `<circle class="ai" cx="10" cy="7.5" r="4.5"/><path class="ai" d="m13.3 10.8 3.7 3.7"/>`,
+  palette: `<rect class="ai" x="2.5" y="2.5" width="17" height="12" rx="2.5"/><path class="ai" d="m6 6.5 2.5 2-2.5 2M10.5 10.5h4"/>`,
+  hidden: `<path class="ai" d="M2 8.5s3.2-5 9-5 9 5 9 5-3.2 5-9 5-9-5-9-5z"/><circle class="ai" cx="11" cy="8.5" r="2.4"/>`,
+  views: `<rect class="ai" x="3" y="2.5" width="6.5" height="5.5" rx="1.2"/><rect class="ai" x="12.5" y="2.5" width="6.5" height="5.5" rx="1.2"/><rect class="ai" x="3" y="10" width="6.5" height="5.5" rx="1.2"/><rect class="ai" x="12.5" y="10" width="6.5" height="5.5" rx="1.2"/>`,
+  graph: `<circle class="ai" cx="6" cy="4" r="1.8"/><circle class="ai" cx="6" cy="14" r="1.8"/><circle class="ai" cx="16" cy="7" r="1.8"/><path class="ai" d="M6 5.8v6.4M16 8.8c0 3-4 3.2-8.3 4.6"/>`,
+  plugins: `<path class="ai" d="M5 5h4a2 2 0 1 1 4 0h4v4a2 2 0 1 1 0 4v4H5z"/>`,
+  keys: `<rect class="ai" x="2" y="4" width="18" height="10" rx="2"/><path class="ai" d="M5.5 7.5h1M9 7.5h1M12.5 7.5h1M16 7.5h.5M6.5 11h9"/>`,
+};
+function paintTab() {
+  $("#tab-led").classList.toggle("on", glowing.length > 0);
+  const html = glowing.map(t => {
+    const [kind, id] = t.split(":");
+    if (kind === "part") { const w = SWITCHES.find(x => x.id === id); return w ? `<li><button type="button" data-hint="${t}" title="${esc(w.label)}: worth trying here">${glyph(id)}</button></li>` : ""; }
+    const a = ACTIONS.find(x => x.id === id); return a ? `<li><button type="button" data-hint="${t}" title="${esc(a.name)}: worth trying here"><svg viewBox="0 0 22 17" aria-hidden="true">${ACT_ICON[id] || ""}</svg></button></li>` : "";
+  }).join("");
+  if ($("#rail-hints").dataset.k !== html) { $("#rail-hints").innerHTML = html; $("#rail-hints").dataset.k = html; }
+}
+$("#rail-hints").addEventListener("click", e => {   // the same control as on the bench, without unfolding it
+  const b = e.target.closest("[data-hint]"); if (!b) return;
+  const [kind, id] = b.dataset.hint.split(":");
+  if (kind === "part") { const sw = $(`#switches [data-p="${id}"]`); if (sw) flipSwitch(sw); }
+  else { const li = $(`#actions [data-a="${id}"]`), a = ACTIONS.find(x => x.id === id); if (li && a) doAction(li, a); }
+});
+
 $("#file-tog").addEventListener("click", () => { const shut = $("#file").classList.toggle("shut"); $("#file-tog").setAttribute("aria-expanded", String(!shut)); $("#file-tog .sr").textContent = shut ? "Unfold the file" : "Fold the file"; });
 
 /* ======================= setup.json: real settings as text ======================= */
@@ -1473,12 +1592,18 @@ async function applyEdit() {
 }
 
 /* ======================= keep everything in step with the window ======================= */
-let setup = setupFrom(stage.state);
-let curPath = stage.state.path || "/";
+// The app's state as the page knows it: read whole at ready and after the page's own changes, and otherwise kept by the
+// events (settings, panels, keybindings, view, navigate, fs-change), each of which carries its part in full.
+let st = { ...stage.state, panes: stage.state.panes.map(p => ({ ...p })) };
+let setup = setupFrom(st);
+let curPath = st.path || "/";
+const trashAtStart = st.trashCount || 0;
 function syncUrl() {
   const p = new URLSearchParams(location.search);
   p.set("setup", encodeSetup(setup));
+  p.set("look", lookParam(swatchOf(setup.theme)));   // the page's colours, so a shared link dresses before the app is ready
   if (curPath && curPath.startsWith("/")) p.set("at", curPath); else p.delete("at");
+  if (tucked) p.set("rail", "tucked"); else p.delete("rail");
   try { history.replaceState(null, "", "?" + p.toString() + location.hash); } catch (_) { /* some embeds forbid it */ }
 }
 function onSetup(s) {
@@ -1486,25 +1611,38 @@ function onSetup(s) {
   dress(setup); paintSwitches(setup); paintActions(setup); paintLook(setup); paintNow(); syncUrl(); hintsSoon();
   if (!editing) { writeFile(setup); setStatus("in step with the window"); setNote(""); }
 }
-// every change the app reports is read back as one state, so the page never assembles a setup from partial events
+// after the page's own changes: one read of the whole state (serialized, so a burst of clicks reads once more at the end)
 let refreshing = null, again = false;
 async function refresh() {
   if (refreshing) { again = true; return refreshing; }
   refreshing = (async () => {
-    do { again = false; const st = await stage.getState(); curPath = st.path || curPath; onSetup(setupFrom(st)); } while (again);
+    do { again = false; const s = await stage.getState(); st = { ...s, panes: s.panes.map(p => ({ ...p })) }; paint(); } while (again);
   })();
   try { await refreshing; } finally { refreshing = null; }
 }
-let refreshT = 0;
-const refreshSoon = () => { clearTimeout(refreshT); refreshT = setTimeout(refresh, 40); };
-for (const ev of ["settings", "panels", "keybindings"]) stage.on(ev, refreshSoon);
+const activePane = () => st.panes.find(p => p.active) || st.panes[0];
+function paint() { const a = activePane(); curPath = (a && a.path) || st.path || curPath; onSetup(setupFrom(st)); }
+let paintT = 0;
+const paintSoon = () => { clearTimeout(paintT); paintT = setTimeout(paint, 30); };
+const paneAt = i => st.panes.find(p => p.index === i || p.paneId === i);
+const makeActive = i => { const t = paneAt(i); if (t) for (const p of st.panes) p.active = p === t; };
+stage.on("settings", s => { st.settings = s; paintSoon(); });
+stage.on("panels", p => { st.panels = p; paintSoon(); });
+stage.on("keybindings", k => { st.keybindings = k; paintSoon(); });
+stage.on("view", ({ viewMode, pane }) => {
+  if (viewMode == null) { st.panes = st.panes.filter(p => p !== paneAt(pane)); return paintSoon(); }
+  const p = paneAt(pane); if (p) { p.viewMode = viewMode; makeActive(pane); } else st.panes.push({ index: pane, path: null, viewMode, active: false });
+  paintSoon();
+});
 stage.on("navigate", ({ path, pane }) => {
-  if (!path) return refreshSoon();
+  if (!path) { st.panes = st.panes.filter(p => p !== paneAt(pane)); if (st.panes.length && !st.panes.some(p => p.active)) st.panes[0].active = true; return paintSoon(); }
+  const p = paneAt(pane); if (p) p.path = path; else st.panes.push({ index: pane, path, viewMode: st.settings.viewMode, active: false });
+  makeActive(pane);
   if (visits.at(-1) !== path) visits.push(path);
   if (visits.length > 30) visits.splice(0, visits.length - 30);
   used = new Set();
   selected = null; selectedText = null;
-  refreshSoon();
+  paintSoon();
 });
 stage.on("select", async ({ path }) => {
   selected = path || null; selectedText = null;
@@ -1514,7 +1652,7 @@ stage.on("select", async ({ path }) => {
   }
   hintsSoon();
 });
-stage.on("fs-change", ({ op }) => { if (op === "trash") trashed++; hintsSoon(); });
+stage.on("fs-change", ({ trashCount }) => { if (typeof trashCount === "number") st.trashCount = trashCount; hintsSoon(); });
 stage.on("overlay", () => hintsSoon());
 
 /* ======================= opened files go to the system's app ======================= */
@@ -1522,9 +1660,10 @@ const KIND = { markdown: "md", text: "txt", csv: "csv", image: "img", video: "vi
 const fmtSize = b => typeof b !== "number" ? String(b || "") : b < 1024 ? `${b} B` : b < 1048576 ? `${Math.max(1, Math.round(b / 1024))} KB` : b < 1073741824 ? `${(b / 1048576).toFixed(1)} MB` : `${(b / 1073741824).toFixed(1)} GB`;
 stage.on("open-external", async file => {
   if (FOUND_RE.test(file.name) && await consider(file.path)) return;   // the explorer's own setups and themes are offered instead
-  const origin = originNow();
+  const origin = onPage(file.rect);
   HostApps.open({ path: file.path, name: file.name, kind: KIND[file.kind] || "file", text: file.text ?? null, src: file.src || null, poster: file.poster || null, size: fmtSize(file.size), date: file.date || "", px: null, duration: null }, {
-    origin, locate: () => origin,
+    // grows from the opened row, and returns to wherever that row is on close (it may have scrolled or gone)
+    origin, locate: path => stage.readFile(path).then(f => f && f.rect ? onPage(f.rect) : origin, () => origin),
     inert: [$(".strip"), $(".floor")],
     onClose: focusApp,
   });
@@ -1547,6 +1686,7 @@ $("#copy-json").addEventListener("click", e => copy(pretty(setup) + "\n", e.curr
 /* ======================= start ======================= */
 visits.push(curPath);
 renderSwitches(); renderActions(); renderLook(); renderShelf();
+setTucked(tucked);
 if (fromUrl) await apply(start, { complete: true });
 else {   // the init settings cover the look; the runtime panels and view follow the same path as any setup
   if (start.terminal || start.split) await apply({ terminal: start.terminal, split: start.split });

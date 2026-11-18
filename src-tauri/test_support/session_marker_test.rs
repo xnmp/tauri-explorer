@@ -15,6 +15,7 @@ fn host() -> HostSession {
 fn record(started: u64) -> SessionRecord {
     SessionRecord {
         version: VERSION.into(),
+        build: Some("release:/opt/tauri-explorer/tauri-explorer".into()),
         pid: 4242,
         started,
         host: host(),
@@ -28,8 +29,13 @@ fn dead(record: SessionRecord) -> Observation {
     }
 }
 
+/// This launch: same version, installation and host session as `record`.
+fn current() -> SessionRecord {
+    record(1_000)
+}
+
 fn verdict(observation: &Observation, covered: bool) -> Verdict {
-    classify(observation, VERSION, &host(), |_| covered)
+    classify(observation, &current(), |_| covered)
 }
 
 struct Profile {
@@ -57,8 +63,7 @@ impl Profile {
                 sessions: &self.sessions,
                 crash_dir: &self.crash_dir,
                 own,
-                version: VERSION,
-                host: &host(),
+                current: &current(),
             },
             now,
             || "os: test".to_owned(),
@@ -119,10 +124,56 @@ fn a_marker_from_another_app_version_is_not_reported() {
 }
 
 #[test]
+fn a_marker_from_another_installation_of_this_version_is_not_reported() {
+    // An AppImage beside a system package, or a dev build beside a release.
+    for build in [
+        Some("release:/tmp/Tauri_Explorer.AppImage".to_owned()),
+        Some("debug:/opt/tauri-explorer/tauri-explorer".to_owned()),
+        None,
+    ] {
+        let mut other = record(100);
+        other.build = build;
+        assert_eq!(verdict(&dead(other), false), Verdict::OtherVersion);
+    }
+}
+
+#[test]
+fn only_release_builds_keep_markers_unless_a_debug_build_opts_in() {
+    // (debug build, e2e hooks, TAURI_EXPLORER_SESSION_MARKER) -> enabled
+    let cases = [
+        ((false, false, None), true),
+        ((false, false, Some("0")), true),
+        ((true, false, None), false),
+        ((true, false, Some("0")), false),
+        ((true, false, Some("yes")), false),
+        ((true, false, Some("1")), true),
+        // E2E hook builds never arm, whatever the opt-in says.
+        ((true, true, Some("1")), false),
+        ((false, true, None), false),
+        ((false, true, Some("1")), false),
+    ];
+    for ((debug, hooks, opt_in), expected) in cases {
+        assert_eq!(
+            enabled_for(debug, hooks, opt_in),
+            expected,
+            "debug={debug} hooks={hooks} opt_in={opt_in:?}"
+        );
+    }
+}
+
+#[test]
+fn this_test_build_does_not_arm_without_the_opt_in() {
+    // cargo test builds carry debug assertions, like `bun run start`.
+    if std::env::var_os("TAURI_EXPLORER_SESSION_MARKER").is_none() {
+        assert!(!enabled());
+    }
+}
+
+#[test]
 fn a_crash_file_from_that_session_already_explains_the_exit() {
     let mut asked = None;
     let observation = dead(record(100));
-    let result = classify(&observation, VERSION, &host(), |since| {
+    let result = classify(&observation, &current(), |since| {
         asked = Some(since);
         true
     });
@@ -341,14 +392,27 @@ fn markers_from_other_versions_or_formats_are_cleared_silently() {
 }
 
 #[test]
+fn a_fresh_staging_file_of_a_launch_arming_now_is_left_alone() {
+    let profile = profile();
+    std::fs::create_dir_all(&profile.sessions_dir).unwrap();
+    // Created, not yet locked: another launch is between those two steps.
+    std::fs::write(profile.sessions_dir.join(".session-new.tmp"), "").unwrap();
+    assert_eq!(profile.review(None, 200), None);
+    assert_eq!(profile.markers(), 1, "a fresh staging file must survive");
+}
+
+#[test]
 fn a_marker_staged_by_a_process_that_died_while_arming_is_cleared() {
     let profile = profile();
     std::fs::create_dir_all(&profile.sessions_dir).unwrap();
-    std::fs::write(
-        profile.sessions_dir.join(".session-abc.tmp"),
-        record(100).encode(),
-    )
-    .unwrap();
+    let stale = profile.sessions_dir.join(".session-abc.tmp");
+    std::fs::write(&stale, record(100).encode()).unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&stale)
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - STAGING_GRACE - Duration::from_secs(1))
+        .unwrap();
     std::fs::write(profile.sessions_dir.join("unrelated.txt"), "keep").unwrap();
     assert_eq!(profile.review(None, 200), None);
     assert!(profile.reports().is_empty());
@@ -419,6 +483,45 @@ fn only_local_x11_displays_name_a_socket() {
 }
 
 #[test]
+fn an_exit_before_arming_leaves_no_marker() {
+    let profile = profile();
+    let phase = Mutex::new(Phase::Idle);
+    disarm_phase(&phase);
+    assert_eq!(
+        arm_unless_exiting(&phase, || profile.sessions.arm(&record(100))),
+        None
+    );
+    assert_eq!(profile.markers(), 0);
+}
+
+#[test]
+fn an_exit_while_the_marker_is_being_written_removes_it() {
+    let profile = profile();
+    let phase = Mutex::new(Phase::Idle);
+    let armed = arm_unless_exiting(&phase, || {
+        let marker = profile.sessions.arm(&record(100));
+        // The exit runs while the write is in flight: it must not wait for
+        // the write (the phase lock is free), and finds nothing to remove.
+        disarm_phase(&phase);
+        marker
+    });
+    assert_eq!(armed, None);
+    assert_eq!(profile.markers(), 0, "the late marker must be removed");
+}
+
+#[test]
+fn an_armed_marker_is_removed_by_the_exit_once() {
+    let profile = profile();
+    let phase = Mutex::new(Phase::Idle);
+    let own = arm_unless_exiting(&phase, || profile.sessions.arm(&record(100))).unwrap();
+    assert!(own.exists());
+    disarm_phase(&phase);
+    disarm_phase(&phase);
+    assert_eq!(profile.markers(), 0);
+    assert_eq!(profile.review(None, 200), None);
+}
+
+#[test]
 fn review_waits_only_for_a_started_review() {
     // Nothing started in this process: returns at once.
     let started = std::time::Instant::now();
@@ -476,8 +579,7 @@ mod real_process {
                 sessions: &sessions,
                 crash_dir: &log_dir.join("crashes"),
                 own: None,
-                version: VERSION,
-                host: &HostSession::current(),
+                current: &SessionRecord::current(now_secs()),
             },
             now_secs(),
             || "os: test".to_owned(),

@@ -21,12 +21,18 @@ explorer path (`src/lib/state/CLAUDE.md`).
 
 Every orderly exit path must run `release_process_resources` (it disarms the
 session marker first): `RunEvent::Exit`, the updater's Windows `on_before_exit`,
-and the Unix signal path in `termination_signals.rs`. A new path that exits
-without it makes the next launch report "did not exit cleanly". Only the main
-process arms or reviews markers (`start` sits after the portal branch in
-setup); liveness is the OS file lock, never a PID. In-process tests release a
-marker with `abandon`, not `drop`: a sibling test's fork can share the
-descriptor, and so the lock, until it execs.
+and the Unix signal path in `termination_signals.rs`; an unprevented
+`ExitRequested` disarms already, so a teardown hang killed by the user is not
+reported. A new path that exits without it makes the next launch report "did
+not exit cleanly". Only the main process of a release build arms or reviews
+markers (`session_marker::enabled`: debug builds opt in with
+`TAURI_EXPLORER_SESSION_MARKER=1`; `e2e-hooks` builds never, since their
+drivers SIGKILL the app); `start` sits after the portal branch in setup.
+Liveness is the OS file lock, never a PID; markers also record the installation
+(`build`), so two installs of one version never judge each other. Only
+foreground windows take the crash report (`claimLaunchCrash`). In-process tests
+release a marker with `abandon`, not `drop`: a sibling test's fork can share
+the descriptor, and so the lock, until it execs.
 
 ## Crate and test layout
 

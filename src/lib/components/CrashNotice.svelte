@@ -9,16 +9,15 @@
   import { onMount } from "svelte";
   import { takeCrashReport } from "$lib/api/crash";
   import { crashNoticeLead } from "$lib/domain/crash-report";
-  import { crashReportStore } from "$lib/state/crash-report.svelte";
+  import { claimLaunchCrash, crashReportStore } from "$lib/state/crash-report.svelte";
+  import { warmMode } from "$lib/state/page-foreground";
 
   const report = $derived(crashReportStore.offered);
 
   onMount(() => {
-    takeCrashReport()
-      .then((r) => crashReportStore.offer(r))
-      .catch(() => {
-        // Crash lookup failing must never break startup.
-      });
+    claimLaunchCrash(crashReportStore, takeCrashReport, warmMode() === "off").catch(() => {
+      // Crash lookup failing must never break startup.
+    });
   });
 
   // Lazy: the report draft store stays out of the startup bundle.

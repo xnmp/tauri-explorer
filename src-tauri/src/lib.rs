@@ -713,17 +713,20 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
 
             // Unclean-exit detection (#1686): main process only, so after the
             // portal branch; single-instance hand-offs never reach setup.
+            // Release builds only, unless opted in (`session_marker::enabled`).
             // Signals first: an armed marker must never meet a stop request
             // under the default action, which skips every cleanup.
-            #[cfg(unix)]
-            {
-                let handle = app.handle().clone();
-                if let Err(error) = termination_signals::install(move || handle.exit(0)) {
-                    log::warn!("Termination signal handling is unavailable: {error}");
+            if session_marker::enabled() {
+                #[cfg(unix)]
+                {
+                    let handle = app.handle().clone();
+                    if let Err(error) = termination_signals::install(move || handle.exit(0)) {
+                        log::warn!("Termination signal handling is unavailable: {error}");
+                    }
                 }
-            }
-            if let Ok(log_dir) = tauri::Manager::path(app).app_log_dir() {
-                session_marker::start(log_dir);
+                if let Ok(log_dir) = tauri::Manager::path(app).app_log_dir() {
+                    session_marker::start(log_dir);
+                }
             }
 
             // Create window programmatically so we can inject initialization_script.
@@ -848,6 +851,11 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
                 if let tauri::RunEvent::ExitRequested { code: None, api, .. } = &event {
                     api.prevent_exit();
                 }
+            } else if matches!(&event, tauri::RunEvent::ExitRequested { .. }) {
+                // Nothing prevents a main-process exit: the stop is orderly
+                // from here, even if teardown (WebKitGTK) then hangs and the
+                // user kills the process (#1686).
+                session_marker::disarm();
             }
             if let tauri::RunEvent::WindowEvent {
                 label,

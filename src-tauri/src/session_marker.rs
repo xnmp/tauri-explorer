@@ -40,6 +40,10 @@ const STAGING_PREFIX: &str = ".session-";
 const STAGING_SUFFIX: &str = ".tmp";
 /// A record is a handful of short lines; anything larger is not ours.
 const MAX_RECORD: u64 = 4096;
+/// A staging file this young may belong to a launch arming right now: its
+/// lock is taken just after creation, so a concurrent review must not claim
+/// it in between. Older ones are left by a process that died while arming.
+pub(crate) const STAGING_GRACE: Duration = Duration::from_secs(10);
 /// Windows estimates boot time from the uptime counter; clock adjustments
 /// move the estimate by seconds, a reboot by much more.
 const BOOT_EPOCH_TOLERANCE_SECS: i64 = 120;
@@ -91,6 +95,10 @@ impl HostSession {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SessionRecord {
     pub version: String,
+    /// Which installation ran: its executable (or AppImage) and profile. Two
+    /// installs of one version (an AppImage beside a system package, a dev
+    /// build beside a release) must not judge each other's sessions.
+    pub build: Option<String>,
     pub pid: u32,
     /// When the session started (Unix seconds).
     pub started: u64,
@@ -107,6 +115,7 @@ impl SessionRecord {
     pub(crate) fn current(started: u64) -> Self {
         Self {
             version: env!("CARGO_PKG_VERSION").to_owned(),
+            build: build_identity(),
             pid: std::process::id(),
             started,
             host: HostSession::current(),
@@ -123,6 +132,7 @@ impl SessionRecord {
         let host = &self.host;
         let boot_epoch = host.boot_epoch.map(|epoch| epoch.to_string());
         for (key, value) in [
+            ("build", self.build.as_deref()),
             ("boot", host.boot.as_deref()),
             ("boot_epoch", boot_epoch.as_deref()),
             ("login", host.login.as_deref()),
@@ -142,13 +152,14 @@ impl SessionRecord {
         if lines.next()? != MAGIC {
             return None;
         }
-        let (mut version, mut pid, mut started) = (None, None, None);
+        let (mut version, mut build, mut pid, mut started) = (None, None, None, None);
         let mut host = HostSession::default();
         for line in lines {
             let (key, value) = line.split_once('=')?;
             let value = clean_value(value)?.to_owned();
             match key {
                 "version" => version = Some(value),
+                "build" => build = Some(value),
                 "pid" => pid = Some(value.parse().ok()?),
                 "started" => started = Some(value.parse().ok()?),
                 "boot" => host.boot = Some(value),
@@ -161,6 +172,7 @@ impl SessionRecord {
         }
         Some(Self {
             version: version?,
+            build,
             pid: pid?,
             started: started?,
             host,
@@ -175,8 +187,9 @@ pub(crate) enum Verdict {
     OwnerAlive,
     /// Unreadable, or written in another format: not ours to judge.
     Unrecognized,
-    /// Written by another app version: an update replaced the binary, and a
-    /// report would describe a build the reporter no longer runs.
+    /// Written by another app version or installation: an update replaced
+    /// the binary (a report would describe a build the reporter no longer
+    /// runs), or another install of this version shares the profile.
     OtherVersion,
     /// The machine restarted, the user logged out or the display server
     /// restarted since: the OS may have ended the app without a signal.
@@ -199,8 +212,7 @@ pub(crate) struct Observation {
 /// whether an unconsumed crash file was written at or after a time.
 pub(crate) fn classify(
     observation: &Observation,
-    current_version: &str,
-    current_host: &HostSession,
+    current: &SessionRecord,
     crash_report_since: impl FnOnce(u64) -> bool,
 ) -> Verdict {
     if observation.owner_alive {
@@ -209,10 +221,10 @@ pub(crate) fn classify(
     let Some(record) = &observation.record else {
         return Verdict::Unrecognized;
     };
-    if record.version != current_version {
+    if record.version != current.version || record.build != current.build {
         return Verdict::OtherVersion;
     }
-    if !record.host.continues(current_host) {
+    if !record.host.continues(&current.host) {
         return Verdict::HostSessionEnded;
     }
     if crash_report_since(record.started) {
@@ -335,7 +347,20 @@ impl Sessions {
             let Ok(file) = open_shared(&path) else {
                 continue;
             };
-            if !file.metadata().is_ok_and(|m| m.is_file()) {
+            let Ok(metadata) = file.metadata() else {
+                continue;
+            };
+            if !metadata.is_file() {
+                continue;
+            }
+            let young = || {
+                metadata
+                    .modified()
+                    .ok()
+                    .and_then(|at| at.elapsed().ok())
+                    .is_none_or(|age| age < STAGING_GRACE)
+            };
+            if staging && young() {
                 continue;
             }
             match file.try_lock() {
@@ -383,8 +408,7 @@ pub(crate) struct Review<'a> {
     pub sessions: &'a Sessions,
     pub crash_dir: &'a Path,
     pub own: Option<&'a Path>,
-    pub version: &'a str,
-    pub host: &'a HostSession,
+    pub current: &'a SessionRecord,
 }
 
 /// Claim every ended session and publish one crash file for the newest
@@ -397,7 +421,7 @@ pub(crate) fn review_ended_sessions(
 ) -> Option<PathBuf> {
     let mut newest_unclean: Option<SessionRecord> = None;
     for observation in review.sessions.observe(review.own) {
-        let verdict = classify(&observation, review.version, review.host, |since| {
+        let verdict = classify(&observation, review.current, |since| {
             crate::crash_report::unseen_report_since(review.crash_dir, since)
         });
         if verdict != Verdict::OwnerAlive {
@@ -437,7 +461,7 @@ pub(crate) fn review_ended_sessions(
 
 // --- Process-wide state: the main process's own marker -------------------
 
-enum Phase {
+pub(crate) enum Phase {
     Idle,
     Armed(ArmedMarker),
     Disarmed,
@@ -477,33 +501,14 @@ pub(crate) fn start(log_dir: PathBuf) {
         .spawn(move || {
             let sessions = Sessions::new(log_dir.join("sessions"));
             let record = SessionRecord::current(now_secs());
-            let own = {
-                let mut phase = PHASE.lock().unwrap_or_else(|p| p.into_inner());
-                // An exit that began before this thread ran stays disarmed.
-                if matches!(*phase, Phase::Idle) {
-                    match sessions.arm(&record) {
-                        Ok(marker) => {
-                            let own = marker.path().to_path_buf();
-                            *phase = Phase::Armed(marker);
-                            Some(own)
-                        }
-                        Err(error) => {
-                            log::warn!("Could not write the session marker: {error}");
-                            None
-                        }
-                    }
-                } else {
-                    None
-                }
-            };
+            let own = arm_unless_exiting(&PHASE, || sessions.arm(&record));
             let crash_dir = log_dir.join("crashes");
             review_ended_sessions(
                 &Review {
                     sessions: &sessions,
                     crash_dir: &crash_dir,
                     own: own.as_deref(),
-                    version: &record.version,
-                    host: &record.host,
+                    current: &record,
                 },
                 now_secs(),
                 || crate::environment::render_crash_lines(crate::environment::summary()),
@@ -516,15 +521,100 @@ pub(crate) fn start(log_dir: PathBuf) {
     }
 }
 
-/// Orderly exit: remove this process's marker. Idempotent, and a no-op in
-/// processes that never armed one.
-pub(crate) fn disarm() {
-    let mut phase = PHASE.lock().unwrap_or_else(|p| p.into_inner());
-    if let Phase::Armed(marker) = std::mem::replace(&mut *phase, Phase::Disarmed) {
-        if let Err(error) = marker.disarm() {
-            log::warn!("Could not remove the session marker: {error}");
+/// Arm this process's marker unless an exit has begun. The file IO (`arm`)
+/// runs outside the phase lock, so an exit never waits on a stalled disk; an
+/// exit that begins meanwhile finds no marker yet, so it is removed here.
+pub(crate) fn arm_unless_exiting(
+    phase: &Mutex<Phase>,
+    arm: impl FnOnce() -> std::io::Result<ArmedMarker>,
+) -> Option<PathBuf> {
+    let lock = || phase.lock().unwrap_or_else(|p| p.into_inner());
+    if !matches!(*lock(), Phase::Idle) {
+        return None;
+    }
+    let marker = match arm() {
+        Ok(marker) => marker,
+        Err(error) => {
+            log::warn!("Could not write the session marker: {error}");
+            return None;
+        }
+    };
+    let own = marker.path().to_path_buf();
+    let late = {
+        let mut phase = lock();
+        if matches!(*phase, Phase::Idle) {
+            *phase = Phase::Armed(marker);
+            None
+        } else {
+            Some(marker)
+        }
+    };
+    match late {
+        None => Some(own),
+        Some(marker) => {
+            remove(marker);
+            None
         }
     }
+}
+
+fn remove(marker: ArmedMarker) {
+    if let Err(error) = marker.disarm() {
+        log::warn!("Could not remove the session marker: {error}");
+    }
+}
+
+/// Orderly exit for `phase`: see `disarm`.
+pub(crate) fn disarm_phase(phase: &Mutex<Phase>) {
+    let armed = {
+        let mut phase = phase.lock().unwrap_or_else(|p| p.into_inner());
+        std::mem::replace(&mut *phase, Phase::Disarmed)
+    };
+    if let Phase::Armed(marker) = armed {
+        remove(marker);
+    }
+}
+
+/// Orderly exit: remove this process's marker. Idempotent, and a no-op in
+/// processes that never armed one. The removal runs outside the lock.
+pub(crate) fn disarm() {
+    disarm_phase(&PHASE);
+}
+
+/// Whether this build keeps session markers. Development builds share the
+/// release's profile and version but are routinely killed (a dev server
+/// restarting the app, `kill -9`, a console Ctrl+C), so they opt in with
+/// `TAURI_EXPLORER_SESSION_MARKER=1`. Builds with E2E hooks never do: their
+/// drivers end the app with SIGKILL or TerminateProcess on every session.
+pub(crate) fn enabled_for(debug_build: bool, e2e_hooks: bool, opt_in: Option<&str>) -> bool {
+    !e2e_hooks && (!debug_build || opt_in == Some("1"))
+}
+
+pub(crate) fn enabled() -> bool {
+    enabled_for(
+        cfg!(debug_assertions),
+        cfg!(feature = "e2e-hooks"),
+        std::env::var("TAURI_EXPLORER_SESSION_MARKER")
+            .ok()
+            .as_deref(),
+    )
+}
+
+/// The installation identity a marker records: the AppImage file when run
+/// from one (its executable lives in a fresh mount per run), otherwise the
+/// canonical executable, plus the build profile. Never leaves the marker.
+fn build_identity() -> Option<String> {
+    let executable = std::env::var_os("APPIMAGE")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::current_exe().ok())?;
+    let executable = executable.canonicalize().unwrap_or(executable);
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
+    Some(format!("{profile}:{}", executable.to_string_lossy()))
 }
 
 /// Wait (bounded) for the startup review, so the crash notice sees an unclean

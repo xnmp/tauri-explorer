@@ -167,26 +167,31 @@ function createThemeState() {
       // These keys hold the opaque theme background that the next opaque
       // window paints before it boots. A translucent window's body is
       // transparent (#1757), and would erase it.
-      if (windowMaterial() !== null) return;
-      const raw = getComputedStyle(document.body).backgroundColor || "";
-      // Raw CSS color string, not JSON — app.html's pre-paint script reads
-      // this key directly, so the exact format must be preserved.
-      if (raw) savePersistedRaw("explorer-bg", raw);
-      const match = raw.match(/[\d.]+/g);
-      if (match && match.length >= 3) {
-        const vals = match.map(Number);
-        const isFloat = vals[0] <= 1 && vals[1] <= 1 && vals[2] <= 1 && raw.includes("color(");
-        const r = isFloat ? Math.round(vals[0] * 255) : vals[0];
-        const g = isFloat ? Math.round(vals[1] * 255) : vals[1];
-        const b = isFloat ? Math.round(vals[2] * 255) : vals[2];
-        const a = vals[3] !== undefined
-          ? Math.round((isFloat || vals[3] <= 1 ? vals[3] : vals[3] / 255) * 255)
-          : 255;
-        savePersisted(EXPLORER_BG_RGBA_KEY, [r, g, b, a]);
-      }
+      if (windowMaterial() === null) saveOpaqueBackground();
+      // Every window, translucent ones included: the native appearance picks
+      // the material's light or dark variant.
       const colorScheme = getComputedStyle(document.documentElement).colorScheme;
       setWindowTheme(colorScheme === "light" ? "light" : "dark");
     });
+  }
+
+  function saveOpaqueBackground() {
+    const raw = getComputedStyle(document.body).backgroundColor || "";
+    // Raw CSS color string, not JSON — app.html's pre-paint script reads
+    // this key directly, so the exact format must be preserved.
+    if (raw) savePersistedRaw("explorer-bg", raw);
+    const match = raw.match(/[\d.]+/g);
+    if (match && match.length >= 3) {
+      const vals = match.map(Number);
+      const isFloat = vals[0] <= 1 && vals[1] <= 1 && vals[2] <= 1 && raw.includes("color(");
+      const r = isFloat ? Math.round(vals[0] * 255) : vals[0];
+      const g = isFloat ? Math.round(vals[1] * 255) : vals[1];
+      const b = isFloat ? Math.round(vals[2] * 255) : vals[2];
+      const a = vals[3] !== undefined
+        ? Math.round((isFloat || vals[3] <= 1 ? vals[3] : vals[3] / 255) * 255)
+        : 255;
+      savePersisted(EXPLORER_BG_RGBA_KEY, [r, g, b, a]);
+    }
   }
 
   /** Swap the visual theme without persisting it. Used by the theme picker

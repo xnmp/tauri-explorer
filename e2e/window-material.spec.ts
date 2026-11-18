@@ -31,6 +31,11 @@ const inlineBackground = (page: Page) => page.evaluate(() => document.documentEl
 
 test.describe("window material from its creator (#1757)", () => {
   test("a window built translucent shows its material, uncovered, though settings now say off", async ({ page }) => {
+    // Record the native appearance requests: the material's light or dark
+    // variant follows them, so a translucent window must still send them.
+    await page.addInitScript(() => {
+      (globalThis as { __mockControl?: unknown }).__mockControl = { invokeArgs: { set_window_theme: [] } };
+    });
     await open(page, "material=acrylic", false);
 
     await expect(html(page)).toHaveAttribute("data-material", "acrylic");
@@ -42,6 +47,9 @@ test.describe("window material from its creator (#1757)", () => {
     // window paints before boot.
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     expect(await page.evaluate(() => localStorage.getItem("explorer-bg"))).toBe(CACHED_BG);
+    expect(await page.evaluate(() =>
+      (globalThis as { __mockControl?: { invokeArgs?: Record<string, unknown[]> } })
+        .__mockControl?.invokeArgs?.set_window_theme)).toContainEqual({ theme: "dark" });
 
     // A reload (or renderer recovery, which keeps the URL) keeps it.
     await page.reload();

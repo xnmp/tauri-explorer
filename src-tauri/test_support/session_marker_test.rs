@@ -308,6 +308,17 @@ fn only_an_unseen_crash_file_written_during_the_session_covers_it() {
 }
 
 #[test]
+fn an_unclean_exit_report_published_during_a_session_does_not_cover_its_own_end() {
+    let profile = profile();
+    // Launch at 100 reports an earlier session (file at 101); nobody consumes
+    // it, and then the launch itself dies.
+    let earlier = crate::crash_report::unclean_exit_report(VERSION, "os: test", 101, 50);
+    crate::crash_report::publish_report(&profile.crash_dir, 101, earlier.as_bytes()).unwrap();
+    profile.sessions.arm(&record(100)).unwrap().abandon();
+    assert!(profile.review(None, 200).is_some());
+}
+
+#[test]
 fn markers_from_other_versions_or_formats_are_cleared_silently() {
     let profile = profile();
     let mut older = record(100);

@@ -234,12 +234,18 @@ fn report_order(path: &Path) -> (u64, u32) {
 
 /// Whether an unconsumed crash file was written at or after `since` (Unix
 /// seconds): a session it falls in has its exit explained already (#1686).
+/// Unclean-exit reports never count: one describes an earlier session's end,
+/// published after this one started, and must not hide this session's own.
 pub(crate) fn unseen_report_since(crash_dir: &Path, since: u64) -> bool {
     std::fs::read_dir(crash_dir).is_ok_and(|entries| {
         entries
             .flatten()
             .map(|entry| entry.path())
-            .any(|path| is_unseen_report(&path) && report_order(&path).0 >= since)
+            .filter(|path| is_unseen_report(path) && report_order(path).0 >= since)
+            .any(|path| {
+                std::fs::read_to_string(path)
+                    .is_ok_and(|contents| crash_kind(&contents) == CrashKind::Crash)
+            })
     })
 }
 

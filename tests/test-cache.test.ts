@@ -7,6 +7,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
+import picomatch from "picomatch";
 import * as cacheModule from "../scripts/test-cache.mjs";
 import {
   TRUSTED_WRITE, assertOutsideWorkspace, cacheKeys, cacheMode, describeRecord, formatReport, staleEntries,
@@ -950,10 +951,20 @@ describe("ci.yml cache wiring", () => {
     expect(effective(run).UNIT_SELECTION).toBe(effective(restore).UNIT_SELECTION);
   });
 
-  it("summarises the hit rate across every cached target", () => {
-    const report = ci.jobs["test-cache"];
-    expect(report.if).toBe("always()");
-    expect(report.needs).toEqual(expect.arrayContaining(Object.keys(targets)));
-    expect(JSON.stringify(report.steps)).toContain("node scripts/test-cache.mjs report");
+  // Each required gate summarises the targets it requires (#1802), so every
+  // cached target's record is downloaded by exactly one gate that waits for it.
+  it.each(Object.entries(targets))("summarises %s's hit rate in the gate that requires it", (job, target) => {
+    type GateStep = { uses?: string; run?: string; with?: { pattern?: string }; "continue-on-error"?: boolean };
+    const artifact = `test-cache-${target.replace(/\$\{\{ matrix\.\w+ \}\}/, "1")}`;
+    const readers = Object.entries(ci.jobs as Record<string, { if?: string; needs?: string[]; steps?: GateStep[] }>)
+      .filter(([, gate]) => (gate.steps ?? []).some((s) =>
+        s.uses?.startsWith("actions/download-artifact@") && s.with?.pattern?.startsWith("test-cache-") &&
+        picomatch(s.with.pattern)(artifact)));
+    expect(readers.map(([id]) => id)).toHaveLength(1);
+    const [, gate] = readers[0];
+    expect(gate.if).toBe("always()");
+    expect(gate.needs).toContain(job);
+    const report = (gate.steps ?? []).find((s) => s.run?.startsWith("node scripts/test-cache.mjs report"));
+    expect(report?.["continue-on-error"]).toBe(true);
   });
 });

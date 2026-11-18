@@ -36,10 +36,12 @@ export const SETUP_STEP =
   /^(set up job|initialize containers|run actions\/(checkout|cache|download-artifact)\b|run oven-sh\/setup-bun\b|run dtolnay\/rust-toolchain\b|run swatinem\/rust-cache\b)|\binstall\b|refresh apt|^restore .*cache|cache key$|^probe test-result cache$/i;
 
 /**
- * Gate and report jobs that fail only because an upstream job did. They are
- * re-run with their upstream jobs and never decide whether to re-run.
+ * Gate jobs that fail only because an upstream job did. They are re-run with
+ * their upstream jobs and never decide whether to re-run. Each also carries
+ * its targets' test-result cache report, and `frontend` the dev-push impact
+ * map (#1802), all as continue-on-error steps.
  */
-export const AGGREGATE_JOBS = new Set(["frontend", "webkit", "rust", "test-cache"]);
+export const AGGREGATE_JOBS = new Set(["frontend", "webkit", "rust"]);
 
 /**
  * The step a job stopped at: its first unsuccessful step, else the first one

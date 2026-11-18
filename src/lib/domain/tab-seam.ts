@@ -204,14 +204,15 @@ export function surfacePocketsPath(surface: Surface, base: number, corners: Surf
 }
 
 /**
- * The one outline (#1785), `width` wide: the surface's edge (up its left
- * corner from the window's left edge, along its whole top edge, down its
- * right corner to the window's right edge) plus, as a second subpath of the
- * same path, the active tab from foot to foot. A path's stroke is painted as
- * one shape, so where the tab's feet run into the top edge nothing is drawn
- * twice. The centre line sits half a stroke inside the surface, so the
- * stroke covers the surface's top pixel row. Without a shown tab (`c` null)
- * it is the surface's edge alone.
+ * The one outline (#1785), `width` wide: up the surface's left corner from
+ * the window's left edge, along its top edge to the active tab's left foot,
+ * over the tab, on from its right foot and down the right corner to the
+ * window's right edge. The top edge breaks under the tab, whose hole is the
+ * surface itself. Its centre line sits half a stroke inside the surface, so
+ * the stroke covers the surface's top pixel row. Without a shown tab (`c`
+ * null) the top edge runs straight. A foot that lies past a corner (a tab
+ * scrolled out of the strip's viewport, where `outlineClips` hides it) starts
+ * a subpath of its own, so the edge never runs back across the corner.
  */
 export function surfaceEdgePath(c: TabContour | null, width: number, surface: Surface, base: number, corners: SurfaceCorners): string {
   const half = Math.max(0, num(width, 1)) / 2;
@@ -221,25 +222,30 @@ export function surfaceEdgePath(c: TabContour | null, width: number, surface: Su
   const y = b + half;
   const rl = nonNegative(corners.left);
   const rr = nonNegative(corners.right);
+  const leftEnd = rl > half ? l + rl : l;
+  const rightStart = rr > half ? r - rr : r;
   const lead = rl > half
-    ? `M${n(l + half)} ${n(b + rl)}A${n(rl - half)} ${n(rl - half)} 0 0 1 ${n(l + rl)} ${n(y)}`
+    ? `M${n(l + half)} ${n(b + rl)}A${n(rl - half)} ${n(rl - half)} 0 0 1 ${n(leftEnd)} ${n(y)}`
     : `M${n(l)} ${n(y)}`;
   const tail = rr > half
-    ? `L${n(r - rr)} ${n(y)}A${n(rr - half)} ${n(rr - half)} 0 0 1 ${n(r - half)} ${n(b + rr)}`
-    : `L${n(r)} ${n(y)}`;
-  if (!c) return `${lead}${tail}`;
-  const { start, body } = outline({ ...c, base: b }, -half);
-  return `${lead}${tail}M${n(start.x)} ${n(start.y)}${body}`;
+    ? `A${n(rr - half)} ${n(rr - half)} 0 0 1 ${n(r - half)} ${n(b + rr)}`
+    : "";
+  if (!c) return `${lead}L${n(rightStart)} ${n(y)}${tail}`;
+  const { start, end, body } = outline({ ...c, base: b }, -half);
+  const toTab = start.x >= leftEnd ? `L${n(start.x)} ${n(y)}` : `M${n(start.x)} ${n(y)}`;
+  const fromTab = end.x <= rightStart ? `L${n(rightStart)} ${n(y)}` : `M${n(rightStart)} ${n(y)}`;
+  return `${lead}${toTab}${body}${fromTab}${tail}`;
 }
 
 /**
  * Clips for the outline's two strokes, complementary columns of the strip's
  * viewport (`view`, snapped to device pixels so they meet without a seam):
  * inside it, the outline with the tab (`surfaceEdgePath(c, ...)`); outside
- * it, the surface's edge alone (`surfaceEdgePath(null, ...)`). A tab half
- * scrolled under a scroll button is cut at the viewport's edge, its hidden
- * foot never strokes over the strip or across a rounded corner, and the
- * surface's top edge runs on beyond it.
+ * it, the surface's straight edge (`surfaceEdgePath(null, ...)`), since the
+ * tab's hole opens only inside the viewport. A tab half scrolled under a
+ * scroll button is cut at the viewport's edge, its hidden foot never
+ * strokes over the strip or across a rounded corner, and the surface's top
+ * edge runs on beside it.
  */
 export function outlineClips(view: { readonly left: number; readonly right: number }): { readonly inside: string; readonly outside: string } {
   const left = num(view.left);

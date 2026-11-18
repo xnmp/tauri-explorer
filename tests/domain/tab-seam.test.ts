@@ -179,27 +179,44 @@ describe("the tab's surface (#1785)", () => {
     expect(surfacePocketsPath(surface, 38, { left: 0, right: 14 }).startsWith("M800 38")).toBe(true);
   });
 
-  it("strokes the surface's whole edge, then the tab from foot to foot, as one path", () => {
+  it("strokes one open outline: up the left corner, along the top edge, over the tab, down the right corner", () => {
     const d = surfaceEdgePath(c, 1, surface, 38, { left: 14, right: 14 });
-    const [edge, tab] = d.split(/(?=M)/);
-    // The surface's edge: up the left corner from the window's left edge,
-    // half a stroke in, along the whole top edge, down the right corner.
-    expect(edge).toBe(surfaceEdgePath(null, 1, surface, 38, { left: 14, right: 14 }));
-    // The tab, from its left foot on the top edge's centre line...
-    const t = walk(tab);
-    expect(t.first).toEqual({ x: 86, y: 38.5 });
-    // ...over its top (half a stroke inside it)...
-    expect(Math.min(...t.points.map((p) => p.y))).toBe(8.5);
-    // ...to its right foot, back on the top edge.
-    expect(t.last).toEqual({ x: 314, y: 38.5 });
+    expect(d.match(/M/g)).toHaveLength(1);
+    const { points, arcs, first, last } = walk(d);
+    // From the window's left edge, half a stroke in, round the corner...
+    expect(first).toEqual({ x: 0.5, y: 52 });
+    expect(points[1]).toEqual({ x: 14, y: 38.5 });
+    expect(arcs[0]).toBe(13.5);
+    // ...along the top edge on the stroke's centre line to the tab's left foot...
+    expect(points[2]).toEqual({ x: 86, y: 38.5 });
+    // ...over the tab (half a stroke inside its top)...
+    expect(Math.min(...points.map((p) => p.y))).toBe(8.5);
+    // ...and on from its right foot round the right corner to the window's edge.
+    expect(points).toContainEqual({ x: 314, y: 38.5 });
+    expect(points).toContainEqual({ x: 786, y: 38.5 });
+    expect(last).toEqual({ x: 799.5, y: 52 });
+    expect(arcs[arcs.length - 1]).toBe(13.5);
+  });
+
+  it("leaves the top edge open under the tab, whose hole is the surface itself", () => {
+    const d = surfaceEdgePath(c, 1, surface, 38, { left: 14, right: 14 });
+    // No straight run on the base between the tab's feet.
+    const runs = [...d.matchAll(/([\d.]+) 38\.5L([\d.]+) 38\.5/g)].map((m) => [Number(m[1]), Number(m[2])]);
+    for (const [from, to] of runs) expect(Math.max(from, to) <= 86 || Math.min(from, to) >= 314).toBe(true);
   });
 
   it("never strokes back across a corner when the tab's hidden foot lies past it (#1785 review)", () => {
     // A tab scrolled left under the strip's start (macOS traffic lights),
-    // its foot beyond the left corner: the edge still turns at the corner.
+    // its foot beyond the left corner: the tab starts a subpath of its own.
     const hidden = tabContour({ left: 10, width: 140, top: 8, base: 38 }, 14, 14);
-    const [edge] = surfaceEdgePath(hidden, 1, surface, 38, { left: 14, right: 14 }).split(/(?=M)/);
-    for (const p of walk(edge).points.slice(1)) expect(p.x).toBeGreaterThanOrEqual(14);
+    const d = surfaceEdgePath(hidden, 1, surface, 38, { left: 14, right: 14 });
+    const [corner, tab] = d.split(/(?=M)/);
+    expect(corner).toBe("M0.5 52A13.5 13.5 0 0 1 14 38.5");
+    expect(walk(tab).first).toEqual({ x: -4, y: 38.5 });
+    // Mirrored on the right.
+    const right = tabContour({ left: 700, width: 140, top: 8, base: 38 }, 14, 14);
+    const parts = surfaceEdgePath(right, 1, surface, 38, { left: 14, right: 14 }).split(/(?=M)/);
+    expect(parts[parts.length - 1]).toBe("M786 38.5A13.5 13.5 0 0 1 799.5 52");
   });
 
   it("clips the two strokes to complementary columns of the viewport", () => {

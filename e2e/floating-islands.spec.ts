@@ -42,12 +42,14 @@ test.describe("Floating islands (#277)", () => {
 });
 
 /**
- * #1734: under Floating Islands the active tab owns the window. It wears the
- * surface of the island it stands on and opens into that island's top edge;
- * the rest of the strip is shaded. Inline SVG marks follow the tab every
- * frame of a slide.
+ * #1734, #1785: under Floating Islands the active tab owns the whole window
+ * below the strip. The tab is a hole in the strip shade through which the
+ * window body (the tab's surface) shows; that surface runs edge to edge with
+ * rounded top corners, and every island sits on it with its own outline. The
+ * one outline is the tab plus the surface's top edge. Inline SVG marks follow
+ * the tab every frame of a slide.
  */
-test.describe("Fused active tab (#1734)", () => {
+test.describe("Active tab owns the window (#1734, #1785)", () => {
   // Stepped slides sample 23 frames each: up to 26s on a WebKit CI container,
   // over the default budget on a loaded one (#1775).
   test.describe.configure({ timeout: 60_000 });
@@ -91,7 +93,22 @@ test.describe("Fused active tab (#1734)", () => {
       await expect(page.locator("html")).toHaveAttribute("data-material", "vibrancy");
       await page.addStyleTag({ content: SIMULATED_MATERIAL });
     }
-    if (layout === "floating-islands") await expect(page.locator('[data-region="titlebar"]')).toHaveAttribute("data-tab-island", "content");
+    // The lazily loaded marks have drawn the active tab's hole.
+    if (layout === "floating-islands") await expect(page.locator('[data-region="titlebar"]')).toHaveAttribute("data-tab-hole", /\d/);
+  }
+
+  /** Every island (each draws its own outline, radius and shadow) and the status bar: all sit on the tab's surface. */
+  const ISLANDS = '[data-region="sidebar"], [data-region="panes"], [data-region="preview"], [data-region="miller-island"], [data-region="status-bar"], [data-region="terminal"]';
+
+  /** Run `read` with the islands hidden, so only the window body (the tab's surface) and the strip paint. */
+  async function withIslandsHidden<T>(page: Page, read: () => Promise<T>): Promise<T> {
+    const tag = await page.addStyleTag({ content: `${ISLANDS} { visibility: hidden !important; }` });
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    try {
+      return await read();
+    } finally {
+      await tag.evaluate((el) => el.remove());
+    }
   }
 
   /** RGB pixels of a page region at device scale 1, row-major. */
@@ -122,7 +139,7 @@ test.describe("Fused active tab (#1734)", () => {
 
   for (const theme of ["light", "dark"]) {
     for (const material of [false, true]) {
-      test(`the tab wears its island's surface, with no seam or sliver (${theme}, ${material ? "macOS material" : "opaque"})`, async ({ page }) => {
+      test(`the tab wears the window's surface, with no seam or sliver (${theme}, ${material ? "macOS material" : "opaque"})`, async ({ page }) => {
         await openIslands(page, { theme, material });
         const tab = await activeTabBox(page);
         const base = Math.round(tab.y + tab.height);
@@ -137,23 +154,77 @@ test.describe("Fused active tab (#1734)", () => {
           for (const pixel of region) expect(distance(pixel, reference)).toBeLessThanOrEqual(12);
         }
 
-        // Tab and island are one surface across the seam.
+        // The tab and the surface below the strip base are one, with the
+        // islands (8px below the base, their shadows reaching up) in place.
         const center = Math.round(tab.x + tab.width / 2);
         const [above] = await pixels(page, { x: center, y: base - 3, width: 1, height: 1 });
         const [below] = await pixels(page, { x: center, y: base + 3, width: 1, height: 1 });
         expect(distance(above, below)).toBeLessThanOrEqual(10);
 
-        // The rest of the strip is shaded, clearly darker than the tab, so the
-        // tab reads as part of its island. Opaque: a luminance step of at
-        // least 12 (of 255; the default dark theme measures ~15, light ~45,
-        // Chrome's dark frame ~20). Over the material the shade is
-        // translucent and the wallpaper varies, so the floor is 8 (measured
-        // ~11 light, ~17 dark over the simulated wallpaper).
+        // The tab's body is the window body: with the islands hidden, the
+        // column from inside the tab down across the base into the surface
+        // under it is one flat colour (gradient dithering moves it by up to
+        // 2), so no line, band or sliver marks the base, and it is the
+        // colour the tab shows with the islands in place (their shadows
+        // reach up into the tab by up to 4).
+        const column = await withIslandsHidden(page, () => pixels(page, { x: center, y: base - 3, width: 1, height: 24 }));
+        for (const [row, pixel] of column.entries()) {
+          expect(distance(pixel, column[0]), `surface ${row - 3}px under the base`).toBeLessThanOrEqual(3);
+        }
+        expect(distance(column[0], above), "the tab shows the window body").toBeLessThanOrEqual(6);
+
+        // The rest of the strip is shaded, so the tab stands out of it.
+        // Opaque: clearly darker, a luminance step of at least 12 (of 255;
+        // the default dark theme measures ~15, light ~35). Over the material
+        // the tab is the window body's light tint over the wallpaper and the
+        // strip a heavier shade over it: they differ (by ~25 light, ~55 dark
+        // over the simulated wallpaper), though a light shade over that
+        // mid-grey stand-in lightens rather than darkens it.
         const [strip] = await pixels(page, { x: 8, y: Math.round(tab.y) + 2, width: 1, height: 1 });
-        expect(luminance(above) - luminance(strip)).toBeGreaterThanOrEqual(material ? 8 : 12);
+        if (material) expect(distance(above, strip)).toBeGreaterThanOrEqual(8);
+        else expect(luminance(above) - luminance(strip)).toBeGreaterThanOrEqual(12);
 
         if (material) {
           await page.screenshot({ path: `screenshots/feat/islands-tab-owns-window/islands-${theme}.png`, animations: "disabled" });
+        }
+      });
+    }
+  }
+
+  // The surface's top corners are rounded (#1785): outside each, below the
+  // base, the strip shade wraps round it; inside, the surface shows.
+  for (const theme of ["light", "dark"]) {
+    for (const material of [false, true]) {
+      test(`the surface's top corners are rounded (${theme}, ${material ? "macOS material" : "opaque"})`, async ({ page }) => {
+        await openIslands(page, { theme, material });
+        const tab = await activeTabBox(page);
+        const base = Math.round(tab.y + tab.height);
+        const width = page.viewportSize()!.width;
+        const one = async (x: number, y: number) => (await pixels(page, { x, y, width: 1, height: 1 }))[0];
+        // Mirrored sample points, `inset` from the window's left or right
+        // edge and `dy` below the base. The corner's radius is 14px: (1, 1)
+        // and (2, 2) lie outside its arc, (6, 6) inside it.
+        const sample = (side: "left" | "right") => {
+          const at = (inset: number, dy: number) => one(side === "left" ? inset : width - 1 - inset, base + dy);
+          return Promise.all([at(1, 1), at(2, 2), at(1, -3), at(6, 6), at(1, 20), at(18, 2)]);
+        };
+        const { body, corners } = await withIslandsHidden(page, async () => ({
+          body: await one(Math.round(tab.x + tab.width / 2), base + 3),
+          corners: { left: await sample("left"), right: await sample("right") },
+        }));
+        for (const [side, [pocket, pocketInner, strip, diagonal, below, beside]] of Object.entries(corners)) {
+          // The pocket is the strip shade just above it.
+          expect(distance(pocket, strip), `${side} pocket vs the strip`).toBeLessThanOrEqual(6);
+          expect(distance(pocketInner, pocket), `${side} pocket`).toBeLessThanOrEqual(3);
+          // Inside the arc, down the window's side and along the top edge
+          // past the corner: the surface, not the shade.
+          for (const [where, pixel] of [["inside the arc", diagonal], ["below the corner", below], ["past the corner", beside]] as const) {
+            expect(distance(pixel, pocket), `${side} ${where} is not shade`).toBeGreaterThanOrEqual(8);
+            // Opaque, the surface is the tab's colour, give or take its
+            // depth gradient (~9 over these 20px); over the material it shows
+            // the wallpaper, which varies across the window.
+            if (!material) expect(distance(pixel, body), `${side} ${where} is the tab's surface`).toBeLessThanOrEqual(12);
+          }
         }
       });
     }
@@ -167,21 +238,21 @@ test.describe("Fused active tab (#1734)", () => {
     return frames;
   }
 
-  test("the seam and edge highlight follow a sliding tab frame by frame", async ({ page }) => {
+  test("the hole and the outline follow a sliding tab frame by frame", async ({ page }) => {
     await openIslands(page);
     for (const frame of await slideFrames(page)) {
-      const { active, hole, fill, edge } = frame;
+      const { active, hole, edge, outline } = frame;
       expect(active, `t=${frame.t}`).not.toBeNull();
       const expected = [active!.left - active!.fillet, active!.right + active!.fillet];
       expect(hole, `hole t=${frame.t}`).not.toBeNull();
       expect(Math.abs(hole![0] - expected[0]), `hole left t=${frame.t}`).toBeLessThanOrEqual(0.6);
       expect(Math.abs(hole![1] - expected[1]), `hole right t=${frame.t}`).toBeLessThanOrEqual(0.6);
-      expect(fill, `fill t=${frame.t}`).not.toBeNull();
-      expect(Math.abs(fill![0] - expected[0]), `fill left t=${frame.t}`).toBeLessThanOrEqual(1);
-      expect(Math.abs(fill![1] - expected[1]), `fill right t=${frame.t}`).toBeLessThanOrEqual(1);
+      // The one outline runs over this frame's tab, and on along the
+      // surface's top edge to both window edges.
+      expect(outline, `outline t=${frame.t}`).toEqual({ top: true, left: true, right: true });
       expect(edge, `edge t=${frame.t}`).not.toBeNull();
-      expect(edge![0], `edge left t=${frame.t}`).toBeLessThanOrEqual(expected[0] + 0.5);
-      expect(edge![1], `edge right t=${frame.t}`).toBeGreaterThanOrEqual(expected[1] - 0.5);
+      expect(edge![0], `edge left t=${frame.t}`).toBeLessThanOrEqual(1);
+      expect(edge![1], `edge right t=${frame.t}`).toBeGreaterThanOrEqual(frame.titlebarWidth - 1);
     }
   });
 
@@ -236,14 +307,14 @@ test.describe("Fused active tab (#1734)", () => {
   });
 
   test("closing a tab: the others widen with its slide and no tab snaps", async ({ page }) => {
-    // Three tabs in the islands strip are narrower than their maximum, so
+    // Five tabs in the islands strip are narrower than their maximum, so
     // the survivors widen into the closed tab's room: over its slide, never
     // in one frame, while the strip (and "+") only moves left.
-    await openIslands(page);
+    await openIslands(page, { count: 5 });
     await page.waitForTimeout(300);
     const all = await steppedFrames(page, () => pressShortcut(page, "w", { ctrlKey: true, shiftKey: true }));
-    await expect(page.locator('.tab-viewport [data-region="tab"]')).toHaveCount(2);
-    for (let i = 0; i < 2; i++) {
+    await expect(page.locator('.tab-viewport [data-region="tab"]')).toHaveCount(4);
+    for (let i = 0; i < 4; i++) {
       const change = Math.abs(all[all.length - 1].widths[i] - all[0].widths[i]);
       expect(change, `tab ${i} widens`).toBeGreaterThan(4);
       for (let index = 1; index < all.length; index++) {
@@ -259,9 +330,9 @@ test.describe("Fused active tab (#1734)", () => {
   /**
    * Exactly one tab reads as the active one on every frame, from the frame
    * before the action on: it is selected, wide enough to show its icon, and
-   * fused to its island (the hole, fill, full-strength outline and open
-   * island edge all sit on it). A frame where no tab, or two, own the island
-   * fails, as does a frame where the owner is an empty sliver.
+   * owns the window (the hole and the full-strength outline both sit on it).
+   * A frame where no tab, or two, own the window fails, as does a frame
+   * where the owner is an empty sliver.
    */
   function expectOneActiveTab(frames: TabFrame[]) {
     for (const frame of frames) {
@@ -274,15 +345,12 @@ test.describe("Fused active tab (#1734)", () => {
       expect(active!.fillet, `fillet ${at}`).toBeGreaterThanOrEqual(13);
       expect(Math.abs(hole![0] - expected[0]), `hole left ${at}`).toBeLessThanOrEqual(0.6);
       expect(Math.abs(hole![1] - expected[1]), `hole right ${at}`).toBeLessThanOrEqual(0.6);
-      expect(frame.fill, `fill ${at}`).not.toBeNull();
-      expect(Math.abs(frame.fill![0] - expected[0]), `fill left ${at}`).toBeLessThanOrEqual(1);
-      expect(Math.abs(frame.fill![1] - expected[1]), `fill right ${at}`).toBeLessThanOrEqual(1);
       expect(frame.edgeOpacity, `edge ${at}`).toBeGreaterThanOrEqual(0.99);
-      expect(frame.seamed, `seam ${at}`).toBeGreaterThanOrEqual(1);
+      expect(frame.outline, `outline over the tab ${at}`).toEqual({ top: true, left: true, right: true });
     }
   }
 
-  for (const count of [3, 8]) test(`opening a tab: the new tab owns the island from its first frame (${count} tabs)`, async ({ page }) => {
+  for (const count of [3, 8]) test(`opening a tab: the new tab owns the window from its first frame (${count} tabs)`, async ({ page }) => {
     await openIslands(page, { count });
     await page.waitForTimeout(300);
     const frames = await steppedFrames(page, () => pressShortcut(page, "t", { ctrlKey: true }));
@@ -292,13 +360,13 @@ test.describe("Fused active tab (#1734)", () => {
     for (const frame of frames.slice(1)) expect(frame.activeIndex, `t=${frame.t}`).toBe(count);
   });
 
-  // At 125% zoom on a 2× display the seam is still measured and drawn in the
-  // tab's own CSS space from the first frame (#1744 review: a sheet captured
-  // with screenshots between WebKit steps showed it offset; without them it
-  // tracks the tab).
+  // At 125% zoom on a 2× display the hole and outline are still measured and
+  // drawn in the tab's own CSS space from the first frame (#1744 review: a
+  // sheet captured with screenshots between WebKit steps showed it offset;
+  // without them it tracks the tab).
   test.describe("at 125% zoom on a 2x display", () => {
     test.use({ deviceScaleFactor: 2 });
-    test("opening a tab: the new tab owns the island from its first frame", async ({ page }) => {
+    test("opening a tab: the new tab owns the window from its first frame", async ({ page }) => {
       await openIslands(page, { theme: "light", settings: { zoomLevel: 125 } });
       await page.waitForTimeout(300);
       const frames = await steppedFrames(page, () => pressShortcut(page, "t", { ctrlKey: true }));
@@ -309,12 +377,12 @@ test.describe("Fused active tab (#1734)", () => {
   });
 
   // WKWebView places a composited island a fraction of a pixel off the device
-  // grid under an ancestor that clips one axis only: its clipped top row then
-  // paints as a line one row under the seam (real-Mac capture, #1744). Local
-  // engines do not show it, so pin the clipping contract the fix relies on.
-  test("no ancestor of a seamed island clips one axis only, and the window clips", async ({ page }) => {
+  // grid under an ancestor that clips one axis only, resampling its content
+  // soft (real-Mac capture, #1744). Local engines do not show it, so pin the
+  // clipping contract the fix relies on.
+  test("no ancestor of an island clips one axis only, and the window clips", async ({ page }) => {
     await openIslands(page, { material: true, theme: "light" });
-    const clips = await page.locator("[data-tab-seam]").first().evaluate((island) => {
+    const clips = await page.locator('[data-region="panes"]:visible').first().evaluate((island) => {
       const out: { node: string; x: string; y: string }[] = [];
       for (let el = island.parentElement; el; el = el.parentElement) {
         const style = getComputedStyle(el);
@@ -326,7 +394,7 @@ test.describe("Fused active tab (#1734)", () => {
     expect(clips.find((c) => c.node === "main[app]")).toEqual({ node: "main[app]", x: "clip", y: "clip" });
   });
 
-  test("closing the active tab hands the seam to its neighbour in the same frame", async ({ page }) => {
+  test("closing the active tab hands the window to its neighbour in the same frame", async ({ page }) => {
     await openIslands(page);
     await page.waitForTimeout(300);
     const frames = await steppedFrames(page, () => pressShortcut(page, "w", { ctrlKey: true, shiftKey: true }));
@@ -334,7 +402,7 @@ test.describe("Fused active tab (#1734)", () => {
     expectOneActiveTab(frames);
   });
 
-  test("switching tabs by click and Ctrl+Tab moves the seam in the same frame", async ({ page }) => {
+  test("switching tabs by click and Ctrl+Tab moves the hole and outline in the same frame", async ({ page }) => {
     await openIslands(page);
     await page.waitForTimeout(300);
     const first = page.locator('.tab-viewport [data-region="tab"]').first();
@@ -448,57 +516,132 @@ test.describe("Fused active tab (#1734)", () => {
     expect(Math.abs(after - before), `icon offset ${before} -> ${after}`).toBeLessThanOrEqual(1);
   });
 
-  /** Box of an island region and the title bar's base, in page CSS px. */
+  /** Box of a shown island region, in page CSS px. */
   async function islandBox(page: Page, region: string) {
-    return (await page.locator(`[data-region="${region}"]`).first().boundingBox())!;
+    return (await page.locator(`[data-region="${region}"]:visible`).first().boundingBox())!;
   }
 
-  // The fused tab always stands on a straight stretch of island top edge:
-  // never on a rounded corner, never over the sidebar's gutter.
-  for (const theme of ["light", "dark"]) test(`the first tab's foot lands on its island's straight edge (${theme})`, async ({ page }) => {
+  /** The active tab's hole (`data-tab-hole`), in page CSS px (the title bar starts at the page's left edge). */
+  async function holeBox(page: Page): Promise<{ left: number; right: number } | null> {
+    const hole = await page.locator('[data-region="titlebar"]').getAttribute("data-tab-hole");
+    if (!hole) return null;
+    const [left, right] = hole.split(" ").map(Number);
+    return { left, right };
+  }
+
+  // Tabs run over the sidebar (#1785). On Windows and Linux the strip starts
+  // just past the surface's rounded top-left corner plus the tab's foot, so
+  // even the first tab shows its whole left curve beside a whole corner.
+  for (const theme of ["light", "dark"]) test(`tabs run over the sidebar, the first tab's curve whole past the surface's corner (${theme})`, async ({ page }) => {
     await openIslands(page, { theme, active: 0 });
     await page.mouse.move(5, 500);
     const tab = await activeTabBox(page);
-    const panes = await islandBox(page, "panes");
     const sidebar = await islandBox(page, "sidebar");
+    expect(tab.x, "the first tab stands over the sidebar").toBeGreaterThan(sidebar.x);
+    expect(tab.x, "the first tab stands over the sidebar").toBeLessThan(sidebar.x + sidebar.width);
     const foot = tab.x - 14;
-    expect(foot, "left fillet starts on the straight edge").toBeGreaterThanOrEqual(panes.x + 14 - 0.5);
-    expect(sidebar.x + sidebar.width, "the sidebar lies wholly before the strip").toBeLessThan(foot);
-    // Under the fillet's foot the island's top edge is open into the tab:
-    // the tab's surface, not a corner curve or the strip.
+    expect(foot, "the left fillet's foot lies past the surface's 14px corner").toBeGreaterThanOrEqual(14);
+    expect(Math.abs((await holeBox(page))!.left - foot), "the hole opens from the foot").toBeLessThanOrEqual(0.6);
+    // In pixels, with the islands hidden: inside the fillet's curve the hole
+    // shows the surface; on its outer side, the strip shade; and the corner
+    // below keeps its whole radius (its pocket is shade, inside its arc the
+    // surface).
     const base = Math.round(tab.y + tab.height);
-    const [under] = await pixels(page, { x: Math.round(foot + 2), y: base + 3, width: 1, height: 1 });
-    const [inside] = await pixels(page, { x: Math.round(tab.x + tab.width / 2), y: base + 3, width: 1, height: 1 });
-    expect(distance(under, inside)).toBeLessThanOrEqual(12);
+    const one = async (x: number, y: number) => (await pixels(page, { x, y, width: 1, height: 1 }))[0];
+    const at = await withIslandsHidden(page, async () => ({
+      body: await one(Math.round(tab.x + tab.width / 2), base - 3),
+      strip: await one(8, Math.round(tab.y) + 2),
+      inFillet: await one(Math.round(tab.x) - 2, base - 2),
+      outsideFillet: await one(Math.round(tab.x) - 10, base - 10),
+      pocket: await one(2, base + 2),
+      corner: await one(6, base + 6),
+    }));
+    expect(distance(at.inFillet, at.body), "inside the fillet: the surface").toBeLessThanOrEqual(8);
+    expect(distance(at.outsideFillet, at.strip), "beside the fillet: the strip").toBeLessThanOrEqual(6);
+    expect(distance(at.pocket, at.strip), "outside the corner: the strip").toBeLessThanOrEqual(6);
+    expect(distance(at.corner, at.body), "inside the corner: the surface").toBeLessThanOrEqual(8);
+    expect(distance(at.body, at.strip), "the fixture tells surface from strip").toBeGreaterThanOrEqual(12);
   });
 
-  for (const theme of ["light", "dark"]) test(`a tab straddling two content islands stands on squared corners (${theme})`, async ({ page }) => {
-    await openIslands(page, { theme, settings: { showPreviewPane: true } });
+  /** Shown islands (each draws its own outline), in page CSS px with their computed outline styles. */
+  async function shownIslands(page: Page) {
+    return page.evaluate(() => [...document.querySelectorAll<HTMLElement>(
+      '[data-region="sidebar"], [data-region="panes"]:not([data-split]), [data-region="panes"][data-split] [data-region="pane"], [data-region="preview"], [data-region="miller-island"]',
+    )].filter((el) => !el.closest(".retained") && el.checkVisibility({ visibilityProperty: true } as CheckVisibilityOptions)).map((el) => {
+      const r = el.getBoundingClientRect();
+      const style = getComputedStyle(el);
+      return {
+        region: `${el.dataset.region}${el.closest("[data-split]") ? " (split)" : ""}`,
+        left: r.left, right: r.right, top: r.top,
+        radii: [style.borderTopLeftRadius, style.borderTopRightRadius, style.borderBottomRightRadius, style.borderBottomLeftRadius],
+        clipPath: style.clipPath,
+        shadow: style.boxShadow,
+      };
+    }));
+  }
+
+  /** Two adjacent columns as one split tab (row split), for every tab. */
+  async function splitEveryTab(page: Page, active: number) {
+    await page.evaluate(async (active) => {
+      const load = new Function("return import('/src/lib/state/window-tabs.svelte.ts')");
+      const manager = (await load()).windowTabsManager;
+      const leaf = (id: string, path: string) => ({ type: "leaf", id, path });
+      manager.restoreFromState({ version: 3, activeTabId: `s-${active}`, tabs: [0, 1, 2].map((i) => ({
+        id: `s-${i}`, kind: "explorer", activePaneId: `l-${i}`,
+        layout: { type: "split", id: `split-${i}`, direction: "row", ratio: 0.5, first: leaf(`l-${i}`, "/home/user"), second: leaf(`r-${i}`, "/home/user/Documents") },
+      })) });
+    }, active);
+    await expect(page.locator(".pane-tree:not(.retained) .explorer-pane")).toHaveCount(2);
+  }
+
+  // Every island keeps its own outline wherever the active tab stands
+  // (#1785): its rounded corners, top edge and shadow, 8px below the strip
+  // base. The tab never opens an island's edge or squares its corners, even
+  // with its foot over the gutter between two islands.
+  const STANCES = [
+    { what: "the sidebar's gutter", count: 3, active: 1, split: false, islands: 2, settings: {} },
+    { what: "split panes' gutter", count: 3, active: 2, split: true, islands: 3, settings: {} },
+    { what: "the preview's gutter", count: 3, active: 2, split: false, islands: 3, settings: { showPreviewPane: true, previewPaneWidth: 500 } },
+  ] as const;
+  for (const stance of STANCES) for (const theme of ["light", "dark"]) test(`islands keep their own top edges and corners with the tab over ${stance.what} (${theme})`, async ({ page }) => {
+    await openIslands(page, { theme, count: stance.count, active: stance.active, settings: stance.settings });
+    if (stance.split) await splitEveryTab(page, stance.active);
     await page.mouse.move(5, 500);
+    await page.waitForTimeout(300);
     const tab = await activeTabBox(page);
-    const panes = await islandBox(page, "panes");
-    const preview = await islandBox(page, "preview");
-    const gutter = [panes.x + panes.width, preview.x];
-    expect(tab.x, "the fixture's tab straddles the gutter").toBeLessThan(gutter[0] - 20);
-    expect(tab.x + tab.width).toBeGreaterThan(gutter[1] + 20);
-    const base = Math.round(tab.y + tab.height);
-    const [surface] = await pixels(page, { x: Math.round(tab.x + 30), y: base + 3, width: 1, height: 1 });
-    // Where a rounded corner would cut away and draw its curved edge (the
-    // 8px beside each island's facing side, just under the base), both
-    // islands are their plain surface: no corner curve, no edge highlight.
-    for (const x of [gutter[0] - 10, gutter[1] + 2]) {
-      const region = await pixels(page, { x: Math.round(x), y: base + 1, width: 8, height: 5 });
-      const worst = Math.max(...region.map((pixel) => distance(pixel, surface)));
-      expect(worst, `corner zone at x=${Math.round(x)}`).toBeLessThanOrEqual(8);
+    const base = tab.y + tab.height;
+    const hole = (await holeBox(page))!;
+    const islands = await shownIslands(page);
+    expect(islands.length, JSON.stringify(islands)).toBeGreaterThanOrEqual(stance.islands);
+    // The fixture: the tab's hole reaches over a gutter, across one island's
+    // top-right corner and the next one's top-left corner.
+    const sorted = [...islands].sort((a, b) => a.left - b.left);
+    const straddled = sorted.findIndex((island, i) => i + 1 < sorted.length && hole.left < island.right - 4 && hole.right > sorted[i + 1].left + 4);
+    expect(straddled, `the hole ${JSON.stringify(hole)} straddles a gutter of ${JSON.stringify(sorted.map(({ left, right }) => [left, right]))}`).toBeGreaterThanOrEqual(0);
+    for (const island of islands) {
+      expect(island.top - base, `${island.region} sits 8px below the base`).toBeCloseTo(8, 0);
+      expect(island.radii, `${island.region} corners`).toEqual(["14px", "14px", "14px", "14px"]);
+      expect(island.clipPath, `${island.region} is not clipped`).toBe("none");
+      expect(island.shadow, `${island.region} casts its shadow`).not.toBe("none");
     }
-    // Moving the tab off the gutter rounds the corners again.
-    await page.locator('.tab-viewport [data-region="tab"]').first().click();
-    await page.mouse.move(5, 500);
-    await expect(page.locator("[data-tab-square]")).toHaveCount(0);
+    // In pixels: the islands' top edges and corners under the hole read
+    // exactly as they do with the tab's layers (hole, shade, outline,
+    // shadows) hidden, so nothing the tab draws reaches an island.
+    const clip = { x: Math.round(hole.left) - 4, y: Math.round(base) + 4, width: Math.round(hole.right - hole.left) + 8, height: 24 };
+    const actual = await pixels(page, clip);
+    const tag = await page.addStyleTag({ content: '[data-region="tab-edge"], [data-region="tab-key-shadow"] { visibility: hidden !important; }' });
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const reference = await pixels(page, clip);
+    await tag.evaluate((el) => el.remove());
+    const worst = Math.max(...actual.map((pixel, i) => distance(pixel, reference[i])));
+    // Up to 4: any restyle (even a no-op one) re-rasterises the islands'
+    // anti-aliased corner arcs by that much, as in tab-outline-matrix.spec.ts.
+    expect(worst, "the islands' edges under the tab vs drawn alone").toBeLessThanOrEqual(4);
   });
+
   // ---- Narrow windows (#1744 review 2) ----
 
-  /** The active tab, the tab scroller and the hole, in page CSS px. */
+  /** The active tab, the tab scroller, the hole and the outline, in page CSS px. */
   async function stripState(page: Page) {
     return page.evaluate(() => {
       const bar = document.querySelector<HTMLElement>('[data-region="titlebar"]')!;
@@ -506,23 +649,33 @@ test.describe("Fused active tab (#1734)", () => {
       const box = (el: Element | null) => {
         if (!el) return null;
         const r = el.getBoundingClientRect();
-        return { left: r.left / zoom, right: r.right / zoom };
+        return { left: r.left / zoom, right: r.right / zoom, top: r.top / zoom, bottom: r.bottom / zoom };
       };
       const hole = bar.getAttribute("data-tab-hole")?.split(" ").map(Number) ?? null;
-      const barLeft = bar.getBoundingClientRect().left / zoom;
+      const barBox = bar.getBoundingClientRect();
+      const barLeft = barBox.left / zoom;
+      const tab = box(bar.querySelector('.tab-viewport [data-region="tab"][aria-selected="true"]'));
+      // The outline (title bar user space): whether it rises above the
+      // strip base anywhere (over a shown tab), and whether it runs along
+      // the active tab's top edge.
+      const stroke = bar.querySelector<SVGGeometryElement>(".tab-edge-stroke");
+      const strokeBox = stroke?.getAttribute("d") ? stroke.getBBox() : null;
+      const base = barBox.height / zoom;
       return {
-        tab: box(bar.querySelector('.tab-viewport [data-region="tab"][aria-selected="true"]')),
+        tab,
         view: box(bar.querySelector(".tab-viewport")),
         hole: hole && { left: hole[0] + barLeft, right: hole[1] + barLeft },
-        seams: document.querySelectorAll("[data-tab-seam]").length,
+        rises: Boolean(strokeBox && strokeBox.y < base - 2),
+        overTab: Boolean(tab && stroke?.isPointInStroke({ x: (tab.left + tab.right) / 2 - barLeft, y: tab.top - barBox.top / zoom + 0.5 })),
         overflowing: Boolean(bar.querySelector(".tab-viewport:not(.bleed)")),
         compact: bar.querySelectorAll(".tab.compact").length,
         buttons: bar.querySelectorAll(".tab-scroll-btn").length,
+        start: parseFloat(getComputedStyle(bar.querySelector('[data-region="tab-strip"]')!).getPropertyValue("--tab-strip-start")),
       };
     });
   }
 
-  for (const width of [560, 640]) test(`a narrow window shows its active tab at load and opens an island only under it (${width}px)`, async ({ page }) => {
+  for (const width of [560, 640]) test(`a narrow window shows its active tab at load and draws the outline only over it (${width}px)`, async ({ page }) => {
     await openIslands(page, { width, count: 14 });
     await page.mouse.move(5, 500);
     await page.waitForTimeout(400);
@@ -531,24 +684,27 @@ test.describe("Fused active tab (#1734)", () => {
     // The active (last) tab is wholly inside the scroller...
     expect(state.tab!.left).toBeGreaterThanOrEqual(state.view!.left - 0.5);
     expect(state.tab!.right).toBeLessThanOrEqual(state.view!.right + 0.5);
-    // ...and the hole opens under it, nowhere else.
+    // ...and the hole and the outline open over it, nowhere else.
     expect(Math.abs(state.hole!.left - (state.tab!.left - 14))).toBeLessThanOrEqual(1);
     expect(Math.abs(state.hole!.right - (state.tab!.right + 14))).toBeLessThanOrEqual(1);
-    expect(state.seams).toBeGreaterThanOrEqual(1);
+    expect(state.overTab, "the outline runs over the active tab").toBe(true);
     // An overflowing strip, however narrow, offers its scroll buttons.
     expect(state.buttons).toBe(2);
     // Scrolled out of view (past the faded end under the scroll button), the
-    // active tab leaves every island closed.
+    // active tab leaves no hole and the surface's top edge runs straight.
     await page.locator(".tab-viewport").evaluate((el) => { el.scrollLeft = 0; });
-    await expect.poll(async () => (await stripState(page)).seams).toBe(0);
+    await expect.poll(async () => (await stripState(page)).rises).toBe(false);
     expect((await stripState(page)).hole).toBeNull();
-    // Scrolled back, the island opens again.
+    // Scrolled back, the outline rises over the tab again.
     await page.locator(".tab-viewport").evaluate((el) => { el.scrollLeft = el.scrollWidth; });
-    await expect.poll(async () => (await stripState(page)).seams).toBeGreaterThanOrEqual(1);
+    await expect.poll(async () => (await stripState(page)).overTab).toBe(true);
   });
 
-  test("a narrow window gives the band over the sidebar back to its tabs", async ({ page }) => {
-    await openIslands(page, { width: 700, count: 4 });
+  // A narrow window gives the band before the first tab back to its tabs
+  // (`tabStripStart`): the first tab's foot then reaches into the surface's
+  // top-left corner, which narrows to end where the foot begins (#1785).
+  for (const theme of ["light", "dark"]) test(`a narrow window gives the band before the first tab back to its tabs (${theme})`, async ({ page }) => {
+    await openIslands(page, { theme, width: 560, count: 4, active: 0 });
     await page.mouse.move(5, 500);
     const state = await stripState(page);
     expect(state.overflowing).toBe(false);
@@ -557,44 +713,23 @@ test.describe("Fused active tab (#1734)", () => {
     const titles = await page.locator('.tab-viewport [data-region="tab"]:not([aria-selected="true"]) .tab-title').evaluateAll((els) => els.map((el) => el.clientWidth));
     expect(titles.length).toBe(3);
     for (const width of titles) expect(width).toBeGreaterThanOrEqual(24);
-    // The strip starts before the content island to make that room.
-    const first = (await page.locator('.tab-viewport [data-region="tab"]').first().boundingBox())!;
-    const panes = await islandBox(page, "panes");
-    expect(first.x).toBeLessThan(panes.x);
-  });
-
-  // When the strip gives the sidebar band back, any tab can straddle the
-  // sidebar's gutter: its foot still stands on straight top edges.
-  for (const theme of ["light", "dark"]) test(`a tab straddling the sidebar gutter stands on squared corners (${theme})`, async ({ page }) => {
-    await openIslands(page, { theme, width: 560, count: 5 });
-    await page.mouse.move(5, 500);
+    // The strip starts before the 30px that clears the corner, to make that room.
     const tab = await activeTabBox(page);
-    const sidebar = await islandBox(page, "sidebar");
-    const panes = await islandBox(page, "panes");
-    const gutter = [sidebar.x + sidebar.width, panes.x];
-    expect(tab.x - 14, "the fixture's foot reaches over the gutter").toBeLessThan(gutter[0] - 18);
-    expect(tab.x + tab.width + 14).toBeGreaterThan(gutter[1] + 14);
-    const corners = await page.evaluate(() => ["sidebar", "panes"].map((region) => {
-      const style = getComputedStyle(document.querySelector(`[data-region="${region}"]`)!);
-      return [style.borderTopLeftRadius, style.borderTopRightRadius];
-    }));
-    expect(corners[0][1], "sidebar's right corner").toBe("0px");
-    expect(corners[1][0], "panes' left corner").toBe("0px");
-    // Each island's corner zone under the foot continues its straight top
-    // edge: every row matches the same row further inside the island (the
-    // sidebar keeps its own edge line, which the tab sits on); a rounded
-    // corner would curve away and show the gutter.
+    expect(state.start).toBeLessThan(30);
+    expect(tab.x - 14, "the foot reaches into the corner").toBeLessThan(14);
+    // The corner gives way: where a whole corner's pocket of strip shade
+    // would be (3px in from the window edge and 3px below the base), the
+    // surface shows, one with the tab's.
     const base = Math.round(tab.y + tab.height);
-    for (const [x, inside] of [[gutter[0] - 10, gutter[0] - 14], [gutter[1] + 2, gutter[1] + 40]]) {
-      for (let row = 1; row <= 5; row++) {
-        const [reference] = await pixels(page, { x: Math.round(inside), y: base + row, width: 1, height: 1 });
-        const zone = await pixels(page, { x: Math.round(x), y: base + row, width: 8, height: 1 });
-        const worst = Math.max(...zone.map((pixel) => distance(pixel, reference)));
-        expect(worst, `corner zone at x=${Math.round(x)}, row ${row}`).toBeLessThanOrEqual(10);
-      }
-    }
+    const one = async (x: number, y: number) => (await pixels(page, { x, y, width: 1, height: 1 }))[0];
+    const at = await withIslandsHidden(page, async () => ({
+      body: await one(Math.round(tab.x + tab.width / 2), base - 3),
+      strip: await one(8, Math.round(tab.y) + 2),
+      corner: await one(3, base + 3),
+    }));
+    expect(distance(at.corner, at.body), "the narrowed corner shows the surface").toBeLessThanOrEqual(8);
+    expect(distance(at.corner, at.strip), "not the strip shade").toBeGreaterThanOrEqual(12);
   });
-
   // The strip start follows the islands and the room it measures, and writing
   // it resizes the strip. Neither measurement may observe a box that write
   // resizes in the same frame: WebKit reports that as a ResizeObserver loop
@@ -635,7 +770,8 @@ test.describe("Fused active tab (#1734)", () => {
     await page.mouse.move(5, 500);
     const strip = (await page.locator('[data-region="tab-strip"]').boundingBox())!;
     const first = (await page.locator('.tab-viewport [data-region="tab"]').first().boundingBox())!;
-    expect(first.x - strip.x, "the fixture has a band").toBeGreaterThan(100);
+    // The band clears the surface's corner and the first tab's foot (#1785).
+    expect(first.x - strip.x, "the fixture has a band").toBeGreaterThanOrEqual(28);
     const drags = (x: number, y: number) => page.evaluate(async ({ x, y }) => {
       const load = new Function("return import('/src/lib/domain/titlebar.ts')");
       const { startsWindowDrag } = await load();
@@ -643,8 +779,8 @@ test.describe("Fused active tab (#1734)", () => {
       return Boolean(target?.closest('[data-region="titlebar"]')) && startsWindowDrag(target);
     }, { x, y });
     const y = first.y + first.height / 2;
-    expect(await drags(strip.x + 40, y), "the band").toBe(true);
-    expect(await drags(first.x - 30, y), "just before the first tab").toBe(true);
+    expect(await drags(strip.x + 4, y), "the band").toBe(true);
+    expect(await drags(first.x - 18, y), "just before the first tab's foot").toBe(true);
     expect(await drags(first.x + first.width / 2, y), "a tab").toBe(false);
   });
 
@@ -781,7 +917,10 @@ test.describe("Fused active tab (#1734)", () => {
   });
 
   test("a title that fits is not faded, one that does not is", async ({ page }) => {
-    await openIslands(page, { theme: "light", settings: { zoomLevel: 125 } });
+    // Four tabs: since the strip runs over the sidebar (#1785), three are at
+    // their widest, where WebKit at 125% measures every title box 1px wider
+    // than itself (151/150), so none counts as fitting.
+    await openIslands(page, { theme: "light", count: 4, active: 2, settings: { zoomLevel: 125 } });
     await page.mouse.move(5, 500);
     const titles = await page.locator('.tab-viewport [data-region="tab"] .tab-title').evaluateAll((els) => els.map((el) => {
       const fits = [el, ...el.children].every((part) => part.scrollWidth <= part.clientWidth);
@@ -810,37 +949,5 @@ test.describe("Fused active tab (#1734)", () => {
     }, side);
     // The fillet reaches about 5px out at the pill's lower corner.
     expect(gap).toBeGreaterThanOrEqual(8);
-  });
-
-  for (const theme of ["light", "dark"]) test(`a tab straddling split panes stands on squared corners (${theme})`, async ({ page }) => {
-    await openIslands(page, { theme, count: 3, active: 1 });
-    await page.evaluate(async () => {
-      const load = new Function("return import('/src/lib/state/window-tabs.svelte.ts')");
-      const manager = (await load()).windowTabsManager;
-      const leaf = (id: string, path: string) => ({ type: "leaf", id, path });
-      manager.restoreFromState({ version: 3, activeTabId: "s-1", tabs: [0, 1, 2].map((i) => ({
-        id: `s-${i}`, kind: "explorer", activePaneId: `l-${i}`,
-        layout: { type: "split", id: `split-${i}`, direction: "row", ratio: 0.5, first: leaf(`l-${i}`, "/home/user"), second: leaf(`r-${i}`, "/home/user/Documents") },
-      })) });
-    });
-    await page.mouse.move(5, 500);
-    await expect(page.locator(".pane-tree:not(.retained) .explorer-pane")).toHaveCount(2);
-    await page.waitForTimeout(300);
-    const tab = await activeTabBox(page);
-    const panes = await page.locator(".pane-tree:not(.retained) .explorer-pane").evaluateAll((els) => els.map((el) => {
-      const island = el.closest<HTMLElement>("[data-region]") ?? el;
-      const r = el.getBoundingClientRect();
-      return { left: r.left, right: r.right, square: el.getAttribute("data-tab-square") ?? island.getAttribute("data-tab-square") };
-    }));
-    const gutter = [panes[0].right, panes[1].left];
-    expect(tab.x - 14, "the fixture's foot reaches over the split").toBeLessThan(gutter[0] - 14);
-    expect(tab.x + tab.width + 14).toBeGreaterThan(gutter[1] + 14);
-    const base = Math.round(tab.y + tab.height);
-    const [surface] = await pixels(page, { x: Math.round(tab.x + 20), y: base + 4, width: 1, height: 1 });
-    for (const x of [gutter[0] - 10, gutter[1] + 2]) {
-      const region = await pixels(page, { x: Math.round(x), y: base + 1, width: 8, height: 5 });
-      const worst = Math.max(...region.map((pixel) => distance(pixel, surface)));
-      expect(worst, `corner zone at x=${Math.round(x)}`).toBeLessThanOrEqual(8);
-    }
   });
 });

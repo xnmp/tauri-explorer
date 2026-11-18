@@ -22,6 +22,10 @@ Rust include. A push whose changes miss a suite's filter creates no run and
 therefore cancels nothing: an older dev push's run that did match keeps
 running. GitHub evaluates only the first 300 changed files of a push against
 `paths`; the nightly run covers a larger push that slipped through.
+A release-prep push (`bun run bump-version`) changes `package.json` and the
+Cargo manifests, so it still starts these suites; `paths` cannot match only a
+version line. Accepted: release bumps are rare, and the next dev push cancels
+any of their runs still in progress.
 
 Every workflow that runs on dev pushes (ci.yml, e2e-tauri.yml, macOS Smoke
 and the path-scoped suites) declares the same workflow-level concurrency (#1798):

@@ -267,6 +267,7 @@ describe("dev-push path filters (#1801)", () => {
       "vitest.perf.config.ts", "playwright.config.ts", "package.json", "bun.lock"],
     "windows-installer.yml": ["windows_install.ps1", "README.md", "tests/windows-install-script.test.ts", "package.json", "bun.lock"],
     "image-crop.yml": ["src-tauri/src/image_crop.rs", "src-tauri/src/files/image_crop.rs", "src-tauri/src/files/recovery/runtime.rs",
+      "src-tauri/src/files/replacement.rs", "src-tauri/src/thumbnails/preview_rendition.rs", "src-tauri/vendor/wry/src/lib.rs",
       "src-tauri/vendor/explorer-avif/src/lib.rs", "src-tauri/Cargo.lock", "e2e-tauri/fixtures/image-crop/quadrants.png"],
   };
 
@@ -296,7 +297,7 @@ describe("dev-push path filters (#1801)", () => {
 
   // Rust tests include files from outside the crate; a suite running them
   // must re-run when one changes.
-  it.each(["rust-platforms.yml", "macos-native-ui.yml", "windows-soak.yml", "native-recovery.yml"])(
+  it.each(["rust-platforms.yml", "image-crop.yml", "macos-native-ui.yml", "windows-soak.yml", "native-recovery.yml"])(
     "%s runs for every file a Rust source includes from outside src-tauri",
     (file) => {
       const matches = triggers(file);

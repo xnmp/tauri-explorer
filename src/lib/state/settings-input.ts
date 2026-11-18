@@ -32,7 +32,6 @@ const SETTING_ENUMS: Partial<Record<keyof Settings, readonly string[]>> = {
   thumbnailSize: ["small", "medium", "large", "xlarge"],
   viewMode: ["details", "list", "tiles"],
   previewPanePosition: ["right", "bottom", "top", "auto"],
-  windowsBackdrop: ["off", "mica", "acrylic"],
   defaultPaneLayout: ["dwindle", "right", "down"],
 };
 

@@ -76,16 +76,8 @@
   --islands-tab-key: light-dark(rgba(0, 0, 0, 0.3), rgba(0, 0, 0, 0.65));
 }
 
-/* Windows Mica/Acrylic (#382): islands use the theme's dark solid colour at
-   the Backdrop Opacity slider's strength, dark enough not to wash out and
-   translucent enough that the material shows through the whole UI. */
-:root[data-layout-base="floating-islands"][data-win-backdrop] {
-  --islands-fill: color-mix(in srgb, var(--background-solid) calc(var(--win-backdrop-strength, 0.85) * 100%), transparent);
-  --islands-structural-fill:
-    color-mix(in srgb, var(--background-solid) calc(var(--win-backdrop-strength, 0.85) * 88%), transparent);
-}
-
-/* macOS material (#1733, #1734): the theme contract. Each coverage is the
+/* Window material (#1733, #1734; every platform's since #1757: macOS
+   vibrancy, Windows acrylic or Mica): the theme contract. Each coverage is the
    share of the material a surface hides in total: the window body's tint,
    then a content or structural island stacked on it. Alphas compound, so an
    island's own alpha is derived from the body's:
@@ -94,7 +86,7 @@
    98% and sidebar 72% of the theme's panel colour). Dark themes get their
    own lighter set, so the wallpaper still shows: body 0.3, islands 0.35 over
    the base lifted 10% toward white, strip shade 50%. docs/layout-themes.md. */
-:root[data-layout-base="floating-islands"][data-macos-material] {
+:root[data-layout-base="floating-islands"][data-material] {
   --islands-body-l: var(--island-body-coverage, 0.15);
   --islands-body-d: var(--island-body-coverage-dark, 0.3);
   --islands-alpha-l: calc(1 - (1 - var(--island-coverage, 0.983)) / (1 - var(--islands-body-l)));
@@ -141,8 +133,7 @@
    match the material rules' specificity, or they would never apply. */
 @media (prefers-reduced-transparency: reduce) {
   :root[data-layout-base="floating-islands"],
-  :root[data-layout-base="floating-islands"][data-macos-material],
-  :root[data-layout-base="floating-islands"][data-win-backdrop] {
+  :root[data-layout-base="floating-islands"][data-material] {
     --layout-app-surface: var(--background-solid);
     --islands-fill-base: var(--background-solid);
     --islands-fill: var(--background-card);

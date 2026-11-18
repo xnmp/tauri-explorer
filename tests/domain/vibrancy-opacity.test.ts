@@ -5,8 +5,11 @@ import {
   TRANSLUCENCY_OPACITY_MIN,
   clampTranslucencyOpacity,
   darkCoverage,
+  darkIslandAlpha,
   lightCoverage,
+  opacityForIslandAlpha,
   vibrancyCoverageVariables,
+  windowCoverage,
 } from "$lib/domain/vibrancy-opacity";
 
 const percents = Array.from(
@@ -23,7 +26,45 @@ describe("vibrancyCoverageVariables defaults", () => {
       "--island-coverage-dark": "0.545",
       "--island-structural-coverage-dark": "0.48",
       "--island-body-coverage-dark": "0.3",
+      "--material-window-coverage": "0.15",
+      "--material-window-coverage-dark": "0.55",
     });
+  });
+});
+
+describe("window coverage (#1757)", () => {
+  it("moves the tint of layouts without islands with the slider, opaque at the top", () => {
+    expect(windowCoverage(20).dark).toBeLessThan(windowCoverage(55).dark);
+    expect(windowCoverage(55).dark).toBeLessThan(windowCoverage(100).dark);
+    expect(windowCoverage(100)).toEqual({ light: 0.4, dark: 1 });
+    expect(windowCoverage(Number.NaN)).toEqual(windowCoverage(TRANSLUCENCY_OPACITY_DEFAULT));
+  });
+});
+
+describe("opacityForIslandAlpha (#1757 migration)", () => {
+  it("finds the percent whose dark island alpha matches a Windows backdrop's", () => {
+    for (const alpha of [0.2, 0.35, 0.5, 0.65, 0.85, 1]) {
+      expect(Math.abs(darkIslandAlpha(opacityForIslandAlpha(alpha)) - alpha)).toBeLessThan(0.02);
+    }
+    expect(opacityForIslandAlpha(darkIslandAlpha(TRANSLUCENCY_OPACITY_DEFAULT))).toBe(TRANSLUCENCY_OPACITY_DEFAULT);
+  });
+
+  it("is monotonic and stays in the slider's range", () => {
+    let previous = 0;
+    for (let alpha = 0; alpha <= 1; alpha += 0.05) {
+      const p = opacityForIslandAlpha(alpha);
+      expect(p).toBeGreaterThanOrEqual(previous);
+      expect(p).toBeGreaterThanOrEqual(TRANSLUCENCY_OPACITY_MIN);
+      expect(p).toBeLessThanOrEqual(TRANSLUCENCY_OPACITY_MAX);
+      previous = p;
+    }
+  });
+
+  it("clamps out-of-range alphas and falls back to the default for non-numbers", () => {
+    expect(opacityForIslandAlpha(-3)).toBe(TRANSLUCENCY_OPACITY_MIN);
+    expect(opacityForIslandAlpha(7)).toBe(TRANSLUCENCY_OPACITY_MAX);
+    expect(opacityForIslandAlpha("0.5")).toBe(TRANSLUCENCY_OPACITY_DEFAULT);
+    expect(opacityForIslandAlpha(Number.POSITIVE_INFINITY)).toBe(TRANSLUCENCY_OPACITY_DEFAULT);
   });
 });
 

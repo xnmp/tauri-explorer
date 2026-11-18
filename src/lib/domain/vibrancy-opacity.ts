@@ -1,7 +1,9 @@
 /**
- * Translucency Opacity (#1735): maps the one slider (macOS + Native Blur) to
- * the six coverage variables of the Floating Islands material contract
- * (`--island-*coverage*` in `layouts/floating-islands.css`). A coverage is the
+ * Translucency Opacity (#1735, cross-platform since #1757): maps the one
+ * slider to the coverage variables of the window material contract: the six
+ * Floating Islands ones (`--island-*coverage*` in `layouts/floating-islands.css`)
+ * and the window tint other layouts paint over the material
+ * (`--material-window-coverage*`, `routes/+page.svelte`). A coverage is the
  * share of the native material a surface hides in total.
  *
  * The slider percent is the content islands' coverage in dark themes. The
@@ -39,6 +41,8 @@ export interface VibrancyCoverageVariables {
   readonly "--island-coverage-dark": string;
   readonly "--island-structural-coverage-dark": string;
   readonly "--island-body-coverage-dark": string;
+  readonly "--material-window-coverage": string;
+  readonly "--material-window-coverage-dark": string;
 }
 
 /** Coverage at (range minimum, default, range maximum). */
@@ -55,6 +59,11 @@ const LIGHT: Record<keyof VibrancyCoverage, Anchors> = {
 const DARK_ISLAND: Anchors = [0.2, 0.545, 1];
 const DARK_STRUCTURAL_RATIO = 0.48 / 0.545;
 const DARK_BODY_RATIO = 0.3 / 0.545;
+
+// The window tint of layouts without islands (default 15% light and 55% dark,
+// the values it had before the slider reached it).
+const WINDOW_LIGHT: Anchors = [0.05, 0.15, 0.4];
+const WINDOW_DARK: Anchors = [0.2, 0.55, 1];
 
 /** Non-finite or non-numeric input falls back to the default; the rest clamps. */
 export function clampTranslucencyOpacity(percent: unknown): number {
@@ -94,10 +103,40 @@ export function darkCoverage(percent: unknown): VibrancyCoverage {
   };
 }
 
-/** The six inline custom properties for a slider percent. */
+/** Coverage of the window tint for layouts without islands, light and dark. */
+export function windowCoverage(percent: unknown): { readonly light: number; readonly dark: number } {
+  const p = clampTranslucencyOpacity(percent);
+  return { light: tidy(through(WINDOW_LIGHT, p)), dark: tidy(through(WINDOW_DARK, p)) };
+}
+
+/** Alpha a dark content island paints over the window body: the share of the
+ *  material it hides beyond what the body already hides. */
+export function darkIslandAlpha(percent: unknown): number {
+  const { island, body } = darkCoverage(percent);
+  return 1 - (1 - island) / (1 - body);
+}
+
+/**
+ * The slider percent whose dark island alpha is closest to `alpha` (0 to 1).
+ * Settings from before #1757 gave Windows islands a fill alpha directly
+ * ("Backdrop Opacity"); this keeps that look when they migrate. Out-of-range
+ * or non-numeric input clamps to the slider's range or falls back to its
+ * default.
+ */
+export function opacityForIslandAlpha(alpha: unknown): number {
+  if (typeof alpha !== "number" || !Number.isFinite(alpha)) return TRANSLUCENCY_OPACITY_DEFAULT;
+  let best = TRANSLUCENCY_OPACITY_MIN;
+  for (let p = TRANSLUCENCY_OPACITY_MIN; p <= TRANSLUCENCY_OPACITY_MAX; p++) {
+    if (Math.abs(darkIslandAlpha(p) - alpha) < Math.abs(darkIslandAlpha(best) - alpha)) best = p;
+  }
+  return best;
+}
+
+/** The inline custom properties for a slider percent. */
 export function vibrancyCoverageVariables(percent: unknown): VibrancyCoverageVariables {
   const l = lightCoverage(percent);
   const d = darkCoverage(percent);
+  const w = windowCoverage(percent);
   return {
     "--island-coverage": String(l.island),
     "--island-structural-coverage": String(l.structural),
@@ -105,5 +144,7 @@ export function vibrancyCoverageVariables(percent: unknown): VibrancyCoverageVar
     "--island-coverage-dark": String(d.island),
     "--island-structural-coverage-dark": String(d.structural),
     "--island-body-coverage-dark": String(d.body),
+    "--material-window-coverage": String(w.light),
+    "--material-window-coverage-dark": String(w.dark),
   };
 }

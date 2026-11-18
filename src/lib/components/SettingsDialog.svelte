@@ -3,11 +3,11 @@
   Issue: tauri-explorer-npjh.1, tauri-explorer-oytv
 -->
 <script lang="ts">
-  import { settingsStore, type IconTheme, type WindowsBackdrop, type PaneLayoutMode } from "$lib/state/settings.svelte";
+  import { settingsStore, type IconTheme, type PaneLayoutMode } from "$lib/state/settings.svelte";
   import { ICON_THEMES } from './icons/icon-theme-options';
   import { themeStore } from "$lib/state/theme.svelte";
   import { isMac, isWindows } from "$lib/domain/platform";
-  import { macOsVibrancyMode } from "$lib/domain/macos-vibrancy";
+  import { availableMaterial } from "$lib/state/window-translucency.svelte";
   import { listInstalledTerminals } from "$lib/api/open";
   import { warmPoolShutdown } from "$lib/api/warm-pool";
   import { spawnWarmWindow } from "$lib/state/warm-window";
@@ -81,8 +81,11 @@
 
   // Row search terms and per-section row lists: domain/settings-rows.
   const rows = SETTINGS_ROWS;
-  const macMaterial = $derived(macOsVibrancyMode(isMac, settingsStore) === "material");
-  const sectionRows = $derived(settingsSectionRows({ isMac, isWindows, macMaterial }));
+  const sectionRows = $derived(settingsSectionRows({
+    isMac, isWindows,
+    translucencyAvailable: availableMaterial !== null,
+    translucencyOn: settingsStore.translucency,
+  }));
 
   // Escape clears the search filter before closing, so the Modal default
   // (close on Escape) is disabled and Escape is handled here instead.
@@ -204,53 +207,15 @@
             hidden={!matchesSearch(...rows.integratedTitleBar)}>
             <SettingToggle checked={settingsStore.integratedTitleBar} onchange={() => settingsStore.update({ integratedTitleBar: !settingsStore.integratedTitleBar })} />
           </SettingRow>
-
-          <SettingRow label="Window Vibrancy"
-            description="Native macOS translucent frosted-glass effect (requires restart)"
-            hidden={!matchesSearch(...rows.vibrancy)}>
-            <SettingToggle checked={settingsStore.macOsVibrancy} onchange={() => settingsStore.update({ macOsVibrancy: !settingsStore.macOsVibrancy })} />
-          </SettingRow>
-
-          {#if settingsStore.macOsVibrancy}
-          <SettingRow label="Native Blur"
-            description="Use macOS frosted glass blur (off = theme background, requires restart)"
-            hidden={!matchesSearch(...rows.nativeBlur)}>
-            <SettingToggle checked={settingsStore.vibrancyBlur} onchange={() => settingsStore.update({ vibrancyBlur: !settingsStore.vibrancyBlur })} />
-          </SettingRow>
-          <TranslucencyOpacitySetting applies={macMaterial} hidden={!matchesSearch(...rows.translucencyOpacity)} />
-          {/if}
           {/if}
 
-          {#if isWindows}
-          <SettingRow label="Window Backdrop"
-            description="Translucent frosted-glass effect (enabling from Off requires restart)"
-            hidden={!matchesSearch(...rows.windowsBackdrop)}>
-            <select
-              class="settings-select"
-              value={settingsStore.windowsBackdrop}
-              onchange={(e) => settingsStore.setWindowsBackdrop(e.currentTarget.value as WindowsBackdrop)}
-            >
-              <option value="off">Off</option>
-              <option value="mica">Mica (wallpaper tint)</option>
-              <option value="acrylic">Acrylic (see-through)</option>
-            </select>
+          {#if availableMaterial}
+          <SettingRow label={rows.translucency[0]}
+            description={rows.translucency[1]}
+            hidden={!matchesSearch(...rows.translucency)}>
+            <SettingToggle checked={settingsStore.translucency} onchange={() => settingsStore.update({ translucency: !settingsStore.translucency })} />
           </SettingRow>
-
-          {#if settingsStore.windowsBackdrop === "acrylic"}
-          <SettingRow label="Backdrop Opacity"
-            description="How see-through the Acrylic backdrop is ({settingsStore.windowsBackdropOpacity}%, lower = more transparent)"
-            hidden={!matchesSearch(...rows.windowsBackdropOpacity)}>
-            <input
-              class="range-input"
-              type="range"
-              min="0"
-              max="100"
-              step="5"
-              value={settingsStore.windowsBackdropOpacity}
-              oninput={(e) => settingsStore.update({ windowsBackdropOpacity: Number(e.currentTarget.value) })}
-            />
-          </SettingRow>
-          {/if}
+          <TranslucencyOpacitySetting applies={settingsStore.translucency} hidden={!matchesSearch(...rows.translucencyOpacity)} />
           {/if}
 
           <SettingRow label="Premium Theme Effects"

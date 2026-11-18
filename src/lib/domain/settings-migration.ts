@@ -25,6 +25,8 @@
  */
 
 import { legacyLayoutThemeId } from "./layout-theme-ids";
+import { legacyTranslucency } from "./translucency";
+import { opacityForIslandAlpha } from "./vibrancy-opacity";
 
 /** Key holding the schema version inside the persisted settings blob. */
 export const SETTINGS_VERSION_KEY = "settingsVersion";
@@ -36,7 +38,8 @@ export interface SettingsMigration {
   /** Persisted keys to discard in favour of their current default value. */
   readonly resetToDefault: readonly string[];
   /** Values derived from the blob as it was persisted, applied after the
-   *  resets. Used when a preference moves to a new key (#1306). */
+   *  resets. Used when a preference moves to a new key (#1306). It reads the
+   *  raw blob, so keys the current settings no longer define stay visible. */
   readonly derive?: (persisted: Readonly<Record<string, unknown>>) => Record<string, unknown>;
   /** Why the persisted value must be dropped — cite the issue. */
   readonly reason: string;
@@ -62,7 +65,30 @@ const SETTINGS_MIGRATIONS: readonly SettingsMigration[] = [
       "macOS vibrancy and Windows backdrops implied) with the layoutTheme " +
       "selection; existing island users keep Floating Islands.",
   },
+  {
+    version: 3,
+    resetToDefault: [],
+    derive: (persisted) => ({
+      ...(Object.hasOwn(persisted, "translucency") ? {} : { translucency: legacyTranslucency(persisted) }),
+      ...(Object.hasOwn(persisted, "translucencyOpacity") ? {} : legacyWindowsOpacity(persisted)),
+    }),
+    reason:
+      "#1757 replaced macOS Window Vibrancy + Native Blur and the Windows " +
+      "Mica/Acrylic backdrop with one Translucency setting; whoever had " +
+      "either keeps a translucent window, and a Windows Backdrop Opacity " +
+      "carries over as the slider value giving islands the same alpha.",
+  },
 ];
+
+/** The Translucency Opacity that keeps a Windows backdrop's island alpha. */
+function legacyWindowsOpacity(persisted: Readonly<Record<string, unknown>>): { translucencyOpacity?: number } {
+  const backdrop = persisted.windowsBackdrop;
+  const opacity = persisted.windowsBackdropOpacity;
+  if ((backdrop !== "mica" && backdrop !== "acrylic") || typeof opacity !== "number" || !Number.isFinite(opacity)) {
+    return {};
+  }
+  return { translucencyOpacity: opacityForIslandAlpha(Math.min(100, Math.max(0, opacity)) / 100) };
+}
 
 /** Highest shipped migration version — the stamp a migrated blob carries. */
 export const CURRENT_SETTINGS_VERSION: number = SETTINGS_MIGRATIONS.reduce(
@@ -103,14 +129,21 @@ function storedVersion(persisted: Record<string, unknown>): number {
  * runs at most once per install and a blob written by a newer build is never
  * downgraded.
  *
+ * `raw` is the blob as parsed, before validation dropped keys the settings no
+ * longer define; derives read it (defaults to `persisted`).
+ *
  * Pure: the inputs are not mutated.
  */
 export function migrateSettings<T extends object>(
   persisted: Partial<T> | null | undefined,
   defaults: T,
   migrations: readonly SettingsMigration[] = SETTINGS_MIGRATIONS,
+  raw: unknown = persisted,
 ): SettingsMigrationResult<T> {
   const saved = asRecord(persisted);
+  // Derives read the blob as written, including keys the settings no longer
+  // define; the stamp still comes from the validated settings.
+  const source = { ...asRecord(raw), ...saved };
   const from = storedVersion(saved);
   const target = migrations.reduce((max, m) => Math.max(max, m.version), 0);
   const defaulted = defaults as unknown as Record<string, unknown>;
@@ -123,7 +156,7 @@ export function migrateSettings<T extends object>(
       // "toString") must not copy a prototype member onto the blob.
       if (Object.hasOwn(defaulted, key)) merged[key] = defaulted[key];
     }
-    if (migration.derive) Object.assign(merged, migration.derive(saved));
+    if (migration.derive) Object.assign(merged, migration.derive(source));
   }
 
   merged[SETTINGS_VERSION_KEY] = Math.max(from, target);

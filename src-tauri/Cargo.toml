@@ -162,6 +162,8 @@ wayland-protocols-wlr = { version = "0.3", features = ["server"] }
 windows-sys = {version="0.61",features= ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Registry", "Win32_System_Pipes"] }
 webview2-com = "0.39"
 windows-core = "0.62.2"
+# OS build for the translucency material (#1757); already in the tree via window-vibrancy.
+windows-version = "0.1"
 # Win32_System_DataExchange/Memory: the clipboard sequence number and the
 # Cut token read-back (clipboard/windows.rs, #877).
 # EnhancedStorage: PKEY_FileName for exact Recycle Bin names (#1208).

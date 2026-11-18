@@ -8,77 +8,36 @@
   (double-click) — renaming also saves the layout as a workspace.
 -->
 <script lang="ts">
-  import { tick, onDestroy, untrack } from "svelte";
+  import { tick, onDestroy } from "svelte";
   import { dragState } from "$lib/state/drag.svelte";
+  import { slide } from "svelte/transition";
   import { MediaQuery } from "svelte/reactivity";
   import { windowTabsManager, type TabTransfer } from "$lib/state/window-tabs.svelte";
   import { dropIntoDirectory } from "$lib/composables/use-dom-directory-drop";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { getCommandShortcut } from "$lib/state/commands.svelte";
   import { tabDragState, windowAtScreenPos, sendTabToWindow } from "$lib/state/tab-transfer";
-  import { clientToCSSRelative, cssToRect, getZoomFactor, rectDimToCSS } from "$lib/domain/zoom";
+  import { clientToCSSRelative, getZoomFactor } from "$lib/domain/zoom";
   import { openNewWindow } from "$lib/state/commands/shared";
-  import { showTabStrip, titleRowHeldOpen } from "$lib/domain/titlebar";
+  import { effectiveWindowControls, showTabStrip } from "$lib/domain/titlebar";
   import { isMac } from "$lib/domain/platform";
   import { stepTabDrag, TAB_DRAG_IDLE, type TabDrag, type TabDragEffect, type TabDragEvent } from "$lib/domain/tab-drag";
-  import { tabStripLayout, tabStripStart, tabEdgeScrollSpeed, tabRevealScroll, TAB_MAX_WIDTH, TAB_GAP, TAB_BLEED } from "$lib/domain/tab-strip";
-  import { TAB_STRIP_PADDING } from "$lib/domain/tab-seam";
-  import { TAB_SLIDE_IN_MS, TAB_SLIDE_OUT_MS } from "$lib/domain/tab-slide";
-  import { stripTabsOf, stripTabWidth } from "$lib/domain/tab-strip-motion";
-  import { createTabStripMotion } from "$lib/composables/tab-strip-motion.svelte";
-  import { createTitleFit, glideTabList, tabRoomAtFloor, tabSlide } from "$lib/composables/tab-strip-dom";
+  import { tabStripLayout, tabEdgeScrollSpeed, TAB_MAX_WIDTH, TAB_GAP } from "$lib/domain/tab-strip";
   import WindowTabPicker from "./WindowTabPicker.svelte";
   import "./window-tab-bar.css";
   import NamedFolderIcon from "./NamedFolderIcon.svelte";
   import type { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-
-  /** Floating Islands: the strip start that aligns it with the content
-   *  islands (`composables/tab-strip-start.ts`); null leaves the stylesheet's. */
-  let { alignedStart = null }: { alignedStart?: number | null } = $props();
 
   const tabs = $derived(windowTabsManager.tabs);
   const activeTabId = $derived(windowTabsManager.activeTabId);
   let renamingTabId = $state<string | null>(null);
 
   let tabViewport: HTMLDivElement | undefined = $state();
-  let tabScrollGroup: HTMLDivElement | undefined = $state();
-  /** The tabs' room with the strip at its window-edge start. */
-  let roomAtFloor = $state(0);
+  let tabSpaceWidth = $state(0);
   let tabViewportWidth = $state(0);
   let tabScrollLeft = $state(0);
-  // The tabs the strip lays out, a frame late while a tab slides, and its
-  // eases (domain/tab-strip-motion.ts, #1734).
-  const motion = createTabStripMotion(stripTabsOf(windowTabsManager.tabs, windowTabsManager.activeTabId));
-  $effect.pre(() => motion.follow(stripTabsOf(tabs, activeTabId)));
-  const activeMinimum = $derived(renamingTabId ? 180 : 120);
-  // Floating Islands starts the strip over the content islands only while
-  // its tabs fit there at a comfortable width; a narrower window gives that
-  // room back to them (#1734).
-  function layoutFor(count: number) {
-    const start = alignedStart === null ? null : tabStripStart(alignedStart, TAB_STRIP_PADDING, roomAtFloor, count, activeMinimum);
-    const space = Math.max(0, roomAtFloor - (start === null ? 0 : start - TAB_STRIP_PADDING));
-    return { start, space, layout: tabStripLayout(count, space, Math.min(activeMinimum, space || 120)) };
-  }
-  const strip = $derived(layoutFor(motion.strip.count));
-  const stripStart = $derived(strip.start);
-  const tabSpaceWidth = $derived(strip.space);
-  const stripLayout = $derived(strip.layout);
-  // A tab sliding in grows to the width it has once the strip lays out its
-  // new count; the start eases with it, and a window resize moves it at once.
-  const entering = $derived(layoutFor(tabs.length));
-  const enteringLayout = $derived(entering.layout);
-  const tabPx = (id: string) => stripTabWidth(id, motion.strip, stripLayout, activeTabId, enteringLayout);
-  $effect.pre(() => {
-    void roomAtFloor;
-    void alignedStart;
-    motion.startMovesAtOnce();
-  });
+  const stripLayout = $derived(tabStripLayout(tabs.length, tabSpaceWidth, Math.min(renamingTabId ? 180 : 120, tabSpaceWidth || 120)));
   const showScrollButtons = $derived(stripLayout.overflowing && tabSpaceWidth >= 240);
-  /** Room the overlaid scroll button and the edge fade take at each end. */
-  const SCROLL_BUTTON_WIDTH = 24;
-  const EDGE_FADE = 24;
-  const fadeStart = $derived(stripLayout.overflowing && tabScrollLeft >= 1);
-  const fadeEnd = $derived(stripLayout.overflowing && tabScrollLeft + tabViewportWidth < stripLayout.totalWidth + 2 * TAB_BLEED - 1);
   let pickerButton: HTMLButtonElement | undefined = $state();
   let pickerOpen = $state(false);
   const pickerItems = $derived(tabs.map(tab => ({
@@ -90,53 +49,11 @@
     if (restoreFocus) pickerButton?.focus();
   }
 
-  // The tabs' room as if the strip started at the window edge, observed on
-  // a box the strip's own layout cannot resize (tab-strip-dom.ts, #1734).
-  let tabArea: HTMLDivElement | undefined = $state();
-  let roomBox = $state<HTMLElement | null>(null);
-  function measureRoom(): void {
-    if (!tabScrollGroup || !tabArea) return;
-    const { room, box } = tabRoomAtFloor(tabArea, tabScrollGroup);
-    roomBox = box;
-    // offsetWidths are rounded, so mid-slide the buttons' share wobbles by
-    // 1px; a wobble must not re-lay out (and re-ease) every tab.
-    if (Math.abs(room - roomAtFloor) > 1) roomAtFloor = room;
-  }
-
-  $effect(() => {
-    const group = tabScrollGroup;
-    if (!group || !tabArea) return;
-    untrack(measureRoom); // a re-created observer re-delivers mid-delivery (#1734)
-    const observer = new ResizeObserver(measureRoom);
-    observer.observe(untrack(() => roomBox) ?? group);
-    return () => observer.disconnect();
-  });
-
-  // Tab widths ease to a new count (window-tab-bar.css) only once the strip
-  // has its first measured layout: the initial mount never animates.
-  let easeWidths = $state(false);
-  $effect(() => {
-    if (easeWidths || tabSpaceWidth <= 0) return;
-    let frame = requestAnimationFrame(() => { frame = requestAnimationFrame(() => { easeWidths = true; }); });
-    return () => cancelAnimationFrame(frame);
-  });
-
-  // A new or closed tab changes the room the strip may take; ResizeObserver
-  // reports it a frame late, so the first frame of a new tab's slide would
-  // be laid out for the old count. Measure synchronously after the DOM
-  // update too.
-  $effect(() => {
-    void tabs.length;
-    untrack(measureRoom);
-  });
-
-  // Activation/layout changes reveal the selected tab (manual scrolling stays
-  // user-owned), to where the layout ends up, once per slide (#1734).
+  // Activation/layout changes reveal the selected tab. Manual browsing does
+  // not retrigger this effect, so wheel/arrow/drag scrolling stays user-owned.
   $effect(() => {
     const id = activeTabId;
-    // The strip only scrolls once it lays out as overflowing (a frame after
-    // the count changes), so that is a reveal too.
-    const geometry = [enteringLayout.activeWidth, enteringLayout.inactiveWidth, enteringLayout.totalWidth, tabViewportWidth, entering.start, tabs.length, stripLayout.overflowing];
+    const geometry = [stripLayout.activeWidth, stripLayout.inactiveWidth, tabViewportWidth];
     void geometry;
     let cancelled = false;
     void tick().then(() => {
@@ -147,26 +64,14 @@
 
   function revealActiveTab(): void {
     if (!tabViewport) return;
-    const index = tabs.findIndex(tab => tab.id === activeTabId);
-    if (index < 0) return;
-    // Leave room for the active tab's fillets, which hang outside its box,
-    // and, in an overflowing strip, for the scroll button and edge fade
-    // overlaid on each end.
-    const layout = enteringLayout;
-    const buttons = layout.overflowing && entering.space >= 240;
-    const room = TAB_BLEED + (layout.overflowing ? (buttons ? SCROLL_BUTTON_WIDTH : 0) + EDGE_FADE : 0);
-    const from = tabViewport.scrollLeft;
-    const to = tabRevealScroll(layout, index, from, tabViewport.clientWidth, room);
-    if (Math.abs(to - from) < 0.5) return;
-    tabViewport.scrollLeft = to;
-    const moved = tabViewport.scrollLeft - from;
-    const list = tabViewport.querySelector<HTMLElement>(".tab-list");
-    if (list && motion.gliding && moved && easeWidths && !reducedMotion.current) glideTabList(list, moved);
+    const selected = Array.from(tabViewport.querySelectorAll<HTMLElement>(".tab"))
+      .find(tab => tab.dataset.tabId === activeTabId);
+    if (!selected) return;
+    const tab = selected.getBoundingClientRect();
+    const view = tabViewport.getBoundingClientRect();
+    if (tab.left < view.left) tabViewport.scrollLeft += clientToCSSRelative(tab.left, view.left);
+    else if (tab.right > view.right) tabViewport.scrollLeft += clientToCSSRelative(tab.right, view.right);
   }
-
-  const titleFits = createTitleFit();
-  const titleFit = titleFits.action;
-  onDestroy(titleFits.dispose);
 
   function scrollTabs(direction: number): void {
     if (tabViewport) tabViewport.scrollLeft += direction * Math.max(120, tabViewport.clientWidth * 0.8);
@@ -195,7 +100,7 @@
       tabs.length,
       windowTabsManager.activeTab?.kind === "explorer" &&
         windowTabsManager.canRenameTab(windowTabsManager.activeTab.id),
-      titleRowHeldOpen(settingsStore.integratedTitleBar, settingsStore.showWindowControls, isMac),
+      effectiveWindowControls(settingsStore.showWindowControls, isMac),
     ),
   );
 
@@ -619,15 +524,15 @@
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <!-- Drag handlers only — keyboard interaction lives on the tabs. -->
   <!-- svelte-ignore a11y_interactive_supports_focus -->
-  <div class="tab-area" data-region="tab-strip" bind:this={tabArea} class:aligned={stripStart !== null} style:--tab-strip-start={stripStart === null ? null : stripStart} style:--tab-start-ease={`${motion.startEaseMs}ms`}>
-    <div class="tab-scroll-group" bind:this={tabScrollGroup} style:width={roomBox ? null : `${tabs.length * (TAB_MAX_WIDTH + TAB_GAP) - TAB_GAP}px`}>
+  <div class="tab-area" data-region="tab-strip">
+    <div class="tab-scroll-group" bind:clientWidth={tabSpaceWidth} style:width={`${tabs.length * (TAB_MAX_WIDTH + TAB_GAP) - TAB_GAP}px`}>
       {#if showScrollButtons}
-        <button class="tab-scroll-btn start" aria-label="Scroll tabs left" disabled={tabScrollLeft < 1} onclick={() => scrollTabs(-1)}>‹</button>
+        <button class="tab-scroll-btn" aria-label="Scroll tabs left" disabled={tabScrollLeft < 1} onclick={() => scrollTabs(-1)}>‹</button>
       {/if}
-      <div class="tab-viewport" class:bleed={!stripLayout.overflowing} class:ease-widths={easeWidths} class:fade-start={fadeStart} class:fade-end={fadeEnd} style:--tab-bleed={`${TAB_BLEED}px`} style:--tab-scroll-btn-w={showScrollButtons ? `${SCROLL_BUTTON_WIDTH}px` : "0px"} style:--tab-width-ease={`${motion.widthEaseMs}ms`} bind:this={tabViewport} bind:clientWidth={tabViewportWidth} onscroll={() => { tabScrollLeft = tabViewport?.scrollLeft ?? 0; }} onwheel={handleTabWheel}>
+      <div class="tab-viewport" bind:this={tabViewport} bind:clientWidth={tabViewportWidth} onscroll={() => { tabScrollLeft = tabViewport?.scrollLeft ?? 0; }} onwheel={handleTabWheel}>
     <!-- A tablist owns only tabs; the new-tab button sits beside it (#785). -->
-    <div class="tab-list" role="tablist" aria-label="Tabs" style:--tab-list-width={`${enteringLayout.totalWidth}px`}>
-    {#each tabs as tab, index (tab.id)}
+    <div class="tab-list" role="tablist" aria-label="Tabs">
+    {#each tabs as tab (tab.id)}
       {@const display = windowTabsManager.getTabDisplay(tab)}
       <div
         class="tab"
@@ -635,16 +540,14 @@
         class:active={tab.id === activeTabId}
         class:compact={tab.id !== activeTabId && stripLayout.iconOnly}
         class:narrow={tab.id === activeTabId && stripLayout.activeWidth < 90}
-        class:before-active={tabs[index + 1]?.id === activeTabId}
-        class:after-active={index > 0 && tabs[index - 1]?.id === activeTabId}
-        style:--tab-px={tabPx(tab.id)}
+        style:width={`${tab.id === activeTabId ? stripLayout.activeWidth : stripLayout.inactiveWidth}px`}
         class:drag-over={dropTargetTabId === tab.id}
         class:file-drop-target={fileDropTargetTabId === tab.id}
         class:dragging={draggingTabId === tab.id}
-        in:tabSlide={{ duration: reducedMotion.current ? 0 : TAB_SLIDE_IN_MS, sized: false }}
-        out:tabSlide={{ duration: reducedMotion.current ? 0 : TAB_SLIDE_OUT_MS, sized: true }}
-        onintroend={() => { motion.slideEnded(); if (tab.id === activeTabId) revealActiveTab(); }}
-        onoutroend={() => { motion.slideEnded(); revealActiveTab(); }}
+        in:slide={{ axis: "x", duration: reducedMotion.current ? 0 : 180 }}
+        out:slide={{ axis: "x", duration: reducedMotion.current ? 0 : 120 }}
+        onintroend={() => { if (tab.id === activeTabId) revealActiveTab(); }}
+        onoutroend={revealActiveTab}
         role="tab"
         tabindex="0"
         aria-selected={tab.id === activeTabId}
@@ -710,7 +613,7 @@
             aria-label="Rename tab"
           />
         {:else}
-          <span class="tab-title" use:titleFit={`${display.repo ?? ""}/${display.name}`}>
+          <span class="tab-title">
             {#if display.repo}
               <!-- Repo name shrinks/ellipsizes first; the current folder stays
                    visible as long as possible (full path is in the tooltip). -->
@@ -745,7 +648,7 @@
     </div>
       </div>
       {#if showScrollButtons}
-        <button class="tab-scroll-btn end" aria-label="Scroll tabs right" disabled={tabScrollLeft + tabViewportWidth >= stripLayout.totalWidth + 2 * TAB_BLEED - 1} onclick={() => scrollTabs(1)}>›</button>
+        <button class="tab-scroll-btn" aria-label="Scroll tabs right" disabled={tabScrollLeft + tabViewportWidth >= stripLayout.totalWidth - 1} onclick={() => scrollTabs(1)}>›</button>
       {/if}
     </div>
 

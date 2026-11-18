@@ -41,15 +41,3 @@ test("settings dialog omits Show Window Controls on macOS and lists it on Linux"
   await expect(page.locator(".settings-dialog")).toBeVisible();
   await expect(page.getByText("Show Window Controls")).toBeVisible();
 });
-
-test("macOS integrated title bar keeps the lone tab of a Floating Islands window (#1734)", async ({ page }) => {
-  await page.addInitScript(() => {
-    Object.defineProperty(window.navigator, "platform", { get: () => "MacIntel", configurable: true });
-  });
-  await seedSettings(page, { showWindowControls: true, integratedTitleBar: true, layoutTheme: "floating-islands" });
-  await page.goto(HOME_URL);
-  await waitForEntries(page);
-  await expect(page.locator(".tab-viewport .tab")).toHaveCount(1);
-  await expect(page.locator(".tab-viewport .tab.active")).toBeVisible();
-  await expect(page.locator(".window-controls")).toHaveCount(0);
-});

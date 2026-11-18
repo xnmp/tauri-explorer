@@ -19,9 +19,7 @@ test("update notice uses themed dialog chrome and preserves its actions", async 
   await expect(notice).toBeVisible({ timeout: 15_000 });
   await expect(notice).toHaveClass(/modal-card/);
 
-  // Opaque card: the acrylic tint over the solid theme base (#1734).
-  await expect(notice).toHaveCSS("background-color", "rgb(28, 28, 30)");
-  await expect(notice).toHaveCSS("background-image", /^linear-gradient\(rgba\(38, 38, 40, 0\.92\), rgba\(38, 38, 40, 0\.92\)\)/);
+  await expect(notice).toHaveCSS("background-color", "rgba(38, 38, 40, 0.92)");
   await expect(notice).toHaveCSS("border-top-color", "rgba(255, 255, 255, 0.1)");
   await expect(notice).toHaveCSS("color", "rgb(232, 232, 237)");
   const viewRelease = notice.getByRole("button", { name: "View release" });
@@ -47,9 +45,7 @@ test("light-themed update notice uses dialog chrome and can be dismissed", async
   const notice = page.getByTestId("update-notice");
   await expect(notice).toBeVisible({ timeout: 15_000 });
   await expect(notice).toHaveClass(/modal-card/);
-  // Opaque card: the acrylic tint over the solid theme base (#1734).
-  await expect(notice).toHaveCSS("background-color", "rgb(245, 245, 247)");
-  await expect(notice).toHaveCSS("background-image", /^linear-gradient\(rgba\(255, 255, 255, 0\.72\), rgba\(255, 255, 255, 0\.72\)\)/);
+  await expect(notice).toHaveCSS("background-color", "rgba(255, 255, 255, 0.72)");
   await expect(notice).toHaveCSS("border-top-color", "rgba(0, 0, 0, 0.03)");
   await expect(notice).toHaveCSS("color", "rgb(29, 29, 31)");
   const viewRelease = notice.getByRole("button", { name: "View release" });

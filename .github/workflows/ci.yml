@@ -924,14 +924,16 @@ jobs:
       run:
         shell: bash
     # Shards are planned at ~24 min, but container runs of the same plan took
-    # 22-30 min. Headroom rather than a sixth shard: browser, Rust and smoke
-    # jobs already queue for runners on a full PR run, and each extra shard
-    # adds its own setup (#1367).
+    # 22-30 min. Headroom first (#1367): browser, Rust and smoke jobs already
+    # queue for runners on a full PR run, and each extra shard adds its own
+    # setup. The sixth shard came when the tab seam matrices (#1772) raised
+    # the plan to ~137 min, ~27 min a shard: runs of 26-35 min left retries
+    # no room under the 40-minute budget (#1775).
     timeout-minutes: 46
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5]
+        shard: [1, 2, 3, 4, 5, 6]
     # Job-wide so the cache probe and the run hash the same environment. The
     # container, not the runner image, is this job's environment: name it in
     # the test-result cache's platform identity.

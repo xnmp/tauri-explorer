@@ -121,6 +121,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `SettingsDialog.svelte` — general settings dialog; links to dedicated Keyboard Shortcuts and Plugins dialogs.
 - `settings/SettingRow.svelte` — one Settings row (label, description, optional `info` snippet, control slot); `hidden` while the search filter excludes it.
 - `settings/SettingToggle.svelte` — the Settings switch (restyled checkbox; extra input attributes forwarded).
+- `settings/TranslucencyOpacitySetting.svelte` — macOS Native Blur "Translucency Opacity" slider row (#1735).
 - `settings/TerminalShortcutSettings.svelte` — terminal line-editing shortcut list and key recorder (#375/#404); recording ends on dialog close or window blur.
 - `settings/GitHubReportTokenSetting.svelte` — Settings → Issue Reports: write-only GitHub token entry (save/replace/remove) showing only whether one is saved (#1455).
 - `settings/ExperimentalSettings.svelte` — Settings → Experimental feature-flag rows (integrated terminal, git graph).
@@ -469,6 +470,12 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-pointer-drag.svelte.ts` — pointer-event drag for macOS (in-app DnD). [modified on branch]
 - `use-pointer-intent.svelte.ts` — pointer-vs-keyboard intent for pickers.
 - `use-sidebar-drag.svelte.ts` — lightweight sidebar-item pointer drag (macOS).
+- `src/lib/composables/island-regions.ts` — shared Floating Islands region selectors (island surfaces vs structural regions) used by the tab seam marks and strip start.
+- `src/lib/composables/tab-seam-marks.ts` — lazily loaded Floating Islands tab marks: measures the active tab and islands, updates the title bar's inline SVG shade/fill/shadow/edge and island `data-tab-seam` notches in place.
+- `src/lib/composables/use-tab-seam.svelte.ts` — loads and attaches `tab-seam-marks` while the islands layout is active; repaints on tab changes.
+- `src/lib/composables/tab-strip-dom.ts` — window tab strip DOM helpers: slide transition (restoring a reversed leaving tab's selected state), reveal glide, title-fade fit check, and the strip's room measured on the title bar's room box so its own writes never loop a ResizeObserver (#1734).
+- `src/lib/composables/tab-strip-motion.svelte.ts` — window tab strip motion state: the tabs the strip lays out (a frame late while a tab slides), width/start eases and the reveal glide flag, on an injectable frame scheduler (#1734).
+- `src/lib/composables/tab-strip-start.ts` — Floating Islands tab strip start: measures the leftmost content island under the title bar (observing only boxes shallower than the strip, plus a MutationObserver for structural island changes) and reports the aligned start that `tabStripStart` adapts to the room (#1734).
 - `src/lib/composables/use-sidebar-drag-end.ts` — source-bound document dragend capture, bookmark fallback and gesture retirement.
 - `src/lib/composables/use-sidebar-file-drop.ts` — MIME-scoped Quick Access pinning and bookmark reorder, independent of retained file consumers.
 - `src/lib/composables/use-dom-directory-drop.ts` — shared importable folder/breadcrumb/tab/listing/Miller DOM transfer destinations and copy policies.
@@ -496,7 +503,11 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 ## src/lib/domain/ — pure logic, no framework deps. Test + reuse here.
 
 - `pointer-drag.ts` — shared five-pixel press-to-drag threshold for tabs, files, sidebar items and click suppression.
-- `tab-strip.ts` — pure Chrome-style tab sizing, full-path tab filtering and drag edge-scroll speed.
+- `tab-strip.ts` — pure Chrome-style tab sizing, full-path tab filtering and drag edge-scroll speed; `TAB_BLEED` and the bleed-aware active-tab reveal.
+- `island-outline.ts` — Floating Islands seam pixel ownership (#1734): device-pixel snapping per engine, the island top-edge cut the tab's SVG stroke takes over (handovers at the corner tangents), its path and the island's clip polygon.
+- `tab-seam.ts` — Floating Islands active-tab geometry (#1734): contour, strip-shade hole, fill, seam rows, gutter bridges, squared island corners, strip start padding, edge stroke and key shadow paths.
+- `tab-slide.ts` — tab insert/remove slide timing and per-frame flex-basis CSS (fillets and content scale with `--tab-slide`).
+- `tab-strip-motion.ts` — pure tab strip transition decisions: which eases a tab-count change uses, whether it slides, and each tab's width (laid out vs entering).
 - `tab-drag.ts` — pure tab-drag lifecycle and effects, including session-qualified asynchronous detach settlement (#1642).
 - `src/lib/domain/job-presentation.ts` — validates optional job cost/reveal metadata and formats exact decimal money.
 - `src/lib/domain/job-reveal.ts` — pure pane choice, present-file selection, reveal routing and latest-click cancellation policy.
@@ -615,6 +626,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `settings-migration.ts` — versioned one-shot migrations for the persisted settings blob; `migrateSettings` + the append-only ledger (#506).
 - `layout-theme.ts` — layout-theme catalog (#1306): built-ins, leading-comment metadata, user-file validation, resolution/fallback reasons, row-height parsing.
 - `layout-theme-ids.ts` — eager built-in layout ids and the legacy Floating Islands → `layoutTheme` mapping used by settings migration.
+- `vibrancy-opacity.ts` — Translucency Opacity slider (20-100%, default 55) to the six `--island-*coverage*` values; default reproduces the fixed theme defaults exactly (#1735).
 - `macos-vibrancy.ts` — macOS vibrancy mode (off / transparent / material) and the Sidebar material shared by JS-created windows (`state/window-appearance.ts`) and the page tint attribute; kept in step with `lib.rs` `MACOS_VIBRANCY_MATERIAL` by `tests/domain/macos-vibrancy.test.ts` (#1733).
 - `miller-placement.ts` — `millerHoistedToIsland`: whether Miller columns hoist to the left island (island layout, no sidebar, single-pane tab only); shared by `+page.svelte` and `ExplorerPane.svelte` (#434, #1699).
 - `settings-numbers.ts` — Numeric preference consumer contracts shared by persisted validation and interactive setters.

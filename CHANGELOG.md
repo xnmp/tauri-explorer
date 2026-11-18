@@ -2,6 +2,22 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.28.0 — 2026-11-18
+
+### Added
+
+- macOS: a Translucency Opacity slider (Settings → Appearance, with Window
+  Vibrancy and Native Blur on) sets how much of the frosted-glass material
+  the Floating Islands panels cover, from see-through to opaque (#1735).
+
+### Changed
+
+- Floating Islands: the active tab owns the window. It joins the panel below
+  it through curved feet drawn as one seamless SVG outline, with a light
+  shadow around its whole border and a heavier one on the right side. The
+  seam follows a tab frame by frame while tabs open, close and switch, and a
+  sliding tab never shows a fragment of its title (#1734).
+
 ## v1.27.0 — 2026-11-17
 
 ### Added

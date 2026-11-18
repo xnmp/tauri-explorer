@@ -104,7 +104,7 @@
   </ul>
   <figure><div class="win" id="m-new"></div><figcaption><b>Proposed, dark, Miller columns off.</b> Middle tab active. The sidebar sits on the tab's surface like every other island.</figcaption></figure>
   <figure><div class="win" id="m-new-miller"></div><figcaption><b>Proposed, dark, sidebar shown, Miller columns on.</b> As today, they sit inside the main island.</figcaption></figure>
-  <figure><div class="win" id="m-new-first"></div><figcaption><b>Proposed, Windows/Linux, first tab active.</b> The window controls are on the right there, so the strip starts at the window's left edge and the first tab sits right over the sidebar. Flush with the window edge it has no left foot: the window's left edge runs straight up into the tab. On macOS the strip starts after the traffic lights, so every tab keeps both feet.</figcaption></figure>
+  <figure><div class="win" id="m-new-first"></div><figcaption><b>Proposed, Windows/Linux, first tab active.</b> The window controls are on the right there, so the strip starts just past the surface's rounded corner: the first tab sits over the sidebar and still shows its whole left curve. On macOS the strip starts after the traffic lights.</figcaption></figure>
   <figure><div class="win" id="m-new-split"></div><figcaption><b>Proposed, split panes.</b> Each pane is its own island on the tab's surface.</figcaption></figure>
   <figure><div class="win" id="m-new-nosidebar"></div><figcaption><b>Proposed, sidebar hidden, Miller columns on.</b> As today, the columns become their own island on the left.</figcaption></figure>
   <figure><div class="win light" id="m-new-light"></div><figcaption><b>Proposed, light theme, Miller columns on.</b></figcaption></figure>
@@ -239,9 +239,11 @@ render("m-new-miller", {
   islands: [sideIsl, mainIsl(true)],
 });
 render("m-new-first", {
-  tabs: [{ x: 0, w: 236 }, { x: 236, w: 220 }, { x: 456, w: 220 }], active: 0, frame: C, controls: "win",
+  // The strip starts at the surface's corner radius plus the tab's foot, so
+  // even the first tab shows its whole left curve.
+  tabs: [{ x: 30, w: 226 }, { x: 256, w: 220 }, { x: 476, w: 220 }], active: 0, frame: C, controls: "win",
   islands: [sideIsl, mainIsl(false)],
-  notes: [{ t: "no left foot: the window's left edge runs straight up into the tab", x: 14, y: H - STATUS_H - 64, w: 190 }],
+  notes: [{ t: "the strip starts after the surface's corner, so the first tab keeps its full curve", x: 14, y: H - STATUS_H - 64, w: 190 }],
 });
 const splitW = (W - IN - mainX - IN) / 2;
 render("m-new-split", {

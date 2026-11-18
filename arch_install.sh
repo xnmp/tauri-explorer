@@ -143,12 +143,19 @@ fi
 # publishes no Arch package, and its only Linux pacman route is this wrapper.
 # Depends on curl and jq; without them the release path reports why it cannot
 # run and the source-build confirmation takes over.
-RELEASE_API=https://api.github.com/repos/xnmp/tauri-explorer/releases/latest
+#
+# GitHub's "Latest" release stays on the 1.x bridge (v1.28.2), so it no longer
+# names the newest release. The updater channel manifest does; the tag API then
+# supplies that release's asset digests.
+RELEASE_CHANNEL=https://github.com/xnmp/tauri-explorer/releases/download/update-channel/latest-alpha.json
+RELEASE_TAG_API=https://api.github.com/repos/xnmp/tauri-explorer/releases/tags
 RELEASE_STAGE="$SCRIPT_DIR/.arch-build/release"
 RELEASE_RECIPE="$SCRIPT_DIR/packaging/aur"
 BUILD_REASON=
 UP_TO_DATE=0
 build_needed() { BUILD_REASON=$1; return 1; }
+# Prints a recipe's epoch, or nothing when it has none.
+recipe_epoch() { sed -n 's/^epoch=//p' "$1" 2>/dev/null | head -n1; }
 
 # Sets PKG (or UP_TO_DATE=1), or returns 1 with BUILD_REASON. A digest mismatch
 # exits instead: tampered or corrupt bytes are never a reason to fall back.
@@ -159,24 +166,34 @@ package_latest_release() {
     command -v "$tool" >/dev/null || build_needed "$tool is not installed" || return
   done
 
-  local release version deb digest installed actual
-  release=$(curl -fsSL --retry 2 --max-time 30 "$RELEASE_API") \
-    || build_needed "could not reach the GitHub release" || return
-  version=$(jq -r '.tag_name // empty' <<<"$release" | sed 's/^v//') \
-    || build_needed "the GitHub release response was unreadable" || return
+  local channel release version tag deb digest installed actual epoch
+  channel=$(curl -fsSL --retry 2 --max-time 30 "$RELEASE_CHANNEL") \
+    || build_needed "could not reach the release channel" || return
+  version=$(jq -r '.version // empty' <<<"$channel") \
+    || build_needed "the release channel response was unreadable" || return
   # The version reaches sed and file names, and pacman forbids a hyphen in it.
   [[ $version =~ ^[0-9]+(\.[0-9]+)+$ ]] \
     || build_needed "the latest release has an unusable version '$version'" || return
+  release=$(curl -fsSL --retry 2 --max-time 30 "$RELEASE_TAG_API/v$version") \
+    || build_needed "could not reach the GitHub release v$version" || return
+  tag=$(jq -r '.tag_name // empty' <<<"$release") \
+    || build_needed "the GitHub release response was unreadable" || return
+  [[ $tag == "v$version" ]] \
+    || build_needed "the GitHub release is '$tag', not v$version" || return
   deb="tauri-explorer_${version}_amd64.deb"
   digest=$(jq -r --arg name "$deb" '.assets[]? | select(.name == $name) | .digest // empty' <<<"$release") \
     || build_needed "the GitHub release response was unreadable" || return
   [[ $digest == sha256:* ]] \
     || build_needed "release $version has no verifiable $deb" || return
 
+  # The 0.x line sits below the 1.x bridge, so the recipe carries an epoch;
+  # pacman -Q reports it, and the comparison must too.
+  epoch=$(recipe_epoch "$RELEASE_RECIPE/PKGBUILD")
+
   # Resolves through provides, so this covers source and binary packages alike.
   installed=$(pacman -Q tauri-explorer 2>/dev/null || true)
   installed=${installed##* }
-  if [[ -n $installed && $(vercmp "${installed%-*}" "$version") -ge 0 ]]; then
+  if [[ -n $installed && $(vercmp "${installed%-*}" "${epoch:+$epoch:}$version") -ge 0 ]]; then
     echo "Tauri Explorer $installed is already up to date (latest release: $version)."
     UP_TO_DATE=1
     return 0
@@ -205,7 +222,7 @@ package_latest_release() {
   (cd "$RELEASE_STAGE" && SRCDEST="$RELEASE_STAGE" PKGDEST="$RELEASE_STAGE" \
     BUILDDIR="$RELEASE_STAGE/build" PKGEXT=.pkg.tar.zst makepkg -f --nodeps --noconfirm) \
     || build_needed "could not repackage release $version" || return
-  PKG="$RELEASE_STAGE/tauri-explorer-bin-${version}-1-x86_64.pkg.tar.zst"
+  PKG="$RELEASE_STAGE/tauri-explorer-bin-${epoch:+$epoch:}${version}-1-x86_64.pkg.tar.zst"
   # makepkg succeeds on an empty package(), and pacman would install it.
   bsdtar -tf "$PKG" usr/bin/tauri-explorer >/dev/null 2>&1 \
     || build_needed "repackaging release $version produced no application" || return
@@ -254,7 +271,8 @@ if [[ $MODE == full || $MODE == build ]]; then
   # Extract version from PKGBUILD
   PKGVER=$(grep -m1 '^pkgver=' PKGBUILD | cut -d= -f2)
   PKGREL=$(grep -m1 '^pkgrel=' PKGBUILD | cut -d= -f2)
-  PKG="tauri-explorer-${PKGVER}-${PKGREL}-${ARCH}.pkg.tar.zst"
+  PKGEPOCH=$(recipe_epoch PKGBUILD)
+  PKG="tauri-explorer-${PKGEPOCH:+$PKGEPOCH:}${PKGVER}-${PKGREL}-${ARCH}.pkg.tar.zst"
   printf '%s\n%s\n' "$PKG" "$BUILT_FROM" > "$PACKAGE_RECORD"
 
   if [[ $MODE == build ]]; then

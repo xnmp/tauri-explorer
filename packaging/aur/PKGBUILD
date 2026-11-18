@@ -5,6 +5,8 @@
 pkgname=tauri-explorer-bin
 pkgver=1.5.0
 pkgrel=1
+# 0.x alpha versions sort below the retired 1.x line (#1783).
+epoch=1
 pkgdesc="A keyboard-first file manager: fuzzy quick-open, ripgrep content search, a command palette for every action"
 install=tauri-explorer-bin.install
 # '!strip': keep the symbol table release backtraces need (#1682).

@@ -4,8 +4,11 @@ pkgname=tauri-explorer
 # package never drifts from the app (it sat at 0.2.7 while the app was
 # 0.3.0). pkgver() updates it automatically during makepkg; the literal
 # below is just a fallback for tooling that reads it without running pkgver.
-pkgver=1.28.2
+pkgver=0.28.0
 pkgrel=1
+# The 0.28 alpha line follows 1.28.x (#1783); the epoch keeps pacman
+# treating it as an upgrade.
+epoch=1
 pkgdesc="A minimalistic, high-performance file explorer"
 arch=('x86_64' 'aarch64')
 url="https://github.com/xnmp/tauri-explorer"

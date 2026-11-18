@@ -272,7 +272,7 @@ describe.skipIf(process.platform !== 'linux')('Arch installer release route', ()
       { name: `tauri-explorer_${version}_amd64.deb`, digest },
     ],
   });
-  const expectedPackage = /^sudo -n pacman -U .*\/\.arch-build\/release\/tauri-explorer-bin-1\.17\.0-1-x86_64\.pkg\.tar\.zst --noconfirm --ask=4$/;
+  const expectedPackage = /^sudo -n pacman -U .*\/\.arch-build\/release\/tauri-explorer-bin-1:1\.17\.0-1-x86_64\.pkg\.tar\.zst --noconfirm --ask=4$/;
 
   it('installs the latest release through pacman without compiling or asking', async () => withInstaller(async ({ invokeDefault, calls }) => {
     const { stdout } = await invokeDefault([], { RELEASE_JSON: releaseJson(), INSTALLED: 'tauri-explorer 1.15.1-1' });
@@ -284,8 +284,22 @@ describe.skipIf(process.platform !== 'linux')('Arch installer release route', ()
     expect(stdout).toContain('Done.');
   }));
 
-  it.each(['1.17.0-1', '1.18.0-1'])('leaves an installed %s alone', async (version) => withInstaller(async ({ invokeDefault, calls }) => {
+  it.each(['1:1.17.0-1', '1:1.18.0-1'])('leaves an installed %s alone', async (version) => withInstaller(async ({ invokeDefault, calls }) => {
     const { stdout } = await invokeDefault([], { RELEASE_JSON: releaseJson(), INSTALLED: `tauri-explorer-bin ${version}` });
+    expect(await calls()).toEqual(['sudo -v']);
+    expect(stdout).toContain('already up to date');
+  }));
+
+  it('installs the channel release over an installed legacy 1.x package', async () => withInstaller(async ({ invokeDefault, calls }) => {
+    const { stdout } = await invokeDefault([], { CHANNEL_JSON: '{"version":"0.28.0"}', RELEASE_JSON: releaseJson(undefined, '0.28.0'), INSTALLED: 'tauri-explorer-bin 1.28.2-1' });
+    const events = await calls();
+    expect(events[1]).toBe('makepkg release pkgver=0.28.0 sums=1 recipe=1');
+    expect(events[2]).toMatch(/^sudo -n pacman -U .*\/tauri-explorer-bin-1:0\.28\.0-1-x86_64\.pkg\.tar\.zst --noconfirm --ask=4$/);
+    expect(stdout).not.toContain('already up to date');
+  }));
+
+  it.each(['1:0.28.0-1', '1:0.29.0-1'])('leaves an installed %s alone', async (version) => withInstaller(async ({ invokeDefault, calls }) => {
+    const { stdout } = await invokeDefault([], { CHANNEL_JSON: '{"version":"0.28.0"}', RELEASE_JSON: releaseJson(undefined, '0.28.0'), INSTALLED: `tauri-explorer-bin ${version}` });
     expect(await calls()).toEqual(['sudo -v']);
     expect(stdout).toContain('already up to date');
   }));
@@ -297,10 +311,14 @@ describe.skipIf(process.platform !== 'linux')('Arch installer release route', ()
 
   it.each([
     ['no network', {}, 'could not reach'],
+    ['an unreachable channel', { CHANNEL_JSON: 'UNREACHABLE', RELEASE_JSON: releaseJson() }, 'could not reach'],
+    ['an unreadable channel', { CHANNEL_JSON: 'not json', RELEASE_JSON: releaseJson() }, 'unreadable'],
+    ['a channel without a version', { CHANNEL_JSON: '{}', RELEASE_JSON: releaseJson() }, 'unusable version'],
+    ['a tag that differs from the channel version', { CHANNEL_JSON: '{"version":"0.28.0"}', RELEASE_JSON: releaseJson() }, 'not v0.28.0'],
     ['no matching asset', { RELEASE_JSON: JSON.stringify({ tag_name: 'v1.17.0', assets: [] }) }, 'no verifiable'],
     ['no asset digest', { RELEASE_JSON: JSON.stringify({ tag_name: 'v1.17.0', assets: [{ name: 'tauri-explorer_1.17.0_amd64.deb' }] }) }, 'no verifiable'],
     ['a malformed response', { RELEASE_JSON: 'not json' }, 'unreadable'],
-    ['an unusable tag', { RELEASE_JSON: JSON.stringify({ tag_name: 'v1.17.0;rm', assets: [] }) }, 'unusable version'],
+    ['an unusable channel version', { CHANNEL_JSON: '{"version":"1.17.0;rm"}', RELEASE_JSON: releaseJson() }, 'unusable version'],
     ['a failed download', { RELEASE_JSON: releaseJson(), DOWNLOAD_FAIL: '1' }, 'could not download'],
     ['a package with no application', { RELEASE_JSON: releaseJson(), EMPTY_PACKAGE: '1' }, 'produced no application'],
     ['an unsupported architecture', { RELEASE_JSON: releaseJson(), FAKE_ARCH: 'aarch64' }, 'no prebuilt aarch64'],
@@ -316,6 +334,12 @@ describe.skipIf(process.platform !== 'linux')('Arch installer release route', ()
   it('asks for credentials before any release work, and stops there when they fail', async () => withInstaller(async ({ invokeDefault, calls }) => {
     await expect(invokeDefault([], { RELEASE_JSON: releaseJson(), AUTH_FAIL: '1' })).rejects.toThrow();
     expect(await calls()).toEqual(['sudo -v']);
+  }));
+
+  it('names the source package with the recipe epoch', async () => withInstaller(async ({ invoke, calls, root }) => {
+    await writeFile(join(root, 'PKGBUILD'), 'pkgver=1.0.0\npkgrel=1\nepoch=1\n');
+    await invoke();
+    expect((await calls()).some((event) => /^sudo -n pacman -U tauri-explorer-1:1\.0\.0-1-/.test(event))).toBe(true);
   }));
 
   it('builds only after --yes accepts the notified fallback', async () => withInstaller(async ({ invokeDefault, calls }) => {
@@ -380,8 +404,19 @@ if [[ "$*" == '-n pacman -U '* && "\${INSTALL_FAIL:-0}" == 1 ]]; then exit 1; fi
       await copyFile(new URL(`../packaging/aur/${name}`, import.meta.url), join(root, 'packaging/aur', name));
     }
     await writeFile(join(root, 'bin/curl'), `#!/usr/bin/env bash
-[[ -n "\${RELEASE_JSON:-}" ]] || exit 22
-printf '%s' "$RELEASE_JSON"
+# Serves the updater channel manifest and the tag API by URL (the last argument).
+url="\${!#}"
+if [[ "$url" == */update-channel/latest-alpha.json ]]; then
+  if [[ "\${CHANNEL_JSON:-}" == UNREACHABLE ]]; then exit 22
+  elif [[ -n "\${CHANNEL_JSON:-}" ]]; then printf '%s' "$CHANNEL_JSON"
+  elif [[ -n "\${RELEASE_JSON:-}" ]]; then printf '{"version":"1.17.0"}'
+  else exit 22; fi
+elif [[ "$url" == */releases/tags/v* ]]; then
+  [[ -n "\${RELEASE_JSON:-}" ]] || exit 22
+  printf '%s' "$RELEASE_JSON"
+else
+  exit 22
+fi
 `, { mode: 0o755 });
     await writeFile(join(root, 'bin/pacman'), `#!/usr/bin/env bash
 [[ -n "\${INSTALLED:-}" ]] || exit 1
@@ -389,8 +424,13 @@ echo "$INSTALLED"
 `, { mode: 0o755 });
     // CI's Ubuntu has no vercmp; these fixtures only compare dotted versions.
     await writeFile(join(root, 'bin/vercmp'), `#!/usr/bin/env bash
-[[ "$1" == "$2" ]] && { echo 0; exit; }
-[[ "$(printf '%s\\n' "$1" "$2" | sort -V | tail -1)" == "$1" ]] && echo 1 || echo -1
+epoch_of() { [[ "$1" == *:* ]] && echo "\${1%%:*}" || echo 0; }
+rest_of() { echo "\${1#*:}"; }
+a_epoch=$(epoch_of "$1"); b_epoch=$(epoch_of "$2")
+if (( a_epoch != b_epoch )); then (( a_epoch > b_epoch )) && echo 1 || echo -1; exit; fi
+a=$(rest_of "$1"); b=$(rest_of "$2")
+[[ "$a" == "$b" ]] && { echo 0; exit; }
+[[ "$(printf '%s\\n' "$a" "$b" | sort -V | tail -1)" == "$a" ]] && echo 1 || echo -1
 `, { mode: 0o755 });
     await writeFile(join(root, 'bin/bsdtar'), `#!/usr/bin/env bash
 [[ "\${EMPTY_PACKAGE:-0}" == 0 ]]
@@ -411,13 +451,15 @@ if [[ "$*" == '-g' ]]; then
 fi
 if [[ "$*" == '-f --nodeps --noconfirm' ]]; then
   version=$(sed -n 's/^pkgver=//p' PKGBUILD)
+  epoch=$(sed -n 's/^epoch=//p' PKGBUILD)
   echo "makepkg release pkgver=$version sums=$(grep -c "^sha256sums=('stub')$" PKGBUILD) recipe=$(grep -c '^package()' PKGBUILD)" >> "$INSTALL_CALLS"
-  touch "$PKGDEST/tauri-explorer-bin-$version-1-x86_64.pkg.tar.zst"
+  touch "$PKGDEST/tauri-explorer-bin-\${epoch:+$epoch:}$version-1-x86_64.pkg.tar.zst"
   exit
 fi
 printf 'makepkg reuse=%s rebuild=%s\\n' "$_arch_reuse_frontend" "$_arch_rebuild_frontend" >> "$INSTALL_CALLS"
 echo "$SOURCE_DATE_EPOCH" >> "$INSTALL_EPOCHS"
-touch "tauri-explorer-1.0.0-1-$(uname -m).pkg.tar.zst"
+epoch=$(sed -n 's/^epoch=//p' PKGBUILD)
+touch "tauri-explorer-\${epoch:+$epoch:}1.0.0-1-$(uname -m).pkg.tar.zst"
 `, { mode: 0o755 });
     await writeFile(join(root, 'bin/pgrep'), `#!/usr/bin/env bash
 [[ -n "\${RUNNING_PIDS:-}" ]] || exit 1

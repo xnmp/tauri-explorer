@@ -2,6 +2,20 @@
 
 All notable changes to Tauri Explorer.
 
+## v0.28.0 — 2026-11-18
+
+### Changed
+
+- Versions: Tauri Explorer is alpha software, so releases are now numbered
+  on the 0.x line, continuing from 0.28.0 after v1.28.2. Nothing else
+  changes in this release. Automatic updates and update notices from v1.28.2
+  treat it as newer. Older 1.x copies are offered v1.28.2 first, which then
+  moves to this line. On Arch the package carries `epoch=1`, as the RPM
+  does, so pacman and rpm upgrade to it; installing the `.deb` by hand with
+  `dpkg -i` warns that it is a downgrade, which is expected. GitHub's
+  "Latest" badge stays on v1.28.2 so 1.x copies keep finding it; the newest
+  release is at the top of the releases page (#1783).
+
 ## v1.28.2 — 2026-11-18
 
 ### Changed

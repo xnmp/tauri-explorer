@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Only the [latest release](https://github.com/xnmp/tauri-explorer/releases/latest) receives security fixes.
+Only the newest release on the [releases page](https://github.com/xnmp/tauri-explorer/releases) receives security fixes.
 
 ## Reporting a vulnerability
 

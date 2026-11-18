@@ -2,6 +2,17 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.28.2 — 2026-11-18
+
+### Changed
+
+- Updates: this is the last 1.x release. Tauri Explorer is still alpha, so
+  version numbers continue from 0.28.0. This release checks for updates
+  through a dedicated update channel and recognises the 0.28 line as newer,
+  so automatic updates (AppImage, macOS, Windows) and update notices carry
+  on into it. Older 1.x copies are offered this release first, then move to
+  the 0.28 line from here (#1783).
+
 ## v1.28.1 — 2026-11-18
 
 ### Added

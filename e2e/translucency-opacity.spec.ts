@@ -1,24 +1,26 @@
 /**
- * E2E: Translucency Opacity setting (#1735). One slider, shown only on macOS
- * with Native Blur, drives the Floating Islands coverage variables inline.
+ * E2E: Translucency Opacity setting (#1735, #1757). One slider, shown wherever the
+ * unified Translucency setting is on (macOS and Windows), drives the Floating Islands coverage variables inline.
  */
 import { test, expect, type Page } from "./fixtures";
-import { pressShortcut, seedSettings, waitForEntries } from "./helpers";
+import { HOME_URL, applySettingsAndReload, pressShortcut, seedSettings, waitForEntries } from "./helpers";
 
 test.describe("Translucency Opacity (#1735)", () => {
-  async function open(page: Page, { platform = "MacIntel", vibrancyBlur = true, theme = "dark", extra = {} } = {}) {
+  async function open(page: Page, { platform = "MacIntel", translucency = true, theme = "dark", extra = {} } = {}) {
     await page.addInitScript((value) => {
       Object.defineProperty(window.navigator, "platform", { get: () => value, configurable: true });
     }, platform);
     await seedSettings(page, {
       layoutTheme: "floating-islands",
       theme,
-      macOsVibrancy: true,
-      vibrancyBlur,
+      translucency,
       ...extra,
     });
     await page.goto("/");
-    await waitForEntries(page);
+    // A simulated Windows page rewrites paths to backslashes, which the POSIX
+    // mock filesystem cannot list: there are no rows to wait for.
+    if (platform.startsWith("Win")) await expect(page.locator(".explorer").first()).toBeVisible();
+    else await waitForEntries(page);
   }
 
   async function openSettings(page: Page) {
@@ -47,7 +49,7 @@ test.describe("Translucency Opacity (#1735)", () => {
 
   test("moving the slider changes the island fill alpha live and persists", async ({ page }) => {
     await open(page);
-    await expect(page.locator("html")).toHaveAttribute("data-macos-material", "");
+    await expect(page.locator("html")).toHaveAttribute("data-material", "vibrancy");
     // Default 55% = today's dark defaults: alpha 1 - 0.455 / 0.7.
     expect(await islandAlpha(page)).toBeCloseTo(0.35, 2);
 
@@ -86,31 +88,101 @@ test.describe("Translucency Opacity (#1735)", () => {
     expect(await islandAlpha(page)).toBeCloseTo(1, 2);
   });
 
-  test("off macOS the row is absent and no coverage variables are set", async ({ page }) => {
+  test("on Linux with translucency on: no material, no backdrop, no Translucency row", async ({ page }) => {
     await open(page, { platform: "Linux x86_64" });
+    const html = page.locator("html");
+    await expect(html).not.toHaveAttribute("data-material");
+    await expect(html).not.toHaveAttribute("data-native-backdrop");
     await openSettings(page);
+    await expect(page.locator(".setting-label", { hasText: /^Translucency$/ })).toHaveCount(0);
     await expect(page.getByText("Translucency Opacity")).toHaveCount(0);
     const inline = await page.evaluate(() => document.documentElement.style.getPropertyValue("--island-coverage-dark"));
     expect(inline).toBe("");
   });
 
-  test("with Native Blur off the row is absent and variables are removed", async ({ page }) => {
-    await open(page, { vibrancyBlur: false });
+  test("with translucency off the opacity row is absent and variables are removed", async ({ page }) => {
+    await open(page, { translucency: false });
     await openSettings(page);
+    // The toggle row stays (macOS), the slider row is gone.
+    await expect(page.locator(".setting-label", { hasText: /^Translucency$/ })).toHaveCount(1);
     await expect(page.getByText("Translucency Opacity")).toHaveCount(0);
     const inline = await page.evaluate(() => document.documentElement.style.getPropertyValue("--island-coverage"));
     expect(inline).toBe("");
   });
 
-  test("screenshot: Appearance > Translucency Opacity", async ({ page }) => {
-    await page.setViewportSize({ width: 1100, height: 760 });
-    await open(page, { extra: { translucencyOpacity: 40 } });
+  test("a runtime toggle does not change the live window; a reload applies it", async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(window.navigator, "platform", { get: () => "MacIntel", configurable: true });
+    });
+    await page.goto(HOME_URL);
+    await applySettingsAndReload(page, { layoutTheme: "floating-islands", translucency: false });
+    await waitForEntries(page);
+    const html = page.locator("html");
+    await expect(html).not.toHaveAttribute("data-material");
+
     await openSettings(page);
-    await slider(page).scrollIntoViewIfNeeded();
+    await page.locator(".setting-row", { has: page.locator(".setting-label", { hasText: /^Translucency$/ }) }).locator(".toggle").click();
     await expect(slider(page)).toBeVisible();
-    await page.screenshot({
-      path: "screenshots/feat/translucency-opacity/settings-slider.png",
-      animations: "disabled",
+    // The native window was created without a material: the page keeps its attributes.
+    await expect(html).not.toHaveAttribute("data-material");
+    await expect(html).not.toHaveAttribute("data-native-backdrop");
+
+    await page.keyboard.press("Escape");
+    await page.reload();
+    await waitForEntries(page);
+    await expect(html).toHaveAttribute("data-material", "vibrancy");
+    await expect(html).toHaveAttribute("data-native-backdrop", "");
+
+    // And back: turned off, the next window (here the reload) has no material.
+    await applySettingsAndReload(page, { translucency: false });
+    await waitForEntries(page);
+    await expect(html).not.toHaveAttribute("data-material");
+  });
+
+  test.describe("Windows (acrylic)", () => {
+    test("material, transparent body, coverage vars and the slider match macOS", async ({ page }) => {
+      await open(page, { platform: "Win32" });
+      const html = page.locator("html");
+      await expect(html).toHaveAttribute("data-material", "acrylic");
+      await expect(html).toHaveAttribute("data-native-backdrop", "");
+      expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe("rgba(0, 0, 0, 0)");
+      const vars = await page.evaluate(() => {
+        const style = document.documentElement.style;
+        return ["--island-coverage-dark", "--material-window-coverage", "--material-window-coverage-dark"]
+          .map((name) => style.getPropertyValue(name));
+      });
+      for (const value of vars) expect(value).not.toBe("");
+
+      expect(await islandAlpha(page)).toBeCloseTo(0.35, 2);
+      await openSettings(page);
+      await slider(page).fill("20");
+      await expect.poll(() => islandAlpha(page)).toBeCloseTo(0.101, 2);
+      await slider(page).fill("100");
+      await expect.poll(() => islandAlpha(page)).toBeCloseTo(1, 2);
+    });
+
+    test("Settings shows one Translucency toggle and no backdrop rows", async ({ page }) => {
+      await open(page, { platform: "Win32" });
+      await openSettings(page);
+      await expect(page.locator(".setting-label", { hasText: /^Translucency$/ })).toHaveCount(1);
+      await expect(slider(page)).toBeVisible();
+      await expect(page.getByText("Window Backdrop")).toHaveCount(0);
+      await expect(page.getByText("Backdrop Opacity")).toHaveCount(0);
     });
   });
+
+  for (const [label, platform] of [["macos", "MacIntel"], ["windows", "Win32"]] as const) {
+    test(`screenshot: Appearance > Translucency (${label})`, async ({ page }) => {
+      await page.setViewportSize({ width: 1100, height: 760 });
+      await open(page, { platform, extra: { translucencyOpacity: 40 } });
+      await openSettings(page);
+      await slider(page).scrollIntoViewIfNeeded();
+      await expect(page.locator(".setting-label", { hasText: /^Translucency$/ })).toBeVisible();
+      await expect(slider(page)).toBeVisible();
+      await page.screenshot({
+        path: `screenshots/feat/unified-translucency/settings-${label}.png`,
+        animations: "disabled",
+      });
+    });
+  }
 });

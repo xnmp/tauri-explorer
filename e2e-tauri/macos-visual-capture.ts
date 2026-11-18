@@ -59,7 +59,6 @@ interface Scenario {
 // islands-native-titlebar keeps the native title bar for comparison. Keys a
 // branch does not know are ignored by its settings merge.
 const BASE = {
-  vibrancyBlur: true,
   integratedTitleBar: true,
   warmWindow: false,
   autoUpdate: false,
@@ -70,9 +69,12 @@ const LAYOUTS = {
   islands: { name: "Floating Islands", settings: { layoutTheme: "floating-islands", floatingIslands: true } },
   default: { name: "Default layout", settings: { layoutTheme: "default", floatingIslands: false } },
 } as const;
+// The pre-#1757 keys too, so a ref from before the single Translucency
+// setting still captures its material (a newer ref ignores them: the
+// `translucency` key wins).
 const VIBRANCY = {
-  vibrancy: { name: "Window Vibrancy + Native Blur", settings: { macOsVibrancy: true } },
-  opaque: { name: "translucency off", settings: { macOsVibrancy: false } },
+  vibrancy: { name: "Translucency", settings: { translucency: true, macOsVibrancy: true, vibrancyBlur: true } },
+  opaque: { name: "translucency off", settings: { translucency: false, macOsVibrancy: false } },
 } as const;
 const THEMES = ["dark", "light"] as const;
 
@@ -635,9 +637,8 @@ async function settingsDialog(ctx: ScenarioContext): Promise<void> {
   await filter.waitForDisplayed({ timeout: 15_000 });
   await sleep(1_200);
   await still(ctx, "02-settings-dialog");
-  // Search terms differ per row: "vibrancy" finds Window Vibrancy (and
-  // Translucency Opacity where the ref has it), "blur" finds Native Blur
-  // (and Translucency Opacity).
+  // The Translucency row's search keywords include both "vibrancy" and
+  // "blur"; the slider row (Translucency Opacity) shares them.
   let translucencyRow = false;
   for (const [index, query] of ["vibrancy", "blur"].entries()) {
     await b.execute("macos: keys", { keys: [{ key: "a", modifierFlags: COMMAND }], elementId: filter.elementId });

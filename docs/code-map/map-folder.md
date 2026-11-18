@@ -121,7 +121,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `SettingsDialog.svelte` — general settings dialog; links to dedicated Keyboard Shortcuts and Plugins dialogs.
 - `settings/SettingRow.svelte` — one Settings row (label, description, optional `info` snippet, control slot); `hidden` while the search filter excludes it.
 - `settings/SettingToggle.svelte` — the Settings switch (restyled checkbox; extra input attributes forwarded).
-- `settings/TranslucencyOpacitySetting.svelte` — macOS Native Blur "Translucency Opacity" slider row (#1735).
+- `settings/TranslucencyOpacitySetting.svelte` — "Translucency Opacity" slider row under the Translucency toggle (#1735, #1757).
 - `settings/TerminalShortcutSettings.svelte` — terminal line-editing shortcut list and key recorder (#375/#404); recording ends on dialog close or window blur.
 - `settings/GitHubReportTokenSetting.svelte` — Settings → Issue Reports: write-only GitHub token entry (save/replace/remove) showing only whether one is saved (#1455).
 - `settings/ExperimentalSettings.svelte` — Settings → Experimental feature-flag rows (integrated terminal, git graph).
@@ -334,11 +334,11 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `warm-activation.ts` — owns parked-window observation, reveal/navigation admission, acknowledged activation and retirement.
 - `warm-window.ts` — native warm-pool adapters and acknowledged reuse; integrates the activation owner.
 - `page-foreground.ts` — `warmMode()` and the page's one foreground gate: a parked or measuring warm window defers drive pushes/poll and file-operation recovery until its activation commits (#931).
-- `window-appearance.ts` — shared window creation options for fresh and warm windows: Windows backdrop, macOS vibrancy transparency + material (`domain/macos-vibrancy.ts`, #1733), and exact feature-injected WebView2 environment arguments in Windows E2E.
+- `window-appearance.ts` — shared window creation options for fresh and warm windows: the Translucency material's transparency + effects (`domain/translucency.ts`, #1733, #1757), and exact feature-injected WebView2 environment arguments in Windows E2E.
 - `window-title.svelte.ts` — resolves launch-home context and keeps the native OS title synchronized with the active pane directory.
 - `window-close.ts` — owns synchronous close admission, native close requests, terminal destruction and failure recovery.
 - `window-chrome.ts` — owns native maximize-state observation, resize query coalescing, and late listener/read retirement.
-- `window-backdrop.ts` — Windows Mica/Acrylic translucent backdrop (CSS strength).
+- `window-translucency.svelte.ts` — the platform's window material (published by `src-tauri/src/translucency.rs`) and this window's own, fixed once its settings load; drives `data-native-backdrop`/`data-material` and the Settings rows (#1757).
 - `workspaces.svelte.ts` — save/restore named workspaces.
 - `bookmarks.svelte.ts` — sidebar bookmarks store.
 - `config-document.ts` — `createConfigDocument`: shared init/migrate/reload/write-through lifecycle for bookmarks.json and folder-views.json (#1568); shape gates and the migration value are per-file options.
@@ -470,12 +470,11 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-pointer-drag.svelte.ts` — pointer-event drag for macOS (in-app DnD). [modified on branch]
 - `use-pointer-intent.svelte.ts` — pointer-vs-keyboard intent for pickers.
 - `use-sidebar-drag.svelte.ts` — lightweight sidebar-item pointer drag (macOS).
-- `src/lib/composables/island-regions.ts` — shared Floating Islands region selectors (island surfaces vs structural regions) used by the tab seam marks and strip start.
-- `src/lib/composables/tab-seam-marks.ts` — lazily loaded Floating Islands tab marks: measures the active tab and islands, updates the title bar's inline SVG shade/fill/shadow/edge and island `data-tab-seam` notches in place.
+- `src/lib/composables/tab-seam-marks.ts` — lazily loaded Floating Islands tab marks: measures the active tab and title bar, updates the inline SVG strip shade (with the tab's hole and the surface's corner pockets), key shadow and the one outline (tab plus the surface's top edge, #1785) in place.
 - `src/lib/composables/use-tab-seam.svelte.ts` — loads and attaches `tab-seam-marks` while the islands layout is active; repaints on tab changes.
 - `src/lib/composables/tab-strip-dom.ts` — window tab strip DOM helpers: slide transition (restoring a reversed leaving tab's selected state), reveal glide, title-fade fit check, and the strip's room measured on the title bar's room box so its own writes never loop a ResizeObserver (#1734).
 - `src/lib/composables/tab-strip-motion.svelte.ts` — window tab strip motion state: the tabs the strip lays out (a frame late while a tab slides), width/start eases and the reveal glide flag, on an injectable frame scheduler (#1734).
-- `src/lib/composables/tab-strip-start.ts` — Floating Islands tab strip start: measures the leftmost content island under the title bar (observing only boxes shallower than the strip, plus a MutationObserver for structural island changes) and reports the aligned start that `tabStripStart` adapts to the room (#1734).
+- `src/lib/composables/tab-strip-start.ts` — Floating Islands tab strip start (#1785): measures the strip area against the title bar and reports the padding that puts the first tab's foot past the surface's rounded top-left corner.
 - `src/lib/composables/use-sidebar-drag-end.ts` — source-bound document dragend capture, bookmark fallback and gesture retirement.
 - `src/lib/composables/use-sidebar-file-drop.ts` — MIME-scoped Quick Access pinning and bookmark reorder, independent of retained file consumers.
 - `src/lib/composables/use-dom-directory-drop.ts` — shared importable folder/breadcrumb/tab/listing/Miller DOM transfer destinations and copy policies.
@@ -504,8 +503,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `pointer-drag.ts` — shared five-pixel press-to-drag threshold for tabs, files, sidebar items and click suppression.
 - `tab-strip.ts` — pure Chrome-style tab sizing, full-path tab filtering and drag edge-scroll speed; `TAB_BLEED` and the bleed-aware active-tab reveal.
-- `island-outline.ts` — Floating Islands seam pixel ownership (#1734): device-pixel snapping per engine, the island top-edge cut the tab's SVG stroke takes over (handovers at the corner tangents), its path and the island's clip polygon.
-- `tab-seam.ts` — Floating Islands active-tab geometry (#1734): contour, strip-shade hole, fill, seam rows, gutter bridges, squared island corners, strip start padding, edge stroke and key shadow paths.
+- `device-grid.ts` — device-pixel grid per engine (#1734): snaps CSS edges and border widths to where layout paints them, for the Floating Islands tab outline.
+- `tab-seam.ts` — Floating Islands active-tab geometry (#1734, #1785): contour, strip-shade hole, the surface's top corners and their shade pockets, the one outline (tab plus surface top edge), strip start padding and key shadow paths.
 - `tab-slide.ts` — tab insert/remove slide timing and per-frame flex-basis CSS (fillets and content scale with `--tab-slide`).
 - `tab-strip-motion.ts` — pure tab strip transition decisions: which eases a tab-count change uses, whether it slides, and each tab's width (laid out vs entering).
 - `tab-drag.ts` — pure tab-drag lifecycle and effects, including session-qualified asynchronous detach settlement (#1642).
@@ -626,8 +625,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `settings-migration.ts` — versioned one-shot migrations for the persisted settings blob; `migrateSettings` + the append-only ledger (#506).
 - `layout-theme.ts` — layout-theme catalog (#1306): built-ins, leading-comment metadata, user-file validation, resolution/fallback reasons, row-height parsing.
 - `layout-theme-ids.ts` — eager built-in layout ids and the legacy Floating Islands → `layoutTheme` mapping used by settings migration.
-- `vibrancy-opacity.ts` — Translucency Opacity slider (20-100%, default 55) to the six `--island-*coverage*` values; default reproduces the fixed theme defaults exactly (#1735).
-- `macos-vibrancy.ts` — macOS vibrancy mode (off / transparent / material) and the Sidebar material shared by JS-created windows (`state/window-appearance.ts`) and the page tint attribute; kept in step with `lib.rs` `MACOS_VIBRANCY_MATERIAL` by `tests/domain/macos-vibrancy.test.ts` (#1733).
+- `vibrancy-opacity.ts` — Translucency Opacity slider (20-100%, default 55) to the six `--island-*coverage*` values and the `--material-window-coverage*` tint; default reproduces the fixed theme defaults exactly (#1735); `opacityForIslandAlpha` maps a pre-#1757 Windows Backdrop Opacity.
+- `translucency.ts` — one cross-platform Translucency setting (#1757): material names (vibrancy / acrylic / mica), the published-or-platform material, window effects per material, and the legacy-settings rule; kept in step with `src-tauri/src/translucency.rs` by `tests/domain/translucency.test.ts`.
 - `miller-placement.ts` — `millerHoistedToIsland`: whether Miller columns hoist to the left island (island layout, no sidebar, single-pane tab only); shared by `+page.svelte` and `ExplorerPane.svelte` (#434, #1699).
 - `settings-numbers.ts` — Numeric preference consumer contracts shared by persisted validation and interactive setters.
 - `folder-preview.ts` — folder preview image selection (#146).
@@ -750,9 +749,11 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `memory_release.rs` — after a large listing reply is encoded (and once more at the next listing), returns glibc arenas' freed pages with `malloc_trim` on Linux/glibc; a no-op elsewhere (#1416).
 - `palette.rs` — dominant-color extraction for themes (#203).
 - `src-tauri/src/platform.rs` — host capabilities that shape recorded history: `TRASH_RESTORE_SUPPORTED` and the `TrashRestore` value passed to history admission (macOS has no trash restore).
-- `src-tauri/src/wallpaper/mod.rs` — set desktop wallpaper (mac/Linux/Windows); returns `WallpaperOutcome { notice }` describing a partial result.
-- `src-tauri/src/wallpaper/macos.rs` — macOS: store snapshot, NSWorkspace per screen (JXA), then on macOS 14+ wait for macOS's own save, return the wallpaper store to all-Spaces mode, atomic replace, WallpaperAgent restart and post-reload verify; OS behind the injected `MacWallpaperOs` seam, flow serialised by a mutex (#1441).
-- `src-tauri/src/wallpaper/macos_store.rs` — pure, fail-safe logic for the private `com.apple.wallpaper/Store/Index.plist`: detect macOS's fresh entry for the image, rewrite to all-Spaces mode (`AllSpacesAndDisplays` ← that entry, `Spaces`/`Displays` emptied), verify (#1441).
+- `src-tauri/src/wallpaper/mod.rs` — set desktop wallpaper (mac/Linux/Windows); returns `WallpaperOutcome { notice }` describing a partial result; `macos_outcome` logs every macOS result and passes only the short notice to the UI (#1731).
+- `src-tauri/src/wallpaper/macos.rs` — macOS: store snapshot, NSWorkspace per `NSScreen` (objc2 on the main dispatch queue via `bounded::hand_off`: 10 s to start, 20 s grace once started; typed `ScreenResult`s), then on macOS 14+ wait for macOS's own save, return the wallpaper store to all-Spaces mode, atomic replace, WallpaperAgent reload (kickstart → killall under SIP, each command time-bounded) and post-reload verify with diagnostics; returns `Option<Partial { user, detail }>`; OS behind the injected `MacWallpaperOs` seam, flow serialised by a mutex (#1441, #1731).
+- `src-tauri/src/wallpaper/macos_store.rs` — pure, fail-safe logic for the private `com.apple.wallpaper/Store/Index.plist`: image URLs from `Files` (14/15) or the nested `Configuration` plist (26), detect macOS's fresh entry for the image, rewrite to all-Spaces mode (`AllSpacesAndDisplays` ← that entry, `Spaces`/`Displays` emptied), `coverage` (incl. macOS 26's reloaded per-Space form), `kept_everywhere` (reloaded form must keep every Space/display recorded before the rewrite), rewrite keeps per-Space `Idle`, bounded `describe` for logs (#1441, #1731).
+- `src-tauri/src/wallpaper/plist_bounds.rs` — pre-parse cost bounds for property lists: binary offset-table walk (expanded value count, depth, cycles) and XML element/depth scan, so shared-reference DAGs and deep nesting are refused before `plist` parses them (#1731).
+- `src-tauri/src/wallpaper/bounded.rs` — `hand_off` (executor-generic PENDING/RUNNING/ABANDONED handoff: start deadline, then grace for started work, late runs are no-ops) and `run_command` (subprocess killed at its timeout, pipes drained) for the macOS wallpaper flow (#1731).
 - `archive.rs` — zip compress/extract; both commands are admitted mutations (renderer owner, Linux recovery claim on the output, forward history position) whose blocking job is cancelled when its renderer retires.
 - `clipboard/` — OS clipboard commands, the ordered file-clipboard worker and per-platform backends; see the `src-tauri/src/clipboard/` section below.
 - `progress.rs` — byte-level progress + cooperative cancellation for streaming file ops.
@@ -760,6 +761,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `terminal.rs` — embedded terminal (PTY) backend (#139).
 - `terminal/input.rs` — per-terminal input sequencer: admits `terminal_write` in sequence-number order (early arrivals held, repeats ignored), holds 64 KiB of pre-start typeahead (an overflow discards all of it), and feeds one writer thread per PTY through a channel (#882).
 - `system.rs` — native launch context, Recycle Bin launcher, window theme and log-path commands.
+- `translucency.rs` — the window material for the Translucency setting (#1757): macOS vibrancy, Windows acrylic (22H2+) or Mica by OS build, none elsewhere; legacy-key fallback for an unmigrated settings.json, the main window's effects, and the `__TRANSLUCENCY_MATERIAL__` init script every page reads.
 - `user_report.rs` — typed async report relay command, full-description/environment body assembly without log tails, and ureq transport with uncertain-response handling.
 - `user_report_github.rs` — optional GitHub token for reports (#1455): keyring-backed write-only token commands and direct GitHub REST issue creation as the token's user, with definite/uncertain failure classification.
 - `process_ext.rs` — suppress console-window flash and own cancellable process trees; drain both pipes with optional output limits and continue cancellation after launcher exit.

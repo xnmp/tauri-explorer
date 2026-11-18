@@ -1,0 +1,136 @@
+name: Windows Visual Capture
+
+# On-demand evidence (#1757), the Windows counterpart of macOS Visual Capture
+# (#1750): desktop screenshots of the release build's window with the
+# Translucency setting off and on, over a bright wallpaper so the material
+# shows. It asserts nothing about the product and must never become a
+# required check: keep it out of gate, aggregation and path-filter jobs.
+#
+#   gh workflow run windows-visual-capture.yml -f ref=<branch-or-sha>
+#
+# Hosted runners have no GPU and run Windows Server; DWM may draw no system
+# backdrop there at all. host.txt records the build and the DWM settings, so
+# read it before treating a flat capture as a product defect.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or SHA to build and capture
+        required: true
+        default: dev
+  # Development only: the workflow's own branch, capturing its own commit.
+  push:
+    branches: [test/windows-visual-capture]
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    runs-on: windows-latest
+    timeout-minutes: 75
+    env:
+      OUT: ${{ github.workspace }}\qualification-results\windows-visual-capture
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.sha }}
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          shared-key: windows-visual-capture
+
+      - name: Build the release binary
+        env:
+          VITE_E2E_HOOKS: '0'
+        run: |
+          bun install --frozen-lockfile
+          bun run tauri build --no-bundle
+
+      - name: Record the hosted Windows environment
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force $env:OUT | Out-Null
+          $nt = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
+          # Transparency effects are a per-user switch; DWM draws no backdrop
+          # without them.
+          $personalize = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'
+          New-Item -Force $personalize | Out-Null
+          Set-ItemProperty $personalize EnableTransparency 1 -Type DWord
+          @(
+            "ref=${{ inputs.ref || github.ref_name }} commit=$(git rev-parse HEAD)"
+            "product=$($nt.ProductName) build=$($nt.CurrentBuild).$($nt.UBR) display=$($nt.DisplayVersion)"
+            "EnableTransparency=$((Get-ItemProperty $personalize).EnableTransparency)"
+            "video=$((Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name) -join ', ')"
+          ) | Tee-Object "$env:OUT\host.txt"
+
+      - name: Paint a bright wallpaper
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Drawing
+          $w = 1920; $h = 1080
+          $bmp = New-Object System.Drawing.Bitmap $w, $h
+          $g = [System.Drawing.Graphics]::FromImage($bmp)
+          $rect = New-Object System.Drawing.Rectangle 0, 0, $w, $h
+          $brush = New-Object System.Drawing.Drawing2D.LinearGradientBrush $rect, ([System.Drawing.Color]::FromArgb(255, 230, 90, 40)), ([System.Drawing.Color]::FromArgb(255, 40, 120, 220)), 35
+          $g.FillRectangle($brush, $rect)
+          $stripe = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, 250, 220, 60))
+          for ($x = 0; $x -lt $w; $x += 160) { $g.FillRectangle($stripe, $x, 0, 40, $h) }
+          $path = "$env:RUNNER_TEMP\wallpaper.bmp"
+          $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Bmp)
+          Add-Type @'
+          using System.Runtime.InteropServices;
+          public static class Wallpaper {
+            [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+            public static extern int SystemParametersInfo(int action, int param, string value, int flags);
+          }
+          '@
+          [Wallpaper]::SystemParametersInfo(20, 0, $path, 3) | Out-Null
+
+      - name: Capture each scenario
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Drawing
+          Add-Type -AssemblyName System.Windows.Forms
+          $exe = (Resolve-Path 'src-tauri\target\release\tauri-explorer.exe').Path
+          $config = Join-Path $env:APPDATA 'tauri-explorer'
+          New-Item -ItemType Directory -Force $config | Out-Null
+          $scenarios = @(
+            @{ id = 'islands-off-dark';  settings = @{ translucency = $false; theme = 'dark';  layoutTheme = 'floating-islands' } },
+            @{ id = 'islands-on-dark';   settings = @{ translucency = $true;  theme = 'dark';  layoutTheme = 'floating-islands' } },
+            @{ id = 'islands-on-light';  settings = @{ translucency = $true;  theme = 'light'; layoutTheme = 'floating-islands' } },
+            @{ id = 'islands-on-dark-20';  settings = @{ translucency = $true; theme = 'dark'; layoutTheme = 'floating-islands'; translucencyOpacity = 20 } },
+            @{ id = 'islands-on-dark-100'; settings = @{ translucency = $true; theme = 'dark'; layoutTheme = 'floating-islands'; translucencyOpacity = 100 } },
+            @{ id = 'default-on-dark';   settings = @{ translucency = $true;  theme = 'dark';  layoutTheme = 'default' } },
+            @{ id = 'legacy-acrylic';    settings = @{ windowsBackdrop = 'acrylic'; windowsBackdropOpacity = 65; theme = 'dark'; layoutTheme = 'floating-islands'; settingsVersion = 2 } }
+          )
+          foreach ($s in $scenarios) {
+            $s.settings | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $config 'settings.json')
+            $app = Start-Process -FilePath $exe -PassThru
+            Start-Sleep -Seconds 15
+            $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            $bmp = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size)
+            $bmp.Save("$env:OUT\$($s.id).png", [System.Drawing.Imaging.ImageFormat]::Png)
+            $g.Dispose(); $bmp.Dispose()
+            # The settings the app wrote back (the migrated blob, for the legacy case).
+            Copy-Item (Join-Path $config 'settings.json') "$env:OUT\$($s.id).settings.json"
+            Stop-Process -Id $app.Id -Force
+            Start-Sleep -Seconds 2
+          }
+
+      - name: Upload captures
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-visual-capture-${{ github.run_id }}-${{ github.run_attempt }}
+          path: qualification-results/windows-visual-capture/
+          if-no-files-found: warn

@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("$lib/domain/platform", () => ({ isMac: false, isWindows: true }));
-vi.mock("$lib/state/window-backdrop", () => ({ windowsBackdropEffects: () => undefined }));
 vi.mock("$lib/state/settings.svelte", () => ({ settingsStore: {} }));
 vi.mock("$lib/state/persisted", () => ({ EXPLORER_BG_RGBA_KEY: "bg", loadPersisted: () => null }));
 afterEach(() => {

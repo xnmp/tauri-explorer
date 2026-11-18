@@ -91,7 +91,7 @@ test.describe("Island / panel layout (#434)", () => {
     await page.locator(".entry-item").first().dblclick();
 
     // Exactly one miller strip — previously the inline copy AND the left island
-    // both mounted (count 2) because the suppression keyed off macOsVibrancy
+    // both mounted (count 2) because the suppression keyed off translucency
     // while the island hoist keyed off the broader island mode.
     await expect(page.locator(".miller-columns")).toHaveCount(1);
   });

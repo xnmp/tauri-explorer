@@ -23,7 +23,7 @@ import { readFileSync } from "node:fs";
 const layoutSheet = (name: string) => readFileSync(new URL(`../../src/lib/layouts/${name}`, import.meta.url), "utf8");
 const compactCss = layoutSheet("compact.css");
 const softCardsCss = layoutSheet("soft-cards.css");
-import { migrateSettings } from "$lib/domain/settings-migration";
+import { migrateSettings, CURRENT_SETTINGS_VERSION } from "$lib/domain/settings-migration";
 
 const COMPACT = `/*
  * @name Compact
@@ -210,14 +210,14 @@ describe("legacy Floating Islands preference (#277, #434)", () => {
   });
 
   it("migrates once through the settings ledger and never overrides a chosen layout", () => {
-    const defaults = { layoutTheme: "default", floatingIslands: false, settingsVersion: 2 };
+    const defaults = { layoutTheme: "default", floatingIslands: false, settingsVersion: CURRENT_SETTINGS_VERSION };
     const legacy = migrateSettings({ floatingIslands: true, settingsVersion: 1 }, defaults);
-    expect(legacy).toEqual({ settings: expect.objectContaining({ layoutTheme: "floating-islands", settingsVersion: 2 }), changed: true });
+    expect(legacy).toEqual({ settings: expect.objectContaining({ layoutTheme: "floating-islands", settingsVersion: CURRENT_SETTINGS_VERSION }), changed: true });
 
     const chosen = migrateSettings({ floatingIslands: true, layoutTheme: "hairline-ledger", settingsVersion: 1 }, defaults);
     expect(chosen.settings.layoutTheme).toBe("hairline-ledger");
 
-    const current = migrateSettings({ floatingIslands: true, layoutTheme: "default", settingsVersion: 2 }, defaults);
+    const current = migrateSettings({ floatingIslands: true, layoutTheme: "default", settingsVersion: CURRENT_SETTINGS_VERSION }, defaults);
     expect(current).toEqual({ settings: expect.objectContaining({ layoutTheme: "default" }), changed: false });
   });
 });

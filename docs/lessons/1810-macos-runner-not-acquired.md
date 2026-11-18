@@ -11,3 +11,7 @@ GitHub's notice about macOS arm64 capacity. The code under test never ran.
 - `ci-auto-rerun.yml` now also listens to macOS Smoke. `rerunDecision` already
   treats a failed job with no steps as a setup failure, so the job gets one
   re-run, still subject to the dev-push supersession check (#1798).
+- #1819: Rust platforms (macos-latest) and macOS Native UI hit the same
+  not-acquired failure three times on 2026-11-18 dev pushes, so
+  `ci-auto-rerun.yml` listens to them too. Any new workflow with a macOS
+  hosted job belongs in that list.

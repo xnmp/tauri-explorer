@@ -160,14 +160,16 @@ describe("workflow wiring", () => {
   const workflows = new URL("../.github/workflows/", import.meta.url);
   const load = (file: string) => parse(readFileSync(new URL(file, workflows), "utf8"));
 
-  it("re-runs only failed first attempts of CI and native smoke, with minimal permissions", () => {
+  it("re-runs only failed first attempts of CI, native smoke and the macOS-hosted suites, with minimal permissions", () => {
     const rerun = load("ci-auto-rerun.yml");
-    expect(rerun.on).toEqual({ workflow_run: { workflows: ["CI", "Tauri binary E2E (smoke)", "macOS Smoke"], types: ["completed"] } });
+    expect(rerun.on).toEqual({ workflow_run: { workflows: ["CI", "Tauri binary E2E (smoke)", "macOS Smoke", "Rust platforms", "macOS Native UI"], types: ["completed"] } });
     expect(rerun.permissions).toEqual({ actions: "write", contents: "read", "pull-requests": "read" });
     expect(rerun.jobs.rerun.if).toBe("github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.run_attempt == 1");
     expect(load("ci.yml").name).toBe("CI");
     expect(load("e2e-tauri.yml").name).toBe("Tauri binary E2E (smoke)");
     expect(load("macos-smoke.yml").name).toBe("macOS Smoke");
+    expect(load("rust-platforms.yml").name).toBe("Rust platforms");
+    expect(load("macos-native-ui.yml").name).toBe("macOS Native UI");
     // Never checks out or runs the triggering run's code.
     for (const s of rerun.jobs.rerun.steps) expect(JSON.stringify(s)).not.toContain("head_sha");
   });

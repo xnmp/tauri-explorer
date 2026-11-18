@@ -2,6 +2,29 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.28.1 — 2026-11-18
+
+### Added
+
+- Windows 11: Translucency now works on Windows too. One Translucency
+  setting (Settings → Appearance) turns the window material on everywhere:
+  vibrancy on macOS, acrylic or Mica on Windows 11. It replaces the separate
+  macOS Window Vibrancy and Native Blur toggles, and the Translucency
+  Opacity slider applies on both platforms (#1757).
+
+### Changed
+
+- Floating Islands: the active tab now owns the whole window below the tab
+  strip. Its surface runs edge to edge under every panel and the status bar,
+  with rounded top corners, and tabs run over the sidebar. The only outline
+  is the tab plus the surface's top edge. On Windows and Linux the first tab
+  keeps its whole curve (#1785).
+
+### Fixed
+
+- macOS 26: Set as Wallpaper applies to every display and Space again
+  (#1731).
+
 ## v1.28.0 — 2026-11-18
 
 ### Added

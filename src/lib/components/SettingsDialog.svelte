@@ -303,6 +303,16 @@
             />
           </SettingRow>
 
+          <SettingRow label="Use OS Recent Files for Date Opened"
+            description="Linux only for now: also read the desktop's recent-files list (recently-used.xbel) for files opened in other applications. Read-only and local. Off: Date opened shows only files opened in Tauri Explorer"
+            hidden={!matchesSearch(...rows.osRecentSources)}>
+            <SettingToggle
+              class="os-recent-sources-toggle"
+              checked={settingsStore.osRecentSources}
+              onchange={() => settingsStore.update({ osRecentSources: !settingsStore.osRecentSources })}
+            />
+          </SettingRow>
+
           <SettingRow label="Auto-Enter Single Subfolder"
             description="When a folder contains only one subfolder (and nothing else), descend into it automatically"
             hidden={!matchesSearch(...rows.autoEnterSingleSubdir)}>

@@ -221,6 +221,8 @@ export const MOCK_LOCAL_KEYS = {
   reportClipboardVideo: "mock-report-clipboard-video",
   /** The app-data open history document (#1525), surviving reloads like the native file. */
   openHistory: "mock-open-history",
+  /** JSON `{ [path]: epochMs }` the mock `os_opened_times` reports (#1526). */
+  osOpenedTimes: "mock-os-opened-times",
   /** Error message: `open_recycle_bin` throws it. */
   openRecycleBinError: "mock-open-recycle-bin-error",
   /** JSON of the last `picker_respond` payload. */

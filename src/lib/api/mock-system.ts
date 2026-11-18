@@ -272,6 +272,13 @@ export const systemCommands: Record<string, CommandHandler> = {
   read_open_history: () => localStorage.getItem(MOCK_LOCAL_KEYS.openHistory) ?? "",
   write_open_history: (args) => { localStorage.setItem(MOCK_LOCAL_KEYS.openHistory, args.data as string); },
 
+  // OS "last opened" records (#1526): only paths seeded through MOCK_LOCAL_KEYS.osOpenedTimes.
+  os_opened_times: (args) => {
+    let seeded: Record<string, number> = {};
+    try { seeded = JSON.parse(localStorage.getItem(MOCK_LOCAL_KEYS.osOpenedTimes) ?? "{}"); } catch { /* none */ }
+    return Object.fromEntries((args.paths as string[]).filter((path) => path in seeded).map((path) => [path, seeded[path]]));
+  },
+
   // ----- File-picker portal -----
 
   // Records the response so e2e tests can assert on the actual outcome.

@@ -166,15 +166,22 @@ fn resolve_request(
     }
 }
 
+/// D-Bus name of the instance that owns `config_dir`'s profile. Errors (never
+/// panics) when the profile directory cannot be resolved.
 #[cfg(target_os = "linux")]
-pub(super) fn routing_plugin() -> Result<tauri::plugin::TauriPlugin<tauri::Wry>, AppError> {
+fn profile_dbus_id(config_dir: &std::path::Path) -> Result<String, AppError> {
     use sha2::{Digest, Sha256};
-    use tauri::Emitter;
-    let profile = crate::config::config_dir()?.canonicalize()?;
-    let id = format!(
+    let profile = config_dir.canonicalize()?;
+    Ok(format!(
         "io.github.xnmp.tauri_explorer.p{}",
         hex::encode(Sha256::digest(profile.as_os_str().as_encoded_bytes()))
-    );
+    ))
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn routing_plugin() -> Result<tauri::plugin::TauriPlugin<tauri::Wry>, AppError> {
+    use tauri::Emitter;
+    let id = profile_dbus_id(&crate::config::config_dir()?)?;
     Ok(tauri_plugin_single_instance::Builder::new()
         .dbus_id(id)
         .callback(|app, args, cwd| {
@@ -216,6 +223,15 @@ pub(super) fn routing_plugin() -> Result<tauri::plugin::TauriPlugin<tauri::Wry>,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn profile_id_reports_an_unresolvable_profile_instead_of_panicking() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(profile_dbus_id(&dir.path().join("missing")).is_err());
+        let a = profile_dbus_id(dir.path()).unwrap();
+        assert_eq!(a, profile_dbus_id(dir.path()).unwrap());
+    }
 
     fn request(path: &str) -> LaunchRequest {
         LaunchRequest {

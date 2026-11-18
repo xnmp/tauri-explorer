@@ -9,9 +9,11 @@
 use crate::error::AppError;
 use serde::Serialize;
 use std::{
+    collections::BTreeMap,
     fs::OpenOptions,
     io::Write,
     path::{Path, PathBuf},
+    time::{Duration, SystemTime},
 };
 use tauri::Manager;
 
@@ -131,6 +133,68 @@ fn publish_crash_report(
         std::io::ErrorKind::AlreadyExists,
         "crash report name space exhausted",
     ))
+}
+
+/// Consumed reports (and their single-use `.claim` markers) older than this
+/// are deleted at startup.
+const RETAIN_CONSUMED_FOR: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+/// At most this many consumed report identities survive, newest first.
+const RETAIN_CONSUMED_MAX: usize = 50;
+
+/// Bound the crash folder (#1597): delete consumed (`.seen`) reports and
+/// their `.claim` markers by age and count. An identity whose report is still
+/// unseen (`crash-N.txt`) is never touched, so nothing the user has not been
+/// shown is lost. Best effort: individual failures are ignored.
+pub(crate) fn prune_consumed_reports(crash_dir: &Path, now: SystemTime) {
+    let Ok(entries) = std::fs::read_dir(crash_dir) else {
+        return;
+    };
+    // identity (file name minus .claim/.seen) -> (files, newest mtime, unseen?)
+    let mut groups: BTreeMap<String, (Vec<PathBuf>, SystemTime, bool)> = BTreeMap::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !name.starts_with(CRASH_PREFIX) {
+            continue;
+        }
+        let unseen = is_unseen_report(&path);
+        let identity = name
+            .strip_suffix(".claim")
+            .or_else(|| name.strip_suffix(".seen"))
+            .unwrap_or(name)
+            .to_string();
+        if !(unseen || name.ends_with(".claim") || name.ends_with(".seen")) {
+            continue;
+        }
+        let modified = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+        let group = groups
+            .entry(identity)
+            .or_insert((Vec::new(), SystemTime::UNIX_EPOCH, false));
+        group.0.push(path);
+        group.1 = group.1.max(modified);
+        group.2 |= unseen;
+    }
+    let mut prunable: Vec<(Vec<PathBuf>, SystemTime)> = groups
+        .into_values()
+        .filter(|(_, _, unseen)| !unseen)
+        .map(|(files, newest, _)| (files, newest))
+        .collect();
+    prunable.sort_by_key(|(_, newest)| std::cmp::Reverse(*newest));
+    for (index, (files, newest)) in prunable.into_iter().enumerate() {
+        let expired = now
+            .duration_since(newest)
+            .is_ok_and(|age| age > RETAIN_CONSUMED_FOR);
+        if expired || index >= RETAIN_CONSUMED_MAX {
+            for file in files {
+                let _ = std::fs::remove_file(file);
+            }
+        }
+    }
 }
 
 fn is_unseen_report(path: &Path) -> bool {
@@ -291,6 +355,71 @@ pub async fn open_external_url(url: String) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn touch(path: &Path, modified: SystemTime) {
+        std::fs::write(path, "x").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(modified)
+            .unwrap();
+    }
+
+    #[test]
+    fn prune_removes_old_consumed_reports_but_never_unseen_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let now = SystemTime::now();
+        let ancient = now - RETAIN_CONSUMED_FOR - Duration::from_secs(3600);
+        touch(&dir.path().join("crash-1.txt.seen"), ancient);
+        touch(&dir.path().join("crash-1.txt.claim"), ancient);
+        touch(&dir.path().join("crash-2.txt.claim"), ancient);
+        // Unseen report with an ancient claim: must survive, claim included.
+        touch(&dir.path().join("crash-3.txt"), ancient);
+        touch(&dir.path().join("crash-3.txt.claim"), ancient);
+        touch(&dir.path().join("crash-4.txt.seen"), now);
+        touch(&dir.path().join("crash-4.txt.claim"), now);
+        prune_consumed_reports(dir.path(), now);
+        let mut left: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        assert_eq!(
+            left,
+            [
+                "crash-3.txt",
+                "crash-3.txt.claim",
+                "crash-4.txt.claim",
+                "crash-4.txt.seen"
+            ]
+        );
+    }
+
+    #[test]
+    fn prune_caps_the_number_of_recent_consumed_reports() {
+        let dir = tempfile::tempdir().unwrap();
+        let now = SystemTime::now();
+        for i in 0..(RETAIN_CONSUMED_MAX + 25) {
+            let modified = now - Duration::from_secs(i as u64);
+            touch(&dir.path().join(format!("crash-{i}.txt.seen")), modified);
+            touch(&dir.path().join(format!("crash-{i}.txt.claim")), modified);
+        }
+        prune_consumed_reports(dir.path(), now);
+        let count = std::fs::read_dir(dir.path()).unwrap().count();
+        assert_eq!(count, RETAIN_CONSUMED_MAX * 2);
+        assert!(dir.path().join("crash-0.txt.seen").exists());
+    }
+
+    #[test]
+    fn prune_tolerates_a_missing_directory_and_foreign_files() {
+        let dir = tempfile::tempdir().unwrap();
+        prune_consumed_reports(&dir.path().join("absent"), SystemTime::now());
+        std::fs::write(dir.path().join("notes.txt"), "keep").unwrap();
+        prune_consumed_reports(dir.path(), SystemTime::now() + Duration::from_secs(1 << 30));
+        assert!(dir.path().join("notes.txt").exists());
+    }
 
     #[test]
     fn write_and_mark_seen_roundtrip() {

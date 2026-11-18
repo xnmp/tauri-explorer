@@ -123,22 +123,41 @@ pub async fn install_update(app: AppHandle, job: State<'_, SelfUpdateJob>) -> Re
 /// The notify-only path: the update channel's release, if newer.
 async fn latest_release_notice() -> Result<Option<UpdateOffer>, AppError> {
     tokio::task::spawn_blocking(|| {
-        let manifest: ChannelManifest = ureq::get(CHANNEL_MANIFEST_URL)
-            .header("User-Agent", "tauri-explorer-update-check")
-            .call()
-            .map_err(|e| AppError::Other(format!("Update check failed: {}", e)))?
-            .body_mut()
-            .read_json()
-            .map_err(|e| AppError::Other(format!("Update check parse failed: {}", e)))?;
+        let manifest =
+            fetch_manifest(&crate::http_timeouts::bounded_agent(), CHANNEL_MANIFEST_URL)?;
         channel_notice(&manifest.version, env!("CARGO_PKG_VERSION"))
     })
     .await
     .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
 }
 
+fn fetch_manifest(agent: &ureq::Agent, url: &str) -> Result<ChannelManifest, AppError> {
+    agent
+        .get(url)
+        .header("User-Agent", "tauri-explorer-update-check")
+        .call()
+        .map_err(|e| AppError::Other(format!("Update check failed: {}", e)))?
+        .body_mut()
+        .read_json()
+        .map_err(|e| AppError::Other(format!("Update check parse failed: {}", e)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stalled_manifest_server_fails_within_the_timeout() {
+        let server = crate::http_timeouts::test_support::stalled_server();
+        let agent = crate::http_timeouts::bounded_agent_with(
+            std::time::Duration::from_millis(500),
+            std::time::Duration::from_millis(800),
+        );
+        let started = std::time::Instant::now();
+        let result = fetch_manifest(&agent, &format!("http://{}/m.json", server.addr));
+        assert!(result.is_err());
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    }
 
     #[test]
     fn channel_notice_offers_only_a_later_release() {

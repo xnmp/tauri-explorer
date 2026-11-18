@@ -835,6 +835,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git_index_lock.rs` — `with_locked_index`: every libgit2 index writer (stage, unstage, discard) holds `index.lock` from read to write, editing a private mtime-preserving copy and renaming it over `index.lock` then `index`, so a concurrent git command fails instead of being silently overwritten (#1617); `IndexCase` picks exact-case or the repository's `core.ignorecase` lookups.
 - `git_index_reset.rs` — `git_unstage` core: literal-path, exact-case index reset matching `git --literal-pathspecs reset` (only differing entries rewritten, skip-worktree kept, binary-searched index; #1589); `index_differs_from_tree` is discard's staged-change check.
 - `github.rs` — `git_open_prs`: open GitHub PRs for the repo's remote, for graph PR badges (#449); TTL-cached, silent-degrade. `git_issues_url`: the remote's github.com issues page for the "Git: Open Issues in Browser" palette command (#1055).
+- `http_timeouts.rs` — shared bounded `ureq` agent (10 s connect, 30 s overall) for the update manifest and GitHub PR lookups (#1827); the report relay keeps its own deliberate no-timeout policy.
 
 ## website/ — static Vercel site and serverless functions.
 

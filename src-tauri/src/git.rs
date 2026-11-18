@@ -221,7 +221,17 @@ fn status_detects_renames(repo: &Repository) -> bool {
 
 /// A libgit2 repo-relative path as a `/`-separated wire spelling (#1592).
 fn repo_relative(path: &Path) -> String {
-    crate::wire_path::encode_path(path).replace('\\', "/")
+    slash_separators(&crate::wire_path::encode_path(path))
+}
+
+/// `\` separates components only on Windows; on Unix it is an ordinary name
+/// character that must survive to match the listed path.
+fn slash_separators(text: &str) -> String {
+    if cfg!(windows) {
+        text.replace('\\', "/")
+    } else {
+        text.to_owned()
+    }
 }
 
 /// Classify one libgit2 status entry into SCM rows the way `git status`
@@ -238,8 +248,10 @@ fn classify(entry: &git2::StatusEntry<'_>, index: Option<&git2::Index>) -> Class
             .or_else(|| entry.head_to_index().and_then(|d| d.new_file().path()))
             .map(repo_relative)
             .or_else(|| {
-                Some(crate::wire_path::encode_bytes(entry.path_bytes()).replace('\\', "/"))
-                    .filter(|path| !path.is_empty())
+                Some(slash_separators(&crate::wire_path::encode_bytes(
+                    entry.path_bytes(),
+                )))
+                .filter(|path| !path.is_empty())
             });
         if let Some(path) = path {
             out.merge = Some(GitFileEntry {
@@ -271,7 +283,7 @@ fn classify(entry: &git2::StatusEntry<'_>, index: Option<&git2::Index>) -> Class
                     GitStatusCode::Added
                 };
                 out.worktree = Some(GitFileEntry {
-                    path: p.replace('\\', "/"),
+                    path: slash_separators(&p),
                     old_path: None,
                     status,
                 });
@@ -287,7 +299,7 @@ fn classify(entry: &git2::StatusEntry<'_>, index: Option<&git2::Index>) -> Class
         let p = crate::wire_path::encode_bytes(entry.path_bytes());
         if !p.is_empty() {
             out.untracked = Some(GitFileEntry {
-                path: p.replace('\\', "/"),
+                path: slash_separators(&p),
                 old_path: None,
                 status: GitStatusCode::Untracked,
             });
@@ -2233,6 +2245,19 @@ mod tests {
         assert!(s.staged.is_empty());
         assert!(s.changes.is_empty());
         assert!(s.untracked.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn untracked_name_with_a_backslash_keeps_it_on_unix() {
+        let dir = init_repo();
+        write(dir.path(), "tracked.txt", "v1\n");
+        commit_all(dir.path(), "init");
+        fs::write(dir.path().join("a\\b.txt"), "x").unwrap();
+
+        let s = sync_status(dir.path());
+        assert_eq!(s.untracked.len(), 1);
+        assert_eq!(s.untracked[0].path, "a\\b.txt");
     }
 
     #[test]

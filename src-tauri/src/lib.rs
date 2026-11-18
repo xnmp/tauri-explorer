@@ -45,6 +45,7 @@ pub mod git_log;
 mod git_observation_probe;
 mod git_watch;
 mod github;
+mod http_timeouts;
 mod image_crop;
 mod image_operation;
 mod installed_plugins;
@@ -281,9 +282,15 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
     let builder = if portal::is_portal_mode() {
         builder
     } else {
-        builder.plugin(
-            window_launch::routing_plugin().expect("Could not initialize profile launch routing"),
-        )
+        match window_launch::routing_plugin() {
+            Ok(plugin) => builder.plugin(plugin),
+            Err(cause) => {
+                // Without routing this process simply is not single-instance;
+                // starting is better than a startup panic (#1597).
+                eprintln!("Could not initialize profile launch routing: {cause}");
+                builder
+            }
+        }
     };
     #[cfg(target_os = "macos")]
     let builder = builder.on_web_content_process_terminate(|webview| {
@@ -658,7 +665,9 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             // Persist panics locally so the next launch can offer a
             // pre-filled GitHub issue (#184). Local files only — no telemetry.
             if let Ok(log_dir) = tauri::Manager::path(app).app_log_dir() {
-                crash_report::install_panic_hook(log_dir.join("crashes"));
+                let crashes = log_dir.join("crashes");
+                crash_report::prune_consumed_reports(&crashes, std::time::SystemTime::now());
+                crash_report::install_panic_hook(crashes);
             }
 
             // Initialize filesystem watcher for auto-refresh

@@ -297,7 +297,13 @@ fn github_token() -> Option<String> {
 /// `None`.
 fn fetch_open_prs(owner: &str, repo: &str) -> Result<Vec<PrInfo>, String> {
     if let Some(token) = github_token() {
-        match fetch_open_prs_graphql(owner, repo, &token) {
+        match fetch_open_prs_graphql(
+            &crate::http_timeouts::bounded_agent(),
+            GRAPHQL_URL,
+            owner,
+            repo,
+            &token,
+        ) {
             Ok(prs) => return Ok(prs),
             Err(e) => {
                 log::debug!(
@@ -306,16 +312,25 @@ fn fetch_open_prs(owner: &str, repo: &str) -> Result<Vec<PrInfo>, String> {
             }
         }
     }
-    fetch_open_prs_rest(owner, repo)
+    fetch_open_prs_rest(
+        &crate::http_timeouts::bounded_agent(),
+        &rest_url(owner, repo),
+    )
 }
+
+fn rest_url(owner: &str, repo: &str) -> String {
+    format!("https://api.github.com/repos/{owner}/{repo}/pulls?state=open&per_page=100")
+}
+
+const GRAPHQL_URL: &str = "https://api.github.com/graphql";
 
 /// GET the open PRs for `owner/repo` via the REST list endpoint. Mirrors
 /// `update_check.rs`'s ureq pattern: a `User-Agent` header (GitHub rejects
 /// requests without one) and the GitHub REST `Accept` header. Adds bearer auth
 /// when a token is set, which raises the unauthenticated rate limit.
-fn fetch_open_prs_rest(owner: &str, repo: &str) -> Result<Vec<PrInfo>, String> {
-    let url = format!("https://api.github.com/repos/{owner}/{repo}/pulls?state=open&per_page=100");
-    let mut request = ureq::get(&url)
+fn fetch_open_prs_rest(agent: &ureq::Agent, url: &str) -> Result<Vec<PrInfo>, String> {
+    let mut request = agent
+        .get(url)
         .header("Accept", "application/vnd.github+json")
         .header("User-Agent", "tauri-explorer-pr-badges");
     if let Some(token) = github_token() {
@@ -333,12 +348,19 @@ fn fetch_open_prs_rest(owner: &str, repo: &str) -> Result<Vec<PrInfo>, String> {
 /// One GraphQL request for the open PRs plus their status decorations. The
 /// last commit's `statusCheckRollup` gives the CI state; `reviewDecision` and
 /// `comments.totalCount` come for free on the same node.
-fn fetch_open_prs_graphql(owner: &str, repo: &str, token: &str) -> Result<Vec<PrInfo>, String> {
+fn fetch_open_prs_graphql(
+    agent: &ureq::Agent,
+    url: &str,
+    owner: &str,
+    repo: &str,
+    token: &str,
+) -> Result<Vec<PrInfo>, String> {
     let body = serde_json::json!({
         "query": open_prs_query(),
         "variables": { "owner": owner, "name": repo },
     });
-    let resp: GqlResponse = ureq::post("https://api.github.com/graphql")
+    let resp: GqlResponse = agent
+        .post(url)
         .header("Accept", "application/vnd.github+json")
         .header("User-Agent", "tauri-explorer-pr-badges")
         .header("Authorization", &format!("Bearer {token}"))
@@ -844,6 +866,20 @@ pub async fn git_open_prs(repo_root: String) -> Result<Vec<PrInfo>, AppError> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn stalled_github_server_fails_within_the_timeout() {
+        let server = crate::http_timeouts::test_support::stalled_server();
+        let agent = crate::http_timeouts::bounded_agent_with(
+            std::time::Duration::from_millis(500),
+            std::time::Duration::from_millis(800),
+        );
+        let url = format!("http://{}/x", server.addr);
+        let started = std::time::Instant::now();
+        assert!(super::fetch_open_prs_rest(&agent, &url).is_err());
+        assert!(super::fetch_open_prs_graphql(&agent, &url, "o", "r", "t").is_err());
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    }
+
     use super::*;
 
     #[test]

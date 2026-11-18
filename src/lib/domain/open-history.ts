@@ -98,6 +98,12 @@ export function replayOpenHistory(history: OpenHistory, ops: readonly OpenHistor
   return ops.reduce<Map<string, number>>((current, op) => mutate(current, op, capacity), new Map(history));
 }
 
+/** The more recent of two optional open times (app history vs an OS source, #1526). */
+export function newestOpened(a: number | undefined, b: number | undefined): number | undefined {
+  if (a === undefined || !Number.isFinite(a)) return validTime(b) ? b : undefined;
+  return validTime(b) && b > a ? b : a;
+}
+
 /** Union of two histories; the later timestamp wins for a shared path. */
 export function mergeOpenHistories(a: OpenHistory, b: OpenHistory, capacity = OPEN_HISTORY_CAPACITY): Map<string, number> {
   const merged = new Map(a);

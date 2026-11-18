@@ -363,6 +363,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `manual-hidden.svelte.ts` — per-folder manually-hidden entry registry.
 - `open-history-access.svelte.ts` — startup-light seam for the open history (#1525): registers the `api/open.ts` `onFileLaunched` listener, lazy-loads the store on first launch/mutation/read, reactive `lastOpenedAt` for FileItem and the "opened" sort.
 - `open-history.svelte.ts` — shared file open history for Details "Date opened" (#1525, loaded lazily): records successful launches, lazy tolerant load, BroadcastChannel publication, coalesced saves that replay unsaved changes over the stored document.
+- `open-history-combined.svelte.ts` — what Details "Date opened" reads (#1526, lazy): app history merged newest-wins with a batched, TTL-cached resolver for OS recent-file times (`api/os-opened.ts`); off when `osRecentSources` is disabled.
 - `settings.svelte.ts` — global settings store (toggles, defaults). Very hot for feature flags. `reloadFromDisk()` adopts external settings.json edits (#599).
 - `settings-input.ts` — Pure persisted-settings input contract: normalization against defaults, enum/numeric validation, unknown-key carry-through, size bound (split from settings.svelte.ts, #1679).
 - `settings-toggles.ts` — `TOGGLE_SETTINGS` metadata and `generateToggleCommands` for the command palette (split from settings.svelte.ts, #1523).
@@ -389,6 +390,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/api/native-file-drag.ts` — host native drag start channel and enriched receiver event contract.
 - `image-resolution.ts` — lazy source pixel metadata IPC; virtual paths are unavailable.
 - `open-history.ts` — read/write the app-data open history document (#1525).
+- `os-opened.ts` — `os_opened_times` IPC: OS last-opened epoch ms per path; any failure is `{}` (#1526).
 
 - `pdf-preview.ts` — bounded native PDF bytes, lazy PDF.js worker/readiness, cancellable page rendering and validated native annotation-link dispatch (#728–#730).
 
@@ -773,6 +775,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `portal/parent.rs` — validates portal window identifiers and attaches GTK picker surfaces to native Wayland/X11 parents before mapping.
 - `shared_history/mod.rs`, `shared_history/model.rs`, `shared_history/store.rs` — async IPC, pure bounded history policy and cross-process SQLite transactions.
 - `open_history.rs` — opaque app-data `open-history.json` read (missing/oversized → empty) and atomic write for the Details "Date opened" column (#1525).
+- `os_recent/mod.rs` — `os_opened_times` command and the `OsRecentSource` adapter seam (newest-wins merge across sources; macOS Spotlight / Windows Recent `.lnk` adapters pending, #1526).
+- `os_recent/xbel.rs` — Linux adapter: parses `$XDG_DATA_HOME/recently-used.xbel` (percent-decoded OsString bytes, newest of visited/modified), mtime+size-keyed parse cache, 8 MiB bound (#1526).
 - `portal.rs` — xdg-desktop-portal FileChooser backend (Linux); holds the process per request and executes the idle policy's timers, bus-name release and exit (#1427).
 - `portal/idle.rs` — pure idle-exit policy for the D-Bus-activated portal: request holds, generation-checked idle timers, open-window postponement, release-name-then-exit, replaced-executable fast exit (#1427).
 - `crash_report.rs` — local crash capture (#184).

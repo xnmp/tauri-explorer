@@ -51,10 +51,16 @@ describe("update channel", () => {
     expect(channelProblem("v0.28.1", { version: "0.28.0" })).toBeNull();
   });
 
-  it("refuses to move the channel back or sideways", () => {
+  it("allows the same release again, for a re-run after a failed upload", () => {
+    expect(channelProblem("v0.28.0", { version: "0.28.0" })).toBeNull();
+  });
+
+  it("refuses to move the channel back, or to carry a pre-release", () => {
     expect(channelProblem("v1.28.3", { version: "0.28.0" })).toMatch(/not released after the channel's 0.28.0/);
-    expect(channelProblem("v0.28.0", { version: "0.28.0" })).toMatch(/not released after/);
+    expect(channelProblem("v0.28.0", { version: "0.28.1" })).toMatch(/not released after/);
     expect(channelProblem("v0.28.0", {})).toMatch(/no version/);
+    expect(channelProblem("v0.29.0-rc.1", { version: "0.28.0" })).toMatch(/pre-release/);
+    expect(channelProblem("v0.29.0-rc.1", undefined)).toMatch(/pre-release/);
   });
 });
 
@@ -67,6 +73,23 @@ describe("release.yml", () => {
     return step?.run ?? "";
   };
 
+  it("runs one release at a time", () => {
+    expect(release.concurrency).toEqual({ group: "release", "cancel-in-progress": false });
+  });
+
+  it("checks the channel before publishing anything, and uploads to it last", () => {
+    const names = steps.map((s) => s.name);
+    const check = names.indexOf("Check the update channel");
+    expect(check).toBeGreaterThan(-1);
+    expect(check).toBeLessThan(names.indexOf("Create release"));
+    expect(names.indexOf("Publish to the update channel")).toBe(names.length - 1);
+    const checkRun = run("Check the update channel");
+    expect(checkRun).toContain(`channel=${CHANNEL_TAG}`);
+    expect(checkRun).toMatch(/gh release create "\$channel" --prerelease --latest=false/);
+    expect(checkRun).toMatch(/update-channel\.mjs check --version "\$VERSION"/);
+    expect(run("Publish to the update channel")).toBe(`gh release upload ${CHANNEL_TAG} latest-alpha.json --clobber`);
+  });
+
   it("marks only the planned releases Latest and gives only them latest.json", () => {
     const create = run("Create release");
     expect(create).toContain('latest=$(node scripts/update-channel.mjs github-latest "$VERSION")');
@@ -75,13 +98,10 @@ describe("release.yml", () => {
     expect(create).toContain("assets+=(latest-alpha.json)");
   });
 
-  it("publishes the manifest to the channel after the release, refusing a downgrade", () => {
-    const names = steps.map((s) => s.name);
-    expect(names.indexOf("Publish to the update channel")).toBeGreaterThan(names.indexOf("Create release"));
-    const channel = run("Publish to the update channel");
-    expect(channel).toContain(`channel=${CHANNEL_TAG}`);
-    expect(channel).toMatch(/gh release create "\$channel" --prerelease --latest=false/);
-    expect(channel).toMatch(/update-channel\.mjs check --version "\$VERSION"[^\n]*\n\s*gh release upload "\$channel" latest-alpha\.json --clobber/);
+  it("lets a re-run continue past an already published release", () => {
+    const create = run("Create release");
+    expect(create.indexOf('gh release view "$VERSION"')).toBeLessThan(create.indexOf('gh release create "$VERSION"'));
+    expect(create).toMatch(/already published[^\n]*\n\s*exit 0/);
   });
 
   it("matches the endpoint installed apps read", () => {

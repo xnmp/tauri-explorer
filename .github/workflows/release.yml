@@ -7,6 +7,14 @@ on:
 permissions:
   contents: write
 
+# One release at a time: the update channel check and upload must not
+# interleave with another release's (#1783). GitHub replaces a pending run in
+# the group with a newer one; release merges are rare and supervised, and a
+# superseded run's version stays untagged, which version-check reports.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   version-check:
     runs-on: ubuntu-latest
@@ -284,12 +292,47 @@ jobs:
           node scripts/updater-manifest.mjs --tag "$VERSION" --dir artifacts
           --notes release-notes.md --repo "$GITHUB_REPOSITORY" --out latest-alpha.json
 
+      # The bridge and every later build read only update-channel's
+      # latest-alpha.json (scripts/update-channel.mjs, #1783). Check it before
+      # publishing anything, so a release that would move the channel back is
+      # never created.
+      - name: Check the update channel
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.version-check.outputs.version }}
+        run: |
+          set -euo pipefail
+          channel=update-channel
+          if ! names=$(gh release view "$channel" --json assets --jq '.assets[].name' 2>view-error.txt); then
+            grep -qi 'release not found' view-error.txt || { cat view-error.txt >&2; exit 1; }
+            gh release create "$channel" --prerelease --latest=false --target "$GITHUB_SHA" \
+              --title "Update channel" \
+              --notes "Not a release: installed copies of Tauri Explorer read latest-alpha.json here to find the newest release (#1783)."
+            names=
+          fi
+          current=()
+          if grep -qx latest-alpha.json <<<"$names"; then
+            gh release download "$channel" --pattern latest-alpha.json --output channel-latest-alpha.json
+            current=(--channel channel-latest-alpha.json)
+          fi
+          node scripts/update-channel.mjs check --version "$VERSION" "${current[@]}"
+
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.version-check.outputs.version }}
         run: |
           set -euo pipefail
+          # Re-running a job whose later step failed must not fail here.
+          if state=$(gh release view "$VERSION" --json isDraft --jq .isDraft 2>view-error.txt); then
+            if [[ $state == false ]]; then
+              echo "$VERSION is already published; continuing with the update channel."
+              exit 0
+            fi
+            echo "::error::$VERSION exists as a draft (an interrupted upload): check its assets, then publish or delete it and re-run."
+            exit 1
+          fi
+          grep -qi 'release not found' view-error.txt || { cat view-error.txt >&2; exit 1; }
           # The signatures the updater manifest embeds are also published
           # beside each signed bundle.
           mapfile -t assets < <(find artifacts -type f \( \
@@ -312,27 +355,11 @@ jobs:
             --notes-file release-notes.md \
             "${assets[@]}"
 
-      # The bridge and every later build read only update-channel's
-      # latest-alpha.json (scripts/update-channel.mjs). Updated after the
-      # release exists, so the manifest never names missing assets.
+      # After the release exists, so the manifest never names missing assets.
+      # --clobber deletes the old asset first: if this upload fails, installs
+      # find no manifest (and offer nothing) until "Re-run failed jobs"
+      # uploads it again.
       - name: Publish to the update channel
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ needs.version-check.outputs.version }}
-        run: |
-          set -euo pipefail
-          channel=update-channel
-          if ! names=$(gh release view "$channel" --json assets --jq '.assets[].name' 2>view-error.txt); then
-            grep -qi 'release not found' view-error.txt || { cat view-error.txt >&2; exit 1; }
-            gh release create "$channel" --prerelease --latest=false --target "$GITHUB_SHA" \
-              --title "Update channel" \
-              --notes "Not a release: installed copies of Tauri Explorer read latest-alpha.json here to find the newest release (#1783)."
-            names=
-          fi
-          current=()
-          if grep -qx latest-alpha.json <<<"$names"; then
-            gh release download "$channel" --pattern latest-alpha.json --output channel-latest-alpha.json
-            current=(--channel channel-latest-alpha.json)
-          fi
-          node scripts/update-channel.mjs check --version "$VERSION" "${current[@]}"
-          gh release upload "$channel" latest-alpha.json --clobber
+        run: gh release upload update-channel latest-alpha.json --clobber

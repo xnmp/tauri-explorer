@@ -91,9 +91,15 @@ API for the notice). Three rules keep every install moving:
   always finds the bridge, and the bridge moves on to the 0.28 line.
 - **The update channel.** The `update-channel` prerelease is never "Latest". Its
   `latest-alpha.json` always describes the newest release. The bridge and
-  every later build read only that file. `release.yml` updates it after
-  publishing the release, and refuses to replace it with a release that is
-  not newer in release order.
+  every later build read only that file. `release.yml` checks it before
+  publishing anything: a release that is older in release order, or a
+  pre-release (it would reach every install), fails there. It uploads the
+  new manifest last. Releases run one at a time (`concurrency: release`).
+
+**Recovery.** If the channel upload fails, use "Re-run failed jobs". The
+create step skips a release that is already published, and the check
+accepts the channel's own version again. `--clobber` deletes the old asset
+first, so until that re-run, installs find no manifest and offer nothing.
 
 Because "Latest" stays on 1.28.2, links meant for new users must point at the
 releases list or the channel, not `releases/latest` (README, website,

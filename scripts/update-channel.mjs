@@ -21,7 +21,8 @@
 // Usage (release.yml):
 //   node scripts/update-channel.mjs github-latest <version>   prints true|false
 //   node scripts/update-channel.mjs check --version <version> [--channel <latest-alpha.json>]
-//     fails unless <version> was released after the channel's current one.
+//     fails unless <version> is the channel's current release or one released
+//     after it, and is not a pre-release.
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -74,13 +75,18 @@ export function marksGitHubLatest(version) {
 }
 
 /**
- * Why `version` must not replace the channel manifest, or null.
+ * Why `version` must not replace the channel manifest, or null. Release
+ * order must not go back; the same release again is allowed.
  * @param {string} version
  * @param {{ version?: unknown } | undefined} channel the current `latest-alpha.json`, if any
  */
 export function channelProblem(version, channel) {
+  // Every install follows the one channel, so a pre-release would reach all of them.
+  if (parse(version).pre !== undefined) return `${version} is a pre-release; the update channel has no pre-releases`;
   if (channel === undefined) return null;
   if (typeof channel?.version !== "string") return "the channel manifest has no version";
+  // The same release again is a re-run after a failed upload.
+  if (channel.version === version.replace(/^v/, "")) return null;
   return isReleasedAfter(version, channel.version)
     ? null
     : `${version} was not released after the channel's ${channel.version}`;

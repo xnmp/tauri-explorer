@@ -10,6 +10,14 @@ on:
     branches: [dev]
   workflow_dispatch:
 
+# PRs share a group per PR ref and dev pushes one group per workflow, both
+# cancelling in progress: a newer commit cancels its superseded run (#1798).
+# Every other event (main pushes, schedule, dispatch) gets a unique run-ID
+# group, so it never cancels or replaces another run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || (github.event_name == 'push' && github.ref == 'refs/heads/dev') && 'dev-push' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/dev') }}
+
 jobs:
   launch-smoke:
     runs-on: macos-latest

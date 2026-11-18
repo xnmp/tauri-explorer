@@ -72,30 +72,106 @@ describe("CI admission policy (#1133)", () => {
     expect(Object.hasOwn(workflow.on, "workflow_dispatch")).toBe(true);
     expect(Object.hasOwn(workflow.on, "pull_request")).toBe(false);
     expect(Object.hasOwn(workflow.on, "pull_request_target")).toBe(false);
-    // A shared group also replaces pending runs when cancellation is false.
-    // Heavy-only workflows must leave every dev commit free to queue.
-    expect(workflow.concurrency).toBeUndefined();
     for (const job of Object.values(workflow.jobs)) {
-      expect(job).not.toHaveProperty("concurrency");
       expect(job).not.toHaveProperty("if");
     }
   });
 
-  it.each(["ci.yml", "e2e-tauri.yml"])(
-    "cancels superseded PRs in %s without grouping dev commits together",
-    (file) => {
-      const workflow = load(file);
-      expect(workflow.on.push.branches).toContain("dev");
-      expect(workflow.on.push.paths).toBeUndefined();
-      expect(workflow.concurrency).toEqual({
-        group: "${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}",
-        "cancel-in-progress": "${{ github.event_name == 'pull_request' }}",
-      });
-      for (const job of Object.values(workflow.jobs)) {
-        expect(job).not.toHaveProperty("concurrency");
+  it.each(["ci.yml", "e2e-tauri.yml"])("runs %s on every dev push and on PRs into dev", (file) => {
+    const workflow = load(file);
+    expect(workflow.on.push.branches).toContain("dev");
+    expect(workflow.on.push.paths).toBeUndefined();
+    expect(workflow.on.pull_request.branches).toEqual(["dev"]);
+  });
+});
+
+// A minimal evaluator for the `${{ }}` expressions concurrency uses: context
+// paths, string literals, ==, !=, !, &&, || (GitHub's value-returning
+// semantics) and parentheses.
+type Context = Record<string, string>;
+function evaluate(template: string, context: Context): string {
+  return template.replace(/\$\{\{(.*?)\}\}/g, (_m, source: string) => {
+    const tokens = source.match(/'[^']*'|==|!=|&&|\|\||[!()]|[\w.-]+/g) ?? [];
+    let at = 0;
+    const peek = () => tokens[at];
+    const truthy = (v: string | boolean) => v !== "" && v !== false && v !== "false";
+    const primary = (): string | boolean => {
+      const token = tokens[at++];
+      if (token === "(") { const v = or(); expect(tokens[at++]).toBe(")"); return v; }
+      if (token === "!") return !truthy(primary());
+      if (token.startsWith("'")) return token.slice(1, -1);
+      if (!Object.hasOwn(context, token)) throw new Error(`unknown context ${token}`);
+      return context[token];
+    };
+    const equality = () => {
+      let v = primary();
+      while (peek() === "==" || peek() === "!=") {
+        const op = tokens[at++];
+        const r = primary();
+        v = op === "==" ? String(v) === String(r) : String(v) !== String(r);
       }
-    },
-  );
+      return v;
+    };
+    const and = () => { let v = equality(); while (peek() === "&&") { at++; const r = equality(); v = truthy(v) ? r : v; } return v; };
+    const or = (): string | boolean => { let v = and(); while (peek() === "||") { at++; const r = and(); v = truthy(v) ? v : r; } return v; };
+    const value = or();
+    expect(at).toBe(tokens.length);
+    return String(value);
+  });
+}
+
+describe("concurrency (#1798)", () => {
+  const files = readdirSync(workflows).filter((file) => /\.ya?ml$/.test(file));
+  const devPush = files.filter((file) => {
+    const push = load(file).on?.push;
+    return push !== undefined && (push?.branches ?? []).includes("dev");
+  });
+  const event = (name: string, ref: string, runId = "42"): Context =>
+    ({ "github.workflow": "W", "github.event_name": name, "github.ref": ref, "github.run_id": runId });
+
+  it("covers CI, native smoke and every heavy dev-push suite", () => {
+    expect(devPush).toEqual(expect.arrayContaining(["ci.yml", "e2e-tauri.yml", ...heavy]));
+  });
+
+  describe.each(devPush)("%s", (file) => {
+    const { concurrency, jobs } = load(file);
+    const outcome = (context: Context) => ({
+      group: evaluate(concurrency.group, context),
+      cancel: evaluate(String(concurrency["cancel-in-progress"]), context),
+    });
+
+    it("declares one workflow-level group and no job-level groups", () => {
+      expect(concurrency.group).toMatch(/^\$\{\{ github\.workflow \}\}-/);
+      for (const job of Object.values(jobs)) expect(job).not.toHaveProperty("concurrency");
+    });
+
+    it("lets a newer dev push cancel the superseded dev push run", () => {
+      const older = outcome(event("push", "refs/heads/dev", "1"));
+      const newer = outcome(event("push", "refs/heads/dev", "2"));
+      expect(newer.group).toBe(older.group);
+      expect(newer.group).toBe("W-dev-push");
+      expect(newer.cancel).toBe("true");
+    });
+
+    it("keeps PRs grouped by full PR ref, cancelling in progress", () => {
+      expect(outcome(event("pull_request", "refs/pull/7/merge"))).toEqual({ group: "W-refs/pull/7/merge", cancel: "true" });
+      expect(outcome(event("pull_request", "refs/pull/8/merge")).group).not.toBe(outcome(event("pull_request", "refs/pull/7/merge")).group);
+    });
+
+    it.each([
+      ["a main push", "push", "refs/heads/main"],
+      ["a schedule run", "schedule", "refs/heads/dev"],
+      ["a manual dispatch on dev", "workflow_dispatch", "refs/heads/dev"],
+      ["a push to another branch", "push", "refs/heads/test/x"],
+    ])("gives %s a unique run-ID group that never cancels", (_label, name, ref) => {
+      expect(outcome(event(name, ref, "1"))).toEqual({ group: "W-1", cancel: "false" });
+      expect(outcome(event(name, ref, "2")).group).toBe("W-2");
+    });
+  });
+
+  it("leaves releases serialized, never cancelled", () => {
+    expect(load("release.yml").concurrency).toEqual({ group: "release", "cancel-in-progress": false });
+  });
 });
 
 describe("release and nightly coverage (#1367)", () => {

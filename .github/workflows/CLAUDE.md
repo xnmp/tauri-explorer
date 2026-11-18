@@ -5,10 +5,19 @@ dev; PRs into main run only `release-gate.yml`.
 The heavy suites listed in `tests/ci-trigger-policy.test.ts` run on every dev
 push without path filters and retain manual dispatch. Existing schedules stay.
 
-Do not use a shared concurrency group for dev pushes, even with
-`cancel-in-progress: false`: GitHub replaces an earlier pending run in that
-group. Heavy-only workflows omit concurrency; mixed PR/push workflows group
-PRs by workflow and full PR ref, and use a unique run ID for other events.
+Every workflow that runs on dev pushes (ci.yml, e2e-tauri.yml, image-crop.yml
+and the heavy suites) declares the same workflow-level concurrency (#1798):
+PRs group by workflow and full PR ref, dev pushes share one
+`<workflow>-dev-push` group, both with `cancel-in-progress: true`, and every
+other event (main pushes, the schedule, dispatch) gets a unique run-ID group.
+A newer dev commit therefore cancels the older commit's runs: two pushes close
+together used to saturate the runners, and queueing, not test execution,
+dominated the release wait. Cancelling makes supersession explicit (a
+`cancelled` run); a shared group with `cancel-in-progress: false` would instead
+silently replace a pending run, which is why dev pushes once had no shared
+group at all. A superseded commit gets no dev-push run of its own: the newer
+commit's run covers its tree. Main pushes must never share a group (each one
+may release). release.yml keeps its own `concurrency: release`.
 
 Trigger changes and required-check changes must be coordinated. Before
 publishing removal of macOS Smoke's PR trigger, remove `launch-smoke` from dev's
@@ -25,6 +34,9 @@ tag or build unless a dev commit with the released commit's exact
 tree has a successful dev-push `ci.yml` run and `smoke (ubuntu-latest)`. Merge
 to main only after dev CI for that tree is green (the gate waits up to an hour
 for a run in progress); a commit made directly on main cannot be released.
+Another dev push during that wait cancels the run (#1798), and the gate then
+fails with a "superseded" reason: release dev's newest tree instead. A
+cancelled older commit never blocks a newer commit carrying the same tree.
 The gate runs only when a release would happen (the version is not yet
 tagged), and retries transient API 5xx responses before failing closed.
 `release-gate.yml` runs the same gate on PRs into main as the `release-gate`
@@ -40,13 +52,18 @@ stopped at an install/setup step (`SETUP_STEP` in `scripts/ci-jobs.mjs`). Gate
 jobs print each upstream shard's result and failing step first; the report is
 `continue-on-error` and never decides the gate. A pull_request run is re-run
 only while it is the newest run of its workflow for the branch and the open
-PR's head is still its `head_sha` (`staleRunReason`): a re-run joins the PR's
-cancel-in-progress group and would otherwise cancel the newer run.
+PR's head is still its `head_sha`, and a dev push run only while it is the
+newest dev push run of its workflow and dev's head is still its `head_sha`
+(`staleRunReason`): a re-run joins the PR's or dev's cancel-in-progress group
+and would otherwise cancel the newer run. A run cancelled by supersession
+concludes `cancelled`, which the workflow's `failure`-only condition skips;
+`staleRunReason` covers a run that failed before a newer push arrived.
 
 `e2e-shard-timings.yml` (weekly) pushes nothing: the repository does not let
 GITHUB_TOKEN open PRs. It uploads the regenerated timings as the
 `e2e-shard-timings` artifact and writes the drift to the job summary; apply it
-in an ordinary PR. It fails with an error when no successful dev run exists.
+in an ordinary PR. It fails with an error when no successful dev run exists;
+superseded (cancelled) dev runs are not successful and are skipped.
 
 # Tauri Linux apt packages (#1371)
 
@@ -92,11 +109,14 @@ an action reads must come from `$RUNNER_TEMP` inside the container (exported
 to `GITHUB_ENV`), not `${{ runner.temp }}`, which names the host path. Git
 needs `safe.directory` because the container runs as root.
 Chromium runs 2 shards and view modes 1, each with `PW_WORKERS=2`; WebKit
-runs 6 shards with one worker, because two workers per WebKit runner
+runs 8 shards with one worker, because two workers per WebKit runner
 overran the 40-minute shard budget with new failures (#1368, run
-40068235372); the sixth shard keeps planned shards near 23 minutes after
-the tab seam matrices (#1775). Changing a matrix also changes `EXPECTED_REPORTS` in the
-dev-push impact-map job.
+40068235372); eight shards plan ~18 minutes each (#1798; six planned ~24
+and ran 21-36, the dev-push critical path). The planner
+(`scripts/e2e-shards.mjs plan`) balances any count from
+`strategy.job-total`. Changing a Chromium matrix also changes
+`EXPECTED_REPORTS` in the dev-push impact-map job (WebKit records no
+coverage).
 `ImageOS`/`ImageVersion` are set to the container so cached results are scoped
 to it. Each shard bounds Playwright with `E2E_GLOBAL_TIMEOUT_MINUTES`, below
 the step `timeout-minutes`, below the job cap.
@@ -287,6 +307,9 @@ key with a forged pass in its own merge-ref cache on a later run.
 Artifacts use `trusted-test-cache-v3-<os>-<arch>-<image>-<image version>-<target>-<run>-<attempt>`.
 Restore computes the requested target's hash with Turborepo, then searches
 artifacts across the latest 30 dev pushes plus the current rerun if older.
+A superseded (cancelled) dev run's completed attempt is still a producer:
+targets that passed before the cancellation packed their records, and a
+cancelled target packs nothing.
 `UNIT_SELECTION` is job-wide so restore and execution hash the same selection;
 browser shard selection and Rust feature/selection variables are also available
 before restore. Keep these environments aligned.

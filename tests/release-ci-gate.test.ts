@@ -41,6 +41,26 @@ describe("judgeCommit", () => {
   it("passes when a re-run succeeded beside an earlier failure", () => {
     expect(judgeCommit([ci({ conclusion: "failure" }), ci({ id: 3 }), native()], jobs("success"), REPO).verdict).toBe("pass");
   });
+
+  it("refuses a commit whose dev push runs a newer push cancelled, and says why (#1798)", () => {
+    const result = judgeCommit([ci({ conclusion: "cancelled" }), native({ conclusion: "cancelled" })], jobs("cancelled"), REPO);
+    expect(result.verdict).toBe("fail");
+    expect(result.reason).toMatch(/^CI did not succeed \(cancelled: a newer dev push superseded it/);
+    expect(result.reason).toContain(`${NATIVE_REQUIRED_JOB} did not succeed (cancelled`);
+  });
+
+  it("does not call a genuine failure superseded", () => {
+    expect(judgeCommit([ci({ conclusion: "failure" }), native()], jobs("success"), REPO).reason).toBe("CI did not succeed");
+  });
+});
+
+describe("superseded dev pushes (#1798)", () => {
+  it("passes on a newer commit carrying the released tree even though an older one was cancelled", () => {
+    const older = judgeCommit([ci({ conclusion: "cancelled" }), native({ conclusion: "cancelled" })], jobs("cancelled"), REPO);
+    const newer = judgeCommit([ci(), native()], jobs("success"), REPO);
+    expect(combine([{ sha: "new", result: newer }, { sha: "old", result: older }]).verdict).toBe("pass");
+    expect(combine([{ sha: "old", result: older }, { sha: "new", result: newer }]).verdict).toBe("pass");
+  });
 });
 
 describe("combine", () => {

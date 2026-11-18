@@ -117,8 +117,34 @@ describe("staleRunReason", () => {
       .toMatch(/cannot be confirmed current/);
   });
 
-  it("never treats a push run as stale: dev pushes do not share a cancelling group", () => {
-    expect(staleRunReason({ ...prRun, event: "push" }, { newerRuns: [{ id: 999 }], prHeads: [] })).toBeNull();
+  describe("dev push runs, which share a cancel-in-progress group per workflow (#1798)", () => {
+    const devRun = { id: 200, event: "push", head_sha: "ddd", head_branch: "dev", workflow_id: 7 };
+
+    it("allows the newest dev push run while dev's head is its commit", () => {
+      expect(staleRunReason(devRun, { newerRuns: [{ id: 200 }, { id: 190 }], prHeads: [], branchHead: "ddd" })).toBeNull();
+    });
+
+    it("refuses when a newer dev push run exists (its re-run would cancel that run)", () => {
+      expect(staleRunReason(devRun, { newerRuns: [{ id: 201 }, { id: 200 }], prHeads: [], branchHead: "ddd" }))
+        .toMatch(/run 201 is a newer run of this workflow for dev/);
+    });
+
+    it("refuses when dev moved, even before the newer run is listed", () => {
+      expect(staleRunReason(devRun, { newerRuns: [{ id: 200 }], prHeads: [], branchHead: "eee" }))
+        .toMatch(/dev moved from ddd to eee/);
+    });
+
+    it.each([undefined, null, ""])("refuses when dev's head is unknown (%s)", (branchHead) => {
+      expect(staleRunReason(devRun, { newerRuns: [], prHeads: [], branchHead })).toMatch(/cannot be confirmed current/);
+    });
+  });
+
+  it.each([
+    ["a main push", { event: "push", head_branch: "main" }],
+    ["a schedule run", { event: "schedule", head_branch: "dev" }],
+    ["a manual dispatch", { event: "workflow_dispatch", head_branch: "dev" }],
+  ])("never treats %s as stale: it has a unique concurrency group", (_label, over) => {
+    expect(staleRunReason({ ...prRun, ...over }, { newerRuns: [{ id: 999 }], prHeads: [] })).toBeNull();
   });
 });
 

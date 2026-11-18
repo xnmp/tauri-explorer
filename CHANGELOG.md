@@ -2,6 +2,24 @@
 
 All notable changes to Tauri Explorer.
 
+## v0.29.0 — 2026-11-18
+
+### Added
+
+- Tabs: right-click a tab for Close, Close Others, Close to the Right,
+  Duplicate and Reopen Closed Tab. While you drag a tab, the tabs it passes
+  move aside to show where it will land. The reorder animates into place,
+  and the drag ghost shows the tab's icon (#1749).
+- Troubleshooting: `tauri-explorer --diagnostics` prints the version, the
+  environment summary, the log folder, the newest crash report and recent
+  warnings and errors, then exits without opening a window. Use it when the
+  app starts to a blank window or quits straight away (#1687).
+
+### Changed
+
+- Tabs: closing the active tab now activates the tab to its right, as
+  browsers do, or the one to its left if it was the last tab (#1749).
+
 ## v0.28.0 — 2026-11-18
 
 ### Changed

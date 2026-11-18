@@ -159,7 +159,7 @@ wayland-protocols = { version = "0.32", features = ["server", "staging"] }
 wayland-protocols-wlr = { version = "0.3", features = ["server"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = {version="0.61",features= ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Registry", "Win32_System_Pipes"] }
+windows-sys = {version="0.61",features= ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Registry", "Win32_System_Pipes", "Win32_System_Console"] }
 webview2-com = "0.39"
 windows-core = "0.62.2"
 # OS build for the translucency material (#1757); already in the tree via window-vibrancy.

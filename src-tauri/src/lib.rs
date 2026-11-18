@@ -16,6 +16,7 @@ pub mod config_watch;
 mod content_search;
 mod crash_report;
 mod diagnostics;
+mod diagnostics_cli;
 pub mod error;
 mod fal;
 mod file_history;
@@ -54,6 +55,13 @@ mod native_file_drag;
 #[cfg(unix)]
 mod process_supervisor;
 mod recovery_actor;
+
+/// `tauri-explorer --diagnostics` (#1687): print the environment, log folder,
+/// newest crash and WARN/ERROR tail, then exit before any window, webview or
+/// single-instance lock exists.
+pub fn run_diagnostics_cli() -> Option<i32> {
+    diagnostics_cli::run_if_requested()
+}
 
 /// Dispatch the private Wayland clipboard owner (#927) before initializing the
 /// application.

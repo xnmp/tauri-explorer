@@ -133,8 +133,19 @@ test('edge dragging reaches distant tabs and releases all scrolling on drop or E
   const point = await dragToEdge();
   // The strip shows the insertion position live (#1749): tabs it passed
   // move aside, so the tab under the pointer is no longer the target.
-  void point;
-  await expect.poll(() => scroller.evaluate(el => el.scrollWidth - el.clientWidth - el.scrollLeft)).toBeLessThan(1);
+  // Leave the edge zone so scrolling stops, then drop where the strip settled.
+  // Waiting for the exact scroll end is engine-dependent: WebKit counts the
+  // shifted tabs' transforms in scrollWidth while they transition.
+  const view = (await scroller.boundingBox())!;
+  await page.mouse.move(view.x + view.width / 2, point.y, { steps: 3 });
+  let settled = -1;
+  await expect.poll(async () => {
+    const now = await scroller.evaluate(el => el.scrollLeft);
+    const stable = now === settled;
+    settled = now;
+    return stable;
+  }, { intervals: [250] }).toBe(true);
+  expect(settled).toBeGreaterThan(120);
   const targetIndex = Number(await page.locator('.tab-list').getAttribute('data-reorder-to'));
   expect(targetIndex).toBeGreaterThan(0);
   await page.mouse.up();

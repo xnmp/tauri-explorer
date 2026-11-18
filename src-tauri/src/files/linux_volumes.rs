@@ -305,6 +305,40 @@ async fn mount_with_monitor(monitor: &VolumeMonitor, device_id: &str) -> Result<
     result
 }
 
+const UDISKS_ERROR: &str = "org.freedesktop.UDisks2.Error.";
+
+/// A user-facing reason for a failed UDisks `Mount` call (#1660). UDisks
+/// reports polkit outcomes as named D-Bus errors whose text names neither the
+/// cause nor the remedy. `NotAuthorizedCanObtain` means polkit would allow the
+/// mount after authentication but no authentication agent answered, which is
+/// usual on desktops that do not start a polkit agent (many tiling window
+/// managers), or for disks UDisks treats as system disks (`HintSystem`), which
+/// need administrator authentication.
+fn mount_failure_message(error: &zbus::Error, device: Option<&str>) -> String {
+    let name = match error {
+        zbus::Error::MethodError(name, _, _) => name.as_str(),
+        _ => "",
+    };
+    match name.strip_prefix(UDISKS_ERROR) {
+        Some("NotAuthorizedCanObtain") => {
+            let device = device.unwrap_or("<device>");
+            format!(
+                "Mounting this drive needs authentication, but no authentication agent answered. \
+                 Start your desktop's polkit agent (for example polkit-gnome-authentication-agent-1, \
+                 lxpolkit or polkit-kde-authentication-agent-1) and try again, or run \
+                 `udisksctl mount -b {device}` in a terminal."
+            )
+        }
+        Some("NotAuthorizedDismissed") => {
+            "Mounting was cancelled at the authentication prompt.".into()
+        }
+        Some("NotAuthorized") => {
+            "You are not allowed to mount this drive: the system's polkit policy denied it.".into()
+        }
+        _ => format!("Cannot mount removable volume: {error}"),
+    }
+}
+
 /// The same D-Bus adapter used by mount_drive, with an injectable bus for tests.
 async fn mount_with_connection(
     connection: &Connection,
@@ -347,8 +381,9 @@ async fn mount_with_connection(
                     return Ok(path);
                 }
             }
-            return Err(AppError::Other(format!(
-                "Cannot mount removable volume: {error}"
+            return Err(AppError::Other(mount_failure_message(
+                &error,
+                volume.source.as_deref(),
             )));
         }
     };

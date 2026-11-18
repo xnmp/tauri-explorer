@@ -26,12 +26,26 @@ const BLOCK: &str = "org.freedesktop.UDisks2.Block";
 const FILESYSTEM: &str = "org.freedesktop.UDisks2.Filesystem";
 const MOUNTED_TABLE: &str = "42 35 8:17 / /media/USB\\040Backup rw - ext4 /dev/sdb1 rw\n";
 
-// Fixture states: volume unmounted, mounted, removed, mount denied, bad path.
+// Fixture states: volume unmounted, mounted, removed, mount denied, bad path,
+// and the polkit outcomes udisksd reports as named errors (#1660).
 const UNMOUNTED: usize = 0;
 const MOUNTED: usize = 1;
 const REMOVED: usize = 2;
 const DENIED: usize = 3;
 const INVALID_PATH: usize = 4;
+const NO_AUTH_AGENT: usize = 5;
+const AUTH_DISMISSED: usize = 6;
+
+/// udisksd's error names (`org.freedesktop.UDisks2.Error.*`).
+#[derive(Debug, zbus::DBusError)]
+#[zbus(prefix = "org.freedesktop.UDisks2.Error")]
+enum UdisksError {
+    #[zbus(error)]
+    ZBus(zbus::Error),
+    Failed(String),
+    NotAuthorizedCanObtain(String),
+    NotAuthorizedDismissed(String),
+}
 
 fn val<T: Into<Value<'static>>>(value: T) -> OwnedValue {
     OwnedValue::try_from(value.into()).unwrap()
@@ -126,11 +140,17 @@ struct Filesystem {
 }
 #[zbus::interface(name = "org.freedesktop.UDisks2.Filesystem")]
 impl Filesystem {
-    fn mount(&self, _options: HashMap<String, OwnedValue>) -> zbus::fdo::Result<String> {
+    fn mount(&self, _options: HashMap<String, OwnedValue>) -> Result<String, UdisksError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         match self.state.load(Ordering::SeqCst) {
-            DENIED => Err(zbus::fdo::Error::AccessDenied(
+            DENIED => Err(UdisksError::Failed(
                 "Not authorized to mount USB Backup".into(),
+            )),
+            NO_AUTH_AGENT => Err(UdisksError::NotAuthorizedCanObtain(
+                "Not authorized to perform operation".into(),
+            )),
+            AUTH_DISMISSED => Err(UdisksError::NotAuthorizedDismissed(
+                "The authentication dialog was dismissed".into(),
             )),
             INVALID_PATH => Ok("relative/path".into()),
             _ => {
@@ -637,6 +657,38 @@ async fn missing_service_keeps_mounted_discovery_until_it_returns_on_the_same_bu
         h.connects.load(Ordering::SeqCst),
         1,
         "a service restart needs no reconnect"
+    );
+}
+
+/// #1660: udisksd answers `NotAuthorizedCanObtain` when polkit would allow the
+/// mount after authentication but no agent answered. The raw D-Bus text
+/// ("Not authorized to perform operation") named neither cause nor remedy.
+#[tokio::test]
+async fn polkit_outcomes_explain_the_cause_and_remedy() {
+    let bus = Bus::start().await;
+    let client = bus.client().await;
+    bus.state.store(NO_AUTH_AGENT, Ordering::SeqCst);
+    let message = mount_with_connection(&client, ID)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        message.contains("no authentication agent answered"),
+        "{message}"
+    );
+    assert!(message.contains("polkit"), "{message}");
+    assert!(
+        message.contains("udisksctl mount -b /dev/sdb1"),
+        "names the volume's own device: {message}"
+    );
+    bus.state.store(AUTH_DISMISSED, Ordering::SeqCst);
+    let message = mount_with_connection(&client, ID)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        message.contains("cancelled at the authentication prompt"),
+        "{message}"
     );
 }
 

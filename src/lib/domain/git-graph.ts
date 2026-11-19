@@ -804,11 +804,7 @@ export function baseUpdateMergeOids(
           preferredRemote != null &&
           ref.name === `${preferredRemote}/${branch}`
         ) return oid;
-        // `<remote>/<branch>`: the remote is the first segment, so `main`
-        // must not match `origin/release/main` (a suffix test did).
-        if (ref.kind === "RemoteBranch" && ref.name.slice(ref.name.indexOf("/") + 1) === branch) {
-          remoteTip = oid;
-        }
+        if (ref.kind === "RemoteBranch" && ref.name.slice(ref.name.indexOf("/") + 1) === branch) remoteTip = oid;
       }
     }
     return localTip ?? remoteTip;

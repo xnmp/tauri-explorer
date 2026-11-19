@@ -1,4 +1,7 @@
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 
@@ -19,6 +22,7 @@ type WorkflowStep = {
   uses?: string;
   "continue-on-error"?: boolean;
   "timeout-minutes"?: number;
+  with?: Record<string, string>;
 };
 
 async function qualificationSteps(): Promise<WorkflowStep[]> {
@@ -37,6 +41,49 @@ function stepNamed(steps: WorkflowStep[], name: string): WorkflowStep {
 }
 
 describe("native qualification workflow cache and diagnostics (#694)", () => {
+  it("isolates target caches across runner images and Rust compilers (#1844)", async () => {
+    const steps = await qualificationSteps();
+    const identity = stepNamed(steps, "Record Rust cache identity");
+    const root = await mkdtemp(join(tmpdir(), "native-cache-identity-"));
+    async function key(image: string, version: string, compiler = "rustc stable") {
+      const output = join(root, "output");
+      await rm(output, { force: true });
+      // Stub only the tools' identity output; execute the workflow's real
+      // hashing/output script, including its diagnostic artifact writes.
+      const result = spawnSync("bash", ["-e", "-o", "pipefail", "-c", `
+        rustc() { printf '%s\\n' "$TEST_COMPILER"; }
+        cargo() { printf 'cargo stable\\n'; }
+        ${identity.run}
+      `], {
+        cwd: root,
+        encoding: "utf8",
+        env: { ...process.env, ImageOS: image, ImageVersion: version,
+          TEST_COMPILER: compiler, GITHUB_OUTPUT: output },
+      });
+      expect(result.status, result.stderr).toBe(0);
+      const match = (await readFile(output, "utf8")).match(/^cache-key=(.+)$/m);
+      expect(match).not.toBeNull();
+      return match![1];
+    }
+    try {
+      const original = await key("windows-2025-vs2026", "20261103.298.1");
+      expect(await key("windows-2025-vs2026", "20261103.298.1")).toBe(original);
+      expect(await key("windows-2025-vs2026", "20261116.315.1")).not.toBe(original);
+      expect(await key("windows-other", "20261103.298.1")).not.toBe(original);
+      expect(await key("windows-2025-vs2026", "20261103.298.1", "rustc next")).not.toBe(original);
+
+      const restore = stepNamed(steps, "Restore Rust target cache");
+      const save = stepNamed(steps, "Save Rust target cache after native outcome");
+      expect(restore.with!.key).toContain("steps.rust-provenance.outputs.cache-key");
+      expect(save.with!.key).toBe(restore.with!.key);
+      expect(restore.with!["restore-keys"]).toBeUndefined();
+      expect(stepNamed(steps, "Collect native qualification diagnostics").run)
+        .toContain(restore.with!.key);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("publishes contract diagnostics before GUI qualification", async () => {
     const workflow = await readFile(workflowPath, "utf8");
     const steps = await qualificationSteps();

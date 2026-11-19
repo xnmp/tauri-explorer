@@ -418,6 +418,10 @@ secret list: `docs/macos-signing.md`.
 
 Per ADR 0022, the native E2E target cache (`e2e-tauri.yml`) is keyed by the
 exact Rust compiler identity as well as target inputs. Keep its restore and
+save keys scoped to the runner image (`ImageOS`/`ImageVersion`) too: cached
+CMake projects can retain an MSVC `lib.exe` path removed by an image update
+even when Rust is unchanged (#1844). The identity step records both inputs.
+Keep the restore and
 save actions separate: save only after the native contracts and embedded build
 succeed, but allow a later GUI failure to retain those safe build products.
 Contract/provenance diagnostics upload before GUI execution so a failed

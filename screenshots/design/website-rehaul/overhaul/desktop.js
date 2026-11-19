@@ -99,12 +99,13 @@
     const layers = [...root.querySelectorAll(".wl")], contour = root.querySelector(".contour");
     if (contour) { const m = contourMap(); contour.style.webkitMaskImage = m; contour.style.maskImage = m; }
     let front = 0, seq = 0, shownKey = "";
-    function put(bg, { image, dark, avg, title, key }) {
+    function put(bg, { image, dark, avg, title, key, flip }) {
       const back = layers[1 - front], cur = layers[front];
-      const k = key + "|" + bg;
+      const k = key + "|" + bg + (flip ? "|flip" : "");
       if (k === shownKey) return;
       shownKey = k;
       back.style.background = bg;
+      back.style.transform = flip ? "scaleX(-1)" : "";   // a desktop may wear its picture mirrored, to bring its subject into view
       back.dataset.kind = image ? "image" : "generated";
       root.dataset.kind = image ? "image" : "generated";
       onDress?.({ dark, avg, title, image });
@@ -117,7 +118,7 @@
     }
     // Show the theme now: its generated backdrop at once (or straight to the image when it is already decoded),
     // the image cross-fading in once it has loaded and decoded. A later call wins over a slower earlier one.
-    // `explicit` ({ src, dark, avg, title }) names the image directly: an Omarchy theme's own, or a machine's own desktop.
+    // `explicit` ({ src, dark, avg, title, flip }) names the image directly: an Omarchy theme's own, or a machine's own desktop.
     // When it fails to load, `key`'s registered wallpaper is tried instead, so pass the theme id as the key.
     async function show(key, palette, explicit) {
       const my = ++seq, v = palette.v, dark = !!palette.dark;
@@ -125,7 +126,7 @@
       const gen = generated(v, dark), genDress = { dark, avg: mix(v[0], v[4], .18), title: "", key };
       const ready = e && loaded.has(e.src) ? await Promise.race([loaded.get(e.src), new Promise(r => setTimeout(() => r(null), 30))]) : null;
       if (my !== seq) return;
-      const imgDress = e && { image: true, key, dark: e.dark ?? dark, avg: e.avg || genDress.avg, title: e.title };
+      const imgDress = e && { image: true, key, dark: e.dark ?? dark, avg: e.avg || genDress.avg, title: e.title, flip: !!explicit?.flip };
       if (ready) return put(`url("${e.src}") center / cover no-repeat, ${gen}`, imgDress);
       put(gen, genDress);
       if (!e) return;

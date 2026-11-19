@@ -251,11 +251,18 @@ body.ha-cinema .ha-scrim { background: rgba(0, 0, 0, .95); transition: opacity .
 .lk-set b { color: #f0c96a; } .lk-set:disabled { opacity: .45; cursor: default; }
 /* what the lock was keeping */
 .lk-after:empty { display: none; }
-.lk-open { width: min(480px, 100%); padding: 22px 24px; border-radius: 14px; color: #2a2620; background: #fbf8f1; box-shadow: 0 0 0 1px rgba(0, 0, 0, .3), 0 18px 40px -12px rgba(0, 0, 0, .6); animation: lk-unfold .55s cubic-bezier(.2, .9, .25, 1.05); }
+.lk-open { width: 100%; padding: 22px 24px; border-radius: 14px; color: #2a2620; background: #fbf8f1; box-shadow: 0 0 0 1px rgba(0, 0, 0, .3), 0 18px 40px -12px rgba(0, 0, 0, .6); animation: lk-unfold .55s cubic-bezier(.2, .9, .25, 1.05); }
 /* transform only: an opacity entrance can be stranded on its first frame in WebKit */
 @keyframes lk-unfold { from { transform: translateY(16px) scale(.97); } }
 .lk-open h3 { margin: 0 0 10px; font: 600 22px/1.2 Newsreader, Georgia, serif; }
-.lk-img { display: block; width: 100%; max-height: 260px; object-fit: cover; margin: 4px 0 12px; border-radius: 8px; }
+.lk-imgb { position: relative; display: block; width: calc(100% + 24px); margin: 6px -12px 16px; padding: 0; border: 0; border-radius: 10px; background: #eee6d6; cursor: zoom-in; overflow: hidden;
+  box-shadow: 0 0 0 1px rgba(60, 45, 20, .16), 0 10px 24px -14px rgba(0, 0, 0, .55); }
+.lk-img { display: block; width: 100%; height: auto; max-height: 62vh; object-fit: contain; }
+.lk-zoom { position: absolute; right: 10px; bottom: 10px; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 9px; color: #fff; background: rgba(20, 16, 10, .55); box-shadow: 0 0 0 1px rgba(255, 255, 255, .18); opacity: .85; transition: opacity .15s, background-color .15s; }
+.lk-zoom svg { width: 15px; height: 15px; }
+.lk-imgb:hover .lk-zoom, .lk-imgb:focus-visible .lk-zoom { opacity: 1; background: rgba(20, 16, 10, .75); }
+.lk-imgb:focus-visible { outline: 2px solid #b8862b; outline-offset: 3px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .lk-md { font-size: 15px; }
 .lk-reveal { display: grid; gap: 8px; margin-top: 16px; }
 .lk-go { display: grid; grid-template-columns: 18px minmax(0, 1fr); column-gap: 10px; align-items: center; padding: 10px 14px; border: 0; border-radius: 10px; text-align: left; cursor: pointer; font: 650 14px/1.25 var(--ha-font); color: #2b1d05;
@@ -269,8 +276,11 @@ body.ha-cinema .ha-scrim { background: rgba(0, 0, 0, .95); transition: opacity .
   .lk *, .lk.shake *, .lk.opening * { animation: none !important; transition: none !important; }
 }
 
-/* eleven letters fit on one row */
-.lk-tiles.many { flex-wrap: nowrap; gap: 5px; }
+/* a word a group, the groups apart; eleven letters fit on one row */
+.lk-tiles { column-gap: 22px; row-gap: 12px; }
+.lk-grp { display: flex; gap: 8px; }
+.lk-tiles.many { flex-wrap: nowrap; }
+.lk-tiles.many .lk-grp { gap: 5px; }
 .lk-tiles.many .lk-tile { width: 38px; height: 50px; font-size: 22px; }
 /* a dial lock: brass thumb-wheels, as on a telescope case */
 .lk-wheels.brass { gap: 12px; padding: 14px 16px; background: linear-gradient(180deg, #3a2a17, #24190d); box-shadow: inset 0 2px 8px rgba(0, 0, 0, .75), 0 0 0 1px rgba(255, 220, 150, .12); }
@@ -289,7 +299,7 @@ body.ha-cinema .ha-scrim { background: rgba(0, 0, 0, .95); transition: opacity .
 .lk.finale.opening .lk-pad { transform: scale(1.12); }
 .lk-open.final { width: min(540px, 100%); padding: 28px 30px 32px; }
 .lk-open.final h3 { font-size: 30px; text-align: center; }
-.lk-open.final .lk-img { max-height: 400px; margin: 10px 0 18px; }
+
 .lk-open.final h3, .lk-open.final .lk-md, .lk-open.final .lk-all { transition: opacity 1.6s ease, transform 1.6s ease; }
 .lk.finale:not(.words) .lk-open.final :is(h3, .lk-md, .lk-all) { opacity: 0; transform: translateY(8px); }
 .lk-all { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 0 0 8px; font: 600 12.5px/1.2 var(--ha-font); letter-spacing: .02em; color: #8a6a1e; }
@@ -297,3 +307,99 @@ body.ha-cinema .ha-scrim { background: rgba(0, 0, 0, .95); transition: opacity .
 @media (prefers-reduced-motion: reduce) {
   .lk-open.final h3, .lk-open.final .lk-md, .lk-open.final .lk-all { transition: none; }
 }
+
+/* ---------------- start again: quiet, at the end of the lock's footer; a second press within a few seconds confirms ---------------- */
+.lk-again { margin-left: 4px; height: 22px; padding: 0 9px; border: 0; border-radius: 6px; font: 500 11.5px/1 var(--ha-font); color: #8d94a0; background: transparent; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .1); cursor: pointer; }
+.lk-again:hover { color: #e7e9ee; background: rgba(255, 255, 255, .06); }
+.lk-again.armed { color: #2b1d05; background: #e3b453; box-shadow: none; }
+.ha-lock .ha-foot .lk-prog + .lk-again { margin-left: 0; }
+
+/* ---------------- the finale card: the sketch held large, then a letter set as a letter ---------------- */
+.lk.finale.is-open .lk-head { display: none; }   /* the padlock has done its work: the card has the window */
+.lk.finale.is-open { padding-top: 22px; }
+.lk-open.final { width: 100%; padding: 26px 30px 40px; background: radial-gradient(120% 60% at 50% 0%, #fffdf7, #f7f0e1); }
+.lk-open.final h3 { margin-bottom: 14px; font: 500 34px/1.05 Newsreader, Georgia, serif; letter-spacing: -.01em; color: #2a2116; }
+.lk-open.final .lk-imgb { width: calc(100% + 30px); margin: 4px -15px 0; background: #efe6d2; }
+.lk-open.final .lk-img { max-height: min(560px, 64vh); }
+.lk-orn { display: block; width: 120px; height: 1px; margin: 26px auto 22px; background: linear-gradient(90deg, transparent, #b8862b, transparent); position: relative; scroll-margin-top: 18px; }
+.lk-orn::after { content: ""; position: absolute; left: 50%; top: -3px; width: 7px; height: 7px; margin-left: -3.5px; border-radius: 50%; background: #d9a744; }
+.lk-open.final .lk-md { max-width: 46ch; margin: 0 auto; font: 400 17.5px/1.66 Newsreader, Georgia, serif; color: #2e271d; }
+.lk-open.final .lk-md p:first-child strong { display: block; font: 600 12.5px/1.3 var(--ha-font); letter-spacing: .06em; text-transform: uppercase; color: #8a6a1e; }
+.lk-open.final .lk-md strong { font-weight: 600; color: #1f180f; }
+.lk-open.final .lk-md p:last-child { margin: 1.6em 0 0; text-align: right; font: italic 400 22px/1 Newsreader, Georgia, serif; color: #4a3a22; }
+.lk-open.final :is(.lk-orn) { transition: opacity 1.6s ease, transform 1.6s ease; }
+.lk.finale:not(.words) .lk-open.final .lk-orn { opacity: 0; transform: translateY(8px); }
+.lk-open.final .lk-all { color: #8a6a1e; }
+
+/* ---------------- a window taking its picture's shape ---------------- */
+.ha-win.ha-reshape { transition: width .36s cubic-bezier(.2, .8, .2, 1), height .36s cubic-bezier(.2, .8, .2, 1), left .36s cubic-bezier(.2, .8, .2, 1), top .36s cubic-bezier(.2, .8, .2, 1), transform .44s cubic-bezier(.18, .92, .22, 1); }
+.iv-z { min-width: 46px; padding: 0 6px; font: 600 12.5px/28px var(--ha-font); font-variant-numeric: tabular-nums; text-align: right; color: var(--bar-ink); }
+.iv-z:empty { display: none; }
+
+/* ---------------- the reading programs take the desktop's colours: the theme's paper, ink and accent ----------------
+   (the page sets --h-paper, --h-side, --h-ink, --h-ink-2, --h-acc on the root, and data-scheme="dark"|"light").
+   Light themes get a lighter paper; dark themes read on their own dark paper. Images, films, sound and locks keep theirs. */
+.ha-markdown, .ha-text, .ha-table, .ha-document {
+  --ap-paper: color-mix(in srgb, var(--h-paper, #f4f2ee) 38%, #fff);
+  --ap-bar: color-mix(in srgb, var(--h-paper, #f4f2ee) 78%, #fff);
+  --ap-ink: var(--h-ink, #24211d);
+  --ap-ink-2: color-mix(in srgb, var(--h-ink-2, #7a746b) 80%, var(--h-ink, #24211d));
+  --ap-acc: color-mix(in srgb, var(--h-acc, #2c4f7c) 72%, var(--h-ink, #24211d));
+}
+:root[data-scheme="dark"] :is(.ha-markdown, .ha-text, .ha-table, .ha-document) {
+  --ap-paper: color-mix(in srgb, var(--h-paper) 94%, #000);
+  --ap-bar: var(--h-side);
+  --ap-ink-2: color-mix(in srgb, var(--h-ink-2) 85%, var(--h-ink));
+  --ap-acc: color-mix(in srgb, var(--h-acc) 80%, var(--h-ink));
+}
+:is(.ha-markdown, .ha-text, .ha-table, .ha-document) {
+  --ap-well: color-mix(in srgb, var(--ap-ink) 6%, var(--ap-paper));
+  --ap-line: color-mix(in srgb, var(--ap-ink) 13%, var(--ap-paper));
+  --bar: var(--ap-bar); --bar-ink: var(--ap-ink); --bar-ink-2: var(--ap-ink-2); --bar-line: var(--ap-line); --ctl-hover: color-mix(in srgb, var(--ap-ink) 9%, transparent);
+  background: var(--ap-paper); color: var(--ap-ink);
+}
+:root[data-scheme="dark"] :is(.ha-markdown, .ha-text, .ha-table, .ha-document) { box-shadow: 0 0 0 1px rgba(0, 0, 0, .55), 0 1px 0 rgba(255, 255, 255, .06) inset, 0 40px 90px -24px rgba(0, 0, 0, .75), 0 14px 30px -14px rgba(0, 0, 0, .5); }
+:is(.ha-markdown, .ha-text, .ha-table, .ha-document) :focus-visible { outline-color: var(--ap-acc); }
+:is(.ha-markdown, .ha-text, .ha-table, .ha-document) .ha-body:focus-visible { box-shadow: inset 0 2px 0 color-mix(in srgb, var(--ap-acc) 80%, transparent); }
+/* Markdown */
+.ha-markdown .ha-body { background: var(--ap-paper); scrollbar-color: var(--ap-line) transparent; }
+.ha-markdown .md-page { color: var(--ap-ink); }
+.ha-markdown .md-meta, .ha-markdown .md-props dt, .ha-markdown .md-doc li.task.done { color: var(--ap-ink-2); }
+.ha-markdown .md-props, .ha-markdown .md-doc pre { background: var(--ap-well); }
+.ha-markdown .md-doc :is(h1, h2, strong) { color: var(--ap-ink); }
+.ha-markdown .md-doc :is(h3, h4, h5, h6, th, blockquote) { color: color-mix(in srgb, var(--ap-ink) 82%, var(--ap-paper)); }
+.ha-markdown .md-doc h1 + p::first-letter, .ha-markdown .md-doc a { color: var(--ap-acc); }
+.ha-markdown .md-doc blockquote { border-left-color: var(--ap-acc); }
+.ha-markdown .md-doc li::marker { color: var(--ap-ink-2); }
+.ha-markdown .md-doc li.task i { box-shadow: inset 0 0 0 1.5px var(--ap-ink-2); }
+.ha-markdown .md-doc li.task.done i { background: var(--ap-acc); }
+.ha-markdown .md-doc code { background: var(--ap-well); }
+.ha-markdown .md-doc hr { border-top-color: var(--ap-line); }
+.ha-markdown .md-doc :is(th, td) { border-bottom-color: var(--ap-line); }
+/* Text Editor */
+.ha-text .ha-body, .ha-text .te-l i { background: var(--ap-paper); }
+.ha-text .ha-body { scrollbar-color: var(--ap-line) transparent; }
+.ha-text .ha-foot { background: var(--ap-bar); }
+.ha-text .te-code { color: var(--ap-ink); }
+.ha-text .te-l i { color: color-mix(in srgb, var(--ap-ink-2) 70%, var(--ap-paper)); box-shadow: 1px 0 0 var(--ap-line); }
+.ha-text .te-l:hover { background: var(--ap-well); } .ha-text .te-l:hover i { color: var(--ap-ink-2); }
+.ha-text .ha-foot .ro { color: var(--ap-ink-2); }
+:root:not([data-scheme="dark"]) .ha-text { --c-com: #707684; --c-str: #2d7a3a; --c-num: #b0501a; --c-kw: #7b3fb6; --c-time: #2464ad; --c-key: #6a4db0; --c-bad: #c0281f; --c-warn: #8f6400; }
+.ha-text .t-com { color: var(--c-com, #6d7685); } .ha-text .t-str { color: var(--c-str, #a5d6a0); } .ha-text .t-num { color: var(--c-num, #f0a875); } .ha-text .t-kw { color: var(--c-kw, #c79bf2); }
+.ha-text .t-time { color: var(--c-time, #79aee6); } .ha-text .t-key { color: var(--c-key, #b9a3e8); } .ha-text .t-bad { color: var(--c-bad, #ff7d76); } .ha-text .t-warn { color: var(--c-warn, #f2c66d); }
+/* Table */
+.ha-table .ha-body { background: var(--ap-paper); }
+.ha-table .ha-foot { background: var(--ap-bar); }
+.ha-table .tb-sort { color: var(--ap-acc); }
+.ha-table .tb { color: var(--ap-ink); }
+.ha-table .tb thead th { background: color-mix(in srgb, var(--ap-bar) 97%, transparent); border-bottom-color: var(--ap-line); }
+.ha-table .tb thead th button { color: color-mix(in srgb, var(--ap-ink) 80%, var(--ap-paper)); }
+.ha-table .tb thead th button:hover { color: var(--ap-ink); background: var(--ap-well); }
+.ha-table .tb thead th[aria-sort] button { color: var(--ap-acc); box-shadow: inset 0 -2px 0 var(--ap-acc); }
+.ha-table .tb tbody th { color: var(--ap-ink-2); background: var(--ap-bar); border-right-color: var(--ap-line); }
+.ha-table .tb td { border-bottom-color: color-mix(in srgb, var(--ap-ink) 7%, var(--ap-paper)); }
+.ha-table .tb tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--ap-ink) 2.5%, var(--ap-paper)); }
+.ha-table .tb tbody tr:hover td { background: color-mix(in srgb, var(--ap-acc) 10%, var(--ap-paper)); }
+.ha-table .tb tbody tr:hover th { color: var(--ap-acc); }
+/* Document Viewer: the page stays a white page; the desk around it takes the theme */
+.ha-document .dv-desk { background: radial-gradient(ellipse at 50% 30%, color-mix(in srgb, var(--ap-paper) 80%, var(--ap-ink)), color-mix(in srgb, var(--ap-paper) 66%, var(--ap-ink))); }

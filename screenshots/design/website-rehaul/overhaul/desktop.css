@@ -67,14 +67,14 @@ body.sweeping .rail .sweep::after { animation: dk-sweep .9s cubic-bezier(.5, .05
 /* the headline: two words answer what the visitor just did */
 .pitch h1 { display: flex; align-items: baseline; white-space: nowrap; overflow: visible; font: 680 21px/1.1 var(--wb-display); font-variation-settings: "wdth" 92, "opsz" 48; letter-spacing: -.022em; }
 .pitch h1 > span { display: inline-flex; align-items: baseline; white-space: pre; }
-.slot { position: relative; display: inline-grid; justify-items: center; height: 1.24em; margin: 0 .06em; padding: 0 .12em; vertical-align: baseline; overflow: hidden; transition: width .32s var(--pop); }
+.slot { position: relative; display: inline-block; margin: 0 .06em; padding: 0 .12em; vertical-align: baseline; white-space: nowrap; }
 .slot::after { content: ""; position: absolute; left: .14em; right: .14em; bottom: .02em; height: 2px; border-radius: 2px; background: linear-gradient(90deg, var(--h-acc), var(--h-folder)); opacity: .38; transform-origin: left; transition: opacity .25s, transform .4s var(--ease); }
 .slot.live::after { opacity: 1; box-shadow: 0 0 10px var(--m-glow); animation: dk-underline .5s var(--ease); }
 @keyframes dk-underline { from { transform: scaleX(0); } }
-.slot .w { grid-area: 1 / 1; display: inline-flex; align-items: center; gap: 3px; height: 1.24em; white-space: nowrap; transition: transform .34s var(--pop), opacity .22s; }
+.slot .w { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; transition: opacity .26s ease; }
 .slot .w.live-word { color: var(--h-acc-text); }
-.slot .w.in { transform: translateY(105%); opacity: 0; }
-.slot .w.out { transform: translateY(-105%); opacity: 0; }
+.slot .w.in { opacity: 0; }
+.slot .w.out { position: absolute; left: 50%; top: 0; translate: -50% 0; opacity: 0; pointer-events: none; transition: opacity .18s ease; }
 .slot kbd { height: 20px; min-width: 20px; padding: 0 5px; font-size: 10.5px; transform: translateY(-1px); }
 
 /* in-story tray: the laptop's own status, not the site's */
@@ -116,7 +116,7 @@ body.sweeping .rail .sweep::after { animation: dk-sweep .9s cubic-bezier(.5, .05
 .stage { z-index: 2; border-radius: var(--win-r); }
 .stage.away { visibility: hidden; pointer-events: none; }
 .stage.leaving { visibility: visible; }
-.stage .frost { position: absolute; inset: 0; border-radius: var(--win-r); -webkit-backdrop-filter: blur(34px) saturate(1.5); backdrop-filter: blur(34px) saturate(1.5);
+.stage .frost { position: absolute; inset: 0; border-radius: var(--win-r); -webkit-backdrop-filter: blur(var(--frost-blur, 34px)) saturate(1.5); backdrop-filter: blur(var(--frost-blur, 34px)) saturate(1.5);
   background: color-mix(in srgb, var(--h-paper) 12%, transparent);
   box-shadow: 0 1px 2px rgba(0, 0, 0, .16), 0 12px 30px -8px rgba(0, 0, 0, .38), 0 44px 100px -26px rgba(0, 0, 0, .6), 0 0 0 1px color-mix(in srgb, #000 40%, transparent); }
 :root[data-scheme="light"] .stage .frost { box-shadow: 0 1px 2px rgba(0, 0, 0, .1), 0 12px 30px -8px rgba(0, 0, 0, .26), 0 44px 100px -26px rgba(0, 0, 0, .42), 0 0 0 1px rgba(0, 0, 0, .16); }
@@ -134,9 +134,11 @@ body.live .stage .boot { opacity: 0; }
 .dicon img, .dicon .doc { width: 60px; height: 60px; filter: drop-shadow(0 4px 8px rgba(0, 0, 0, .35)); transition: transform .2s var(--pop); }
 .dicon .doc { display: grid; place-items: center; }
 .dicon .doc svg { width: 46px; height: 56px; }
-.dicon span { max-width: 100%; padding: 2px 6px; border-radius: 5px; font: 600 12.5px/1.25 var(--wb-font); text-shadow: 0 1px 2px rgba(0, 0, 0, .7), 0 0 8px rgba(0, 0, 0, .35); overflow-wrap: anywhere; }
+/* a label sits on a small frosted chip, so it reads over any part of any picture (a white wave as well as a night sky) */
+.dicon span:not(.doc) { max-width: 100%; padding: 2px 6px; border-radius: 5px; font: 600 12.5px/1.25 var(--wb-font); text-shadow: 0 1px 2px rgba(0, 0, 0, .55); overflow-wrap: anywhere;
+  background: rgba(12, 12, 16, .46); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
 :root[data-wp="light"] .dicon { color: #15171a; }
-:root[data-wp="light"] .dicon span { text-shadow: 0 1px 1px rgba(255, 255, 255, .75), 0 0 8px rgba(255, 255, 255, .5); }
+:root[data-wp="light"] .dicon span:not(.doc) { text-shadow: none; background: rgba(255, 255, 255, .62); }
 .dicon:hover { background: rgba(255, 255, 255, .1); }
 .dicon:active img, .dicon:active .doc { transform: scale(.94); }
 .dicon[aria-selected="true"] { background: rgba(255, 255, 255, .14); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .22); }
@@ -186,9 +188,11 @@ body.desk-away .rail-body, body.desk-away .rail-tab { opacity: .07; filter: satu
 .disc:focus-visible { outline: 2px solid var(--h-acc); outline-offset: -2px; }
 .disc[aria-expanded="false"] .chev { transform: rotate(-90deg); }
 .disc[aria-expanded="false"] .sum { opacity: 1; transform: none; }
-.sect-b { display: grid; grid-template-rows: 1fr; transition: grid-template-rows .26s var(--ease), opacity .2s; }
+/* Height only, never opacity: WebKit can strand an opacity transition on its first frame, which left an opened
+   section invisible (a blank band that a second click then folded away). Visibility hides a shut body at once. */
+.sect-b { display: grid; grid-template-rows: 1fr; transition: grid-template-rows .26s var(--ease); }
 .sect-b > .sect-in { min-height: 0; overflow: hidden; }
-.sect.shut > .sect-b { grid-template-rows: 0fr; opacity: 0; }
+.sect.shut > .sect-b { grid-template-rows: 0fr; visibility: hidden; transition: grid-template-rows .26s var(--ease), visibility 0s .26s; }
 .file .disc .chev { transform: rotate(180deg); }
 .file .disc[aria-expanded="false"] .chev { transform: none; }
 .sect-in > .lede { margin: -4px 0 12px; font-size: 12.5px; line-height: 1.4; color: var(--h-text-2); }
@@ -238,6 +242,10 @@ body.has-toast .wp-cap { opacity: 0; }
 @keyframes dk-toast { from { transform: translateY(14px) scale(.96); } }
 .toast svg { flex: none; width: 18px; height: 18px; color: var(--h-acc-text); }
 .toast b { font-weight: 650; }
+.toast-x { flex: none; display: grid; place-items: center; width: 24px; height: 24px; margin: -4px -8px -4px 2px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--h-text-2); cursor: pointer; }
+.toast-x svg { width: 11px; height: 11px; color: inherit; }
+.toast-x:hover { background: color-mix(in srgb, var(--h-ink) 10%, transparent); color: var(--h-text); }
+.toast-x:focus-visible { outline: 2px solid var(--h-acc); outline-offset: 1px; }
 
 /* ---------------- maximised ---------------- */
 body.desk-max { --desk-pad: 12px; --desk-top: 10px; }
@@ -363,7 +371,12 @@ body.desk-closed .desk-machines { animation: dk-pk .5s var(--pop) .12s backwards
 .nudge .nd-x { all: unset; grid-column: 2; grid-row: 1; display: grid; place-items: center; width: 26px; height: 26px; border-radius: 13px; cursor: pointer; color: var(--h-text-2); }
 .nudge .nd-x svg { width: 12px; height: 12px; }
 
-.wp-cap { left: auto; right: 24px; text-align: right; }
+/* The caption sits on a small frosted chip of its own, dark on a dark picture and light on a light one, so it stays
+   readable over a busy, bright wallpaper (Kanagawa's waves) as well as a plain one. */
+.wp-cap { left: auto; right: 24px; text-align: right; padding: 6px 11px; border-radius: 10px; text-shadow: none;
+  background: rgba(14, 14, 18, .52); -webkit-backdrop-filter: blur(12px) saturate(1.2); backdrop-filter: blur(12px) saturate(1.2);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .1), 0 6px 18px -8px rgba(0, 0, 0, .55); color: rgba(255, 255, 255, .92); }
+:root[data-wp="light"] .wp-cap { background: rgba(255, 255, 255, .66); color: rgba(0, 0, 0, .82); text-shadow: none; box-shadow: 0 0 0 1px rgba(0, 0, 0, .08), 0 6px 18px -8px rgba(0, 0, 0, .3); }
 @keyframes dk-spin { to { transform: rotate(360deg); } }
 
 /* ---------------- Omarchy's themes, and the credit on the desktop ---------------- */
@@ -392,19 +405,30 @@ body.redress .sheen i { animation: wb-sheen 1s cubic-bezier(.45, .05, .25, 1); }
 .lockbar.all { color: var(--h-text); box-shadow: inset 0 0 0 1px rgba(224, 173, 73, .55); background: rgba(224, 173, 73, .12); }
 .lockbar.bump { animation: dk-bump-s .5s var(--pop); }
 @keyframes dk-bump-s { 40% { transform: scale(1.08); } }
-.wall::after { content: ""; position: absolute; inset: 0; z-index: 6; pointer-events: none; opacity: 0; transition: opacity 6s ease;
-  background: radial-gradient(110% 70% at 50% 105%, rgba(255, 196, 128, .55), rgba(255, 170, 130, .2) 45%, transparent 75%), linear-gradient(180deg, rgba(255, 226, 190, .16), transparent 45%);
+/* dawn: over a couple of seconds the whole desktop warms, a low sun glowing up from the horizon */
+.wall::after { content: ""; position: absolute; inset: 0; z-index: 6; pointer-events: none; opacity: 0; transition: opacity 2.6s ease;
+  background: radial-gradient(120% 75% at 50% 108%, rgba(255, 190, 110, .78), rgba(255, 160, 120, .34) 42%, transparent 74%), linear-gradient(180deg, rgba(255, 214, 170, .32), rgba(255, 200, 160, .08) 55%, transparent);
   mix-blend-mode: screen; }
-.wall { transition: filter 6s ease; }
-body.dawn .wall { filter: brightness(1.1) saturate(1.06); }
+.wall { transition: filter 2.6s ease; }
+body.dawn .wall { filter: brightness(1.22) saturate(1.12) sepia(.14); }
 body.dawn .wall::after { opacity: 1; }
-.bird { position: fixed; left: -60px; top: 24vh; z-index: 25; pointer-events: none; animation: dk-fly 12s cubic-bezier(.35, .1, .65, .9) .8s backwards; }
-.bird i { display: block; width: 34px; animation: dk-bob 1.6s ease-in-out infinite alternate; }
-.bird svg { display: block; width: 100%; fill: rgba(30, 24, 20, .82); animation: dk-flap .32s ease-in-out infinite alternate; transform-origin: 50% 60%; }
-@keyframes dk-fly { from { transform: translate(0, 0); } to { transform: translate(calc(100vw + 140px), -10vh); } }
-@keyframes dk-bob { to { transform: translateY(10px); } }
-@keyframes dk-flap { to { transform: scaleY(.45); } }
-@media (prefers-reduced-motion: reduce) { .wall, .wall::after { transition: none; } .lockbar.bump { animation: none; } }
+/* while the finale is up, the scrim behind the lock thins so the dawn shows round it */
+body.finale-on .ha-scrim.on { background: rgba(40, 22, 8, .18); transition: opacity .3s ease, visibility 0s, background-color 2.6s ease; }
+/* the indicator becomes the prize, in gold */
+.lockbar.all b { color: #a8740f; letter-spacing: .01em; }
+:root[data-scheme="dark"] .lockbar.all b { color: #f2c862; }
+.lockbar.all { box-shadow: inset 0 0 0 1px rgba(224, 173, 73, .7), 0 0 16px -4px rgba(224, 173, 73, .55); background: rgba(224, 173, 73, .16); }
+/* number 400: a shore lark, in over the desktop and onto the dock */
+.lark { position: fixed; left: 0; top: 0; z-index: 62; width: 78px; height: 55px; pointer-events: none; filter: drop-shadow(0 3px 3px rgba(0, 0, 0, .35)); }
+.lark svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.lark .w-up, .lark .legs { display: none; }
+.lark.flying .w-up { display: inline; transform-origin: 26px 17px; animation: lk-wing .2s ease-in-out infinite alternate; }
+.lark.flying .w-fold { display: none; }
+.lark.perched .legs { display: inline; }
+.lark.perched .head { transform-origin: 36px 16px; animation: lk-look 5s ease-in-out 1s infinite; }
+@keyframes lk-wing { to { transform: scaleY(-.55); } }
+@keyframes lk-look { 0%, 70%, 100% { transform: none; } 76%, 90% { transform: rotate(-9deg) translateY(-.5px); } }
+@media (prefers-reduced-motion: reduce) { .wall, .wall::after { transition: none; } .lockbar.bump, .lark .head { animation: none !important; } }
 
 /* a phone: say plainly where it is best, and keep the window usable anyway */
 .phone-note { display: none; }
@@ -415,3 +439,10 @@ body.dawn .wall::after { opacity: 1; }
   .drive .dv-tx small { display: none; }
   .drive .dv-th { width: 50px; height: 36px; }
 }
+
+/* ---------------- text on the desktop's glass: measured against the real backdrop (workshop.html, paintChrome) ---------------- */
+.drive, .dock-app { color: var(--chrome-ink, var(--h-text)); }
+.drive .dv-tx small, .dock-app .st { color: var(--chrome-ink-2, var(--h-text-2)); }
+.drive .dv-go { color: var(--chrome-go, var(--h-text)); }
+.drive .dv-go svg { color: var(--chrome-go-icon, var(--ma, var(--h-acc))); }
+

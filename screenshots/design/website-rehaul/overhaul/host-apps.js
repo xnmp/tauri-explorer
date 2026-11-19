@@ -176,14 +176,16 @@
         const lines = String(f.text ?? "").replace(/\r\n?/g, "\n").split("\n");
         if (lines.length > 1 && lines.at(-1) === "") lines.pop();
         const [lang, langName] = langOf(f.name), CH = 150, digits = String(lines.length).length;
+        // prose (plain text, Markdown source, mail) wraps by default; code, logs and tables keep their columns
+        const prose = (lang === "plain" || lang === "mail") && !/^(csv|tsv)$/.test(extOf(f.name));
         let html = "";
         for (let s = 0; s < lines.length; s += CH) {
           const part = lines.slice(s, s + CH);
           html += `<div class="te-chunk" style="contain-intrinsic-size:auto ${part.length * 21}px">` + part.map((l, k) => `<div class="te-l"><i>${s + k + 1}</i><span>${tint(l, lang) || " "}</span></div>`).join("") + `</div>`;
         }
         return {
-          tools: `<button type="button" class="ha-tool" data-wrap aria-pressed="false" title="Word wrap"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4h11M2.5 8h9a2 2 0 0 1 0 4H8.5m0 0 1.6-1.6M8.5 12l1.6 1.6M2.5 12h3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Wrap</span></button>`,
-          body: `<div class="te-code" style="--gut:${digits + 2}ch">${html}</div>`,
+          tools: `<button type="button" class="ha-tool" data-wrap aria-pressed="${prose}" title="Word wrap"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4h11M2.5 8h9a2 2 0 0 1 0 4H8.5m0 0 1.6-1.6M8.5 12l1.6 1.6M2.5 12h3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Wrap</span></button>`,
+          body: `<div class="te-code${prose ? " wrap" : ""}" style="--gut:${digits + 2}ch">${html}</div>`,
           foot: `<span>${lines.length.toLocaleString("en")} lines</span><span>${esc(langName)}</span><span>UTF-8</span><span class="ro">Read-only</span>`,
           scroller: ".ha-body",
           mount() {
@@ -233,21 +235,27 @@
       render(f, win) {
         let fit = true, z = 1, x = 0, y = 0, nat = null;
         return {
-          tools: `<button type="button" class="ha-tool" data-fit aria-pressed="true" title="Fit to window"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Fit</span></button><button type="button" class="ha-tool" data-one aria-pressed="false" title="Actual size"><span>100%</span></button>`,
+          // One readout, in the toolbar: the zoom in percent of the picture's own size. Fit and 1:1 are the two buttons.
+          tools: `<button type="button" class="ha-tool" data-fit aria-pressed="true" title="Fit to window"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Fit</span></button><button type="button" class="ha-tool" data-one aria-pressed="false" title="Actual size (1:1)"><span>1:1</span></button><output class="iv-z" aria-live="polite"></output>`,
           body: `<div class="iv-wall"><div class="iv-pan"><img class="iv-img" alt="${esc(f.name)}" src="${esc(f.src)}" draggable="false"></div><div class="iv-none" hidden>${ICON.image}<b>${esc(f.name)}</b><small>The picture is not included in this demo.</small></div></div>`,
-          foot: `<span class="iv-dim">${esc(f.px || "")}</span><span>${esc(f.size)}</span><span class="iv-z">Fit</span>`,
+          foot: `<span class="iv-dim">${esc(f.px || "")}</span><span>${esc(f.size)}</span>`,
           mount() {
             const wall = win.querySelector(".iv-wall"), pan = win.querySelector(".iv-pan"), img = win.querySelector(".iv-img"), zl = win.querySelector(".iv-z"), dim = win.querySelector(".iv-dim");
             const bFit = win.querySelector("[data-fit]"), bOne = win.querySelector("[data-one]");
-            const base = () => nat ? Math.max(.01, Math.min((wall.clientWidth - 80) / nat[0], (wall.clientHeight - 80) / nat[1], 1)) : 1;
+            const GAP = 16;   // Fit fills the wall, small pictures included, with a thin margin
+            const base = () => nat ? Math.max(.01, Math.min((wall.clientWidth - GAP * 2) / nat[0], (wall.clientHeight - GAP * 2) / nat[1])) : 1;
             const paint = () => {
               const s = base() * z; img.style.width = nat ? nat[0] * base() + "px" : "";
               pan.style.transform = `translate(${x}px, ${y}px) scale(${z})`;
-              zl.textContent = fit ? `Fit, ${Math.round(s * 100)}%` : `${Math.round(s * 100)}%`;
+              zl.textContent = nat ? `${Math.round(s * 100)}%` : "";
               bFit.setAttribute("aria-pressed", fit); bOne.setAttribute("aria-pressed", !fit && Math.abs(s - 1) < .005);
               wall.classList.toggle("grab", !fit);
             };
-            img.addEventListener("load", () => { nat = [img.naturalWidth, img.naturalHeight]; dim.textContent = `${nat[0]} × ${nat[1]} px`; paint(); win.classList.add("iv-ready"); });
+            img.addEventListener("load", () => {
+              nat = [img.naturalWidth, img.naturalHeight]; dim.textContent = `${nat[0]} × ${nat[1]} px`;
+              shapeTo(win, nat[0] / nat[1], nat[0]);   // the window takes the picture's proportions, so Fit leaves no dark band
+              paint(); win.classList.add("iv-ready");
+            });
             img.addEventListener("error", () => { pan.hidden = true; win.querySelector(".iv-none").hidden = false; zl.textContent = ""; bFit.disabled = bOne.disabled = true; });
             bFit.addEventListener("click", () => { fit = true; z = 1; x = y = 0; paint(); });
             bOne.addEventListener("click", () => { fit = false; z = 1 / base(); x = y = 0; paint(); });
@@ -262,6 +270,7 @@
             wall.addEventListener("pointermove", e => { if (!drag) return; x = e.clientX - drag[0]; y = e.clientY - drag[1]; fit = false; paint(); });
             const end = () => { drag = null; wall.classList.remove("dragging"); };
             wall.addEventListener("pointerup", end); wall.addEventListener("pointercancel", end);
+            new ResizeObserver(() => paint()).observe(wall);   // the window reshaping (or the viewport) keeps Fit filling
             this.resize = paint;
           },
         };
@@ -353,7 +362,12 @@
     const dialNums = kind === "dial" && !wheels ? String(o.answer).match(/\d+/g) || [] : [];
     const length = Math.max(1, Math.min(kind === "dial" ? 8 : 16, Number.isInteger(o.length) && o.length > 0 ? o.length : dialNums.length || normal(o.answer).length || 4));
     const opens = o.opens && typeof o.opens === "object" ? o.opens : {};
-    return { id: String(o.lock || ""), kind, wheels, length, prompt: String(o.prompt || ""), answer: String(o.answer), final: o.final === true,
+    // words: `groups` ([6, 5]) when the lock says so, else the answer's own words, else one group
+    const sum = a => a.reduce((x, y) => x + y, 0), words = String(o.answer).trim().split(/\s+/).map(w => normal(w).length).filter(Boolean);
+    const groups = kind !== "word" ? [length]
+      : Array.isArray(o.groups) && o.groups.every(n => Number.isInteger(n) && n > 0) && sum(o.groups) === length ? o.groups.slice()
+      : words.length > 1 && sum(words) === length ? words : [length];
+    return { id: String(o.lock || ""), kind, wheels, length, groups, prompt: String(o.prompt || ""), answer: String(o.answer), final: o.final === true,
       hints: (Array.isArray(o.hints) ? o.hints : []).slice(0, 3).map(String),
       dialMax: dialNums.some(n => +n >= 40) ? 100 : 40,
       opens: { title: String(opens.title || "Open"), text: String(opens.text || ""), image: typeof opens.image === "string" ? opens.image : null,
@@ -368,79 +382,120 @@
     <path d="M22 70h76" stroke="rgba(255,255,255,.5)" stroke-width="2" stroke-linecap="round"/>
     <circle cx="60" cy="92" r="9" fill="#4a3510"/><path d="M57 98h6l2 16h-10z" fill="#4a3510"/></svg>`;
   APPS.lock = {
-    size: [600, 720],
+    size: [640, 760],
     render(f, win, opts = {}) {
       const L = readLock(f.text), store = opts.locks || { solved: () => false, solve() {}, count: () => 0, total: 0 };
       const progress = () => store.total ? (store.count() >= store.total ? `All ${store.total} locks open` : `${store.count()} of ${store.total} locks open`) : "";
       if (!L) return { body: `<div class="lk"><div class="lk-head">${PADLOCK}<p class="lk-prompt">This lock's file could not be read.</p></div></div>`, foot: `<span>${esc(f.size)}</span>` };
       const key = L.id || f.path;
       let hintsShown = 0, value = L.wheels ? Array(L.length).fill(0) : L.kind === "dial" ? [] : Array(L.length).fill(""), dialAt = 0;
+      let keys = null;   // the code's keyboard, once mounted (see key below)
       const field = () => {
         if (L.wheels) return `<div class="lk-wheels${L.kind === "dial" ? " brass" : ""}" role="group" aria-label="Combination, ${L.length} ${L.kind === "dial" ? "dials" : "digits"}">${value.map((d, i) => `<div class="lk-wheel" role="spinbutton" tabindex="0" aria-valuemin="0" aria-valuemax="9" aria-valuenow="${d}" aria-label="Digit ${i + 1}" data-i="${i}"><button type="button" class="lk-up" tabindex="-1" aria-hidden="true"><svg viewBox="0 0 12 8"><path d="m2 6 4-4 4 4"/></svg></button><span class="lk-drum"><i>${(d + 9) % 10}</i><b>${d}</b><i>${(d + 1) % 10}</i></span><button type="button" class="lk-dn" tabindex="-1" aria-hidden="true"><svg viewBox="0 0 12 8"><path d="m2 2 4 4 4-4"/></svg></button></div>`).join("")}</div>`;
-        if (L.kind === "word") return `<div class="lk-tiles${L.length > 8 ? " many" : ""}" role="group" aria-label="Answer, ${L.length} letters">${value.map((c, i) => `<input class="lk-tile" maxlength="1" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Letter ${i + 1}" data-i="${i}" value="${esc(c)}">`).join("")}</div>`;
+        if (L.kind === "word") {   // one group of tiles a word, with a visible gap between words
+          let at = 0;
+          const groups = L.groups.map(n => { const g = value.slice(at, at + n).map((c, k) => `<input class="lk-tile" maxlength="1" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Letter ${at + k + 1}" data-i="${at + k}" value="${esc(c)}">`).join(""); at += n; return `<span class="lk-grp">${g}</span>`; });
+          return `<div class="lk-tiles${L.length > 8 ? " many" : ""}" role="group" aria-label="Answer, ${L.groups.length > 1 ? `${L.groups.length} words, ${L.groups.join(" and ")} letters` : `${L.length} letters`}">${groups.join("")}</div>`;
+        }
         const ticks = Array.from({ length: L.dialMax }, (_, n) => `<i style="--a:${n * 360 / L.dialMax}deg"${n % 5 === 0 ? ` class="maj" data-n="${n}"` : ""}></i>`).join("");
         return `<div class="lk-dialbox"><div class="lk-dial" tabindex="0" role="slider" aria-label="Dial" aria-valuemin="0" aria-valuemax="${L.dialMax - 1}" aria-valuenow="0"><div class="lk-face">${ticks}<span class="lk-knob"></span></div><span class="lk-mark" aria-hidden="true"></span><output class="lk-now">0</output></div>
           <div class="lk-seq"><span class="lk-seq-l">Numbers set</span><span class="lk-chips"></span><button type="button" class="lk-set">Set ${"<b>0</b>"}</button><button type="button" class="lk-clear">Clear</button></div></div>`;
       };
+      // What the lock was keeping. A picture fills the card and opens full size in the Image Viewer.
       const opened = () => {
         const o = L.opens, md = markdown(o.text).html, all = store.total && store.count() >= store.total;
-        return `<div class="lk-open${L.final ? " final" : ""}">${L.final && all ? `<p class="lk-all"><i aria-hidden="true"></i>All ${store.total} locks open</p>` : ""}<h3>${esc(o.title)}</h3>${o.image ? `<img class="lk-img" src="${esc(o.image)}" alt="">` : ""}<div class="md-doc lk-md">${md}</div>${o.reveal.length && !L.final ? `<div class="lk-reveal">${o.reveal.map(p => `<button type="button" class="lk-go" data-go="${esc(p)}"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5c0-.8.6-1.4 1.4-1.4h2.6l1.4 1.5h4.2c.8 0 1.4.6 1.4 1.4v5.6c0 .8-.6 1.4-1.4 1.4H3.9c-.8 0-1.4-.6-1.4-1.4z" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>Go to ${esc(p.split("/").filter(Boolean).pop() || p)}<small>${esc(p)}</small></button>`).join("")}</div>` : ""}</div>`;
+        const pic = o.image ? `<button type="button" class="lk-imgb" data-img="${esc(o.image)}" title="Open the picture"><img class="lk-img" src="${esc(o.image)}" alt=""><span class="lk-zoom" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="sr">Open the picture full size</span></button>` : "";
+        return `<div class="lk-open${L.final ? " final" : ""}">${L.final && all ? `<p class="lk-all"><i aria-hidden="true"></i>All ${store.total} locks open</p>` : ""}<h3>${esc(o.title)}</h3>${pic}${L.final ? `<span class="lk-orn" aria-hidden="true"></span>` : ""}<div class="md-doc lk-md">${md}</div>${o.reveal.length && !L.final ? `<div class="lk-reveal">${o.reveal.map(p => `<button type="button" class="lk-go" data-go="${esc(p)}"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5c0-.8.6-1.4 1.4-1.4h2.6l1.4 1.5h4.2c.8 0 1.4.6 1.4 1.4v5.6c0 .8-.6 1.4-1.4 1.4H3.9c-.8 0-1.4-.6-1.4-1.4z" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>Go to ${esc(p.split("/").filter(Boolean).pop() || p)}<small>${esc(p)}</small></button>`).join("")}</div>` : ""}</div>`;
       };
       const solvedBefore = store.solved(key);
+      const kindLine = L.wheels && L.kind === "dial" ? `${L.length} brass dials`
+        : L.kind === "word" ? (L.groups.length > 1 ? `${["", "one", "two", "three", "four", "five", "six"][L.groups.length] || L.groups.length} words, ${L.groups.join(" + ")} letters` : `${L.length}-letter word`)
+        : { digits: `${L.length}-digit combination`, dial: `Dial, ${L.length} numbers` }[L.kind];
+      const again = store.reset && store.count() > 0 ? `<button type="button" class="lk-again" title="Lock every lock on this machine again">Start again</button>` : "";
       return {
+        size: L.final ? [760, 900] : null,   // the last lock's card holds the sketch large
         body: `<div class="lk${solvedBefore ? " is-open" + (L.final ? " finale words" : "") : ""}" data-kind="${L.kind}"><div class="lk-head">${PADLOCK}<p class="lk-prompt">${inline(L.prompt)}</p></div>
           <div class="lk-play"><form class="lk-form" novalidate>${field()}<div class="lk-row"><button type="submit" class="lk-try">Try it</button><button type="button" class="lk-hint"${L.hints.length ? "" : " hidden"}>Hint <span>1 of ${L.hints.length}</span></button></div>
           <p class="lk-msg" role="status" aria-live="polite"></p><ol class="lk-hints"></ol></form></div>
           <div class="lk-after">${solvedBefore ? opened() : ""}</div></div>`,
-        foot: `<span class="lk-state">${solvedBefore ? "Open" : "Locked"}</span><span>${L.wheels && L.kind === "dial" ? `${L.length} brass dials` : { digits: `${L.length}-digit combination`, word: `${L.length}-letter word`, dial: `Dial, ${L.length} numbers` }[L.kind]}</span>${store.total ? `<span class="lk-prog">${progress()}</span>` : ""}`,
+        foot: `<span class="lk-state">${solvedBefore ? "Open" : "Locked"}</span><span>${kindLine}</span>${store.total ? `<span class="lk-prog">${progress()}</span>` : ""}${again}`,
         scroller: ".ha-body",
+        first: () => solvedBefore ? null : win.querySelector(".lk-tile, .lk-wheel, .lk-dial"),
+        key: e => keys ? keys(e) : false,
         mount() {
           const root = win.querySelector(".lk"), msg = win.querySelector(".lk-msg"), after = win.querySelector(".lk-after");
-          const reveal = () => after.querySelectorAll("[data-go]").forEach(b => b.addEventListener("click", () => opts.navigate?.(b.dataset.go)));
-          if (solvedBefore) { reveal(); return; }
-          const form = win.querySelector(".lk-form");
+          const wire = () => {
+            after.querySelectorAll("[data-go]").forEach(b => b.addEventListener("click", () => opts.navigate?.(b.dataset.go)));
+            after.querySelectorAll("[data-img]").forEach(b => b.addEventListener("click", () => {
+              const src = b.dataset.img, r = b.getBoundingClientRect();
+              openOver({ path: src, name: src.split("/").pop(), kind: "image", src, size: "" }, { x: r.left, y: r.top, w: r.width, h: r.height });
+            }));
+          };
+          // start again: two clicks, the second within a few seconds, so one stray click cannot undo the room
+          const ag = win.querySelector(".lk-again");
+          if (ag) {
+            let armed = 0;
+            ag.addEventListener("click", () => {
+              if (!armed) { ag.textContent = "Lock them all again?"; ag.classList.add("armed"); armed = setTimeout(() => { armed = 0; ag.textContent = "Start again"; ag.classList.remove("armed"); }, 4000); return; }
+              clearTimeout(armed); store.reset(); close();
+            });
+          }
+          if (solvedBefore) { wire(); return; }
+          const form = win.querySelector(".lk-form"), rotary = L.kind === "dial" && !L.wheels;
+          const tiles = () => [...win.querySelectorAll(".lk-tile")], wheels = () => [...win.querySelectorAll(".lk-wheel")];
+          let wi = 0;   // the wheel the keyboard is on
+          // the code's own place for the keyboard: the first empty tile (all full: the first, so typing writes it afresh),
+          // the current wheel, or the dial
+          const codeEl = () => L.kind === "word" ? (tiles().find(t => !t.value) || tiles()[0]) : L.wheels ? wheels()[wi] : win.querySelector(".lk-dial");
+          const focusCode = () => codeEl()?.focus({ preventScroll: true });
           // digits: wheels turn by click, wheel, arrows or typing
           const paintWheel = (w, d) => { w.setAttribute("aria-valuenow", d); w.querySelector(".lk-drum").innerHTML = `<i>${(d + 9) % 10}</i><b>${d}</b><i>${(d + 1) % 10}</i>`; };
           const turn = (i, by) => {
             const w = win.querySelector(`.lk-wheel[data-i="${i}"]`); value[i] = (value[i] + by + 10) % 10; paintWheel(w, value[i]);
             if (!reduce()) { w.classList.remove("up", "dn"); void w.offsetWidth; w.classList.add(by > 0 ? "up" : "dn"); }
           };
-          win.querySelectorAll(".lk-wheel").forEach(w => {
+          const setDigit = (i, d) => { const all = wheels(); value[i] = d; paintWheel(all[i], d); wi = Math.min(all.length - 1, i + 1); (i + 1 < all.length ? all[i + 1] : win.querySelector(".lk-try")).focus(); };
+          wheels().forEach(w => {
             const i = +w.dataset.i;
+            w.addEventListener("focus", () => { wi = i; });
             w.querySelector(".lk-up").addEventListener("click", () => { turn(i, -1); w.focus(); });
             w.querySelector(".lk-dn").addEventListener("click", () => { turn(i, 1); w.focus(); });
             w.addEventListener("wheel", e => { e.preventDefault(); turn(i, e.deltaY > 0 ? 1 : -1); }, { passive: false });
             w.addEventListener("keydown", e => {
-              const all = [...win.querySelectorAll(".lk-wheel")];
+              const all = wheels();
               if (e.key === "ArrowUp") { e.preventDefault(); turn(i, -1); }
               else if (e.key === "ArrowDown") { e.preventDefault(); turn(i, 1); }
               else if (e.key === "ArrowRight") { e.preventDefault(); all[Math.min(all.length - 1, i + 1)].focus(); }
-              else if (e.key === "ArrowLeft") { e.preventDefault(); all[Math.max(0, i - 1)].focus(); }
-              else if (/^\d$/.test(e.key)) { e.preventDefault(); value[i] = +e.key; paintWheel(w, value[i]); (all[i + 1] || win.querySelector(".lk-try")).focus(); }
+              else if (e.key === "ArrowLeft" || e.key === "Backspace") { e.preventDefault(); all[Math.max(0, i - 1)].focus(); }
+              else if (/^\d$/.test(e.key)) { e.preventDefault(); setDigit(i, +e.key); }
             });
           });
-          // word: one letter a tile, moving on as you type
-          win.querySelectorAll(".lk-tile").forEach(t => {
-            const i = +t.dataset.i, all = () => [...win.querySelectorAll(".lk-tile")];
-            t.addEventListener("input", () => { t.value = t.value.slice(-1).toUpperCase(); value[i] = t.value; if (t.value) (all()[i + 1] || win.querySelector(".lk-try")).focus(); });
+          // word: one letter a tile, moving on as you type; spaces and punctuation are not letters
+          const setLetter = (t, c) => { const i = +t.dataset.i; t.value = c; value[i] = c; if (c) (tiles()[i + 1] || win.querySelector(".lk-try")).focus(); };
+          tiles().forEach(t => {
+            const i = +t.dataset.i;
+            t.addEventListener("input", () => { const c = (t.value.match(/[\p{L}\p{N}]/gu) || []).pop() || ""; setLetter(t, c.toUpperCase()); });
             t.addEventListener("keydown", e => {
-              if (e.key === "Backspace" && !t.value && i > 0) { e.preventDefault(); const p = all()[i - 1]; p.value = ""; value[i - 1] = ""; p.focus(); }
-              else if (e.key === "ArrowLeft" && i > 0) { e.preventDefault(); all()[i - 1].focus(); }
-              else if (e.key === "ArrowRight" && all()[i + 1]) { e.preventDefault(); all()[i + 1].focus(); }
+              const all = tiles();
+              if (e.key === "Backspace" && !t.value && i > 0) { e.preventDefault(); const p = all[i - 1]; p.value = ""; value[i - 1] = ""; p.focus(); }
+              else if (e.key === "ArrowLeft" && i > 0) { e.preventDefault(); all[i - 1].focus(); }
+              else if (e.key === "ArrowRight" && all[i + 1]) { e.preventDefault(); all[i + 1].focus(); }
+              else if (e.key === " ") e.preventDefault();
             });
             t.addEventListener("focus", () => t.select());
           });
           // dial: turn it (drag, wheel, arrows), set each number in turn
           const dial = win.querySelector(".lk-dial");
+          let spin = null;
           if (dial) {
             const face = dial.querySelector(".lk-face"), now = dial.querySelector(".lk-now"), set = win.querySelector(".lk-set"), chips = win.querySelector(".lk-chips");
             const paint = () => { face.style.transform = `rotate(${-dialAt * 360 / L.dialMax}deg)`; now.textContent = dialAt; dial.setAttribute("aria-valuenow", dialAt); set.querySelector("b").textContent = dialAt; };
-            const spin = by => { dialAt = (dialAt + by + L.dialMax) % L.dialMax; paint(); };
+            spin = by => { dialAt = (dialAt + by + L.dialMax) % L.dialMax; paint(); };
             const paintSeq = () => { chips.innerHTML = value.map(n => `<b>${n}</b>`).join("") + Array.from({ length: Math.max(0, L.length - value.length) }, () => "<i></i>").join(""); set.disabled = value.length >= L.length; };
             dial.addEventListener("keydown", e => {
               if (e.key === "ArrowRight" || e.key === "ArrowUp") { e.preventDefault(); spin(1); }
               else if (e.key === "ArrowLeft" || e.key === "ArrowDown") { e.preventDefault(); spin(-1); }
-              else if (e.key === "Enter" || e.key === " ") { e.preventDefault(); set.click(); }
+              else if ((e.key === "Enter" || e.key === " ") && value.length < L.length) { e.preventDefault(); set.click(); }   // all set: Enter tries the code
             });
             dial.addEventListener("wheel", e => { e.preventDefault(); spin(e.deltaY > 0 ? 1 : -1); }, { passive: false });
             let drag = null;
@@ -448,29 +503,59 @@
             dial.addEventListener("pointerdown", e => { drag = { a: angle(e), at: dialAt }; dial.setPointerCapture(e.pointerId); dial.focus(); });
             dial.addEventListener("pointermove", e => { if (!drag) return; const d = angle(e) - drag.a; dialAt = ((drag.at - Math.round(d / (360 / L.dialMax))) % L.dialMax + L.dialMax) % L.dialMax; paint(); });
             const end = () => { drag = null; }; dial.addEventListener("pointerup", end); dial.addEventListener("pointercancel", end);
-            set.addEventListener("click", () => { if (value.length < L.length) { value.push(dialAt); paintSeq(); } });
+            set.addEventListener("click", () => { if (value.length < L.length) { value.push(dialAt); paintSeq(); } dial.focus(); });
             win.querySelector(".lk-clear").addEventListener("click", () => { value = []; paintSeq(); dial.focus(); });
             paint(); paintSeq();
           }
-          // hints, one at a time
+          // hints, one at a time, only by a deliberate press; the keyboard then goes back to the code
           const hb = win.querySelector(".lk-hint"), list = win.querySelector(".lk-hints");
           hb.addEventListener("click", () => {
             if (hintsShown >= L.hints.length) return;
             const li = document.createElement("li"); li.innerHTML = inline(L.hints[hintsShown++]); list.append(li);
             hb.querySelector("span").textContent = hintsShown < L.hints.length ? `${hintsShown + 1} of ${L.hints.length}` : "none left";
             hb.disabled = hintsShown >= L.hints.length;
+            tabbed = false; focusCode();
           });
+          // The keyboard belongs to the code wherever focus is in the lock: letters, digits, Backspace and arrows reach
+          // the tiles, wheels or dial, and Enter always tries the code, except on another button reached by Tab (a
+          // keyboard user choosing Hint or Clear on purpose). A button merely clicked keeps no claim on Enter.
+          let tabbed = false;
+          win.addEventListener("pointerdown", () => { tabbed = false; }, true);
+          keys = e => {
+            if (e.ctrlKey || e.metaKey || e.altKey || root.classList.contains("opening")) return false;
+            if (e.key === "Tab") { tabbed = true; return false; }
+            const t = e.target, btn = t.closest?.("button");
+            if (e.key === "Enter") {
+              if (e.defaultPrevented) return true;
+              if (btn && !btn.classList.contains("lk-try") && tabbed) return false;
+              e.preventDefault(); form.requestSubmit(); return true;
+            }
+            if (e.defaultPrevented || t.closest?.(".lk-tile, .lk-wheel, .lk-dial")) return false;   // already handled where it landed
+            if (btn && (e.key === " " || e.key === "Spacebar")) return false;                       // Space presses the button
+            const ch = e.key.length === 1 ? e.key : "";
+            if (L.kind === "word") {
+              if (ch && /[\p{L}\p{N}]/u.test(ch)) { e.preventDefault(); const el = codeEl(); el.focus(); setLetter(el, ch.toUpperCase()); return true; }
+              if (e.key === "Backspace") { e.preventDefault(); const el = tiles().filter(x => x.value).pop() || tiles()[0]; el.value = ""; value[+el.dataset.i] = ""; el.focus(); return true; }
+            } else if (L.wheels) {
+              if (/^\d$/.test(ch)) { e.preventDefault(); setDigit(wi, +ch); return true; }
+              if (e.key === "Backspace") { e.preventDefault(); wi = Math.max(0, wi - 1); focusCode(); return true; }
+            } else if (spin && /^Arrow/.test(e.key)) { e.preventDefault(); spin(e.key === "ArrowRight" || e.key === "ArrowUp" ? 1 : -1); focusCode(); return true; }
+            if (/^Arrow/.test(e.key)) { e.preventDefault(); focusCode(); return true; }
+            return false;
+          };
           form.addEventListener("submit", e => {
             e.preventDefault();
-            const rotary = L.kind === "dial" && !L.wheels, tried = rotary ? value.join("-") : value.join("");
-            if (!rotary && value.some(v => v === "")) { msg.textContent = `All ${L.length} letters first.`; return; }
-            if (rotary && value.length < L.length) { msg.textContent = `Set all ${L.length} numbers first.`; return; }
+            const tried = rotary ? value.join("-") : value.join("");
+            if (!rotary && value.some(v => v === "")) { msg.textContent = `All ${L.length} ${L.kind === "word" ? "letters" : "figures"} first.`; focusCode(); return; }
+            if (rotary && value.length < L.length) { msg.textContent = `Set all ${L.length} numbers first.`; focusCode(); return; }
             const ok = rotary ? (String(L.answer).match(/\d+/g) || []).map(Number).join("-") === value.join("-") : normal(tried) === normal(L.answer);
             if (!ok) {
               msg.textContent = "Not that. The lock holds.";
               if (!reduce()) { root.classList.remove("shake"); void root.offsetWidth; root.classList.add("shake"); }
+              wi = 0; (L.kind === "word" ? tiles()[0] : codeEl())?.focus({ preventScroll: true });   // typing again overwrites from the start
               return;
             }
+            keys = null;
             store.solve(key);
             msg.textContent = "Open.";
             win.querySelector(".lk-state").textContent = "Open";
@@ -480,13 +565,19 @@
               root.classList.add("finale");
               opts.onFinale?.();
               setTimeout(() => {
-                after.innerHTML = opened(); root.classList.add("is-open");
-                setTimeout(() => root.classList.add("words"), reduce() ? 0 : 1600);
+                after.innerHTML = opened(); wire(); root.classList.add("is-open");
+                win.querySelector(".ha-body").scrollTo({ top: 0 });
+                setTimeout(() => {
+                  root.classList.add("words");
+                  // after a moment with the picture, bring the letter into view (with reduced motion nothing moves by
+                  // itself: the card stays at the picture and the visitor scrolls on to the letter)
+                  if (!reduce()) setTimeout(() => after.querySelector(".lk-orn")?.scrollIntoView({ block: "start", behavior: "smooth" }), 2600);
+                }, reduce() ? 0 : 1700);
               }, reduce() ? 0 : 1500);
               return;
             }
             setTimeout(() => {
-              after.innerHTML = opened(); reveal();
+              after.innerHTML = opened(); wire();
               root.classList.add("is-open");
               (after.querySelector(".lk-go") || after).focus?.({ preventScroll: true });
             }, reduce() ? 0 : 750);
@@ -495,6 +586,12 @@
       };
     },
   };
+  // A file opened from inside another program's window (a lock's picture): closing it returns to that window.
+  function openOver(file, origin) {
+    if (!cur) return;
+    const back = { file: cur.file, opts: cur.opts };
+    open(file, { origin, inert: back.opts.inert, onClose: () => open(back.file, { ...back.opts, origin: null }) });
+  }
 
   /* ================================ the window ================================ */
   let cur = null;
@@ -504,13 +601,35 @@
 
   const focusables = el => [...el.querySelectorAll('button:not([disabled]), [href], input, textarea, select, video[controls], [tabindex]:not([tabindex="-1"])')].filter(x => !x.closest("[hidden]") && x.offsetParent !== null);
 
-  function place(win, id) {
+  // Where windows may go: the page says (HostApps.configure({ bounds })), e.g. the desktop below its top bar; else the viewport.
+  let env = { bounds: null };
+  function area() {
+    let b = null; try { b = env.bounds?.() || null; } catch (_) { b = null; }
+    const top = Math.max(0, Math.min(innerHeight - 200, b?.top ?? 0)), bottom = Math.min(innerHeight, Math.max(top + 200, b?.bottom ?? innerHeight));
+    const left = Math.max(0, b?.left ?? 0), right = Math.min(innerWidth, Math.max(left + 200, b?.right ?? innerWidth));
+    return { top, bottom, left, right, w: right - left, h: bottom - top };
+  }
+  function place(win, id, size) {
     if (small()) { win.style.cssText = ""; win.classList.add("ha-full"); return; }
     win.classList.remove("ha-full");
-    const [w0, h0] = APPS[id].size, W = innerWidth, H = innerHeight, m = id === "video" ? 32 : 48;
-    const w = Math.min(w0, W - m * 2), h = Math.min(h0, H - m * 2);
+    const [w0, h0] = size || APPS[id].size, A = area(), m = id === "video" ? 16 : 24;
+    const w = Math.min(w0, A.w - m * 2), h = Math.min(h0, A.h - m * 2);
     win.style.width = w + "px"; win.style.height = h + "px";
-    win.style.left = Math.round((W - w) / 2) + "px"; win.style.top = Math.round((H - h) / 2) + "px";
+    win.style.left = Math.round(A.left + (A.w - w) / 2) + "px"; win.style.top = Math.round(A.top + (A.h - h) / 2) + "px";
+  }
+  // A picture's window takes the picture's proportions (within the desktop, and at most twice its own size), so Fit fills
+  // it instead of floating a small picture in a dark field.
+  function shapeTo(win, aspect, natW) {
+    if (win.classList.contains("ha-full") || !(aspect > 0)) return;
+    const body = win.querySelector(".ha-body"), chrome = win.offsetHeight - body.clientHeight, A = area(), m = 24;
+    const maxW = Math.min(1240, A.w - m * 2, (natW || Infinity) * 2), maxH = Math.min(900, A.h - m * 2) - chrome;
+    let w = maxW, h = w / aspect;
+    if (h > maxH) { h = maxH; w = h * aspect; }
+    w = Math.max(w, Math.min(460, A.w - m * 2));   // room for the title bar; a tall picture keeps a margin either side
+    const H = Math.round(h + chrome), W = Math.round(w);
+    if (!reduce()) { win.classList.add("ha-reshape"); setTimeout(() => win.classList.remove("ha-reshape"), 420); }
+    win.style.width = W + "px"; win.style.height = H + "px";
+    win.style.left = Math.round(A.left + (A.w - W) / 2) + "px"; win.style.top = Math.round(A.top + (A.h - H) / 2) + "px";
   }
   function flipFrom(win, o) {   // a transform that puts the window over the file it came from
     const r = win.getBoundingClientRect();
@@ -533,7 +652,7 @@
       + `<div class="ha-ctl"><span class="ha-c ha-min" aria-hidden="true"><svg viewBox="0 0 12 12"><path d="M2.5 6h7"/></svg></span><span class="ha-c ha-max" aria-hidden="true"><svg viewBox="0 0 12 12"><rect x="2.5" y="2.5" width="7" height="7" rx="1"/></svg></span><button type="button" class="ha-c ha-x" aria-label="Close ${esc(NAME[id])}"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="m3 3 6 6M9 3 3 9"/></svg></button></div></header>`
       + `<div class="ha-body">${part.body}</div>${part.foot ? `<footer class="ha-foot">${part.foot}</footer>` : ""}`;
     document.body.append(win);
-    place(win, id);
+    place(win, id, part.size);
     const inert = opts.inert || [];
     for (const el of inert) el.inert = true;
     document.body.classList.add("ha-open"); document.body.classList.toggle("ha-cinema", !!def.cinema);
@@ -569,14 +688,15 @@
     });
     bar.addEventListener("pointermove", e => {
       if (!cur?.drag) return;
-      const w = win.offsetWidth, x = Math.min(innerWidth - 80, Math.max(80 - w, e.clientX - cur.drag[0])), y = Math.min(innerHeight - 40, Math.max(0, e.clientY - cur.drag[1]));
+      const w = win.offsetWidth, x = Math.min(innerWidth - 80, Math.max(80 - w, e.clientX - cur.drag[0])), y = Math.min(innerHeight - 40, Math.max(area().top, e.clientY - cur.drag[1]));
       win.style.left = x + "px"; win.style.top = y + "px";
     });
     const endDrag = () => { if (cur) cur.drag = null; win.classList.remove("ha-dragging"); };
     bar.addEventListener("pointerup", endDrag); bar.addEventListener("pointercancel", endDrag);
-    cur.onResize = () => { if (small() || win.classList.contains("ha-full")) place(win, id); part.resize?.(); };
+    cur.onResize = () => { if (small() || win.classList.contains("ha-full")) place(win, id, part.size); part.resize?.(); };
     if (part.scroller) { const s = win.querySelector(part.scroller); s.tabIndex = 0; s.setAttribute("aria-label", file.name); }
-    ((part.scroller && win.querySelector(part.scroller)) || win).focus({ preventScroll: true });
+    // a program may name what takes the keyboard first (a lock's first tile); else the scrolling page, else the window
+    (part.first?.() || (part.scroller && win.querySelector(part.scroller)) || win).focus({ preventScroll: true });
     return id;
   }
 
@@ -603,5 +723,6 @@
   scrim.addEventListener("click", () => close());
   addEventListener("resize", () => cur?.onResize?.());
 
-  window.HostApps = { open, close, isOpen: () => !!cur, appFor, NAME, markdown, csv };
+  function configure(o) { env = { ...env, ...(o || {}) }; }
+  window.HostApps = { open, close, configure, isOpen: () => !!cur, appFor, NAME, markdown, csv };
 })();

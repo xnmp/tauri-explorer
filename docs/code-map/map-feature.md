@@ -390,7 +390,8 @@ backend for E2E/browser).
 
 ## Git status badges
 
-- `components/GitStatusBadge.svelte` — per-row M/A/? badge glyph
+- `components/GitStatusBadge.svelte` — per-row status chip (letter on a faint tint); names are tinted by `EntryNameLabel` (`git` prop, via `EntryName`/`FileTile`) (#1852)
+- `composables/use-entry-git-status.svelte.ts` — shared per-entry lookup (one derived); `domain/git-status-presentation.ts` — status → tone/colour var/letter; `themes/git-status.css` — `--git-*` defaults via `light-dark()`, themes override per `[data-theme]`. Tests: `tests/domain/git-status-presentation.test.ts`, `e2e/git-status-chips.spec.ts` (all renderers)
 - `state/git-status.svelte.ts` — `gitStatusStore`: path→status map, `refresh()`
 - `state/git-refresh.ts` — debounced git-status refresh
 - `api/git.ts` (getGitStatus), `src-tauri/src/files/git_status.rs`

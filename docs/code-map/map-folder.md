@@ -81,7 +81,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `RowThumbnail.svelte` — the 48px icon box of Details/List rows while the `rowThumbnails` setting is on (#1465): image/video thumbnails through ThumbnailImage (Tiles small preset's cache key), large icon scaled in for other entries.
 - `VideoIndicator.svelte` — passive, contrast-backed video type badge shared by Tiles and Preview Pane; remains present during loading and frame extraction failure (#823).
 - `FolderThumbnail.svelte` — Windows-style folder preview tile (up to 3 nested images, #146).
-- `GitStatusBadge.svelte` — per-entry git status letter/color decoration.
+- `GitStatusBadge.svelte` — per-entry Git status chip (tinted letter, #1852); the name tint is EntryNameLabel's `git` prop.
 - `ExplorerPane.svelte` — one pane: navigation bar + FileList + preview; owns pane-scoped context.
 - `PanelResizeHandle.svelte` — shared focusable Sidebar/SCM/Miller separator with pointer capture wiring and keyboard range semantics.
 - `PaneContainer.svelte` — owns the scrollable active workspace (CSS-filled canvas with a script minimum, #1061) and one divider input lifetime; keeps recently active tabs mounted as hidden, inert `.pane-tree.retained` layers (#1173).
@@ -461,6 +461,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-preview-fullscreen.svelte.ts` — Preview fullscreen controller shared by file images and plugin targets: toggle/exit, zoom/pan state, wheel/pointer/click handlers and keys (`createPreviewFullscreen`, effect-free and unit-tested), plus the window key listener and `data-preview-fullscreen` attribute (`usePreviewFullscreen`) (#1033).
 - `use-light-theme.svelte.ts` — reactive light/dark color-scheme flag (MutationObserver on `data-theme`) for picking the hljs palette.
 
+- `src/lib/composables/use-entry-git-status.svelte.ts` — one derived Git status presentation per entry (explicit directory or pane path, `showGitStatus` gate), shared by GitStatusBadge and EntryName/FileTile name tint (#1852).
 - `src/lib/composables/use-entry-appearance.svelte.ts` — reactive clipboard, manually-hidden/dotfile and empty-folder appearance shared by EntryCell and FileTile.
 - `use-item-interactions.svelte.ts` — shared click/select/activate logic across views.
 - `use-inline-rename.svelte.ts` — inline rename edit lifecycle.
@@ -585,6 +586,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `shortcut-import.ts` — validate the prospective imported map, permitting swaps and rejecting final-state ambiguity.
 - `shortcut-recording.ts` — pure two-step recording transitions and shared chord deadline.
 - `git.ts` — git status letter/indicator conversion.
+- `git-status-presentation.ts` — Git status → tone, `--git-*` colour variable, chip letter, dimmed/emphasis (#1852).
 - `git-graph.ts` — commit-graph lane layout (#58/#179).
 - `git-graph-view.ts` — git-graph table geometry: row offsets with an inline expansion, render window, lane windowing, table minimum width, menu clamp, synthetic uncommitted row and date cells.
 - `git-graph-branch-filter.ts` — branch-filter popover semantics (all/none/subset toggles, author batch toggles, remote-only exclusion).
@@ -721,7 +723,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## src/lib/themes/ — CSS theme files. Edit for theming/colors.
 
-- `index.css` (aggregator), `syntax.css` (code highlight), and per-theme: `dark.css`, `light.css`, `aurora.css`, `catppuccin.css`, `desert.css`, `gruvbox.css`, `hacker.css`, `horizon.css`, `nord.css`, `ocean-blue.css`, `solarized-light.css`, `tahoe.css`.
+- `index.css` (aggregator), `syntax.css` (code highlight), `git-status.css` (`--git-*` light/dark defaults for file-list Git tints, #1852), and per-theme: `dark.css`, `light.css`, `aurora.css`, `catppuccin.css`, `desert.css`, `gruvbox.css`, `hacker.css`, `horizon.css`, `nord.css`, `ocean-blue.css`, `solarized-light.css`, `tahoe.css`.
 
 ## src/lib/layouts/ — built-in layout themes (#1306; contract in docs/layout-themes.md).
 

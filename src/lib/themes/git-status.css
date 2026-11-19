@@ -1,0 +1,23 @@
+/**
+ * File-list Git status colours (#1852): tinted names and status chips
+ * (`domain/git-status-presentation.ts` names a `--git-<tone>` per status).
+ *
+ * Defaults follow the active theme's `color-scheme` through `light-dark()`
+ * (kept intact in release builds, docs/lessons/1728-user-theme-light-dark.md):
+ * darker shades on light themes so tinted names keep >= 4.5:1 contrast on the
+ * list and its selected rows, brighter ones on dark themes. `:where()` keeps
+ * the defaults at zero specificity, so any theme (bundled or user) overrides a
+ * colour by setting the variable in its `[data-theme="..."]` block.
+ */
+:where(:root) {
+  --git-modified: light-dark(#985405, #e5b54a);
+  --git-added: light-dark(#13773a, #4ade80);
+  --git-untracked: light-dark(#13773a, #4ade80);
+  --git-deleted: light-dark(#b91c1c, #f87171);
+  --git-conflicted: light-dark(#b91c1c, #f87171);
+  --git-renamed: light-dark(#1d4ed8, #60a5fa);
+  --git-copied: var(--git-renamed);
+  --git-typechange: light-dark(#7e22ce, #c084fc);
+  /* Ignored names are dimmed like other ghosted entries (#785). */
+  --git-ignored: var(--text-secondary);
+}

@@ -6,6 +6,7 @@
   } from "$lib/api/user-report";
   import { openExternalUrl } from "$lib/api/crash";
   import { recentSlowLoads } from "$lib/api/load-diagnostics";
+  import { recentActions, recentErrors } from "$lib/api/user-report";
   import {
     fitSlowLoadsForReport,
     selectReportableSlowLoads,
@@ -19,6 +20,7 @@
     sectionBudget,
     type ReportDiagnostic,
   } from "$lib/domain/report-diagnostics";
+  import { includedDiagnostics, planOptInSections, type OptInSectionKind } from "$lib/domain/report-sections";
   import { crashReportStore } from "$lib/state/crash-report.svelte";
   import {
     MAX_USER_REPORT_CONTACT_UNITS,
@@ -85,7 +87,22 @@
   const offerSlowLoads = $derived(
     textDraft.kind === "bug" && slowLoadText.length > 0 && slowLoadBudget >= MIN_REPORT_DIAGNOSTIC_UNITS,
   );
-  const includesDiagnostics = $derived((offerCrash && includeCrash) || (offerSlowLoads && includeSlowLoads));
+  // Opt-in sections (#1685, #1688): off on every open, bug reports only,
+  // fitted into what the sections above leave (domain/report-sections.ts).
+  let optInTexts = $state.raw<Partial<Record<OptInSectionKind, string>>>({});
+  let optInChecked = $state<Partial<Record<OptInSectionKind, boolean>>>({});
+  const optInPlan = $derived(planOptInSections(
+    textDraft.kind === "bug" ? optInTexts : {},
+    optInChecked,
+    budgetAfter(
+      budgetAfter(diagnosticsBudget, offerCrash && includeCrash ? crashText : ""),
+      offerSlowLoads && includeSlowLoads ? slowLoadText : "",
+    ),
+  ));
+  const optInDiagnostics = $derived(includedDiagnostics(optInPlan));
+  const includesDiagnostics = $derived(
+    (offerCrash && includeCrash) || (offerSlowLoads && includeSlowLoads) || optInDiagnostics.length > 0,
+  );
 
   $effect(() => {
     if (!open) return;
@@ -93,8 +110,18 @@
     clipboardAttachmentAvailable = false;
     void probeClipboardAttachment();
     void loadSlowLoads();
+    optInChecked = {};
+    void loadOptInTexts();
     void reportTokenStore.refresh();
   });
+
+  async function loadOptInTexts(): Promise<void> {
+    const [errors, actions] = await Promise.all([
+      recentErrors().catch(() => ""),
+      recentActions().catch(() => ""),
+    ]);
+    optInTexts = { "recent-errors": errors, "recent-actions": actions };
+  }
 
   async function loadSlowLoads(): Promise<void> {
     slowLoads = await recentSlowLoads();
@@ -148,6 +175,7 @@
     const diagnostics: ReportDiagnostic[] = [
       ...(offerCrash && includeCrash ? [{ kind: "crash-report" as const, text: crashText }] : []),
       ...(offerSlowLoads && includeSlowLoads ? [{ kind: "slow-loads" as const, text: slowLoadText }] : []),
+      ...optInDiagnostics,
     ];
     if (diagnostics.length > 0) draft.diagnostics = diagnostics;
     // A crash the reporter saw (sent or unticked) is settled once the report
@@ -415,6 +443,25 @@
         </details>
       </section>
     {/if}
+
+    {#each optInPlan.filter((section) => section.offered) as section (section.kind)}
+      <section class="diagnostics" aria-label={section.label}>
+        <label class="diagnostics-toggle">
+          <input
+            type="checkbox"
+            checked={optInChecked[section.kind] === true}
+            onchange={(event) => (optInChecked = { ...optInChecked, [section.kind]: event.currentTarget.checked })}
+            disabled={submitting}
+          />
+          <span>{section.toggle}</span>
+        </label>
+        <p class="attachment-hint">{section.hint}</p>
+        <details>
+          <summary>Show what will be sent</summary>
+          <pre class="diagnostics-preview">{section.text}</pre>
+        </details>
+      </section>
+    {/each}
 
     <p class="report-disclosure">
       Submitting creates a public GitHub issue. {routeNotice} Your description, optional contact details,

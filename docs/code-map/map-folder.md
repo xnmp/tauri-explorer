@@ -414,6 +414,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `files.ts` — all file-op IPC (list, create, rename, copy, move, delete, estimate), including typed per-path trash/restore outcomes. Hot.
 - `media.ts` — `get_media_durations` IPC wrapper (Details Length column, #995).
 - `frontend-log.ts` — forwards diagnosable webview failures to the native rotating log.
+- `action-trail.ts` — `recordAction(kind)` fire-and-forget IPC for the recent-actions trail (#1688); called from `executeCommand` and the load watchdog (navigation kind).
 - `load-diagnostics.ts` — `record_slow_load` / `recent_slow_loads` IPC for slow directory-load records (#1022).
 - `e2e-hooks.ts` — the single frontend E2E hook gate: `E2E_HOOKS_ENABLED` (literal `VITE_E2E_HOOKS === "1"`, not DEV) and `loadE2EHooks()`, the only importer of `src/test-support/`; documents the orphan-chunk rule (#457, #884).
 - `mock-invoke.ts` — mock backend core for browser/E2E (no Tauri): merges the command-family tables and applies the copy/move session and history receipts. Lazily imported by `common.ts` outside Tauri. Open when E2E data wrong, then follow the command's family module.
@@ -677,6 +678,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `crash-report.ts` — pure crash-dedupe + benign-browser-notice (ResizeObserver) helpers behind `api/crash.ts` (#1725).
 - `crash-report-draft.ts` — pure crash → report title/draft update (#1684), loaded only when reporting.
 - `report-diagnostics.ts` — Report Issue diagnostic sections (kinds mirror `user_report.rs` `DiagnosticKind`), shared relay budget and head-keeping text fitting (#1022, #1684).
+- `report-sections.ts` — opt-in diagnostics section model (recent errors #1685, recent actions #1688): `planOptInSections` fits ticked sections into the shared budget; `includedDiagnostics` yields only ticked ones.
 - `user-report.ts` — report contracts and pure prefilled-GitHub fallback URL builder.
 - `user-report-route.ts` — pure report route (saved GitHub token for text-only reports, relay otherwise), route notice and token validation (#1455).
 - `git-warm.ts` — pure scheduler: when (and whether) to warm git-graph/SCM caches after a pane settles.
@@ -783,6 +785,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `portal/idle.rs` — pure idle-exit policy for the D-Bus-activated portal: request holds, generation-checked idle timers, open-window postponement, release-name-then-exit, replaced-executable fast exit (#1427).
 - `crash_report.rs` — local crash capture (#184).
 - `environment.rs` — environment summary (distro, webview engine/version, Linux renderer mode and session, install category) probed once off the startup path; feeds `get_app_info`/About, the user-report environment block (budgeted within the relay ceiling), crash-file headers and one `Environment:` log line (#1683). Tests: `src-tauri/test_support/environment_test.rs`.
+- `recent_errors.rs` — opt-in "Recent errors" report section (#1685): bounded WARN/ERROR ring fed by a `RingLog` log-plugin Dispatch target, previous session read from the log file before the session-start offset; redacts `$HOME`; `recent_errors` command. Tests: `src-tauri/test_support/recent_errors_test.rs`.
+- `report_redaction.rs` — pure home-directory `Redactor` for report text (#1685): displayed/canonical/Debug-escaped/forward-slash/percent-encoded forms, path-boundary matches, case-insensitive on Windows, `/run/media/<user>/` segment. Tests: `src-tauri/test_support/report_redaction_test.rs`.
+- `recent_actions.rs` — in-process recent-actions trail (#1688): identifier-only (`sanitize`), newest 30; `record_action`/`recent_actions` commands; also quoted in panic crash files. Tests: `src-tauri/test_support/recent_actions_test.rs`.
 - `diagnostics_cli.rs` — `tauri-explorer --diagnostics` (#1687): dispatched first in `main.rs` (no window, webview, single-instance lock or log plugin); prints the environment summary, log folder, newest crash file and a bounded WARN/ERROR log tail. Pure `render`/`requested`; Windows attaches the parent console. Tests: `src-tauri/test_support/diagnostics_cli_test.rs`.
 - `load_diagnostics/mod.rs` — slow directory-load records (#1022): merges the frontend record with the native trace and blocker and hands it to `persist.rs`; culprit naming (including an IPC-reply gap after a settled native command); `begin_listing` arms the fallback for watched listings.
 - `load_diagnostics/fallback.rs` — native-only record for a watched listing still in flight after 7 s, settled with its outcome when the listing finishes; background refreshes are never armed.

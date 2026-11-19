@@ -19,6 +19,7 @@
 
   /* ---------------- which program opens what: first match wins ---------------- */
   const OPENS_WITH = [
+    ["lock",     f => /\.lock$/i.test(f.name) && f.text != null],   // the escape room's locks, ahead of any kind
     ["video",    f => f.kind === "video"],
     ["image",    f => !!f.src],
     ["markdown", f => f.text != null && /\.(md|markdown)$/i.test(f.name)],
@@ -46,9 +47,10 @@
     image: `<svg viewBox="0 0 20 20"><defs><linearGradient id="ha-gi" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f2b24a"/><stop offset="1" stop-color="#c2412d"/></linearGradient></defs><rect x="1" y="1" width="18" height="18" rx="5" fill="url(#ha-gi)"/><path d="m3.8 14.6 4-4.6 3 3.2 1.8-1.8 3.6 3.2" fill="none" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/><circle cx="13.2" cy="6.8" r="1.6" fill="#fff"/></svg>`,
     video: `<svg viewBox="0 0 20 20"><rect x="1" y="1" width="18" height="18" rx="5" fill="#111"/><rect x="1.6" y="1.6" width="16.8" height="16.8" rx="4.4" fill="none" stroke="#3a3a3a"/><path d="M8 6.2v7.6c0 .4.4.6.7.4l5.6-3.8a.5.5 0 0 0 0-.8L8.7 5.8c-.3-.2-.7 0-.7.4z" fill="#f4f4f4"/></svg>`,
     audio: `<svg viewBox="0 0 20 20"><defs><linearGradient id="ha-ga" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3b2d5c"/><stop offset="1" stop-color="#1b1726"/></linearGradient></defs><rect x="1" y="1" width="18" height="18" rx="5" fill="url(#ha-ga)"/><path d="M5 10v0M7.5 7.5v5M10 5v10M12.5 8v4M15 9.2v1.6" stroke="#f3b562" stroke-width="1.7" stroke-linecap="round"/></svg>`,
+    lock: `<svg viewBox="0 0 20 20"><defs><linearGradient id="ha-gl" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f3d27a"/><stop offset="1" stop-color="#b8862b"/></linearGradient></defs><rect x="1" y="1" width="18" height="18" rx="5" fill="#23262d"/><path d="M7 9V7.2a3 3 0 0 1 6 0V9" fill="none" stroke="#c9ccd3" stroke-width="1.6"/><rect x="5" y="9" width="10" height="7.5" rx="1.8" fill="url(#ha-gl)"/><circle cx="10" cy="12.3" r="1.1" fill="#5a4211"/></svg>`,
     document: `<svg viewBox="0 0 20 20"><rect x="1" y="1" width="18" height="18" rx="5" fill="#e9e6e1"/><path d="M6.5 3.8h5l3 3v9.4h-8z" fill="#fff" stroke="#8a8478" stroke-width="1.1" stroke-linejoin="round"/><path d="M8.3 10h4.4M8.3 12.3h4.4" stroke="#b4342a" stroke-width="1.2" stroke-linecap="round"/></svg>`,
   };
-  const NAME = { markdown: "Markdown Viewer", text: "Text Editor", table: "Table", image: "Image Viewer", video: "Video Player", audio: "Audio Player", document: "Document Viewer" };
+  const NAME = { lock: "Lock", markdown: "Markdown Viewer", text: "Text Editor", table: "Table", image: "Image Viewer", video: "Video Player", audio: "Audio Player", document: "Document Viewer" };
 
   /* ---------------- Markdown: escaped first, then a small block and inline grammar. No HTML passes through. ---------------- */
   function inline(s) {
@@ -325,6 +327,175 @@
     },
   };
 
+
+  /* ---------------- the escape room's locks ----------------
+     A *.lock file is JSON, either plain or encoded as "TXLOCK1\n" + base64(UTF-8 JSON) so that previews and search
+     cannot read the answers: { lock, kind: "digits" | "word" | "dial", length, prompt, answer, hints: [3], final?,
+     opens: { title, text (markdown), image?, reveal?: [paths] } }. `length` is the normalised answer's length: digits
+     and word show that many wheels or tiles; a dial with a digits-only answer is that many brass 0-9 dials (any other
+     dial answer, such as "12-34-5", is a rotary dial). Answers compare after normalising (case, spaces and punctuation
+     dropped). The page remembers solved locks (opts.locks), and a solved lock reopens on its contents; a reveal path
+     takes the explorer's pane there (opts.navigate, folders and files alike). */
+  const normal = s => String(s ?? "").normalize("NFKD").toLowerCase().replace(/[\s\p{P}\p{S}]/gu, "");
+  function lockJSON(text) {
+    const t = String(text ?? "").trim();
+    if (!/^TXLOCK1\s/.test(t)) return t;
+    try {   // base64 to bytes, then the bytes as UTF-8 (atob alone would leave a byte string)
+      const bin = atob(t.slice(7).replace(/\s+/g, ""));
+      return new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(bin, c => c.charCodeAt(0)));
+    } catch (_) { return null; }
+  }
+  function readLock(text) {
+    let o; try { o = JSON.parse(lockJSON(text)); } catch (_) { return null; }
+    if (!o || typeof o !== "object" || o.answer == null) return null;
+    const kind = ["digits", "word", "dial"].includes(o.kind) ? o.kind : "word";
+    const wheels = kind === "digits" || (kind === "dial" && /^\d{1,8}$/.test(normal(o.answer)));
+    const dialNums = kind === "dial" && !wheels ? String(o.answer).match(/\d+/g) || [] : [];
+    const length = Math.max(1, Math.min(kind === "dial" ? 8 : 16, Number.isInteger(o.length) && o.length > 0 ? o.length : dialNums.length || normal(o.answer).length || 4));
+    const opens = o.opens && typeof o.opens === "object" ? o.opens : {};
+    return { id: String(o.lock || ""), kind, wheels, length, prompt: String(o.prompt || ""), answer: String(o.answer), final: o.final === true,
+      hints: (Array.isArray(o.hints) ? o.hints : []).slice(0, 3).map(String),
+      dialMax: dialNums.some(n => +n >= 40) ? 100 : 40,
+      opens: { title: String(opens.title || "Open"), text: String(opens.text || ""), image: typeof opens.image === "string" ? opens.image : null,
+        reveal: (Array.isArray(opens.reveal) ? opens.reveal : []).filter(x => typeof x === "string" && x.startsWith("/")) } };
+  }
+  const PADLOCK = `<svg class="lk-pad" viewBox="0 0 120 140" aria-hidden="true"><defs>
+      <linearGradient id="lk-body" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f6dc8c"/><stop offset=".45" stop-color="#d9a744"/><stop offset="1" stop-color="#a87521"/></linearGradient>
+      <linearGradient id="lk-steel" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#8e939c"/><stop offset=".35" stop-color="#eef0f3"/><stop offset=".6" stop-color="#b3b8c0"/><stop offset="1" stop-color="#7b8089"/></linearGradient></defs>
+    <path class="lk-shackle" d="M34 66V44a26 26 0 0 1 52 0v22" fill="none" stroke="url(#lk-steel)" stroke-width="13" stroke-linecap="round"/>
+    <rect x="16" y="62" width="88" height="70" rx="14" fill="url(#lk-body)"/>
+    <rect x="16.5" y="62.5" width="87" height="69" rx="13.5" fill="none" stroke="rgba(255,255,255,.45)"/>
+    <path d="M22 70h76" stroke="rgba(255,255,255,.5)" stroke-width="2" stroke-linecap="round"/>
+    <circle cx="60" cy="92" r="9" fill="#4a3510"/><path d="M57 98h6l2 16h-10z" fill="#4a3510"/></svg>`;
+  APPS.lock = {
+    size: [600, 720],
+    render(f, win, opts = {}) {
+      const L = readLock(f.text), store = opts.locks || { solved: () => false, solve() {}, count: () => 0, total: 0 };
+      const progress = () => store.total ? (store.count() >= store.total ? `All ${store.total} locks open` : `${store.count()} of ${store.total} locks open`) : "";
+      if (!L) return { body: `<div class="lk"><div class="lk-head">${PADLOCK}<p class="lk-prompt">This lock's file could not be read.</p></div></div>`, foot: `<span>${esc(f.size)}</span>` };
+      const key = L.id || f.path;
+      let hintsShown = 0, value = L.wheels ? Array(L.length).fill(0) : L.kind === "dial" ? [] : Array(L.length).fill(""), dialAt = 0;
+      const field = () => {
+        if (L.wheels) return `<div class="lk-wheels${L.kind === "dial" ? " brass" : ""}" role="group" aria-label="Combination, ${L.length} ${L.kind === "dial" ? "dials" : "digits"}">${value.map((d, i) => `<div class="lk-wheel" role="spinbutton" tabindex="0" aria-valuemin="0" aria-valuemax="9" aria-valuenow="${d}" aria-label="Digit ${i + 1}" data-i="${i}"><button type="button" class="lk-up" tabindex="-1" aria-hidden="true"><svg viewBox="0 0 12 8"><path d="m2 6 4-4 4 4"/></svg></button><span class="lk-drum"><i>${(d + 9) % 10}</i><b>${d}</b><i>${(d + 1) % 10}</i></span><button type="button" class="lk-dn" tabindex="-1" aria-hidden="true"><svg viewBox="0 0 12 8"><path d="m2 2 4 4 4-4"/></svg></button></div>`).join("")}</div>`;
+        if (L.kind === "word") return `<div class="lk-tiles${L.length > 8 ? " many" : ""}" role="group" aria-label="Answer, ${L.length} letters">${value.map((c, i) => `<input class="lk-tile" maxlength="1" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Letter ${i + 1}" data-i="${i}" value="${esc(c)}">`).join("")}</div>`;
+        const ticks = Array.from({ length: L.dialMax }, (_, n) => `<i style="--a:${n * 360 / L.dialMax}deg"${n % 5 === 0 ? ` class="maj" data-n="${n}"` : ""}></i>`).join("");
+        return `<div class="lk-dialbox"><div class="lk-dial" tabindex="0" role="slider" aria-label="Dial" aria-valuemin="0" aria-valuemax="${L.dialMax - 1}" aria-valuenow="0"><div class="lk-face">${ticks}<span class="lk-knob"></span></div><span class="lk-mark" aria-hidden="true"></span><output class="lk-now">0</output></div>
+          <div class="lk-seq"><span class="lk-seq-l">Numbers set</span><span class="lk-chips"></span><button type="button" class="lk-set">Set ${"<b>0</b>"}</button><button type="button" class="lk-clear">Clear</button></div></div>`;
+      };
+      const opened = () => {
+        const o = L.opens, md = markdown(o.text).html, all = store.total && store.count() >= store.total;
+        return `<div class="lk-open${L.final ? " final" : ""}">${L.final && all ? `<p class="lk-all"><i aria-hidden="true"></i>All ${store.total} locks open</p>` : ""}<h3>${esc(o.title)}</h3>${o.image ? `<img class="lk-img" src="${esc(o.image)}" alt="">` : ""}<div class="md-doc lk-md">${md}</div>${o.reveal.length && !L.final ? `<div class="lk-reveal">${o.reveal.map(p => `<button type="button" class="lk-go" data-go="${esc(p)}"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5c0-.8.6-1.4 1.4-1.4h2.6l1.4 1.5h4.2c.8 0 1.4.6 1.4 1.4v5.6c0 .8-.6 1.4-1.4 1.4H3.9c-.8 0-1.4-.6-1.4-1.4z" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>Go to ${esc(p.split("/").filter(Boolean).pop() || p)}<small>${esc(p)}</small></button>`).join("")}</div>` : ""}</div>`;
+      };
+      const solvedBefore = store.solved(key);
+      return {
+        body: `<div class="lk${solvedBefore ? " is-open" + (L.final ? " finale words" : "") : ""}" data-kind="${L.kind}"><div class="lk-head">${PADLOCK}<p class="lk-prompt">${inline(L.prompt)}</p></div>
+          <div class="lk-play"><form class="lk-form" novalidate>${field()}<div class="lk-row"><button type="submit" class="lk-try">Try it</button><button type="button" class="lk-hint"${L.hints.length ? "" : " hidden"}>Hint <span>1 of ${L.hints.length}</span></button></div>
+          <p class="lk-msg" role="status" aria-live="polite"></p><ol class="lk-hints"></ol></form></div>
+          <div class="lk-after">${solvedBefore ? opened() : ""}</div></div>`,
+        foot: `<span class="lk-state">${solvedBefore ? "Open" : "Locked"}</span><span>${L.wheels && L.kind === "dial" ? `${L.length} brass dials` : { digits: `${L.length}-digit combination`, word: `${L.length}-letter word`, dial: `Dial, ${L.length} numbers` }[L.kind]}</span>${store.total ? `<span class="lk-prog">${progress()}</span>` : ""}`,
+        scroller: ".ha-body",
+        mount() {
+          const root = win.querySelector(".lk"), msg = win.querySelector(".lk-msg"), after = win.querySelector(".lk-after");
+          const reveal = () => after.querySelectorAll("[data-go]").forEach(b => b.addEventListener("click", () => opts.navigate?.(b.dataset.go)));
+          if (solvedBefore) { reveal(); return; }
+          const form = win.querySelector(".lk-form");
+          // digits: wheels turn by click, wheel, arrows or typing
+          const paintWheel = (w, d) => { w.setAttribute("aria-valuenow", d); w.querySelector(".lk-drum").innerHTML = `<i>${(d + 9) % 10}</i><b>${d}</b><i>${(d + 1) % 10}</i>`; };
+          const turn = (i, by) => {
+            const w = win.querySelector(`.lk-wheel[data-i="${i}"]`); value[i] = (value[i] + by + 10) % 10; paintWheel(w, value[i]);
+            if (!reduce()) { w.classList.remove("up", "dn"); void w.offsetWidth; w.classList.add(by > 0 ? "up" : "dn"); }
+          };
+          win.querySelectorAll(".lk-wheel").forEach(w => {
+            const i = +w.dataset.i;
+            w.querySelector(".lk-up").addEventListener("click", () => { turn(i, -1); w.focus(); });
+            w.querySelector(".lk-dn").addEventListener("click", () => { turn(i, 1); w.focus(); });
+            w.addEventListener("wheel", e => { e.preventDefault(); turn(i, e.deltaY > 0 ? 1 : -1); }, { passive: false });
+            w.addEventListener("keydown", e => {
+              const all = [...win.querySelectorAll(".lk-wheel")];
+              if (e.key === "ArrowUp") { e.preventDefault(); turn(i, -1); }
+              else if (e.key === "ArrowDown") { e.preventDefault(); turn(i, 1); }
+              else if (e.key === "ArrowRight") { e.preventDefault(); all[Math.min(all.length - 1, i + 1)].focus(); }
+              else if (e.key === "ArrowLeft") { e.preventDefault(); all[Math.max(0, i - 1)].focus(); }
+              else if (/^\d$/.test(e.key)) { e.preventDefault(); value[i] = +e.key; paintWheel(w, value[i]); (all[i + 1] || win.querySelector(".lk-try")).focus(); }
+            });
+          });
+          // word: one letter a tile, moving on as you type
+          win.querySelectorAll(".lk-tile").forEach(t => {
+            const i = +t.dataset.i, all = () => [...win.querySelectorAll(".lk-tile")];
+            t.addEventListener("input", () => { t.value = t.value.slice(-1).toUpperCase(); value[i] = t.value; if (t.value) (all()[i + 1] || win.querySelector(".lk-try")).focus(); });
+            t.addEventListener("keydown", e => {
+              if (e.key === "Backspace" && !t.value && i > 0) { e.preventDefault(); const p = all()[i - 1]; p.value = ""; value[i - 1] = ""; p.focus(); }
+              else if (e.key === "ArrowLeft" && i > 0) { e.preventDefault(); all()[i - 1].focus(); }
+              else if (e.key === "ArrowRight" && all()[i + 1]) { e.preventDefault(); all()[i + 1].focus(); }
+            });
+            t.addEventListener("focus", () => t.select());
+          });
+          // dial: turn it (drag, wheel, arrows), set each number in turn
+          const dial = win.querySelector(".lk-dial");
+          if (dial) {
+            const face = dial.querySelector(".lk-face"), now = dial.querySelector(".lk-now"), set = win.querySelector(".lk-set"), chips = win.querySelector(".lk-chips");
+            const paint = () => { face.style.transform = `rotate(${-dialAt * 360 / L.dialMax}deg)`; now.textContent = dialAt; dial.setAttribute("aria-valuenow", dialAt); set.querySelector("b").textContent = dialAt; };
+            const spin = by => { dialAt = (dialAt + by + L.dialMax) % L.dialMax; paint(); };
+            const paintSeq = () => { chips.innerHTML = value.map(n => `<b>${n}</b>`).join("") + Array.from({ length: Math.max(0, L.length - value.length) }, () => "<i></i>").join(""); set.disabled = value.length >= L.length; };
+            dial.addEventListener("keydown", e => {
+              if (e.key === "ArrowRight" || e.key === "ArrowUp") { e.preventDefault(); spin(1); }
+              else if (e.key === "ArrowLeft" || e.key === "ArrowDown") { e.preventDefault(); spin(-1); }
+              else if (e.key === "Enter" || e.key === " ") { e.preventDefault(); set.click(); }
+            });
+            dial.addEventListener("wheel", e => { e.preventDefault(); spin(e.deltaY > 0 ? 1 : -1); }, { passive: false });
+            let drag = null;
+            const angle = e => { const r = dial.getBoundingClientRect(); return Math.atan2(e.clientY - (r.top + r.height / 2), e.clientX - (r.left + r.width / 2)) * 180 / Math.PI; };
+            dial.addEventListener("pointerdown", e => { drag = { a: angle(e), at: dialAt }; dial.setPointerCapture(e.pointerId); dial.focus(); });
+            dial.addEventListener("pointermove", e => { if (!drag) return; const d = angle(e) - drag.a; dialAt = ((drag.at - Math.round(d / (360 / L.dialMax))) % L.dialMax + L.dialMax) % L.dialMax; paint(); });
+            const end = () => { drag = null; }; dial.addEventListener("pointerup", end); dial.addEventListener("pointercancel", end);
+            set.addEventListener("click", () => { if (value.length < L.length) { value.push(dialAt); paintSeq(); } });
+            win.querySelector(".lk-clear").addEventListener("click", () => { value = []; paintSeq(); dial.focus(); });
+            paint(); paintSeq();
+          }
+          // hints, one at a time
+          const hb = win.querySelector(".lk-hint"), list = win.querySelector(".lk-hints");
+          hb.addEventListener("click", () => {
+            if (hintsShown >= L.hints.length) return;
+            const li = document.createElement("li"); li.innerHTML = inline(L.hints[hintsShown++]); list.append(li);
+            hb.querySelector("span").textContent = hintsShown < L.hints.length ? `${hintsShown + 1} of ${L.hints.length}` : "none left";
+            hb.disabled = hintsShown >= L.hints.length;
+          });
+          form.addEventListener("submit", e => {
+            e.preventDefault();
+            const rotary = L.kind === "dial" && !L.wheels, tried = rotary ? value.join("-") : value.join("");
+            if (!rotary && value.some(v => v === "")) { msg.textContent = `All ${L.length} letters first.`; return; }
+            if (rotary && value.length < L.length) { msg.textContent = `Set all ${L.length} numbers first.`; return; }
+            const ok = rotary ? (String(L.answer).match(/\d+/g) || []).map(Number).join("-") === value.join("-") : normal(tried) === normal(L.answer);
+            if (!ok) {
+              msg.textContent = "Not that. The lock holds.";
+              if (!reduce()) { root.classList.remove("shake"); void root.offsetWidth; root.classList.add("shake"); }
+              return;
+            }
+            store.solve(key);
+            msg.textContent = "Open.";
+            win.querySelector(".lk-state").textContent = "Open";
+            const prog = win.querySelector(".lk-prog"); if (prog) prog.textContent = progress();
+            root.classList.add("opening");
+            if (L.final) {   // the finale: slower and larger; the picture first, then the words
+              root.classList.add("finale");
+              opts.onFinale?.();
+              setTimeout(() => {
+                after.innerHTML = opened(); root.classList.add("is-open");
+                setTimeout(() => root.classList.add("words"), reduce() ? 0 : 1600);
+              }, reduce() ? 0 : 1500);
+              return;
+            }
+            setTimeout(() => {
+              after.innerHTML = opened(); reveal();
+              root.classList.add("is-open");
+              (after.querySelector(".lk-go") || after).focus?.({ preventScroll: true });
+            }, reduce() ? 0 : 750);
+          });
+        },
+      };
+    },
+  };
+
   /* ================================ the window ================================ */
   let cur = null;
   const scrim = document.createElement("div");
@@ -356,7 +527,7 @@
     win.setAttribute("role", "dialog"); win.setAttribute("aria-modal", "true"); win.tabIndex = -1;
     const tid = "ha-t-" + Math.random().toString(36).slice(2, 8);
     win.setAttribute("aria-labelledby", tid);
-    const part = def.render(file, win);
+    const part = def.render(file, win, opts);
     win.innerHTML = `<header class="ha-bar"><span class="ha-ic" aria-hidden="true">${ICON[id]}</span><h2 class="ha-ttl" id="${tid}"><b>${esc(file.name)}</b><small>${NAME[id]}</small></h2>`
       + `<div class="ha-tools">${part.tools || ""}</div>`
       + `<div class="ha-ctl"><span class="ha-c ha-min" aria-hidden="true"><svg viewBox="0 0 12 12"><path d="M2.5 6h7"/></svg></span><span class="ha-c ha-max" aria-hidden="true"><svg viewBox="0 0 12 12"><rect x="2.5" y="2.5" width="7" height="7" rx="1"/></svg></span><button type="button" class="ha-c ha-x" aria-label="Close ${esc(NAME[id])}"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="m3 3 6 6M9 3 3 9"/></svg></button></div></header>`

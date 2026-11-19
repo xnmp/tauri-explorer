@@ -5,7 +5,8 @@
  * Built-in layout theme (#1548): a middle ground between Default and Floating
  * Islands. The sidebar, pane area and preview become opaque cards (6px
  * radius, 1px border, no shadow, no blur) separated by 6px of a slightly
- * darker window backdrop; title bar and status bar sit on that backdrop.
+ * darker window backdrop; title bar and status bar sit on that backdrop, and
+ * the same gap separates the cards from the tab strip (#1848).
  *
  * Written only against the layout contract (docs/layout-themes.md). Loaded
  * lazily and injected after all application CSS, like a user layout. The
@@ -18,7 +19,7 @@
 
 :root {
   --layout-gap: 6px;
-  --layout-inset: 0 6px 0 6px;
+  --layout-inset: var(--layout-gap) 6px 0 6px;
   --layout-radius: 6px;
   --layout-border: 1px solid var(--soft-cards-edge);
   --layout-shadow: none;

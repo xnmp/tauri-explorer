@@ -451,7 +451,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `terminal.ts` — embedded terminal spawn/write/resize IPC (#139).
   Terminal output/exit/cwd events go through `listenTerminal`: Tauri events natively, `mock-terminal.ts` in the browser.
 - `mock-terminal.ts` — mock PTY: terminal commands with seq-ordered input admission and an in-memory output/exit/cwd event channel; an installed backend (the site demo's shell) answers, otherwise the terminal stays silent.
-- `mock-git-fixture.ts` — fixture repositories for the mock backend: wraps the command table so git queries under an installed fixture repo answer from its commits/diffs (mutations refused); everything else falls through to the built-in repo.
+- `mock-git-fixture.ts` — fixture repositories for the mock backend: wraps the command table so git commands under an installed fixture repo answer from its commits/diffs plus a live HEAD/index over the mock filesystem (status, diff, stage/unstage, hunk patches, discard, commit, ignore, trash untracked; fs changes inside a repo emit watcher git changes); other mutations refused; everything else falls through to the built-in repo.
 - `mock-world.ts` — installs a converted fixture world into the mock backend (listings, text, trash, home, drives, repos; clears File Recovery records) and per-file media hooks that follow renames/moves/copies; `uninstall()` restores everything it replaced.
 - `mock-fs-changes.ts` — the mock filesystem's change feed: every mock mutation (commands, copy/move sessions, undo/redo) publishes `{op, path, from?}` once; observers run isolated and never change an outcome.
 - `mock-world-media.ts` — fetch-once media loader for fixture assets: downscaled JPEG thumbnails, data URLs and bytes; failures are not cached.
@@ -680,6 +680,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `demo-fixture.ts` — site demo: converts a `TX_FS` fixture into the mock world (listings, text, media, trash, users, drives, bookmarks, repos); never throws, bounded, warns on malformed input.
 - `demo-fixture-values.ts` — fixture value parsing: sizes, dates (absolute, year-less, relative), durations, pixel sizes, asset URLs.
 - `demo-fixture-git.ts` — fixture repositories: commit/ref/diff conversion with stable OIDs, paged log queries with branch/file filters, comparisons, merge base.
+- `demo-repo-worktree.ts` — fixture repositories' three trees (HEAD, index, working tree): status, stage/unstage, discard, commit/amend, git-format unified diffs, hunk patch apply, `.gitignore` subset.
 - `demo-protocol.ts` — site demo bridge protocol v1: message parsing, custom theme CSS, open-external kinds, `fs-change` derivation.
 - `demo-shell.ts` — site demo in-memory shell session: line parsing, editing, history, Tab completion, typeahead while busy.
 - `demo-shell-commands.ts` — the demo shell's commands (ls, cd, cat, grep, find, tree, mkdir, mv, cp, rm, git log/status, …) over a narrow `ShellFs` port.

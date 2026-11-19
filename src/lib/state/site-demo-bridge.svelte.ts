@@ -216,7 +216,7 @@ function snapshot(media: MockWorldMedia | null) {
     media: media !== null,
     trashCount: mockTrashCount(),
     // Where the git graph has something to show (it needs a repository).
-    repos: getMockFixtureRepos().map((repo) => ({ path: repo.root, branch: repo.branch })),
+    repos: getMockFixtureRepos().map((repo) => ({ path: repo.root, branch: repo.branch, changes: repo.changes.length })),
     appearance: appearance(),
   });
 }

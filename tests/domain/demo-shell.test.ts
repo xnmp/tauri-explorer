@@ -193,6 +193,23 @@ describe("shell commands", () => {
     expect((await run("git log", fs, "/home/ines")).err).toMatch(/not a git repository/);
   });
 
+  it("git status separates staged changes from unstaged and untracked ones", async () => {
+    const { fs } = tree();
+    const io: CommandIo = { cwd: "/r", previousCwd: "/r", out: "", err: "", status: 0, clear: false };
+    const staged = { ...repo, changes: [
+      { path: "new.md", status: "Added" as const, staged: true },
+      { path: "notes.md", status: "Modified" as const },
+      { path: "draft.md", status: "Untracked" as const },
+    ] };
+    await runCommand(["git", "status"], io, { ...env(fs), repoFor: () => staged }, NOW);
+    expect(strip(io.out)).toBe([
+      "On branch main",
+      "Changes to be committed:", "\tnew file:   new.md", "",
+      "Changes not staged for commit:", "\tmodified:   notes.md", "",
+      "Untracked files:", "\tdraft.md", "", "",
+    ].join("\n"));
+  });
+
   it("git log follows HEAD: a merged branch is in it, an unmerged one only with --all; git branch lists both", async () => {
     const branched = convertDemoRepo("/r", {
       branch: "main",

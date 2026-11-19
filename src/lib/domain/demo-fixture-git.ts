@@ -32,7 +32,14 @@ export interface DemoCommit {
 }
 
 export type DemoChangeStatus = "Modified" | "Added" | "Deleted" | "Renamed" | "Untracked" | "Conflicted";
-export interface DemoChange { readonly path: string; readonly status: DemoChangeStatus }
+export interface DemoChange {
+  readonly path: string;
+  readonly status: DemoChangeStatus;
+  /** The committed text of a modified or deleted file, when the fixture gives it. */
+  readonly base?: string;
+  /** The change is already in the index. */
+  readonly staged?: boolean;
+}
 
 export interface DemoRepo {
   readonly root: string;
@@ -191,7 +198,12 @@ export function convertDemoRepo(root: string, raw: unknown, now: number, warn: (
 
   const changes = (Array.isArray(raw.changes) ? raw.changes : [])
     .filter((ch): ch is Record<string, unknown> => isRecord(ch) && typeof ch.path === "string" && ch.path.length > 0)
-    .map((ch) => ({ path: (ch.path as string).replace(/^\/+/, ""), status: changeStatus(ch.status) }));
+    .map((ch): DemoChange => ({
+      path: (ch.path as string).replace(/^\/+/, ""),
+      status: changeStatus(ch.status),
+      ...(typeof ch.base === "string" ? { base: ch.base } : {}),
+      ...(ch.staged === true ? { staged: true } : {}),
+    }));
 
   return { root, branch: headBranch, head, commits, refs, changes };
 }

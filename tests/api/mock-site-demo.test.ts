@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mockInvoke } from "$lib/api/mock-invoke";
 import { emitMockTerminal, listenMockTerminal, setMockTerminalBackend, type MockTerminalBackend } from "$lib/api/mock-terminal";
 import { installMockWorld, type InstalledMockWorld } from "$lib/api/mock-world";
-import { withFixtureRepos } from "$lib/api/mock-git-fixture";
+import { getMockFixtureRepos, withFixtureRepos } from "$lib/api/mock-git-fixture";
+import { subscribeGitChanges, type GitChange } from "$lib/state/git-refresh";
 import { mockTrashCount } from "$lib/api/mock-files";
 import { onMockFsChange, type MockFsChange } from "$lib/api/mock-fs-changes";
 import { convertDemoFixture } from "$lib/domain/demo-fixture";
@@ -65,7 +66,7 @@ const FIXTURE = {
   trash: [{ from: "/home/ines", node: { name: "old.txt", text: "gone" } }],
   repos: { "/home/ines/repo": {
     branch: "main",
-    changes: [{ path: "a.txt", status: "Modified" }],
+    changes: [{ path: "a.txt", status: "Modified", base: "x\n" }],
     commits: [
       { hash: "c3", msg: "Merge", parents: ["b2", "a1"], refs: ["HEAD -> main"] },
       { hash: "b2", msg: "Side", parents: ["a1"], files: [{ path: "a.txt", status: "M", diff: "@@ -1 +1 @@\n-x\n+a" }] },
@@ -241,8 +242,114 @@ describe("fixture world in the mock backend", () => {
     expect(inside.results.map((r) => r.path)).toEqual(["/home/ines/.config/x.txt"]);
   });
 
+  describe("fixture repositories track the working tree", () => {
+    const REPO = "/home/ines/repo";
+    type Entry = { path: string; status: string };
+    type Status = { branch: string; staged: Entry[]; changes: Entry[]; untracked: Entry[] };
+    const status = () => mockInvoke<Status>("git_status", { repoPath: REPO });
+    const lists = async () => {
+      const s = await status();
+      return { staged: s.staged.map((e) => e.path), changes: s.changes.map((e) => e.path), untracked: s.untracked.map((e) => e.path) };
+    };
+
+    it("starts from the fixture's changes, with a real diff against the committed text", async () => {
+      install();
+      expect(await status()).toMatchObject({ branch: "main", staged: [], changes: [{ path: "a.txt", status: "Modified" }], untracked: [] });
+      expect(getMockFixtureRepos().map((r) => [r.root, r.changes.length])).toEqual([[REPO, 1]]);
+      expect(await mockInvoke("git_diff", { repoPath: REPO, path: "a.txt", options: null })).toContain("-x\n+a\n\\ No newline at end of file");
+    });
+
+    it("lists files created, edited, renamed and deleted through the filesystem", async () => {
+      install();
+      await mockInvoke("write_text_file", { path: `${REPO}/new.md`, content: "fresh\n" });
+      expect(await lists()).toEqual({ staged: [], changes: ["a.txt"], untracked: ["new.md"] });
+      await mockInvoke("rename_entry", { path: `${REPO}/a.txt`, newName: "b.txt" });
+      expect(await lists()).toEqual({ staged: [], changes: ["a.txt"], untracked: ["b.txt", "new.md"] });
+      expect((await status()).changes[0].status).toBe("Deleted");
+      await mockInvoke("delete_entries", { paths: [`${REPO}/new.md`], permanent: false });
+      expect((await lists()).untracked).toEqual(["b.txt"]);
+    });
+
+    it("stages, unstages and commits; the commit heads the log and clears the staged list", async () => {
+      install();
+      await mockInvoke("write_text_file", { path: `${REPO}/new.md`, content: "fresh\n" });
+      await mockInvoke("git_stage", { repoPath: REPO, paths: ["a.txt", "new.md"] });
+      expect(await lists()).toEqual({ staged: ["a.txt", "new.md"], changes: [], untracked: [] });
+      expect(await mockInvoke("git_diff", { repoPath: REPO, path: "new.md", options: { staged: true } })).toContain("new file mode 100644");
+      await mockInvoke("git_unstage", { repoPath: REPO, paths: ["new.md"] });
+      expect(await lists()).toEqual({ staged: ["a.txt"], changes: [], untracked: ["new.md"] });
+
+      const result = await mockInvoke<{ commit_id: string; summary: string }>("git_commit", { repoPath: REPO, message: "Count the cranes", options: null });
+      expect(result.summary).toBe("Count the cranes");
+      expect(await lists()).toEqual({ staged: [], changes: [], untracked: ["new.md"] });
+      const page = await mockInvoke<LogPage & { commits: Array<{ oid: string; summary: string }> }>("git_log", { repoPath: REPO, options: { skip: 0, limit: 10 } });
+      expect(page.commits.map((c) => c.summary)).toEqual(["Count the cranes", "Merge", "Side", "Root"]);
+      const files = await mockInvoke<Entry[]>("git_commit_files", { repoPath: REPO, oid: result.commit_id });
+      expect(files).toEqual([{ path: "a.txt", status: "M" }]);
+      expect(getMockFixtureRepos()[0]).toMatchObject({ head: result.commit_id, branch: "main" });
+      await expect(mockInvoke("git_commit", { repoPath: REPO, message: "again", options: null })).rejects.toThrow(/nothing to commit/);
+    });
+
+    it("discard restores a tracked file and removes an untracked one", async () => {
+      install();
+      await mockInvoke("write_text_file", { path: `${REPO}/new.md`, content: "fresh\n" });
+      await mockInvoke("git_discard", { repoPath: REPO, paths: ["a.txt", "new.md"], options: null });
+      expect(await mockInvoke("read_text_file", { path: `${REPO}/a.txt` })).toBe("x\n");
+      expect(await lists()).toEqual({ staged: [], changes: [], untracked: [] });
+    });
+
+    it("stages and discards single hunks through patches", async () => {
+      install();
+      await mockInvoke("write_text_file", { path: `${REPO}/a.txt`, content: "x\ny\n" });
+      const patch = await mockInvoke<string>("git_diff", { repoPath: REPO, path: "a.txt", options: null });
+      await mockInvoke("git_apply_patch", { repoPath: REPO, patch, action: "stage" });
+      expect(await lists()).toEqual({ staged: ["a.txt"], changes: [], untracked: [] });
+      const staged = await mockInvoke<string>("git_diff", { repoPath: REPO, path: "a.txt", options: { staged: true } });
+      await mockInvoke("git_apply_patch", { repoPath: REPO, patch: staged, action: "unstage" });
+      expect(await lists()).toEqual({ staged: [], changes: ["a.txt"], untracked: [] });
+      await mockInvoke("git_apply_patch", { repoPath: REPO, patch, action: "discard" });
+      expect(await mockInvoke("read_text_file", { path: `${REPO}/a.txt` })).toBe("x\n");
+    });
+
+    it("ignores and trashes untracked files", async () => {
+      install();
+      await mockInvoke("write_text_file", { path: `${REPO}/scratch.log`, content: "" });
+      await mockInvoke("write_text_file", { path: `${REPO}/keep.md`, content: "" });
+      expect(await mockInvoke("git_add_to_gitignore", { repoRoot: REPO, entry: "scratch.log" })).toBe("scratch.log");
+      expect((await lists()).untracked).toEqual([".gitignore", "keep.md"]);
+      await mockInvoke("git_trash_untracked", { repoPath: REPO, paths: ["keep.md"] });
+      expect((await lists()).untracked).toEqual([".gitignore"]);
+      await expect(mockInvoke("git_trash_untracked", { repoPath: REPO, paths: ["a.txt"] })).rejects.toThrow(/non-untracked/);
+    });
+
+    it("tells git observers when a file inside a repository changes, as the native watcher does", async () => {
+      install();
+      const seen: GitChange[] = [];
+      const stop = await subscribeGitChanges((change) => seen.push(change));
+      try {
+        await mockInvoke("write_text_file", { path: `${REPO}/new.md`, content: "1" });
+        await mockInvoke("write_text_file", { path: "/home/ines/outside.md", content: "1" });
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        expect(seen).toEqual([{ repoRoot: REPO, source: "watcher" }]);
+      } finally {
+        stop();
+      }
+    });
+
+    it("leaves the fixture as installed after a reinstall", async () => {
+      install();
+      await mockInvoke("git_stage", { repoPath: REPO, paths: ["a.txt"] });
+      await mockInvoke("git_commit", { repoPath: REPO, message: "m", options: null });
+      installed!.uninstall();
+      install();
+      expect(await lists()).toEqual({ staged: [], changes: ["a.txt"], untracked: [] });
+      const page = await mockInvoke<LogPage>("git_log", { repoPath: REPO, options: { skip: 0, limit: 10 } });
+      expect(page.commits[0].summary).toBe("Merge");
+    });
+  });
+
   describe("fixture repositories are read-only by default (review D)", () => {
-    it.each(["git_commit", "git_merge_abort", "git_rebase_abort", "git_rebase_continue", "git_revert_abort", "git_cherry_pick_abort"])(
+    it.each(["git_checkout", "git_merge", "git_archive_untracked", "git_merge_abort", "git_rebase_abort", "git_rebase_continue", "git_revert_abort", "git_cherry_pick_abort"])(
       "%s is refused for a fixture repository", async (command) => {
         install();
         await expect(mockInvoke(command, { repoPath: "/home/ines/repo" })).rejects.toMatchObject({ message: expect.stringMatching(/read-only/) });

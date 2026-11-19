@@ -789,11 +789,13 @@ describe("turbo.json", () => {
     "ci:e2e": ["package.json", "bun.lock", "tsconfig.json", "playwright.config.ts", "vite.config.ts", "svelte.config.js",
       "scripts/ci-test-e2e.sh", "scripts/e2e-shards.mjs", "scripts/e2e-shard-timings.json", "scripts/prepare-pdf-assets.mjs"],
   };
-  // Strings that name files without reading them: a selector fixture, and
-  // this file's scratch-repository paths.
+  // Strings that name files without reading them: a selector fixture, this
+  // file's scratch-repository paths, and a dev server no test starts.
   const notReads: Record<string, string[] | "all"> = {
     "tests/rust-affected.test.ts": ["CLAUDE.md"],
     "tests/test-cache.test.ts": "all",
+    // `bun run demo:serve` serves the site mocks to a browser; no test runs it.
+    "scripts/demo-serve.ts": ["screenshots/design/website-rehaul/overhaul"],
   };
   const hashed = (task: string) => {
     const dry = spawnSync(TURBO, [

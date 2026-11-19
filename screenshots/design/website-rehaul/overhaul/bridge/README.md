@@ -91,7 +91,7 @@ target. Messages from any other window, origin or version are ignored.
 
 | Method | Params → result |
 |---|---|
-| `getState()` | → `{ path, panes: [{index, paneId, path, viewMode, selection, active}], settings, theme, panels, keybindings, media, trashCount, repos, appearance }` (`trashCount`: items in the Recycle Bin; `repos`: the fixture's git repositories, `[{ path, branch }]`, where the git graph has something to show; `appearance`: as the event) |
+| `getState()` | → `{ path, panes: [{index, paneId, path, viewMode, selection, active}], settings, theme, panels, keybindings, media, trashCount, repos, appearance }` (`trashCount`: items in the Recycle Bin; `repos`: the fixture's git repositories, `[{ path, branch, changes }]`, where the git graph has something to show, with `changes` the number of files the Source Control panel lists now (staged, modified and untracked; a badge count); `appearance`: as the event) |
 | `getCatalog()` | → see Catalog |
 | `setSettings(partial)` | any keys of the app's `Settings` (unknown keys and bad values are dropped by the app's own normalizer) → the full settings. `theme` must be a catalog theme id. `millerLayers` and `viewMode` are each new pane's default; the bridge also applies them to the open panes. |
 | `setPanel(id, visible)` | → `true` when the panel ends up in that state |
@@ -195,7 +195,7 @@ What the host does:
 | terminal | `terminal` | — (runtime) | `view.toggleTerminal` (Alt+M T) | needs `enableTerminal` (the demo turns it on) |
 | split | `split` | — (runtime) | `view.toggleDualPane` | |
 | Miller | `miller` | `millerLayers` (default for panes) | `view.toggleMillerColumns` (Alt+M E) | per pane |
-| source control | `scm` | `showScmPanel` (default for panes) | `view.toggleScmPanel` | per pane |
+| source control | `scm` | `showScmPanel` (default for panes) | `view.toggleScmPanel` | per pane; works inside a fixture repository (see below), shows "Not a git repository" elsewhere |
 | git graph | `git` | — | `git.showGraph` (Ctrl+Alt+G) | needs `enableGitGraph` (the demo turns it on) and a repository; replaces the pane's file view |
 | search | — | — | `general.openQuickOpen` (Ctrl+P), `general.openContentSearch` (Ctrl+Shift+F) | modal, not a panel; reported by `overlay` |
 | tabs | — | — | — | **no real toggle**: the tab bar is always shown |
@@ -211,10 +211,24 @@ Real-app behaviour a host may notice:
   was (`run` → `true`, `setPanel` → `false`). `getState().repos` lists the fixture's repositories, so
   `navigate(repos[0].path)` first. The demo has no Upscale plugin (it needs a fal.ai account).
 
+- **Source control works in the fixture repositories, in memory.** Inside a repository from the
+  fixture's `repos`, the Source Control panel lists the fixture's `changes` plus whatever the
+  visitor does there: a file created, edited, renamed or deleted (in the app or the terminal) shows
+  as untracked, modified or deleted. Stage and unstage (files or single hunks) move entries between
+  the lists, clicking a change shows its diff (HEAD vs index vs working tree), Discard restores the
+  file from the last commit (or removes an untracked one), Ignore appends to `.gitignore`, and
+  Commit records a commit on the current branch that heads the git graph and the terminal's
+  `git log` and empties the staged list. A change whose fixture entry has no `base` text lists as
+  modified, but its diff shows the file unchanged and Discard keeps it as it is. Everything resets
+  on reload. Branch switching, merging, pull/push, stash and "Move to .archive" are refused with
+  the toast "This demo repository is read-only". Outside a repository the panel shows the app's
+  ordinary "Not a git repository" state. Terminal: `git status` (staged, unstaged, untracked),
+  `git log`, `git branch`.
+
 - **Search never looks inside hidden entries.** Quick Open and Search in Files skip every
   dot-named file and folder below the search root, whatever `showHidden` says (the native walkers
   do the same: `search.rs` uses jwalk's `skip_hidden`, `content_search.rs` uses `ignore`'s
-  `hidden(true)`, which also honours `.gitignore`; the demo does not model `.gitignore`).
+  `hidden(true)`, which also honours `.gitignore`; the demo's search does not model `.gitignore`).
 - **Narrow frames scroll the panes, they do not squeeze them.** Each pane keeps a minimum width;
   when sidebar, preview and a split leave less than that, the pane area scrolls horizontally to
   the active pane, so the inactive pane is partly scrolled out of view at its left edge (e.g.

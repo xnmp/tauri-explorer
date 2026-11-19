@@ -6,8 +6,13 @@
  * repository (`/home/user/Documents/project`) unchanged, so the browser suite
  * is unaffected while no fixture repository is installed.
  *
- * Fixture repositories are read-only: history and status queries answer from
- * the fixture, and every other git command about them is refused by default.
+ * Each fixture repository is a live, in-memory git repository over the mock
+ * filesystem (`domain/demo-repo-worktree.ts`): HEAD and the index are seeded
+ * from the fixture's `changes`, the working tree is whatever the mock
+ * filesystem holds now, so files created, edited, renamed or deleted through
+ * the app or the demo terminal show up in status. Stage, unstage, hunk patches,
+ * discard and commit work; every other mutating git command (branch switch,
+ * merge, push...) is refused as read-only. All of it resets on reload.
  */
 import {
   compareDemoCommits,
@@ -16,23 +21,106 @@ import {
   type DemoLogOptions,
   type DemoRepo,
 } from "$lib/domain/demo-fixture-git";
+import {
+  applyDemoPatch,
+  binaryBlob,
+  commitDemoRepo,
+  demoStatus,
+  demoUnifiedDiff,
+  discardPaths,
+  seedIndexState,
+  stagePaths,
+  statusChanges,
+  unstagePaths,
+  withGitignoreEntry,
+  type DemoIndexState,
+  type DemoTree,
+} from "$lib/domain/demo-repo-worktree";
+import { parentDir } from "$lib/domain/path";
+import { broadcastFileChange } from "$lib/state/file-events";
+import { emitWatcherGitChange } from "$lib/state/git-refresh";
 import { STALE_CURSOR_KIND } from "./git-log";
-import type { CommandHandler } from "./mock-dispatch";
+import { invokeMockCommand, type CommandHandler } from "./mock-dispatch";
+import { mockWrittenFiles } from "./mock-files";
+import { mockFileContent, mockFiles } from "./mock-fixtures";
+import { onMockFsChange } from "./mock-fs-changes";
 
-let fixtureRepos: readonly DemoRepo[] = [];
+/** One fixture repository: its history plus HEAD/index trees. */
+interface LiveRepo {
+  repo: DemoRepo;
+  state: DemoIndexState;
+}
+
+/** Innermost first, so a nested repository wins over the one containing it. */
+let liveRepos: LiveRepo[] = [];
+
+const inside = (root: string, path: string) => path === root || path.startsWith(`${root}/`);
+
+/** The working tree of `root` as the mock filesystem holds it now. */
+function readWorktree(root: string): DemoTree {
+  const nested = liveRepos.map((r) => r.repo.root).filter((other) => other !== root && inside(root, other));
+  const tree = new Map<string, string>();
+  for (const [dir, entries] of Object.entries(mockFiles)) {
+    if (!inside(root, dir) || nested.some((other) => inside(other, dir))) continue;
+    for (const entry of entries) {
+      if (entry.kind !== "file" || !inside(root, entry.path)) continue;
+      const relative = entry.path.slice(root.length + 1);
+      if (relative.split("/").includes(".git")) continue;
+      const text = mockWrittenFiles[entry.path] ?? mockFileContent[entry.path];
+      tree.set(relative, text ?? binaryBlob(entry.size ?? 0, String(entry.modified ?? "")));
+    }
+  }
+  return tree;
+}
+
+/** The repository as git would describe it now: history plus live status. */
+function currentRepo(live: LiveRepo): DemoRepo {
+  return { ...live.repo, changes: statusChanges(demoStatus(live.state, readWorktree(live.repo.root))) };
+}
 
 /** Replace the installed fixture repositories (empty: built-in mock only). */
 export function setMockFixtureRepos(repos: readonly DemoRepo[]): void {
-  fixtureRepos = [...repos].sort((a, b) => b.root.length - a.root.length);
+  liveRepos = [...repos]
+    .sort((a, b) => b.root.length - a.root.length)
+    .map((repo) => ({ repo, state: { head: new Map(), index: new Map() } }));
+  // Seed after every root is known, so nested repositories stay out of their parent's tree.
+  for (const live of liveRepos) live.state = seedIndexState(readWorktree(live.repo.root), live.repo.changes);
 }
 
-export const getMockFixtureRepos = (): readonly DemoRepo[] => fixtureRepos;
+/** Capture the installed repositories exactly (history, HEAD and index); the returned function puts them back. */
+export function snapshotMockFixtureRepos(): () => void {
+  const saved = liveRepos.map((live) => ({ ...live }));
+  return () => { liveRepos = saved.map((live) => ({ ...live })); };
+}
 
-/** The innermost fixture repository containing `path`, or null. */
+/** The installed repositories, each with its current history and status. */
+export const getMockFixtureRepos = (): readonly DemoRepo[] => liveRepos.map(currentRepo);
+
+function liveRepoFor(path: unknown): LiveRepo | null {
+  if (typeof path !== "string" || liveRepos.length === 0) return null;
+  return liveRepos.find((live) => inside(live.repo.root, path)) ?? null;
+}
+
+/** The innermost fixture repository containing `path`, with its current status, or null. */
 export function fixtureRepoFor(path: unknown): DemoRepo | null {
-  if (typeof path !== "string" || fixtureRepos.length === 0) return null;
-  return fixtureRepos.find((repo) => path === repo.root || path.startsWith(`${repo.root}/`)) ?? null;
+  const live = liveRepoFor(path);
+  return live ? currentRepo(live) : null;
 }
+
+// A file changed inside a repository: tell git observers, as the native
+// repository watcher would. Coalesced per root, after the change completes.
+const pendingRoots = new Set<string>();
+onMockFsChange(({ path, from }) => {
+  for (const changed of [path, from]) {
+    const live = liveRepoFor(changed);
+    if (!live || pendingRoots.has(live.repo.root)) continue;
+    pendingRoots.add(live.repo.root);
+    setTimeout(() => {
+      pendingRoots.delete(live.repo.root);
+      emitWatcherGitChange(live.repo.root);
+    }, 0);
+  }
+});
 
 const readOnly = () => ({ kind: "other", message: "This demo repository is read-only" });
 const relativeTo = (root: string, path: string) => (path === root ? "" : path.slice(root.length + 1));
@@ -54,19 +142,123 @@ function refTarget(repo: DemoRepo, fullName: unknown): string | null {
   return null;
 }
 
-function statusSummary(repo: DemoRepo) {
-  const entry = (c: DemoRepo["changes"][number]) => ({ path: c.path, old_path: null, status: c.status });
+function statusSummary(live: LiveRepo) {
+  const { staged, changes, untracked } = demoStatus(live.state, readWorktree(live.repo.root));
   return {
     is_repo: true,
-    repo_root: repo.root,
-    branch: repo.branch,
+    repo_root: live.repo.root,
+    branch: live.repo.branch,
     detached: false,
-    staged: [],
-    changes: repo.changes.filter((c) => c.status !== "Untracked").map(entry),
-    untracked: repo.changes.filter((c) => c.status === "Untracked").map(entry),
+    staged,
+    changes,
+    untracked,
     merge: [],
     op_state: "clean",
   };
+}
+
+const pathsArgument = (args: Record<string, unknown>): string[] =>
+  Array.isArray(args.paths) ? args.paths.filter((p): p is string => typeof p === "string") : [];
+
+/** `git_diff`: the index against HEAD (staged) or the working tree against the index. */
+function fileDiff(live: LiveRepo, args: Record<string, unknown>): string {
+  const path = String(args.path ?? "");
+  const staged = Boolean((args.options as { staged?: boolean } | null)?.staged);
+  const { head, index } = live.state;
+  return staged
+    ? demoUnifiedDiff(path, head.get(path), index.get(path))
+    : demoUnifiedDiff(path, index.get(path), readWorktree(live.repo.root).get(path));
+}
+
+const patchTarget = (patch: string) =>
+  /^\+\+\+ b\/(.+)$/m.exec(patch)?.[1] ?? /^--- a\/(.+)$/m.exec(patch)?.[1] ?? null;
+const isText = (blob: string | undefined) => blob === undefined || !blob.startsWith("\0");
+
+/** `git_apply_patch`: one file's hunks, applied to the index (stage, unstage) or the working tree (discard). */
+async function applyPatch(live: LiveRepo, args: Record<string, unknown>): Promise<null> {
+  const patch = String(args.patch ?? "");
+  const path = patchTarget(patch);
+  if (!path) throw new Error("patch is missing its target path");
+  const { head, index } = live.state;
+  const work = readWorktree(live.repo.root);
+  const next = new Map(index);
+  const put = (tree: Map<string, string>, text: string | undefined) => {
+    if (text === undefined) tree.delete(path);
+    else tree.set(path, text);
+  };
+  if (args.action === "stage") {
+    const current = index.get(path);
+    put(next, isText(current) ? applyDemoPatch(current ?? "", patch, false) : work.get(path));
+    // A hunk that empties a deleted file stages the deletion itself.
+    if (work.get(path) === undefined && next.get(path) === "") next.delete(path);
+  } else if (args.action === "unstage") {
+    const current = index.get(path);
+    put(next, isText(current) && current !== undefined ? applyDemoPatch(current, patch, true) : head.get(path));
+    if (head.get(path) === undefined && next.get(path) === "") next.delete(path);
+  } else if (args.action === "discard") {
+    const current = work.get(path);
+    if (current === undefined || !isText(current)) throw new Error(`cannot discard part of '${path}'`);
+    const absolute = `${live.repo.root}/${path}`;
+    await invokeMockCommand("write_text_file", { path: absolute, content: applyDemoPatch(current, patch, true) });
+    // Open folders refresh as they would from the native filesystem watcher.
+    broadcastFileChange([parentDir(absolute)]);
+    return null;
+  } else {
+    throw new Error(`unknown patch action ${String(args.action)}`);
+  }
+  live.state = { head, index: next };
+  return null;
+}
+
+/** `git_discard`: restore tracked files from HEAD and remove untracked ones, through the mock filesystem. */
+async function discard(live: LiveRepo, args: Record<string, unknown>): Promise<null> {
+  const force = Boolean((args.options as { force?: boolean } | null)?.force);
+  const { state, writes } = discardPaths(live.state, readWorktree(live.repo.root), pathsArgument(args), force);
+  live.state = state;
+  const absolute = (path: string) => `${live.repo.root}/${path}`;
+  const removed = writes.filter((w) => w.text === null).map((w) => absolute(w.path));
+  for (const write of writes) {
+    if (write.text !== null) await invokeMockCommand("write_text_file", { path: absolute(write.path), content: write.text });
+  }
+  if (removed.length) await invokeMockCommand("delete_entries", { paths: removed, permanent: true });
+  // Open folders refresh as they would from the native filesystem watcher.
+  broadcastFileChange([...new Set(writes.map((w) => parentDir(absolute(w.path))))]);
+  return null;
+}
+
+/** `git_trash_untracked`: untracked files go to the Recycle Bin. */
+async function trashUntracked(live: LiveRepo, args: Record<string, unknown>): Promise<null> {
+  const paths = pathsArgument(args);
+  const untracked = new Set(demoStatus(live.state, readWorktree(live.repo.root)).untracked.map((e) => e.path));
+  if (paths.length === 0 || new Set(paths).size !== paths.length || paths.some((path) => !untracked.has(path))) {
+    throw new Error("refusing to operate on non-untracked path");
+  }
+  const absolute = paths.map((path) => `${live.repo.root}/${path}`);
+  await invokeMockCommand("delete_entries", { paths: absolute, permanent: false });
+  broadcastFileChange([...new Set(absolute.map(parentDir))]);
+  return null;
+}
+
+/** `git_add_to_gitignore`: append the entry to the repository's root `.gitignore`. */
+async function addToGitignore(live: LiveRepo, args: Record<string, unknown>): Promise<string> {
+  const entry = String(args.entry ?? "").replace(/^\.\//, "").replace(/^\//, "");
+  if (!entry) throw new Error("gitignore entry is empty");
+  const path = `${live.repo.root}/.gitignore`;
+  const current = readWorktree(live.repo.root).get(".gitignore");
+  const next = withGitignoreEntry(current?.startsWith("\0") ? undefined : current, entry);
+  if (next !== current) {
+    await invokeMockCommand("write_text_file", { path, content: next });
+    broadcastFileChange([live.repo.root]);
+  }
+  return entry;
+}
+
+function commit(live: LiveRepo, args: Record<string, unknown>) {
+  const amend = Boolean((args.options as { amend?: boolean } | null)?.amend);
+  const result = commitDemoRepo(live.repo, live.state, { message: String(args.message ?? ""), amend, now: Date.now() });
+  live.repo = result.repo;
+  live.state = result.state;
+  return { commit_id: result.commit.oid, summary: result.commit.summary };
 }
 
 /** `get_git_status`: per-name status of `dir`'s direct children. */
@@ -95,13 +287,32 @@ function refsPayload(repo: DemoRepo) {
 }
 
 type FixtureHandler = (repo: DemoRepo, args: Record<string, unknown>) => unknown;
+type WorktreeHandler = (live: LiveRepo, args: Record<string, unknown>) => unknown;
 
+/** Commands that read or change the index and working tree. */
+const WORKTREE: Record<string, WorktreeHandler> = {
+  get_git_status: (live, args) => ({ is_git_repo: true, statuses: directoryStatuses(currentRepo(live), String(args.path)) }),
+  git_status: (live) => statusSummary(live),
+  git_diff: fileDiff,
+  git_stage: (live, args) => {
+    live.state = stagePaths(live.state, readWorktree(live.repo.root), pathsArgument(args));
+    return null;
+  },
+  git_unstage: (live, args) => {
+    live.state = unstagePaths(live.state, pathsArgument(args));
+    return null;
+  },
+  git_apply_patch: applyPatch,
+  git_discard: discard,
+  git_commit: commit,
+  git_trash_untracked: trashUntracked,
+  git_add_to_gitignore: addToGitignore,
+};
+
+/** History queries, answered from the repository's commits. */
 const QUERIES: Record<string, FixtureHandler> = {
-  get_git_status: (repo, args) => ({ is_git_repo: true, statuses: directoryStatuses(repo, String(args.path)) }),
   git_repo_root: (repo) => repo.root,
   git_directory_scope: (repo, args) => ({ repo_root: repo.root, relative_directory: relativeTo(repo.root, String(args.path)) }),
-  git_status: (repo) => statusSummary(repo),
-  git_diff: () => "",
   git_log: (repo, args) => {
     const page = queryDemoLog(repo, (args.options as DemoLogOptions | null) ?? {});
     if (page.staleCursor) throw { kind: STALE_CURSOR_KIND, message: "git log cursor is not in the current history" };
@@ -156,15 +367,21 @@ const repoArgument = (args: Record<string, unknown>) => args.repoPath ?? args.re
 export function withFixtureRepos(commands: Record<string, CommandHandler>): Record<string, CommandHandler> {
   const routed: Record<string, CommandHandler> = { ...commands };
   for (const [name, fallback] of Object.entries(commands)) {
+    const worktree = WORKTREE[name];
     const query = QUERIES[name];
-    if (query) {
+    if (worktree) {
       routed[name] = (args) => {
-        const repo = fixtureRepoFor(repoArgument(args));
-        return repo ? query(repo, args) : fallback(args);
+        const live = liveRepoFor(repoArgument(args));
+        return live ? worktree(live, args) : fallback(args);
+      };
+    } else if (query) {
+      routed[name] = (args) => {
+        const live = liveRepoFor(repoArgument(args));
+        return live ? query(live.repo, args) : fallback(args);
       };
     } else if (name.startsWith("git_") && !PASSTHROUGH.has(name)) {
       routed[name] = (args) => {
-        if (fixtureRepoFor(repoArgument(args))) throw readOnly();
+        if (liveRepoFor(repoArgument(args))) throw readOnly();
         return fallback(args);
       };
     }

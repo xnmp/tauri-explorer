@@ -1391,25 +1391,40 @@ if __name__ == "__main__":
         flag = "" if model == seen else "   <- model disagrees with dye (model checked twice)"
         print(f"{cairn}: model {model:5s} dye {seen}{flag}")
 `),
-        T("notes.md", at(36, "21:20"), `
+        // Uncommitted work (see the repository's `changes` below): the lab
+        // check written into notes and calibration, and a thank-you note.
+        T("notes.md", "2026-11-05T21:40:00", `
 # Notes on T7 (in order, honestly)
 
 - D22: +0.8 C at 10 m. Impossible. FAULT.
 - D25: dye drains east at C19. Unrelated. Probably.
 - D29: swapped T7 and T3. The warmth stayed at C19. Inconvenient.
 - D36: ice bath. Every probe fine. Very inconvenient.
+- 30 Oct: lab ice bath against the reference probe. All eight within 0.05 C again.
+- T7 was right on Day 22. It was right every day after. Good probe.
 - Conclusion pending. (It is not pending.)
 `),
-        T("calibration.csv", at(36, "21:20"), `
-probe,offset_C
-T1,+0.02
-T2,-0.03
-T3,+0.01
-T4,+0.04
-T5,-0.02
-T6,0.00
-T7,+0.03
-T8,-0.01
+        T("calibration.csv", "2026-11-05T21:40:00", `
+probe,offset_C,lab_30oct_C
+T1,+0.02,+0.01
+T2,-0.03,-0.02
+T3,+0.01,+0.01
+T4,+0.04,+0.03
+T5,-0.02,-0.02
+T6,0.00,+0.01
+T7,+0.03,+0.02
+T8,-0.01,0.00
+`),
+        T("acknowledgements.md", "2026-11-05T22:05:00", `
+# Acknowledgements (draft)
+
+Thanks to Jonas, who carried two buckets of slush up from the stream on Day 36
+and did not once ask why. To Ansel, for the hammer, which I am returning. To the
+lab, for the reference probe and for not laughing.
+
+And to T7, which reported +0.8 C at 10 m every day for twenty days while I
+called it faulty in four documents and one email I am glad I never sent. It was
+the most reliable instrument on the
 `)
       ])
     ]),
@@ -2231,5 +2246,33 @@ T. Hale (Dr)
     ],
     repos: {}
   };
-  TX.expedition.repos[R] = { branch: "main", commits: commits };
+  TX.expedition.repos[R] = {
+    branch: "main",
+    commits: commits,
+    // Not committed yet: `base` is each file as of the last commit, so the
+    // Source Control panel shows a real diff.
+    changes: [
+      { path: "notes.md", status: "M", base: body(`
+# Notes on T7 (in order, honestly)
+
+- D22: +0.8 C at 10 m. Impossible. FAULT.
+- D25: dye drains east at C19. Unrelated. Probably.
+- D29: swapped T7 and T3. The warmth stayed at C19. Inconvenient.
+- D36: ice bath. Every probe fine. Very inconvenient.
+- Conclusion pending. (It is not pending.)
+`) },
+      { path: "calibration.csv", status: "M", base: body(`
+probe,offset_C
+T1,+0.02
+T2,-0.03
+T3,+0.01
+T4,+0.04
+T5,-0.02
+T6,0.00
+T7,+0.03
+T8,-0.01
+`) },
+      { path: "acknowledgements.md", status: "??" }
+    ]
+  };
 })();

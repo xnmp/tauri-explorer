@@ -18,7 +18,7 @@ import { mockDirEmpty, mockFileContent, mockFiles } from "./mock-fixtures";
 import { mockWrittenFiles, seedMockTrash, snapshotMockTrash } from "./mock-files";
 import { clearMockRecoveryRecords } from "./mock-file-recovery";
 import { onMockFsChange } from "./mock-fs-changes";
-import { getMockFixtureRepos, setMockFixtureRepos } from "./mock-git-fixture";
+import { setMockFixtureRepos, snapshotMockFixtureRepos } from "./mock-git-fixture";
 import { getMockDrives, getMockHomeDirectory, setMockDrives, setMockHomeDirectory } from "./mock-system";
 import { createMockMediaLoader } from "./mock-world-media";
 
@@ -53,7 +53,7 @@ function snapshot(): () => void {
   const restoreTrash = snapshotMockTrash();
   const home = getMockHomeDirectory();
   const drives = getMockDrives();
-  const repos = getMockFixtureRepos();
+  const restoreRepos = snapshotMockFixtureRepos();
   const control = getMockControl();
   const hooks = Object.fromEntries(HOOKS.map((name) => [name, control[name]]));
   return () => {
@@ -64,7 +64,7 @@ function snapshot(): () => void {
     restoreTrash();
     setMockHomeDirectory(home);
     setMockDrives(drives);
-    setMockFixtureRepos(repos);
+    restoreRepos();
     Object.assign(control, hooks);
   };
 }

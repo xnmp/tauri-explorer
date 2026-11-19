@@ -117,7 +117,10 @@ Ctrl+C/L/U/A/E. The pane drives the terminal's cwd; `cd` never moves the pane, `
 - Names starting with `.` are hidden until Toggle Hidden Files (Ctrl+H). `date` may be ISO
   (`2026-10-11T07:04:00`, shown as "Oct 11 2026, 07:04") or free text.
 - `trash: [{ node, from: "/original/dir", deleted }]` → shown in the sidebar Recycle Bin, restorable.
-- `repos: { "/abs/repo/path": { branch, changes?: [{path, status}], commits: [...] } }`. Commits are
+- `repos: { "/abs/repo/path": { branch, changes?: [{path, status, base?, staged?}], commits: [...] } }`.
+  `changes` are the uncommitted files: `status` `"M"`, `"A"`, `"D"` or `"??"` (untracked), `base` the
+  file's text as of the last commit (the app demo diffs the working file against it; without it the
+  diff shows no lines changed), `staged: true` if it is already in the index. Commits are
   newest first: `{ hash, msg ("subject\n\nbody"), author, date, parents: [hash…], refs?: [...],
   files: [{ path, status: "A"|"M"|"D"|"R", diff?: unified-diff text }] }`. Merges have 2 parents;
   files without `diff` list without one. The repo folder gets a git badge; the graph opens from it.

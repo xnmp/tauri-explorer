@@ -456,8 +456,14 @@ function git(argv: readonly string[], io: CommandIo, env: ShellEnv, now: number)
   if (sub === "status") {
     io.out += `On branch ${repo.branch ?? "(no branch)"}\n`;
     if (!repo.changes.length) { io.out += "nothing to commit, working tree clean\n"; return; }
-    const tracked = repo.changes.filter((c) => c.status !== "Untracked");
-    const untracked = repo.changes.filter((c) => c.status === "Untracked");
+    const staged = repo.changes.filter((c) => c.staged);
+    const tracked = repo.changes.filter((c) => !c.staged && c.status !== "Untracked");
+    const untracked = repo.changes.filter((c) => !c.staged && c.status === "Untracked");
+    if (staged.length) {
+      io.out += "Changes to be committed:\n";
+      for (const c of staged) io.out += `\t${GREEN}${c.status === "Added" ? "new file" : c.status.toLowerCase()}:   ${c.path}${RESET}\n`;
+      io.out += "\n";
+    }
     if (tracked.length) {
       io.out += "Changes not staged for commit:\n";
       for (const c of tracked) io.out += `\t\x1b[31m${c.status.toLowerCase()}:   ${c.path}${RESET}\n`;

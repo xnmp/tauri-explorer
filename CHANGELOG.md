@@ -2,6 +2,44 @@
 
 All notable changes to Tauri Explorer.
 
+## v0.29.1 — 2026-11-19
+
+### Added
+
+- Reports: a bug report can include two opt-in sections, both unticked by
+  default and shown in full before sending. "Recent errors" adds the warning
+  and error lines Tauri Explorer logged in this session and the previous one,
+  with your home folder shown as `~`. "Recent actions" adds the last commands,
+  view changes and navigation steps by name only, never folder paths, file
+  names or typed text. Crash reports include the recent actions too (#1685,
+  #1688).
+- Crashes that leave no crash report, such as the app being killed or
+  running out of memory, are now noticed on the next launch: the crash
+  notice says Tauri Explorer did not exit cleanly last time and offers a
+  report. Quitting, closing the last window, updates, logging out and
+  shutting down are never reported (#1686).
+- Details view on Linux: the Date opened column also shows when a file was
+  last opened in another app, from the desktop's recent-files list. Turn this
+  off in Settings with "Use OS Recent Files for Date Opened" (#1526).
+
+### Fixed
+
+- Removable drives on Linux: when mounting needs a password but no
+  authentication agent is running, the error now says so and how to fix it,
+  instead of showing the raw system error (#1660).
+- Source control: a failed stage or unstage now shows an error instead of
+  failing silently.
+- Context menu and settings: shortcut hints now follow your own key bindings,
+  and an unbound command shows no hint.
+- Quick Open no longer replaces its results with late events from a finished
+  search, and a failed search no longer leaves the spinner running.
+- The file picker no longer remembers a folder that failed to load as empty.
+- Update checks and GitHub requests now give up after a timeout instead of
+  waiting forever on a stalled connection (#1827).
+- Renaming a file with a non-UTF-8 name in a folder tracked by a provenance
+  plugin no longer reports a spurious warning, and on Linux and macOS a file
+  name containing a backslash now matches its Git status (#1827).
+
 ## v0.29.0 — 2026-11-18
 
 ### Added

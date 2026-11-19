@@ -119,14 +119,16 @@ export function createGitPrSession(
     else closeDetail();
   });
 
-  async function prepareCreate(expectedBranch: string): Promise<PrAction | null> {
+  /** Capture the repository identity for a create confirmation of any local
+   *  branch (#1847). The backend rechecks the repository and that the branch
+   *  still exists before spawning `gh`. */
+  async function prepareCreate(branch: string): Promise<PrAction | null> {
     if (disposed || contextBusy || mutation.busy) return null;
     contextBusy = true; contextError = null; mutation.clear();
     try {
       const context = await (dependencies.context ?? gitPrContext)(repoPath);
       if (disposed) return null;
-      if (context.headBranch !== expectedBranch) throw new Error("Current branch changed; refresh the graph before creating a PR");
-      return { action: "create", repoSlug: context.repoSlug, headBranch: expectedBranch, title: "", body: "", base: "" };
+      return { action: "create", repoSlug: context.repoSlug, headBranch: branch, title: "", body: "", base: "" };
     } catch (error) {
       if (!disposed) contextError = extractError(error);
       return null;

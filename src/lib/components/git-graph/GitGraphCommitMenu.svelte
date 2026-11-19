@@ -4,10 +4,12 @@
   branch/remote/tag chip it is scoped to that ref (#405, #432). The anchor
   (position, trigger and captured scroller position) and viewport clamp live
   in composables/use-git-graph-menu; actions run through GitGraphActions.
+  A local-branch-scoped menu also offers "Create pull request…" (#1847).
 -->
 <script lang="ts">
   import type { GraphCommit as CommitInfo } from "$lib/state/git-graph-cache";
   import type { RefChips, RemoteRefChip } from "$lib/domain/git-graph";
+  import { createPrMenuItem } from "$lib/domain/git-graph-create-pr";
   import type { GraphMenu } from "$lib/composables/use-git-graph-menu.svelte";
   import type { PrSnapshot } from "$lib/state/git-pr-session.svelte";
   import type { GitGraphActions } from "$lib/state/git-graph-actions.svelte";
@@ -19,6 +21,10 @@
     actions: GitGraphActions;
     prForHead: (name: string) => PrSnapshot | undefined;
     prForRemote: (chip: RemoteRefChip) => PrSnapshot | undefined;
+    /** Whether a GitHub PR action (or its context load) is running. */
+    prActionBusy: boolean;
+    /** Open the create-PR confirmation for a local branch. */
+    onCreatePr: (branch: string) => void;
     onOpenMenu: (
       event: MouseEvent,
       commit: CommitInfo,
@@ -32,7 +38,7 @@
 
   let {
     menu: m, menuEl = $bindable(null), chips: menuChips, actions, prForHead, prForRemote,
-    onOpenMenu, onTogglePr, onBackdropContextMenu,
+    prActionBusy, onCreatePr, onOpenMenu, onTogglePr, onBackdropContextMenu,
   }: Props = $props();
 
   // Badge-scoped menu (#405): opened from a branch chip, only that branch's
@@ -40,6 +46,9 @@
   const deletableHeads = $derived(menuChips.heads.filter(
     (h) => !h.active && (m.kind === "actions" && (m.scopedBranch === null || h.name === m.scopedBranch)),
   ));
+  const createPr = $derived(
+    m.kind === "actions" ? createPrMenuItem(m.scopedBranch, prActionBusy, m.scopedBranch ? prForHead(m.scopedBranch) : undefined) : null,
+  );
 </script>
 
 <!-- Backdrop closes the menu on any outside interaction. -->
@@ -141,6 +150,20 @@
         Rename Branch '{am.scopedBranch}'…
       </button>
     {/if}
+    {#if createPr}
+      {@const item = createPr}
+      <button
+        class="menu-item"
+        role="menuitem"
+        data-testid="git-graph-create-pr"
+        disabled={!item.enabled}
+        title={item.enabled ? `Create a pull request for ${item.branch}` : item.reason}
+        onclick={() => { const branch = item.branch; actions.closeMenu(); onCreatePr(branch); }}
+      >
+        Create pull request…
+        {#if !item.enabled}<span class="menu-hint">{item.reason}</span>{/if}
+      </button>
+    {/if}
     {#if deletableHeads.length > 0 || menuChips.remotes.length > 0 || am.scopedTag}
       <div class="menu-sep"></div>
       {#each deletableHeads as head (head.name)}
@@ -233,8 +256,20 @@
     white-space: nowrap;
   }
 
-  .menu-item:hover {
+  .menu-item:hover:not(:disabled) {
     background: color-mix(in srgb, var(--accent) 16%, transparent);
+  }
+
+  .menu-item:disabled {
+    color: var(--text-tertiary, var(--text-secondary));
+    cursor: default;
+  }
+
+  .menu-hint {
+    margin-left: auto;
+    padding-left: 12px;
+    color: var(--text-tertiary, var(--text-secondary));
+    font-size: var(--font-size-caption);
   }
 
   .menu-sep {

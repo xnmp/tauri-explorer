@@ -17,10 +17,13 @@ window.TX_OMARCHY = {
       color12: "#ebb97e", color13: "#e3c5ab", color14: "#fbd2ab", color15: "#ffffff",
       accent: "#d9a56c"
     },
+    // The theme repo's own backgrounds carry no licence, so this page wears original pictures made for it in the
+    // theme's colours (originals and prompts in output/imagegen/wallpaper-pass/). `own` marks a picture as the page's,
+    // so the desktop caption credits the theme's colours to its maker without claiming the picture is theirs.
     wallpapers: [
-      { src: "assets-desktop/omarchy-sakura.webp", avg: "#735759", origin: "backgrounds/1.jpg in the theme repo (signature image: pink sun over a snow mountain with blossom trees); authorship/licence not stated; looks AI-generated" },
-      { src: "assets-desktop/omarchy-sakura-2.webp", avg: "#efddd3", origin: "backgrounds/2.jpg (cherry blossom branch photo/render); authorship/licence not stated" },
-      { src: "assets-desktop/omarchy-sakura-3.webp", avg: "#a68f8a", origin: "backgrounds/5.jpg (watercolour pavilion by a pond with blossom); authorship/licence not stated" }
+      { src: "assets-desktop/sakura.webp", avg: "#3e1b21", own: true, title: "Lantern-lit canal under the blossom", origin: "made for this page (output/imagegen/wallpaper-pass/sakura.png)" },
+      { src: "assets-desktop/sakura-2.webp", avg: "#decab4", own: true, title: "Petals drifting on the pond", origin: "made for this page (output/imagegen/wallpaper-pass/sakura-2.png)" },
+      { src: "assets-desktop/sakura-3.webp", avg: "#caa086", own: true, title: "Stone steps through the blossom", origin: "made for this page (output/imagegen/wallpaper-pass/sakura-3.png)" }
     ]
   },
   kanagawa: {

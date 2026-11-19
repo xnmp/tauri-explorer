@@ -2,7 +2,7 @@
 /* =====================================================================================================
    HOST APPS: what the operating system would open a file with. The explorer hands a file over
    (the stage's "open-external" event); one of these small programs shows it above the stage.
-   They belong to the page, not to the explorer, so they look like other applications.
+   They belong to the page, not to the explorer: each is its own program, dressed in the desktop's theme (host-apps.css).
    HostApps.open(file, { origin, locate, onClose, inert })
      file    { path, name, kind, text, src, poster, size, date, px, duration }   (the event payload)
      origin  { x, y, w, h } in viewport pixels, or null: the window grows out of it and returns to it
@@ -50,6 +50,31 @@
     lock: `<svg viewBox="0 0 20 20"><defs><linearGradient id="ha-gl" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f3d27a"/><stop offset="1" stop-color="#b8862b"/></linearGradient></defs><rect x="1" y="1" width="18" height="18" rx="5" fill="#23262d"/><path d="M7 9V7.2a3 3 0 0 1 6 0V9" fill="none" stroke="#c9ccd3" stroke-width="1.6"/><rect x="5" y="9" width="10" height="7.5" rx="1.8" fill="url(#ha-gl)"/><circle cx="10" cy="12.3" r="1.1" fill="#5a4211"/></svg>`,
     document: `<svg viewBox="0 0 20 20"><rect x="1" y="1" width="18" height="18" rx="5" fill="#e9e6e1"/><path d="M6.5 3.8h5l3 3v9.4h-8z" fill="#fff" stroke="#8a8478" stroke-width="1.1" stroke-linejoin="round"/><path d="M8.3 10h4.4M8.3 12.3h4.4" stroke="#b4342a" stroke-width="1.2" stroke-linecap="round"/></svg>`,
   };
+  /* ---------------- the ink that reads on the theme's accent (a filled button, a ticked box): black or white ----------------
+     The page sets the theme's colours on the root (--h-acc among them) and may change them at any time; near-black when
+     it reads on the accent (4.5:1), else white on the accent deepened until it does: --ha-on-acc and --ha-acc-fill. */
+  (function onAccent() {
+    const root = document.documentElement;
+    const rgb = v => { const t = String(v).trim(), m = t.match(/^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/i);
+      if (m) return [+m[1], +m[2], +m[3]];
+      const h = t.match(/^#([0-9a-f]{6})$/i); if (!h) return null; const n = parseInt(h[1], 16); return [n >> 16, (n >> 8) & 255, n & 255]; };
+    const lum = c => { const l = c.map(x => { x /= 255; return x <= .03928 ? x / 12.92 : ((x + .055) / 1.055) ** 2.4; }); return .2126 * l[0] + .7152 * l[1] + .0722 * l[2]; };
+    let last = "";
+    const paint = () => {
+      const acc = (root.style.getPropertyValue("--h-acc") || getComputedStyle(root).getPropertyValue("--h-acc")).trim();
+      if (acc === last) return; last = acc;
+      const c = rgb(acc); if (!c) { root.style.removeProperty("--ha-on-acc"); root.style.removeProperty("--ha-acc-fill"); return; }
+      // near-black when it reads on the accent; otherwise white, on the accent deepened just enough for white to read
+      const dk = lum([20, 22, 26]), onDark = (lum(c) + .05) / (dk + .05);
+      let fill = c;
+      if (onDark < 4.5) for (let t = 0; t <= .6 && 1.05 / (lum(fill) + .05) < 4.5; t += .04) fill = c.map(v => v * (1 - t));
+      const white = onDark < 4.5 && 1.05 / (lum(fill) + .05) >= onDark;
+      root.style.setProperty("--ha-on-acc", white ? "#ffffff" : "#14161a");
+      root.style.setProperty("--ha-acc-fill", white ? `rgb(${fill.map(Math.round).join(" ")})` : acc);
+    };
+    paint();
+    new MutationObserver(paint).observe(root, { attributes: true, attributeFilter: ["style", "data-scheme"] });
+  })();
   const NAME = { lock: "Lock", markdown: "Markdown Viewer", text: "Text Editor", table: "Table", image: "Image Viewer", video: "Video Player", audio: "Audio Player", document: "Document Viewer" };
 
   /* ---------------- Markdown: escaped first, then a small block and inline grammar. No HTML passes through. ---------------- */
@@ -150,7 +175,7 @@
     for (let i = 0; i < n; i++) { env += (r() - .5) * .22; env = Math.min(.95, Math.max(.12, env)); const v = Math.min(1, env * (.55 + r() * .6)); bars.push(v); }
     for (let k = 0; k < 2; k++) for (let i = 1; i < n - 1; i++) bars[i] = (bars[i - 1] + bars[i] * 2 + bars[i + 1]) / 4;
     const w = 600, h = 120, bw = w / n;
-    return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="ha-wv" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="${w}" y2="0"><stop offset="0" stop-color="#f6c16b"/><stop offset=".55" stop-color="#f08a6c"/><stop offset="1" stop-color="#b479e0"/></linearGradient></defs>`
+    return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="ha-wv" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="${w}" y2="0"><stop offset="0" style="stop-color: var(--wv-1, #f6c16b)"/><stop offset=".55" style="stop-color: var(--wv-2, #f08a6c)"/><stop offset="1" style="stop-color: var(--wv-3, #b479e0)"/></linearGradient></defs>`
       + bars.map((v, i) => { const bh = Math.max(3, v * (h - 8)); return `<rect x="${(i * bw + bw * .18).toFixed(2)}" y="${((h - bh) / 2).toFixed(2)}" width="${(bw * .64).toFixed(2)}" height="${bh.toFixed(2)}" rx="${(bw * .32).toFixed(2)}"/>`; }).join("") + `</svg>`;
   }
 

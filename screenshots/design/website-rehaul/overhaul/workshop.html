@@ -600,7 +600,6 @@ body.offline .rail, body.offline .sheen, body.offline .dock, body.offline .stage
     <li role="none"><button class="dicon" id="di-note" type="button" role="option" aria-selected="false" title="Double-click or press Enter to open"><span class="doc" aria-hidden="true"><svg viewBox="0 0 46 56"><path d="M4 3.5h26L42 15.5v37H4z" fill="#fbfaf6" stroke="rgba(0,0,0,.25)"/><path d="M30 3.5v12h12" fill="#e7e3d8" stroke="rgba(0,0,0,.2)"/><path d="M10 24h24M10 30h26M10 36h20M10 42h14" stroke="#9a958a" stroke-width="2" stroke-linecap="round"/></svg></span><span>there is no wifi.txt</span></button></li>
   </ul>
   <p class="wp-cap" id="wp-cap"></p>
-  <section class="desk-machines" id="desk-machines" aria-labelledby="dm-h" hidden><h2 id="dm-h">Or open another machine</h2><ul class="mcards" id="dm-cards"></ul></section>
   <section class="stage" aria-label="Tauri Explorer, running in this page">
     <div class="frost" aria-hidden="true"></div>
     <div class="boot" aria-hidden="true"><img src="assets-desktop/app-icon.png" alt=""></div>
@@ -672,10 +671,10 @@ body.offline .rail, body.offline .sheen, body.offline .dock, body.offline .stage
             <div class="lede-row"><p class="lede">Colours, shape, icons and how files are laid out.</p><button class="btn small" type="button" id="open-themes">Theme picker</button></div>
             <div class="look-h" id="lbl-colours">Colours</div>
             <div class="chips" id="chips" role="group" aria-labelledby="lbl-colours"></div>
-            <div class="look-h" id="lbl-mat">Window <small>the wallpaper through the window</small></div>
+            <div class="look-h" id="lbl-mat">Window <small>Translucency opacity: how solid the panels are over the wallpaper</small></div>
             <div class="mat" role="group" aria-labelledby="lbl-mat">
               <button class="msw" type="button" role="switch" aria-checked="false" id="mat-on"><span class="tog" aria-hidden="true"></span><span class="nm">Translucent</span></button>
-              <label class="rng" id="mat-rng" data-off><span class="sr">Opacity</span><input class="range" id="mat-op" type="range" min="20" max="100" step="5" value="55" disabled aria-label="Window opacity"></label>
+              <label class="rng" id="mat-rng" data-off><span class="sr">Translucency opacity</span><span class="cap" aria-hidden="true">Glass</span><input class="range" id="mat-op" type="range" min="20" max="100" step="1" value="55" disabled aria-label="Translucency opacity: lower is more see-through, 100% is solid"><span class="cap" aria-hidden="true">Solid</span></label>
               <output id="mat-out" for="mat-op">55%</output>
             </div>
             <div class="look-h" id="lbl-layout">Layout</div>
@@ -896,6 +895,11 @@ const MAT = { on: "translucency", opacity: "translucencyOpacity" };
 const HOUSE = [
   { id: "peach-alloy", name: "Peach Alloy", dark: false, v: ["#f4dccf", "#e8c7b6", "#221c19", "#585d63", "#b5603f", "#b08a3e"],
     wall: { src: "assets-desktop/peach-alloy.webp", dark: false, avg: "#c7a68e", title: "Rose-gold dawn on the valley lake" } },
+  // Nord Snow: the official Nord palette, light. Snow Storm paper and panel (#eceff4, #e5e9f0), Polar Night ink (#2e3440,
+  // 10.8:1 on the paper) and secondary (#4c566a, 6.4:1; 6.1:1 on the panel), Frost accent (#5e81ac, 3.5:1, a UI colour, not
+  // body text) and Aurora orange folders (#d08770). The expedition laptop arrives in it.
+  { id: "nord-snow", name: "Nord Snow", dark: false, v: ["#eceff4", "#e5e9f0", "#2e3440", "#4c566a", "#5e81ac", "#d08770"],
+    wall: { src: "assets-desktop/nord-snow.webp", dark: false, avg: "#a5afc3", title: "Taiga river under snow, morning" } },
 ];
 const full = s => ({ ...BASE, ...s, keybindings: { ...(s.keybindings || {}) } });
 
@@ -919,8 +923,12 @@ const FS = fsId ? ALL_FS[fsId] : undefined;   // none: the app boots its built-i
 const u0 = ((FS && FS.users) || [])[0] || {};
 // Each machine arrives as its owner keeps it, so the three feel like three people's computers. The fixtures' own
 // users[0].setup is only a stock theme ({ theme, layout, icons, view }), so the page names each owner's look here; a theme
-// can be one of the owner's own theme files (inline colours, applied as a custom theme). The expedition wears Horizon.
+// can be one of the owner's own theme files (inline colours, applied as a custom theme) or one of the page's HOUSE themes
+// (`house`, which also brings its wallpaper as the machine's desktop).
 const MACHINE_LOOK = {
+  // the expedition: Nord Snow, cold and light, over the snowbound taiga; the window solid, so the snow paper and names
+  // stay crisp and the taiga frames it (translucency is one switch away on the bench)
+  expedition: { house: "nord-snow", layoutTheme: "floating-islands", iconTheme: "default", viewMode: "details" },
   // the Count: his own "Crypt, but tasteful", soft cards and classic icons, the window frosted so the castle shows through
   count: { themeFile: ".config/tauri-explorer/crypt, but tasteful.theme.json", layoutTheme: "floating-islands", iconTheme: "classic", viewMode: "details", translucency: true, opacity: 34 },
   // the life list: a warm light morning on the marsh, a postman's ledger rules and plain icons
@@ -930,6 +938,8 @@ const fixtureText = (fs, path) => { let n = fs && fs.tree; for (const seg of Str
 const LOOK_HERE = (() => {
   const L = FS && MACHINE_LOOK[fsId]; if (!L) return null;
   let theme = L.theme;
+  const h = L.house && HOUSE.find(x => x.id === L.house);
+  if (h) theme = { name: h.name, dark: h.dark, v: h.v.slice(0, 6) };   // a page theme, sent to the app as custom colours
   if (L.themeFile) {   // the owner's own theme file, beside their home
     const home = (u0.setup && u0.setup.path) || "";
     try { const t = JSON.parse(fixtureText(FS, home + "/" + L.themeFile) || "null"); if (t && Array.isArray(t.v) && t.v.length >= 6) theme = { name: String(t.name || "Custom"), dark: !!t.dark, v: t.v.slice(0, 6) }; } catch (_) { /* unreadable: the stock look below */ }
@@ -938,8 +948,8 @@ const LOOK_HERE = (() => {
 })();
 const FS_FIRST = (() => {
   const s = u0.setup || {};
-  if (!FS || fsId === "expedition") return FIRST;
-  if (LOOK_HERE) { const { themeFile, opacity, ...look } = LOOK_HERE; return full({ ...FIRST, ...look }); }
+  if (!FS) return FIRST;
+  if (LOOK_HERE) { const { themeFile, house, opacity, ...look } = LOOK_HERE; return full({ ...FIRST, ...look }); }
   const look = { theme: s.theme, layoutTheme: s.layout, iconTheme: s.icons, viewMode: s.view };
   return full({ ...FIRST, ...Object.fromEntries(Object.entries(look).filter(([, v]) => typeof v === "string" && v)) });
 })();
@@ -947,7 +957,8 @@ const fromUrl = qs.get("setup") ? decodeSetup(qs.get("setup")) : null;
 const startPath = qs.get("at") || (u0.setup && u0.setup.path) || undefined;
 const start = fromUrl ? full(fromUrl) : FS_FIRST;
 // A machine's own desktop picture, worn while it wears its first theme: `TX_FS.<id>.desktop` when the fixture names one,
-// else `assets-desktop/fs-<id>.webp` by convention (the expedition wears Horizon's). A missing picture falls back to the
+// else its HOUSE theme's wallpaper when it arrives in one (the expedition's Nord Snow taiga), else
+// `assets-desktop/fs-<id>.webp` by convention. A missing picture falls back to the
 // theme's own wallpaper, so a machine whose picture is still being made looks finished anyway.
 // DESK_ART frames a picture for this page's layout: the Count's castle stands at the far right of its picture, under
 // the bench, so his desktop wears it mirrored (the castle then stands behind his translucent window) under a lighter frost.
@@ -955,6 +966,8 @@ const DESK_ART = { count: { flip: true, frost: 9 } };
 const deskOf = id => { const f = ALL_FS[id]; if (!f) return null;
   const art = DESK_ART[id] || {};
   if (f.desktop && typeof f.desktop.wallpaper === "string") return { ...art, ...f.desktop };
+  const h = (MACHINE_LOOK[id] || {}).house, hw = h && (HOUSE.find(x => x.id === h) || {}).wall;
+  if (hw) return { ...art, wallpaper: hw.src, avg: hw.avg, dark: hw.dark, title: hw.title };
   return id === "expedition" ? null : { ...art, wallpaper: `assets-desktop/fs-${id}.webp` }; };
 const FS_DESK = fsId ? deskOf(fsId) : null;
 const OMARCHY = Object.entries(window.TX_OMARCHY || {}).filter(([, t]) => t && Array.isArray(t.v) && t.v.length >= 6).map(([id, t]) => ({ id, ...t }));
@@ -974,7 +987,7 @@ const dressCache = { read() { try { const o = JSON.parse(localStorage.getItem(DR
 const CAP = $("#wp-cap");
 let wallTitle = "", wallCredit = null;
 let wallAvg = null;
-const HERE_ACCENT = ({ expedition: "#e95678", count: "#8a5cc7", escape: "#e0a72e" })[fsId] || null;   // as MACHINE_DEFAULTS
+const HERE_ACCENT = ({ expedition: "#5e81ac", count: "#8a5cc7", escape: "#e0a72e" })[fsId] || null;   // as MACHINE_DEFAULTS
 const WALL = TXDesk.wall($("#wall"), { onDress(d) {
   if (d.avg) ROOT.style.setProperty("--wp-avg", d.avg);
   if (/^#[0-9a-f]{6}$/i.test(d.avg || "")) wallAvg = d.avg;
@@ -1020,7 +1033,9 @@ function paintChrome() {
 }
 function paintCaption() {   // an Omarchy theme always credits its makers; any other picture names itself while the desktop shows
   CAP.classList.toggle("credit", !!wallCredit);
-  if (wallCredit) CAP.innerHTML = `<a href="${esc(wallCredit.url)}" target="_blank" rel="noopener noreferrer">${esc(wallCredit.name)}</a> · an Omarchy theme`;
+  // a picture made for this page (`own`) is not the theme makers': the caption says so, so it never claims their art
+  const ownPic = wallCredit && ((wallCredit.wallpapers || [])[0] || {}).own;
+  if (wallCredit) CAP.innerHTML = `<a href="${esc(wallCredit.url)}" target="_blank" rel="noopener noreferrer">${esc(wallCredit.name)}</a> · an Omarchy theme${ownPic ? "<small>Wallpaper made for this page</small>" : ""}`;
   else CAP.textContent = wallTitle;
 }
 // Which picture a theme wears: an Omarchy theme its own, this machine's first theme the machine's own desktop (when it
@@ -2262,7 +2277,7 @@ FLOOR.addEventListener("pointerdown", e => { if (document.body.classList.contain
 // wallpaper and remounts the app on it (`?fs=`); its own setup, found items and locks are kept apart.
 // `line` is the whole teaser ("Title: the rest"); `hook` is the file a visit to that machine starts on, selected.
 const MACHINE_DEFAULTS = {
-  expedition: { title: "Day 41", accent: "#e95678",
+  expedition: { title: "Day 41", accent: "#5e81ac",
     line: "Day 41: the shared laptop of a polar survey. Nobody say the word yet." },
   count: { title: "The Count's laptop", accent: "#8a5cc7", hook: "INCIDENT LOG - who is taking my furniture.md",
     line: "The Count's laptop: someone keeps opening the curtains and borrowing the furniture. He has kept a log." },
@@ -2271,6 +2286,8 @@ const MACHINE_DEFAULTS = {
 };
 const machineTheme = id => {   // the theme a machine arrives in (MACHINE_LOOK, else its user's), for thumbnails and the switch
   const f = ALL_FS[id] || {}, u = (f.users && f.users[0] && f.users[0].setup) || {}, L = MACHINE_LOOK[id];
+  const h = L && L.house && HOUSE.find(x => x.id === L.house);
+  if (h) return { id: "house:" + h.id, swatch: h.v.slice(0, 6), dark: h.dark };
   if (L && L.themeFile) {
     try { const t = JSON.parse(fixtureText(f, (u.path || "") + "/" + L.themeFile) || "null"); if (t && Array.isArray(t.v)) return { id: "custom", swatch: t.v.slice(0, 6), dark: !!t.dark }; } catch (_) { /* the stock theme below */ }
   }
@@ -2306,8 +2323,6 @@ function renderMachines() {
     $("#drive").setAttribute("aria-label", `In the drive: ${HERE.title}. Switch machine`);
   }
   $("#pk-cards").innerHTML = MACHINES.map(mcard).join("");
-  $("#dm-cards").innerHTML = MACHINES.filter(m => m.id !== fsId).map(mcard).join("");
-  $("#desk-machines").hidden = !many;
 }
 renderMachines();
 // A machine opened without a place of its own (no `at=`) starts with its hook file selected: navigating to a file opens
@@ -2359,7 +2374,7 @@ PICKER.addEventListener("keydown", e => {
     else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
   }
 });
-for (const box of [$("#pk-cards"), $("#dm-cards")]) box.addEventListener("click", e => { const b = e.target.closest(".mcard"); if (b) switchTo(b.dataset.fs, b); });
+for (const box of [$("#pk-cards")]) box.addEventListener("click", e => { const b = e.target.closest(".mcard"); if (b) switchTo(b.dataset.fs, b); });
 // first visit: one quiet pointer to the other machines, a few seconds after the window is up
 const NUDGE_KEY = "tx-workshop-nudge-v1";
 let nudgeT = 0;

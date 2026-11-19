@@ -116,10 +116,16 @@ body.sweeping .rail .sweep::after { animation: dk-sweep .9s cubic-bezier(.5, .05
 .stage { z-index: 2; border-radius: var(--win-r); }
 .stage.away { visibility: hidden; pointer-events: none; }
 .stage.leaving { visibility: visible; }
-.stage .frost { position: absolute; inset: 0; border-radius: var(--win-r); -webkit-backdrop-filter: blur(var(--frost-blur, 34px)) saturate(1.5); backdrop-filter: blur(var(--frost-blur, 34px)) saturate(1.5);
-  background: color-mix(in srgb, var(--h-paper) 12%, transparent);
+/* The window material behind a translucent window, as the OS gives it (Windows acrylic and Mica, macOS vibrancy): the
+   wallpaper blurred and mostly covered by a neutral luminosity layer, so only its soft light and hue come through. The
+   app tints that with its own theme colour (Translucency Opacity). Raw saturated wallpaper here made every theme read as
+   the wallpaper's grey-blue at any opacity. This backdrop is the only thing seen through the window: the app paints no
+   wallpaper of its own, so what shows is this page's wallpaper at the window's own position, live (#1789). The blur
+   keeps the picture recognisable, so the window reads as see-through rather than as some other image. */
+.stage .frost { position: absolute; inset: 0; border-radius: var(--win-r); -webkit-backdrop-filter: blur(var(--frost-blur, 22px)) saturate(1.15); backdrop-filter: blur(var(--frost-blur, 22px)) saturate(1.15);
+  background: color-mix(in srgb, color-mix(in srgb, #1c1c1e 82%, var(--h-paper)) 58%, transparent);
   box-shadow: 0 1px 2px rgba(0, 0, 0, .16), 0 12px 30px -8px rgba(0, 0, 0, .38), 0 44px 100px -26px rgba(0, 0, 0, .6), 0 0 0 1px color-mix(in srgb, #000 40%, transparent); }
-:root[data-scheme="light"] .stage .frost { box-shadow: 0 1px 2px rgba(0, 0, 0, .1), 0 12px 30px -8px rgba(0, 0, 0, .26), 0 44px 100px -26px rgba(0, 0, 0, .42), 0 0 0 1px rgba(0, 0, 0, .16); }
+:root[data-scheme="light"] .stage .frost { background: color-mix(in srgb, color-mix(in srgb, #f3f3f3 82%, var(--h-paper)) 56%, transparent); box-shadow: 0 1px 2px rgba(0, 0, 0, .1), 0 12px 30px -8px rgba(0, 0, 0, .26), 0 44px 100px -26px rgba(0, 0, 0, .42), 0 0 0 1px rgba(0, 0, 0, .16); }
 .stage .boot { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; transition: opacity .4s; }
 .stage .boot img { width: 64px; height: 64px; opacity: .9; filter: drop-shadow(0 6px 16px rgba(0, 0, 0, .35)); animation: dk-breathe 1.6s ease-in-out infinite; }
 @keyframes dk-breathe { 50% { transform: scale(.92); opacity: .6; } }
@@ -210,6 +216,7 @@ body.desk-away .rail-body, body.desk-away .rail-tab { opacity: .07; filter: satu
 .mat .msw[aria-checked="true"] .tog::before { transform: translateX(16px); background: linear-gradient(180deg, #fff, #ececec); }
 .mat .rng { display: flex; align-items: center; gap: 10px; min-width: 0; transition: opacity .2s; }
 .mat .rng[data-off] { opacity: .45; }
+.mat .rng .cap { flex: none; font: 600 11px/1 var(--wb-font); letter-spacing: .02em; color: var(--h-text-2); }
 .mat output { min-width: 3.4ch; text-align: right; font: 600 12.5px/1 var(--wb-font); font-variant-numeric: tabular-nums; color: var(--h-text-2); }
 .range { -webkit-appearance: none; appearance: none; flex: 1; min-width: 60px; height: 22px; margin: 0; background: none; cursor: pointer; --p: 55%; }
 .range::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: linear-gradient(90deg, var(--h-acc) var(--p), var(--m-well) var(--p)); box-shadow: inset 0 1px 2px var(--m-shade-2), inset 0 0 0 1px var(--m-line-2); }
@@ -275,8 +282,6 @@ body.enter .wall { animation: dk-fade .45s ease-out backwards; }
   body .drive .dv-go { margin-left: auto; }
   .dock { position: static; align-self: center; transform: none; margin: 0 auto 24px; }
   .nudge { display: none !important; }
-  body .desk-machines { position: static; translate: none; margin: 0 0 16px; }
-  body .desk-machines .mcards { grid-template-columns: 1fr; }
   body .picker { padding: 12px; place-items: start center; overflow: auto; }
   body .pk-panel { max-height: none; padding: 18px; }
   body .pk-head h2 { font-size: 20px; }
@@ -287,7 +292,7 @@ body.enter .wall { animation: dk-fade .45s ease-out backwards; }
   .wp-cap { position: absolute; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .pk-panel, .desk-machines, .nudge, .toast { animation: none !important; }
+  .pk-panel, .nudge, .toast { animation: none !important; }
   .wall .wl { transition: none; }
   .tray .clock i { animation: none; }
 }
@@ -350,14 +355,6 @@ body.enter .wall { animation: dk-fade .45s ease-out backwards; }
 .pk-x svg { width: 16px; height: 16px; }
 
 /* the closed desktop offers the others: a natural moment to pick another machine */
-.desk-machines { position: fixed; left: calc(var(--desk-pad) + 128px); right: calc(var(--wb-rail) + var(--desk-pad) * 2); top: 50%; z-index: 3; translate: 0 -50%; }
-.desk-machines[hidden], body:not(.desk-closed) .desk-machines { display: none; }
-.desk-machines > * { max-width: 760px; margin-inline: auto; }
-.desk-machines h2 { margin: 0 0 14px; font: 700 20px/1.2 var(--wb-display); color: #fff; text-shadow: 0 1px 3px rgba(0, 0, 0, .6); }
-.desk-machines .mcards { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; }
-.desk-machines .mcard { background: color-mix(in srgb, var(--h-paper) 82%, transparent); -webkit-backdrop-filter: blur(18px) saturate(1.5); backdrop-filter: blur(18px) saturate(1.5); }
-.desk-machines .mc-tx span { font-size: 12.5px; }
-body.desk-closed .desk-machines { animation: dk-pk .5s var(--pop) .12s backwards; }
 
 /* first visit: a quiet pointer to the other machines */
 .nudge { position: fixed; left: var(--desk-pad); bottom: 76px; z-index: 19; display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; width: 300px; padding: 12px 10px 12px 14px; border-radius: 14px;
@@ -382,6 +379,7 @@ body.desk-closed .desk-machines { animation: dk-pk .5s var(--pop) .12s backwards
 /* ---------------- Omarchy's themes, and the credit on the desktop ---------------- */
 .om[hidden] { display: none; }
 .wp-cap.credit { opacity: 1; transform: none; pointer-events: auto; }
+.wp-cap small { display: block; margin-top: 2px; font-size: 11px; font-weight: 500; opacity: .74; }   /* a second line: whose the picture is */
 .wp-cap a { color: inherit; font-weight: 650; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; text-decoration-color: color-mix(in srgb, currentColor 45%, transparent); }
 .wp-cap a:hover { text-decoration-color: currentColor; }
 

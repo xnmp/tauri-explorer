@@ -1,4 +1,4 @@
-/* Host apps: the programs a file is handed to. Each has its own palette and type, unrelated to the explorer's theme. */
+/* Host apps: the programs a file is handed to. Each rule block below is a program's fallback look; the theme layer at the end dresses every program in the desktop's theme. */
 .ha-scrim { position: fixed; inset: 0; z-index: 59; background: rgba(6, 7, 10, .58); opacity: 0; visibility: hidden; transition: opacity .3s ease, visibility 0s .3s, background-color .5s ease; }
 .ha-scrim.on { opacity: 1; visibility: visible; transition: opacity .3s ease, visibility 0s, background-color .5s ease; }
 body.ha-cinema .ha-scrim { background: rgba(0, 0, 0, .95); transition: opacity .7s ease, visibility 0s, background-color .7s ease; }
@@ -336,70 +336,154 @@ body.ha-cinema .ha-scrim { background: rgba(0, 0, 0, .95); transition: opacity .
 .iv-z { min-width: 46px; padding: 0 6px; font: 600 12.5px/28px var(--ha-font); font-variant-numeric: tabular-nums; text-align: right; color: var(--bar-ink); }
 .iv-z:empty { display: none; }
 
-/* ---------------- the reading programs take the desktop's colours: the theme's paper, ink and accent ----------------
-   (the page sets --h-paper, --h-side, --h-ink, --h-ink-2, --h-acc on the root, and data-scheme="dark"|"light").
-   Light themes get a lighter paper; dark themes read on their own dark paper. Images, films, sound and locks keep theirs. */
-.ha-markdown, .ha-text, .ha-table, .ha-document {
-  --ap-paper: color-mix(in srgb, var(--h-paper, #f4f2ee) 38%, #fff);
-  --ap-bar: color-mix(in srgb, var(--h-paper, #f4f2ee) 78%, #fff);
+/* ================= every program wears the desktop's theme =================
+   The page sets the active theme's six colours on the root (--h-paper, --h-side, --h-ink, --h-ink-2, --h-acc, --h-folder),
+   data-scheme="dark"|"light", and host-apps.js sets --ha-on-acc (black or white, whichever reads on the accent). Every
+   program takes its window from them, so it changes live with the theme and sits beside the explorer as one family:
+   the same paper, panel, ink and accent, the explorer window's radius and shadow, and a solid (never glassier) surface.
+   What stays its own is an object, not chrome: the film's black, a document's white page, the padlock's brass and steel.
+   The rules above are each program's fallback when the page sets no theme. */
+.ha-win {
+  --ap-paper: var(--h-paper, #f4f2ee);
+  --ap-bar: var(--h-side, #ebe8e2);
   --ap-ink: var(--h-ink, #24211d);
-  --ap-ink-2: color-mix(in srgb, var(--h-ink-2, #7a746b) 80%, var(--h-ink, #24211d));
-  --ap-acc: color-mix(in srgb, var(--h-acc, #2c4f7c) 72%, var(--h-ink, #24211d));
-}
-:root[data-scheme="dark"] :is(.ha-markdown, .ha-text, .ha-table, .ha-document) {
-  --ap-paper: color-mix(in srgb, var(--h-paper) 94%, #000);
-  --ap-bar: var(--h-side);
-  --ap-ink-2: color-mix(in srgb, var(--h-ink-2) 85%, var(--h-ink));
-  --ap-acc: color-mix(in srgb, var(--h-acc) 80%, var(--h-ink));
-}
-:is(.ha-markdown, .ha-text, .ha-table, .ha-document) {
+  --ap-ink-2: color-mix(in srgb, var(--h-ink-2, #6b665e) 82%, var(--ap-ink));
+  --ap-hue: var(--h-acc, #2c4f7c);                                        /* the accent as a fill */
+  --ap-acc: color-mix(in srgb, var(--ap-hue) 72%, var(--ap-ink));          /* the accent as text: nudged toward the ink */
+  --ap-fold: var(--h-folder, #b08a3e);
+  --ap-on-acc: var(--ha-on-acc, #fff);
+  --ap-fill: var(--ha-acc-fill, var(--ap-hue));                            /* a filled control: --ap-on-acc reads on it */
   --ap-well: color-mix(in srgb, var(--ap-ink) 6%, var(--ap-paper));
   --ap-line: color-mix(in srgb, var(--ap-ink) 13%, var(--ap-paper));
-  --bar: var(--ap-bar); --bar-ink: var(--ap-ink); --bar-ink-2: var(--ap-ink-2); --bar-line: var(--ap-line); --ctl-hover: color-mix(in srgb, var(--ap-ink) 9%, transparent);
+  --ap-thumb: color-mix(in srgb, var(--ap-ink) 24%, var(--ap-paper));
+  --ap-sel: color-mix(in srgb, var(--ap-hue) 32%, transparent);
+  --ap-bad: #b3261e; --ap-warn: #8a5a00;
+  /* the explorer window's own shadow (desktop.css, .stage .frost), and a hairline of the theme's ink */
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ap-ink) 16%, transparent), 0 1px 2px rgba(0, 0, 0, .1), 0 12px 30px -8px rgba(0, 0, 0, .26), 0 44px 100px -26px rgba(0, 0, 0, .42);
+}
+.ha-win:not(:where(.ha-video)) {   /* the film keeps its own see-through bar over the picture */
+  --bar: var(--ap-bar); --bar-ink: var(--ap-ink); --bar-ink-2: var(--ap-ink-2); --bar-line: var(--ap-line);
+  --ctl-hover: color-mix(in srgb, var(--ap-ink) 9%, transparent);
   background: var(--ap-paper); color: var(--ap-ink);
 }
-:root[data-scheme="dark"] :is(.ha-markdown, .ha-text, .ha-table, .ha-document) { box-shadow: 0 0 0 1px rgba(0, 0, 0, .55), 0 1px 0 rgba(255, 255, 255, .06) inset, 0 40px 90px -24px rgba(0, 0, 0, .75), 0 14px 30px -14px rgba(0, 0, 0, .5); }
-:is(.ha-markdown, .ha-text, .ha-table, .ha-document) :focus-visible { outline-color: var(--ap-acc); }
-:is(.ha-markdown, .ha-text, .ha-table, .ha-document) .ha-body:focus-visible { box-shadow: inset 0 2px 0 color-mix(in srgb, var(--ap-acc) 80%, transparent); }
+:root[data-scheme="dark"] .ha-win {
+  --ap-acc: color-mix(in srgb, var(--ap-hue) 84%, var(--ap-ink));
+  --ap-bad: #ff8a80; --ap-warn: #f2c66d;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .5), 0 1px 0 color-mix(in srgb, var(--ap-ink) 7%, transparent) inset, 0 1px 2px rgba(0, 0, 0, .16), 0 12px 30px -8px rgba(0, 0, 0, .38), 0 44px 100px -26px rgba(0, 0, 0, .6);
+}
+:root[data-mono] .ha-win .ha-body { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; }
+.ha-win :focus-visible { outline-color: var(--ap-acc); }
+.ha-win .ha-body:focus-visible { box-shadow: inset 0 2px 0 color-mix(in srgb, var(--ap-acc) 80%, transparent); }
+.ha-win ::selection { background: var(--ap-sel); color: inherit; }
+.ha-win .ha-body { scrollbar-width: thin; scrollbar-color: var(--ap-thumb) transparent; }
+.ha-win:not(:where(.ha-video)) .ha-foot { background: var(--ap-bar); color: var(--ap-ink-2); border-top-color: var(--ap-line); }
+.ha-win .ha-x:hover { background: #d93b41; color: #fff; }
+
 /* Markdown */
-.ha-markdown .ha-body { background: var(--ap-paper); scrollbar-color: var(--ap-line) transparent; }
+.ha-markdown .ha-body { background: var(--ap-paper); }
 .ha-markdown .md-page { color: var(--ap-ink); }
 .ha-markdown .md-meta, .ha-markdown .md-props dt, .ha-markdown .md-doc li.task.done { color: var(--ap-ink-2); }
 .ha-markdown .md-props, .ha-markdown .md-doc pre { background: var(--ap-well); }
 .ha-markdown .md-doc :is(h1, h2, strong) { color: var(--ap-ink); }
-.ha-markdown .md-doc :is(h3, h4, h5, h6, th, blockquote) { color: color-mix(in srgb, var(--ap-ink) 82%, var(--ap-paper)); }
+.ha-markdown .md-doc :is(h3, h4, h5, h6, th, blockquote) { color: color-mix(in srgb, var(--ap-ink) 84%, var(--ap-paper)); }
 .ha-markdown .md-doc h1 + p::first-letter, .ha-markdown .md-doc a { color: var(--ap-acc); }
-.ha-markdown .md-doc blockquote { border-left-color: var(--ap-acc); }
+.ha-markdown .md-doc blockquote { border-left-color: var(--ap-hue); }
 .ha-markdown .md-doc li::marker { color: var(--ap-ink-2); }
 .ha-markdown .md-doc li.task i { box-shadow: inset 0 0 0 1.5px var(--ap-ink-2); }
-.ha-markdown .md-doc li.task.done i { background: var(--ap-acc); }
+.ha-markdown .md-doc li.task.done i { background: var(--ap-fill); }
+.ha-markdown .md-doc li.task.done i::after { border-color: var(--ap-on-acc); }
 .ha-markdown .md-doc code { background: var(--ap-well); }
 .ha-markdown .md-doc hr { border-top-color: var(--ap-line); }
 .ha-markdown .md-doc :is(th, td) { border-bottom-color: var(--ap-line); }
-/* Text Editor */
+
+/* Text Editor: the syntax colours come from the theme too (keywords the accent, strings and numbers the folder colour) */
+.ha-text {
+  --c-com: var(--ap-ink-2);
+  --c-kw: var(--ap-acc);
+  --c-key: color-mix(in srgb, var(--ap-hue) 55%, var(--ap-ink));
+  --c-time: color-mix(in srgb, var(--ap-hue) 45%, var(--ap-ink-2));
+  --c-str: color-mix(in srgb, var(--ap-fold) 52%, var(--ap-ink));
+  --c-num: color-mix(in srgb, var(--ap-fold) 66%, var(--ap-ink));
+  --c-bad: var(--ap-bad); --c-warn: var(--ap-warn);
+}
+:root[data-scheme="dark"] .ha-text { --c-str: color-mix(in srgb, var(--ap-fold) 70%, var(--ap-ink)); --c-num: var(--ap-fold); }
 .ha-text .ha-body, .ha-text .te-l i { background: var(--ap-paper); }
-.ha-text .ha-body { scrollbar-color: var(--ap-line) transparent; }
-.ha-text .ha-foot { background: var(--ap-bar); }
+.ha-text .ha-foot { height: 26px; font-size: 11.5px; }
 .ha-text .te-code { color: var(--ap-ink); }
 .ha-text .te-l i { color: color-mix(in srgb, var(--ap-ink-2) 70%, var(--ap-paper)); box-shadow: 1px 0 0 var(--ap-line); }
 .ha-text .te-l:hover { background: var(--ap-well); } .ha-text .te-l:hover i { color: var(--ap-ink-2); }
 .ha-text .ha-foot .ro { color: var(--ap-ink-2); }
-:root:not([data-scheme="dark"]) .ha-text { --c-com: #707684; --c-str: #2d7a3a; --c-num: #b0501a; --c-kw: #7b3fb6; --c-time: #2464ad; --c-key: #6a4db0; --c-bad: #c0281f; --c-warn: #8f6400; }
-.ha-text .t-com { color: var(--c-com, #6d7685); } .ha-text .t-str { color: var(--c-str, #a5d6a0); } .ha-text .t-num { color: var(--c-num, #f0a875); } .ha-text .t-kw { color: var(--c-kw, #c79bf2); }
-.ha-text .t-time { color: var(--c-time, #79aee6); } .ha-text .t-key { color: var(--c-key, #b9a3e8); } .ha-text .t-bad { color: var(--c-bad, #ff7d76); } .ha-text .t-warn { color: var(--c-warn, #f2c66d); }
+.ha-text .t-com { color: var(--c-com); } .ha-text .t-str { color: var(--c-str); } .ha-text .t-num { color: var(--c-num); } .ha-text .t-kw { color: var(--c-kw); }
+.ha-text .t-time { color: var(--c-time); } .ha-text .t-key { color: var(--c-key); } .ha-text .t-bad { color: var(--c-bad); } .ha-text .t-warn { color: var(--c-warn); }
+
 /* Table */
 .ha-table .ha-body { background: var(--ap-paper); }
-.ha-table .ha-foot { background: var(--ap-bar); }
 .ha-table .tb-sort { color: var(--ap-acc); }
 .ha-table .tb { color: var(--ap-ink); }
 .ha-table .tb thead th { background: color-mix(in srgb, var(--ap-bar) 97%, transparent); border-bottom-color: var(--ap-line); }
 .ha-table .tb thead th button { color: color-mix(in srgb, var(--ap-ink) 80%, var(--ap-paper)); }
 .ha-table .tb thead th button:hover { color: var(--ap-ink); background: var(--ap-well); }
-.ha-table .tb thead th[aria-sort] button { color: var(--ap-acc); box-shadow: inset 0 -2px 0 var(--ap-acc); }
+.ha-table .tb thead th[aria-sort] button { color: var(--ap-acc); box-shadow: inset 0 -2px 0 var(--ap-hue); }
 .ha-table .tb tbody th { color: var(--ap-ink-2); background: var(--ap-bar); border-right-color: var(--ap-line); }
 .ha-table .tb td { border-bottom-color: color-mix(in srgb, var(--ap-ink) 7%, var(--ap-paper)); }
 .ha-table .tb tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--ap-ink) 2.5%, var(--ap-paper)); }
-.ha-table .tb tbody tr:hover td { background: color-mix(in srgb, var(--ap-acc) 10%, var(--ap-paper)); }
+.ha-table .tb tbody tr:hover td { background: color-mix(in srgb, var(--ap-hue) 12%, var(--ap-paper)); }
 .ha-table .tb tbody tr:hover th { color: var(--ap-acc); }
+
 /* Document Viewer: the page stays a white page; the desk around it takes the theme */
-.ha-document .dv-desk { background: radial-gradient(ellipse at 50% 30%, color-mix(in srgb, var(--ap-paper) 80%, var(--ap-ink)), color-mix(in srgb, var(--ap-paper) 66%, var(--ap-ink))); }
+.ha-document .dv-desk { background: radial-gradient(ellipse at 50% 30%, color-mix(in srgb, var(--ap-paper) 86%, var(--ap-ink)), color-mix(in srgb, var(--ap-paper) 72%, var(--ap-ink))); }
+
+/* Image Viewer: the picture on a wall of the theme's own paper, lit from above */
+.ha-image .iv-wall { background: radial-gradient(ellipse 62% 70% at 50% -8%, color-mix(in srgb, var(--ap-ink) 7%, transparent), transparent 70%), color-mix(in srgb, var(--ap-paper) 90%, var(--ap-ink)); }
+:root[data-scheme="dark"] .ha-image .iv-wall { background: radial-gradient(ellipse 62% 70% at 50% -8%, color-mix(in srgb, var(--ap-ink) 9%, transparent), transparent 70%), radial-gradient(ellipse 80% 40% at 50% 108%, rgba(0, 0, 0, .35), transparent), color-mix(in srgb, var(--ap-paper) 86%, #000); }
+:root:not([data-scheme="dark"]) .ha-image .iv-img { box-shadow: 0 0 0 1px rgba(0, 0, 0, .08), 0 2px 4px rgba(0, 0, 0, .14), 0 30px 50px -20px rgba(0, 0, 0, .45); }
+.ha-image .iv-none { color: var(--ap-ink); } .ha-image .iv-none small { color: var(--ap-ink-2); }
+
+/* Video Player: the film stays on black (it is cinema); only its controls take the accent */
+.ha-video { --ap-paper: #000; background: #000; }
+.ha-video :focus-visible { outline-color: var(--ap-hue); }
+
+/* Audio Player: the theme's panel and paper, warmed by the accent; the waveform in the theme's accent and folder colours */
+.ha-audio { --bar: transparent; --wv-1: var(--ap-fold); --wv-2: color-mix(in srgb, var(--ap-fold) 50%, var(--ap-hue)); --wv-3: var(--ap-hue);
+  background: radial-gradient(500px 260px at 20% 0%, color-mix(in srgb, var(--ap-hue) 16%, transparent), transparent 70%), linear-gradient(165deg, var(--ap-bar), var(--ap-paper) 70%); }
+.ha-audio .ha-foot { background: color-mix(in srgb, var(--ap-ink) 5%, transparent); }
+.ha-audio .ap { color: var(--ap-ink); }
+.ha-audio :is(.ap-id small, .ap-tr, .ap-q) { color: var(--ap-ink-2); }
+.ha-audio .ap-art { background: linear-gradient(145deg, color-mix(in srgb, var(--ap-hue) 22%, var(--ap-bar)), var(--ap-paper)); box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ap-ink) 10%, transparent), 0 0 0 1px var(--ap-line), 0 12px 24px -12px rgba(0, 0, 0, .5); }
+.ha-audio .ap-play { background: var(--ap-fill); color: var(--ap-on-acc); }
+.ha-audio .ap-bar { background: color-mix(in srgb, var(--ap-ink) 14%, transparent); }
+
+/* Lock: the plate, words and buttons take the theme; the padlock, wheels, tiles and dial stay brass and steel */
+.ha-lock .ha-body { background: radial-gradient(120% 70% at 50% 0%, var(--ap-bar), var(--ap-paper) 70%); color: var(--ap-ink); }
+.ha-lock .ha-foot .lk-state, .ha-lock .ha-foot .lk-prog { color: var(--ap-acc); }
+.ha-lock .lk-prompt { color: var(--ap-ink); }
+.ha-lock .lk-prompt code { background: var(--ap-well); box-shadow: inset 0 0 0 1px var(--ap-line); }
+.ha-lock .lk-try { color: var(--ap-on-acc); background: linear-gradient(180deg, color-mix(in srgb, var(--ap-fill) 90%, #fff), var(--ap-fill));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .3), inset 0 -2px 0 rgba(0, 0, 0, .12), 0 0 0 1px color-mix(in srgb, var(--ap-fill) 70%, #000), 0 6px 16px -6px color-mix(in srgb, var(--ap-hue) 60%, transparent); }
+.ha-lock .lk-hint, .ha-lock :is(.lk-set, .lk-clear) { color: var(--ap-ink); background: color-mix(in srgb, var(--ap-ink) 6%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ap-ink) 16%, transparent); }
+.ha-lock .lk-hint span { color: var(--ap-ink-2); }
+.ha-lock .lk-hint:hover:not(:disabled), .ha-lock :is(.lk-set, .lk-clear):hover:not(:disabled) { background: color-mix(in srgb, var(--ap-ink) 11%, transparent); }
+.ha-lock .lk-set b { color: var(--ap-acc); }
+.ha-lock .lk-msg { color: var(--ap-bad); }
+.ha-lock .lk.opening .lk-msg, .ha-lock .lk.is-open .lk-msg { color: var(--ap-acc); }
+.ha-lock .lk-hints li { color: var(--ap-ink); background: color-mix(in srgb, var(--ap-hue) 9%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ap-hue) 28%, transparent); }
+.ha-lock .lk-hints li::before, .ha-lock .lk-chips b, .ha-lock .lk-again.armed { color: var(--ap-on-acc); background: var(--ap-fill); }
+.ha-lock .lk-chips i { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ap-ink) 18%, transparent); }
+.ha-lock .lk-seq { color: var(--ap-ink-2); }
+.ha-lock .lk-again { color: var(--ap-ink-2); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ap-ink) 14%, transparent); }
+.ha-lock .lk-again:hover { color: var(--ap-ink); background: color-mix(in srgb, var(--ap-ink) 7%, transparent); }
+/* what the lock was keeping: a card of the theme's paper, lifted off the plate */
+.ha-lock .lk-open { color: var(--ap-ink); background: color-mix(in srgb, var(--ap-paper) 70%, #fff); box-shadow: 0 0 0 1px var(--ap-line), 0 18px 40px -12px rgba(0, 0, 0, .45); }
+:root[data-scheme="dark"] .ha-lock .lk-open { background: color-mix(in srgb, var(--ap-bar) 88%, var(--ap-ink)); box-shadow: 0 0 0 1px rgba(0, 0, 0, .4), 0 1px 0 color-mix(in srgb, var(--ap-ink) 8%, transparent) inset, 0 18px 40px -12px rgba(0, 0, 0, .6); }
+.ha-lock .lk-imgb, .ha-lock .lk-open.final .lk-imgb { background: var(--ap-well); box-shadow: 0 0 0 1px var(--ap-line), 0 10px 24px -14px rgba(0, 0, 0, .55); }
+.ha-lock .lk-imgb:focus-visible { outline-color: var(--ap-acc); }
+.ha-lock .lk-go { color: var(--ap-on-acc); background: linear-gradient(180deg, color-mix(in srgb, var(--ap-fill) 90%, #fff), var(--ap-fill)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .3), 0 0 0 1px color-mix(in srgb, var(--ap-fill) 70%, #000); }
+.ha-lock .lk-go small { color: color-mix(in srgb, var(--ap-on-acc) 72%, transparent); }
+.ha-lock .lk-all { color: var(--ap-acc); } .ha-lock .lk-all i { background: var(--ap-hue); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ap-hue) 25%, transparent); }
+.ha-lock .lk-open.final { background: radial-gradient(120% 60% at 50% 0%, color-mix(in srgb, var(--ap-paper) 55%, #fff), color-mix(in srgb, var(--ap-paper) 80%, #fff)); }
+:root[data-scheme="dark"] .ha-lock .lk-open.final { background: radial-gradient(120% 60% at 50% 0%, color-mix(in srgb, var(--ap-bar) 80%, var(--ap-ink)), var(--ap-bar)); }
+.ha-lock .lk-open.final :is(h3, .lk-md, .lk-md strong) { color: var(--ap-ink); }
+.ha-lock .lk-open.final .lk-md p:first-child strong { color: var(--ap-acc); }
+.ha-lock .lk-open.final .lk-md p:last-child { color: var(--ap-ink-2); }
+.ha-lock .lk-orn { background: linear-gradient(90deg, transparent, var(--ap-hue), transparent); }
+.ha-lock .lk-orn::after { background: var(--ap-hue); }

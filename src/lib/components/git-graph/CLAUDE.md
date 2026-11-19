@@ -36,8 +36,10 @@ graph once built a private refresh stack and produced #431/#432.
 ## GitHub PR mutations (ADR 0005, ADR 0006)
 
 Git Graph PR mutations use `git_pr_action` through `gh` with an explicit selected
-GitHub repository and user confirmation. Creation requires an already-pushed
-branch and revalidates the displayed HEAD branch before spawning the CLI.
+GitHub repository and user confirmation. Creation starts from a local branch
+pill's context menu, for any local branch (not only HEAD's); the backend checks
+that `refs/heads/<branch>` still exists before spawning the CLI, and
+`gh pr create --head` reports a branch that was never pushed (#1847).
 Every confirmation carries its displayed repository identity, which the backend
 rechecks against the selected remote. A successful merge command means “merge
 requested”: GitHub may enqueue it, so only refreshed badges reflect closure. PR

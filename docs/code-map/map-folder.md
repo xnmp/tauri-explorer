@@ -99,7 +99,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `scm/ScmCommitPanel.svelte` — branch line + flat/tree toggle, commit message (Enter commits, Ctrl/Cmd+Enter amends), Amend toggle, Commit button.
 - `ScmPanel.svelte` — standalone SCM panel (stage/unstage/commit lists).
 - `GitGraphView.svelte` — commit-graph pane content (#51/#58); the uncommitted-changes node opens an inline stage/unstage/commit panel (#466, logic in `domain/commit-panel.ts`), arbitrary commit comparison transitions live in `git-graph-comparison.ts` (#512), failed GitHub Actions checks can expose their failed `gh` log inline from an open-PR badge (#521), branch/tag delete, branch rename, merge, and pull record session undo snapshots with a confirmed Ctrl+Z inverse (#513), and `GitAuthorAvatar.svelte` renders opt-out round author images with deterministic local fallbacks (#514).
-- `git-graph/GitGraphBanners.svelte` — PR action toolbar/status, standing detached-HEAD banner (#524) and cancellable network-operation banner (#528).
+- `git-graph/GitGraphBanners.svelte` — PR action status strip (only while there is status to show), standing detached-HEAD banner (#524) and cancellable network-operation banner (#528).
 - `git-graph/GitGraphHeader.svelte` — graph column header: graph/author/date resize separators (#341) and the branch-filter slot.
 - `git-graph/GitGraphBranchFilter.svelte` — branch-filter button + popover: fork-point jump (#1083), file-path filter (#529), local-only/remote-only toggles, author and branch checkboxes (semantics in `domain/git-graph-branch-filter.ts`).
 - `git-graph/GitGraphColumnMenu.svelte` — header right-click menu over `state/git-graph-view-prefs.svelte.ts` (columns, avatars/Gravatar, detail metadata, merge muting, branch tracing).
@@ -107,7 +107,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-graph/GitGraphCommitRow.svelte` — one windowed commit row: ref chips, PR and branch-status badges, avatar and metadata columns.
 - `git-graph/GitGraphCommitDetail.svelte` — inline commit details contents: message/metadata, comparison controls, changed files + inline diffs, uncommitted commit box (#466).
 - `git-graph/GitGraphPrDetail.svelte` — inline PR dropdown contents: actions, description/comments, failed CI checks + logs, review threads (#459, #521).
-- `git-graph/GitGraphCommitMenu.svelte` — commit context menu and references disclosure (anchor in `composables/use-git-graph-menu.svelte.ts`).
+- `git-graph/GitGraphCommitMenu.svelte` — commit context menu (incl. a local branch pill's "Create pull request…", entry state from `domain/git-graph-create-pr.ts`, #1847) and references disclosure (anchor in `composables/use-git-graph-menu.svelte.ts`).
 - `git-graph/GitGraphDialogs.svelte` — rename/name prompts, pull offer, reset/delete suboption modals, PR action and undo confirmations.
 - `icons/FilesIcon.svelte` — activity-bar SVG icon.
 - `CommandPalette.svelte` — Ctrl+Shift+P command palette UI.
@@ -586,6 +586,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `shortcut-recording.ts` — pure two-step recording transitions and shared chord deadline.
 - `git.ts` — git status letter/indicator conversion.
 - `git-graph.ts` — commit-graph lane layout (#58/#179).
+- `git-graph-create-pr.ts` — state of a local branch pill menu's "Create pull request…" entry: offered only for a local branch, disabled with a reason while a PR action runs or the branch has an open PR (#1847).
 - `git-graph-view.ts` — git-graph table geometry: row offsets with an inline expansion, render window, lane windowing, table minimum width, menu clamp, synthetic uncommitted row and date cells.
 - `git-graph-branch-filter.ts` — branch-filter popover semantics (all/none/subset toggles, author batch toggles, remote-only exclusion).
 - `git-branch-status.ts` — branch-status badge presenter (merged / squashed / stale; `unknown` shows none) and status index (#1081).

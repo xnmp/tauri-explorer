@@ -15,21 +15,56 @@ async function graph(page: import("@playwright/test").Page, query = "") {
   await expect(page.locator('[data-testid="git-graph-view"] .commit-row').first()).toContainText("Uncommitted Changes");
   return page.locator('[data-testid="git-graph-view"]');
 }
-test("create PR from the current branch reports URL and refreshes badge", async ({ page }) => {
+/** Right-click a local branch pill and choose "Create pull request…" (#1847). */
+async function createPrFromPill(page: import("@playwright/test").Page, view: import("@playwright/test").Locator, branch: string, screenshot?: string) {
+  await view.locator(".ref-branch", { hasText: new RegExp(`^\\s*${branch}\\b`) }).first().click({ button: "right" });
+  const item = page.getByTestId("git-graph-menu").getByRole("menuitem", { name: /Create pull request…/ });
+  await expect(item).toBeEnabled();
+  if (screenshot) await page.screenshot({ path: screenshot });
+  await item.click();
+  return page.getByRole("dialog", { name: "Create pull request" });
+}
+
+test("create PR from a non-checked-out branch pill reports URL and refreshes badge", async ({ page }) => {
   const view = await graph(page);
-  await view.getByRole("button", { name: "Create PR", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "Create pull request" });
+  // The toolbar no longer offers creation, and stays absent while idle.
+  await expect(view.getByRole("button", { name: "Create PR", exact: true })).toHaveCount(0);
+  await expect(view.getByTestId("git-graph-pr-status")).toHaveCount(0);
+  // `release` sits on the HEAD commit but HEAD is `main`.
+  const dialog = await createPrFromPill(page, view, "release", "screenshots/refactor/branch-pill-create-pr/branch-pill-menu.png");
   await expect(dialog).toContainText("Repository: mock/project");
-  await expect(dialog).toContainText("Current branch: main");
+  await expect(dialog).toContainText("Branch: release");
   await dialog.getByLabel("Title", { exact: true }).fill("Create graph PR actions");
   await dialog.getByLabel("Base branch").fill("dev");
   await dialog.getByLabel("Description").fill("Created from the graph pane.");
   await dialog.getByRole("button", { name: "Create PR", exact: true }).click();
   await expect(view.getByRole("status")).toContainText("PR created");
   await expect(view.getByRole("status")).toContainText("https://github.com/mock/project/pull/99");
-  await expect(view.locator(".ref-pr", { hasText: "#99" }).first()).toBeVisible();
+  await expect(view.locator(".commit-row", { has: page.locator(".ref-branch", { hasText: "release" }) }).locator(".ref-pr", { hasText: "#99" })).toBeVisible();
   await page.screenshot({ path: "evidence/ac-1-create-pr.png" });
 });
+
+test("create PR is disabled for a branch with an open PR and absent on remote and tag pills", async ({ page }) => {
+  const view = await graph(page);
+  await view.locator(".ref-branch", { hasText: /^\s*feature\b/ }).first().click({ button: "right" });
+  const menu = page.getByTestId("git-graph-menu");
+  const item = menu.getByRole("menuitem", { name: /Create pull request…/ });
+  await expect(item).toBeDisabled();
+  await expect(item).toContainText("PR #7 is already open");
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("git-graph-menu")).toHaveCount(0);
+
+  await view.locator(".ref-remote", { hasText: "origin/legacy-import" }).first().click({ button: "right" });
+  await expect(menu.getByRole("menuitem", { name: /Checkout legacy-import/ })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: /Create pull request…/ })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("git-graph-menu")).toHaveCount(0);
+
+  await view.locator(".ref-tag", { hasText: "v1.0" }).first().click({ button: "right" });
+  await expect(menu.getByRole("menuitem", { name: /Delete Tag 'v1.0'/ })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: /Create pull request…/ })).toHaveCount(0);
+});
+
 for (const action of ["merge", "approve"] as const) {
   test(`${action} PR requires confirmation and refreshes graph badges`, async ({ page }) => {
     const view = await graph(page);
@@ -52,13 +87,11 @@ for (const action of ["merge", "approve"] as const) {
 test("cancel sends no mutation and CLI errors keep the dialog retryable", async ({ page }) => {
   const view = await graph(page);
   const count = () => page.evaluate(() => (globalThis as { __mockControl?: { invokeCounts?: Record<string, number> } }).__mockControl?.invokeCounts?.git_pr_action ?? 0);
-  await view.getByRole("button", { name: "Create PR", exact: true }).click();
-  let dialog = page.getByRole("dialog", { name: "Create pull request" });
+  let dialog = await createPrFromPill(page, view, "main");
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   expect(await count()).toBe(0);
   await page.evaluate(() => { (globalThis as { __mockControl?: { failures?: Record<string, string> } }).__mockControl!.failures = { git_pr_action: "GitHub CLI (`gh`) is not installed" }; });
-  await view.getByRole("button", { name: "Create PR", exact: true }).click();
-  dialog = page.getByRole("dialog", { name: "Create pull request" });
+  dialog = await createPrFromPill(page, view, "main");
   await dialog.getByLabel("Title", { exact: true }).fill("Retryable PR");
   await dialog.getByLabel("Base branch").fill("dev");
   await dialog.getByRole("button", { name: "Create PR", exact: true }).click();

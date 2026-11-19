@@ -66,13 +66,19 @@ describe("graph PR actions", () => {
 
 
 describe("create PR confirmation identity", () => {
-  it("captures repository and displayed branch before opening confirmation", async () => {
-    const context = vi.fn(async () => ({ repoSlug: "owner/A", headBranch: "feature" }));
+  it("captures the repository identity for the requested branch", async () => {
+    const context = vi.fn(async () => ({ repoSlug: "owner/A" }));
     const session = createGitPrSession("/repo", { context, openPrs: async () => [], failedChecks: async () => [], checkLog: async () => ({ checkName: "", log: "" }) });
     expect(await session.prepareCreate("feature")).toEqual({ repoSlug: "owner/A", action: "create", headBranch: "feature", title: "", base: "", body: "" });
-    context.mockResolvedValue({ repoSlug: "owner/A", headBranch: "other" });
-    expect(await session.prepareCreate("feature")).toBeNull();
-    expect(session.actionError).toContain("branch changed");
+    expect(session.actionError).toBeNull();
+  });
+
+  it("accepts any local branch, not only the checked-out one (#1847)", async () => {
+    const context = vi.fn(async () => ({ repoSlug: "owner/A" }));
+    const session = createGitPrSession("/repo", { context, openPrs: async () => [], failedChecks: async () => [], checkLog: async () => ({ checkName: "", log: "" }) });
+    expect(await session.prepareCreate("not-head")).toMatchObject({ action: "create", headBranch: "not-head", repoSlug: "owner/A" });
+    expect(await session.prepareCreate("feature/other")).toMatchObject({ headBranch: "feature/other" });
+    expect(session.actionError).toBeNull();
   });
 });
 

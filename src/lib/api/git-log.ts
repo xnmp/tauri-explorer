@@ -448,9 +448,10 @@ export async function gitPrAction(repoPath: string, request: PrAction): Promise<
   return invoke<string>("git_pr_action", { repoRoot: repoPath, request });
 }
 
-export interface PrContext { repoSlug: string; headBranch: string | null }
+export interface PrContext { repoSlug: string }
 
-/** Capture repository and branch identity before asking for confirmation. */
+/** Capture the repository identity before asking for confirmation; the
+ *  backend rechecks it, and that the branch still exists, on submit. */
 export async function gitPrContext(repoPath: string): Promise<PrContext> {
   return invoke<PrContext>("git_pr_context", { repoRoot: repoPath });
 }

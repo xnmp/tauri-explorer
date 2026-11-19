@@ -177,7 +177,7 @@
       <div class="dialog-header">
         <h2>{prDialogTitle(prDialog.dialog.action)}</h2>
         <p class="dialog-subtitle">Repository: {prDialog.dialog.repoSlug}</p>
-        <p class="dialog-subtitle">{prDialog.dialog.action === "create" ? `Current branch: ${prDialog.dialog.headBranch}` : `PR #${prDialog.dialog.prNumber} · ${repoPath}`}</p>
+        <p class="dialog-subtitle">{prDialog.dialog.action === "create" ? `Branch: ${prDialog.dialog.headBranch}` : `PR #${prDialog.dialog.prNumber} · ${repoPath}`}</p>
       </div>
       {#if prDialog.dialog.action === "create"}
         <div class="form-field"><label for="pr-title">Title</label><input autocorrect="off" autocapitalize="none" spellcheck="false" id="pr-title" data-autofocus required bind:value={prDialog.dialog.title} disabled={prActionBusy} /></div>

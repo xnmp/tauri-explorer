@@ -19,7 +19,7 @@ export const NUMERIC_SETTINGS = {
   recentItemsCount: { min: 0, max: 20, integer: true },
   millerLayers: { min: 0, max: 3, integer: true },
   millerLayersPreferred: { min: 1, max: 3, integer: true },
-  windowsBackdropOpacity: { min: 0, max: 100 },
+  translucencyOpacity: { min: 20, max: 100, integer: true },
   previewFontSize: { min: 8, max: 28 },
   settingsVersion: { min: 0, max: Number.MAX_SAFE_INTEGER, integer: true },
 } as const satisfies Record<string, NumericSettingRule>;

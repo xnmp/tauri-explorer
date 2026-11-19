@@ -47,3 +47,27 @@ test("Linux volume sidebar discovers, mounts, reports errors and removes volumes
   await expect(page.locator(".drive-item").filter({ hasText: "Google Drive" })).toHaveCount(0);
   await page.screenshot({ animations: "disabled", path: "evidence/ac-3-linux-volume-removal.png" });
 });
+
+// #1660: the native message for a mount with no polkit agent is long and
+// carries the remedy (the agent to start, or the exact udisksctl command).
+// The toast must show it in full rather than clip the command.
+test("a mount refused for want of a polkit agent shows the remedy in full", async ({ page }) => {
+  const message = "Mounting this drive needs authentication, but no authentication agent answered. " +
+    "Start your desktop's polkit agent (for example polkit-gnome-authentication-agent-1, lxpolkit or " +
+    "polkit-kde-authentication-agent-1) and try again, or run `udisksctl mount -b /dev/sdb1` in a terminal.";
+  await page.addInitScript(({ volume, message }) => {
+    const control = ((window as unknown as VolumeFixture).__mockControl ??= {});
+    control.linuxVolumes = [volume];
+    control.mountError = message;
+  }, { volume, message });
+  await page.goto(HOME_URL);
+  await waitForEntries(page);
+  await page.locator(".drive-item").filter({ hasText: "USB Backup" }).click();
+  const toast = page.locator(".toast").filter({ hasText: "no authentication agent answered" });
+  await expect(toast).toBeVisible();
+  await expect(toast).toContainText("udisksctl mount -b /dev/sdb1");
+  const box = await toast.boundingBox();
+  const viewport = page.viewportSize();
+  expect(box && viewport && box.x >= 0 && box.x + box.width <= viewport.width && box.y + box.height <= viewport.height).toBe(true);
+  await page.screenshot({ animations: "disabled", path: "screenshots/fix/udisks-auth-message/udisks-auth-toast.png" });
+});

@@ -5564,7 +5564,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-explorer"
-version = "1.27.0"
+version = "0.29.0"
 dependencies = [
  "base64 0.23.1",
  "bytes",
@@ -5573,6 +5573,7 @@ dependencies = [
  "criterion",
  "dbus-secret-service",
  "dirs",
+ "dispatch2",
  "drag",
  "dunce",
  "explorer-avif",
@@ -5645,6 +5646,7 @@ dependencies = [
  "windows 0.62.2",
  "windows-core 0.62.2",
  "windows-sys 0.61.2",
+ "windows-version",
  "wry",
  "x11rb 0.14.0",
  "xkbcommon",

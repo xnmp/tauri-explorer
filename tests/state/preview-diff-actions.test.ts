@@ -11,8 +11,8 @@ function fixture(owner = "a") {
   const scm = {
     activeDiff: { path: "f.txt", staged: false },
     summary: { staged: [], changes: [{ path: "f.txt" }], untracked: [] },
-    stage: vi.fn(async (p: string[]) => { staged.push(p); }),
-    unstage: vi.fn(async () => {}),
+    stage: vi.fn(async (p: string[]) => { staged.push(p); return { ok: true }; }),
+    unstage: vi.fn(async () => ({ ok: true })),
     discard: vi.fn(async (p: string[]) => { discarded.push(p); return { ok: true }; }),
     applyPatch: vi.fn(async (p: string) => { patches.push(p); return { ok: true }; }),
     openDiff: vi.fn(),

@@ -98,4 +98,17 @@ describe("renameSuggestionStore", () => {
     expect(renameSuggestionStore.suggestionFor(e.path)).toBe("new.txt");
     renameSuggestionStore.clearProvider(newProvider);
   });
+
+  it("shows an escaped-name suggestion as display text but keeps the wire form", async () => {
+    const wire = "caf\uEFE9.txt"; // U+EF00 + 0xE9 is an ill-formed byte
+    const provider = async () => wire;
+    renameSuggestionStore.setProvider(provider);
+    const e = entry("a.txt");
+    renameSuggestionStore.fetch(e);
+    await flush();
+    expect(renameSuggestionStore.suggestionFor(e.path)).toBe(wire);
+    expect(renameSuggestionStore.displaySuggestionFor(e.path)).toBe("caf\uFFFD.txt");
+    expect(renameSuggestionStore.displaySuggestionFor("/other")).toBe(null);
+    renameSuggestionStore.clearProvider(provider);
+  });
 });

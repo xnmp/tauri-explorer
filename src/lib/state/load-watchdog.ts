@@ -10,6 +10,7 @@
  *
  * Recording is best-effort and never throws into the load it observes.
  */
+import { recordAction } from "$lib/api/action-trail";
 import {
   SLOW_LOAD_THRESHOLD_MS,
   buildFrontendRecord,
@@ -56,6 +57,8 @@ export interface LoadWatchdogDeps {
   sinceBootMs?(): number | null;
   /** Every settled trace, for opt-in measurement (#1417). Best-effort. */
   settled?(trace: LoadTrace): void;
+  /** Every directory navigation as it starts, by kind only (#1688). */
+  began?(reason: LoadTraceInit["reason"]): void;
 }
 
 interface Entry {
@@ -111,6 +114,7 @@ export function createLoadWatchdog(deps: LoadWatchdogDeps) {
 
   function begin(init: Omit<LoadTraceInit, "id">): LoadTraceHandle {
     const trace = startLoadTrace({ ...init, id: nextId() }, deps.nowMono(), deps.nowEpoch());
+    deps.began?.(init.reason);
     const entry: Entry = { trace, timer: null, recorded: false };
     inFlight.set(trace.id, entry);
     // Owners settle their traces; this bound only guards against a leak.
@@ -190,4 +194,9 @@ export const loadWatchdog = createLoadWatchdog({
   randomSuffix: () => Math.random().toString(36).slice(2, 10),
   sinceBootMs: sinceBoot,
   settled: publishPerfTrace,
+  // The kind of navigation (navigate / history / parent-fallback), never its
+  // path; the initial load is not a user action.
+  began: (reason) => {
+    if (reason !== "initial") recordAction(`nav:${reason}`);
+  },
 });

@@ -273,14 +273,6 @@
     opacity: 0;
   }
 
-  .tab-area .tab.dragging {
-    opacity: 0.5;
-  }
-
-  .tab-area .tab.drag-over {
-    border-color: var(--accent);
-    background: var(--subtle-fill-secondary);
-  }
 
   .tab-area .tab.file-drop-target,
   .tab-area .tab.drop-target {
@@ -339,11 +331,11 @@
     overflow: visible;
   }
 
-  /* Under the macOS material the window is translucent: an opaque tab over
+  /* Under a window material the window is translucent: an opaque tab over
      the translucent pane read as a white (or black) card on glass. The
      title bar is already the pane's card, so the tab adds exactly what the
      navigation bar below adds to the pane, and no solid base (#1734). */
-  :root[data-macos-material] .tab-area .tab.active {
+  :root[data-material] .tab-area .tab.active {
     --tab-surface: var(--layout-chrome-surface, var(--background-card-secondary));
     --tab-surface-base: transparent;
   }
@@ -640,4 +632,25 @@
   @media (max-width: 500px) {
     .tab-area { padding-left: 8px; }
     .tab-area .new-tab-btn, .tab-area .tab-picker-btn { width: 24px; margin-left: 0; }
+  }
+
+  /* Drag to reorder (#1749). These rules come last and carry the tab's
+     [data-tab-id] so they outrank every tab state above: .tab.active (and
+     its hover and window-material variants) reset opacity and transform,
+     and once sat after .tab.dragging, so a dragged active tab never dimmed.
+     While a drag shows an insertion position the tabs it passes move aside
+     (--tab-shift, domain/tab-reorder.ts) and the dragged tab, dimmed and
+     outlined, stands in the gap as the marker of where it will land. */
+  .tab-area .tab-list.reordering > .tab[data-tab-id] {
+    transform: translateX(calc(var(--tab-shift, 0) * 1px));
+    transition: transform 160ms cubic-bezier(0.33, 1, 0.68, 1);
+  }
+  .tab-area .tab.dragging[data-tab-id] {
+    opacity: 0.5;
+    z-index: 3;
+    outline: 1px dashed var(--accent);
+    outline-offset: -3px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .tab-area .tab-list.reordering > .tab[data-tab-id] { transition: none; }
   }

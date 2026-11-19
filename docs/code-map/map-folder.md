@@ -117,11 +117,13 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `ContentSearchDialog.svelte` — Ctrl+Shift+F grep-across-files dialog + streamed results.
 - `OptionPicker.svelte` — generic secondary list picker.
 - `ContextMenu.svelte` — right-click menu renderer (items from context-menu stores).
+- `ContextMenuHint.svelte` — command-owned shortcut hint for a context-menu item (`getCommandShortcut`).
 - `Modal.svelte` + `modal.css` — base modal shell + shared modal styling.
 - `UserReportDialog.svelte` — in-app issue form; closes optimistically, submits through Rust, toasts background failures, and restores saved failed drafts when reopened.
 - `SettingsDialog.svelte` — general settings dialog; links to dedicated Keyboard Shortcuts and Plugins dialogs.
 - `settings/SettingRow.svelte` — one Settings row (label, description, optional `info` snippet, control slot); `hidden` while the search filter excludes it.
 - `settings/SettingToggle.svelte` — the Settings switch (restyled checkbox; extra input attributes forwarded).
+- `settings/TranslucencyOpacitySetting.svelte` — "Translucency Opacity" slider row under the Translucency toggle (#1735, #1757).
 - `settings/TerminalShortcutSettings.svelte` — terminal line-editing shortcut list and key recorder (#375/#404); recording ends on dialog close or window blur.
 - `settings/GitHubReportTokenSetting.svelte` — Settings → Issue Reports: write-only GitHub token entry (save/replace/remove) showing only whether one is saved (#1455).
 - `settings/ExperimentalSettings.svelte` — Settings → Experimental feature-flag rows (integrated terminal, git graph).
@@ -148,6 +150,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `TitleBar.svelte` — window title bar + tab strip host + window controls.
 - `WindowTabBar.svelte` — compressed window tab strip, active-tab reveal and edge scrolling; executes the domain tab-drag reducer effects.
 - `WindowTabPicker.svelte` — searchable all-tabs combobox with full pane paths, keyboard selection and anchored positioning.
+- `WindowTabMenu.svelte` — lazy-loaded tab right-click menu (Close, Close Others, Close to the Right, Duplicate, Reopen Closed Tab); items supplied by `WindowTabBar` (#1749).
 - `window-tab-bar.css` — tab strip chrome scoped to `.tab-area`, including compression and persistent controls.
 - `JobsPanel.svelte` — background jobs viewer (Ctrl+J); Retry on failed jobs that carry `retry`.
 - `ToastOverlay.svelte` — stacked toast notifications.
@@ -324,8 +327,10 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `commands/general-commands.ts` — misc app commands (settings, palette, etc).
 - `commands/system-actions.ts` — system actions not touching pane state (open terminal, reveal).
 - `keybindings.svelte.ts` — customizable keybinding store (chords, conflicts, persistence).
+- `command-shortcut-label.ts` — `shortcutSuffix(commandId)`: " (Ctrl+H)" prose hint from the effective binding, empty when unbound.
 - `shortcut-recorder.ts` — owned shortcut recording timer, cancellation and completion callbacks.
 - `window-tabs.svelte.ts` — tab management (open/close/reorder/active). Central for tabs.
+- `window-tab-actions.ts` — tab context-menu actions on the manager: Close Others / Close to the Right (anchor activated first, each close restorable), Duplicate, and the menu's item list (#1749).
 - `window-tabs-pane-prefs.ts` — per-pane commit graph (#272) and SCM panel override (#434) accessors for the tab strip, split from `window-tabs.svelte.ts`.
 - `window-tabs-persistence.ts` — persist/migrate window tab tree (PersistedNode).
 - `tab-transfer.ts` — window-local pointer marker identity and acknowledged native tab transfer.
@@ -334,11 +339,11 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `warm-activation.ts` — owns parked-window observation, reveal/navigation admission, acknowledged activation and retirement.
 - `warm-window.ts` — native warm-pool adapters and acknowledged reuse; integrates the activation owner.
 - `page-foreground.ts` — `warmMode()` and the page's one foreground gate: a parked or measuring warm window defers drive pushes/poll and file-operation recovery until its activation commits (#931).
-- `window-appearance.ts` — shared window creation options for fresh and warm windows: Windows backdrop, macOS vibrancy transparency + material (`domain/macos-vibrancy.ts`, #1733), and exact feature-injected WebView2 environment arguments in Windows E2E.
+- `window-appearance.ts` — shared window creation options for fresh and warm windows: the Translucency material's transparency + effects (`domain/translucency.ts`, #1733, #1757), and exact feature-injected WebView2 environment arguments in Windows E2E.
 - `window-title.svelte.ts` — resolves launch-home context and keeps the native OS title synchronized with the active pane directory.
 - `window-close.ts` — owns synchronous close admission, native close requests, terminal destruction and failure recovery.
 - `window-chrome.ts` — owns native maximize-state observation, resize query coalescing, and late listener/read retirement.
-- `window-backdrop.ts` — Windows Mica/Acrylic translucent backdrop (CSS strength).
+- `window-translucency.svelte.ts` — the platform's window material (published by `src-tauri/src/translucency.rs`) and this window's own, fixed once its settings load; drives `data-native-backdrop`/`data-material` and the Settings rows (#1757).
 - `workspaces.svelte.ts` — save/restore named workspaces.
 - `bookmarks.svelte.ts` — sidebar bookmarks store.
 - `config-document.ts` — `createConfigDocument`: shared init/migrate/reload/write-through lifecycle for bookmarks.json and folder-views.json (#1568); shape gates and the migration value are per-file options.
@@ -361,6 +366,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `manual-hidden.svelte.ts` — per-folder manually-hidden entry registry.
 - `open-history-access.svelte.ts` — startup-light seam for the open history (#1525): registers the `api/open.ts` `onFileLaunched` listener, lazy-loads the store on first launch/mutation/read, reactive `lastOpenedAt` for FileItem and the "opened" sort.
 - `open-history.svelte.ts` — shared file open history for Details "Date opened" (#1525, loaded lazily): records successful launches, lazy tolerant load, BroadcastChannel publication, coalesced saves that replay unsaved changes over the stored document.
+- `open-history-combined.svelte.ts` — what Details "Date opened" reads (#1526, lazy): app history merged newest-wins with a batched, TTL-cached resolver for OS recent-file times (`api/os-opened.ts`); off when `osRecentSources` is disabled.
 - `settings.svelte.ts` — global settings store (toggles, defaults). Very hot for feature flags. `reloadFromDisk()` adopts external settings.json edits (#599).
 - `settings-input.ts` — Pure persisted-settings input contract: normalization against defaults, enum/numeric validation, unknown-key carry-through, size bound (split from settings.svelte.ts, #1679).
 - `settings-toggles.ts` — `TOGGLE_SETTINGS` metadata and `generateToggleCommands` for the command palette (split from settings.svelte.ts, #1523).
@@ -391,6 +397,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/api/native-file-drag.ts` — host native drag start channel and enriched receiver event contract.
 - `image-resolution.ts` — lazy source pixel metadata IPC; virtual paths are unavailable.
 - `open-history.ts` — read/write the app-data open history document (#1525).
+- `os-opened.ts` — `os_opened_times` IPC: OS last-opened epoch ms per path; any failure is `{}` (#1526).
 
 - `pdf-preview.ts` — bounded native PDF bytes, lazy PDF.js worker/readiness, cancellable page rendering and validated native annotation-link dispatch (#728–#730).
 
@@ -412,6 +419,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `files.ts` — all file-op IPC (list, create, rename, copy, move, delete, estimate), including typed per-path trash/restore outcomes. Hot.
 - `media.ts` — `get_media_durations` IPC wrapper (Details Length column, #995).
 - `frontend-log.ts` — forwards diagnosable webview failures to the native rotating log.
+- `action-trail.ts` — `recordAction(kind)` fire-and-forget IPC for the recent-actions trail (#1688); called from `executeCommand` and the load watchdog (navigation kind).
 - `load-diagnostics.ts` — `record_slow_load` / `recent_slow_loads` IPC for slow directory-load records (#1022).
 - `e2e-hooks.ts` — the single frontend E2E hook gate: `E2E_HOOKS_ENABLED` (literal `VITE_E2E_HOOKS === "1"`, not DEV) and `loadE2EHooks()`, the only importer of `src/test-support/`; documents the orphan-chunk rule (#457, #884).
 - `mock-invoke.ts` — mock backend core for browser/E2E (no Tauri): merges the command-family tables and applies the copy/move session and history receipts. Lazily imported by `common.ts` outside Tauri. Open when E2E data wrong, then follow the command's family module.
@@ -480,12 +488,12 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-pointer-drag.svelte.ts` — pointer-event drag for macOS (in-app DnD). [modified on branch]
 - `use-pointer-intent.svelte.ts` — pointer-vs-keyboard intent for pickers.
 - `use-sidebar-drag.svelte.ts` — lightweight sidebar-item pointer drag (macOS).
-- `src/lib/composables/island-regions.ts` — shared Floating Islands region selectors (island surfaces vs structural regions) used by the tab seam marks and strip start.
-- `src/lib/composables/tab-seam-marks.ts` — lazily loaded Floating Islands tab marks: measures the active tab and islands, updates the title bar's inline SVG shade/fill/shadow/edge and island `data-tab-seam` notches in place.
+- `src/lib/composables/tab-seam-marks.ts` — lazily loaded Floating Islands tab marks: measures the active tab and title bar, updates the inline SVG strip shade (with the tab's hole and the surface's corner pockets), key shadow and the one outline (tab plus the surface's top edge, #1785) in place.
 - `src/lib/composables/use-tab-seam.svelte.ts` — loads and attaches `tab-seam-marks` while the islands layout is active; repaints on tab changes.
-- `src/lib/composables/tab-strip-dom.ts` — window tab strip DOM helpers: slide transition (restoring a reversed leaving tab's selected state), reveal glide, title-fade fit check, and the strip's room measured on the title bar's room box so its own writes never loop a ResizeObserver (#1734).
+- `src/lib/composables/tab-reorder.svelte.ts` — live tab drag-reorder state: captures resting slots, shows the insertion index and per-tab displacement, and ends with the move plus the FLIP glide (#1749).
+- `src/lib/composables/tab-strip-dom.ts` — window tab strip DOM helpers: slide transition (restoring a reversed leaving tab's selected state), reveal glide, title-fade fit check, and the strip's room measured on the title bar's room box so its own writes never loop a ResizeObserver (#1734); the icon-carrying drag ghost and the drop/cancel FLIP glide (#1749).
 - `src/lib/composables/tab-strip-motion.svelte.ts` — window tab strip motion state: the tabs the strip lays out (a frame late while a tab slides), width/start eases and the reveal glide flag, on an injectable frame scheduler (#1734).
-- `src/lib/composables/tab-strip-start.ts` — Floating Islands tab strip start: measures the leftmost content island under the title bar (observing only boxes shallower than the strip, plus a MutationObserver for structural island changes) and reports the aligned start that `tabStripStart` adapts to the room (#1734).
+- `src/lib/composables/tab-strip-start.ts` — Floating Islands tab strip start (#1785): measures the strip area against the title bar and reports the padding that puts the first tab's foot past the surface's rounded top-left corner.
 - `src/lib/composables/use-sidebar-drag-end.ts` — source-bound document dragend capture, bookmark fallback and gesture retirement.
 - `src/lib/composables/use-sidebar-file-drop.ts` — MIME-scoped Quick Access pinning and bookmark reorder, independent of retained file consumers.
 - `src/lib/composables/use-dom-directory-drop.ts` — shared importable folder/breadcrumb/tab/listing/Miller DOM transfer destinations and copy policies.
@@ -514,11 +522,12 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `pointer-drag.ts` — shared five-pixel press-to-drag threshold for tabs, files, sidebar items and click suppression.
 - `tab-strip.ts` — pure Chrome-style tab sizing, full-path tab filtering and drag edge-scroll speed; `TAB_BLEED` and the bleed-aware active-tab reveal.
-- `island-outline.ts` — Floating Islands seam pixel ownership (#1734): device-pixel snapping per engine, the island top-edge cut the tab's SVG stroke takes over (handovers at the corner tangents), its path and the island's clip polygon.
-- `tab-seam.ts` — Floating Islands active-tab geometry (#1734): contour, strip-shade hole, fill, seam rows, gutter bridges, squared island corners, strip start padding, edge stroke and key shadow paths.
+- `device-grid.ts` — device-pixel grid per engine (#1734): snaps CSS edges and border widths to where layout paints them, for the Floating Islands tab outline.
+- `tab-seam.ts` — Floating Islands active-tab geometry (#1734, #1785): contour, strip-shade hole, the surface's top corners and their shade pockets, the one outline (tab plus surface top edge), strip start padding and key shadow paths.
 - `tab-slide.ts` — tab insert/remove slide timing and per-frame flex-basis CSS (fillets and content scale with `--tab-slide`).
 - `tab-strip-motion.ts` — pure tab strip transition decisions: which eases a tab-count change uses, whether it slides, and each tab's width (laid out vs entering).
 - `tab-drag.ts` — pure tab-drag lifecycle and effects, including session-qualified asynchronous detach settlement (#1642).
+- `tab-reorder.ts` — live drag-reorder geometry: insertion index from the pointer over the tabs' resting slots, and each tab's displacement while the dragged tab is shown there (#1749).
 - `src/lib/domain/job-presentation.ts` — validates optional job cost/reveal metadata and formats exact decimal money.
 - `src/lib/domain/job-reveal.ts` — pure pane choice, present-file selection, reveal routing and latest-click cancellation policy.
 
@@ -627,7 +636,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `pane-presentation.ts` — flat constrained placement with readiness pruning and pure single-leaf-creation policy, independent of renderer ancestry (#1703).
 - `pane-motion.ts` — pure stable-size reveal plan and clipped visible rectangles, reveal timing and the held extent the file view treats as paint-only room; preserves interruption geometry (#1709, #1718).
 - `entry-reflow.ts` — pure FLIP plan for entries keyed by path across one reflow: glide offsets for painted entries, none for newly mounted or departed ones (#1718).
-- `window-tab-order.ts` — tab-strip index arithmetic: insertion after the active tab, Ctrl+Tab wrapping, drag reordering.
+- `window-tab-order.ts` — tab-strip index arithmetic: insertion after the active tab, Ctrl+Tab wrapping, drag reordering, right-neighbour activation on close and Close Others/Right sets (#1749).
 - `closed-panes.ts` — bounded closed-pane stack, pane-vs-tab restore precedence, repeated last-tab close detection (#229).
 - `tab-title.ts` — VS Code-style tab title disambiguation.
 - `retained-tabs.ts` — which recently active tabs keep their pane tree mounted while hidden: stable render order plus LRU eviction (#1173).
@@ -636,7 +645,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `settings-migration.ts` — versioned one-shot migrations for the persisted settings blob; `migrateSettings` + the append-only ledger (#506).
 - `layout-theme.ts` — layout-theme catalog (#1306): built-ins, leading-comment metadata, user-file validation, resolution/fallback reasons, row-height parsing.
 - `layout-theme-ids.ts` — eager built-in layout ids and the legacy Floating Islands → `layoutTheme` mapping used by settings migration.
-- `macos-vibrancy.ts` — macOS vibrancy mode (off / transparent / material) and the Sidebar material shared by JS-created windows (`state/window-appearance.ts`) and the page tint attribute; kept in step with `lib.rs` `MACOS_VIBRANCY_MATERIAL` by `tests/domain/macos-vibrancy.test.ts` (#1733).
+- `vibrancy-opacity.ts` — Translucency Opacity slider (20-100%, default 55) to the six `--island-*coverage*` values and the `--material-window-coverage*` tint; default reproduces the fixed theme defaults exactly (#1735); `opacityForIslandAlpha` maps a pre-#1757 Windows Backdrop Opacity.
+- `translucency.ts` — one cross-platform Translucency setting (#1757): material names (vibrancy / acrylic / mica), the published-or-platform material, window effects per material, and the legacy-settings rule; kept in step with `src-tauri/src/translucency.rs` by `tests/domain/translucency.test.ts`.
 - `miller-placement.ts` — `millerHoistedToIsland`: whether Miller columns hoist to the left island (island layout, no sidebar, single-pane tab only); shared by `+page.svelte` and `ExplorerPane.svelte` (#434, #1699).
 - `settings-numbers.ts` — Numeric preference consumer contracts shared by persisted validation and interactive setters.
 - `folder-preview.ts` — folder preview image selection (#146).
@@ -687,6 +697,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `crash-report.ts` — pure crash-dedupe + benign-browser-notice (ResizeObserver) helpers behind `api/crash.ts` (#1725).
 - `crash-report-draft.ts` — pure crash → report title/draft update (#1684), loaded only when reporting.
 - `report-diagnostics.ts` — Report Issue diagnostic sections (kinds mirror `user_report.rs` `DiagnosticKind`), shared relay budget and head-keeping text fitting (#1022, #1684).
+- `report-sections.ts` — opt-in diagnostics section model (recent errors #1685, recent actions #1688): `planOptInSections` fits ticked sections into the shared budget; `includedDiagnostics` yields only ticked ones.
 - `user-report.ts` — report contracts and pure prefilled-GitHub fallback URL builder.
 - `user-report-route.ts` — pure report route (saved GitHub token for text-only reports, relay otherwise), route notice and token validation (#1455).
 - `git-warm.ts` — pure scheduler: when (and whether) to warm git-graph/SCM caches after a pane settles.
@@ -767,9 +778,11 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `memory_release.rs` — after a large listing reply is encoded (and once more at the next listing), returns glibc arenas' freed pages with `malloc_trim` on Linux/glibc; a no-op elsewhere (#1416).
 - `palette.rs` — dominant-color extraction for themes (#203).
 - `src-tauri/src/platform.rs` — host capabilities that shape recorded history: `TRASH_RESTORE_SUPPORTED` and the `TrashRestore` value passed to history admission (macOS has no trash restore).
-- `src-tauri/src/wallpaper/mod.rs` — set desktop wallpaper (mac/Linux/Windows); returns `WallpaperOutcome { notice }` describing a partial result.
-- `src-tauri/src/wallpaper/macos.rs` — macOS: store snapshot, NSWorkspace per screen (JXA), then on macOS 14+ wait for macOS's own save, return the wallpaper store to all-Spaces mode, atomic replace, WallpaperAgent restart and post-reload verify; OS behind the injected `MacWallpaperOs` seam, flow serialised by a mutex (#1441).
-- `src-tauri/src/wallpaper/macos_store.rs` — pure, fail-safe logic for the private `com.apple.wallpaper/Store/Index.plist`: detect macOS's fresh entry for the image, rewrite to all-Spaces mode (`AllSpacesAndDisplays` ← that entry, `Spaces`/`Displays` emptied), verify (#1441).
+- `src-tauri/src/wallpaper/mod.rs` — set desktop wallpaper (mac/Linux/Windows); returns `WallpaperOutcome { notice }` describing a partial result; `macos_outcome` logs every macOS result and passes only the short notice to the UI (#1731).
+- `src-tauri/src/wallpaper/macos.rs` — macOS: store snapshot, NSWorkspace per `NSScreen` (objc2 on the main dispatch queue via `bounded::hand_off`: 10 s to start, 20 s grace once started; typed `ScreenResult`s), then on macOS 14+ wait for macOS's own save, return the wallpaper store to all-Spaces mode, atomic replace, WallpaperAgent reload (kickstart → killall under SIP, each command time-bounded) and post-reload verify with diagnostics; returns `Option<Partial { user, detail }>`; OS behind the injected `MacWallpaperOs` seam, flow serialised by a mutex (#1441, #1731).
+- `src-tauri/src/wallpaper/macos_store.rs` — pure, fail-safe logic for the private `com.apple.wallpaper/Store/Index.plist`: image URLs from `Files` (14/15) or the nested `Configuration` plist (26), detect macOS's fresh entry for the image, rewrite to all-Spaces mode (`AllSpacesAndDisplays` ← that entry, `Spaces`/`Displays` emptied), `coverage` (incl. macOS 26's reloaded per-Space form), `kept_everywhere` (reloaded form must keep every Space/display recorded before the rewrite), rewrite keeps per-Space `Idle`, bounded `describe` for logs (#1441, #1731).
+- `src-tauri/src/wallpaper/plist_bounds.rs` — pre-parse cost bounds for property lists: binary offset-table walk (expanded value count, depth, cycles) and XML element/depth scan, so shared-reference DAGs and deep nesting are refused before `plist` parses them (#1731).
+- `src-tauri/src/wallpaper/bounded.rs` — `hand_off` (executor-generic PENDING/RUNNING/ABANDONED handoff: start deadline, then grace for started work, late runs are no-ops) and `run_command` (subprocess killed at its timeout, pipes drained) for the macOS wallpaper flow (#1731).
 - `archive.rs` — zip compress/extract; both commands are admitted mutations (renderer owner, Linux recovery claim on the output, forward history position) whose blocking job is cancelled when its renderer retires.
 - `clipboard/` — OS clipboard commands, the ordered file-clipboard worker and per-platform backends; see the `src-tauri/src/clipboard/` section below.
 - `progress.rs` — byte-level progress + cooperative cancellation for streaming file ops.
@@ -777,6 +790,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `terminal.rs` — embedded terminal (PTY) backend (#139).
 - `terminal/input.rs` — per-terminal input sequencer: admits `terminal_write` in sequence-number order (early arrivals held, repeats ignored), holds 64 KiB of pre-start typeahead (an overflow discards all of it), and feeds one writer thread per PTY through a channel (#882).
 - `system.rs` — native launch context, Recycle Bin launcher, window theme and log-path commands.
+- `translucency.rs` — the window material for the Translucency setting (#1757): macOS vibrancy, Windows acrylic (22H2+) or Mica by OS build, none elsewhere; legacy-key fallback for an unmigrated settings.json, the main window's effects, and the `__TRANSLUCENCY_MATERIAL__` init script every page reads.
 - `user_report.rs` — typed async report relay command, full-description/environment body assembly without log tails, and ureq transport with uncertain-response handling.
 - `user_report_github.rs` — optional GitHub token for reports (#1455): keyring-backed write-only token commands and direct GitHub REST issue creation as the token's user, with definite/uncertain failure classification.
 - `process_ext.rs` — suppress console-window flash and own cancellable process trees; drain both pipes with optional output limits and continue cancellation after launcher exit.
@@ -784,10 +798,16 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `portal/parent.rs` — validates portal window identifiers and attaches GTK picker surfaces to native Wayland/X11 parents before mapping.
 - `shared_history/mod.rs`, `shared_history/model.rs`, `shared_history/store.rs` — async IPC, pure bounded history policy and cross-process SQLite transactions.
 - `open_history.rs` — opaque app-data `open-history.json` read (missing/oversized → empty) and atomic write for the Details "Date opened" column (#1525).
+- `os_recent/mod.rs` — `os_opened_times` command and the `OsRecentSource` adapter seam (newest-wins merge across sources; macOS Spotlight / Windows Recent `.lnk` adapters pending, #1526).
+- `os_recent/xbel.rs` — Linux adapter: parses `$XDG_DATA_HOME/recently-used.xbel` (percent-decoded OsString bytes, newest of visited/modified), mtime+size-keyed parse cache, 8 MiB bound (#1526).
 - `portal.rs` — xdg-desktop-portal FileChooser backend (Linux); holds the process per request and executes the idle policy's timers, bus-name release and exit (#1427).
 - `portal/idle.rs` — pure idle-exit policy for the D-Bus-activated portal: request holds, generation-checked idle timers, open-window postponement, release-name-then-exit, replaced-executable fast exit (#1427).
 - `crash_report.rs` — local crash capture (#184).
 - `environment.rs` — environment summary (distro, webview engine/version, Linux renderer mode and session, install category) probed once off the startup path; feeds `get_app_info`/About, the user-report environment block (budgeted within the relay ceiling), crash-file headers and one `Environment:` log line (#1683). Tests: `src-tauri/test_support/environment_test.rs`.
+- `recent_errors.rs` — opt-in "Recent errors" report section (#1685): bounded WARN/ERROR ring fed by a `RingLog` log-plugin Dispatch target, previous session read from the log file before the session-start offset; redacts `$HOME`; `recent_errors` command. Tests: `src-tauri/test_support/recent_errors_test.rs`.
+- `report_redaction.rs` — pure home-directory `Redactor` for report text (#1685): displayed/canonical/Debug-escaped/forward-slash/percent-encoded forms, path-boundary matches, case-insensitive on Windows, `/run/media/<user>/` segment. Tests: `src-tauri/test_support/report_redaction_test.rs`.
+- `recent_actions.rs` — in-process recent-actions trail (#1688): identifier-only (`sanitize`), newest 30; `record_action`/`recent_actions` commands; also quoted in panic crash files. Tests: `src-tauri/test_support/recent_actions_test.rs`.
+- `diagnostics_cli.rs` — `tauri-explorer --diagnostics` (#1687): dispatched first in `main.rs` (no window, webview, single-instance lock or log plugin); prints the environment summary, log folder, newest crash file and a bounded WARN/ERROR log tail. Pure `render`/`requested`; Windows attaches the parent console. Tests: `src-tauri/test_support/diagnostics_cli_test.rs`.
 - `load_diagnostics/mod.rs` — slow directory-load records (#1022): merges the frontend record with the native trace and blocker and hands it to `persist.rs`; culprit naming (including an IPC-reply gap after a settled native command); `begin_listing` arms the fallback for watched listings.
 - `load_diagnostics/fallback.rs` — native-only record for a watched listing still in flight after 7 s, settled with its outcome when the listing finishes; background refreshes are never armed.
 - `load_diagnostics/reply.rs` — `encoded_reply`: encodes a listing reply inside the command under its trace, timing the encoding as the `serialize` phase, and settles the trace.
@@ -798,6 +818,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `update_check.rs` — `prepare_update` / `install_update` (#185, #1679): signed self-update when `autoUpdate` is on and the install is eligible, falling back to the GitHub-releases notify-only notice. Runbook: `docs/auto-update.md`.
 - `update_check/eligibility.rs` — pure policy: which installs may replace themselves (Windows NSIS/MSI, installed macOS `.app`, an AppImage running from its own writable image); deb/rpm, unbundled, Arch and Nix installs stay notify-only.
 - `update_check/self_update.rs` — one process-wide `SelfUpdateJob` (managed state): check + download + verify via `tauri-plugin-updater` (read timeout; Windows `on_before_exit` runs `release_process_resources`), hold the bytes until restart, install off the async runtime, then `request_restart`; gathers the install facts (bundle type, own writable AppImage, `.app` location).
+- `update_check/release_order.rs` — pure release chronology across the 1.28 → 0.28 version reset (#1783): era first (0.0–0.27, 1.0–1.28, then 0.28+ in version order); the updater's `version_comparator` and the notify-only comparison. Its order vectors (`src-tauri/test_support/release-order-vectors.json`, `[candidate, current, expected]`) are shared with `isReleasedAfter`'s tests in `tests/update-channel.test.ts` (#1803). `update_check.rs` reads the newest version from the `update-channel` manifest, not `releases/latest`.
 - `update_check/restart_fds.rs` — Linux: marks every descriptor above stderr close-on-exec before the update relaunch, so the new process does not inherit (and pin) the old AppImage's FUSE mount.
 - `warm_pool.rs` — native warm registry with label-scoped spawn reservations, bounded claims and committed activation.
 - `wire_path.rs` — canonical wire text for native paths (#1592, ADR 0031): bijective encode/decode (invalid bytes ↔ U+EF00+byte), wire path algebra (`parent`/`file_name`/`join`), lossy display text and `refuse_escaped` for surfaces without phase-1 support. The only sanctioned native↔text conversion (`clippy.toml`). Tests: `test_support/wire_path_test.rs` (vectors + proptests), `test_support/wire_path_fs_test.rs` (real-filesystem regressions, mounted from `files/mod.rs`).
@@ -840,6 +861,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git_index_lock.rs` — `with_locked_index`: every libgit2 index writer (stage, unstage, discard) holds `index.lock` from read to write, editing a private mtime-preserving copy and renaming it over `index.lock` then `index`, so a concurrent git command fails instead of being silently overwritten (#1617); `IndexCase` picks exact-case or the repository's `core.ignorecase` lookups.
 - `git_index_reset.rs` — `git_unstage` core: literal-path, exact-case index reset matching `git --literal-pathspecs reset` (only differing entries rewritten, skip-worktree kept, binary-searched index; #1589); `index_differs_from_tree` is discard's staged-change check.
 - `github.rs` — `git_open_prs`: open GitHub PRs for the repo's remote, for graph PR badges (#449); TTL-cached, silent-degrade. `git_issues_url`: the remote's github.com issues page for the "Git: Open Issues in Browser" palette command (#1055).
+- `http_timeouts.rs` — shared bounded `ureq` agent (10 s connect, 30 s overall) for the update manifest and GitHub PR lookups (#1827); the report relay keeps its own deliberate no-timeout policy.
 
 ## website/ — static Vercel site and serverless functions.
 
@@ -1102,12 +1124,14 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `scripts/impact-map-source.mjs` — which `e2e-impact-map` artifact a PR trusts: the newest one produced by a dev push/schedule/dispatch run of ci.yml or e2e-impact-map.yml in this repository (#1386).
 - `scripts/impact-regions.mjs` — static facts about diff lines (trivia / type-only / import / code), every function's start/body/end lines and import statements in order, from the TypeScript parser (Svelte script blocks offset; markup and styles are code).
 - `scripts/impact-select.mjs` — pure coverage selection: per hunk the tests that entered the innermost enclosing function (method-level TIA), else every loader of the file; comment/type-only and new-import-binding proofs, import removal/reorder → file level, zero-coverage fallback, drift union (`withDrift`).
-- `.github/workflows/e2e-impact-map.yml` — nightly backstop to ci.yml's dev-push `impact-map` job (#1386): full Chromium run with `E2E_COVERAGE=1 ALL_VIEW_MODES=1` that publishes the `e2e-impact-map` artifact PR selection downloads (#1368).
+- `.github/workflows/e2e-impact-map.yml` — nightly backstop to the dev-push impact map ci.yml's `frontend` gate merges (#1386, #1802): full Chromium run with `E2E_COVERAGE=1 ALL_VIEW_MODES=1` that publishes the `e2e-impact-map` artifact PR selection downloads (#1368).
 - `e2e/evidence-shots.ts` — gates `page`/`locator.screenshot({ path })` writes into the tracked `screenshots/` and `evidence/` dirs behind `CAPTURE_EVIDENCE=1` (worker fixture in `e2e/fixtures.ts`, #1123); contracts in `tests/e2e-evidence-shots.test.ts`.
 - `e2e/impact-coverage.ts` — opt-in (`E2E_COVERAGE=1`) per-test coverage collector wired as an auto fixture in `e2e/fixtures.ts`; covers every page, context and popup a test opens. `tests/e2e-fixture-imports.test.ts` keeps every spec on the shared fixtures so none escapes it.
-- `scripts/version-only.mjs` — recognises a release version bump (only `version` in package.json/tauri.conf.json, `[package] version` in Cargo.toml, local-crate versions in Cargo.lock, `pkgver` in PKGBUILD, plus CHANGELOG.md) by structured per-format comparison; anything else, malformed or added/deleted files are not version-only. Selectors then run e2e NONE, rust NONE and only text-related unit tests; contracts in `tests/version-only.test.ts` (#1367).
+- `scripts/bump-version.mjs` — `bun run bump-version <version>`: the release bump (#1800). Edits only the version token of package.json (the source tauri.conf.json reads), `[package] version` in Cargo.toml, the app's Cargo.lock entry and PKGBUILD's fallback `pkgver`, checking each edit with `version-only.mjs`; refuses non-SemVer input and a version without a dated CHANGELOG.md section. Contracts and the sources-agree check in `tests/bump-version.test.ts`.
+- `scripts/version-only.mjs` — recognises a release version bump (only `version` in package.json (tauri.conf.json reads it, #1800), `[package] version` in Cargo.toml, local-crate versions in Cargo.lock, `pkgver` in PKGBUILD, plus CHANGELOG.md) by structured per-format comparison; anything else, malformed or added/deleted files are not version-only. Selectors then run e2e NONE, rust NONE and only text-related unit tests; contracts in `tests/version-only.test.ts` (#1367).
 - `scripts/ci-jobs.mjs` — `report`: ci.yml gate jobs print each upstream shard's result and the step a failed/cancelled one stopped at (Actions API, diagnostics only); `auto-rerun`: decides whether `.github/workflows/ci-auto-rerun.yml` re-runs a failed first attempt (only install/setup-step failures, once). Contracts in `tests/ci-jobs.test.ts` (#1367).
-- `scripts/updater-manifest.mjs` — builds the signed self-update `latest.json` from the release assets and their `.sig` files (bundle-specific platform keys only; fails closed on any missing asset/signature or a signature that does not verify against `plugins.updater.pubkey`); run by `release.yml`, contracts in `tests/updater-manifest.test.ts` (#1679). `src-tauri/tauri.updater.conf.json` is the `--config` overlay release builds pass to enable `createUpdaterArtifacts`.
+- `scripts/update-channel.mjs` — release-side rules for the 1.28 → 0.28 version reset (#1783): `isReleasedAfter` (mirrors `release_order.rs`), `marksGitHubLatest` (only releases every 1.x install sees as newer become "Latest" and publish `latest.json`) and the no-downgrade check before `release.yml` replaces the `update-channel` release's `latest-alpha.json`. Contracts in `tests/update-channel.test.ts`.
+- `scripts/updater-manifest.mjs` — builds the signed self-update `latest-alpha.json` from the release assets and their `.sig` files (bundle-specific platform keys only; fails closed on any missing asset/signature or a signature that does not verify against `plugins.updater.pubkey`); run by `release.yml`, contracts in `tests/updater-manifest.test.ts` (#1679). `src-tauri/tauri.updater.conf.json` is the `--config` overlay release builds pass to enable `createUpdaterArtifacts`.
 - `scripts/release-ci-gate.mjs` — run by `.github/workflows/release.yml` before tagging/building: requires a dev commit with the released tree to have a successful dev-push CI run and `smoke (ubuntu-latest)`, waiting for in-progress runs; contracts in `tests/release-ci-gate.test.ts` (#1367).
 - `scripts/perf-fixtures.mjs` — deterministic flat large-folder fixtures (1k/10k/100k/500k sparse files, mixed names/sizes/mtimes, `manifest.json`) in a temp root outside the repo; `create`/`remove` (#983, `docs/performance.md`).
 - `scripts/perf-real-app.mjs` — end-to-end folder-open and navigation timings (n/median/p95) against a real binary through tauri-driver under Xvfb with private XDG dirs; in-page MutationObserver + animation-frame marks, no app instrumentation (#983, `docs/performance.md`); `--scenarios memory` samples per-process RSS/PSS and anonymous memory by allocator, with retained/live-per-entry budget flags (#1416).

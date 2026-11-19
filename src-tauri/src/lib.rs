@@ -16,12 +16,17 @@ pub mod config_watch;
 mod content_search;
 mod crash_report;
 mod diagnostics;
+mod diagnostics_cli;
 pub mod error;
 mod fal;
 mod file_history;
 mod file_mutation;
 mod file_picker;
 mod open_history;
+mod os_recent;
+mod recent_actions;
+mod recent_errors;
+mod report_redaction;
 mod shared_history;
 // pub: criterion benches (src-tauri/benches/) call into
 // files::dir_listing::{scan_directory_parallel, sort_entries} directly.
@@ -43,6 +48,7 @@ pub mod git_log;
 mod git_observation_probe;
 mod git_watch;
 mod github;
+mod http_timeouts;
 mod image_crop;
 mod image_operation;
 mod installed_plugins;
@@ -54,6 +60,13 @@ mod native_file_drag;
 #[cfg(unix)]
 mod process_supervisor;
 mod recovery_actor;
+
+/// `tauri-explorer --diagnostics` (#1687): print the environment, log folder,
+/// newest crash and WARN/ERROR tail, then exit before any window, webview or
+/// single-instance lock exists.
+pub fn run_diagnostics_cli() -> Option<i32> {
+    diagnostics_cli::run_if_requested()
+}
 
 /// Dispatch the private Wayland clipboard owner (#927) before initializing the
 /// application.
@@ -128,29 +141,8 @@ fn e2e_webview2_browser_args() -> String {
          --remote-debugging-port={port}"
     )
 }
+pub mod translucency;
 mod wsl;
-
-/// The macOS window material behind a vibrant window (#1733). `Sidebar`, not
-/// `UnderWindowBackground`, which looked opaque in dark mode.
-///
-/// Windows created from JS (fresh children, parked warm windows) cannot call
-/// this; they take the same material from `src/lib/domain/macos-vibrancy.ts`
-/// (`MACOS_VIBRANCY_MATERIAL`, Tauri's serialized name for this variant).
-/// `tests/domain/macos-vibrancy.test.ts` reads this constant to keep the two
-/// in step, so change both together.
-#[cfg(target_os = "macos")]
-const MACOS_VIBRANCY_MATERIAL: tauri::utils::WindowEffect = tauri::utils::WindowEffect::Sidebar;
-
-#[cfg(target_os = "macos")]
-fn macos_vibrancy_effects() -> tauri::utils::config::WindowEffectsConfig {
-    tauri::utils::config::WindowEffectsConfig {
-        effects: vec![MACOS_VIBRANCY_MATERIAL],
-        // Keep the material lit while the window is inactive (the JS
-        // `MACOS_VIBRANCY_STATE`).
-        state: Some(tauri::utils::WindowEffectState::Active),
-        ..Default::default()
-    }
-}
 
 use system::{
     get_log_dir, log_startup_progress, log_startup_timing, open_recycle_bin, set_window_theme,
@@ -293,9 +285,15 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
     let builder = if portal::is_portal_mode() {
         builder
     } else {
-        builder.plugin(
-            window_launch::routing_plugin().expect("Could not initialize profile launch routing"),
-        )
+        match window_launch::routing_plugin() {
+            Ok(plugin) => builder.plugin(plugin),
+            Err(cause) => {
+                // Without routing this process simply is not single-instance;
+                // starting is better than a startup panic (#1597).
+                eprintln!("Could not initialize profile launch routing: {cause}");
+                builder
+            }
+        }
     };
     #[cfg(target_os = "macos")]
     let builder = builder.on_web_content_process_terminate(|webview| {
@@ -305,6 +303,13 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
     let builder = builder.plugin(renderer_owner::termination_recovery());
     #[cfg(target_os = "linux")]
     let builder = builder.plugin(native_file_drag::html5_source_lifecycle());
+    // Every page learns the platform's window material before its scripts
+    // run (#1757), so fresh and warm windows build and style alike.
+    let builder = builder.plugin(
+        tauri::plugin::Builder::<_, ()>::new("translucency")
+            .js_init_script(translucency::init_script(translucency::platform_material()))
+            .build(),
+    );
     // Every WebView sharing Windows' data directory must use the exact same
     // environment options. Inject the main window's attach-build arguments
     // into every spawning page so fresh and warm descendants preserve them.
@@ -331,6 +336,11 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             let mut targets = vec![
                 Target::new(TargetKind::LogDir { file_name: None }),
                 Target::new(TargetKind::Webview),
+                // In-memory WARN/ERROR ring for the report dialog (#1685).
+                Target::new(TargetKind::Dispatch(
+                    tauri_plugin_log::fern::Dispatch::new()
+                        .chain(Box::new(recent_errors::RingLog) as Box<dyn log::Log>),
+                )),
             ];
             // Opt-in stream capture lets the qualification runner measure the
             // shipping release profile using the same native readiness logs.
@@ -401,6 +411,9 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             crash_report::log_frontend_error,
             crash_report::record_frontend_crash,
             crash_report::open_external_url,
+            recent_errors::recent_errors,
+            recent_actions::record_action,
+            recent_actions::recent_actions,
             palette::extract_palette,
             config::write_theme_file,
             update_check::prepare_update,
@@ -505,6 +518,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             shared_history::shared_history_mutate,
             open_history::read_open_history,
             open_history::write_open_history,
+            os_recent::os_opened_times,
             config::write_config_file,
             config::list_user_themes,
             config::list_user_layouts,
@@ -623,6 +637,10 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             terminal::terminal_status,
         ])
         .setup(move |app| {
+            // Before anything this session logs: earlier lines are the previous session's (#1685).
+            if let Ok(log_dir) = tauri::Manager::path(app).app_log_dir() {
+                recent_errors::capture_previous_session(log_dir);
+            }
             native_file_drag::install_snapshots(app.handle().clone());
             let t_setup = std::time::Instant::now();
             // First in setup: portal mode returns early below, and a renderer
@@ -662,7 +680,9 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             // Persist panics locally so the next launch can offer a
             // pre-filled GitHub issue (#184). Local files only — no telemetry.
             if let Ok(log_dir) = tauri::Manager::path(app).app_log_dir() {
-                crash_report::install_panic_hook(log_dir.join("crashes"));
+                let crashes = log_dir.join("crashes");
+                crash_report::prune_consumed_reports(&crashes, std::time::SystemTime::now());
+                crash_report::install_panic_hook(crashes);
             }
 
             // Initialize filesystem watcher for auto-refresh
@@ -688,10 +708,6 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
 
             // Create window programmatically so we can inject initialization_script.
             // This replaces the static window definition in tauri.conf.json.
-            // `mut` is used by the macOS (title bar / vibrancy) and Windows
-            // (Mica/Acrylic backdrop) blocks below; allow the otherwise-unused
-            // mut on Linux so clippy -D warnings stays green there.
-            #[cfg_attr(target_os = "linux", allow(unused_mut))]
             let mut builder = tauri::WebviewWindowBuilder::new(
                 app,
                 "main",
@@ -720,28 +736,9 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
                         .hidden_title(true);
                 }
 
-                let vibrancy = settings_json
-                    .as_ref()
-                    .and_then(|v| v.get("macOsVibrancy")?.as_bool())
-                    .unwrap_or(false);
-                let vibrancy_blur = settings_json
-                    .as_ref()
-                    .and_then(|v| v.get("vibrancyBlur")?.as_bool())
-                    .unwrap_or(true);
-                if vibrancy {
-                    builder = builder.transparent(true);
-                    if vibrancy_blur {
-                        builder = builder.effects(macos_vibrancy_effects());
-                    }
-                }
             }
 
-            // Windows: apply a translucent Mica/Acrylic system backdrop when
-            // enabled. Like macOS vibrancy this is a startup decision (the
-            // transparent flag can't be toggled at runtime), so it requires a
-            // restart. The DWM system backdrop keeps the window's rounded
-            // corners; the frontend's [data-native-backdrop] CSS makes the app
-            // background transparent so the effect shows through.
+            // Windows: E2E WebView2 attach arguments.
             #[cfg(target_os = "windows")]
             {
                 // GitHub's Windows runner starts the host elevated. WebView2
@@ -753,27 +750,30 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
                 {
                     builder = builder.additional_browser_args(&e2e_webview2_browser_args());
                 }
+            }
 
-                let backdrop = config::config_dir()
+            // Translucency (#1757): the platform's window material (macOS
+            // vibrancy, Windows acrylic or Mica). Window transparency is fixed
+            // at creation, so the setting reaches this window on the next
+            // launch. A system backdrop keeps Windows' rounded corners. The
+            // page learns which material this window got from its own
+            // initialization script rather than inferring it from settings,
+            // which may have changed (or failed to load) since.
+            let window_material = translucency::platform_material().filter(|_| {
+                let settings_json = config::config_dir()
                     .ok()
                     .and_then(|dir| std::fs::read_to_string(dir.join("settings.json")).ok())
-                    .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-                    .and_then(|v| v.get("windowsBackdrop")?.as_str().map(String::from));
-
-                use tauri::utils::WindowEffect;
-                let effect = match backdrop.as_deref() {
-                    Some("mica") => Some(WindowEffect::Mica),
-                    Some("acrylic") => Some(WindowEffect::Acrylic),
-                    _ => None,
-                };
-                if let Some(effect) = effect {
-                    use tauri::utils::config::WindowEffectsConfig;
-                    builder = builder.transparent(true).effects(WindowEffectsConfig {
-                        effects: vec![effect],
-                        ..Default::default()
-                    });
-                }
+                    .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+                translucency::translucency_enabled(settings_json.as_ref())
+            });
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            if let Some(material) = window_material {
+                builder = builder
+                    .transparent(true)
+                    .effects(translucency::effects(material));
             }
+            builder =
+                builder.initialization_script(translucency::window_init_script(window_material));
 
             builder.build()?;
             let t_window_built = std::time::Instant::now();

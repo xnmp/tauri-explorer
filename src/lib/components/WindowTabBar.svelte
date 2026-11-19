@@ -26,7 +26,8 @@
   import { TAB_SLIDE_IN_MS, TAB_SLIDE_OUT_MS } from "$lib/domain/tab-slide";
   import { stripTabsOf, stripTabWidth } from "$lib/domain/tab-strip-motion";
   import { createTabStripMotion } from "$lib/composables/tab-strip-motion.svelte";
-  import { createTitleFit, glideTabList, tabRoomAtFloor, tabSlide } from "$lib/composables/tab-strip-dom";
+  import { createTitleFit, glideTabList, makeTabGhost, tabRoomAtFloor, tabSlide } from "$lib/composables/tab-strip-dom";
+  import { createTabReorder } from "$lib/composables/tab-reorder.svelte";
   import WindowTabPicker from "./WindowTabPicker.svelte";
   import "./window-tab-bar.css";
   import NamedFolderIcon from "./NamedFolderIcon.svelte";
@@ -220,6 +221,17 @@
     }
   }
 
+  // ── Tab context menu (#1749): lazy, so the startup bundle stays put ──
+  let tabMenu = $state.raw<{ tabId: string; at: { x: number; y: number } } | null>(null);
+  const loadTabMenu = () => import("./WindowTabMenu.svelte");
+
+  function handleTabContextMenu(event: MouseEvent, tabId: string): void {
+    event.preventDefault();
+    event.stopPropagation();
+    if (renamingTabId === tabId) return;
+    tabMenu = { tabId, at: { x: event.clientX, y: event.clientY } };
+  }
+
   const newTabShortcut = $derived(getCommandShortcut("tabs.newTab"));
   const newTabTitle = $derived(`New Tab${newTabShortcut ? ` (${newTabShortcut})` : ""}`);
 
@@ -280,9 +292,10 @@
   // ghost, reorder within the strip, hand the tab off to whichever window the
   // cursor is over, or tear off a new window AT the cursor. File drops ONTO a
   // tab still use the HTML5/native path further below.
-  let dropTargetTabId = $state<string | null>(null);
   let fileDropTargetTabId = $state<string | null>(null);
   let draggingTabId = $state<string | null>(null);
+  /** Live reorder: displacement and insertion position (#1749). */
+  const reorder = createTabReorder(() => tabViewport, () => (reducedMotion.current ? 0 : 160));
 
   /** Resources one press-to-release session acquires; its identity is the session. */
   interface DragSession {
@@ -292,6 +305,13 @@
     followRaf: number;
     scrollRaf: number;
     pointer: { x: number; y: number } | null;
+  }
+
+  /** Show the insertion position under the pointer (#1749). */
+  function updateReorder(session: DragSession): void {
+    if (drag.kind !== "dragging" || drag.session !== session || !session.pointer) return;
+    const { x, y } = session.pointer;
+    reorder.update(drag.tabId, tabAreaAtPoint(x, y) ? x : null);
   }
   // The lifecycle (pressed → dragging → detaching → detached, #176) is the
   // domain reducer's; this component runs the effect each transition names.
@@ -310,30 +330,13 @@
     if ((event.target as HTMLElement).closest(".tab-close")) return; // close btn owns its clicks
     if (renamingTabId === tabId) return; // rename input owns the pointer
     cancelTabDrag();
+    // A drag released off its own tab leaves no click to swallow.
+    suppressNextClick = false;
     const session: DragSession = { dragId: null, transfer: null, ghost: null, followRaf: 0, scrollRaf: 0, pointer: null };
     send({ type: "press", session, tabId, at: { x: event.clientX, y: event.clientY } });
     window.addEventListener("mousemove", onTabMouseMove, true);
     window.addEventListener("mouseup", onTabMouseUp, true);
     window.addEventListener("keydown", onTabDragKey, true);
-  }
-
-  function makeTabGhost(tabId: string): HTMLElement {
-    const tab = tabs.find((t) => t.id === tabId);
-    const el = document.createElement("div");
-    el.className = "tab-drag-ghost";
-    el.textContent = tab ? windowTabsManager.getTabTitle(tab) : "";
-    el.style.cssText =
-      "position:fixed;pointer-events:none;z-index:2147483647;opacity:0.9;padding:4px 12px;" +
-      "border-radius:6px;background:var(--background-card-secondary,#2a2a2a);" +
-      "color:var(--text-primary,#eee);font-size:13px;white-space:nowrap;" +
-      "box-shadow:0 4px 14px rgba(0,0,0,0.35);border:1px solid var(--divider,rgba(255,255,255,0.1));";
-    document.body.appendChild(el);
-    return el;
-  }
-
-  function tabAtPoint(x: number, y: number): string | null {
-    const el = (document.elementFromPoint(x, y) as HTMLElement | null)?.closest?.(".tab");
-    return el?.getAttribute("data-tab-id") ?? null;
   }
 
   /** Whether the window's tab strip is under the point. */
@@ -353,8 +356,12 @@
       snapshot: session.transfer.snapshot,
     });
     if (!session.dragId) return false;
+    // Slots are measured before the drag restyles anything.
+    reorder.begin();
+    const tab = tabs.find((t) => t.id === tabId);
+    const tabEl = tabViewport?.querySelector<HTMLElement>(`.tab[data-tab-id="${CSS.escape(tabId)}"]`) ?? null;
+    session.ghost = makeTabGhost(tabEl, tab ? windowTabsManager.getTabTitle(tab) : "");
     draggingTabId = tabId;
-    session.ghost = makeTabGhost(tabId);
     return true;
   }
 
@@ -376,8 +383,7 @@
       drag.session.ghost!.style.top = `${at.y / zoom + 12}px`;
       drag.session.pointer = at;
       startEdgeScroll(drag.session);
-      const over = tabAtPoint(at.x, at.y);
-      dropTargetTabId = over && over !== drag.tabId ? over : null;
+      updateReorder(drag.session);
     }
   }
 
@@ -401,8 +407,7 @@
       tabViewport.scrollLeft = desiredScroll;
       appliedScroll = tabViewport.scrollLeft;
       previous = now;
-      const over = tabAtPoint(x, y);
-      dropTargetTabId = over && over !== drag.tabId ? over : null;
+      updateReorder(session);
       // The first frame can have zero elapsed time and engines may round a
       // fractional scroll delta away. Continue until the actual edge, rather
       // than treating one unchanged scrollLeft as the end of the gesture.
@@ -498,7 +503,7 @@
     if (session?.scrollRaf) cancelAnimationFrame(session.scrollRaf);
     session?.ghost?.remove();
     draggingTabId = null;
-    dropTargetTabId = null;
+    reorder.cancel();
     removeTabDragListeners();
   }
 
@@ -510,8 +515,10 @@
     removeTabDragListeners();
     if (ptr.followRaf) cancelAnimationFrame(ptr.followRaf);
     if (ptr.scrollRaf) cancelAnimationFrame(ptr.scrollRaf);
+    // A drop glides each tab from where it showed: the dragged tab from the
+    // ghost under the pointer, the rest from their displaced boxes (#1749).
+    const { move, glide } = reorder.end(from.tabId, tabs.map((t) => t.id), ptr.ghost?.getBoundingClientRect() ?? null);
     ptr.ghost?.remove();
-    dropTargetTabId = null;
     draggingTabId = null;
 
     const pending = tabDragState.read();
@@ -528,18 +535,16 @@
 
     try {
       suppressNextClick = true;
-      if (!pending || pending.id !== ptr.dragId || pending.sourceWindow !== windowTabsManager.windowLabel) return;
+      if (!pending || pending.id !== ptr.dragId || pending.sourceWindow !== windowTabsManager.windowLabel) { glide(); return; }
 
-      // 1) Released over the tab strip in THIS window → reorder.
+      // 1) Released over the tab strip in THIS window → reorder to the
+      //    insertion position the strip showed, if the strip is unchanged.
       if (tabAreaAtPoint(event.clientX, event.clientY)) {
-        const overId = tabAtPoint(event.clientX, event.clientY);
-        if (overId && overId !== from.tabId) {
-          const fromIndex = tabs.findIndex((t) => t.id === from.tabId);
-          const to = tabs.findIndex((t) => t.id === overId);
-          if (fromIndex >= 0 && to >= 0) windowTabsManager.reorderTabs(fromIndex, to);
-        }
+        if (move) windowTabsManager.reorderTabs(move.from, move.to);
+        glide();
         return;
       }
+      glide();
 
       // 2) Resolve the release position (physical px) against every open window.
       const dpr = window.devicePixelRatio || 1;
@@ -570,6 +575,9 @@
   function onTabDragKey(event: KeyboardEvent): void {
     if (event.key === "Escape" && drag.kind !== "idle") {
       // If already detached the window simply stops following (it exists now).
+      // The dragged tab glides back under the pointer; releasing there is
+      // still the end of a cancelled drag, not a click that activates it.
+      if (drag.kind === "dragging") suppressNextClick = true;
       cancelTabDrag();
     }
   }
@@ -626,7 +634,7 @@
       {/if}
       <div class="tab-viewport" class:bleed={!stripLayout.overflowing} class:ease-widths={easeWidths} class:fade-start={fadeStart} class:fade-end={fadeEnd} style:--tab-bleed={`${TAB_BLEED}px`} style:--tab-scroll-btn-w={showScrollButtons ? `${SCROLL_BUTTON_WIDTH}px` : "0px"} style:--tab-width-ease={`${motion.widthEaseMs}ms`} bind:this={tabViewport} bind:clientWidth={tabViewportWidth} onscroll={() => { tabScrollLeft = tabViewport?.scrollLeft ?? 0; }} onwheel={handleTabWheel}>
     <!-- A tablist owns only tabs; the new-tab button sits beside it (#785). -->
-    <div class="tab-list" role="tablist" aria-label="Tabs" style:--tab-list-width={`${enteringLayout.totalWidth}px`}>
+    <div class="tab-list" role="tablist" aria-label="Tabs" class:reordering={reorder.to !== null} data-reorder-to={reorder.to} style:--tab-list-width={`${enteringLayout.totalWidth}px`}>
     {#each tabs as tab, index (tab.id)}
       {@const display = windowTabsManager.getTabDisplay(tab)}
       <div
@@ -638,7 +646,7 @@
         class:before-active={tabs[index + 1]?.id === activeTabId}
         class:after-active={index > 0 && tabs[index - 1]?.id === activeTabId}
         style:--tab-px={tabPx(tab.id)}
-        class:drag-over={dropTargetTabId === tab.id}
+        style:--tab-shift={reorder.shift(tab.id)}
         class:file-drop-target={fileDropTargetTabId === tab.id}
         class:dragging={draggingTabId === tab.id}
         in:tabSlide={{ duration: reducedMotion.current ? 0 : TAB_SLIDE_IN_MS, sized: false }}
@@ -655,6 +663,7 @@
         ondblclick={() => startRename(tab.id)}
         onkeydown={(e) => handleTabKeydown(e, tab.id)}
         onauxclick={(e) => handleTabMiddleClick(e, tab.id)}
+        oncontextmenu={(e) => handleTabContextMenu(e, tab.id)}
         title={windowTabsManager.getTabTooltip(tab)}
         ondragover={(e) => handleTabDragOver(e, tab.id)}
         ondragleave={handleTabDragLeave}
@@ -769,6 +778,14 @@
     </button>
     {#if pickerOpen && pickerButton}
       <WindowTabPicker items={pickerItems} {activeTabId} anchorEl={pickerButton} onSelect={handleTabClick} onClose={closePicker} />
+    {/if}
+    {#if tabMenu}
+      {@const menu = tabMenu}
+      {#key menu}
+        {#await loadTabMenu() then { default: WindowTabMenu }}
+          <WindowTabMenu tabId={menu.tabId} at={menu.at} onClose={() => { if (tabMenu === menu) tabMenu = null; }} />
+        {/await}
+      {/key}
     {/if}
   </div>
 {/if}

@@ -1,6 +1,6 @@
 [package]
 name = "tauri-explorer"
-version = "1.27.0"
+version = "0.29.0"
 description = "A keyboard-first file manager: fuzzy quick-open, ripgrep content search, a command palette for every action"
 authors = ["xnmp"]
 license = "MIT"
@@ -159,9 +159,11 @@ wayland-protocols = { version = "0.32", features = ["server", "staging"] }
 wayland-protocols-wlr = { version = "0.3", features = ["server"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = {version="0.61",features= ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Registry", "Win32_System_Pipes"] }
+windows-sys = {version="0.61",features= ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Registry", "Win32_System_Pipes", "Win32_System_Console"] }
 webview2-com = "0.39"
 windows-core = "0.62.2"
+# OS build for the translucency material (#1757); already in the tree via window-vibrancy.
+windows-version = "0.1"
 # Win32_System_DataExchange/Memory: the clipboard sequence number and the
 # Cut token read-back (clipboard/windows.rs, #877).
 # EnhancedStorage: PKEY_FileName for exact Recycle Bin names (#1208).
@@ -172,8 +174,13 @@ windows = { version = "0.62.2", features = ["Wdk_Foundation", "Wdk_Storage_FileS
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "2.11"
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSData", "NSString", "NSURL"] }
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSEvent", "NSPasteboard", "NSPasteboardItem"] }
+# NSScreen/NSWorkspace/NSError/NSDictionary: the per-display desktop image
+# for Set as Wallpaper (wallpaper/macos.rs, #1731).
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSData", "NSDictionary", "NSError", "NSString", "NSURL"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSEvent", "NSPasteboard", "NSPasteboardItem", "NSScreen", "NSWorkspace"] }
+# The main dispatch queue for that AppKit work; already in the tree through
+# tao/objc2 at this version.
+dispatch2 = "0.3"
 # The private Sonoma+ wallpaper store (wallpaper/macos_store.rs, #1441).
 # Already in the tree through tauri; listed so we can read/write it directly.
 plist = "1.8"

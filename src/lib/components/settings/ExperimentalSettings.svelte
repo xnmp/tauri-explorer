@@ -6,6 +6,7 @@
   import { settingsStore } from "$lib/state/settings.svelte";
   import { SETTINGS_ROWS as rows } from "$lib/domain/settings-rows";
   import SettingRow from "./SettingRow.svelte";
+  import { shortcutSuffix } from "$lib/state/command-shortcut-label";
   import SettingToggle from "./SettingToggle.svelte";
 
   interface Props {
@@ -22,7 +23,7 @@
 </SettingRow>
 
 <SettingRow label="Git Commit Graph"
-  description="Show the repo's commit graph in the active pane (command palette: Git: Toggle Commit Graph, Ctrl+Alt+G)"
+  description={`Show the repo's commit graph in the active pane (command palette: Git: Toggle Commit Graph${shortcutSuffix("git.showGraph").replace(" (", ", ").replace(/\)$/, "")})`}
   hidden={!matches(...rows.enableGitGraph)}>
   <SettingToggle checked={settingsStore.enableGitGraph} onchange={() => settingsStore.toggleEnableGitGraph()} />
 </SettingRow>

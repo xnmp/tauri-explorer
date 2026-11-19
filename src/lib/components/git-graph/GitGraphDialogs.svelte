@@ -314,7 +314,7 @@
   .prompt-input {
     width: 100%;
     padding: 6px 8px;
-    background: var(--background-input, var(--background-card));
+    background: var(--background-card);
     border: 1px solid var(--divider);
     border-radius: 6px;
     color: var(--text-primary);

@@ -5,6 +5,7 @@
  */
 import { settingsStore, type Settings } from "./settings.svelte";
 import type { Command, CommandCategory } from "./commands.svelte";
+import { availableMaterial } from "./window-translucency.svelte";
 
 
 export interface ToggleSettingMeta {
@@ -52,8 +53,8 @@ export const TOGGLE_SETTINGS: ToggleSettingMeta[] = [
   { key: "autoEnterSingleSubdir", label: "Toggle Auto-Enter Single Subfolder" },
   { key: "tabTitleGitRoot", label: "Toggle Git Repo Root in Tab Title" },
   { key: "integratedTitleBar", label: "Toggle Integrated Title Bar" },
-  { key: "macOsVibrancy", label: "Toggle macOS Vibrancy" },
-  { key: "vibrancyBlur", label: "Toggle Vibrancy Blur" },
+  // Only where the platform has a window material (#1757).
+  { key: "translucency", label: "Toggle Translucency", when: () => availableMaterial !== null },
   { key: "premiumTheme", label: "Toggle Premium Theme Effects" },
   { key: "terminalFollowsExplorer", label: "Toggle Terminal Follows Explorer" },
   { key: "explorerFollowsTerminal", label: "Toggle Explorer Follows Terminal" },

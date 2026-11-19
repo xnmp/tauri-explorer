@@ -3,15 +3,17 @@ name: Image crop native codecs
 on:
   push:
     branches: [dev]
+    # Its Windows `durable-recovery` crop tests run nowhere else, and the crop
+    # save path runs through much of files/, thumbnails/ and the native
+    # wrappers, so any Rust change re-runs it (#1801 review).
     paths:
-      - "src-tauri/src/image_crop.rs"
-      - "src-tauri/src/image_crop/**"
-      - "src-tauri/src/image_operation.rs"
-      - "src-tauri/src/files/image_crop.rs"
-      - "src-tauri/test_support/image_crop*.rs"
-      - "src-tauri/test_support/fixtures/*image-crop*"
-      - "src-tauri/Cargo.toml"
-      - "src-tauri/Cargo.lock"
+      - "src-tauri/**"
+      - "package.json"
+      - "static/**"
+      - "tests/contract/fixtures/**"
+      - "tests/fixtures/**"
+      - "e2e-tauri/fixtures/**"
+      - ".github/actions/tauri-linux-deps/**"
       - ".github/workflows/image-crop.yml"
   # Not a required check, so it runs after merge (tauri#1133). macOS is
   # nightly/manual only: dev pushes run Linux and Windows.
@@ -19,9 +21,13 @@ on:
     - cron: "43 5 * * *"
   workflow_dispatch:
 
+# PRs share a group per PR ref and dev pushes one group per workflow, both
+# cancelling in progress: a newer commit cancels its superseded run (#1798).
+# Every other event (main pushes, schedule, dispatch) gets a unique run-ID
+# group, so it never cancels or replaces another run.
 concurrency:
-  group: image-crop-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || (github.event_name == 'push' && github.ref == 'refs/heads/dev') && 'dev-push' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/dev') }}
 
 jobs:
   codecs:

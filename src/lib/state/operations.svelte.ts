@@ -149,6 +149,9 @@ function createOperationsManager() {
 
   /** Mark operation as error — show dialog immediately so user sees the error */
   function failOperation(operationId: string, error: string): void {
+    // Cancelled/cleared meanwhile: nothing to show, and opening the dialog
+    // here would skip the next operation's delay.
+    if (!operations.some((op) => op.id === operationId)) return;
     operations = operations.map((op) =>
       op.id === operationId
         ? { ...op, status: "error", error }

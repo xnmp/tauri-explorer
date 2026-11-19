@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { del, put } from "@vercel/blob";
 import {
+  BASE_LABELS,
   ReportError,
   createInMemoryRateLimitStore,
   createRestRateLimitStore,
@@ -28,6 +29,21 @@ function rateLimitStore() {
 
 /** @param {{title: string, body: string, labels: string[]}} issue @returns {Promise<{url: string, number: number}>} */
 export async function createGitHubIssue(issue) {
+  try {
+    return await postGitHubIssue(issue);
+  } catch (error) {
+    // Triage labels (#1689) are best-effort: a definite 422 created nothing,
+    // so retrying once without them cannot duplicate and cannot lose the report.
+    const base = issue.labels.filter((label) => BASE_LABELS.includes(label));
+    if (!(error instanceof ReportError) || !("validationRejected" in error && error.validationRejected) || base.length === issue.labels.length) {
+      throw error;
+    }
+    return postGitHubIssue({ ...issue, labels: base });
+  }
+}
+
+/** @param {{title: string, body: string, labels: string[]}} issue */
+async function postGitHubIssue(issue) {
   const token = process.env.GITHUB_ISSUE_TOKEN;
   if (!token) throw new ReportError("server_rejected", "Report service is not configured", 503);
   let response;
@@ -47,7 +63,9 @@ export async function createGitHubIssue(issue) {
     throw submissionUncertain();
   }
   if (!response.ok && response.status < 500 && response.status !== 408) {
-    throw new ReportError("server_rejected", "GitHub rejected the report", 502);
+    throw Object.assign(new ReportError("server_rejected", "GitHub rejected the report", 502), {
+      validationRejected: response.status === 422,
+    });
   }
   if (!response.ok) {
     throw submissionUncertain();

@@ -2,13 +2,44 @@
 
 Only `ci.yml` and the Linux matrix entry in `e2e-tauri.yml` run on PRs into
 dev; PRs into main run only `release-gate.yml`.
-The heavy suites listed in `tests/ci-trigger-policy.test.ts` run on every dev
-push without path filters and retain manual dispatch. Existing schedules stay.
+`ci.yml` and `e2e-tauri.yml` (whose `smoke (ubuntu-latest)` gates releases)
+run on every dev push without path filters. The non-gating suites
+(`pathScoped` in `tests/ci-trigger-policy.test.ts`: macOS Native UI, Windows
+soak, Windows installer, perf, native recovery, Rust platforms, image-crop
+codecs) run on a dev push only when it changes their inputs (push `paths`),
+plus a nightly `schedule` on dev and manual dispatch (#1801); they competed
+with the release path for runners on every push. macOS Smoke builds and
+launches the whole app, so it stays on every dev push.
+A filter lists what the suite builds, drives or reads: its own workflow and
+the scripts and actions it runs; the full app build (`src/**`, `src-tauri/**`,
+`static/**`, `scripts/**`, `package.json`, `bun.lock`, root configs) for a
+suite that builds the app; and for Rust suites the files Rust sources
+`include_*!` from outside `src-tauri` plus `package.json`, which
+`tauri.conf.json` reads for its version. Err wide: a missed input lets a
+regression wait for the nightly. The contract test checks representative
+inputs, every repository path a step's `run` names, and every outside-crate
+Rust include. A push whose changes miss a suite's filter creates no run and
+therefore cancels nothing: an older dev push's run that did match keeps
+running. GitHub evaluates only the first 300 changed files of a push against
+`paths`; the nightly run covers a larger push that slipped through.
+A release-prep push (`bun run bump-version`) changes `package.json` and the
+Cargo manifests, so it still starts these suites; `paths` cannot match only a
+version line. Accepted: release bumps are rare, and the next dev push cancels
+any of their runs still in progress.
 
-Do not use a shared concurrency group for dev pushes, even with
-`cancel-in-progress: false`: GitHub replaces an earlier pending run in that
-group. Heavy-only workflows omit concurrency; mixed PR/push workflows group
-PRs by workflow and full PR ref, and use a unique run ID for other events.
+Every workflow that runs on dev pushes (ci.yml, e2e-tauri.yml, macOS Smoke
+and the path-scoped suites) declares the same workflow-level concurrency (#1798):
+PRs group by workflow and full PR ref, dev pushes share one
+`<workflow>-dev-push` group, both with `cancel-in-progress: true`, and every
+other event (main pushes, the schedule, dispatch) gets a unique run-ID group.
+A newer dev commit therefore cancels the older commit's runs: two pushes close
+together used to saturate the runners, and queueing, not test execution,
+dominated the release wait. Cancelling makes supersession explicit (a
+`cancelled` run); a shared group with `cancel-in-progress: false` would instead
+silently replace a pending run, which is why dev pushes once had no shared
+group at all. A superseded commit gets no dev-push run of its own: the newer
+commit's run covers its tree. Main pushes must never share a group (each one
+may release). release.yml keeps its own `concurrency: release`.
 
 Trigger changes and required-check changes must be coordinated. Before
 publishing removal of macOS Smoke's PR trigger, remove `launch-smoke` from dev's
@@ -25,6 +56,9 @@ tag or build unless a dev commit with the released commit's exact
 tree has a successful dev-push `ci.yml` run and `smoke (ubuntu-latest)`. Merge
 to main only after dev CI for that tree is green (the gate waits up to an hour
 for a run in progress); a commit made directly on main cannot be released.
+Another dev push during that wait cancels the run (#1798), and the gate then
+fails with a "superseded" reason: release dev's newest tree instead. A
+cancelled older commit never blocks a newer commit carrying the same tree.
 The gate runs only when a release would happen (the version is not yet
 tagged), and retries transient API 5xx responses before failing closed.
 `release-gate.yml` runs the same gate on PRs into main as the `release-gate`
@@ -40,13 +74,30 @@ stopped at an install/setup step (`SETUP_STEP` in `scripts/ci-jobs.mjs`). Gate
 jobs print each upstream shard's result and failing step first; the report is
 `continue-on-error` and never decides the gate. A pull_request run is re-run
 only while it is the newest run of its workflow for the branch and the open
-PR's head is still its `head_sha` (`staleRunReason`): a re-run joins the PR's
-cancel-in-progress group and would otherwise cancel the newer run.
+PR's head is still its `head_sha`, and a dev push run only while it is the
+newest dev push run of its workflow and dev's head is still its `head_sha`
+(`staleRunReason`): a re-run joins the PR's or dev's cancel-in-progress group
+and would otherwise cancel the newer run. A run cancelled by supersession
+concludes `cancelled`, which the workflow's `failure`-only condition skips;
+`staleRunReason` covers a run that failed before a newer push arrived.
+
+ci.yml has no report-only jobs (#1802): each runner slot waits in the queue,
+and a seconds-long job once waited 13 minutes for one. The required gates
+(`frontend`, `webkit`, `rust`, `code-maps`; dev branch protection also
+requires e2e-tauri.yml's `smoke (ubuntu-latest)`) carry the diagnostics:
+the upstream-result report, their targets' test-result cache summary and, in
+`frontend`, the dev-push impact map. Every step before a gate's final
+decision step is `continue-on-error` with a step timeout, and the gate's job
+timeout exceeds their sum, so diagnostics can never change a gate's verdict.
+A gate's `needs` lists only the jobs it decides on; adding one to host a
+report would delay that check. The required checks cannot merge into fewer
+jobs: each context is a job name.
 
 `e2e-shard-timings.yml` (weekly) pushes nothing: the repository does not let
 GITHUB_TOKEN open PRs. It uploads the regenerated timings as the
 `e2e-shard-timings` artifact and writes the drift to the job summary; apply it
-in an ordinary PR. It fails with an error when no successful dev run exists.
+in an ordinary PR. It fails with an error when no successful dev run exists;
+superseded (cancelled) dev runs are not successful and are skipped.
 
 # Tauri Linux apt packages (#1371)
 
@@ -92,10 +143,14 @@ an action reads must come from `$RUNNER_TEMP` inside the container (exported
 to `GITHUB_ENV`), not `${{ runner.temp }}`, which names the host path. Git
 needs `safe.directory` because the container runs as root.
 Chromium runs 2 shards and view modes 1, each with `PW_WORKERS=2`; WebKit
-keeps 5 shards with one worker, because two workers per WebKit runner
+runs 8 shards with one worker, because two workers per WebKit runner
 overran the 40-minute shard budget with new failures (#1368, run
-40068235372). Changing a matrix also changes `EXPECTED_REPORTS` in the
-dev-push impact-map job.
+40068235372); eight shards plan ~18 minutes each (#1798; six planned ~24
+and ran 21-36, the dev-push critical path). The planner
+(`scripts/e2e-shards.mjs plan`) balances any count from
+`strategy.job-total`. Changing a Chromium matrix also changes
+`EXPECTED_REPORTS` in the `frontend` gate's impact-map merge step (WebKit records no
+coverage).
 `ImageOS`/`ImageVersion` are set to the container so cached results are scoped
 to it. Each shard bounds Playwright with `E2E_GLOBAL_TIMEOUT_MINUTES`, below
 the step `timeout-minutes`, below the job cap.
@@ -139,9 +194,11 @@ counts as loading them, so an edit that brings one into the bundle
 over-selects (#1391). Requests are attributed to each spec's own app server
 (the `baseURL` fixture), so specs on the dev server beside the bundle record
 their assets too, and every record names its `server`. Each shard uploads its records and
-Playwright JSON report; the `impact-map` job (`continue-on-error`: an
-advisory artifact must never fail the dev push whose conclusion gates
-releases) merges them with
+Playwright JSON report; the `frontend` gate's impact-map steps (#1802; each
+`continue-on-error` with a step timeout, their sum below the gate's job
+timeout and the gate's decision the last step: an advisory artifact must never
+fail the required check or the dev push whose conclusion gates releases)
+merge them with
 `--commit $GITHUB_SHA` and publishes `e2e-impact-map` only when all
 `EXPECTED_REPORTS` (3, the two matrices) are present: a shard replayed from
 the test-result cache records nothing, and the previous map then stays the
@@ -286,6 +343,9 @@ key with a forged pass in its own merge-ref cache on a later run.
 Artifacts use `trusted-test-cache-v3-<os>-<arch>-<image>-<image version>-<target>-<run>-<attempt>`.
 Restore computes the requested target's hash with Turborepo, then searches
 artifacts across the latest 30 dev pushes plus the current rerun if older.
+A superseded (cancelled) dev run's completed attempt is still a producer:
+targets that passed before the cancellation packed their records, and a
+cancelled target packs nothing.
 `UNIT_SELECTION` is job-wide so restore and execution hash the same selection;
 browser shard selection and Rust feature/selection variables are also available
 before restore. Keep these environments aligned.
@@ -319,8 +379,10 @@ The artifact retention is also 30 days. Keep cache data names outside the
 `test-cache-*` report-artifact pattern.
 
 Reading the cache: every cached job's step summary has one line per target,
-and the `test-cache` job summarises the hit rate, the targets served from the
-cache, the time saved and the time executed. Each record (hash, hit, duration)
+and each required gate (`frontend`: unit and both Chromium jobs; `webkit`;
+`rust`) summarises its own targets' hit rate, the targets served from the
+cache, the time saved and the time executed, in continue-on-error steps
+(#1802: these replaced a separate `test-cache` job). Each record (hash, hit, duration)
 is uploaded as the `test-cache-<target>` artifact.
 
 Suspected stale hit: check out the commit and run
@@ -351,3 +413,16 @@ check workflow uses its own cache key so a dev run cannot seed the release
 job's cached tauri-cli binary.
 The script runs under macOS's stock bash 3.2 (no `mapfile`). Runbook and
 secret list: `docs/macos-signing.md`.
+
+# Native E2E target cache (ADR 0022)
+
+Per ADR 0022, the native E2E target cache (`e2e-tauri.yml`) is keyed by the
+exact Rust compiler identity as well as target inputs. Keep its restore and
+save actions separate: save only after the native contracts and embedded build
+succeed, but allow a later GUI failure to retain those safe build products.
+Contract/provenance diagnostics upload before GUI execution so a failed
+contract remains inspectable while independent native checks run (#694).
+GitHub's explicit Bash shell enables `-e -o pipefail`; disable errexit only
+around a piped diagnostic command, capture `PIPESTATUS[0]`, then restore
+errexit before writing its timing artifact and returning that exact status
+(#697).

@@ -210,6 +210,8 @@ export const MOCK_LOCAL_KEYS = {
   reportErrorMessage: "mock-report-error-message",
   /** JSON of the last `submit_user_report` payload. */
   submittedReport: "mock-submitted-report",
+  /** Text `recent_errors` returns (#1685); absent means no errors recorded. */
+  recentErrors: "mock-recent-errors",
   /** "1" when a GitHub report token is saved (`user_report_token_state`). */
   reportToken: "mock-report-token",
   /** "1" when set: `prepare_update` reports a newer release. */
@@ -232,6 +234,8 @@ export const MOCK_LOCAL_KEYS = {
   reportClipboardVideo: "mock-report-clipboard-video",
   /** The app-data open history document (#1525), surviving reloads like the native file. */
   openHistory: "mock-open-history",
+  /** JSON `{ [path]: epochMs }` the mock `os_opened_times` reports (#1526). */
+  osOpenedTimes: "mock-os-opened-times",
   /** Error message: `open_recycle_bin` throws it. */
   openRecycleBinError: "mock-open-recycle-bin-error",
   /** JSON of the last `picker_respond` payload. */

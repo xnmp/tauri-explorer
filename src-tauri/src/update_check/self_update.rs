@@ -1,7 +1,8 @@
 //! Signed self-update (#1679): one process-wide job shared by every window.
 //!
-//! `prepare` checks the signed `latest.json` (tauri.conf.json
-//! `plugins.updater`), downloads and verifies the payload, and keeps it in
+//! `prepare` checks the update channel's signed `latest-alpha.json`
+//! (tauri.conf.json `plugins.updater`; ordered by `release_order`, #1783),
+//! downloads and verifies the payload, and keeps it in
 //! memory until the user chooses to restart. The job lock is held across the
 //! download, so a second window asking at the same time waits and then sees
 //! the same ready update instead of downloading it again.
@@ -58,6 +59,11 @@ impl SelfUpdateJob {
             // starting the installer), skipping `RunEvent::Exit`; run the
             // same shutdown it would have run.
             .on_before_exit(crate::release_process_resources)
+            // Plain version order would call the 0.28 alpha line older than
+            // the 1.x line it replaced and strand every 1.x install.
+            .version_comparator(|current, remote| {
+                super::release_order::is_newer(&remote.version.to_string(), &current.to_string())
+            })
             .build()
             .map_err(|e| AppError::Other(format!("Updater unavailable: {e}")))?;
         let Some(update) = updater

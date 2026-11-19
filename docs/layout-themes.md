@@ -94,14 +94,14 @@ names are internal and change without notice; `data-region` names do not.
 | --- | --- | --- |
 | `backdrop` | Decorative background layer behind the app | |
 | `app` | The whole window surface | |
-| `titlebar` | Title bar containing the tab strip | Floating Islands: `data-tab-hole="left right"` (the active tab's opening, CSS px), `data-tab-island="content\|structural\|none"` (the surface it wears) |
+| `titlebar` | Title bar containing the tab strip | Floating Islands: `data-tab-hole="left right"` (the active tab's opening, CSS px) |
 | `tab-strip` | Window tab strip | |
 | `tab` | One window tab | `aria-selected="true"` on the active tab |
 | `tab-fillet` | Curves joining the active tab to the content | `data-side="left\|right"` |
-| `tab-key-shadow` | Floating Islands: inline SVG under the tab strip holding the strip shade, the active tab's fill and its key shadow | |
-| `tab-edge` | Floating Islands: inline SVG edge highlight around the active tab and along its island's top edge | |
+| `tab-key-shadow` | Floating Islands: inline SVG under the tab strip holding the strip shade (with the active tab's hole and the shade pockets outside the surface's rounded top corners) and the tab's key shadow | |
+| `tab-edge` | Floating Islands: inline SVG outline, the active tab plus the top edge and corners of its surface (#1785) | |
 | `main` | Area below the title bar | |
-| `sidebar` | Sidebar container (outer box) | Floating Islands: `data-tab-seam` while the active tab opens into it (also on `panes`, `pane`, `preview`, `miller-island`) |
+| `sidebar` | Sidebar container (outer box) | |
 | `sidebar-body` | Sidebar painted body | |
 | `sidebar-section-header` | Section headings (Quick Access, Drives, ...) | |
 | `sidebar-item` | One sidebar entry | |
@@ -130,15 +130,20 @@ Root (`<html>`) attributes describe the window and can scope rules:
 | `data-layout` | Applied layout id (`default` after a fallback). |
 | `data-layout-base` | Applied built-in base. |
 | `data-theme` | Active colour theme id. |
-| `data-native-backdrop` | Native window material is on (macOS vibrancy with blur, Windows Mica/Acrylic). The body is transparent; paint opaque surfaces only where you want them. |
-| `data-transparent-window` | The window was created transparent (macOS vibrancy). Without `data-native-backdrop` the body is painted opaque. |
-| `data-macos-material` | The macOS vibrancy material is on (macOS, Window Vibrancy and Native Blur). The page tints the window body with the theme base. |
-| `data-win-backdrop` | Windows material kind (`mica`, `acrylic`, ...). |
+| `data-native-backdrop` | A native window material is behind this window (the Translucency setting). The body is transparent; paint opaque surfaces only where you want them. |
+| `data-material` | Which material: `vibrancy` (macOS), `acrylic` (Windows 11 22H2+) or `mica` (earlier Windows 11). The page tints the window body with the theme base. |
 | `data-preview-fullscreen` | A preview is fullscreen. |
+
+Before #1757 these were platform-specific attributes. A user layout that
+targeted them needs updating:
+- `data-macos-material` and `data-transparent-window` are now `[data-material="vibrancy"]`.
+- `data-win-backdrop` is now `[data-material="acrylic"]` or `[data-material="mica"]`.
+- `[data-native-backdrop]` still matches all of them.
 
 ### Floating Islands surfaces
 
-Under the macOS material, Floating Islands reads a small theme contract.
+Under a window material (any `data-material`), Floating Islands reads a
+small theme contract.
 Set these on `:root` in a colour theme; unset, the defaults apply.
 
 | Variable | Default | Meaning |
@@ -148,6 +153,13 @@ Set these on `:root` in a colour theme; unset, the defaults apply.
 | `--island-coverage` / `-dark` | `0.983` / `0.545` | Total share a content island (panes, preview, Miller) hides, body included. |
 | `--island-structural-coverage` / `-dark` | `0.762` / `0.48` | Total share the sidebar hides, body included. |
 
+The "Translucency Opacity" setting (Appearance, shown while Translucency is
+on, default 55%) overrides all six values inline on the root, so it beats a
+theme's own; `domain/vibrancy-opacity.ts` maps the slider and its default
+reproduces the table above. It also sets `--material-window-coverage` /
+`-dark` (default `0.15` / `0.55`), the share of the material the window tint
+of other layouts hides. The variables are removed when there is no material.
+
 Alphas compound over the body, so an island's own alpha is derived:
 `island alpha = 1 - (1 - coverage) / (1 - body coverage)`. The light defaults
 reproduce the earlier alphas exactly. The window body is the theme base
@@ -155,9 +167,13 @@ nudged 6% toward the accent; a theme's `--vibrancy-tint` or a layout's
 `--layout-app-surface` still wins. Under `prefers-reduced-transparency`
 every surface is opaque.
 
-The active tab owns the window: it wears the surface of the island it
-stands on, that island opens its top edge under the tab (a 2px notch,
-`data-tab-seam`), and the rest of the strip is shaded (35% light, 50% dark).
+The active tab owns the whole window below the strip (#1785): the tab is a
+hole in the strip shade through which the window body, its surface, shows.
+That surface runs edge to edge under every island and the status bar, with
+rounded top corners (`--layout-radius`) where the shade wraps round it, and
+the only outline is the tab plus the surface's top edge. The rest of the
+strip is shaded (35% light, 50% dark). Islands keep their own outlines and
+sit `--layout-gap` below the strip.
 Islands carry no `backdrop-filter`: it made each island the containing block
 of fixed overlays, so menus opened offset, and the webview cannot sample the
 native material anyway. Context menus and modal cards are opaque.
@@ -167,6 +183,11 @@ native material anyway. Context menus and modal cards are opaque.
 Native material is a separate window capability, never part of a layout. A
 layout must look right both with and without it: scope translucent surfaces
 to `:root[data-native-backdrop]` and keep them opaque otherwise.
+
+The one **Translucency** setting turns it on wherever the platform has a
+material (#1757); the native side picks which (`src-tauri/src/translucency.rs`)
+and publishes it to every page. A window's material is fixed when the window
+is created, so the setting reaches new windows and the next launch.
 
 ## Precedence
 
@@ -229,3 +250,9 @@ The former **Floating Islands** toggle (`floatingIslands`) became the
 toggle, or the macOS vibrancy / Windows backdrop options that used to imply
 islands, select `floating-islands`. Native material settings are otherwise
 unchanged and now combine with any layout.
+
+The macOS **Window Vibrancy** / **Native Blur** toggles and the Windows
+**Window Backdrop** / **Backdrop Opacity** options became one
+**Translucency** setting with the **Translucency Opacity** slider (#1757).
+Either platform's former setting turns Translucency on, and a Windows
+Backdrop Opacity becomes the slider value that gives islands the same alpha.

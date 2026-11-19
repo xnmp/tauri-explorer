@@ -24,13 +24,31 @@ describe("settingsSectionRows", () => {
   it("shows macOS-only appearance rows only on macOS", () => {
     expect(settingsSectionRows(mac).appearance).toContain(SETTINGS_ROWS.integratedTitleBar);
     expect(settingsSectionRows(linux).appearance).not.toContain(SETTINGS_ROWS.integratedTitleBar);
-    expect(settingsSectionRows(windows).appearance).not.toContain(SETTINGS_ROWS.vibrancy);
+    expect(settingsSectionRows(windows).appearance).not.toContain(SETTINGS_ROWS.integratedTitleBar);
   });
 
-  it("shows Windows-only appearance rows only on Windows", () => {
-    expect(settingsSectionRows(windows).appearance).toContain(SETTINGS_ROWS.windowsBackdrop);
-    expect(settingsSectionRows(mac).appearance).not.toContain(SETTINGS_ROWS.windowsBackdrop);
-    expect(settingsSectionRows(linux).appearance).not.toContain(SETTINGS_ROWS.windowsBackdropOpacity);
+  it("shows one Translucency row wherever the platform has a material (#1757)", () => {
+    const row = SETTINGS_ROWS.translucency;
+    for (const platform of [mac, windows]) {
+      expect(settingsSectionRows({ ...platform, translucencyAvailable: true }).appearance).toContain(row);
+    }
+    expect(settingsSectionRows({ ...windows, translucencyAvailable: false }).appearance).not.toContain(row);
+    expect(settingsSectionRows(linux).appearance).not.toContain(row);
+  });
+
+  it("shows Translucency Opacity only while Translucency is on and available", () => {
+    const row = SETTINGS_ROWS.translucencyOpacity;
+    const on = { translucencyAvailable: true, translucencyOn: true };
+    expect(settingsSectionRows({ ...mac, ...on }).appearance).toContain(row);
+    expect(settingsSectionRows({ ...windows, ...on }).appearance).toContain(row);
+    expect(settingsSectionRows({ ...mac, translucencyAvailable: true, translucencyOn: false }).appearance).not.toContain(row);
+    expect(settingsSectionRows({ ...linux, translucencyAvailable: false, translucencyOn: true }).appearance).not.toContain(row);
+  });
+
+  it("finds the Translucency row by each platform's material name", () => {
+    for (const word of ["vibrancy", "acrylic", "mica", "blur"]) {
+      expect(SETTINGS_ROWS.translucency.join(" ").toLowerCase()).toContain(word);
+    }
   });
 
   it("keeps platform-independent sections identical across platforms", () => {

@@ -3,16 +3,19 @@
   Issue: tauri-explorer-npjh.1, tauri-explorer-oytv
 -->
 <script lang="ts">
-  import { settingsStore, type IconTheme, type WindowsBackdrop, type PaneLayoutMode } from "$lib/state/settings.svelte";
+  import { settingsStore, type IconTheme, type PaneLayoutMode } from "$lib/state/settings.svelte";
   import { ICON_THEMES } from '$lib/domain/icon-theme-options';
   import { themeStore } from "$lib/state/theme.svelte";
+  import { shortcutSuffix } from "$lib/state/command-shortcut-label";
   import { isMac, isWindows } from "$lib/domain/platform";
+  import { availableMaterial } from "$lib/state/window-translucency.svelte";
   import { listInstalledTerminals } from "$lib/api/open";
   import { warmPoolShutdown } from "$lib/api/warm-pool";
   import { spawnWarmWindow } from "$lib/state/warm-window";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import Modal from "./Modal.svelte";
   import SettingRow from "./settings/SettingRow.svelte";
+  import TranslucencyOpacitySetting from "./settings/TranslucencyOpacitySetting.svelte";
   import SettingToggle from "./settings/SettingToggle.svelte";
   import TerminalShortcutSettings from "./settings/TerminalShortcutSettings.svelte";
   import LayoutThemeSetting from "./settings/LayoutThemeSetting.svelte";
@@ -77,11 +80,13 @@
     return terms.some((t) => matchesSearch(...t));
   }
 
-  // Searchable terms per setting row and per-section row lists live in
-  // domain/settings-rows; they drive row and section visibility.
+  // Row search terms and per-section row lists: domain/settings-rows.
   const rows = SETTINGS_ROWS;
-  const { appearance: appearanceRows, navBar: navBarRows, behavior: behaviorRows, terminal: terminalRows } =
-    settingsSectionRows({ isMac, isWindows });
+  const sectionRows = $derived(settingsSectionRows({
+    isMac, isWindows,
+    translucencyAvailable: availableMaterial !== null,
+    translucencyOn: settingsStore.translucency,
+  }));
 
   // Escape clears the search filter before closing, so the Modal default
   // (close on Escape) is disabled and Escape is handled here instead.
@@ -144,7 +149,7 @@
         {/if}
 
         <!-- Appearance Section -->
-        <section class="settings-section" class:hidden={!sectionVisible(...appearanceRows)}>
+        <section class="settings-section" class:hidden={!sectionVisible(...sectionRows.appearance)}>
           <h3 class="section-title">Appearance</h3>
 
           <SettingRow label="Theme"
@@ -203,52 +208,15 @@
             hidden={!matchesSearch(...rows.integratedTitleBar)}>
             <SettingToggle checked={settingsStore.integratedTitleBar} onchange={() => settingsStore.update({ integratedTitleBar: !settingsStore.integratedTitleBar })} />
           </SettingRow>
-
-          <SettingRow label="Window Vibrancy"
-            description="Native macOS translucent frosted-glass effect (requires restart)"
-            hidden={!matchesSearch(...rows.vibrancy)}>
-            <SettingToggle checked={settingsStore.macOsVibrancy} onchange={() => settingsStore.update({ macOsVibrancy: !settingsStore.macOsVibrancy })} />
-          </SettingRow>
-
-          {#if settingsStore.macOsVibrancy}
-          <SettingRow label="Native Blur"
-            description="Use macOS frosted glass blur (off = theme background, requires restart)"
-            hidden={!matchesSearch(...rows.nativeBlur)}>
-            <SettingToggle checked={settingsStore.vibrancyBlur} onchange={() => settingsStore.update({ vibrancyBlur: !settingsStore.vibrancyBlur })} />
-          </SettingRow>
-          {/if}
           {/if}
 
-          {#if isWindows}
-          <SettingRow label="Window Backdrop"
-            description="Translucent frosted-glass effect (enabling from Off requires restart)"
-            hidden={!matchesSearch(...rows.windowsBackdrop)}>
-            <select
-              class="settings-select"
-              value={settingsStore.windowsBackdrop}
-              onchange={(e) => settingsStore.setWindowsBackdrop(e.currentTarget.value as WindowsBackdrop)}
-            >
-              <option value="off">Off</option>
-              <option value="mica">Mica (wallpaper tint)</option>
-              <option value="acrylic">Acrylic (see-through)</option>
-            </select>
+          {#if availableMaterial}
+          <SettingRow label={rows.translucency[0]}
+            description={rows.translucency[1]}
+            hidden={!matchesSearch(...rows.translucency)}>
+            <SettingToggle checked={settingsStore.translucency} onchange={() => settingsStore.update({ translucency: !settingsStore.translucency })} />
           </SettingRow>
-
-          {#if settingsStore.windowsBackdrop === "acrylic"}
-          <SettingRow label="Backdrop Opacity"
-            description="How see-through the Acrylic backdrop is ({settingsStore.windowsBackdropOpacity}%, lower = more transparent)"
-            hidden={!matchesSearch(...rows.windowsBackdropOpacity)}>
-            <input
-              class="range-input"
-              type="range"
-              min="0"
-              max="100"
-              step="5"
-              value={settingsStore.windowsBackdropOpacity}
-              oninput={(e) => settingsStore.update({ windowsBackdropOpacity: Number(e.currentTarget.value) })}
-            />
-          </SettingRow>
-          {/if}
+          <TranslucencyOpacitySetting applies={settingsStore.translucency} hidden={!matchesSearch(...rows.translucencyOpacity)} />
           {/if}
 
           <SettingRow label="Premium Theme Effects"
@@ -271,7 +239,7 @@
         </section>
 
         <!-- Navigation Bar Section -->
-        <section class="settings-section" class:hidden={!sectionVisible(...navBarRows)}>
+        <section class="settings-section" class:hidden={!sectionVisible(...sectionRows.navBar)}>
           <h3 class="section-title">Navigation Bar Buttons</h3>
           <SettingRow label="Back"
             description="Show the back navigation button"
@@ -296,11 +264,11 @@
         </section>
 
         <!-- Behavior Section -->
-        <section class="settings-section" class:hidden={!sectionVisible(...behaviorRows)}>
+        <section class="settings-section" class:hidden={!sectionVisible(...sectionRows.behavior)}>
           <h3 class="section-title">Behavior</h3>
 
           <SettingRow label="Show Hidden Files"
-            description="Show files and folders starting with a dot (Ctrl+H)"
+            description={`Show files and folders starting with a dot${shortcutSuffix("view.toggleHidden")}`}
             hidden={!matchesSearch(...rows.showHidden)}>
             <SettingToggle checked={settingsStore.showHidden} onchange={() => settingsStore.toggleHidden()} />
           </SettingRow>
@@ -333,6 +301,16 @@
               class="folder-peek-carets-toggle"
               checked={settingsStore.folderPeekCarets}
               onchange={() => settingsStore.update({ folderPeekCarets: !settingsStore.folderPeekCarets })}
+            />
+          </SettingRow>
+
+          <SettingRow label="Use OS Recent Files for Date Opened"
+            description="Linux only for now: also read the desktop's recent-files list (recently-used.xbel) for files opened in other applications. Read-only and local. Off: Date opened shows only files opened in Tauri Explorer"
+            hidden={!matchesSearch(...rows.osRecentSources)}>
+            <SettingToggle
+              class="os-recent-sources-toggle"
+              checked={settingsStore.osRecentSources}
+              onchange={() => settingsStore.update({ osRecentSources: !settingsStore.osRecentSources })}
             />
           </SettingRow>
 
@@ -369,7 +347,7 @@
           </SettingRow>
 
           <SettingRow label="Pre-warm New Windows"
-            description="Keep a hidden window ready so opening a new window (Ctrl+N) is near-instant. Uses extra memory for one background window. The first new window after enabling still opens cold."
+            description={`Keep a hidden window ready so opening a new window${shortcutSuffix("window.newWindow")} is near-instant. Uses extra memory for one background window. The first new window after enabling still opens cold.`}
             hidden={!matchesSearch(...rows.warmWindow)}>
             <SettingToggle
               checked={settingsStore.warmWindow}
@@ -431,7 +409,7 @@
           </SettingRow>
 
           <SettingRow label="QuickOpen Debug Scores"
-            description="Show score breakdown (name, frecency, dir bonus) in Ctrl+P results"
+            description={`Show score breakdown (name, frecency, dir bonus) in Quick Open${shortcutSuffix("general.openQuickOpen")} results`}
             hidden={!matchesSearch(...rows.quickOpenDebug)}>
             <SettingToggle checked={settingsStore.quickOpenDebug} onchange={() => settingsStore.toggleQuickOpenDebug()} />
           </SettingRow>
@@ -546,7 +524,7 @@
         </section>
 
         <!-- Terminal Section -->
-        <section class="settings-section" class:hidden={!sectionVisible(...terminalRows)}>
+        <section class="settings-section" class:hidden={!sectionVisible(...sectionRows.terminal)}>
           <h3 class="section-title">Terminal</h3>
 
           <SettingRow label="Terminal Follows Explorer"
@@ -782,7 +760,6 @@
     accent-color: var(--accent);
     cursor: pointer;
   }
-
 
   /* The confirm-delete row keeps its original `.setting-item` markup;
      SettingRow owns the equivalent rules for converted rows. */

@@ -131,9 +131,22 @@ test('edge dragging reaches distant tabs and releases all scrolling on drop or E
     return point;
   };
   const point = await dragToEdge();
-  const target = await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('.tab')?.getAttribute('data-tab-id'), point);
-  expect(target).toBeTruthy();
-  const targetIndex = before.indexOf(target!);
+  // The strip shows the insertion position live (#1749): tabs it passed
+  // move aside, so the tab under the pointer is no longer the target.
+  // Leave the edge zone so scrolling stops, then drop where the strip settled.
+  // Waiting for the exact scroll end is engine-dependent: WebKit counts the
+  // shifted tabs' transforms in scrollWidth while they transition.
+  const view = (await scroller.boundingBox())!;
+  await page.mouse.move(view.x + view.width / 2, point.y, { steps: 3 });
+  let settled = -1;
+  await expect.poll(async () => {
+    const now = await scroller.evaluate(el => el.scrollLeft);
+    const stable = now === settled;
+    settled = now;
+    return stable;
+  }, { intervals: [250] }).toBe(true);
+  expect(settled).toBeGreaterThan(120);
+  const targetIndex = Number(await page.locator('.tab-list').getAttribute('data-reorder-to'));
   expect(targetIndex).toBeGreaterThan(0);
   await page.mouse.up();
   const expected = [...before.slice(1)]; expected.splice(targetIndex, 0, before[0]);
@@ -251,6 +264,9 @@ function expectPlusFollows(frames: TabFrame[]) {
 }
 
 for (const [label, count, settings] of [['3 tabs', 3, {}], ['12 tabs', 12, {}], ['3 tabs at 125%', 3, { zoomLevel: 125 }]] as const) test(`the new-tab button rides behind a tab sliding in and out (${label})`, async ({ page }) => {
+  // Two slides of 23 stepped frames each: 21-26s on a WebKit CI container,
+  // over the default budget on a loaded one (#1775).
+  test.setTimeout(90_000);
   await openTabs(page, count, 1000, 'details', settings);
   await page.waitForTimeout(300);
   const opening = await steppedFrames(page, () => pressShortcut(page, 't', { ctrlKey: true }));

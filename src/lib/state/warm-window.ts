@@ -56,6 +56,8 @@ import {
 } from "$lib/api/warm-pool";
 import { windowTabsManager } from "./window-tabs.svelte";
 import { explorerWindowAppearance } from "./window-appearance";
+import { newWindowMaterial } from "./window-translucency.svelte";
+import { withWindowMaterial, type TranslucencyMaterial } from "$lib/domain/translucency";
 import { settingsStore } from "./settings.svelte";
 import { themeStore } from "./theme.svelte";
 import type { ViewMode } from "./types";
@@ -70,6 +72,13 @@ import { pageForeground } from "./page-foreground";
 // "explorer-*"). A distinct "warm-*" prefix would be denied event:listen etc.
 // The "-warm-" infix identifies them (warm_pool.rs matches on it too).
 const WARM_LABEL_PREFIX = "explorer-warm-";
+
+/** A parked window's material is fixed when it is created (#1757), so its
+ *  label records it: a claim made after the Translucency setting changed must
+ *  not reveal a window built for the old value. */
+function warmLabelPrefix(material: TranslucencyMaterial | null): string {
+  return `${WARM_LABEL_PREFIX}${material ?? "none"}-`;
+}
 
 /** Parent → warm window: "become a real window at this path." */
 export const WARM_ACTIVATE_EVENT = "warm-activate";
@@ -86,7 +95,8 @@ export { warmMode } from "./page-foreground";
  * over-spawning. The window becomes claimable only after it registers itself.
  */
 export async function spawnWarmWindow(): Promise<void> {
-  const label = WARM_LABEL_PREFIX + crypto.randomUUID();
+  const material = newWindowMaterial();
+  const label = warmLabelPrefix(material) + crypto.randomUUID();
   let reserved = false;
   try {
     reserved = await warmPoolBeginSpawn(label);
@@ -106,8 +116,9 @@ export async function spawnWarmWindow(): Promise<void> {
   // on macOS), producing a broken, multi-second list load on activation.
   const homePath = resolveLaunchHomePath();
   const parkPath = windowTabsManager.getActiveExplorer()?.currentPath || homePath || "/";
-  const params = new URLSearchParams({ warm: "1", path: parkPath });
-  if (homePath) params.set("home", homePath);
+  const parking = new URLSearchParams({ warm: "1", path: parkPath });
+  if (homePath) parking.set("home", homePath);
+  const params = withWindowMaterial(parking, material);
 
   try {
     const win = new WebviewWindow(label, {
@@ -116,7 +127,7 @@ export async function spawnWarmWindow(): Promise<void> {
       height: 800,
       visible: false,
       skipTaskbar: true,
-      ...explorerWindowAppearance(formatWindowTitle(parkPath, homePath)),
+      ...explorerWindowAppearance(formatWindowTitle(parkPath, homePath), material),
     });
     void win.once("tauri://error", ({ payload }) => cancelReservation(payload)).catch(cancelReservation);
   } catch (error) {
@@ -149,6 +160,13 @@ export async function consumeWarmWindow(
     return null; // not running in Tauri — fresh-window path handles it
   }
   if (!label) {
+    void spawnWarmWindow();
+    return null;
+  }
+  if (!label.startsWith(warmLabelPrefix(newWindowMaterial()))) {
+    // Built before the Translucency setting changed: retire it, open this
+    // window fresh, and park a replacement with the current material.
+    await warmPoolDiscard(label).catch(() => {});
     void spawnWarmWindow();
     return null;
   }

@@ -337,6 +337,26 @@ describe("Quick Open session: stream lifecycle", () => {
     expect(h.session.loading).toBe(false);
   });
 
+  it("stops loading when the fallback search rejects", async () => {
+    const h = harness({ listenMode: "reject" });
+    await h.startStreamFor("comp");
+    h.fallbacks[0].reply.reject(new Error("ipc down"));
+    await flush();
+    expect(names(h.session.results)).toEqual(["comp-local"]);
+    expect(h.session.loading).toBe(false);
+  });
+
+  it("ignores events for its own search id after done", async () => {
+    const h = harness();
+    await h.startStreamFor("rep");
+    h.starts[0].reply.resolve({ ok: true, data: 7 });
+    await flush();
+    h.emit({ searchId: 7, results: [hit("report", 60)], done: true, totalScanned: 40 });
+    h.emit({ searchId: 7, results: [hit("late", 99)], totalScanned: 5 });
+    expect(names(h.session.results)).toEqual(["report", "rep-local"]);
+    expect(h.session.totalScanned).toBe(40);
+  });
+
   it("ignores a fallback result that arrives after new input", async () => {
     const h = harness({ listenMode: "reject" });
     await h.startStreamFor("old");

@@ -2,6 +2,88 @@
 
 All notable changes to Tauri Explorer.
 
+## v0.29.0 — 2026-11-18
+
+### Added
+
+- Tabs: right-click a tab for Close, Close Others, Close to the Right,
+  Duplicate and Reopen Closed Tab. While you drag a tab, the tabs it passes
+  move aside to show where it will land. The reorder animates into place,
+  and the drag ghost shows the tab's icon (#1749).
+- Troubleshooting: `tauri-explorer --diagnostics` prints the version, the
+  environment summary, the log folder, the newest crash report and recent
+  warnings and errors, then exits without opening a window. Use it when the
+  app starts to a blank window or quits straight away (#1687).
+
+### Changed
+
+- Tabs: closing the active tab now activates the tab to its right, as
+  browsers do, or the one to its left if it was the last tab (#1749).
+
+## v0.28.0 — 2026-11-18
+
+### Changed
+
+- Versions: Tauri Explorer is alpha software, so releases are now numbered
+  on the 0.x line, continuing from 0.28.0 after v1.28.2. Nothing else
+  changes in this release. Automatic updates and update notices from v1.28.2
+  treat it as newer. Older 1.x copies are offered v1.28.2 first, which then
+  moves to this line. On Arch the package carries `epoch=1`, as the RPM
+  does, so pacman and rpm upgrade to it; installing the `.deb` by hand with
+  `dpkg -i` warns that it is a downgrade, which is expected. GitHub's
+  "Latest" badge stays on v1.28.2 so 1.x copies keep finding it; the newest
+  release is at the top of the releases page (#1783).
+
+## v1.28.2 — 2026-11-18
+
+### Changed
+
+- Updates: this is the last 1.x release. Tauri Explorer is still alpha, so
+  version numbers continue from 0.28.0. This release checks for updates
+  through a dedicated update channel and recognises the 0.28 line as newer,
+  so automatic updates (AppImage, macOS, Windows) and update notices carry
+  on into it. Older 1.x copies are offered this release first, then move to
+  the 0.28 line from here (#1783).
+
+## v1.28.1 — 2026-11-18
+
+### Added
+
+- Windows 11: Translucency now works on Windows too. One Translucency
+  setting (Settings → Appearance) turns the window material on everywhere:
+  vibrancy on macOS, acrylic or Mica on Windows 11. It replaces the separate
+  macOS Window Vibrancy and Native Blur toggles, and the Translucency
+  Opacity slider applies on both platforms (#1757).
+
+### Changed
+
+- Floating Islands: the active tab now owns the whole window below the tab
+  strip. Its surface runs edge to edge under every panel and the status bar,
+  with rounded top corners, and tabs run over the sidebar. The only outline
+  is the tab plus the surface's top edge. On Windows and Linux the first tab
+  keeps its whole curve (#1785).
+
+### Fixed
+
+- macOS 26: Set as Wallpaper applies to every display and Space again
+  (#1731).
+
+## v1.28.0 — 2026-11-18
+
+### Added
+
+- macOS: a Translucency Opacity slider (Settings → Appearance, with Window
+  Vibrancy and Native Blur on) sets how much of the frosted-glass material
+  the Floating Islands panels cover, from see-through to opaque (#1735).
+
+### Changed
+
+- Floating Islands: the active tab owns the window. It joins the panel below
+  it through curved feet drawn as one seamless SVG outline, with a light
+  shadow around its whole border and a heavier one on the right side. The
+  seam follows a tab frame by frame while tabs open, close and switch, and a
+  sliding tab never shows a fragment of its title (#1734).
+
 ## v1.27.0 — 2026-11-17
 
 ### Added

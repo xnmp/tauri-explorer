@@ -68,6 +68,14 @@ describe("rerunDecision", () => {
     expect(rerunDecision({ conclusion: "failure", runAttempt: 1, jobs: [job("x", "failure")] }).rerun).toBe(true);
   });
 
+  it("re-runs a job no hosted runner ever acquired (#1810)", () => {
+    // GitHub cancels a queued job it cannot place on a runner; it has no steps.
+    const unacquired = job("launch-smoke", "cancelled");
+    expect(rerunDecision({ conclusion: "failure", runAttempt: 1, jobs: [unacquired] })).toEqual({
+      rerun: true, reason: 'launch-smoke at "job setup": install/setup failure',
+    });
+  });
+
   it("leaves a real test failure alone, even beside an install failure", () => {
     const result = rerunDecision({ conclusion: "failure", runAttempt: 1, jobs: [installHang, testFailure, gate] });
     expect(result).toEqual({ rerun: false, reason: 'chromium (2) failed at "E2E tests": not an install/setup failure' });
@@ -117,8 +125,34 @@ describe("staleRunReason", () => {
       .toMatch(/cannot be confirmed current/);
   });
 
-  it("never treats a push run as stale: dev pushes do not share a cancelling group", () => {
-    expect(staleRunReason({ ...prRun, event: "push" }, { newerRuns: [{ id: 999 }], prHeads: [] })).toBeNull();
+  describe("dev push runs, which share a cancel-in-progress group per workflow (#1798)", () => {
+    const devRun = { id: 200, event: "push", head_sha: "ddd", head_branch: "dev", workflow_id: 7 };
+
+    it("allows the newest dev push run while dev's head is its commit", () => {
+      expect(staleRunReason(devRun, { newerRuns: [{ id: 200 }, { id: 190 }], prHeads: [], branchHead: "ddd" })).toBeNull();
+    });
+
+    it("refuses when a newer dev push run exists (its re-run would cancel that run)", () => {
+      expect(staleRunReason(devRun, { newerRuns: [{ id: 201 }, { id: 200 }], prHeads: [], branchHead: "ddd" }))
+        .toMatch(/run 201 is a newer run of this workflow for dev/);
+    });
+
+    it("refuses when dev moved, even before the newer run is listed", () => {
+      expect(staleRunReason(devRun, { newerRuns: [{ id: 200 }], prHeads: [], branchHead: "eee" }))
+        .toMatch(/dev moved from ddd to eee/);
+    });
+
+    it.each([undefined, null, ""])("refuses when dev's head is unknown (%s)", (branchHead) => {
+      expect(staleRunReason(devRun, { newerRuns: [], prHeads: [], branchHead })).toMatch(/cannot be confirmed current/);
+    });
+  });
+
+  it.each([
+    ["a main push", { event: "push", head_branch: "main" }],
+    ["a schedule run", { event: "schedule", head_branch: "dev" }],
+    ["a manual dispatch", { event: "workflow_dispatch", head_branch: "dev" }],
+  ])("never treats %s as stale: it has a unique concurrency group", (_label, over) => {
+    expect(staleRunReason({ ...prRun, ...over }, { newerRuns: [{ id: 999 }], prHeads: [] })).toBeNull();
   });
 });
 
@@ -126,13 +160,16 @@ describe("workflow wiring", () => {
   const workflows = new URL("../.github/workflows/", import.meta.url);
   const load = (file: string) => parse(readFileSync(new URL(file, workflows), "utf8"));
 
-  it("re-runs only failed first attempts of CI and native smoke, with minimal permissions", () => {
+  it("re-runs only failed first attempts of CI, native smoke and the macOS-hosted suites, with minimal permissions", () => {
     const rerun = load("ci-auto-rerun.yml");
-    expect(rerun.on).toEqual({ workflow_run: { workflows: ["CI", "Tauri binary E2E (smoke)"], types: ["completed"] } });
+    expect(rerun.on).toEqual({ workflow_run: { workflows: ["CI", "Tauri binary E2E (smoke)", "macOS Smoke", "Rust platforms", "macOS Native UI"], types: ["completed"] } });
     expect(rerun.permissions).toEqual({ actions: "write", contents: "read", "pull-requests": "read" });
     expect(rerun.jobs.rerun.if).toBe("github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.run_attempt == 1");
     expect(load("ci.yml").name).toBe("CI");
     expect(load("e2e-tauri.yml").name).toBe("Tauri binary E2E (smoke)");
+    expect(load("macos-smoke.yml").name).toBe("macOS Smoke");
+    expect(load("rust-platforms.yml").name).toBe("Rust platforms");
+    expect(load("macos-native-ui.yml").name).toBe("macOS Native UI");
     // Never checks out or runs the triggering run's code.
     for (const s of rerun.jobs.rerun.steps) expect(JSON.stringify(s)).not.toContain("head_sha");
   });

@@ -1,5 +1,5 @@
 /**
- * Frame-by-frame tab strip sampling (#1734).
+ * Frame-by-frame tab strip sampling (#1734, #1785).
  *
  * A requestAnimationFrame sampler runs before the app's own rAF work, so it
  * sees the previous frame's marks. ResizeObserver delivery runs after every
@@ -18,8 +18,8 @@ export interface TabFrame {
   activeIndex: number;
   /** `data-tab-hole` on the title bar ("left right"), islands only. */
   hole: [number, number] | null;
-  /** Bounding boxes of the islands' SVG marks (title bar user space). */
-  fill: [number, number] | null;
+  /** Bounding boxes of the islands' SVG marks (title bar user space): the
+   *  one outline (the tab plus the surface's top edge) and the strip shade. */
   edge: [number, number] | null;
   shade: [number, number] | null;
   titlebarWidth: number;
@@ -34,8 +34,10 @@ export interface TabFrame {
   /** Opacity of the active tab's outline, and of its icon (1 = fully drawn). */
   edgeOpacity: number | null;
   iconOpacity: number | null;
-  /** Islands whose top edge is open under the active tab. */
-  seamed: number;
+  /** Whether the one outline (#1785) runs over the active tab this frame:
+   *  along its top edge and down each side to its fillet (SVG hit test on
+   *  the stroke's centre line, title bar user space). */
+  outline: { top: boolean; left: boolean; right: boolean } | null;
   /** The active tab's close button: opacity and right edge (CSS px). */
   closeOpacity: number | null;
   closeRight: number | null;
@@ -86,7 +88,6 @@ export async function sampleTabFrames(page: Page, ms = 500): Promise<void> {
         widths: tabs.map((el) => el.getBoundingClientRect().width / zoom),
         activeIndex: tab ? tabs.indexOf(tab) : -1,
         hole: hole ?? null,
-        fill: box(".tab-fill-panel"),
         edge: box(".tab-edge-stroke"),
         shade: box(".strip-shade"),
         titlebarWidth: bar.width / zoom,
@@ -105,7 +106,17 @@ export async function sampleTabFrames(page: Page, ms = 500): Promise<void> {
           const icon = tab?.querySelector<Element>(".tab-icon, .tab-icon-special");
           return icon ? Number(getComputedStyle(icon).opacity) : null;
         })(),
-        seamed: document.querySelectorAll("[data-tab-seam]").length,
+        outline: (() => {
+          const stroke = titlebar.querySelector<SVGGeometryElement>(".tab-edge-stroke");
+          if (!r || !stroke?.getAttribute("d")) return null;
+          const left = (r.left - bar.left) / zoom;
+          const right = (r.right - bar.left) / zoom;
+          const top = (r.top - bar.top) / zoom;
+          // The sides run straight down to where the fillets begin.
+          const side = (r.bottom - bar.top) / zoom - Math.max(0, fillet / zoom - 1);
+          const on = (x: number, y: number) => stroke.isPointInStroke({ x, y });
+          return { top: on((left + right) / 2, top + 0.5), left: on(left + 0.5, side), right: on(right - 0.5, side) };
+        })(),
         ...(() => {
           const close = tab?.querySelector<HTMLElement>(".tab-close");
           const closeBox = close?.getBoundingClientRect();
@@ -186,7 +197,7 @@ async function holdTitlebarAnimations(page: Page): Promise<void> {
 /**
  * Run `action` with the title bar's animations held, then advance them in
  * `stepMs` steps of animation time, sampling one painted frame per step
- * (`onStep` may inspect each held frame).
+ * (`onStep` may inspect each frame, with the title bar's animations paused).
  * Stepping animation time (not wall time) makes every step the same on a
  * fast or a slow runner: a stalled engine cannot skip a step or merge two.
  * Returns the frame before the action, then one per step.
@@ -219,8 +230,41 @@ export async function steppedFrames(
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       return w.__tabFrames.at(-1);
     }, step * stepMs) as TabFrame);
-    // Inspect the held frame (a screenshot does not advance it).
-    await onStep?.(step);
+    if (!onStep) continue;
+    // Held animations still run (transitions in real time, only 1000 times
+    // slower): over an inspection's screenshots on a slow runner they move
+    // the strip by whole pixels. Pause them for the inspection, then let
+    // them run again as held. A pause takes effect at the next animation
+    // frame, so wait for it (`ready`) and for two more frames, so the
+    // paused frame is the one painted.
+    //
+    // WebKit's first screenshot of a held slide then resolves the strip's
+    // --tab-px transitions to their end values (once: they stay there, and
+    // later screenshots move nothing; the strip moved 10 to 70px). A
+    // throwaway screenshot takes that step before `onStep` measures.
+    const paused = await page.evaluate(async () => {
+      const w = window as unknown as { __tabPaused?: Animation[] };
+      w.__tabPaused = document.getAnimations().filter((animation) => {
+        const target = (animation.effect as KeyframeEffect | null)?.target;
+        return Boolean(target?.closest?.('[data-region="titlebar"]')) && animation.playState === "running";
+      });
+      for (const animation of w.__tabPaused) animation.pause();
+      await Promise.all(w.__tabPaused.map((animation) => animation.ready));
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      return w.__tabPaused.length;
+    });
+    await page.screenshot({ clip: { x: 0, y: 0, width: 1, height: 1 } });
+    try {
+      await onStep(step);
+    } finally {
+      if (paused) {
+        await page.evaluate(() => {
+          const w = window as unknown as { __tabPaused?: Animation[] };
+          for (const animation of w.__tabPaused ?? []) animation.play();
+          w.__tabPaused = [];
+        });
+      }
+    }
   }
   return frames;
 }

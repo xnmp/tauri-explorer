@@ -9,9 +9,8 @@
   import { startWindowSession } from "$lib/state/window-session";
   import { loadE2EHooks } from "$lib/api/e2e-hooks";
   import { settingsStore } from "$lib/state/settings.svelte";
-  import { applyWindowsBackdrop } from "$lib/state/window-backdrop";
-  import { isMac } from "$lib/domain/platform";
-  import { macOsVibrancyMode } from "$lib/domain/macos-vibrancy";
+  import { windowMaterial } from "$lib/state/window-translucency.svelte";
+  import { vibrancyCoverageVariables } from "$lib/domain/vibrancy-opacity";
   import { layoutStore } from "$lib/state/layout.svelte";
   import "$lib/layouts/floating-islands.css";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
@@ -119,32 +118,32 @@
     }
   });
 
-  // Native window material (macOS vibrancy with blur, Windows Mica/Acrylic)
+  // Native window material (#1757: macOS vibrancy, Windows acrylic or Mica)
   // is a capability independent of the layout theme (#1306): the window
   // background goes transparent so the material shows wherever the layout
-  // leaves the window uncovered. Layouts may react to [data-native-backdrop].
+  // leaves the window uncovered. Layouts react to [data-native-backdrop]; the
+  // material contract (tints, coverages) keys on [data-material], whose value
+  // names the material. The material is this window's, fixed at creation.
+  //
+  // Translucency Opacity (#1735): its coverages go inline on the root so the
+  // setting beats a colour theme's own values. Removed without a material so
+  // themes keep their contract. prefers-reduced-transparency still wins: its
+  // rule overrides the derived fills, not these inputs.
   $effect(() => {
-    document.documentElement.toggleAttribute("data-native-backdrop",
-      (settingsStore.macOsVibrancy && settingsStore.vibrancyBlur) || settingsStore.windowsBackdrop !== "off");
-    // macOS vibrancy makes the window transparent even with blur off (lib.rs);
-    // without material behind it, the body must stay opaque in every layout.
-    document.documentElement.toggleAttribute("data-transparent-window", settingsStore.macOsVibrancy);
-    // The macOS material itself is grey; [data-macos-material] tints it with
-    // the theme base so the palette survives (#1733). Windows backdrops keep
-    // their own strength tint (window-backdrop.ts).
-    document.documentElement.toggleAttribute("data-macos-material",
-      macOsVibrancyMode(isMac, settingsStore) === "material");
-  });
-
-  // Windows Mica/Acrylic: apply the native backdrop with a theme-matched tint
-  // at runtime so changing material, opacity, or theme updates the live window
-  // (the tint controls how see-through Acrylic is). Re-runs when any of those
-  // reactive inputs change; theme is read so the tint follows the palette.
-  $effect(() => {
-    void settingsStore.windowsBackdrop;
-    void settingsStore.windowsBackdropOpacity;
-    void settingsStore.theme;
-    applyWindowsBackdrop();
+    const root = document.documentElement;
+    const material = windowMaterial();
+    root.toggleAttribute("data-native-backdrop", material !== null);
+    if (material) root.setAttribute("data-material", material);
+    else root.removeAttribute("data-material");
+    // app.html paints the cached opaque theme background inline before boot.
+    // It skips a window whose creator named its material; a page that had to
+    // infer it (the browser build) clears it here.
+    if (material) root.style.removeProperty("background");
+    const vars = vibrancyCoverageVariables(settingsStore.translucencyOpacity);
+    for (const [name, value] of Object.entries(vars)) {
+      if (material) root.style.setProperty(name, value);
+      else root.style.removeProperty(name);
+    }
   });
 
   // Lightweight file-picker mode (portal windows): ?picker=open|save.
@@ -596,10 +595,6 @@
     box-shadow: none;
   }
 
-  :global([data-transparent-window]:not([data-native-backdrop])) :global(body) {
-    background: var(--background-solid);
-  }
-
   /* A layout that paints the window body itself (--layout-app-surface) wins
      over the tint. */
   :global([data-native-backdrop]) .explorer {
@@ -608,32 +603,32 @@
     -webkit-backdrop-filter: none;
   }
 
-  /* macOS material (#1733): the material is a neutral grey, so paint the
-     theme base over it, lightly on light themes and heavily on dark ones,
-     where the grey otherwise reads as a washed-out palette. A theme may set
+  /* Window material (#1733, every platform since #1757): the material is a
+     neutral grey (macOS) or the wallpaper (Mica), so paint the theme base
+     over it, lightly on light themes and heavily on dark ones, where the
+     material otherwise washes the palette out. Translucency Opacity sets the
+     share (--material-window-coverage*, default 15% and 55%). A theme may set
      its own --vibrancy-tint (Tahoe's lavender wash). light-dark() follows the
      theme's color-scheme. */
-  :global([data-macos-material]) .explorer {
+  :global([data-material]) .explorer {
     background: var(
       --layout-app-surface,
       var(
         --vibrancy-tint,
         light-dark(
-          color-mix(in srgb, var(--background-solid) 15%, transparent),
-          color-mix(in srgb, var(--background-solid) 55%, transparent)
+          color-mix(in srgb, var(--background-solid) calc(var(--material-window-coverage, 0.15) * 100%), transparent),
+          color-mix(in srgb, var(--background-solid) calc(var(--material-window-coverage-dark, 0.55) * 100%), transparent)
         )
       )
     );
   }
 
-  /* Windows Acrylic strength: a theme-coloured tint over the whole window,
-     driven by the Backdrop Opacity slider. Higher alpha = more opaque = less
-     of the native Acrylic blur shows through. Must follow the
-     [data-native-backdrop] body rule above to win the equal-specificity tie.
-     The native Acrylic tint colour is ignored on Windows 11, so this is the
-     only reliable strength control. */
-  :global([data-win-acrylic]) :global(body) {
-    background: var(--win-acrylic-tint, transparent);
+  /* The user asked for solid surfaces: no window shows the material behind
+     the app. Floating Islands also solidifies its islands (its own rule). */
+  @media (prefers-reduced-transparency: reduce) {
+    :global([data-material]) .explorer {
+      background: var(--background-solid);
+    }
   }
 
   /* Miller columns hoisted beside the panes (island arrangement only). Its

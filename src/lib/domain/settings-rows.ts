@@ -15,12 +15,10 @@ export const SETTINGS_ROWS = {
   showSidebar: ["Show Sidebar", "Display bookmarks and quick access panel"],
   windowControls: ["Show Window Controls", "Display minimize, maximize and close buttons"],
   integratedTitleBar: ["Integrated Title Bar", "Show tabs in the title bar alongside window controls (requires restart)"],
-  vibrancy: ["Window Vibrancy", "Native macOS translucent frosted-glass effect (requires restart)"],
+  translucency: ["Translucency", "Frosted-glass window material: macOS vibrancy, Windows acrylic or Mica (applies to new windows)", "vibrancy", "blur", "acrylic", "mica", "backdrop", "transparency", "frosted glass"],
   layoutTheme: ["Layout", "Panel spacing, borders, rounding and density. Add your own CSS layouts to the layouts folder", "floating islands", "hairline ledger", "island", "css", "custom"],
   premiumTheme: ["Premium Theme Effects", "Aurora-style surface treatment: accent-tinted hairlines, soft glow shadows, breadcrumb pills, translucent panels and a subtle depth backdrop. Off = flatter, higher-contrast look", "aurora", "glow", "gradient", "glass"],
-  nativeBlur: ["Native Blur", "Use macOS frosted glass blur (off = theme background, requires restart)"],
-  windowsBackdrop: ["Window Backdrop", "Windows translucent Mica/Acrylic frosted-glass effect (enabling from Off requires restart)"],
-  windowsBackdropOpacity: ["Backdrop Opacity", "How see-through the app is over the Mica/Acrylic backdrop — islands included (lower = more transparent)"],
+  translucencyOpacity: ["Translucency Opacity", "How much of the frosted-glass material the panels hide (lower = more see-through)", "vibrancy", "transparency", "blur", "acrylic", "mica", "backdrop"],
   addressBar: ["Show Address Bar", "Display the breadcrumb/path bar above the file list"],
   statusBar: ["Show Status Bar", "Display file info bar at the bottom (Alt+M U)"],
   navBack: ["Back", "Show the back navigation button"],
@@ -32,6 +30,7 @@ export const SETTINGS_ROWS = {
   yaziNavigation: ["Yazi-style Navigation", "Left/right arrows navigate up/into folders in Details view (and List view when Folder Peek is off)"],
   folderPeek: ["Folder Peek", "Expand folders in place with a caret; List view flows into columns that scroll sideways. Off restores the classic views"],
   folderPeekCarets: ["Show Folder Peek Carets", "Show expand carets beside folders in Details and List. Off: a single click on a folder expands or collapses it"],
+  osRecentSources: ["Use OS Recent Files for Date Opened", "Linux only for now: also read the desktop's recent-files list (recently-used.xbel) for files opened in other applications. Read-only and local. Off: Date opened shows only files opened in Tauri Explorer"],
   autoEnterSingleSubdir: ["Auto-Enter Single Subfolder", "When a folder contains only one subfolder (and nothing else), descend into it automatically"],
   tabTitleGitRoot: ["Git Repo Root in Tab Title", "When the folder is inside a git repository, show the repo's root folder name in the tab title"],
   autoUpdate: ["Install Updates Automatically", "Download new versions in the background and offer to restart into them", "auto update upgrade release version"],
@@ -66,20 +65,30 @@ export interface SettingsSectionRows {
   terminal: SettingsSearchTerms[];
 }
 
+/** Where the Settings dialog runs: the platform, and whether it offers a window
+ *  material (#1757) and the user has turned it on. */
+export interface SettingsPlatform {
+  readonly isMac: boolean;
+  readonly isWindows: boolean;
+  readonly translucencyAvailable?: boolean;
+  readonly translucencyOn?: boolean;
+}
+
 /** Rows per section; platform-only rows appear only on their platform. */
-export function settingsSectionRows(platform: { isMac: boolean; isWindows: boolean }): SettingsSectionRows {
+export function settingsSectionRows(platform: SettingsPlatform): SettingsSectionRows {
   const r = SETTINGS_ROWS;
   const appearance = [
     r.theme, r.layoutTheme, r.iconTheme, r.thumbnailSize, r.rowThumbnails, r.showSidebar,
     ...(platform.isMac ? [] : [r.windowControls]),
-    ...(platform.isMac ? [r.integratedTitleBar, r.vibrancy, r.nativeBlur] : []),
-    ...(platform.isWindows ? [r.windowsBackdrop, r.windowsBackdropOpacity] : []),
+    ...(platform.isMac ? [r.integratedTitleBar] : []),
+    ...(platform.translucencyAvailable ? [r.translucency] : []),
+    ...(platform.translucencyAvailable && platform.translucencyOn ? [r.translucencyOpacity] : []),
     r.premiumTheme,
     r.addressBar, r.statusBar,
   ];
   const navBar = [r.navBack, r.navForward, r.navUp, r.navRefresh];
   const behavior = [
-    r.showHidden, r.millerHideEmpty, r.yaziNavigation, r.folderPeek, r.folderPeekCarets, r.autoEnterSingleSubdir, r.tabTitleGitRoot, r.autoUpdate, r.defaultPaneLayout, r.showManuallyHidden,
+    r.showHidden, r.millerHideEmpty, r.yaziNavigation, r.folderPeek, r.folderPeekCarets, r.osRecentSources, r.autoEnterSingleSubdir, r.tabTitleGitRoot, r.autoUpdate, r.defaultPaneLayout, r.showManuallyHidden,
     r.gitStatus, r.f5SyncsLocalBranches, r.recentItems, r.recycleBin, r.quickOpenDebug, r.warmWindow, r.confirmDelete,
     r.backgroundOpacity, r.backgroundImage, r.wallpaperBlur, r.terminalApp,
     r.previewFontSize, r.showPreviewInfo, r.ffmpegPath,

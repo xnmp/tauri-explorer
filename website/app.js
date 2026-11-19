@@ -5,7 +5,9 @@
 "use strict";
 
 const REPO = "https://github.com/xnmp/tauri-explorer";
-const RELEASE_PAGE = `${REPO}/releases/latest`;
+/* Not releases/latest: GitHub's "Latest" stays on the v1.28.2 bridge so 1.x
+   installs keep finding it, while newer releases are numbered 0.28+ (#1783). */
+const RELEASE_PAGE = `${REPO}/releases`;
 const PLUGIN_RELEASES = "https://github.com/xnmp/TraceExplorer/releases/latest";
 
 /* Asset filenames embed the version. Until GitHub's API resolves the current
@@ -33,9 +35,14 @@ function download(url) {
 }
 
 function resolveDownloads() {
-  fetch("https://api.github.com/repos/xnmp/tauri-explorer/releases/latest")
+  fetch("https://api.github.com/repos/xnmp/tauri-explorer/releases?per_page=10")
     .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
-    .then((rel) => {
+    .then((list) => {
+      // The newest published release; the update-channel entry is a prerelease.
+      const rel = (Array.isArray(list) ? list : [])
+        .filter((r) => !r.draft && !r.prerelease && r.published_at)
+        .sort((a, b) => Date.parse(b.published_at) - Date.parse(a.published_at))[0];
+      if (!rel) return;
       for (const a of rel.assets || [])
         for (const [key, pat] of Object.entries(DL_ASSET))
           if (pat.test(a.name)) DL[key] = a.browser_download_url;
@@ -1736,7 +1743,7 @@ function fileCtx(e, node, paneIdx = 0, baseOverride, rel) {
     ...(node.kind === "dir" ? [] : [{ label: "AI Rename (plugin demo)", run: () => aiRename(node, paneIdx) }]),
     { sep: true },
     { label: "Copy Path", run: () => { if (navigator.clipboard) navigator.clipboard.writeText("~/tauri-explorer/" + path.join("/")); toast("Path copied — the app's menu also does zip, checksums, open-with…", { ms: 3200 }); } },
-    { label: "Get the Real App ↗", run: () => window.open(`${REPO}/releases/latest`, "_blank") },
+    { label: "Get the Real App ↗", run: () => window.open(RELEASE_PAGE, "_blank") },
   ]);
 }
 

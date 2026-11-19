@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  TAB_FILLET, TAB_LIGHT, TAB_STRIP_PADDING, gutterRowsFor, tabFootFor, tabShownSpan, islandAt, islandSquareFor, islandUnder, seamRowFor, tabFillPath, tabStripPadding, stripShadePath, tabContour, tabEdgePath, tabHoleFor, tabKeyShadow, tabSilhouettePath,
+  SURFACE_TAB_GAP, TAB_FILLET, outlineClips, TAB_LIGHT, TAB_STRIP_PADDING, stripShadePath, surfaceCorners, surfaceEdgePath, surfacePocketsPath,
+  tabContour, tabHoleFor, tabKeyShadow, tabShownSpan, tabSilhouettePath, tabStripPadding,
 } from "$lib/domain/tab-seam";
 
 /** Endpoints of every segment (M/L/A/H/V/Z) plus each arc's radius. */
@@ -119,58 +120,6 @@ describe("tab silhouette", () => {
   });
 });
 
-describe("tabEdgePath", () => {
-  const c = tabContour(box, 14, 14);
-
-  it("runs over the tab between its feet, on the stroke's centre line half a stroke below the base", () => {
-    const edge = tabEdgePath(c, 1);
-    const { first, last, arcs } = walk(edge.d);
-    expect(first).toEqual({ x: 86, y: 38.5 });
-    expect(last).toEqual({ x: 314, y: 38.5 });
-    expect(arcs).toEqual([14.5, 13.5, 13.5, 14.5]);
-    expect(edge.left).toBe("");
-    expect(edge.right).toBe("");
-    expect(edge.tab).toBe(edge.d);
-  });
-
-  it("continues along the island's top edge to each rounded corner's tangent", () => {
-    const edge = tabEdgePath(c, 1, { left: { kind: "round", x: 20 }, right: { kind: "round", x: 880 } });
-    expect(walk(edge.d).first).toEqual({ x: 20, y: 38.5 });
-    expect(walk(edge.d).last).toEqual({ x: 880, y: 38.5 });
-    // Three runs that join end to end: the island colours can differ from the tab's.
-    expect(walk(edge.left).last).toEqual(walk(edge.tab).first);
-    expect(walk(edge.tab).last).toEqual(walk(edge.right).first);
-    expect(edge.d.startsWith(edge.left)).toBe(true);
-  });
-
-  it("turns a squared corner down its side to the handover", () => {
-    const edge = tabEdgePath(c, 1, { left: { kind: "square", edge: 6, handover: 39 } });
-    const { points } = walk(edge.left);
-    // Inside the island's edge by half a stroke, from the handover up to the top line.
-    expect(points[0]).toEqual({ x: 6.5, y: 39 });
-    expect(points[1]).toEqual({ x: 6.5, y: 38.5 });
-    expect(points.at(-1)).toEqual({ x: 86, y: 38.5 });
-  });
-
-  it("ignores a corner that does not lie beyond its foot", () => {
-    const edge = tabEdgePath(c, 1, { left: { kind: "round", x: 90 }, right: { kind: "square", edge: 300, handover: 39 } });
-    expect(edge.left).toBe("");
-    expect(edge.right).toBe("");
-  });
-
-  it("follows the stroke width and survives a malformed one", () => {
-    expect(walk(tabEdgePath(c, 2).d).first).toEqual({ x: 86, y: 39 });
-    expect(walk(tabEdgePath(c, Number.NaN).d).first.y).toBe(38.5);
-    expect(walk(tabEdgePath(c, -3).d).first.y).toBe(38);
-  });
-
-  it("finds the island under a foot", () => {
-    const islands = [{ left: 6, right: 246, radius: 14 }, { left: 254, right: 900, radius: 14 }];
-    expect(islandAt(islands, 250)).toBeNull();
-    expect(islandAt(islands, 300)).toBe(islands[1]);
-  });
-});
-
 describe("tabKeyShadow", () => {
   it("falls away from the top-left light, shaped like the tab", () => {
     const c = tabContour(box, 14, 14);
@@ -182,117 +131,136 @@ describe("tabKeyShadow", () => {
   });
 });
 
-describe("seams and fill", () => {
+describe("the tab's surface (#1785)", () => {
+  const surface = { left: 0, right: 800, radius: 14 };
   const c = tabContour(box, 14, 14);
-  const hole = tabHoleFor(box, 14)!;
+  const hole = tabHoleFor(box, TAB_FILLET)!;
 
-  it("opens only the island's straight top edge under the hole", () => {
-    expect(seamRowFor(hole, { left: 6, right: 246, radius: 14 })).toEqual({ left: 86, right: 232 });
-    expect(seamRowFor(hole, { left: 254, right: 900, radius: 14 })).toEqual({ left: 268, right: 314 });
-    expect(seamRowFor(hole, { left: 310, right: 900, radius: 14 })).toBeNull();
-    expect(seamRowFor({ left: 120, right: 120 }, { left: 0, right: 900, radius: 14 })).toBeNull();
+  it("rounds both top corners fully while the tab's foot stays clear of them", () => {
+    expect(surfaceCorners(surface, null)).toEqual({ left: 14, right: 14 });
+    expect(surfaceCorners(surface, hole)).toEqual({ left: 14, right: 14 });
   });
 
-  it("wears the surface of the island under most of the tab", () => {
-    const sidebar = { left: 6, right: 246, radius: 14 };
-    const panes = { left: 254, right: 900, radius: 14 };
-    expect(islandUnder([sidebar, panes], hole)).toBe(sidebar);
-    expect(islandUnder([sidebar, panes], { left: 230, right: 470 })).toBe(panes);
-    expect(islandUnder([sidebar], { left: 300, right: 400 })).toBeNull();
-    expect(islandUnder([], hole)).toBeNull();
+  it("narrows a corner the foot reaches into, so it ends where the foot begins", () => {
+    expect(surfaceCorners(surface, { left: 6, right: 240 })).toEqual({ left: 6, right: 14 });
+    expect(surfaceCorners(surface, { left: 560, right: 795 })).toEqual({ left: 14, right: 5 });
+    // A foot past the window's edge squares the corner; it never inverts.
+    expect(surfaceCorners(surface, { left: -3, right: 900 })).toEqual({ left: 0, right: 0 });
   });
 
-  it("fills the silhouette down to the base and reaches into each seam row", () => {
-    const d = tabFillPath(c, [{ left: 86, right: 232 }], 2);
-    expect(d.startsWith(tabSilhouettePath(c, 0, 0))).toBe(true);
-    const { points } = walk(d);
-    expect(Math.max(...points.map(p => p.y))).toBe(40);
-    expect(points).toContainEqual({ x: 232, y: 40 });
-    expect(tabFillPath(c, [{ left: 86, right: 232 }], Number.NaN)).toBe(tabSilhouettePath(c, 0, 0));
-  });
-});
-
-describe("the foot always stands on a straight top edge (#1734)", () => {
-  const sidebar = { left: 6, right: 246, radius: 14 };
-  const panes = { left: 254, right: 804, radius: 14 };
-  const preview = { left: 812, right: 1094, radius: 14 };
-
-  it("starts the strip over the content island, its first fillet past the island's corner", () => {
-    // Strip padding box at x=0: the first tab starts at 254 + 14 + 14.
-    const padding = tabStripPadding(panes, 0);
-    expect(padding).toBe(254 + 14 + TAB_FILLET);
-    const hole = tabHoleFor({ left: padding, width: 200 }, TAB_FILLET)!;
-    expect(hole.left).toBe(panes.left + panes.radius);
-    expect(islandSquareFor(hole, panes)).toEqual({ left: false, right: false });
-    // The sidebar island lies wholly before the strip.
-    expect(hole.left).toBeGreaterThan(sidebar.right);
+  it("never rounds a corner past half the surface, and survives malformed geometry", () => {
+    expect(surfaceCorners({ left: 0, right: 20, radius: 14 }, null)).toEqual({ left: 10, right: 10 });
+    const odd = surfaceCorners({ left: Number.NaN, right: Number.POSITIVE_INFINITY, radius: -4 }, { left: Number.NaN, right: 3 });
+    expect(Number.isFinite(odd.left) && odd.left >= 0).toBe(true);
+    expect(Number.isFinite(odd.right) && odd.right >= 0).toBe(true);
   });
 
-  it("keeps the default padding without a content island, and never goes below it", () => {
+  it("shades the pockets outside each rounded corner, running half a pixel under the outline", () => {
+    const d = surfacePocketsPath(surface, 38, { left: 14, right: 14 });
+    const [left, right] = d.split("Z").filter(Boolean).map((part) => walk(`${part}Z`));
+    // Left pocket: the window's corner square, minus the quarter disc the surface keeps.
+    expect(left.first).toEqual({ x: 0, y: 38 });
+    expect(left.points).toContainEqual({ x: 14, y: 38.5 });
+    expect(left.points).toContainEqual({ x: 0.5, y: 52 });
+    expect(left.arcs).toEqual([13.5]);
+    expect(right.first).toEqual({ x: 800, y: 38 });
+    expect(right.points).toContainEqual({ x: 799.5, y: 52 });
+    expect(right.points).toContainEqual({ x: 786, y: 38.5 });
+    expect(right.arcs).toEqual([13.5]);
+    // Everything stays below the base, in the corner squares.
+    for (const p of [...left.points, ...right.points]) {
+      expect(p.y).toBeGreaterThanOrEqual(38);
+      expect(p.y).toBeLessThanOrEqual(52);
+    }
+  });
+
+  it("leaves no pocket beside a squared corner", () => {
+    expect(surfacePocketsPath(surface, 38, { left: 0, right: 0 })).toBe("");
+    expect(surfacePocketsPath(surface, 38, { left: 0, right: 14 }).startsWith("M800 38")).toBe(true);
+  });
+
+  it("strokes one open outline: up the left corner, along the top edge, over the tab, down the right corner", () => {
+    const d = surfaceEdgePath(c, 1, surface, 38, { left: 14, right: 14 });
+    expect(d.match(/M/g)).toHaveLength(1);
+    const { points, arcs, first, last } = walk(d);
+    // From the window's left edge, half a stroke in, round the corner...
+    expect(first).toEqual({ x: 0.5, y: 52 });
+    expect(points[1]).toEqual({ x: 14, y: 38.5 });
+    expect(arcs[0]).toBe(13.5);
+    // ...along the top edge on the stroke's centre line to the tab's left foot...
+    expect(points[2]).toEqual({ x: 86, y: 38.5 });
+    // ...over the tab (half a stroke inside its top)...
+    expect(Math.min(...points.map((p) => p.y))).toBe(8.5);
+    // ...and on from its right foot round the right corner to the window's edge.
+    expect(points).toContainEqual({ x: 314, y: 38.5 });
+    expect(points).toContainEqual({ x: 786, y: 38.5 });
+    expect(last).toEqual({ x: 799.5, y: 52 });
+    expect(arcs[arcs.length - 1]).toBe(13.5);
+  });
+
+  it("leaves the top edge open under the tab, whose hole is the surface itself", () => {
+    const d = surfaceEdgePath(c, 1, surface, 38, { left: 14, right: 14 });
+    // No straight run on the base between the tab's feet.
+    const runs = [...d.matchAll(/([\d.]+) 38\.5L([\d.]+) 38\.5/g)].map((m) => [Number(m[1]), Number(m[2])]);
+    for (const [from, to] of runs) expect(Math.max(from, to) <= 86 || Math.min(from, to) >= 314).toBe(true);
+  });
+
+  it("never strokes back across a corner when the tab's hidden foot lies past it (#1785 review)", () => {
+    // A tab scrolled left under the strip's start (macOS traffic lights),
+    // its foot beyond the left corner: the tab starts a subpath of its own.
+    const hidden = tabContour({ left: 10, width: 140, top: 8, base: 38 }, 14, 14);
+    const d = surfaceEdgePath(hidden, 1, surface, 38, { left: 14, right: 14 });
+    const [corner, tab] = d.split(/(?=M)/);
+    expect(corner).toBe("M0.5 52A13.5 13.5 0 0 1 14 38.5");
+    expect(walk(tab).first).toEqual({ x: -4, y: 38.5 });
+    // Mirrored on the right.
+    const right = tabContour({ left: 700, width: 140, top: 8, base: 38 }, 14, 14);
+    const parts = surfaceEdgePath(right, 1, surface, 38, { left: 14, right: 14 }).split(/(?=M)/);
+    expect(parts[parts.length - 1]).toBe("M786 38.5A13.5 13.5 0 0 1 799.5 52");
+  });
+
+  it("clips the two strokes to complementary columns of the viewport", () => {
+    const { inside, outside } = outlineClips({ left: 67, right: 940 });
+    expect(inside).toBe("M67 -8192H940V8192H67Z");
+    expect(outside).toBe("M-8192 -8192H67V8192H-8192ZM940 -8192H8192V8192H940Z");
+    // An inverted or malformed view leaves the inside empty, never inverted.
+    expect(outlineClips({ left: 500, right: 400 }).inside).toBe("M500 -8192H500V8192H500Z");
+    expect(outlineClips({ left: Number.NaN, right: Number.NaN }).inside).toBe("M0 -8192H0V8192H0Z");
+  });
+
+  it("runs the top edge straight between the corners with no shown tab", () => {
+    expect(surfaceEdgePath(null, 1, surface, 38, { left: 14, right: 14 })).toBe(
+      "M0.5 52A13.5 13.5 0 0 1 14 38.5L786 38.5A13.5 13.5 0 0 1 799.5 52",
+    );
+  });
+
+  it("starts at the window's edge beside a squared corner, and survives a malformed stroke width", () => {
+    const d = surfaceEdgePath(null, Number.NaN, surface, 38, { left: 0, right: 0 });
+    expect(d).toBe("M0 38.5L800 38.5");
+    expect(surfaceEdgePath(null, 2, surface, 38, { left: 14, right: 14 })).toBe(
+      "M1 52A13 13 0 0 1 14 39L786 39A13 13 0 0 1 799 52",
+    );
+  });
+
+  it("starts the strip so the first tab's whole curve lies past the surface's corner", () => {
+    const padding = tabStripPadding(surface, 0);
+    expect(padding).toBe(14 + SURFACE_TAB_GAP + TAB_FILLET);
+    const first = tabHoleFor({ left: padding, width: 200 }, TAB_FILLET)!;
+    expect(first.left).toBe(surface.radius + SURFACE_TAB_GAP);
+    expect(surfaceCorners(surface, first)).toEqual({ left: 14, right: 14 });
+  });
+
+  it("keeps the floor where the strip already starts further right (macOS traffic lights)", () => {
+    expect(tabStripPadding(surface, 70)).toBe(TAB_STRIP_PADDING);
     expect(tabStripPadding(null, 0)).toBe(TAB_STRIP_PADDING);
-    expect(tabStripPadding({ left: 6, right: 900, radius: 14 }, 70)).toBe(TAB_STRIP_PADDING);
-    expect(tabStripPadding(panes, Number.NaN)).toBe(TAB_STRIP_PADDING);
+    expect(tabStripPadding(surface, Number.NaN)).toBe(TAB_STRIP_PADDING);
     expect(tabStripPadding({ left: Number.POSITIVE_INFINITY, right: 0, radius: 0 }, 0)).toBe(TAB_STRIP_PADDING);
-    expect(tabStripPadding(panes, 0, -5)).toBe(254 + 28);
-  });
-
-  it("squares the corners a straddling foot reaches into, and only those", () => {
-    const hole = { left: 678, right: 910 };
-    expect(islandSquareFor(hole, panes)).toEqual({ left: false, right: true });
-    expect(islandSquareFor(hole, preview)).toEqual({ left: true, right: false });
-    expect(islandSquareFor(hole, sidebar)).toEqual({ left: false, right: false });
-    // A foot ending exactly where the straight edge starts squares nothing.
-    expect(islandSquareFor({ left: 268, right: 500 }, panes)).toEqual({ left: false, right: false });
-    // Islands without corners are never squared.
-    expect(islandSquareFor(hole, { ...panes, radius: 0 })).toEqual({ left: false, right: false });
-  });
-
-  it("opens squared corners as straight edge and bridges the gutter between them", () => {
-    const hole = { left: 678, right: 910 };
-    const square = (island: typeof panes) => ({ ...island, square: islandSquareFor(hole, island) });
-    expect(seamRowFor(hole, panes, square(panes).square)).toEqual({ left: 678, right: 804 });
-    expect(seamRowFor(hole, preview, square(preview).square)).toEqual({ left: 812, right: 910 });
-    expect(gutterRowsFor(hole, [square(preview), square(panes)])).toEqual([{ left: 804, right: 812 }]);
-    // No bridge unless both facing corners are squared under the foot.
-    expect(gutterRowsFor({ left: 500, right: 790 }, [square(panes), { ...preview, square: { left: false, right: false } }])).toEqual([]);
-    expect(gutterRowsFor(hole, [])).toEqual([]);
+    expect(tabStripPadding(surface, 0, -5)).toBe(30);
+    expect(tabStripPadding(surface, 0, 40)).toBe(40);
   });
 });
 
-describe("a narrow window's strip over the sidebar (#1734)", () => {
-  // Sidebar (structural) island 6-246, panes (content) 254-1094.
-  const sidebar = { left: 6, right: 246, radius: 14, home: false };
-  const panes = { left: 254, right: 1094, radius: 14, home: true };
-
-  it("stands a foot straddling the sidebar gutter on straight edges of both kinds", () => {
-    const hole = { left: 200, right: 330 };
-    const foot = tabFootFor(hole, [sidebar, panes]);
-    // Both facing corners are squared, whatever their kind...
-    expect(foot.squared.map((island) => [island.left, island.square])).toEqual([
-      [6, { left: false, right: true }],
-      [254, { left: true, right: false }],
-    ]);
-    // ...the gutter between them is bridged...
-    expect(foot.bridges).toEqual([{ left: 246, right: 254 }]);
-    // ...and only the tab's own kind opens its edge, from its squared corner.
-    expect(foot.seams.map(({ island, row }) => [island.left, row])).toEqual([[254, { left: 254, right: 330 }]]);
-  });
-
-  it("squares the sidebar's corner under a foot that only reaches into it", () => {
-    const foot = tabFootFor({ left: 100, right: 240 }, [{ ...sidebar, home: true }, panes]);
-    expect(foot.squared.map((island) => island.square)).toEqual([{ left: false, right: true }]);
-    expect(foot.bridges).toEqual([]);
-    expect(foot.seams.map(({ row }) => row)).toEqual([{ left: 100, right: 240 }]);
-  });
-
-  it("leaves every corner round under a foot on a straight stretch", () => {
-    const foot = tabFootFor({ left: 400, right: 560 }, [sidebar, panes]);
-    expect(foot.squared).toEqual([]);
-    expect(foot.bridges).toEqual([]);
-  });
-});
-
-describe("islands open only under a shown tab (#1734)", () => {
+describe("the outline rises only out of a shown tab (#1734)", () => {
   const view = { left: 267, right: 371 };
 
   it("shows nothing of a tab scrolled past either end", () => {

@@ -1,19 +1,20 @@
 /**
- * Context menus inside Floating Islands (#1734).
+ * Context menus inside Floating Islands (#1734, #1785).
  *
  * An island with a backdrop-filter (or transform) becomes the containing
  * block for the `position: fixed` menu inside it, so the menu opened offset
- * by the island's own position. The island under the active tab also clips
- * itself (the seam notch), which makes it a stacking context: a menu that
- * overhangs a later sibling island must still paint above it. Menus are
- * opaque: a backdrop filter never sampled the native window material.
+ * by the island's own position. A menu that overhangs a later sibling island
+ * must still paint above it (#1734's seam made the island under the active
+ * tab a stacking context that trapped its menus; #1785 removed the seam, and
+ * this keeps any island from trapping them again). Menus are opaque: a
+ * backdrop filter never sampled the native window material.
  */
 import { test, expect, type Page } from "./fixtures";
 import { HOME_URL, pressShortcut, seedSettings, waitForEntries } from "./helpers";
 
 const MATERIALS = [
   { name: "opaque window", platform: undefined, settings: {} },
-  { name: "macOS material", platform: "MacIntel", settings: { macOsVibrancy: true, vibrancyBlur: true } },
+  { name: "macOS material", platform: "MacIntel", settings: { translucency: true } },
 ] as const;
 
 async function openIslands(page: Page, material: (typeof MATERIALS)[number]): Promise<void> {
@@ -31,20 +32,18 @@ async function openIslands(page: Page, material: (typeof MATERIALS)[number]): Pr
   });
   await page.goto(HOME_URL);
   await waitForEntries(page);
-  if (material.platform) await expect(page.locator("html")).toHaveAttribute("data-macos-material", "");
+  if (material.platform) await expect(page.locator("html")).toHaveAttribute("data-material", "vibrancy");
 }
 
 for (const material of MATERIALS) {
   test(`context menu opens at the pointer and above later islands (${material.name})`, async ({ page }) => {
     await openIslands(page, material);
-    // Two new tabs: the active third tab stands over the panes island, which
-    // then carries the seam notch (a clip-path) under it.
+    // Two new tabs: the active third tab stands over the panes island.
     await pressShortcut(page, "t", { ctrlKey: true });
     await pressShortcut(page, "t", { ctrlKey: true });
     await expect(page.locator('.tab-viewport [data-region="tab"]')).toHaveCount(3);
     await page.locator(".pane-tree:not(.retained) .entry-item:visible").first().waitFor();
     const panes = page.locator('[data-region="panes"]:visible').first();
-    await expect(panes).toHaveAttribute("data-tab-seam", "");
     const preview = page.locator('[data-region="preview"]:visible').first();
     await expect(preview).toBeVisible();
 

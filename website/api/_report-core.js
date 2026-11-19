@@ -1,3 +1,5 @@
+import { environmentLabels, titleWithSignature } from "./_report-triage.js";
+
 /** @typedef {{ scope: string, key: string, limit: number, windowMs: number }} LimitEntry */
 /** @typedef {{ consume(entries: LimitEntry[], now?: number): Promise<string | undefined> }} RateLimitStore */
 /** @typedef {{ name: string, mediaType: "image/png" | "image/jpeg" | "image/gif" | "video/mp4" | "video/webm" | "video/quicktime", bytes: Uint8Array }} ValidAttachment */
@@ -174,6 +176,9 @@ function escapeMarkdownAlt(value) {
 
 /** @typedef {{ name: string, url: string, mediaType?: string }} HostedAttachment */
 
+/** Labels every relay issue may carry; triage labels (#1689) are best-effort on top. */
+export const BASE_LABELS = Object.freeze(["user-report", "bug", "enhancement"]);
+
 /** @param {ValidReport} report @param {HostedAttachment[]} [hostedAttachments] */
 export function buildGitHubIssue(report, hostedAttachments = []) {
   const attachments = hostedAttachments.length === 0
@@ -182,9 +187,13 @@ export function buildGitHubIssue(report, hostedAttachments = []) {
       `${mediaType?.startsWith("video/") ? "" : "!"}[${escapeMarkdownAlt(name)}](${url})`
     ).join("\n\n")}`;
   return {
-    title: report.title,
+    title: titleWithSignature(report.title, report.body),
     body: `${report.body}${attachments}`,
-    labels: ["user-report", report.kind === "bug" ? "bug" : "enhancement"],
+    labels: [
+      "user-report",
+      report.kind === "bug" ? "bug" : "enhancement",
+      ...environmentLabels(report.body),
+    ],
   };
 }
 

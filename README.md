@@ -1,7 +1,7 @@
 # Tauri Explorer
 
 [![CI](https://github.com/xnmp/tauri-explorer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/xnmp/tauri-explorer/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/xnmp/tauri-explorer)](https://github.com/xnmp/tauri-explorer/releases/latest)
+[![Release](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fgithub.com%2Fxnmp%2Ftauri-explorer%2Freleases%2Fdownload%2Fupdate-channel%2Flatest-alpha.json&query=%24.version&prefix=v&label=release)](https://github.com/xnmp/tauri-explorer/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 **A file manager with Ctrl+P, Ctrl+Shift+F, and a command palette.**
@@ -16,7 +16,7 @@ If you've ever opened your editor just to move files faster than your file manag
 
 ## Install
 
-Grab the [latest release](https://github.com/xnmp/tauri-explorer/releases/latest) — AppImage/deb/rpm, MSI, or dmg. On Linux it can even [replace your system file picker](https://tauri-explorer.vercel.app) (xdg-desktop-portal FileChooser backend).
+Grab the newest release from the [releases page](https://github.com/xnmp/tauri-explorer/releases) — AppImage/deb/rpm, MSI, or dmg. On Linux it can even [replace your system file picker](https://tauri-explorer.vercel.app) (xdg-desktop-portal FileChooser backend).
 
 ```bash
 # macOS (Apple Silicon or Intel) — one command; builds from source (checks
@@ -47,6 +47,14 @@ tauri-explorer [--new-tab] [PATH]
 ```
 
 `PATH` (absolute or relative to the current directory) is the folder to open; without it, Explorer opens the directory it was launched from. On Linux, launching again while Explorer is running hands the location to that instance, which opens it in a new window. Add `--new-tab` (before or after the path) to open it as a new tab in the most recently focused Explorer window instead, and bring that window to the front. When no instance is running, `--new-tab` opens a window as usual. Use `--` before a path that begins with `--`. On macOS and Windows each launch currently starts its own window, so `--new-tab` has no effect there.
+
+### If the app won't start
+
+```bash
+tauri-explorer --diagnostics
+```
+
+prints the app version, environment summary (OS, webview, session, install method), the log folder, the newest crash report and the last 50 warning/error log lines, then exits without opening a window. Paste the output into a [bug report](https://github.com/xnmp/tauri-explorer/issues/new?template=bug_report.yml). On macOS run the binary inside the bundle (`/Applications/tauri-explorer.app/Contents/MacOS/tauri-explorer --diagnostics`); on Windows pipe or redirect it (`tauri-explorer.exe --diagnostics | more`, or `> diagnostics.txt`) so the prompt waits for the output.
 
 ## Use as system file picker
 

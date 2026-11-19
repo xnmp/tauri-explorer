@@ -9,6 +9,7 @@
   import { buildTree, collectEntries, type ScmTreeNode } from "$lib/domain/scm-tree";
   import { canDiscardScmRow, discardableScmPaths, splitScmPath as splitPath, statusClass, statusLetter, type ScmSectionKind } from "$lib/domain/scm-sidebar";
   import type { ScmStore } from "$lib/state/scm.svelte";
+  import { stagePaths } from "$lib/state/scm-sidebar-actions";
   import { settingsStore } from "$lib/state/settings.svelte";
 
   interface Props {
@@ -94,10 +95,10 @@
   {/if}
   {#if kind === "staged"}
     <button type="button" class="row-btn" title="Unstage" aria-label="Unstage {row.path}"
-      onclick={(e) => { e.stopPropagation(); scmStore.unstage([row.path]); }}>{@render actionIcon("unstage")}</button>
+      onclick={(e) => { e.stopPropagation(); stagePaths(scmStore, [row.path], "unstage"); }}>{@render actionIcon("unstage")}</button>
   {:else if kind === "merge"}
     <button type="button" class="row-btn" title="Stage" aria-label="Stage {row.path}"
-      onclick={(e) => { e.stopPropagation(); scmStore.stage([row.path]); }}>{@render actionIcon("stage")}</button>
+      onclick={(e) => { e.stopPropagation(); stagePaths(scmStore, [row.path], "stage"); }}>{@render actionIcon("stage")}</button>
   {:else}
     {#if canDiscardScmRow(kind, row)}
     <button type="button" class="row-btn destructive"
@@ -114,7 +115,7 @@
         onclick={(e) => { e.stopPropagation(); onIgnore(row.path); }}>{@render actionIcon("ignore")}</button>
     {/if}
     <button type="button" class="row-btn" title="Stage" aria-label="Stage {row.path}"
-      onclick={(e) => { e.stopPropagation(); scmStore.stage([row.path]); }}>{@render actionIcon("stage")}</button>
+      onclick={(e) => { e.stopPropagation(); stagePaths(scmStore, [row.path], "stage"); }}>{@render actionIcon("stage")}</button>
   {/if}
 {/snippet}
 
@@ -173,10 +174,10 @@
         <span class="row-actions folder-actions">
           {#if kind === "staged"}
             <button type="button" class="row-btn" title="Unstage folder" aria-label="Unstage {child.name}"
-              onclick={(e) => { e.stopPropagation(); scmStore.unstage(folderPaths); }}>{@render actionIcon("unstage")}</button>
+              onclick={(e) => { e.stopPropagation(); stagePaths(scmStore, folderPaths, "unstage"); }}>{@render actionIcon("unstage")}</button>
           {:else if kind === "merge"}
             <button type="button" class="row-btn" title="Stage folder" aria-label="Stage {child.name}"
-              onclick={(e) => { e.stopPropagation(); scmStore.stage(folderPaths); }}>{@render actionIcon("stage")}</button>
+              onclick={(e) => { e.stopPropagation(); stagePaths(scmStore, folderPaths, "stage"); }}>{@render actionIcon("stage")}</button>
           {:else}
             {#if folderDiscardPaths.length > 0}
             <button type="button" class="row-btn destructive"
@@ -193,7 +194,7 @@
                 onclick={(e) => { e.stopPropagation(); onIgnore(child.fullDir); }}>{@render actionIcon("ignore")}</button>
             {/if}
             <button type="button" class="row-btn" title="Stage folder" aria-label="Stage {child.name}"
-              onclick={(e) => { e.stopPropagation(); scmStore.stage(folderPaths); }}>{@render actionIcon("stage")}</button>
+              onclick={(e) => { e.stopPropagation(); stagePaths(scmStore, folderPaths, "stage"); }}>{@render actionIcon("stage")}</button>
           {/if}
         </span>
       </li>
@@ -304,7 +305,6 @@
     cursor: pointer;
     text-align: left;
     width: 100%;
-    transition: background var(--transition-fast);
   }
 
   .section-header:hover {
@@ -351,7 +351,6 @@
     padding: 0 8px;
     border-radius: var(--radius-sm);
     cursor: pointer;
-    transition: background var(--transition-fast);
     font-size: 13px;
     height: 22px;
     min-height: 22px;
@@ -387,15 +386,15 @@
     margin-left: auto;
   }
 
-  /* Status letter colors: themeable via --scm-* vars, mixed with the theme's
+  /* Status letter colors: derived from the theme status colours, mixed with the theme's
      text color so they stay legible on both dark and light backgrounds. */
-  .s-modified { color: var(--scm-modified, color-mix(in srgb, #d7ba7d 75%, var(--text-primary) 25%)); }
-  .s-added { color: var(--scm-added, color-mix(in srgb, #73c991 75%, var(--text-primary) 25%)); }
-  .s-deleted { color: var(--scm-deleted, color-mix(in srgb, #f14c4c 75%, var(--text-primary) 25%)); }
-  .s-renamed { color: var(--scm-renamed, color-mix(in srgb, #6cb6ff 75%, var(--text-primary) 25%)); }
-  .s-conflict { color: var(--scm-conflict, color-mix(in srgb, #e4676b 75%, var(--text-primary) 25%)); }
+  .s-modified { color: color-mix(in srgb, var(--system-caution-text, var(--system-caution)) 75%, var(--text-primary) 25%); }
+  .s-added { color: color-mix(in srgb, var(--system-success-text, var(--system-success)) 75%, var(--text-primary) 25%); }
+  .s-deleted { color: color-mix(in srgb, var(--system-critical-text, var(--system-critical)) 75%, var(--text-primary) 25%); }
+  .s-renamed { color: color-mix(in srgb, var(--accent-text, var(--accent)) 75%, var(--text-primary) 25%); }
+  .s-conflict { color: color-mix(in srgb, var(--system-critical-text, var(--system-critical)) 75%, var(--text-primary) 25%); }
   .s-ignored { color: var(--text-tertiary); }
-  .s-type { color: var(--scm-typechange, color-mix(in srgb, #eab308 75%, var(--text-primary) 25%)); }
+  .s-type { color: color-mix(in srgb, var(--system-caution-text, var(--system-caution)) 75%, var(--text-primary) 25%); }
 
   .file-name {
     flex: 1;
@@ -463,9 +462,6 @@
     align-items: center;
     justify-content: center;
     line-height: 1;
-    transition:
-      color var(--transition-fast),
-      background-color var(--transition-fast);
   }
 
   /* A color-only hover read as barely-there (#270): give the hovered button

@@ -38,6 +38,7 @@ import {
 } from "$lib/domain/preview-pane-position";
 import { windowSizeStore } from "./window-size.svelte";
 import { DEFAULT_LAYOUT_ID, legacyLayoutThemeId, withLegacyLayoutMirror } from "$lib/domain/layout-theme-ids";
+import { legacyTranslucency } from "$lib/domain/translucency";
 import {
   CURRENT_SETTINGS_VERSION,
   SETTINGS_VERSION_KEY,
@@ -58,9 +59,6 @@ import type { IconTheme } from '$lib/domain/icon-themes';
 // Tile sizes are pure layout data shared by every tile grid; re-exported here
 // for existing importers.
 export { THUMBNAIL_SIZE_CONFIG, type ThumbnailSize, type ThumbnailSizeConfig };
-
-/** Windows translucent system backdrop (Mica/Acrylic). "off" = opaque window. */
-export type WindowsBackdrop = "off" | "mica" | "acrylic";
 
 /** Which columns are visible in details view (name is always shown). Prompt
  * applies only while a lineage provider supplies labels (#1449). */
@@ -112,16 +110,15 @@ export interface Settings {
   scmTreeView: boolean; // group SCM file rows by folder hierarchy
   quickOpenDebug: boolean; // show score breakdown in QuickOpen results
   integratedTitleBar: boolean; // macOS: render tabs in title bar with overlay traffic lights
-  macOsVibrancy: boolean; // macOS: native window vibrancy (translucent frosted glass), requires restart
-  vibrancyBlur: boolean; // macOS: enable native blur behind vibrancy (off = theme background, no blur)
+  translucency: boolean; // window material (macOS vibrancy, Windows acrylic/Mica) where the platform has one; applies to new windows (#1757)
   /** @deprecated Superseded by `layoutTheme` (#1306): read by the migration,
    *  mirrored from built-in layout choices for downgraded builds. */
   floatingIslands: boolean;
   layoutTheme: string; // layout theme id: a built-in ("default", "floating-islands", "hairline-ledger", "compact", "soft-cards") or a `<config>/layouts/*.css` file name (#1306)
-  windowsBackdrop: WindowsBackdrop; // Windows: translucent system backdrop (Mica/Acrylic), requires restart
-  windowsBackdropOpacity: number; // Windows: acrylic tint opacity 0-100 (lower = more see-through)
+  translucencyOpacity: number; // how much of the window material surfaces hide, 20-100 (%), see domain/vibrancy-opacity
   yaziNavigation: boolean; // left/right arrows navigate up/into folders in Details view (and List when folderPeek is off)
   folderPeek: boolean; // folder peek (inline expansion, List column flow); off = classic views (#1238)
+  osRecentSources: boolean; // Date opened also reads the OS's own recent-files record (#1526)
   folderPeekCarets: boolean; // expand carets beside folders; off = a plain click on a folder toggles its peek (#1248)
   previewFontSize: number; // base font size (px) for text/code/markdown previews
   showPreviewInfo: boolean; // preview pane chrome: file name, type badge, size and modified rows (off = content only, #494)
@@ -194,15 +191,14 @@ const DEFAULT_SETTINGS: Settings = {
   scmTreeView: false,
   quickOpenDebug: false,
   integratedTitleBar: false,
-  macOsVibrancy: false,
-  vibrancyBlur: true,
+  translucency: false,
   floatingIslands: false,
   layoutTheme: DEFAULT_LAYOUT_ID,
-  windowsBackdrop: "off",
-  windowsBackdropOpacity: 65,
+  translucencyOpacity: 55,
   yaziNavigation: true,
   folderPeek: true,
   folderPeekCarets: true,
+  osRecentSources: true,
   previewFontSize: 12,
   showPreviewInfo: true,
   autoEnterSingleSubdir: false,
@@ -228,11 +224,13 @@ export function normalizeSettingsInput(value: unknown): Partial<Settings> {
 
 function createSettingsStore() {
   const initialPersisted = boundedPersistedInput(loadPersisted<unknown>(STORAGE_KEY, {}));
-  // A cache written before #1306 has no layoutTheme; derive it as the ledger
-  // will when settings.json loads, so first paint already shows that layout.
+  // A cache written before #1306 has no layoutTheme (nor, before #1757, a
+  // translucency); derive them as the ledger will when settings.json loads,
+  // so first paint already shows that layout and window material.
   let settings = $state<Settings>({
     ...DEFAULT_SETTINGS,
     layoutTheme: legacyLayoutThemeId(initialPersisted),
+    translucency: legacyTranslucency(initialPersisted),
     ...normalizeSettingsInput(initialPersisted),
   });
   let extras: Record<string, unknown> = persistedExtras(initialPersisted, DEFAULT_SETTINGS);
@@ -256,7 +254,7 @@ function createSettingsStore() {
       const parsed = JSON.parse(raw) as unknown;
       if (!isRecord(parsed)) return null;
       const loaded = normalizeSettingsInput(parsed);
-      const { settings: migrated, changed } = migrateSettings(loaded, DEFAULT_SETTINGS);
+      const { settings: migrated, changed } = migrateSettings(loaded, DEFAULT_SETTINGS, undefined, parsed);
       return { settings: migrated, extras: persistedExtras(parsed, DEFAULT_SETTINGS), migrationChanged: changed };
     } catch {
       return null;
@@ -584,29 +582,23 @@ function createSettingsStore() {
     get integratedTitleBar() {
       return settings.integratedTitleBar;
     },
-    get macOsVibrancy() {
-      return settings.macOsVibrancy;
-    },
-    get vibrancyBlur() {
-      return settings.vibrancyBlur;
+    get translucency() {
+      return settings.translucency;
     },
     get layoutTheme() {
       return settings.layoutTheme;
     },
-    get windowsBackdrop() {
-      return settings.windowsBackdrop;
-    },
-    setWindowsBackdrop(value: WindowsBackdrop): void {
-      update({ windowsBackdrop: value });
-    },
-    get windowsBackdropOpacity() {
-      return settings.windowsBackdropOpacity;
+    get translucencyOpacity() {
+      return settings.translucencyOpacity;
     },
     get yaziNavigation() {
       return settings.yaziNavigation;
     },
     get folderPeek() {
       return settings.folderPeek;
+    },
+    get osRecentSources() {
+      return settings.osRecentSources;
     },
     get folderPeekCarets() {
       return settings.folderPeekCarets;

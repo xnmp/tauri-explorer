@@ -135,7 +135,14 @@ test.describe("Layout themes (#1306)", () => {
     expect(header).not.toBe("rgba(0, 0, 0, 0)");
     expect(header).not.toMatch(/rgba\(.*, 0\)$/);
     await expect(page.locator('[data-region="tab-fillet"]:visible')).toHaveCount(0);
+    // The cards sit a gap below the tab strip, not flush against it (#1848).
+    const tabBottom = await page.locator('[data-region="tab"][aria-selected="true"]:visible').evaluate(el => el.getBoundingClientRect().bottom);
+    for (const card of [".sidebar-container", '[data-region="panes"]:visible']) {
+      const top = await page.locator(card).first().evaluate(el => el.getBoundingClientRect().top);
+      expect(top - tabBottom).toBeGreaterThanOrEqual(6);
+    }
     await page.screenshot({ path: "screenshots/feat/compact-soft-cards-layouts/soft-cards-details.png" });
+    await page.screenshot({ path: "screenshots/fix/soft-cards-top-gap/soft-cards-top-gap.png", clip: { x: 0, y: 0, width: 520, height: 140 } });
 
     // A split turns each pane into its own card, separated by the gap.
     await page.evaluate(async () => {

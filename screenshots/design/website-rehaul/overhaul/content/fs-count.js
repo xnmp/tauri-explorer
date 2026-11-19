@@ -128,7 +128,7 @@ Dictated by Casimir, Count Morvanescu. Typed by H. Pike, who would like it noted
 
 **Tuesday 10 November, 22:45.** THE LONG TABLE. Thirty-two feet of oak, made in this hall in 1511 by eleven men and a horse. It does not fit through the door. It has never fitted through the door. It has gone through the door.
 
-**Thursday 12 November, 22:33.** The good candelabrum: the seven-branched one, silver, Augsburg, 1650. The curtains open again. And in the hall, unmistakably, a smell of sponge.
+**Thursday 12 November, 22:33.** The good candelabrum: the five-branched one, silver, Augsburg, 1650. The curtains open again. And in the hall, unmistakably, a smell of sponge.
 
 **Tuesday 17 November, 22:50.** Chalk on the floor of the Great Hall, in lines, with numbers. Someone has *measured* my hall. Hollis has copied the marks exactly (see the great hall folder). Also found: one crumb of sausage roll. Hollis denies the sausage roll.
 
@@ -194,7 +194,7 @@ item,since,maker,condition,status,note
 "long table, oak, 32 ft",1511,"eleven men and a horse",sound,MISSING since Tue 10 Nov,"built in the hall; never fitted through the door"
 "chairs with arms (x40)",1702,"unknown (do not ask)",good,MISSING since Thu 5 Nov,"acquired in the century we do not discuss"
 "benches (x6)",1598,"the village carpenter, Tobias",wobbly,present,"nobody took the benches. I am hurt on their behalf"
-"candelabrum, seven-branched, silver",1650,Augsburg,polished,MISSING since Thu 12 Nov,"the good one"
+"candelabrum, five-branched, silver",1650,Augsburg,polished,MISSING since Thu 12 Nov,"the good one"
 "candlesticks, ordinary (x12)",1820,Sheffield,adequate,present,"left behind. a judgement?"
 "curtains, velvet (eleven drops)",1890,Liberty of London,"faded, one side only",present,"OPENED Tue 3 Nov and Thu 12 Nov by persons unknown"
 fireplace,1440,"stone; my great-grandfather",draughty,present,"too big to take, one assumes"
@@ -254,7 +254,7 @@ His lordship asks what "C." stands for. I said "Ceiling, my lord, probably". He 
       "room,item,since,status,note",
       "great hall,long table (oak; 32 ft),1511,MISSING (Tue 10 Nov),see the great hall folder",
       "great hall,chairs with arms (x40),1702,MISSING (Thu 5 Nov),",
-      "great hall,candelabrum (seven-branched),1650,MISSING (Thu 12 Nov),",
+      "great hall,candelabrum (five-branched),1650,MISSING (Thu 12 Nov),",
       "great hall,the good rug,1880,rolled up,",
       "great hall,Siegfried (armour),1520,moved 2 ft,",
       "great hall,curtains (velvet),1890,opened twice,freckles",
@@ -1142,7 +1142,7 @@ Nobody tells him. (Everybody has told everybody not to tell him, which in Nether
 - H. carries the lamp. H. opens the door.
 
 ## 19:05
-- Lights: all seven branches and the twelve.
+- Lights: all five branches and the twelve.
 - Bells: Morvane Surprise Major, six hundred changes, Derek's band. (About twenty minutes. He will complain about the hours. Let him.)
 - Choir, from the gallery: *Sasévek Ouri*, all three verses. The children take the last line.
 - Three hundred people say, more or less together: happy birthday.
@@ -1656,7 +1656,7 @@ Qty  Item                                                           GBP
        - minus one, which Gary has had already, in your hall,
          on Tuesday. Charged to Gary.
 1    Delivery: Sat 28 Nov, 18:00, kitchen door (H. to unlock)       0.00
-1    Polishing: candelabrum, seven-branched (Mum's method)          0.00
+1    Polishing: candelabrum, five-branched (Mum's method)          0.00
 
                                               TOTAL           297.00
                                               PAID            297.00
@@ -2035,7 +2035,7 @@ date,time,item,taken by,taken to,why,cover story if asked
 2026-11-03,19:50,drawbridge (lowered),me,(stayed put),"to let them in","the wind"
 2026-11-05,19:50,chairs with arms (x40),the choir tenors (in relays),the village hall,"re-gluing the wobbly ones; polish","woodworm treatment"
 2026-11-10,20:00,"the long table (legs off, top on Gary's trestles)","Gary, Jess + six ringers",the village hall,"waxed; first time since 1890","woodworm (the table has the worst of it)"
-2026-11-12,20:10,candelabrum (seven-branched),Agnes,the bakery (back room),"polishing (her mum's method: bicarbonate and patience)","sent for valuation"
+2026-11-12,20:10,candelabrum (five-branched),Agnes,the bakery (back room),"polishing (her mum's method: bicarbonate and patience)","sent for valuation"
 2026-11-12,20:15,curtains (opened again),June,(stayed put),"measuring the light for the choir in the gallery","they blew open"
 2026-11-17,19:40,"the hall itself (measured; chalk)","Priya + Gary",(stayed put),"the layout for the night","the bat surveyors"
 2026-11-17,19:41,one paper star (dropped),Kit,under Siegfried,"practising decorations","he will not ask about a star. (he asked about the star.)"

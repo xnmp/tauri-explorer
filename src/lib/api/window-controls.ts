@@ -11,6 +11,29 @@
  */
 export type WindowControlAction = "minimize" | "maximize" | "close";
 
+/** True only in the marketing site's demo build (`VITE_SITE_DEMO=1`); folds to false elsewhere. */
+export const SITE_DEMO_BUILD = import.meta.env.VITE_SITE_DEMO === "1";
+
+/**
+ * Who handles a window button:
+ * - `host`: the site demo's host page (the demo has no window of its own);
+ * - `close-flow`: the app's own close sequence (`requestWindowClose`: cancel
+ *   pane activation, release pane dialogs, save the session), native or in an
+ *   ordinary browser build, as before the demo existed;
+ * - `native`: the native window's minimize / maximize;
+ * - `none`: minimize / maximize in an ordinary browser build.
+ */
+export type WindowControlRoute = "host" | "close-flow" | "native" | "none";
+
+export function windowControlRoute(
+  action: WindowControlAction,
+  { nativeWindow, hostOwnsWindow }: { nativeWindow: boolean; hostOwnsWindow: boolean },
+): WindowControlRoute {
+  if (hostOwnsWindow && !nativeWindow) return "host";
+  if (action === "close") return "close-flow";
+  return nativeWindow ? "native" : "none";
+}
+
 export async function requestBrowserWindowControl(action: WindowControlAction): Promise<void> {
   const { getMockControl } = await import("./mock-control");
   getMockControl().windowControl?.(action);

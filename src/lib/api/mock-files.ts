@@ -16,6 +16,9 @@ import { createMockFileHistory } from "./mock-file-history";
 import { dir, file, mockDirEmpty, mockFileContent, mockFiles, TIMESTAMP_BASE } from "./mock-fixtures";
 import { type CommandHandler, invokeMockCommand, waitForMockLatency } from "./mock-dispatch";
 import { publishMockFsChange } from "./mock-fs-changes";
+import { mockWrittenFiles, putMockTexts, takeMockTexts, type MockTexts } from "./mock-file-texts";
+
+export { mockWrittenFiles };
 
 
 interface MockCopyControl {
@@ -67,7 +70,8 @@ function relocateMockEntry(source: string, destDir: string): FileMutationReceipt
   return mutationReceipt(newEntry);
 }
 
-interface MockTrashItem { entry: FileEntry; listings: [string, FileEntry[]][]; id: string; deletedAt: string }
+interface MockTrashItem { entry: FileEntry; listings: [string, FileEntry[]][]; id: string; deletedAt: string; texts?: MockTexts }
+
 const mockTrash = new Map<string, MockTrashItem[]>();
 let mockTrashSequence = 0;
 
@@ -100,9 +104,12 @@ function removeMockEntry(path: string, toTrash: boolean): void {
   const entry = entries.find((candidate) => candidate.path === path);
   if (!entry) throw new Error(`Path not found: ${path}`);
   const listings = Object.entries(mockFiles).filter(([directory]) => directory === path || directory.startsWith(`${path}/`));
+  // The text goes with the entry: a file later created at this path starts
+  // empty, and restoring the trashed one brings its text back.
+  const texts = takeMockTexts(path);
   if (toTrash) {
     const versions = mockTrash.get(path) ?? [];
-    versions.push({ entry, listings, id: `mock-trash-${++mockTrashSequence}`, deletedAt: new Date().toISOString() });
+    versions.push({ entry, listings, id: `mock-trash-${++mockTrashSequence}`, deletedAt: new Date().toISOString(), texts });
     mockTrash.set(path, versions);
   }
   mockFiles[parent] = entries.filter((candidate) => candidate.path !== path);
@@ -120,6 +127,7 @@ function restoreMockEntry(path: string): void {
   if (entries.some((entry) => entry.path === path)) throw new Error(`Path already exists: ${path}`);
   mockFiles[parent] = [...entries, item.entry];
   for (const [directory, listing] of item.listings) mockFiles[directory] = listing;
+  putMockTexts(item.texts);
   versions!.pop();
   if (!versions!.length) mockTrash.delete(path);
   publishMockFsChange({ op: "restore", path });
@@ -160,6 +168,7 @@ function restoreMockTrashItems(ids: string[]): FileBatchOutcome {
     if (!versions.length) mockTrash.delete(path);
     mockFiles[parent] = [...entries, item.entry];
     for (const [directory, listing] of item.listings) mockFiles[directory] = listing;
+    putMockTexts(item.texts);
     result.succeeded.push(path);
     publishMockFsChange({ op: "restore", path });
   }
@@ -202,6 +211,7 @@ function restoreMockTrashItemsTo(ids: string[], destination: string): FileBatchO
     for (const [directory, listing] of item.listings) {
       mockFiles[relocate(directory)] = listing.map((entry) => ({ ...entry, path: relocate(entry.path) }));
     }
+    putMockTexts(item.texts, relocate);
     result.succeeded.push(target);
     publishMockFsChange({ op: "restore", path: target });
   }
@@ -366,8 +376,6 @@ function copySessionEntry(source: string, destDir: string, overwrite: boolean): 
   };
 }
 
-/** Contents of files created via the mocked write_text_file. */
-export const mockWrittenFiles: Record<string, string> = {};
 
 const mockFileHistory = createMockFileHistory(
   (command, args) => invokeMockCommand(command, args),
@@ -602,6 +610,9 @@ export const fileCommands: Record<string, CommandHandler> = {
     const entry = file(name, newPath, 0);
     if (!mockFiles[parentPath]) mockFiles[parentPath] = [];
     mockFiles[parentPath].push(entry);
+    // A new file is empty, whatever text an earlier file at this path had.
+    delete mockFileContent[newPath];
+    mockWrittenFiles[newPath] = "";
     publishMockFsChange({ op: "create", path: newPath });
     return mutationReceipt(entry);
   },

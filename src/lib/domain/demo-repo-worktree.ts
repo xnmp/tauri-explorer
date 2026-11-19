@@ -32,6 +32,10 @@ const isText = (blob: DemoBlob | undefined): blob is string => blob !== undefine
 export interface DemoIndexState {
   readonly head: DemoTree;
   readonly index: DemoTree;
+  /** The tree of HEAD's first parent, once known (amend records against it). */
+  readonly parent?: DemoTree;
+  /** Commits made in the demo so far; part of each new commit's id. */
+  readonly made?: number;
 }
 
 export type DemoStatusCode = "Added" | "Modified" | "Deleted" | "Untracked";
@@ -142,6 +146,36 @@ export function statusChanges(status: DemoStatus): DemoChange[] {
   ];
 }
 
+/**
+ * Folder badges (`get_git_status`) for the folder `prefix` ("" for the root),
+ * as the native command derives them from `git status --porcelain`: one
+ * status per path, combining its staged and unstaged halves (a deletion on
+ * either side wins, then an addition in the index, else modified), and each
+ * direct child named by its most significant descendant (any tracked change
+ * outranks untracked; the first one listed wins a tie).
+ */
+export function demoBadgeStatuses(status: DemoStatus, prefix: string): Record<string, DemoStatusCode> {
+  const staged = new Map(status.staged.map((e) => [e.path, e.status]));
+  const unstaged = new Map(status.changes.map((e) => [e.path, e.status]));
+  const perPath = new Map<string, DemoStatusCode>();
+  for (const path of sorted([...staged.keys(), ...unstaged.keys()])) {
+    const sides = [staged.get(path), unstaged.get(path)];
+    perPath.set(path, sides.includes("Deleted") ? "Deleted" : staged.get(path) === "Added" ? "Added" : "Modified");
+  }
+  for (const e of status.untracked) perPath.set(e.path, "Untracked");
+  const rank = (code: DemoStatusCode) => (code === "Untracked" ? 2 : 3);
+  const badges: Record<string, DemoStatusCode> = {};
+  const base = prefix.replace(/^\/+|\/+$/g, "");
+  for (const path of sorted(perPath.keys())) {
+    if (base && !path.startsWith(`${base}/`)) continue;
+    const name = (base ? path.slice(base.length + 1) : path).split("/")[0];
+    if (!name) continue;
+    const code = perPath.get(path)!;
+    if (!(name in badges) || rank(code) > rank(badges[name])) badges[name] = code;
+  }
+  return badges;
+}
+
 /** A repo-relative path, or a folder covering it ("" or "." is the whole repository). */
 function covers(paths: readonly string[], key: string): boolean {
   return paths.some((raw) => {
@@ -159,7 +193,7 @@ export function stagePaths(state: DemoIndexState, work: DemoTree, paths: readonl
     if (now === undefined) index.delete(key);
     else index.set(key, now);
   }
-  return { head: state.head, index };
+  return { ...state, index };
 }
 
 /** `git restore --staged`: the index takes HEAD's version back. */
@@ -171,7 +205,7 @@ export function unstagePaths(state: DemoIndexState, paths: readonly string[]): D
     if (committed === undefined) index.delete(key);
     else index.set(key, committed);
   }
-  return { head: state.head, index };
+  return { ...state, index };
 }
 
 /** A working-tree write a discard needs: new text, or null to remove the file. */
@@ -196,19 +230,17 @@ export function discardPaths(
   const head = new Map(state.head);
   const index = new Map(state.index);
   const writes: DemoWrite[] = [];
-  const keys = sorted([...index.keys(), ...work.keys()]).filter((key) => covers(paths, key));
+  const keys = sorted([...head.keys(), ...index.keys(), ...work.keys()]).filter((key) => covers(paths, key));
   if (!force) {
-    const staged = keys.find((key) => index.has(key) && head.get(key) !== index.get(key));
+    // A staged change, including a staged deletion (in HEAD, not in the index).
+    const staged = keys.find((key) => (head.has(key) || index.has(key)) && head.get(key) !== index.get(key));
     if (staged) throw new Error(`refusing to discard '${staged}' with staged changes; pass force=true to override`);
   }
   for (const key of keys) {
     const now = work.get(key);
-    if (!index.has(key)) {
-      writes.push({ path: key, text: null });
-      continue;
-    }
     const committed = head.get(key);
     if (committed === undefined) {
+      // Untracked, or added in the index: the file goes.
       index.delete(key);
       if (now !== undefined) writes.push({ path: key, text: null });
     } else if (committed === now) {
@@ -224,7 +256,7 @@ export function discardPaths(
       }
     }
   }
-  return { state: { head, index }, writes };
+  return { state: { ...state, head, index }, writes };
 }
 
 // ----- Diffs -----
@@ -433,18 +465,54 @@ function parseHunks(patch: string, reverse: boolean): ParsedHunk[] {
 
 // ----- Commits -----
 
+const fileStatus = (before: DemoBlob | undefined, after: DemoBlob | undefined): DemoCommitFile["status"] =>
+  before === undefined ? "A" : after === undefined ? "D" : "M";
+
+/** What a commit records going from `before` to `after`: each changed path, with its diff. */
+export function treeChanges(before: DemoTree, after: DemoTree): DemoCommitFile[] {
+  return sorted([...before.keys(), ...after.keys()]).flatMap((path) => {
+    const from = before.get(path);
+    const to = after.get(path);
+    if (from === to) return [];
+    return [{ path, status: fileStatus(from, to), diff: demoUnifiedDiff(path, from, to) || null }];
+  });
+}
+
 /** The files a commit records: HEAD against the index, each with its diff. */
 export function stagedFiles({ head, index }: DemoIndexState): DemoCommitFile[] {
-  return demoStatus({ head, index }, index).staged.map(({ path, status }) => {
-    const diff = demoUnifiedDiff(path, head.get(path), index.get(path));
-    return { path, status: status === "Added" ? "A" : status === "Deleted" ? "D" : "M", diff: diff || null };
-  });
+  return treeChanges(head, index);
+}
+
+/**
+ * The tree of `commit`'s first parent, from the tree it made and the diffs it
+ * recorded. A file whose earlier text cannot be recovered (no diff, or one
+ * that does not apply) is unknown there.
+ */
+export function parentTree(commit: DemoCommit, tree: DemoTree): DemoTree {
+  const parent = new Map(tree);
+  for (const file of commit.files) {
+    if (file.status === "A") { parent.delete(file.path); continue; }
+    const now = tree.get(file.path);
+    let before: DemoBlob = UNKNOWN_BLOB;
+    if (file.diff && (now === undefined || isText(now))) {
+      try { before = applyDemoPatch(now ?? "", file.diff, true); } catch { before = UNKNOWN_BLOB; }
+    }
+    parent.set(file.path, before);
+  }
+  return parent;
+}
+
+/** A tree's identity, for commit ids. */
+function treeSignature(tree: DemoTree): string {
+  return sorted(tree.keys()).map((path) => `${path}\0${tree.get(path)}`).join("\n");
 }
 
 /**
  * Commit the index on the current branch (or amend HEAD's commit): the new
  * commit goes on top of the history, HEAD and the branch move to it, and the
  * index becomes HEAD. Fails as git does on an empty message or nothing staged.
+ * An amended commit records its parent's tree against the new index, keeps
+ * its author time, and leaves the history only when nothing else names it.
  */
 export function commitDemoRepo(
   repo: DemoRepo,
@@ -452,28 +520,41 @@ export function commitDemoRepo(
   { message, amend, now }: { message: string; amend: boolean; now: number },
 ): { repo: DemoRepo; state: DemoIndexState; commit: DemoCommit } {
   const previous = repo.commits.find((c) => c.oid === repo.head) ?? null;
-  const files = stagedFiles(state);
   if (amend && !previous) throw new Error("nothing to amend");
   const text = message.trim() ? message.trim() : amend && previous ? previous.message : "";
   if (!text) throw new Error("commit message cannot be empty");
-  if (files.length === 0 && !amend) throw new Error("nothing to commit");
+  if (!amend && stagedFiles(state).length === 0) throw new Error("nothing to commit");
+
+  // The tree the new commit is recorded against: HEAD's, or for an amend HEAD's parent's.
+  const base: DemoTree = amend && previous
+    ? state.parent ?? (previous.parents.length ? parentTree(previous, state.head) : new Map())
+    : state.head;
+  const files = treeChanges(base, state.index).map((file) => {
+    // A file the amend leaves as HEAD's commit had it, against an unknown parent text: keep that record.
+    const earlier = amend ? previous?.files.find((f) => f.path === file.path) : undefined;
+    return earlier && base.get(file.path) === UNKNOWN_BLOB && state.index.get(file.path) === state.head.get(file.path)
+      ? earlier
+      : file;
+  });
 
   const parents = amend && previous ? previous.parents : previous ? [previous.oid] : [];
   const time = Math.floor(now / 1000);
-  const oid = expandOid(`demo-commit\n${parents.join(" ")}\n${time}\n${text}`);
-  const recorded = amend && previous
-    ? [...files, ...previous.files.filter((f) => !files.some((g) => g.path === f.path))]
-    : files;
+  const made = (state.made ?? 0) + 1;
+  const taken = new Set(repo.commits.map((c) => c.oid));
+  let oid = "";
+  for (let salt = 0; !oid || taken.has(oid); salt++) {
+    oid = expandOid(`demo-commit\n${parents.join(" ")}\n${time}\n${made}\n${salt}\n${text}\n${treeSignature(state.index)}`);
+  }
   const commit: DemoCommit = {
     oid,
     short_oid: oid.slice(0, 7),
     parents,
     author_name: previous?.author_name ?? "You",
     author_email: previous?.author_email ?? "you@example.invalid",
-    author_time: time,
+    author_time: amend && previous ? previous.author_time : time,
     summary: text.split("\n")[0],
     message: text,
-    files: recorded,
+    files,
   };
 
   // HEAD and its branch move to the new commit; other refs stay where they are.
@@ -485,12 +566,13 @@ export function commitDemoRepo(
     if (kept.length) refs[target] = kept;
   }
   refs[oid] = [{ name: "HEAD", kind: "Head" }, ...(repo.branch ? [{ name: repo.branch, kind: "LocalBranch" as const }] : [])];
-  // An amended commit leaves the history unless another ref still names it.
-  const dropped = amend && previous && !refs[previous.oid] ? previous.oid : null;
+  // An amended commit leaves the history unless a ref or another commit still names it.
+  const stillNamed = (target: string) => Boolean(refs[target]) || repo.commits.some((c) => c.parents.includes(target));
+  const dropped = amend && previous && !stillNamed(previous.oid) ? previous.oid : null;
   const commits = [commit, ...repo.commits.filter((c) => c.oid !== dropped)];
   return {
     repo: { ...repo, head: oid, commits, refs },
-    state: { head: new Map(state.index), index: state.index },
+    state: { head: new Map(state.index), index: state.index, parent: base, made },
     commit,
   };
 }

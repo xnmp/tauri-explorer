@@ -4,6 +4,7 @@ import {
   applyDemoPatch,
   binaryBlob,
   commitDemoRepo,
+  demoBadgeStatuses,
   demoStatus,
   demoUnifiedDiff,
   discardPaths,
@@ -136,6 +137,17 @@ describe("discardPaths", () => {
     expect(paths(demoStatus(state, WORK).changes)).toEqual(["notes.md"]);
   });
 
+  it("refuses to discard a staged deletion unless forced, then restores it", () => {
+    const work = new Map(WORK);
+    work.delete("notes.md");
+    const staged = stagePaths(seeded, work, ["notes.md"]);
+    expect(demoStatus(staged, work).staged).toEqual([{ path: "notes.md", old_path: null, status: "Deleted" }]);
+    expect(() => discardPaths(staged, work, ["notes.md"], false)).toThrow(/staged changes/);
+    const { state, writes } = discardPaths(staged, work, ["notes.md"], true);
+    expect(writes).toEqual([{ path: "notes.md", text: "line 1\nline 2\nline 3\n" }]);
+    expect(state.index.get("notes.md")).toBe("line 1\nline 2\nline 3\n");
+  });
+
   it("restores a deleted file", () => {
     const work = new Map(WORK);
     work.delete("notes.md");
@@ -189,13 +201,21 @@ describe("demoUnifiedDiff", () => {
     expect(demoUnifiedDiff("f", UNKNOWN_BLOB, "a\nb\n")).toContain("@@ -1,2 +1,2 @@\n a\n b\n");
   });
 
-  it("handles a large rewrite without the quadratic table", () => {
-    const before = Array.from({ length: 3000 }, (_, i) => `old ${i}`).join("\n");
-    const after = Array.from({ length: 3000 }, (_, i) => `new ${i}`).join("\n");
-    const diff = demoUnifiedDiff("big", before, after);
-    expect(diff.split("\n").filter((l) => l.startsWith("-old")).length).toBe(3000);
-    expect(diff.split("\n").filter((l) => l.startsWith("+new")).length).toBe(3000);
+  it("falls back to remove-all/add-all past the size guard instead of building the quadratic table", () => {
+    // 2,100 lines, every other one shared: an LCS would keep the ~1,050 shared
+    // "x" lines as context; past the 4M-cell guard the middle is replaced whole.
+    const before = Array.from({ length: 2100 }, (_, i) => (i % 2 ? "x" : `a${i}`)).join("\n") + "\n";
+    const after = Array.from({ length: 2100 }, (_, i) => (i % 2 ? "x" : `b${i}`)).join("\n") + "\n";
+    const lines = demoUnifiedDiff("big", before, after).split("\n");
+    expect(lines.filter((l) => l === "-x")).toHaveLength(1049);
+    expect(lines.filter((l) => l === "+x")).toHaveLength(1049);
+    // Only the common last line survives as context.
+    expect(lines.filter((l) => l === " x")).toHaveLength(1);
+    // Below the guard the shared lines are context, as git shows them.
+    const small = demoUnifiedDiff("s", "a\nx\nb\nx\n", "c\nx\nd\nx\n").split("\n");
+    expect(small.filter((l) => l === " x")).toHaveLength(2);
   });
+
 });
 
 describe("applyDemoPatch", () => {
@@ -275,11 +295,110 @@ describe("commitDemoRepo", () => {
     expect(() => commitDemoRepo(repo, seeded, { message: "m", amend: false, now: 0 })).toThrow(/nothing to commit/);
   });
 
-  it("amends HEAD's commit in place of the old one", () => {
+  it("amends HEAD's commit in place of the old one, recording it against its parent", () => {
     const first = commitDemoRepo(repo, stagePaths(seeded, WORK, ["notes.md"]), { message: "one", amend: false, now: 1000 });
     const amended = commitDemoRepo(first.repo, stagePaths(first.state, WORK, ["draft.md"]), { message: "", amend: true, now: 2000 });
     expect(amended.repo.commits.map((c) => c.summary)).toEqual(["one", "first"]);
     expect(amended.commit.parents).toEqual([repo.head]);
-    expect(amended.commit.files.map((f) => f.path).sort()).toEqual(["draft.md", "notes.md"]);
+    expect(amended.commit.files.map((f) => [f.path, f.status])).toEqual([["draft.md", "A"], ["notes.md", "M"]]);
+    // Amend keeps the original author time.
+    expect(amended.commit.author_time).toBe(first.commit.author_time);
+  });
+
+  describe("amend records the parent's tree against the new index (review D2)", () => {
+    const base = { ...repo, commits: [repo.commits[0]] };
+    const work = (text: string) => tree({ "f.txt": text });
+    const seed = (text: string) => seedIndexState(work(text), []);
+    const commitText = (r: DemoRepo, s: ReturnType<typeof seed>, text: string, amend: boolean, now: number) => {
+      const w = work(text);
+      return commitDemoRepo(r, stagePaths(s, w, ["f.txt"]), { message: `set ${text}`, amend, now });
+    };
+
+    it("A→B then amend B→C records -A +C", () => {
+      const one = commitText(base, seed("A\n"), "B\n", false, 1000);
+      const two = commitText(one.repo, one.state, "C\n", true, 2000);
+      expect(two.commit.files).toHaveLength(1);
+      expect(two.commit.files[0].diff).toContain("-A\n+C\n");
+      expect(two.commit.files[0].diff).not.toContain("B");
+    });
+
+    it("amending a file back to its parent's text drops it from the commit", () => {
+      const one = commitText(base, seed("A\n"), "B\n", false, 1000);
+      const two = commitText(one.repo, one.state, "A\n", true, 2000);
+      expect(two.commit.files).toEqual([]);
+    });
+
+    it("a file added in the amended commit and edited before the amend stays added", () => {
+      const start = seedIndexState(tree({ "f.txt": "A\n" }), []);
+      const added = tree({ "f.txt": "A\n", "g.txt": "1\n" });
+      const one = commitDemoRepo(base, stagePaths(start, added, ["g.txt"]), { message: "add g", amend: false, now: 1000 });
+      const edited = tree({ "f.txt": "A\n", "g.txt": "2\n" });
+      const two = commitDemoRepo(one.repo, stagePaths(one.state, edited, ["g.txt"]), { message: "", amend: true, now: 2000 });
+      expect(two.commit.files.map((f) => [f.path, f.status])).toEqual([["g.txt", "A"]]);
+      expect(two.commit.files[0].diff).toContain("new file mode 100644");
+      expect(two.commit.files[0].diff).toContain("+2");
+    });
+
+    it("amending a fixture commit reverses its recorded diff to find the parent text", () => {
+      const fixture: DemoRepo = {
+        ...repo,
+        commits: [{ ...repo.commits[0], parents: ["0".repeat(40)], files: [{ path: "f.txt", status: "M", diff: demoUnifiedDiff("f.txt", "A\n", "B\n") }] }],
+      };
+      const amended = commitText(fixture, seed("B\n"), "C\n", true, 2000);
+      expect(amended.commit.files[0].diff).toContain("-A\n+C\n");
+    });
+  });
+
+  it("gives every commit a distinct id, even a commit and its amend in the same second (review D3)", () => {
+    const one = commitDemoRepo(repo, stagePaths(seeded, WORK, ["notes.md"]), { message: "same", amend: false, now: 5_000_000 });
+    const two = commitDemoRepo(one.repo, one.state, { message: "same", amend: true, now: 5_000_400 });
+    expect(two.commit.oid).not.toBe(one.commit.oid);
+    const three = commitDemoRepo(two.repo, stagePaths(two.state, WORK, ["draft.md"]), { message: "same", amend: false, now: 5_000_400 });
+    const four = commitDemoRepo(three.repo, three.state, { message: "same", amend: true, now: 5_000_400 });
+    const ids = [one, two, three, four].map((r) => r.commit.oid);
+    expect(new Set(ids).size).toBe(4);
+    expect(new Set(four.repo.commits.map((c) => c.oid)).size).toBe(four.repo.commits.length);
+  });
+
+  it("keeps an amended commit that another commit still has as a parent (review D8)", () => {
+    const head = repo.head!;
+    const child = { ...repo.commits[0], oid: "c".repeat(40), short_oid: "ccccccc", parents: [head], summary: "side", message: "side" };
+    const branched: DemoRepo = { ...repo, commits: [child, ...repo.commits], refs: { ...repo.refs, [child.oid]: [{ name: "side", kind: "LocalBranch" }] } };
+    const noTag: DemoRepo = { ...branched, refs: { [head]: [{ name: "HEAD", kind: "Head" }, { name: "main", kind: "LocalBranch" }], [child.oid]: branched.refs[child.oid] } };
+    const amended = commitDemoRepo(noTag, stagePaths(seeded, WORK, ["notes.md"]), { message: "", amend: true, now: 0 });
+    expect(amended.repo.commits.map((c) => c.oid)).toContain(head);
+    // Nothing names it: an amend drops it.
+    const alone: DemoRepo = { ...repo, refs: { [head]: [{ name: "HEAD", kind: "Head" }, { name: "main", kind: "LocalBranch" }] } };
+    expect(commitDemoRepo(alone, stagePaths(seeded, WORK, ["notes.md"]), { message: "", amend: true, now: 0 }).repo.commits.map((c) => c.oid)).not.toContain(head);
+  });
+});
+
+describe("demoBadgeStatuses (folder badges, as the native get_git_status)", () => {
+  const status = {
+    staged: [
+      { path: "a/both.txt", old_path: null, status: "Added" as const },
+      { path: "d/gone.txt", old_path: null, status: "Modified" as const },
+    ],
+    changes: [
+      { path: "a/both.txt", old_path: null, status: "Modified" as const },
+      { path: "d/gone.txt", old_path: null, status: "Deleted" as const },
+      { path: "top.md", old_path: null, status: "Modified" as const },
+    ],
+    untracked: [
+      { path: "fresh/new.txt", old_path: null, status: "Untracked" as const },
+      { path: "mixed/new.txt", old_path: null, status: "Untracked" as const },
+      { path: "mixed/z.txt", old_path: null, status: "Untracked" as const },
+    ],
+  };
+
+  it("combines a file's staged and unstaged halves as porcelain XY does", () => {
+    expect(demoBadgeStatuses(status, "a")).toEqual({ "both.txt": "Added" });
+    expect(demoBadgeStatuses(status, "d")).toEqual({ "gone.txt": "Deleted" });
+  });
+
+  it("labels a folder by its most significant descendant; untracked-only folders stay untracked", () => {
+    expect(demoBadgeStatuses(status, "")).toEqual({ a: "Added", d: "Deleted", fresh: "Untracked", mixed: "Untracked", "top.md": "Modified" });
+    const withTracked = { ...status, changes: [...status.changes, { path: "mixed/old.txt", old_path: null, status: "Modified" as const }] };
+    expect(demoBadgeStatuses(withTracked, "").mixed).toBe("Modified");
   });
 });

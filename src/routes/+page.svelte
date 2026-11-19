@@ -9,7 +9,7 @@
   import { startWindowSession } from "$lib/state/window-session";
   import { loadE2EHooks } from "$lib/api/e2e-hooks";
   import { settingsStore } from "$lib/state/settings.svelte";
-  import { windowMaterial } from "$lib/state/window-translucency.svelte";
+  import { syncOpaqueBackground, windowMaterial } from "$lib/state/window-translucency.svelte";
   import { vibrancyCoverageVariables } from "$lib/domain/vibrancy-opacity";
   import { layoutStore } from "$lib/state/layout.svelte";
   import "$lib/layouts/floating-islands.css";
@@ -137,8 +137,9 @@
     else root.removeAttribute("data-material");
     // app.html paints the cached opaque theme background inline before boot.
     // It skips a window whose creator named its material; a page that had to
-    // infer it (the browser build) clears it here.
-    if (material) root.style.removeProperty("background");
+    // infer it (the browser build) clears it here, and gets it back if the
+    // material goes again (only the site demo's can).
+    syncOpaqueBackground(root.style, material !== null);
     const vars = vibrancyCoverageVariables(settingsStore.translucencyOpacity);
     for (const [name, value] of Object.entries(vars)) {
       if (material) root.style.setProperty(name, value);

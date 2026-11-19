@@ -10,7 +10,8 @@
 const SITE_DEMO_SOURCES = [
   /^src\/lib\/state\/site-demo-/,
   /^src\/lib\/api\/mock-world/,
-  /^src\/lib\/domain\/demo-(boot|fixture|shell|protocol)/,
+  /^src\/lib\/api\/mock-git-fixture/,
+  /^src\/lib\/domain\/demo-(boot|fixture|shell|protocol|repo)/,
 ];
 
 const SITE_DEMO_MARKERS = [
@@ -19,6 +20,10 @@ const SITE_DEMO_MARKERS = [
   /data-site-demo/,
   // Every demo log line is prefixed this way.
   /\[site-demo\]/,
+  // Modules a manifest does not list when another chunk imports them
+  // statically: the fixture repositories' refusal and commit-id seed.
+  /This demo repository is read-only/,
+  /demo-commit/,
 ];
 
 /**

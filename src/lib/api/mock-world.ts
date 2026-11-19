@@ -18,7 +18,8 @@ import { mockDirEmpty, mockFileContent, mockFiles } from "./mock-fixtures";
 import { mockWrittenFiles, seedMockTrash, snapshotMockTrash } from "./mock-files";
 import { clearMockRecoveryRecords } from "./mock-file-recovery";
 import { onMockFsChange } from "./mock-fs-changes";
-import { setMockFixtureRepos, snapshotMockFixtureRepos } from "./mock-git-fixture";
+import { setMockCommandLayer } from "./mock-dispatch";
+import { setMockFixtureRepos, snapshotMockFixtureRepos, withFixtureRepos } from "./mock-git-fixture";
 import { getMockDrives, getMockHomeDirectory, setMockDrives, setMockHomeDirectory } from "./mock-system";
 import { createMockMediaLoader } from "./mock-world-media";
 
@@ -74,7 +75,8 @@ export function installMockWorld(world: DemoWorld): InstalledMockWorld {
   const restoreFixtures = snapshot();
   let stopFollowing = () => {};
   let restoreRecovery = () => {};
-  const restore = () => { restoreRecovery(); restoreFixtures(); };
+  let restoreLayer = () => {};
+  const restore = () => { restoreLayer(); restoreRecovery(); restoreFixtures(); };
   try {
     // The built-in File Recovery records describe the built-in fixtures.
     restoreRecovery = clearMockRecoveryRecords();
@@ -96,6 +98,8 @@ export function installMockWorld(world: DemoWorld): InstalledMockWorld {
     setMockHomeDirectory(world.user.home);
     setMockDrives(world.drives.map((d) => ({ ...d })));
     setMockFixtureRepos(world.repos);
+    // Git commands about these repositories answer from them.
+    restoreLayer = setMockCommandLayer(withFixtureRepos);
     installMediaHooks(media);
 
     // Media follows its file through every rename, move and copy, including

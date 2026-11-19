@@ -336,6 +336,7 @@ Taped to the eyepiece cover:
     lock: "The bureau",
     kind: "word",
     length: 11,
+    groups: [6, 5],
     prompt: "Two words. The tin has the question.",
     answer: "pallidswift",
     hints: [

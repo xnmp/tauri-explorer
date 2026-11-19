@@ -5,6 +5,7 @@ package-lock.json
 /build-demo
 /build-demo.next
 /build-demo.old
+/build-demo.lock
 .svelte-kit
 /package
 .env

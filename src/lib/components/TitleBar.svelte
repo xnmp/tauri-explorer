@@ -18,7 +18,7 @@
   import { useTabSeam } from "$lib/composables/use-tab-seam.svelte";
   import { attachTabStripStart } from "$lib/composables/tab-strip-start";
   import WindowTabBar from "./WindowTabBar.svelte";
-  import { requestBrowserWindowControl } from "$lib/api/window-controls";
+  import { requestBrowserWindowControl, SITE_DEMO_BUILD, windowControlRoute, type WindowControlAction } from "$lib/api/window-controls";
 
   const windowControls = $derived(
     titlebar.effectiveWindowControls(settingsStore.showWindowControls, isMac),
@@ -90,22 +90,19 @@
     await appWindow?.startDragging();
   }
 
-  // Without a native window (the browser build) the buttons ask the mock's
-  // window stand-in instead (api/window-controls.ts).
-  async function handleMinimize() {
-    if (appWindow) await appWindow.minimize();
-    else await requestBrowserWindowControl("minimize");
+  // Routing (api/window-controls.ts): the site demo hands the buttons to its
+  // host page; everywhere else close runs the app's close sequence.
+  async function windowControl(action: WindowControlAction) {
+    const route = windowControlRoute(action, { nativeWindow: appWindow != null, hostOwnsWindow: SITE_DEMO_BUILD });
+    if (route === "host") await requestBrowserWindowControl(action);
+    else if (route === "close-flow") await windowTabsManager.requestWindowClose();
+    else if (route === "native" && action === "minimize") await appWindow?.minimize();
+    else if (route === "native") await appWindow?.toggleMaximize();
   }
 
-  async function handleMaximize() {
-    if (appWindow) await appWindow.toggleMaximize();
-    else await requestBrowserWindowControl("maximize");
-  }
-
-  async function handleClose() {
-    if (appWindow) await windowTabsManager.requestWindowClose();
-    else await requestBrowserWindowControl("close");
-  }
+  const handleMinimize = () => windowControl("minimize");
+  const handleMaximize = () => windowControl("maximize");
+  const handleClose = () => windowControl("close");
 </script>
 
 {#if showTitleBar}

@@ -23,6 +23,9 @@ describe("site-demo leak guard", () => {
     "src/lib/domain/demo-fixture.ts",
     "src/lib/domain/demo-shell.ts",
     "src/lib/domain/demo-protocol.ts",
+    "src/lib/api/mock-git-fixture.ts",
+    "src/lib/domain/demo-repo-worktree.ts",
+    "src/lib/state/site-demo-bridge-seams.ts",
   ])("reports a chunk built from %s", (source) => {
     expect(findSiteDemoLeaks({ ...cleanManifest, [source]: { file: "_app/chunks/x.js", src: source } }, []))
       .toEqual([`_app/chunks/x.js is built from site-demo module ${source}`]);
@@ -35,6 +38,16 @@ describe("site-demo leak guard", () => {
     ])).toEqual([
       "_app/chunks/a.js contains site-demo marker siteDemo",
       "_app/chunks/b.js contains site-demo marker [site-demo]",
+    ]);
+  });
+
+  it("finds demo git code inlined into an ordinary chunk, which a manifest does not list (review D7)", () => {
+    expect(findSiteDemoLeaks(cleanManifest, [
+      { file: "_app/chunks/mock.js", text: 'throw{kind:"other",message:"This demo repository is read-only"}' },
+      { file: "_app/chunks/mock2.js", text: "const s=`demo-commit\n${p}`" },
+    ])).toEqual([
+      "_app/chunks/mock.js contains site-demo marker This demo repository is read-only",
+      "_app/chunks/mock2.js contains site-demo marker demo-commit",
     ]);
   });
 });

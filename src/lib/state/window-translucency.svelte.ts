@@ -68,3 +68,22 @@ export function followTranslucencySetting(): void {
 export function newWindowMaterial(): TranslucencyMaterial | null {
   return activeMaterial(availableMaterial, settingsStore.translucency);
 }
+
+/** The opaque boot background (`app.html` paints the cached theme colour
+ *  inline) set aside while a material shows, to put back when it goes. */
+let setAsideBackground: string | null = null;
+
+/**
+ * Keep the root's inline opaque background in step with the material: a
+ * translucent window must not have it (it would cover the material), and a
+ * page whose material can go away again (the site demo) gets it back.
+ */
+export function syncOpaqueBackground(style: Pick<CSSStyleDeclaration, "background" | "removeProperty">, translucent: boolean): void {
+  if (translucent) {
+    if (style.background) setAsideBackground = style.background;
+    style.removeProperty("background");
+  } else if (setAsideBackground !== null) {
+    if (!style.background) style.background = setAsideBackground;
+    setAsideBackground = null;
+  }
+}

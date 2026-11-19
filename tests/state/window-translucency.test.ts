@@ -59,3 +59,31 @@ describe("window material", () => {
     expect(n.windowMaterial()).toBeNull();
   });
 });
+
+describe("the opaque boot background", () => {
+  const style = (background: string) => {
+    const s = { background, removeProperty: (name: string) => { if (name === "background") s.background = ""; return ""; } };
+    return s;
+  };
+
+  it("is set aside while a material shows and put back when it goes (the site demo can turn it off live)", async () => {
+    const m = await load({}, { translucency: false });
+    const root = style("rgb(28, 28, 30)");
+    m.syncOpaqueBackground(root, true);
+    expect(root.background).toBe("");
+    m.syncOpaqueBackground(root, true);
+    expect(root.background).toBe("");
+    m.syncOpaqueBackground(root, false);
+    expect(root.background).toBe("rgb(28, 28, 30)");
+  });
+
+  it("leaves an opaque window's background alone", async () => {
+    const m = await load({}, { translucency: false });
+    const root = style("rgb(1, 2, 3)");
+    m.syncOpaqueBackground(root, false);
+    expect(root.background).toBe("rgb(1, 2, 3)");
+    const none = style("");
+    m.syncOpaqueBackground(none, false);
+    expect(none.background).toBe("");
+  });
+});

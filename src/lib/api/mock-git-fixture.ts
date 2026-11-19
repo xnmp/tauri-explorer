@@ -25,6 +25,7 @@ import {
   applyDemoPatch,
   binaryBlob,
   commitDemoRepo,
+  demoBadgeStatuses,
   demoStatus,
   demoUnifiedDiff,
   discardPaths,
@@ -41,7 +42,7 @@ import { broadcastFileChange } from "$lib/state/file-events";
 import { emitWatcherGitChange } from "$lib/state/git-refresh";
 import { STALE_CURSOR_KIND } from "./git-log";
 import { invokeMockCommand, type CommandHandler } from "./mock-dispatch";
-import { mockWrittenFiles } from "./mock-files";
+import { mockWrittenFiles } from "./mock-file-texts";
 import { mockFileContent, mockFiles } from "./mock-fixtures";
 import { onMockFsChange } from "./mock-fs-changes";
 
@@ -67,7 +68,8 @@ function readWorktree(root: string): DemoTree {
       const relative = entry.path.slice(root.length + 1);
       if (relative.split("/").includes(".git")) continue;
       const text = mockWrittenFiles[entry.path] ?? mockFileContent[entry.path];
-      tree.set(relative, text ?? binaryBlob(entry.size ?? 0, String(entry.modified ?? "")));
+      // An empty file has empty text, not a binary signature.
+      tree.set(relative, text ?? (entry.size ? binaryBlob(entry.size, String(entry.modified ?? "")) : ""));
     }
   }
   return tree;
@@ -107,18 +109,37 @@ export function fixtureRepoFor(path: unknown): DemoRepo | null {
   return live ? currentRepo(live) : null;
 }
 
-// A file changed inside a repository: tell git observers, as the native
-// repository watcher would. Coalesced per root, after the change completes.
+/**
+ * Tell git observers that `root` changed, as the native repository watcher
+ * does for any write under it, `.git` included: the Source Control panel, the
+ * folder badges and an open git graph all reload from it. Coalesced per
+ * root, after the change completes.
+ */
 const pendingRoots = new Set<string>();
-onMockFsChange(({ path, from }) => {
+function announceRepoChange(live: LiveRepo): void {
+  const root = live.repo.root;
+  if (pendingRoots.has(root)) return;
+  pendingRoots.add(root);
+  setTimeout(() => {
+    pendingRoots.delete(root);
+    emitWatcherGitChange(live.repo.root);
+  }, 0);
+}
+
+onMockFsChange(({ op, path, from }) => {
+  // A renamed or moved folder takes the repositories inside it along.
+  if (from && (op === "rename" || op === "move")) {
+    let moved = false;
+    for (const live of liveRepos) {
+      if (!inside(from, live.repo.root)) continue;
+      live.repo = { ...live.repo, root: path + live.repo.root.slice(from.length) };
+      moved = true;
+    }
+    if (moved) liveRepos.sort((a, b) => b.repo.root.length - a.repo.root.length);
+  }
   for (const changed of [path, from]) {
     const live = liveRepoFor(changed);
-    if (!live || pendingRoots.has(live.repo.root)) continue;
-    pendingRoots.add(live.repo.root);
-    setTimeout(() => {
-      pendingRoots.delete(live.repo.root);
-      emitWatcherGitChange(live.repo.root);
-    }, 0);
+    if (live) announceRepoChange(live);
   }
 });
 
@@ -206,7 +227,7 @@ async function applyPatch(live: LiveRepo, args: Record<string, unknown>): Promis
   } else {
     throw new Error(`unknown patch action ${String(args.action)}`);
   }
-  live.state = { head, index: next };
+  live.state = { ...live.state, index: next };
   return null;
 }
 
@@ -261,19 +282,6 @@ function commit(live: LiveRepo, args: Record<string, unknown>) {
   return { commit_id: result.commit.oid, summary: result.commit.summary };
 }
 
-/** `get_git_status`: per-name status of `dir`'s direct children. */
-function directoryStatuses(repo: DemoRepo, dir: string): Record<string, string> {
-  const prefix = relativeTo(repo.root, dir);
-  const statuses: Record<string, string> = {};
-  for (const change of repo.changes) {
-    if (prefix && !change.path.startsWith(`${prefix}/`)) continue;
-    const rest = prefix ? change.path.slice(prefix.length + 1) : change.path;
-    const [first, ...deeper] = rest.split("/");
-    statuses[first] = deeper.length ? "Modified" : change.status;
-  }
-  return statuses;
-}
-
 function refsPayload(repo: DemoRepo) {
   const out = { local_branches: [] as { name: string; target: string }[], remote_branches: [] as { name: string; target: string }[], tags: [] as { name: string; target: string }[] };
   for (const [target, list] of Object.entries(repo.refs)) {
@@ -291,7 +299,10 @@ type WorktreeHandler = (live: LiveRepo, args: Record<string, unknown>) => unknow
 
 /** Commands that read or change the index and working tree. */
 const WORKTREE: Record<string, WorktreeHandler> = {
-  get_git_status: (live, args) => ({ is_git_repo: true, statuses: directoryStatuses(currentRepo(live), String(args.path)) }),
+  get_git_status: (live, args) => ({
+    is_git_repo: true,
+    statuses: demoBadgeStatuses(demoStatus(live.state, readWorktree(live.repo.root)), relativeTo(live.repo.root, String(args.path))),
+  }),
   git_status: (live) => statusSummary(live),
   git_diff: fileDiff,
   git_stage: (live, args) => {
@@ -308,6 +319,11 @@ const WORKTREE: Record<string, WorktreeHandler> = {
   git_trash_untracked: trashUntracked,
   git_add_to_gitignore: addToGitignore,
 };
+
+/** The worktree commands that write the index, the history or files. */
+const MUTATIONS = new Set([
+  "git_stage", "git_unstage", "git_apply_patch", "git_discard", "git_commit", "git_trash_untracked", "git_add_to_gitignore",
+]);
 
 /** History queries, answered from the repository's commits. */
 const QUERIES: Record<string, FixtureHandler> = {
@@ -372,7 +388,10 @@ export function withFixtureRepos(commands: Record<string, CommandHandler>): Reco
     if (worktree) {
       routed[name] = (args) => {
         const live = liveRepoFor(repoArgument(args));
-        return live ? worktree(live, args) : fallback(args);
+        if (!live) return fallback(args);
+        if (!MUTATIONS.has(name)) return worktree(live, args);
+        // What the native watcher reports after git writes the index or a commit.
+        return Promise.resolve(worktree(live, args)).finally(() => announceRepoChange(live));
       };
     } else if (query) {
       routed[name] = (args) => {

@@ -380,6 +380,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `terminal.svelte.ts` — embedded terminal panel state (#139).
 - `site-demo-boot.ts` — site-demo build only: separate in-memory local/session storage, `hello`/`init` handshake with a same-origin parent (timeout → built-in fixtures), seeds the `domain/demo-boot.ts` plan, installs the fixture world (failing closed to the built-in fixtures) and demo shell, starts the bridge with the boot report.
 - `site-demo-bridge.svelte.ts` — site-demo host bridge: same-origin postMessage requests (settings, keybindings, commands, navigation, panels, custom theme, readFile, focusApp) and store-derived events (`ready`, `appearance`, `settings`, `panels`, `navigate`, `select`, `fs-change`, `overlay`, `open-external`, `window-control`). Protocol doc: `screenshots/design/website-rehaul/overhaul/bridge/README.md`.
+- `site-demo-bridge-seams.ts` — the bridge's pure decisions: focusApp's target order, change-only `appearance` emission, `window-control` forwarding.
 - `site-demo-catalog.ts` — site-demo catalog (themes with probed colours, layouts, icon themes, commands with keybindings) and the panel ↔ setting/command map.
 - `site-demo-terminal.ts` — site-demo shell behind the mock PTY: `ShellFs` over the mock filesystem, mutations through mock commands, panes refreshed via `directoryChanged`.
 - `jobs.svelte.ts` — background jobs store (Ctrl+J); `retryJob` runs a failed job's `retry` once, then drops the entry or keeps it with the new error; a retrying entry is active (`isJobActive`: not dismissable or cleared); `dropRetries(owner)` for retired plugins.
@@ -426,6 +427,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `mock-invoke.ts` — mock backend core for browser/E2E (no Tauri): merges the command-family tables and applies the copy/move session and history receipts. Lazily imported by `common.ts` outside Tauri. Open when E2E data wrong, then follow the command's family module.
 - `mock-dispatch.ts` — raw mock dispatch: the installed command table, invocation counting, injected failures and latency; family modules re-enter through `invokeMockCommand` here (keeps the graph acyclic).
 - `mock-files.ts` — mock filesystem family: listings (incl. synthetic `/perf` dirs), create/rename/delete, Trash, archives, file history, ordered copy/move session.
+- `mock-file-texts.ts` — mock text written through the mock (`mockWrittenFiles`) and the move of a file's text into/out of the Trash with its entry.
 - `mock-file-recovery.ts` — mock File Recovery family: retained-destination records, budget and subscription snapshots.
 - `mock-preview.ts` — mock preview/media family: thumbnails, image/PDF/video previews, image crop, folder previews, media metadata.
 - `mock-git-state.ts` — shared mock Git repository state: working tree, hunks, commit graph, refs, synthetic load-test repos.
@@ -466,7 +468,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `open.ts` — open files in the default/chosen app, image viewer (with siblings), or a terminal.
 - `trash.ts` — `list_trash` / `restore_trash_items` IPC for the in-app Trash; restore is a native mutation reply keyed by opaque entry IDs.
 - `system.ts` — OS/window-shell plumbing: picker response, native window theme, ffmpeg path. Not filesystem.
-- `window-controls.ts` — title-bar minimize/maximize/close for a page with no native window (browser build): asks the mock's window stand-in (`MockControl.windowControl`); the site demo forwards it to its host.
+- `window-controls.ts` — title-bar button routing (`windowControlRoute`): the site demo hands every button to its host (`MockControl.windowControl`); elsewhere close runs `requestWindowClose`, minimize/maximize act on the native window.
 
 ## src/lib/composables/ — reusable behavior modules (`.svelte.ts` = runes-aware).
 

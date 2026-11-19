@@ -17,7 +17,6 @@ import { gitHistoryCommands } from "./mock-git-history";
 import { previewCommands } from "./mock-preview";
 import { searchCommands } from "./mock-search";
 import { systemCommands } from "./mock-system";
-import { withFixtureRepos } from "./mock-git-fixture";
 
 export { MOCK_LONG_COMMIT_FILE_PATH } from "./mock-git-state";
 export { MOCK_CONFIG_SEED_KEY } from "./mock-system";
@@ -36,9 +35,9 @@ export const mockCommandFamilies: Readonly<Record<string, Readonly<Record<string
   system: systemCommands,
 };
 
-// Git commands about an installed fixture repository answer from that
-// fixture; with none installed (the default) every call reaches its family.
-const mockCommands: Record<string, CommandHandler> = withFixtureRepos(Object.assign({}, ...Object.values(mockCommandFamilies)));
+// The site demo layers its fixture repositories over this table
+// (`setMockCommandLayer`, from `mock-world.ts`); nothing else does.
+const mockCommands: Record<string, CommandHandler> = Object.assign({}, ...Object.values(mockCommandFamilies));
 installMockCommands(mockCommands);
 
 /** Commands `mockInvoke` handles itself rather than through a family table. */

@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { mockInvoke } from "$lib/api/mock-invoke";
 import { emitMockTerminal, listenMockTerminal, setMockTerminalBackend, type MockTerminalBackend } from "$lib/api/mock-terminal";
 import { installMockWorld, type InstalledMockWorld } from "$lib/api/mock-world";
@@ -324,6 +326,8 @@ describe("fixture world in the mock backend", () => {
 
     it("tells git observers when a file inside a repository changes, as the native watcher does", async () => {
       install();
+      // Let announcements from the previous test land first.
+      await new Promise((resolve) => setTimeout(resolve, 5));
       const seen: GitChange[] = [];
       const stop = await subscribeGitChanges((change) => seen.push(change));
       try {
@@ -334,6 +338,89 @@ describe("fixture world in the mock backend", () => {
       } finally {
         stop();
       }
+    });
+
+    it("announces every index or history change as the native .git watcher would, so an open graph reloads (review D1)", async () => {
+      install();
+      const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
+      await settle();
+      const seen: GitChange[] = [];
+      const stop = await subscribeGitChanges((change) => seen.push(change));
+      try {
+        for (const [command, args] of [
+          ["git_stage", { repoPath: REPO, paths: ["a.txt"] }],
+          ["git_unstage", { repoPath: REPO, paths: ["a.txt"] }],
+          ["git_stage", { repoPath: REPO, paths: ["a.txt"] }],
+          ["git_commit", { repoPath: REPO, message: "m", options: null }],
+        ] as const) {
+          seen.length = 0;
+          await mockInvoke(command, args);
+          await settle();
+          expect(seen, command).toEqual([{ repoRoot: REPO, source: "watcher" }]);
+        }
+        // Reads announce nothing.
+        seen.length = 0;
+        await mockInvoke("git_status", { repoPath: REPO });
+        await settle();
+        expect(seen).toEqual([]);
+      } finally {
+        stop();
+      }
+    });
+
+    it("a file deleted and created again at the same path is new and empty, and its text comes back with a restore (review D4)", async () => {
+      install();
+      await mockInvoke("delete_entries", { paths: [`${REPO}/a.txt`], permanent: false });
+      await mockInvoke("create_empty_file", { parentPath: REPO, name: "a.txt" });
+      expect(await mockInvoke("read_text_file", { path: `${REPO}/a.txt` })).toBe("");
+      expect(await status()).toMatchObject({ changes: [{ path: "a.txt", status: "Modified" }] });
+      expect(await mockInvoke("git_diff", { repoPath: REPO, path: "a.txt", options: null })).toContain("-x\n");
+      // Out of the way, then the trashed file comes back with its text.
+      await mockInvoke("delete_entries", { paths: [`${REPO}/a.txt`], permanent: true });
+      const trash = await mockInvoke<{ entries: Array<{ id: string; originalPath: string }> }>("list_trash");
+      const item = trash.entries.find((e) => e.originalPath === `${REPO}/a.txt`)!;
+      await mockInvoke("restore_trash_items", { ids: [item.id] });
+      expect(await mockInvoke("read_text_file", { path: `${REPO}/a.txt` })).toBe("a");
+    });
+
+    it("an empty new file is untracked text, not binary (review D10)", async () => {
+      install();
+      await mockInvoke("create_empty_file", { parentPath: REPO, name: "empty.md" });
+      expect((await lists()).untracked).toEqual(["empty.md"]);
+      expect(await mockInvoke("git_diff", { repoPath: REPO, path: "empty.md", options: null })).not.toMatch(/Binary/);
+    });
+
+    it("a renamed or moved repository folder stays a repository (review D5)", async () => {
+      install();
+      await mockInvoke("rename_entry", { path: REPO, newName: "repo2" });
+      expect(await mockInvoke("git_repo_root", { path: "/home/ines/repo2" })).toBe("/home/ines/repo2");
+      expect(await mockInvoke<Status>("git_status", { repoPath: "/home/ines/repo2" })).toMatchObject({ changes: [{ path: "a.txt", status: "Modified" }] });
+      await mockInvoke("move_entries", { request: { requestId: "r2", sources: ["/home/ines/repo2"], destDir: "/home/ines/Archive" }, events: () => {} });
+      expect(await mockInvoke("git_repo_root", { path: "/home/ines/Archive/repo2" })).toBe("/home/ines/Archive/repo2");
+      const page = await mockInvoke<LogPage>("git_log", { repoPath: "/home/ines/Archive/repo2", options: { skip: 0, limit: 10 } });
+      expect(page.commits.map((c) => c.summary)).toEqual(["Merge", "Side", "Root"]);
+      expect(await mockInvoke("git_repo_root", { path: REPO })).toBeNull();
+    });
+
+    it("folder badges combine staged and unstaged halves and keep untracked-only folders untracked", async () => {
+      install();
+      await mockInvoke("create_directory", { parentPath: REPO, name: "fresh" });
+      await mockInvoke("write_text_file", { path: `${REPO}/fresh/n.txt`, content: "n" });
+      await mockInvoke("write_text_file", { path: `${REPO}/a.txt`, content: "x\ny\n" });
+      await mockInvoke("git_stage", { repoPath: REPO, paths: ["a.txt"] });
+      await mockInvoke("write_text_file", { path: `${REPO}/a.txt`, content: "x\ny\nz\n" });
+      const badges = await mockInvoke<{ statuses: Record<string, string> }>("get_git_status", { path: REPO });
+      expect(badges.statuses).toEqual({ "a.txt": "Modified", fresh: "Untracked" });
+    });
+
+    it("routes fixture repositories only while a world is installed: mock-invoke itself never imports them (review D7)", async () => {
+      expect(readFileSync(resolve("src/lib/api/mock-invoke.ts"), "utf8")).not.toMatch(/mock-git-fixture|demo-repo-worktree|demo-fixture-git/);
+      install();
+      expect(await mockInvoke("git_repo_root", { path: REPO })).toBe(REPO);
+      installed!.uninstall();
+      installed = null;
+      // The built-in mock answers again: its git_repo_root knows only its own repository.
+      expect(await mockInvoke("git_repo_root", { path: REPO })).not.toBe(REPO);
     });
 
     it("leaves the fixture as installed after a reinstall", async () => {

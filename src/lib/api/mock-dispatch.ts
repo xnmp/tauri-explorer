@@ -9,11 +9,31 @@ import { getMockControl } from "./mock-control";
 
 export type CommandHandler = (args: Record<string, unknown>) => unknown;
 
-let mockCommands: Readonly<Record<string, CommandHandler>> = {};
+type CommandTable = Readonly<Record<string, CommandHandler>>;
+/** Wraps the merged table (the site demo routes its fixture repositories through one). */
+export type MockCommandLayer = (commands: CommandTable) => CommandTable;
+
+let baseCommands: CommandTable = {};
+let commandLayer: MockCommandLayer | null = null;
+let mockCommands: CommandTable = {};
 
 /** Install the merged command table (called once by `mock-invoke.ts`). */
-export function installMockCommands(commands: Readonly<Record<string, CommandHandler>>): void {
-  mockCommands = commands;
+export function installMockCommands(commands: CommandTable): void {
+  baseCommands = commands;
+  mockCommands = commandLayer ? commandLayer(baseCommands) : baseCommands;
+}
+
+/**
+ * Wrap every command in `layer` (null: none), whether the table is installed
+ * yet or later. The demo installs its fixture-repository layer this way, so
+ * `mock-invoke.ts` never imports it and ordinary builds do not ship it.
+ * Returns the way back to the previous layer.
+ */
+export function setMockCommandLayer(layer: MockCommandLayer | null): () => void {
+  const previous = commandLayer;
+  commandLayer = layer;
+  mockCommands = layer ? layer(baseCommands) : baseCommands;
+  return () => { setMockCommandLayer(previous); };
 }
 
 export async function invokeMockCommand<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {

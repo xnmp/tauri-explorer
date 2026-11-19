@@ -87,7 +87,6 @@ export const mockShellFs: ShellFs = {
   }),
   touch: (path) => attempt([parentDir(path)], async () => {
     await mockInvoke("create_empty_file", { parentPath: parentDir(path), name: basename(path) });
-    mockFileContent[path] = "";
     stampNow(path);
     return null;
   }),

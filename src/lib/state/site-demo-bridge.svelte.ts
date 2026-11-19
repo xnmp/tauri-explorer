@@ -29,6 +29,7 @@ import { themeStore } from "./theme.svelte";
 import { windowTabsManager } from "./window-tabs.svelte";
 import { windowMaterial } from "./window-translucency.svelte";
 import { buildDemoCatalog, DEMO_PANELS, demoPanelState, type DemoPanelId } from "./site-demo-catalog";
+import { changeEmitter, focusIsLost, forwardWindowControls, pickFocusTarget } from "./site-demo-bridge-seams";
 
 const VIEW_MODES = ["details", "list", "tiles"] as const;
 type DemoViewMode = (typeof VIEW_MODES)[number];
@@ -228,13 +229,10 @@ function snapshot(media: MockWorldMedia | null) {
  */
 function focusApp(): boolean {
   window.focus();
-  const current = document.activeElement;
-  if (!current || current === document.body) {
+  if (focusIsLost(document.activeElement, document.body)) {
     const paneId = CSS.escape(windowTabsManager.activePaneId ?? "");
     const pane = document.querySelector<HTMLElement>(`.pane-tree:not(.retained) .explorer-pane[data-pane-id="${paneId}"]`);
-    const target = [".file-list .entry-item.selected", ".file-list .entry-item[tabindex='0']", ".file-list .virtual-viewport"]
-      .map((selector) => pane?.querySelector<HTMLElement>(selector)).find(Boolean) ?? pane;
-    target?.focus({ preventScroll: true });
+    pickFocusTarget<HTMLElement>(pane)?.focus({ preventScroll: true });
   }
   return document.hasFocus();
 }
@@ -322,7 +320,7 @@ export function startSiteDemoBridge({ host, origin, media, boot }: SiteDemoBridg
     if (payload) emit("open-external", payload);
   };
   // The title bar's window buttons: the host decides what a window does.
-  control.windowControl = (action) => emit("window-control", { action });
+  forwardWindowControls(control, emit);
   // Every executed change, including undo/redo, publishes to this feed.
   onMockFsChange((change) => emit("fs-change", { ...change, trashCount: mockTrashCount() }));
 
@@ -351,13 +349,8 @@ export function startSiteDemoBridge({ host, origin, media, boot }: SiteDemoBridg
   $effect.root(() => {
     // From boot, not only after ready: a transparent frame needs its color
     // scheme matched before its first translucent paint.
-    let lastAppearance = "";
-    $effect(() => {
-      const value = appearance();
-      const key = JSON.stringify(value);
-      if (key !== lastAppearance) emit("appearance", value);
-      lastAppearance = key;
-    });
+    const publishAppearance = changeEmitter((value) => emit("appearance", value));
+    $effect(() => publishAppearance(appearance()));
     let announced = false;
     $effect(() => {
       if (!ready || announced) return;

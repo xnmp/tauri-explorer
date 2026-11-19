@@ -2,6 +2,18 @@
 
 All notable changes to Tauri Explorer.
 
+## v0.29.2 — 2026-11-19
+
+### Fixed
+
+- Address bar on Windows: typing a path with backslashes, such as
+  `C:\Users\fo`, now shows folder suggestions. A bare drive letter such as
+  `D:` suggests that drive's top-level folders (#1597).
+- Git graph: the setting that dims merges which only bring a pull request
+  up to date with its base branch no longer picks a remote branch that only
+  ends with the base's name, such as `origin/release/main` for `main`. It
+  could dim the wrong merge (#1597).
+
 ## v0.29.1 — 2026-11-19
 
 ### Added

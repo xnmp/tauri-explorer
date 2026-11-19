@@ -866,11 +866,11 @@ async fn retirement_closes_a_genuinely_stalled_socket_and_releases_stream_admiss
 mod companion_audio {
     use super::super::audio::{lists_audio_stream, sweep, Extractor};
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::symlink;
 
     /// Probe lists `streams`; an encode runs `encode` with `$out` as its output path.
     fn fake_ffmpeg(root: &std::path::Path, streams: &str, encode: &str) -> std::path::PathBuf {
-        let script = root.join("ffmpeg");
+        let script = root.join("ffmpeg.sh");
         fs::write(
             &script,
             format!(
@@ -879,8 +879,13 @@ mod companion_audio {
             ),
         )
         .unwrap();
-        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
-        script
+        // Never exec a freshly written inode: another test's fork can retain
+        // its writer until exec even after fs::write closes our descriptor.
+        let executable = root.join("ffmpeg");
+        let launcher = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("test_support/fixtures/media-preview-ffmpeg.sh");
+        symlink(launcher, &executable).unwrap();
+        executable
     }
     const VIDEO_AND_AAC: &str =
         "'  Stream #0:0[0x1](und): Video: h264 (High), yuv420p, 1920x1080' '  Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo'";
@@ -996,6 +1001,34 @@ mod companion_audio {
             Some("audio/flac")
         );
         assert_eq!(audio.derived(), [format!("{}.flac", audio.token)]);
+    }
+
+    #[tokio::test]
+    async fn writable_fixture_descriptors_do_not_prevent_audio_extraction() {
+        let audio = Audio::new(VIDEO_AND_AAC, "printf 'OPUS-AUDIO' > \"$out\"").await;
+        // Model a concurrent fork retaining the fixture writer until its exec.
+        // Keep every generated ffmpeg input open across the real extractor call.
+        let writers: Vec<_> = fs::read_dir(audio.fixture.root.path())
+            .unwrap()
+            .map(Result::unwrap)
+            .filter(|entry| {
+                entry.file_name().to_string_lossy().starts_with("ffmpeg")
+                    && entry.file_type().unwrap().is_file()
+            })
+            .map(|entry| {
+                fs::OpenOptions::new()
+                    .write(true)
+                    .open(entry.path())
+                    .unwrap()
+            })
+            .collect();
+        assert_eq!(writers.len(), 1);
+        assert!(audio.prepare(true).await.unwrap());
+        let reply = audio.get().await;
+        assert_eq!(reply.status, 200);
+        assert_eq!(reply.body, b"OPUS-AUDIO");
+        assert!(audio.calls().contains("-map 0:a:0"));
+        drop(writers);
     }
 
     #[tokio::test]

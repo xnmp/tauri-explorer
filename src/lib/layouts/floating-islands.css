@@ -93,8 +93,10 @@
      island alpha = 1 - (1 - coverage) / (1 - body coverage).
    Light defaults reproduce the earlier alphas exactly (body 0.15; islands
    98% and sidebar 72% of the theme's panel colour). Dark themes get their
-   own lighter set, so the wallpaper still shows: body 0.3, islands 0.35 over
-   the base lifted 10% toward white, strip shade 50%. docs/layout-themes.md. */
+   own lighter set, so the wallpaper still shows: body 0.3, islands 0.35,
+   strip shade 50%. An island paints its opaque colour (panel over base) at
+   its alpha. At the slider's solid end every surface is (nearly) opaque, as
+   with Translucency off (#1789). docs/layout-themes.md. */
 :root[data-layout-base="floating-islands"][data-material] {
   --islands-body-l: var(--island-body-coverage, 0.15);
   --islands-body-d: var(--island-body-coverage-dark, 0.3);
@@ -103,7 +105,10 @@
   --islands-structural-alpha-l: calc(1 - (1 - var(--island-structural-coverage, 0.762)) / (1 - var(--islands-body-l)));
   --islands-structural-alpha-d: calc(1 - (1 - var(--island-structural-coverage-dark, 0.48)) / (1 - var(--islands-body-d)));
   --islands-panel-l: var(--island-surface, var(--vibrancy-island-card, var(--background-card)));
-  --islands-panel-d: var(--island-surface, color-mix(in srgb, var(--background-solid) 90%, white));
+  /* Dark islands are the theme's own island colour (its card over its base),
+     as without the material: the base lifted toward white turned every
+     dark palette grey (Ocean Blue's navy read slate, #1789). */
+  --islands-panel-d: var(--island-surface, var(--background-card));
   /* The window body: the theme base nudged toward the accent. It is the
      active tab's surface (#1785): the tab and its fillets show it through the
      strip, and the gaps between islands show it. A theme's own tint wins. */
@@ -123,9 +128,22 @@
       color-mix(in srgb, var(--islands-panel-l) calc(var(--islands-structural-alpha-l) * 100%), transparent),
       color-mix(in srgb, var(--islands-panel-d) calc(var(--islands-structural-alpha-d) * 100%), transparent)
     );
+  /* Under the panel, the theme base at the same alpha: the island is its
+     opaque self (panel over base) faded, so a translucent panel colour
+     keeps its hue and the solid end is the opaque island (#1789). */
+  --islands-fill-base: light-dark(
+    color-mix(in srgb, var(--background-solid) calc(var(--islands-alpha-l) * 100%), transparent),
+    color-mix(in srgb, var(--background-solid) calc(var(--islands-alpha-d) * 100%), transparent)
+  );
+  --islands-structural-fill-base: light-dark(
+    color-mix(in srgb, var(--background-solid) calc(var(--islands-structural-alpha-l) * 100%), transparent),
+    color-mix(in srgb, var(--background-solid) calc(var(--islands-structural-alpha-d) * 100%), transparent)
+  );
+  /* Translucency Opacity scales the strip's share of its shade colour, up to
+     the opaque strip's share at the solid end. */
   --islands-strip-shade: light-dark(
-    color-mix(in srgb, var(--islands-strip-shade-color) 35%, transparent),
-    color-mix(in srgb, var(--islands-strip-shade-color) 50%, transparent)
+    color-mix(in srgb, var(--islands-strip-shade-color) calc(var(--island-strip-shade, 0.35) * 100%), transparent),
+    color-mix(in srgb, var(--islands-strip-shade-color) calc(var(--island-strip-shade-dark, 0.5) * 100%), transparent)
   );
 }
 

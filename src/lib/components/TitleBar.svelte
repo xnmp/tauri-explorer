@@ -220,7 +220,7 @@
        themselves via align-self. */
     align-items: flex-end;
     height: 38px;
-    background: var(--layout-chrome-surface, color-mix(in srgb, var(--background-card) calc(var(--titlebar-opacity, 1) * 100%), transparent));
+    background: var(--layout-chrome-surface, var(--titlebar-surface));
     user-select: none;
     flex-shrink: 0;
     position: relative;
@@ -238,7 +238,7 @@
       var(--control-fill-tertiary) 0%,
       transparent 100%
     );
-    opacity: 0.4;
+    opacity: var(--titlebar-sheen-opacity, 0.4);
     pointer-events: none;
   }
 

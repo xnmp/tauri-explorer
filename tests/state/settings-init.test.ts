@@ -7,6 +7,7 @@
  * update() must merge partially and persist.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { darkIslandAlpha } from "$lib/domain/vibrancy-opacity";
 
 const readConfigFileMock = vi.fn();
 const writeConfigQueuedMock = vi.fn();
@@ -248,6 +249,14 @@ describe("settingsStore.translucency migration (#1757)", () => {
     expect(written.settingsVersion).toBe(3);
   });
 
+  /** The slider value whose dark island alpha is nearest `alpha`: a neighbour is never closer. */
+  const expectNearestIslandAlpha = (percent: number, alpha: number) => {
+    const miss = (p: number) => Math.abs(darkIslandAlpha(p) - alpha);
+    expect(miss(percent)).toBeLessThanOrEqual(miss(percent - 1));
+    expect(miss(percent)).toBeLessThanOrEqual(miss(percent + 1));
+    expect(miss(percent)).toBeLessThan(0.02);
+  };
+
   it("keeps a macOS Translucency Opacity and carries a Windows Backdrop Opacity over by island alpha", async () => {
     readConfigFileMock.mockResolvedValue({
       ok: true,
@@ -255,8 +264,8 @@ describe("settingsStore.translucency migration (#1757)", () => {
     });
     const windows = await freshStore();
     await windows.init();
-    // 65% island alpha is the slider's 81 (domain/vibrancy-opacity).
-    expect(windows.translucencyOpacity).toBe(81);
+    // The slider value whose dark island shows the same 65% alpha (domain/vibrancy-opacity).
+    expectNearestIslandAlpha(windows.translucencyOpacity, 0.65);
 
     readConfigFileMock.mockResolvedValue({
       ok: true,
@@ -278,7 +287,8 @@ describe("settingsStore.translucency migration (#1757)", () => {
     });
     const store = await freshStore();
     await store.init();
-    expect(store.translucencyOpacity).toBe(81);
+    expect(store.translucencyOpacity).not.toBe(55);
+    expectNearestIslandAlpha(store.translucencyOpacity, 0.65);
   });
 
   it("never re-derives Translucency the user turned off after migrating", async () => {

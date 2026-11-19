@@ -448,7 +448,7 @@
     min-width: 0;
     min-height: 0;
     border-left: 1px solid var(--layout-hairline, var(--divider));
-    background: var(--layout-surface, var(--background-card-secondary));
+    background: var(--layout-surface, var(--preview-surface));
     border-radius: inherit; /* follow a layout's rounded preview island */
     overflow: hidden;
     /* Horizontal inset of the Preview chrome and info rows. Plugin

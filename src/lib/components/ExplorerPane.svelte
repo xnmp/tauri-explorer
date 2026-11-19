@@ -472,7 +472,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     flex: 1;
     min-width: 0;
     overflow: hidden;
-    background: var(--layout-surface, color-mix(in srgb, var(--background-card) calc(var(--content-opacity, 1) * 100%), transparent));
+    background: var(--layout-surface, var(--pane-surface));
     border-radius: 0;
     border: 1px solid transparent;
     transition:

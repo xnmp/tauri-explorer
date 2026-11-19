@@ -293,8 +293,8 @@
        silhouette (#1734). Fillets only shrink for a tab narrower than two
        of them. */
     --tab-seed: min(var(--tab-width), 34px);
-    --tab-surface: var(--background-card);
-    --tab-surface-base: var(--background-solid);
+    --tab-surface: var(--active-tab-surface);
+    --tab-surface-base: var(--active-tab-surface-base);
     --tab-content-alpha: 1;
     padding: 0 var(--tab-pad-r) 0 var(--tab-pad-l);
     --fillet: min(14px, calc(var(--tab-grown) / 2));
@@ -331,14 +331,11 @@
     overflow: visible;
   }
 
-  /* Under a window material the window is translucent: an opaque tab over
-     the translucent pane read as a white (or black) card on glass. The
-     title bar is already the pane's card, so the tab adds exactly what the
-     navigation bar below adds to the pane, and no solid base (#1734). */
-  :root[data-material] .tab-area .tab.active {
-    --tab-surface: var(--layout-chrome-surface, var(--background-card-secondary));
-    --tab-surface-base: transparent;
-  }
+  /* Under a window material (#1734, #1789) an opaque tab over the
+     translucent pane read as a card on glass, and a translucent fill over
+     the title bar compounded into a denser shade than the pane. There the
+     title bar is the pane's own surface, so the tab paints nothing:
+     --active-tab-surface* are transparent (routes/+page.svelte). */
 
   /* Chrome-style fillets (#157): concave quarter-circles that flare the
      active tab's base into the pane surface below it. Each is a square

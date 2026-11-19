@@ -76,7 +76,7 @@
     justify-content: space-between;
     height: 28px;
     padding: 0 16px;
-    background: var(--layout-chrome-surface, color-mix(in srgb, var(--background-card-secondary) calc(var(--statusbar-opacity, 1) * 100%), transparent));
+    background: var(--layout-chrome-surface, var(--statusbar-surface));
     border-top: none;
     box-shadow: 0 -1px 0 var(--layout-hairline, var(--divider));
     font-size: var(--font-size-caption);

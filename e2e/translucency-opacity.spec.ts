@@ -28,11 +28,13 @@ test.describe("Translucency Opacity (#1735)", () => {
     await expect(page.locator(".settings-dialog")).toBeVisible();
   }
 
-  /** The island fill as the page computes it (a probe painted with the variable). */
+  /** The island's alpha over the window body as the page computes it: the
+   *  alpha of its base layer (a probe painted with the variable). The panel
+   *  colour on it is the theme's card at the same share (#1789). */
   async function islandAlpha(page: Page): Promise<number> {
     return page.evaluate(() => {
       const probe = document.createElement("div");
-      probe.style.background = "var(--islands-fill)";
+      probe.style.background = "var(--islands-fill-base)";
       document.documentElement.appendChild(probe);
       const colour = getComputedStyle(probe).backgroundColor;
       probe.remove();

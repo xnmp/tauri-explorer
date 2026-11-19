@@ -322,7 +322,7 @@
     display: grid;
     gap: 0;
     padding: 6px 16px;
-    background: var(--layout-chrome-surface, var(--background-solid));
+    background: var(--layout-chrome-surface, var(--column-header-surface));
     border-bottom: 1px solid var(--layout-hairline, var(--divider));
     position: sticky;
     top: 0;

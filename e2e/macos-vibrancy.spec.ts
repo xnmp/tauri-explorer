@@ -4,6 +4,7 @@
  */
 import { test, expect, type Page } from "./fixtures";
 import { HOME_URL, applySettingsAndReload, waitForEntries } from "./helpers";
+import { decodePng } from "./png-pixels";
 
 test.describe("macOS vibrancy", () => {
   // The browser publishes no native material, so the platform fallback decides:
@@ -54,23 +55,13 @@ test.describe("macOS vibrancy", () => {
 });
 
 /**
- * #1733: under the macOS material the page paints a tint of the theme base
- * over the window, so the palette survives the grey material: about 15% on
- * light themes and 55% on dark ones. The browser cannot show the native
- * material, so the window "behind" is simulated by an html background.
+ * #1733, #1789: under the macOS material the theme's own colours cover most
+ * of the material, so the palette survives it. Default and Compact fade the
+ * opaque window uniformly; Floating Islands tints its window body and stacks
+ * islands on it. The browser cannot show the native material, so the window
+ * "behind" is an html background.
  */
-test.describe("theme tint over the macOS material (#1733)", () => {
-  const SIMULATED_MATERIAL = `
-    html {
-      background:
-        linear-gradient(rgba(128, 128, 128, 0.55), rgba(128, 128, 128, 0.55)),
-        radial-gradient(70% 90% at 15% 20%, #e8875a 0%, transparent 60%),
-        radial-gradient(60% 80% at 85% 75%, #3f7fd6 0%, transparent 65%),
-        linear-gradient(135deg, #5b3c88, #1f6f6b) !important;
-      /* The root box can be shorter than the viewport; size the images to it. */
-      background-attachment: fixed !important;
-    }`;
-
+test.describe("theme colours over the macOS material (#1733, #1789)", () => {
   async function openVibrant(page: Page, theme: string, platform = "MacIntel", layoutTheme = "default", extra: Record<string, unknown> = {}): Promise<void> {
     await page.addInitScript((value) => {
       Object.defineProperty(window.navigator, "platform", { get: () => value, configurable: true });
@@ -107,32 +98,106 @@ test.describe("theme tint over the macOS material (#1733)", () => {
     }, color);
   }
 
-  test("dark themes paint 55% of the theme base over the material", async ({ page }) => {
-    await openVibrant(page, "dark");
-    await expect(page.locator("html")).toHaveAttribute("data-material", "vibrancy");
-    const { body, light, dark } = await tint(page);
-    expect(light).not.toBe(dark);
-    expect(body).toBe(dark);
+  /**
+   * #1789: Default and Compact fade the opaque window uniformly. Each surface
+   * is screenshotted over a black and a white backdrop: over black it shows
+   * colour x alpha, over white that plus (1 - alpha) x 255, which gives the
+   * share of the material it hides (alpha) and its colour. Every surface must
+   * hide the same share and keep its opaque colour: the tab, title bar,
+   * navigation bar and column header are the pane's colour, the sidebar its own.
+   */
+  type Rgb = [number, number, number];
+  const REGIONS = {
+    tab: '[data-region="tab"][aria-selected="true"]',
+    titlebar: '[data-region="titlebar"]',
+    navbar: '[data-region="toolbar"]',
+    header: ".column-headers",
+    pane: '[data-region="pane"]',
+    sidebar: '[data-region="sidebar-body"]',
+  } as const;
+  type Region = keyof typeof REGIONS;
 
-    await page.addStyleTag({ content: SIMULATED_MATERIAL });
-    await page.screenshot({
-      path: "screenshots/feat/macos-vibrancy-material/vibrancy-tint-dark.png",
-      animations: "disabled",
+  /** A point inside each region away from text and icons. */
+  async function probePoints(page: Page): Promise<Record<Region, { x: number; y: number }>> {
+    const box = async (selector: string) => (await page.locator(selector).first().boundingBox())!;
+    const tab = await box(REGIONS.tab);
+    const titlebar = await box(REGIONS.titlebar);
+    const navbar = await box(REGIONS.navbar);
+    const header = await box(REGIONS.header);
+    const pane = await box(REGIONS.pane);
+    const sidebar = await box(REGIONS.sidebar);
+    return {
+      tab: { x: tab.x + 6, y: tab.y + tab.height - 4 },
+      titlebar: { x: titlebar.x + titlebar.width * 0.45, y: titlebar.y + titlebar.height / 2 },
+      navbar: { x: navbar.x + 3, y: navbar.y + navbar.height / 2 },
+      header: { x: header.x + header.width - 6, y: header.y + 3 },
+      pane: { x: pane.x + pane.width * 0.6, y: pane.y + pane.height - 20 },
+      sidebar: { x: sidebar.x + 6, y: sidebar.y + sidebar.height - 20 },
+    };
+  }
+
+  async function shotOver(page: Page, backdrop: string) {
+    await page.addStyleTag({ content: `html { background: ${backdrop} !important; }` });
+    return decodePng(await page.screenshot({ animations: "disabled" }));
+  }
+
+  /** Alpha and colour of every region, solved from black and white backdrops. */
+  async function surfaces(page: Page): Promise<Record<Region, { alpha: number; rgb: Rgb }>> {
+    const points = await probePoints(page);
+    const black = await shotOver(page, "#000");
+    const white = await shotOver(page, "#fff");
+    const out = {} as Record<Region, { alpha: number; rgb: Rgb }>;
+    for (const [name, { x, y }] of Object.entries(points) as [Region, { x: number; y: number }][]) {
+      const b = black.pixel(Math.round(x), Math.round(y));
+      const w = white.pixel(Math.round(x), Math.round(y));
+      const alpha = 1 - (w[0] - b[0] + w[1] - b[1] + w[2] - b[2]) / 3 / 255;
+      out[name] = { alpha, rgb: b.map((c) => (alpha > 0.01 ? c / alpha : 0)) as Rgb };
+    }
+    return out;
+  }
+
+  const near = (a: Rgb, b: Rgb) => Math.max(...a.map((c, i) => Math.abs(c - b[i])));
+
+  for (const theme of ["dark", "light", "ocean-blue"]) {
+    test(`Default fades the opaque window uniformly, the tab one with the pane (${theme}, #1789)`, async ({ page }) => {
+      // As on a real Mac: the integrated title row holds the lone tab (#1756).
+      await openVibrant(page, theme, "MacIntel", "default", { translucency: false, showWindowControls: true, integratedTitleBar: true });
+      await expect(page.locator("html")).not.toHaveAttribute("data-material");
+      const opaque = await surfaces(page);
+
+      await applySettingsAndReload(page, { translucency: true, translucencyOpacity: 55 });
+      await waitForEntries(page);
+      await expect(page.locator("html")).toHaveAttribute("data-material", "vibrancy");
+      const glass = await surfaces(page);
+
+      for (const region of Object.keys(REGIONS) as Region[]) {
+        // One share of the material everywhere: no surface compounds another.
+        expect(glass[region].alpha, region).toBeGreaterThan(0.78);
+        expect(glass[region].alpha, region).toBeLessThan(0.82);
+      }
+      // The tab, title bar, navigation bar and column header ARE the pane.
+      for (const region of ["tab", "titlebar", "navbar", "header"] as const) {
+        expect(near(glass[region].rgb, glass.pane.rgb), region).toBeLessThanOrEqual(3);
+      }
+      // Each surface keeps its opaque colour (the sidebar its own tone).
+      expect(near(glass.pane.rgb, opaque.pane.rgb)).toBeLessThanOrEqual(3);
+      expect(near(glass.sidebar.rgb, opaque.sidebar.rgb)).toBeLessThanOrEqual(3);
     });
-  });
+  }
 
-  test("light themes paint 15% of the theme base over the material", async ({ page }) => {
-    await openVibrant(page, "light");
-    await expect(page.locator("html")).toHaveAttribute("data-material", "vibrancy");
-    const { body, light, dark } = await tint(page);
-    expect(light).not.toBe(dark);
-    expect(body).toBe(light);
-
-    await page.addStyleTag({ content: SIMULATED_MATERIAL });
-    await page.screenshot({
-      path: "screenshots/feat/macos-vibrancy-material/vibrancy-tint-light.png",
-      animations: "disabled",
-    });
+  test("the slider moves the share from glass to the opaque window (#1789)", async ({ page }) => {
+    await openVibrant(page, "dark", "MacIntel", "default", { translucencyOpacity: 20, showWindowControls: true, integratedTitleBar: true });
+    const glass = await surfaces(page);
+    await applySettingsAndReload(page, { translucencyOpacity: 100 });
+    await waitForEntries(page);
+    const solid = await surfaces(page);
+    for (const region of Object.keys(REGIONS) as Region[]) {
+      expect(glass[region].alpha, region).toBeGreaterThan(0.57);
+      expect(glass[region].alpha, region).toBeLessThan(0.63);
+      expect(solid[region].alpha, region).toBeGreaterThan(0.98);
+    }
+    // Translucency on does not paint the window body itself: the surfaces do.
+    expect(await page.evaluate(() => getComputedStyle(document.querySelector(".explorer")!).backgroundColor)).toBe("rgba(0, 0, 0, 0)");
   });
 
   test("Floating Islands paints its own window body: light 15%, dark 30% (#1734)", async ({ page }) => {
@@ -149,8 +214,8 @@ test.describe("theme tint over the macOS material (#1733)", () => {
     expect(light.body).toBe(light.light);
   });
 
-  test("a theme's own tint wins: Tahoe's lighter lavender wash", async ({ page }) => {
-    await openVibrant(page, "tahoe");
+  test("a theme's own tint wins on Floating Islands: Tahoe's lighter lavender wash", async ({ page }) => {
+    await openVibrant(page, "tahoe", "MacIntel", "floating-islands");
     const { body } = await tint(page);
     expect(body).toBe("rgba(170, 190, 255, 0.12)");
   });
@@ -180,15 +245,4 @@ test.describe("theme tint over the macOS material (#1733)", () => {
     expect(opaque).not.toBe("rgba(0, 0, 0, 0)");
   });
 
-  test("the non-island tint follows the opacity slider (--material-window-coverage)", async ({ page }) => {
-    await openVibrant(page, "dark", "MacIntel", "default", { translucencyOpacity: 100 });
-    const full = await tint(page);
-    // Slider 100: the theme base at 100%, i.e. fully opaque.
-    expect(full.body).toBe(full.full);
-    await applySettingsAndReload(page, { translucencyOpacity: 55 });
-    await waitForEntries(page);
-    const normal = await tint(page);
-    expect(normal.body).toBe(normal.dark);
-    expect(normal.body).not.toBe(full.body);
-  });
 });

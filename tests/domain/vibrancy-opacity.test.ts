@@ -8,6 +8,8 @@ import {
   darkIslandAlpha,
   lightCoverage,
   opacityForIslandAlpha,
+  stripShadeShare,
+  surfaceCoverage,
   vibrancyCoverageVariables,
   windowCoverage,
 } from "$lib/domain/vibrancy-opacity";
@@ -28,7 +30,32 @@ describe("vibrancyCoverageVariables defaults", () => {
       "--island-body-coverage-dark": "0.3",
       "--material-window-coverage": "0.15",
       "--material-window-coverage-dark": "0.55",
+      "--material-surface-coverage": "0.8",
+      "--island-strip-shade": "0.35",
+      "--island-strip-shade-dark": "0.5",
     });
+  });
+});
+
+describe("surface coverage of flat layouts (#1789)", () => {
+  it("is opaque at the solid end and keeps the theme dominant at the see-through end", () => {
+    expect(surfaceCoverage(TRANSLUCENCY_OPACITY_MAX)).toBe(1);
+    expect(surfaceCoverage(TRANSLUCENCY_OPACITY_DEFAULT)).toBe(0.8);
+    expect(surfaceCoverage(TRANSLUCENCY_OPACITY_MIN)).toBeGreaterThanOrEqual(0.5);
+  });
+
+  it("rises strictly with the slider, so every step is visible", () => {
+    for (let i = 1; i < percents.length; i++) {
+      expect(surfaceCoverage(percents[i])).toBeGreaterThan(surfaceCoverage(percents[i - 1]));
+    }
+  });
+
+  it("clamps out-of-range and malformed input", () => {
+    expect(surfaceCoverage(-50)).toBe(surfaceCoverage(TRANSLUCENCY_OPACITY_MIN));
+    expect(surfaceCoverage(1e9)).toBe(1);
+    expect(surfaceCoverage(Number.NaN)).toBe(surfaceCoverage(TRANSLUCENCY_OPACITY_DEFAULT));
+    expect(surfaceCoverage(null)).toBe(surfaceCoverage(TRANSLUCENCY_OPACITY_DEFAULT));
+    expect(surfaceCoverage("90")).toBe(surfaceCoverage(TRANSLUCENCY_OPACITY_DEFAULT));
   });
 });
 
@@ -69,11 +96,24 @@ describe("opacityForIslandAlpha (#1757 migration)", () => {
 });
 
 describe("coverage mapping", () => {
-  it("makes the dark island coverage track the slider and keeps the dark ratios", () => {
-    const d = darkCoverage(80);
-    expect(d.island).toBeGreaterThan(darkCoverage(60).island);
-    expect(d.structural / d.island).toBeCloseTo(0.48 / 0.545, 4);
-    expect(d.body / d.island).toBeCloseTo(0.3 / 0.545, 4);
+  it("makes the dark island coverage track the slider and keeps the dark ratios up to the default", () => {
+    expect(darkCoverage(80).island).toBeGreaterThan(darkCoverage(60).island);
+    for (const p of [20, 35, 50]) {
+      const d = darkCoverage(p);
+      expect(d.structural / d.island).toBeCloseTo(0.48 / 0.545, 4);
+      expect(d.body / d.island).toBeCloseTo(0.3 / 0.545, 4);
+    }
+  });
+
+  it("reaches the opaque window at the solid end (#1789)", () => {
+    for (const c of [lightCoverage(TRANSLUCENCY_OPACITY_MAX), darkCoverage(TRANSLUCENCY_OPACITY_MAX)]) {
+      expect(c.island).toBe(1);
+      expect(c.structural).toBe(1);
+      expect(c.body).toBeGreaterThanOrEqual(0.95);
+    }
+    expect(stripShadeShare(TRANSLUCENCY_OPACITY_MAX)).toEqual({ light: 0.62, dark: 0.9 });
+    expect(stripShadeShare(TRANSLUCENCY_OPACITY_DEFAULT)).toEqual({ light: 0.35, dark: 0.5 });
+    expect(stripShadeShare(TRANSLUCENCY_OPACITY_MIN).dark).toBeLessThan(0.5);
   });
 
   it("is monotonic non-decreasing in the slider for every output", () => {

@@ -55,7 +55,7 @@
   .sidebar {
     flex: 1;
     border-radius: inherit;
-    background: var(--layout-chrome-surface, color-mix(in srgb, var(--background-card-secondary) calc(var(--sidebar-opacity, 1) * 100%), transparent));
+    background: var(--layout-chrome-surface, var(--sidebar-surface));
     border-right: var(--sidebar-border-right, none);
     box-shadow: 1px 0 0 var(--layout-hairline, var(--divider));
     overflow: hidden;

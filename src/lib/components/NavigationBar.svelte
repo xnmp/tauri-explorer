@@ -469,7 +469,7 @@
     align-items: center;
     gap: 6px;
     padding: 4px 10px;
-    background: var(--layout-chrome-surface, var(--background-card-secondary));
+    background: var(--layout-chrome-surface, var(--navbar-surface));
     border-bottom: var(--navbar-border-bottom, 1px solid var(--layout-hairline, var(--divider)));
     height: 40px;
     container-type: inline-size;

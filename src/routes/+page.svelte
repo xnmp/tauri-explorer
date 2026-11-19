@@ -419,6 +419,100 @@
     --z-menu: 1200;           /* context menus */
     --z-progress: 1300;       /* corner progress panel — visible above modals */
     --z-toast: 1400;          /* notifications — topmost */
+
+    /* Window surfaces (#1789). Each *-fill is a surface's own paint over
+       the window base; each *-surface is what its element paints, the fill
+       unless a window material takes over (below). A layout's
+       --layout-surface / --layout-chrome-surface win over these. The pane
+       column is one surface: the chrome stacked on the pane (navigation bar,
+       Details column header, active tab) adds a fill only on an opaque
+       window, where stacking cannot change the colour. */
+    --window-base: linear-gradient(var(--background-mica, transparent), var(--background-mica, transparent)), var(--background-solid);
+    --pane-fill: color-mix(in srgb, var(--background-card) calc(var(--content-opacity, 1) * 100%), transparent);
+    --pane-surface: var(--pane-fill);
+    --titlebar-fill: color-mix(in srgb, var(--background-card) calc(var(--titlebar-opacity, 1) * 100%), transparent);
+    --titlebar-surface: var(--titlebar-fill);
+    --titlebar-sheen-opacity: 0.4;
+    --sidebar-fill: color-mix(in srgb, var(--background-card-secondary) calc(var(--sidebar-opacity, 1) * 100%), transparent);
+    --sidebar-surface: var(--sidebar-fill);
+    --statusbar-fill: color-mix(in srgb, var(--background-card-secondary) calc(var(--statusbar-opacity, 1) * 100%), transparent);
+    --statusbar-surface: var(--statusbar-fill);
+    --preview-fill: var(--background-card-secondary);
+    --preview-surface: var(--preview-fill);
+    --navbar-surface: var(--background-card-secondary);
+    --column-header-surface: var(--background-solid);
+    --active-tab-surface: var(--background-card);
+    --active-tab-surface-base: var(--background-solid);
+  }
+
+  /* Under a window material, translucent layers stacked on each other
+     compound: each one hides more of the material and pulls the colour
+     toward its own. So the title bar is the pane's surface, and the active
+     tab on it, the navigation bar and the column header on the pane paint
+     nothing: all of them ARE the pane's surface. The strip's sheen goes too,
+     as the tab could not cover it. Inactive tabs keep their fill (#1789). */
+  :global(:root[data-material]) {
+    --titlebar-surface: var(--pane-surface);
+    --titlebar-sheen-opacity: 0;
+    --navbar-surface: transparent;
+    --column-header-surface: transparent;
+    --active-tab-surface: transparent;
+    --active-tab-surface-base: transparent;
+  }
+
+  /* Flat layouts (Default, Compact) under a material (#1789): the window is
+     its opaque self, faded uniformly to the Translucency Opacity coverage.
+     Each surface the window is tiled into paints its opaque stack (its fill
+     over the window base) on a layer at that opacity, and nothing else
+     paints under or over it, so every surface lets the same share of the
+     material through and keeps exactly its opaque colour relationships to
+     its neighbours: the title bar, tab and pane one colour, the sidebar its
+     own. A tint under translucent surfaces could not: a surface hid the
+     material by its own alpha, and its colour drifted toward its fill. The
+     layer sits at z-index -1 in the surface's stacking context, below every
+     sibling's content; the surface's own background steps aside. */
+  :global(:root[data-material]:is([data-layout-base="default"], [data-layout-base="compact"])) {
+    --pane-surface: transparent;
+    --titlebar-surface: transparent;
+    --sidebar-surface: transparent;
+    --statusbar-surface: transparent;
+    --preview-surface: transparent;
+  }
+
+  :global(:root[data-material]:is([data-layout-base="default"], [data-layout-base="compact"]) :is([data-region="status-bar"], [data-region="split-divider"])) {
+    position: relative;
+  }
+
+  :global(:root[data-material]:is([data-layout-base="default"], [data-layout-base="compact"]) :is([data-region="titlebar"], [data-region="sidebar-body"], .pane-frame, [data-region="split-divider"], [data-region="preview-body"], [data-region="status-bar"])::after) {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    border-radius: inherit;
+    background: linear-gradient(var(--material-tile-fill, transparent), var(--material-tile-fill, transparent)), var(--window-base);
+    opacity: var(--material-surface-coverage, 0.8);
+  }
+
+  :global(:root[data-material] [data-region="titlebar"]),
+  :global(:root[data-material] .pane-frame) {
+    --material-tile-fill: var(--pane-fill);
+  }
+  :global(:root[data-material] [data-region="sidebar-body"]) {
+    --material-tile-fill: var(--sidebar-fill);
+  }
+  :global(:root[data-material] [data-region="status-bar"]) {
+    --material-tile-fill: var(--statusbar-fill);
+  }
+  :global(:root[data-material] [data-region="preview-body"]) {
+    --material-tile-fill: var(--preview-fill);
+  }
+
+  /* The user asked for solid surfaces: the layers are opaque. */
+  @media (prefers-reduced-transparency: reduce) {
+    :global(:root[data-material]) {
+      --material-surface-coverage: 1 !important;
+    }
   }
 
   /* Window frame styling for transparent decorationless window */
@@ -622,6 +716,13 @@
         )
       )
     );
+  }
+
+  /* Flat layouts paint the material's share surface by surface (the
+     --material-surface-coverage layers above), so the window body adds
+     nothing under them (#1789). */
+  :global(:root[data-material]:is([data-layout-base="default"], [data-layout-base="compact"])) .explorer {
+    background: var(--layout-app-surface, transparent);
   }
 
   /* The user asked for solid surfaces: no window shows the material behind

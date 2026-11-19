@@ -9,9 +9,10 @@ import { readFileSync } from "node:fs";
 const { version } = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
 
 // The marketing site's embedded demo (`bun run build:demo`) is served under
-// /app/ next to the site pages, from its own output directory.
+// /app/ next to the site pages, from its own output directory
+// (scripts/build-demo.mjs builds into SITE_DEMO_OUT, then swaps it in).
 const siteDemo = process.env.VITE_SITE_DEMO === "1";
-const output = siteDemo ? "build-demo" : "build";
+const output = siteDemo ? process.env.SITE_DEMO_OUT || "build-demo" : "build";
 
 /** @type {import('@sveltejs/kit').Config} */
 const config = {

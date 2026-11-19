@@ -155,6 +155,10 @@ export interface MockControl {
   /** Called when the app hands a file to the system handler (`open_file`,
    *  `open_image_with_siblings`, `open_file_at_line`); the mock still succeeds. */
   openFile?: (path: string, command: string) => void;
+  /** The browser build's stand-in for the native window: called when a
+   *  title-bar window button is pressed (`api/window-controls.ts`). Absent:
+   *  the buttons do nothing, as there is no window to act on. */
+  windowControl?: (action: import("./window-controls").WindowControlAction) => void;
   // Filesystem changes are observed through `mock-fs-changes.ts`, which every
   // mutation path (commands, sessions, undo/redo) publishes to.
 

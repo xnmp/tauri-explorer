@@ -607,13 +607,14 @@ backend for E2E/browser).
 
 ## Site demo (marketing-site embed of the real app)
 
-- Build: `VITE_SITE_DEMO=1` → `svelte.config.js` base `/app`, output `build-demo/`; `src/hooks.client.ts` awaits `state/site-demo-boot.ts` before routes load (constant gate, absent from the release bundle).
+- Build: `scripts/build-demo.mjs` (`bun run build:demo`) → `VITE_SITE_DEMO=1`, `svelte.config.js` base `/app`, output `build-demo/` swapped in whole with earlier builds' chunks kept for open pages; `src/hooks.client.ts` awaits `state/site-demo-boot.ts` before routes load (constant gate, absent from the release bundle). Boot also publishes the demo's window material and makes `state/window-translucency.svelte.ts` follow the Translucency setting, and unregisters the Upscale plugin.
+- Window buttons: `components/TitleBar.svelte` → `api/window-controls.ts` (no native window) → `MockControl.windowControl` → bridge `window-control` event.
 - Fixture → mock: `domain/demo-boot.ts` plans the boot (total; fails closed to built-in fixtures) → `domain/demo-fixture.ts` (+ `demo-fixture-values.ts`, `demo-fixture-git.ts`) → `api/mock-world.ts` (+ `mock-world-media.ts`, `mock-git-fixture.ts`). Mutations publish to `api/mock-fs-changes.ts` (media map + bridge `fs-change`).
 - Terminal: `domain/demo-shell.ts` + `demo-shell-commands.ts` behind `api/mock-terminal.ts`, wired by `state/site-demo-terminal.ts`; `api/terminal.ts` `listenTerminal` picks Tauri events or the mock channel.
-- Host bridge: `domain/demo-protocol.ts`, `state/site-demo-bridge.svelte.ts`, `state/site-demo-catalog.ts`; host side `screenshots/design/website-rehaul/overhaul/bridge/tx-bridge.js`, harness `screenshots/design/website-rehaul/overhaul/real.html`, protocol `screenshots/design/website-rehaul/overhaul/bridge/README.md`; serve with `screenshots/design/website-rehaul/overhaul/bridge/serve.ts` (`bun run demo:serve`).
+- Host bridge: `domain/demo-protocol.ts`, `state/site-demo-bridge.svelte.ts`, `state/site-demo-catalog.ts`; host side `screenshots/design/website-rehaul/overhaul/bridge/tx-bridge.js`, harness `screenshots/design/website-rehaul/overhaul/real.html`, protocol `screenshots/design/website-rehaul/overhaul/bridge/README.md`; serve with `scripts/demo-serve.ts` (`bun run demo:serve`).
 - FLOW: iframe boots → `hello` → host `init` (fixture) → world + shell installed → app mounts → bridge `ready`; requests drive stores/commands; events derive from stores; `open_file` → `open-external`.
 - Release guard: `scripts/site-demo-leaks.mjs`, run by `check:bundle` (`tests/site-demo-leaks.test.ts`).
-- Tests: `tests/domain/demo-boot.test.ts`, `demo-fixture.test.ts`, `demo-fixture-git.test.ts`, `demo-shell.test.ts`, `demo-protocol.test.ts`, `tests/api/mock-site-demo.test.ts`, `tests/api/mock-world-media.test.ts`.
+- Tests: `tests/domain/demo-boot.test.ts`, `demo-fixture.test.ts`, `demo-fixture-git.test.ts`, `demo-shell.test.ts`, `demo-protocol.test.ts`, `tests/api/mock-site-demo.test.ts`, `tests/api/mock-world-media.test.ts`, `tests/state/window-translucency.test.ts`, `tests/build-demo.test.ts`.
 
 ## Archives, external apps, wallpaper, system
 

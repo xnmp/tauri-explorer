@@ -37,6 +37,8 @@ const built = page ? builtWindowMaterial(page.__WINDOW_MATERIAL__, page.location
 let settled = $state<{ material: TranslucencyMaterial | null } | null>(
   built === undefined ? null : { material: built },
 );
+/** Set by {@link followTranslucencySetting}: the material is never fixed. */
+let following = false;
 
 /** The material behind this window, or null for an opaque window. */
 export function windowMaterial(): TranslucencyMaterial | null {
@@ -47,7 +49,19 @@ export function windowMaterial(): TranslucencyMaterial | null {
  *  the settings the native window was created with. Changes nothing for a
  *  window whose creator said, nor on later calls. */
 export function settleWindowMaterial(): void {
+  if (following) return;
   settled ??= { material: activeMaterial(availableMaterial, settingsStore.translucency) };
+}
+
+/**
+ * Follow the Translucency setting for this page's whole life, for a page
+ * whose "window" is not a native one and can change its backdrop at any time
+ * (the marketing site's embedded demo, where the backdrop is the host page
+ * behind a transparent frame). Call before the window settles.
+ */
+export function followTranslucencySetting(): void {
+  following = true;
+  settled = null;
 }
 
 /** The material a window created now gets (none while the setting is off). */

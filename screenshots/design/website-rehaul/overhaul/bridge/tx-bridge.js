@@ -117,6 +117,8 @@
       playVideo: function (path) { return call("playVideo", path); },
       readFile: function (path) { return call("readFile", path); },
       setCustomTheme: function (theme) { return call("setCustomTheme", theme); },
+      /** Give the app keyboard focus again (e.g. after re-showing a closed or minimized window). */
+      focusApp: function () { return call("focusApp"); },
       on: function (event, fn) {
         (listeners[event] = listeners[event] || []).push(fn);
         return function () { listeners[event] = (listeners[event] || []).filter(function (f) { return f !== fn; }); };
@@ -150,6 +152,11 @@
         if (!waiter) return;
         if (data.ok) waiter.resolve(data.result); else waiter.reject(new Error(data.error));
       } else if (data.type === "event") {
+        if (data.event === "appearance" && data.data) {
+          // A browser paints an opaque backdrop behind a frame whose color scheme differs from
+          // its element's; keep them equal so a translucent app shows the page behind it.
+          iframe.style.colorScheme = data.data.colorScheme || "";
+        }
         if (data.event === "ready") {
           stage.catalog = data.data.catalog;
           stage.state = data.data.state;

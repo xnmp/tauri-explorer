@@ -11,7 +11,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `arch_install.sh`, `PKGBUILD` — Arch source installation: early sudo authentication, checkout installation lock, isolated makepkg staging, locked dependency preparation, verified local frontend reuse and unchanged native release compilation; after installing, per-user copies that shadow `/usr` are moved aside so the package is the only install. `--rebuild` forces frontend regeneration; ordinary makepkg builds remain fresh. `--build-only` / `--install-only` split the build (recorded with its source identity in `.arch-build/package-source`) from the sudo install.
 - `scripts/check-file-size.mjs`, `scripts/file-size-allowlist.json` — frontend file-size ratchet run by `bun run lint:arch` (#1372): `src/` `.ts`/`.js`/`.mjs`/`.svelte` files stay at or below 800 lines; pre-existing larger files are allowlisted at their line count, may shrink but never grow, and an entry fails once its file is at or below the limit or gone.
 - `scripts/build-arch-frontend.mjs` — content- and environment-verified local frontend build receipt; hashes source/config/dependencies/tool versions and output, locks builders through completion, and never publishes interrupted/changed-input builds.
-- `screenshots/design/website-rehaul/overhaul/bridge/serve.ts` — `bun run demo:serve`: serves the website-rehaul mocks at `/` and `build-demo/` (`bun run build:demo`) at `/app/` on port 1455.
+- `scripts/demo-serve.ts` — `bun run demo:serve`: serves the website-rehaul mocks at `/` and `build-demo/` (`bun run build:demo`) at `/app/` on port 1455.
+- `scripts/build-demo.mjs` — `bun run build:demo`: builds the site demo into `build-demo.next/` (`SITE_DEMO_OUT`, read by `svelte.config.js`), carries the previous build's `_app/immutable/` files over for 7 days so pages already open keep loading their lazy chunks, then swaps it into `build-demo/` (#1789). Contracts in `tests/build-demo.test.ts`.
 - `tests/arch-frontend-build.test.ts`, `tests/arch-install-script.test.ts` — frontend reuse/invalidation/failure/concurrency outcomes and the actual PKGBUILD preparation/native-build contract without package installation.
 - `windows_install.ps1` — Windows PowerShell source installer: validates Git/Rust/Bun and the VC toolchain, uses an existing checkout or temporary HTTPS clone, builds the MSI, invokes elevated `msiexec`, reports reboot-required success, and cleans temporary clones. Governed by `docs/adr/0003-windows-installer-trust-boundary.md`.
 - `tests/windows-install-script.test.ts` — README and Windows-only invocation seam for `windows_install.ps1`; mocks prerequisite, source-build, clone, and MSI outcomes (including reboot-required `3010`) without installing software.
@@ -343,7 +344,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `window-title.svelte.ts` — resolves launch-home context and keeps the native OS title synchronized with the active pane directory.
 - `window-close.ts` — owns synchronous close admission, native close requests, terminal destruction and failure recovery.
 - `window-chrome.ts` — owns native maximize-state observation, resize query coalescing, and late listener/read retirement.
-- `window-translucency.svelte.ts` — the platform's window material (published by `src-tauri/src/translucency.rs`) and this window's own, fixed once its settings load; drives `data-native-backdrop`/`data-material` and the Settings rows (#1757).
+- `window-translucency.svelte.ts` — the platform's window material (published by `src-tauri/src/translucency.rs`) and this window's own, fixed once its settings load (`followTranslucencySetting` keeps the site demo's frame following the setting instead); drives `data-native-backdrop`/`data-material` and the Settings rows (#1757).
 - `workspaces.svelte.ts` — save/restore named workspaces.
 - `bookmarks.svelte.ts` — sidebar bookmarks store.
 - `config-document.ts` — `createConfigDocument`: shared init/migrate/reload/write-through lifecycle for bookmarks.json and folder-views.json (#1568); shape gates and the migration value are per-file options.
@@ -378,7 +379,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `config-watch.ts` — applies `config-file-changed` to the settings/theme stores; `handleConfigFileChanged` is the routing seam (#599).
 - `terminal.svelte.ts` — embedded terminal panel state (#139).
 - `site-demo-boot.ts` — site-demo build only: separate in-memory local/session storage, `hello`/`init` handshake with a same-origin parent (timeout → built-in fixtures), seeds the `domain/demo-boot.ts` plan, installs the fixture world (failing closed to the built-in fixtures) and demo shell, starts the bridge with the boot report.
-- `site-demo-bridge.svelte.ts` — site-demo host bridge: same-origin postMessage requests (settings, keybindings, commands, navigation, panels, custom theme, readFile) and store-derived events (`ready`, `settings`, `panels`, `navigate`, `select`, `fs-change`, `overlay`, `open-external`). Protocol doc: `screenshots/design/website-rehaul/overhaul/bridge/README.md`.
+- `site-demo-bridge.svelte.ts` — site-demo host bridge: same-origin postMessage requests (settings, keybindings, commands, navigation, panels, custom theme, readFile, focusApp) and store-derived events (`ready`, `appearance`, `settings`, `panels`, `navigate`, `select`, `fs-change`, `overlay`, `open-external`, `window-control`). Protocol doc: `screenshots/design/website-rehaul/overhaul/bridge/README.md`.
 - `site-demo-catalog.ts` — site-demo catalog (themes with probed colours, layouts, icon themes, commands with keybindings) and the panel ↔ setting/command map.
 - `site-demo-terminal.ts` — site-demo shell behind the mock PTY: `ShellFs` over the mock filesystem, mutations through mock commands, panes refreshed via `directoryChanged`.
 - `jobs.svelte.ts` — background jobs store (Ctrl+J); `retryJob` runs a failed job's `retry` once, then drops the entry or keeps it with the new error; a retrying entry is active (`isJobActive`: not dismissable or cleared); `dropRetries(owner)` for retired plugins.
@@ -465,6 +466,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `open.ts` — open files in the default/chosen app, image viewer (with siblings), or a terminal.
 - `trash.ts` — `list_trash` / `restore_trash_items` IPC for the in-app Trash; restore is a native mutation reply keyed by opaque entry IDs.
 - `system.ts` — OS/window-shell plumbing: picker response, native window theme, ffmpeg path. Not filesystem.
+- `window-controls.ts` — title-bar minimize/maximize/close for a page with no native window (browser build): asks the mock's window stand-in (`MockControl.windowControl`); the site demo forwards it to its host.
 
 ## src/lib/composables/ — reusable behavior modules (`.svelte.ts` = runes-aware).
 

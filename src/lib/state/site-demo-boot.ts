@@ -24,6 +24,18 @@ import { appMessage, parseHostMessage, type DemoInit } from "$lib/domain/demo-pr
 /** How long an embedding page has to answer `hello` before the built-in fixtures serve. */
 const HANDSHAKE_TIMEOUT_MS = 5000;
 
+/**
+ * The window material this frame offers, so the real Translucency setting
+ * appears and works. With it on, the app's own material styles leave the
+ * frame transparent and the host page shows through; the host supplies the
+ * blur (README). Acrylic is the Windows material, the closest to a blurred
+ * wallpaper behind the window.
+ */
+const DEMO_MATERIAL = "acrylic";
+
+/** Built-in plugins the site never shows: Upscale needs the visitor's own fal.ai account. */
+const HIDDEN_PLUGINS = ["upscale"];
+
 class MemoryStorage implements Storage {
   #items = new Map<string, string>();
   get length() { return this.#items.size; }
@@ -101,6 +113,8 @@ function hostSlug(title: string): string {
 export async function bootSiteDemo(): Promise<void> {
   // Release builds strip this module; the marker lets `check:bundle` prove it.
   document.documentElement.dataset.siteDemo = "";
+  // Read once, when `state/window-translucency` first loads.
+  (window as Window & { __TRANSLUCENCY_MATERIAL__?: unknown }).__TRANSLUCENCY_MATERIAL__ = DEMO_MATERIAL;
   const storage = installMemoryStorage();
   const host = sameOriginParent();
   const origin = location.origin;
@@ -112,10 +126,17 @@ export async function bootSiteDemo(): Promise<void> {
   seed(storage, plan);
   // Importing the mock backend can load stores that read the seed (settings),
   // so a failed install keeps those and drops only what pointed into the world.
-  const [{ installMockWorld }, { getMockHomeDirectory }] = await Promise.all([
+  const [{ installMockWorld }, { getMockHomeDirectory }, { followTranslucencySetting }, { pluginRegistry }] = await Promise.all([
     import("$lib/api/mock-world"),
     import("$lib/api/mock-system"),
+    import("./window-translucency.svelte"),
+    import("$lib/plugins/registry.svelte"),
   ]);
+  // The frame's backdrop is the host page, which can change at any time,
+  // unlike a native window's material, fixed when it is created.
+  followTranslucencySetting();
+  // Before the app activates its plugins: never registered, never shown.
+  await pluginRegistry.removeInstalled(HIDDEN_PLUGINS);
   let installed: ReturnType<typeof installMockWorld> | null = null;
   try {
     if (plan.world) installed = installMockWorld(plan.world);

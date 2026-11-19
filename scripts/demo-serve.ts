@@ -5,16 +5,16 @@
  *   /...      → screenshots/design/website-rehaul/overhaul/, then its parent
  *               (so fixtures' `../peel-mock/assets/` URLs resolve)
  *
- * Kept beside the bridge (not in scripts/) because it is a site tool, not a CI input.
+ * Lives in scripts/ so package.json never names the screenshots tree (tests/ci-trigger-policy.test.ts).
  * PORT overrides the default 1455 (1420 belongs to the dev server).
  */
 import { existsSync, statSync } from "node:fs";
 import { join, normalize, resolve, sep } from "node:path";
 
-// This file lives in <repo>/screenshots/design/website-rehaul/overhaul/bridge/.
-const siteDir = resolve(import.meta.dir, "..");
+const repoDir = resolve(import.meta.dir, "..");
+const siteDir = resolve(repoDir, "screenshots/design/website-rehaul/overhaul");
 const fallbackDir = resolve(siteDir, "..");
-const appDir = resolve(siteDir, "../../../../build-demo");
+const appDir = resolve(repoDir, "build-demo");
 const port = Number(process.env.PORT ?? 1455);
 
 /** A regular file inside `root` for the URL path, or null (never escapes `root`). */

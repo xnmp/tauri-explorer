@@ -17,6 +17,7 @@ import { getMockControl } from "$lib/api/mock-control";
 import { mockFileContent, mockFiles } from "$lib/api/mock-fixtures";
 import { mockTrashCount, mockWrittenFiles } from "$lib/api/mock-files";
 import { onMockFsChange } from "$lib/api/mock-fs-changes";
+import { getMockFixtureRepos } from "$lib/api/mock-git-fixture";
 import type { MockWorldMedia } from "$lib/api/mock-world";
 import { writeThemeFile } from "$lib/api/config";
 import { executeCommand, getAllCommands } from "./commands.svelte";
@@ -26,6 +27,7 @@ import { settingsStore, type Settings } from "./settings.svelte";
 import { terminalPanelStore } from "./terminal.svelte";
 import { themeStore } from "./theme.svelte";
 import { windowTabsManager } from "./window-tabs.svelte";
+import { windowMaterial } from "./window-translucency.svelte";
 import { buildDemoCatalog, DEMO_PANELS, demoPanelState, type DemoPanelId } from "./site-demo-catalog";
 
 const VIEW_MODES = ["details", "list", "tiles"] as const;
@@ -213,7 +215,43 @@ function snapshot(media: MockWorldMedia | null) {
     overlay: false,
     media: media !== null,
     trashCount: mockTrashCount(),
+    // Where the git graph has something to show (it needs a repository).
+    repos: getMockFixtureRepos().map((repo) => ({ path: repo.root, branch: repo.branch })),
+    appearance: appearance(),
   });
+}
+
+/**
+ * Give this frame keyboard focus (a host calls it after showing the demo
+ * again). The element that held focus when the frame lost it gets it back;
+ * when there is none, the active pane's selected row or file list does.
+ */
+function focusApp(): boolean {
+  window.focus();
+  const current = document.activeElement;
+  if (!current || current === document.body) {
+    const paneId = CSS.escape(windowTabsManager.activePaneId ?? "");
+    const pane = document.querySelector<HTMLElement>(`.pane-tree:not(.retained) .explorer-pane[data-pane-id="${paneId}"]`);
+    const target = [".file-list .entry-item.selected", ".file-list .entry-item[tabindex='0']", ".file-list .virtual-viewport"]
+      .map((selector) => pane?.querySelector<HTMLElement>(selector)).find(Boolean) ?? pane;
+    target?.focus({ preventScroll: true });
+  }
+  return document.hasFocus();
+}
+
+/**
+ * What the frame element needs from its host: the material behind the app
+ * (Translucency) and the document's color scheme. A browser paints an opaque
+ * backdrop behind a frame whose color scheme differs from its element's, so
+ * a transparent app shows the host page only while the two agree; TXBridge
+ * sets the element's `color-scheme` from this.
+ */
+function appearance() {
+  void themeStore.appliedThemeRevision; // re-read after every applied theme
+  return {
+    colorScheme: getComputedStyle(document.documentElement).colorScheme || "normal",
+    material: windowMaterial(),
+  };
 }
 
 function userKeybindings(): Record<string, string | null> {
@@ -259,6 +297,7 @@ export function startSiteDemoBridge({ host, origin, media, boot }: SiteDemoBridg
     },
     readFile: (path) => (typeof path === "string" ? openPayload(path, media) : null),
     setCustomTheme,
+    focusApp,
   };
 
   window.addEventListener("message", async (event) => {
@@ -282,6 +321,8 @@ export function startSiteDemoBridge({ host, origin, media, boot }: SiteDemoBridg
     const payload = openPayload(path, media);
     if (payload) emit("open-external", payload);
   };
+  // The title bar's window buttons: the host decides what a window does.
+  control.windowControl = (action) => emit("window-control", { action });
   // Every executed change, including undo/redo, publishes to this feed.
   onMockFsChange((change) => emit("fs-change", { ...change, trashCount: mockTrashCount() }));
 
@@ -308,6 +349,15 @@ export function startSiteDemoBridge({ host, origin, media, boot }: SiteDemoBridg
   };
 
   $effect.root(() => {
+    // From boot, not only after ready: a transparent frame needs its color
+    // scheme matched before its first translucent paint.
+    let lastAppearance = "";
+    $effect(() => {
+      const value = appearance();
+      const key = JSON.stringify(value);
+      if (key !== lastAppearance) emit("appearance", value);
+      lastAppearance = key;
+    });
     let announced = false;
     $effect(() => {
       if (!ready || announced) return;

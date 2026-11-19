@@ -6,7 +6,7 @@ browser mock backend. It is fed a `TX_FS` fixture by the page that embeds it. Ev
 themes, layouts, keybindings) is the shipping code.
 
 ```sh
-bun run build:demo     # → build-demo/ (gitignored), base path /app/
+bun run build:demo     # → build-demo/ (gitignored), base path /app/; safe to run under open pages (below)
 bun run demo:serve     # http://127.0.0.1:1455/real.html?fs=station  (PORT=… overrides)
 ```
 
@@ -16,6 +16,14 @@ same-origin with the host page** (both sides check `event.origin`).
 
 `real.html?fs=station|expedition|archive|default` is the harness: a full-viewport demo, a strip of
 buttons for every request, and a live event log. An unknown `fs` boots the built-in fixtures.
+
+A rebuild does not break a page that is already open. Each build has new content-hashed chunk
+names, and an open page loads its lazy chunks (List and Tiles views, the git graph, dialogs) by the
+names of the build it booted from; replacing `build-demo/` in place used to make such a page show
+"Unable to load List view" or "Could not load Git history". `build:demo` (`scripts/build-demo.mjs`)
+builds into `build-demo.next/`, carries the previous build's `_app/immutable/` files over for 7 days,
+and then swaps the directory in. **A deployment needs the same**: keep the previous release's
+`_app/immutable/` files servable for as long as a visitor may keep the page open.
 
 ## Mounting
 
@@ -83,7 +91,7 @@ target. Messages from any other window, origin or version are ignored.
 
 | Method | Params → result |
 |---|---|
-| `getState()` | → `{ path, panes: [{index, paneId, path, viewMode, selection, active}], settings, theme, panels, keybindings, media, trashCount }` (`trashCount`: items in the Recycle Bin) |
+| `getState()` | → `{ path, panes: [{index, paneId, path, viewMode, selection, active}], settings, theme, panels, keybindings, media, trashCount, repos, appearance }` (`trashCount`: items in the Recycle Bin; `repos`: the fixture's git repositories, `[{ path, branch }]`, where the git graph has something to show; `appearance`: as the event) |
 | `getCatalog()` | → see Catalog |
 | `setSettings(partial)` | any keys of the app's `Settings` (unknown keys and bad values are dropped by the app's own normalizer) → the full settings. `theme` must be a catalog theme id. `millerLayers` and `viewMode` are each new pane's default; the bridge also applies them to the open panes. |
 | `setPanel(id, visible)` | → `true` when the panel ends up in that state |
@@ -97,6 +105,7 @@ target. Messages from any other window, origin or version are ignored.
 | `readFile(path)` | → the `open-external` payload for that file, or `null` |
 | `playVideo(path)` | selects a fixture video with the preview pane shown (the preview has the play control; it does not autoplay) → `false` when the file is not a video |
 | `setCustomTheme({ name, dark, v })` | `v` = `[paper, panel, ink, ink2, accent, folder]` as hex → the new theme id (`site-<slug>`), applied and added to the catalog; `null` when invalid |
+| `focusApp()` | gives the frame keyboard focus again (after the host re-shows a closed or minimized window): the element that had focus keeps it, else the active pane's selected row or file list → `true` when the frame has focus |
 
 ### Events (`stage.on(event, fn)`, or `"*"` for `(event, data)`)
 
@@ -104,7 +113,8 @@ All events after `ready` fire only on change.
 
 | Event | Data |
 |---|---|
-| `ready` | `{ catalog, state }` (once: first listing done, commands registered, themes discovered) |
+| `ready` | `{ catalog, state, boot }` (once: first listing done, commands registered, themes discovered) |
+| `appearance` | `{ colorScheme, material }`: the app document's computed `color-scheme` and the material behind it (`"acrylic"` while Translucency is on, else `null`). Unlike the others it is sent from boot, before `ready`. TXBridge copies `colorScheme` onto the iframe element itself; see Translucency |
 | `settings` | the full settings object |
 | `keybindings` | `{ commandId: keys \| null }` for every user override |
 | `panels` | `{ sidebar, address, status, preview, windowControls, terminal, split, miller, scm, git }` |
@@ -114,6 +124,7 @@ All events after `ready` fire only on change.
 | `fs-change` | `{ op, path, from?, trashCount }`, `op` ∈ `mkdir create write rename move copy symlink trash delete restore purge compress extract` (`purge`: emptied from the Recycle Bin; `from` on rename/move/copy). Every change is reported once, whether it came from the UI, the terminal, or undo/redo |
 | `overlay` | `{ open, fullscreen, modal }`: a dialog/palette/Quick Open/Search, or the fullscreen preview |
 | `open-external` | `{ path, name, kind, text?, src?, poster?, size, date, rect }`, see below |
+| `window-control` | `{ action: "minimize" \| "maximize" \| "close" }`: one of the title bar's window buttons (`showWindowControls`) was pressed. The app does nothing else (the tab, panes and state stay as they are); the host decides what the window does, and can call `focusApp()` when it shows it again |
 
 ### `open-external`
 
@@ -129,6 +140,34 @@ offset to animate from it), or `null` when no row for the file is on screen.
 The real app has no in-app viewer on double-click: every kind goes to the system handler. Only
 double-clicking the **preview pane** opens the app's own fullscreen preview (reported as
 `overlay {fullscreen: true}`).
+
+## Translucency (a wallpaper behind the app)
+
+The app's own Translucency setting works in the demo. The frame reports a window material
+(`"acrylic"`, the Windows one), so the Settings rows **Translucency** and **Translucency Opacity**
+and the command `setting.toggle.translucency` ("Toggle Translucency") appear, and:
+
+```js
+stage.setSettings({ translucency: true });          // boolean, default false
+stage.setSettings({ translucencyOpacity: 40 });      // 20–100 (%), default 55: how much of the backdrop the panels hide
+```
+
+With it on, the app's material styles apply exactly as on a native translucent window (`[data-material]`,
+`[data-native-backdrop]`): the document and body are transparent and every surface is tinted at the
+Opacity's coverage. Floating Islands gives the look of `screenshots/feat/tab-owns-window/islands-dark-material.png`;
+other layouts tint the whole window. Unlike a native window the setting can be switched at any time.
+
+What the host does:
+
+- Put the wallpaper **behind** the iframe and leave the iframe and its wrapper without a background.
+- **Blur is the host's job**: give the iframe's wrapper `backdrop-filter: blur(30px) saturate(1.5)`
+  (or similar). The native material is a blurred wallpaper; a `backdrop-filter` inside the frame
+  cannot see the host page, so the app cannot blur it. Without the filter the wallpaper shows through sharp.
+- Keep the iframe element's `color-scheme` equal to the app's. A browser paints an opaque canvas
+  behind a frame whose color scheme differs from its element's (a dark theme on a light page shows a
+  black window). **TXBridge does this for you** from the `appearance` event; a host that talks to the
+  frame without TXBridge must set `iframe.style.colorScheme = appearance.colorScheme` itself.
+- `prefers-reduced-transparency: reduce` makes the surfaces solid, as in the desktop app.
 
 ## Catalog
 
@@ -166,6 +205,12 @@ setting in `settings` and a command in the catalog.
 
 Real-app behaviour a host may notice:
 
+- **The git graph needs a repository.** `git.showGraph` (and `setPanel("git", true)`) opens the
+  graph of the repository containing the active pane's folder. Outside one it behaves as the desktop
+  app does: the command runs, shows the toast "Not inside a git repository" and leaves the pane as it
+  was (`run` → `true`, `setPanel` → `false`). `getState().repos` lists the fixture's repositories, so
+  `navigate(repos[0].path)` first. The demo has no Upscale plugin (it needs a fal.ai account).
+
 - **Search never looks inside hidden entries.** Quick Open and Search in Files skip every
   dot-named file and folder below the search root, whatever `showHidden` says (the native walkers
   do the same: `search.rs` uses jwalk's `skip_hidden`, `content_search.rs` uses `ignore`'s
@@ -180,9 +225,11 @@ Real-app behaviour a host may notice:
 
 The terminal is the real panel over an in-memory shell: `help pwd whoami echo clear history exit cd
 ls(-a -A -l) cat(-n) head tail tree(-a -d) find(-name -iname -type) grep(-r -i -n -l -c) mkdir(-p)
-touch mv cp(-r) rm(-r -f, to the Recycle Bin) git log [--oneline] [-n N] / status / branch`, with
+touch mv cp(-r) rm(-r -f, to the Recycle Bin) git log [--oneline] [--all] [-n N] / status / branch`, with
 `;` `&&` `||` `>` `>>`, quotes, globs, history, Tab completion and line editing. No pipes.
 Changes go through the same mock filesystem, so panes refresh and `fs-change` fires.
+`git log` lists what git would: the history of HEAD (a merged branch's commits included, a branch
+never merged only with `--all`); `git branch` lists every branch in the fixture's `refs`.
 
 Unlike the old engine, `cd` moves the pane (the app's real *Explorer follows terminal* setting,
 `explorerFollowsTerminal`), and navigating the pane `cd`s the shell (`terminalFollowsExplorer`).

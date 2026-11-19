@@ -121,6 +121,11 @@ Ctrl+C/L/U/A/E. The pane drives the terminal's cwd; `cd` never moves the pane, `
   newest first: `{ hash, msg ("subject\n\nbody"), author, date, parents: [hash…], refs?: [...],
   files: [{ path, status: "A"|"M"|"D"|"R", diff?: unified-diff text }] }`. Merges have 2 parents;
   files without `diff` list without one. The repo folder gets a git badge; the graph opens from it.
+  Branches: each `refs` entry decorates its commit (`"HEAD -> main"`, `"main"`, `"origin/main"`,
+  `"tag: v1"`); a plain name is a local branch, so a side branch is a ref on its tip. A merged branch's
+  tip is reachable from `branch` through a 2-parent commit; an open one is a tip nothing else reaches.
+  List commits in git log's date order: newest first, every child before its parents (the real app's
+  graph lays lanes out in the order given). The app demo (`bridge/`) reads the same format.
 
 ## Tokens (override on `themeRoot` or `.tx-app`)
 `--tx-paper --tx-app --tx-app-side --tx-app-line --tx-app-sel --tx-ink --tx-ink-2 --tx-ink-3

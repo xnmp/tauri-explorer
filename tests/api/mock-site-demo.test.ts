@@ -122,6 +122,14 @@ describe("fixture world in the mock backend", () => {
     expect(await mockInvoke("get_git_status", { path: "/home/ines/repo" })).toMatchObject({ is_git_repo: true, statuses: { "a.txt": expect.any(String) } });
   });
 
+  it("has no repository outside the fixture's, so the graph command reports none there", async () => {
+    install();
+    // ExplorerPane's "Could not load Git history" is only its failed lazy
+    // import; outside a repository `git.showGraph` toasts instead, as natively.
+    expect(await mockInvoke("git_repo_root", { path: "/home/ines" })).toBeNull();
+    expect(await mockInvoke("git_repo_root", { path: "/home/ines/repo/sub" })).toBe("/home/ines/repo");
+  });
+
   it("uninstalling restores the built-in fixtures", async () => {
     install();
     installed!.uninstall();

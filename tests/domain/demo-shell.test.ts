@@ -193,6 +193,31 @@ describe("shell commands", () => {
     expect((await run("git log", fs, "/home/ines")).err).toMatch(/not a git repository/);
   });
 
+  it("git log follows HEAD: a merged branch is in it, an unmerged one only with --all; git branch lists both", async () => {
+    const branched = convertDemoRepo("/r", {
+      branch: "main",
+      commits: [
+        { hash: "ddddddd", msg: "Merge branch 'side'", author: "Ines", parents: ["bbbbbbb", "ccccccc"], refs: ["main"] },
+        { hash: "eeeeeee", msg: "Open idea", author: "Ines", parents: ["bbbbbbb"], refs: ["idea"] },
+        { hash: "ccccccc", msg: "Side work", author: "Ines", parents: ["aaaaaaa"], refs: ["side"] },
+        { hash: "bbbbbbb", msg: "Main work", author: "Ines", parents: ["aaaaaaa"] },
+        { hash: "aaaaaaa", msg: "First", author: "Ines", parents: [] },
+      ],
+    }, NOW, () => {})!;
+    const { fs } = tree();
+    const git = async (line: string) => {
+      const io: CommandIo = { cwd: "/r", previousCwd: "/r", out: "", err: "", status: 0, clear: false };
+      await runCommand(parseShellLine(line).segments[0].words.map((w) => w.text), io, { ...env(fs), repoFor: () => branched }, NOW);
+      return strip(io.out);
+    };
+    expect(await git("git log --oneline")).toBe(
+      "ddddddd (HEAD -> main) Merge branch 'side'\nccccccc (side) Side work\nbbbbbbb Main work\naaaaaaa First\n");
+    expect(await git("git log --oneline --all")).toContain("eeeeeee (idea) Open idea\n");
+    expect(await git("git log -n 2 --oneline")).toBe("ddddddd (HEAD -> main) Merge branch 'side'\nccccccc (side) Side work\n");
+    expect(await git("git log")).toMatch(/^commit ddddddd[0-9a-f]{33} \(HEAD -> main\)\nMerge: bbbbbbb ccccccc\n/);
+    expect(await git("git branch")).toBe("  idea\n* main\n  side\n");
+  });
+
   it("reports unknown commands like a shell", async () => {
     const { fs } = tree();
     expect(await run("vim notes.md", fs)).toMatchObject({ status: 127, err: expect.stringMatching(/^vim: command not found/) });

@@ -267,6 +267,17 @@ function ancestorsOf(repo: DemoRepo, tip: string): Set<string> {
   return seen;
 }
 
+/**
+ * What `git log` lists: the commits reachable from HEAD, newest first, so a
+ * side branch that was never merged stays out of it (`all`: every commit,
+ * as `git log --all`).
+ */
+export function demoLogHistory(repo: DemoRepo, all = false): readonly DemoCommit[] {
+  if (all || !repo.head) return repo.commits;
+  const reachable = ancestorsOf(repo, repo.head);
+  return repo.commits.filter((c) => reachable.has(c.oid));
+}
+
 /** Files changed between two commits: the union of the commits on the way. */
 export function compareDemoCommits(repo: DemoRepo, baseOid: string, targetOid: string): DemoCommitFile[] {
   const byOid = new Map(repo.commits.map((c) => [c.oid, c]));

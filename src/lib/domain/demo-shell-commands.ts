@@ -4,7 +4,7 @@
  * changes it only through that port's mutations, which the demo routes
  * through the mock backend so the panes refresh. Pure and framework-free.
  */
-import type { DemoRepo } from "./demo-fixture-git";
+import { demoLogHistory, type DemoRepo } from "./demo-fixture-git";
 
 export interface ShellEntry {
   readonly name: string;
@@ -442,7 +442,8 @@ function git(argv: readonly string[], io: CommandIo, env: ShellEnv, now: number)
   if (sub === "log") {
     const { flags, values } = parseArgs(rest, ["-n"]);
     const limit = Number.parseInt(values.get("-n") ?? "", 10);
-    const commits = repo.commits.slice(0, Number.isFinite(limit) && limit > 0 ? limit : repo.commits.length);
+    const history = demoLogHistory(repo, flags.has("--all"));
+    const commits = history.slice(0, Number.isFinite(limit) && limit > 0 ? limit : history.length);
     for (const c of commits) {
       if (flags.has("--oneline")) { io.out += `${YELLOW}${c.short_oid}${RESET}${decorate(c.oid)} ${c.summary}\n`; continue; }
       io.out += `${YELLOW}commit ${c.oid}${RESET}${decorate(c.oid)}\n`;
@@ -474,7 +475,7 @@ function git(argv: readonly string[], io: CommandIo, env: ShellEnv, now: number)
     for (const name of names) io.out += name === repo.branch ? `* ${GREEN}${name}${RESET}\n` : `  ${name}\n`;
     return;
   }
-  io.err += sub ? `git: '${sub}' is not available in this demo (try log, status, branch)\n` : "usage: git (log [--oneline] [-n N] | status | branch)\n";
+  io.err += sub ? `git: '${sub}' is not available in this demo (try log, status, branch)\n` : "usage: git (log [--oneline] [--all] [-n N] | status | branch)\n";
   io.status = 1;
 }
 
@@ -488,7 +489,7 @@ const HELP = `Built-in commands (an in-memory demo shell over the fixture filesy
   find [path] [-name|-iname pattern] [-type f|d]
   grep [-r] [-i] [-n] [-l] [-c] pattern [path…]
   mkdir [-p] dir…   touch file…   mv src… dest   cp [-r] src… dest   rm [-r] [-f] path… (to the Recycle Bin)
-  echo text [> file | >> file]  history   clear   git log [--oneline] [-n N] | status | branch
+  echo text [> file | >> file]  history   clear   git log [--oneline] [--all] [-n N] | status | branch
 Separate commands with ; or &&. Tab completes, Up/Down recall history.
 `;
 

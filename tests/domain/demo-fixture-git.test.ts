@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compareDemoCommits, convertDemoRepo, demoMergeBase, expandOid, queryDemoLog } from "$lib/domain/demo-fixture-git";
+import { compareDemoCommits, convertDemoRepo, demoLogHistory, demoMergeBase, expandOid, queryDemoLog } from "$lib/domain/demo-fixture-git";
 
 const NOW = Date.UTC(2026, 9, 18);
 const raw = {
@@ -102,5 +102,20 @@ describe("comparison and merge base", () => {
     const [merge, , , , initial] = r.commits;
     const paths = compareDemoCommits(r, initial.oid, merge.oid).map((f) => f.path).sort();
     expect(paths).toEqual(["counts.csv", "plot.R"]);
+  });
+
+  it("keeps an unmerged branch out of HEAD's history but in the graph's", () => {
+    const open = convertDemoRepo("/r", { ...raw, commits: [
+      { hash: "f6f6f6f", msg: "Unmerged idea", author: "Ines", date: "2026-10-06T00:00:00Z", parents: ["d4d4d4d"], refs: ["idea"] },
+      ...raw.commits,
+    ] }, NOW, () => {})!;
+    const summaries = (commits: readonly { summary: string }[]) => commits.map((c) => c.summary);
+    expect(summaries(demoLogHistory(open))).toEqual(["Merge branch 'explore'", "Count 4 Oct", "Plot north pool", "Second", "Initial"]);
+    expect(summaries(demoLogHistory(open, true))[0]).toBe("Unmerged idea");
+    // The graph's log (no branch filter) shows every branch, and the open
+    // branch is its own ref beside the merged one.
+    expect(queryDemoLog(open, {}).commits).toHaveLength(6);
+    expect(Object.values(open.refs).flat().filter((r) => r.kind === "LocalBranch").map((r) => r.name).sort())
+      .toEqual(["explore", "idea", "main"]);
   });
 });

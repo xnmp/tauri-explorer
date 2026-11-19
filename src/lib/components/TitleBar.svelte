@@ -18,6 +18,7 @@
   import { useTabSeam } from "$lib/composables/use-tab-seam.svelte";
   import { attachTabStripStart } from "$lib/composables/tab-strip-start";
   import WindowTabBar from "./WindowTabBar.svelte";
+  import { requestBrowserWindowControl } from "$lib/api/window-controls";
 
   const windowControls = $derived(
     titlebar.effectiveWindowControls(settingsStore.showWindowControls, isMac),
@@ -89,16 +90,21 @@
     await appWindow?.startDragging();
   }
 
+  // Without a native window (the browser build) the buttons ask the mock's
+  // window stand-in instead (api/window-controls.ts).
   async function handleMinimize() {
-    await appWindow?.minimize();
+    if (appWindow) await appWindow.minimize();
+    else await requestBrowserWindowControl("minimize");
   }
 
   async function handleMaximize() {
-    await appWindow?.toggleMaximize();
+    if (appWindow) await appWindow.toggleMaximize();
+    else await requestBrowserWindowControl("maximize");
   }
 
   async function handleClose() {
-    await windowTabsManager.requestWindowClose();
+    if (appWindow) await windowTabsManager.requestWindowClose();
+    else await requestBrowserWindowControl("close");
   }
 </script>
 

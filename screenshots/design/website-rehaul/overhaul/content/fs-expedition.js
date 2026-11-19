@@ -1375,6 +1375,22 @@ if __name__ == "__main__":
 probe,flag,since,by
 T7_C19_10m,ITEM_A,D22,TH
 `),
+        T("drainage.py", at(27, "22:05"), `
+# Where does the meltwater go? Downhill. Usually.
+
+# Dye released D25; where it came out.
+DYE = {"C17": "west", "C18": "west", "C19": "east"}
+
+def route(cairn):
+    """The way meltwater leaves a cairn, by the DEM's steepest descent."""
+    return "west"   # the whole plateau tilts to the Lund. Everyone knows that.
+
+if __name__ == "__main__":
+    for cairn, seen in DYE.items():
+        model = route(cairn)
+        flag = "" if model == seen else "   <- model disagrees with dye (model checked twice)"
+        print(f"{cairn}: model {model:5s} dye {seen}{flag}")
+`),
         T("notes.md", at(36, "21:20"), `
 # Notes on T7 (in order, honestly)
 
@@ -2052,7 +2068,9 @@ paper, survey                    2 reams (of which the artist used one)
     JS(".halloran-1962.theme.json", at(41, "23:35"), { name: "1962, sepia", dark: false, v: ["#efe4cc", "#e3d3ad", "#2e2112", "#5f4a2c", "#8a3b12", "#a8773b"] })
   ]);
 
-  /* ================= Tamsin's analysis repo: conceding, one commit at a time ================= */
+  /* ================= Tamsin's analysis repo: conceding, one commit at a time =================
+     main, plus two side routes: drainage-model (D26-27, merged D28: the model agrees with the dye)
+     and warm-bias (D30-33, still open: a "correction" that turned out to belong to a place). */
   var H = "/home/varda";
   var R = H + "/tamsin/varda-thermal";
   var commits = [
@@ -2071,9 +2089,27 @@ paper, survey                    2 reams (of which the artist used one)
         { path: "calibration.csv", status: "A" },
         { path: "notes.md", status: "M", diff: "--- a/notes.md\n+++ b/notes.md\n@@ -3,3 +3,5 @@\n - D22: +0.8 C at 10 m. Impossible. FAULT.\n - D25: dye drains east at C19. Unrelated. Probably.\n - D29: swapped T7 and T3. The warmth stayed at C19. Inconvenient.\n+- D36: ice bath. Every probe fine. Very inconvenient.\n+- Conclusion pending. (It is not pending.)" }
       ] },
-    { hash: "29d5a11", author: "Tamsin Hale", date: at(29, "20:35"), parents: ["d7e25aa"],
+    { hash: "f00d1e5", author: "Tamsin Hale", date: at(33, "22:40"), parents: ["6a3f0b9"], refs: ["warm-bias"],
+      msg: "warm-bias: key the correction by cairn, not by probe\n\nWhichever probe sits at C19 reads +0.8. So the correction belongs to C19, not to a probe.\nA correction that belongs to a place is not a correction. It is a measurement.\nParking this branch. Not merging it. Not deleting it either (evidence).",
+      files: [{ path: "analyse.py", status: "M", diff: "--- a/analyse.py\n+++ b/analyse.py\n@@ -3,3 +3,4 @@\n FAULTY = {\"T7_C19_10m\"}          # +0.8 C at 10 m. Impossible. Manufacturer to be told.\n-WARM_BIAS = {\"T3\": -0.80}        # since the D29 swap. T3 seems to have caught it off T7.\n+# Keyed by place, not probe: whatever sits at C19 reads warm.\n+WARM_BIAS = {\"C19\": -0.80}       # ...which is not what a correction is. Parked. TH, D33\n " }] },
+    { hash: "6a3f0b9", author: "Tamsin Hale", date: at(30, "21:05"), parents: ["29d5a11"],
+      msg: "warm-bias: subtract 0.80 C from T3 until it behaves\n\nSince the swap, T3 reads warm at C19. It must have caught it off T7. Is that a thing probes do?\nTemporary. On a branch, so main stays honest.",
+      files: [{ path: "analyse.py", status: "M", diff: "--- a/analyse.py\n+++ b/analyse.py\n@@ -3,2 +3,3 @@\n FAULTY = {\"T7_C19_10m\"}          # +0.8 C at 10 m. Impossible. Manufacturer to be told.\n+WARM_BIAS = {\"T3\": -0.80}        # since the D29 swap. T3 seems to have caught it off T7.\n " }] },
+    { hash: "29d5a11", author: "Tamsin Hale", date: at(29, "20:35"), parents: ["8d4e1a0"],
       msg: "swap test T7<->T3: the warm reading stays at C19\n\nIf T7 were faulty the warmth would have moved to C18 with it. It didn't.\nT3, a perfectly sensible probe, now reads +0.80 at C19. T7 reads -6.09 at C18.\nThe warmth belongs to the place. (Writing this under protest.)",
       files: [{ path: "notes.md", status: "M", diff: "--- a/notes.md\n+++ b/notes.md\n@@ -3,2 +3,3 @@\n - D22: +0.8 C at 10 m. Impossible. FAULT.\n - D25: dye drains east at C19. Unrelated. Probably.\n+- D29: swapped T7 and T3. The warmth stayed at C19. Inconvenient." }] },
+    { hash: "8d4e1a0", author: "Tamsin Hale", date: at(28, "21:30"), parents: ["3a9d0c2", "9e57f10"],
+      msg: "Merge branch 'drainage-model'\n\nThe model and the dye agree: C17 and C18 drain west to the Lund, C19 drains east, over the rim.\nThe map says there is only more ice over the rim. Maps have been wrong before. (Not usually by this much.)",
+      files: [{ path: "drainage.py", status: "A" }] },
+    { hash: "9e57f10", author: "Tamsin Hale", date: at(27, "22:05"), parents: ["c19a3e7"], refs: ["drainage-model"],
+      msg: "drainage: check the model against the dye\n\nRe-ran it on the DEM twice. The DEM is from 1962 and has opinions.\nC19 disagrees with the model in exactly the way the dye did. The model shrugs.",
+      files: [{ path: "drainage.py", status: "M", diff: "--- a/drainage.py\n+++ b/drainage.py\n@@ -1,8 +1,13 @@\n # Where does the meltwater go? Downhill. Usually.\n \n+# Dye released D25; where it came out.\n+DYE = {\"C17\": \"west\", \"C18\": \"west\", \"C19\": \"east\"}\n+\n def route(cairn):\n     \"\"\"The way meltwater leaves a cairn, by the DEM's steepest descent.\"\"\"\n     return \"west\"   # the whole plateau tilts to the Lund. Everyone knows that.\n \n if __name__ == \"__main__\":\n-    for cairn in (\"C17\", \"C18\", \"C19\"):\n-        print(f\"{cairn}: {route(cairn)}\")\n+    for cairn, seen in DYE.items():\n+        model = route(cairn)\n+        flag = \"\" if model == seen else \"   <- model disagrees with dye (model checked twice)\"\n+        print(f\"{cairn}: model {model:5s} dye {seen}{flag}\")" }] },
+    { hash: "3a9d0c2", author: "Tamsin Hale", date: at(27, "08:10"), parents: ["d7e25aa"],
+      msg: "README: list known issues (one)\n\nSo the lab knows I noticed. Probably the probe.",
+      files: [{ path: "README.md", status: "M", diff: "--- a/README.md\n+++ b/README.md\n@@ -2,5 +2,8 @@\n \n Thermistor and ablation analysis, Varda Icefield Resurvey 2026. T. Hale.\n \n+## Known issues\n+- T7 at C19 reads warm. Under investigation. Probably the probe.\n+\n ## Run" }] },
+    { hash: "c19a3e7", author: "Tamsin Hale", date: at(26, "21:40"), parents: ["d7e25aa"],
+      msg: "drainage model: meltwater goes downhill (a bold claim)\n\nOn a branch, because I would like to be wrong in private first.",
+      files: [{ path: "drainage.py", status: "A" }] },
     { hash: "d7e25aa", author: "Tamsin Hale", date: at(25, "21:15"), parents: ["b0a7f22"],
       msg: "dye test: C19 drains EAST\n\nEverything else on the plateau drains west to the Lund. C19 drains east, over the rim.\nA second, unrelated fault, beside the first one. That can happen.\n(Can it?)",
       files: [{ path: "notes.md", status: "M", diff: "--- a/notes.md\n+++ b/notes.md\n@@ -2,1 +2,2 @@\n - D22: +0.8 C at 10 m. Impossible. FAULT.\n+- D25: dye drains east at C19. Unrelated. Probably." }] },

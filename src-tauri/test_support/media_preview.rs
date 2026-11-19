@@ -888,7 +888,10 @@ mod companion_audio {
         // Once one exec succeeds no process holds a write descriptor, and our
         // own is closed, so no later fork can inherit one.
         for _ in 0..1000 {
-            match std::process::Command::new(&script).arg("__exec_probe").status() {
+            match std::process::Command::new(&script)
+                .arg("__exec_probe")
+                .status()
+            {
                 Ok(status) => {
                     assert!(status.success(), "fake ffmpeg probe failed: {status}");
                     return script;

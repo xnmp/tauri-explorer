@@ -9,7 +9,11 @@
  */
 
 /** Mirrors `DiagnosticKind` in `src-tauri/src/user_report.rs`. */
-export type ReportDiagnosticKind = "crash-report" | "slow-loads";
+export type ReportDiagnosticKind =
+  | "crash-report"
+  | "slow-loads"
+  | "recent-errors"
+  | "recent-actions";
 
 export interface ReportDiagnostic {
   kind: ReportDiagnosticKind;

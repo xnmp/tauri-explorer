@@ -27,7 +27,8 @@ export function createPreviewDiffActions(deps: PreviewDiffActionDeps) {
     const scm = deps.scm();
     if (blocked() || !scm.activeDiff) return;
     const path = scm.activeDiff.path;
-    await scm.stage([path]);
+    const r = await scm.stage([path]);
+    if (!r.ok) return deps.onError(`Stage failed: ${r.error}`);
     // Follow the file to its staged diff so the view doesn't leave the user
     // staring at an empty "unstaged" diff after the change moved to the index.
     if (scm.summary.staged.some((e) => e.path === path)) scm.openDiff(path, true);
@@ -37,7 +38,8 @@ export function createPreviewDiffActions(deps: PreviewDiffActionDeps) {
     const scm = deps.scm();
     if (blocked() || !scm.activeDiff) return;
     const path = scm.activeDiff.path;
-    await scm.unstage([path]);
+    const r = await scm.unstage([path]);
+    if (!r.ok) return deps.onError(`Unstage failed: ${r.error}`);
     const stillChanged =
       scm.summary.changes.some((e) => e.path === path) ||
       scm.summary.untracked.some((e) => e.path === path);

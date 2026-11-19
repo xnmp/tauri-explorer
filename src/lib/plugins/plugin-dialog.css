@@ -133,7 +133,7 @@
 }
 
 .plugin-dialog .link-btn:hover {
-  color: var(--accent-hover, var(--accent));
+  color: var(--accent-text, var(--accent));
 }
 
 .plugin-dialog .prompt-field {

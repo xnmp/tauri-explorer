@@ -92,7 +92,7 @@ export function useInlineRename(getExplorer: () => ExplorerInstance) {
   function acceptSuggestion(entry: FileEntry): string | null {
     // The rename box holds display text; the provider sees wire names and
     // may echo their escapes (ADR 0031).
-    const suggested = displayName(renameSuggestionStore.suggestionFor(entry.path) ?? "");
+    const suggested = renameSuggestionStore.displaySuggestionFor(entry.path) ?? "";
     if (!suggested || suggested === editedName) return null;
     editedName = suggested;
     tick().then(() => {

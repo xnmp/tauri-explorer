@@ -193,10 +193,40 @@ pub(crate) async fn relocate_after_rename(
         backend::call(
             &provider.manifest.id,
             "provenance.relocate",
-            json!({"source":source,"target":target}),
+            relocate_params(&source, &target),
         )
         .map(|_| ())
     })
     .await
     .map_err(|cause| AppError::WorkerFailed(cause.to_string()))?
+}
+
+/// Paths cross to the provider in wire form (ADR 0031): `json!` over a native
+/// `PathBuf` panics on a non-UTF-8 name.
+fn relocate_params(source: &std::path::Path, target: &std::path::Path) -> Value {
+    json!({
+        "source": crate::wire_path::encode_path(source),
+        "target": crate::wire_path::encode_path(target),
+    })
+}
+
+#[cfg(all(test, unix))]
+mod relocate_tests {
+    use super::*;
+    use std::os::unix::ffi::OsStrExt;
+
+    #[test]
+    fn relocate_params_encode_a_non_utf8_parent_without_panicking() {
+        let parent = std::path::PathBuf::from(std::ffi::OsStr::from_bytes(b"/tmp/caf\xe9"));
+        let source = parent.join("a.txt");
+        let target = parent.join("b.txt");
+        let params = relocate_params(&source, &target);
+        let wire_source = params["source"].as_str().unwrap();
+        let decoded = crate::wire_path::decode(wire_source).unwrap();
+        assert_eq!(
+            decoded.as_os_str().as_bytes(),
+            source.as_os_str().as_bytes()
+        );
+        assert!(params["target"].as_str().unwrap().ends_with("b.txt"));
+    }
 }

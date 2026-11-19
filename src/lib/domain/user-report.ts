@@ -211,6 +211,8 @@ export function userReportFallbackUrl(draft: UserReportDraft): string | null {
 const FALLBACK_DIAGNOSTIC_HEADINGS: Record<ReportDiagnostic["kind"], string> = {
   "crash-report": "Crash report",
   "slow-loads": "Slow folder-load diagnostics",
+  "recent-errors": "Recent errors",
+  "recent-actions": "Recent actions",
 };
 
 function fallbackDiagnosticBlock(kind: ReportDiagnostic["kind"], text: string): string {

@@ -116,6 +116,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `ContentSearchDialog.svelte` — Ctrl+Shift+F grep-across-files dialog + streamed results.
 - `OptionPicker.svelte` — generic secondary list picker.
 - `ContextMenu.svelte` — right-click menu renderer (items from context-menu stores).
+- `ContextMenuHint.svelte` — command-owned shortcut hint for a context-menu item (`getCommandShortcut`).
 - `Modal.svelte` + `modal.css` — base modal shell + shared modal styling.
 - `UserReportDialog.svelte` — in-app issue form; closes optimistically, submits through Rust, toasts background failures, and restores saved failed drafts when reopened.
 - `SettingsDialog.svelte` — general settings dialog; links to dedicated Keyboard Shortcuts and Plugins dialogs.
@@ -325,6 +326,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `commands/general-commands.ts` — misc app commands (settings, palette, etc).
 - `commands/system-actions.ts` — system actions not touching pane state (open terminal, reveal).
 - `keybindings.svelte.ts` — customizable keybinding store (chords, conflicts, persistence).
+- `command-shortcut-label.ts` — `shortcutSuffix(commandId)`: " (Ctrl+H)" prose hint from the effective binding, empty when unbound.
 - `shortcut-recorder.ts` — owned shortcut recording timer, cancellation and completion callbacks.
 - `window-tabs.svelte.ts` — tab management (open/close/reorder/active). Central for tabs.
 - `window-tab-actions.ts` — tab context-menu actions on the manager: Close Others / Close to the Right (anchor activated first, each close restorable), Duplicate, and the menu's item list (#1749).
@@ -363,6 +365,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `manual-hidden.svelte.ts` — per-folder manually-hidden entry registry.
 - `open-history-access.svelte.ts` — startup-light seam for the open history (#1525): registers the `api/open.ts` `onFileLaunched` listener, lazy-loads the store on first launch/mutation/read, reactive `lastOpenedAt` for FileItem and the "opened" sort.
 - `open-history.svelte.ts` — shared file open history for Details "Date opened" (#1525, loaded lazily): records successful launches, lazy tolerant load, BroadcastChannel publication, coalesced saves that replay unsaved changes over the stored document.
+- `open-history-combined.svelte.ts` — what Details "Date opened" reads (#1526, lazy): app history merged newest-wins with a batched, TTL-cached resolver for OS recent-file times (`api/os-opened.ts`); off when `osRecentSources` is disabled.
 - `settings.svelte.ts` — global settings store (toggles, defaults). Very hot for feature flags. `reloadFromDisk()` adopts external settings.json edits (#599).
 - `settings-input.ts` — Pure persisted-settings input contract: normalization against defaults, enum/numeric validation, unknown-key carry-through, size bound (split from settings.svelte.ts, #1679).
 - `settings-toggles.ts` — `TOGGLE_SETTINGS` metadata and `generateToggleCommands` for the command palette (split from settings.svelte.ts, #1523).
@@ -389,6 +392,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/api/native-file-drag.ts` — host native drag start channel and enriched receiver event contract.
 - `image-resolution.ts` — lazy source pixel metadata IPC; virtual paths are unavailable.
 - `open-history.ts` — read/write the app-data open history document (#1525).
+- `os-opened.ts` — `os_opened_times` IPC: OS last-opened epoch ms per path; any failure is `{}` (#1526).
 
 - `pdf-preview.ts` — bounded native PDF bytes, lazy PDF.js worker/readiness, cancellable page rendering and validated native annotation-link dispatch (#728–#730).
 
@@ -410,6 +414,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `files.ts` — all file-op IPC (list, create, rename, copy, move, delete, estimate), including typed per-path trash/restore outcomes. Hot.
 - `media.ts` — `get_media_durations` IPC wrapper (Details Length column, #995).
 - `frontend-log.ts` — forwards diagnosable webview failures to the native rotating log.
+- `action-trail.ts` — `recordAction(kind)` fire-and-forget IPC for the recent-actions trail (#1688); called from `executeCommand` and the load watchdog (navigation kind).
 - `load-diagnostics.ts` — `record_slow_load` / `recent_slow_loads` IPC for slow directory-load records (#1022).
 - `e2e-hooks.ts` — the single frontend E2E hook gate: `E2E_HOOKS_ENABLED` (literal `VITE_E2E_HOOKS === "1"`, not DEV) and `loadE2EHooks()`, the only importer of `src/test-support/`; documents the orphan-chunk rule (#457, #884).
 - `mock-invoke.ts` — mock backend core for browser/E2E (no Tauri): merges the command-family tables and applies the copy/move session and history receipts. Lazily imported by `common.ts` outside Tauri. Open when E2E data wrong, then follow the command's family module.
@@ -673,6 +678,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `crash-report.ts` — pure crash-dedupe + benign-browser-notice (ResizeObserver) helpers behind `api/crash.ts` (#1725).
 - `crash-report-draft.ts` — pure crash → report title/draft update (#1684), loaded only when reporting.
 - `report-diagnostics.ts` — Report Issue diagnostic sections (kinds mirror `user_report.rs` `DiagnosticKind`), shared relay budget and head-keeping text fitting (#1022, #1684).
+- `report-sections.ts` — opt-in diagnostics section model (recent errors #1685, recent actions #1688): `planOptInSections` fits ticked sections into the shared budget; `includedDiagnostics` yields only ticked ones.
 - `user-report.ts` — report contracts and pure prefilled-GitHub fallback URL builder.
 - `user-report-route.ts` — pure report route (saved GitHub token for text-only reports, relay otherwise), route notice and token validation (#1455).
 - `git-warm.ts` — pure scheduler: when (and whether) to warm git-graph/SCM caches after a pane settles.
@@ -773,10 +779,17 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `portal/parent.rs` — validates portal window identifiers and attaches GTK picker surfaces to native Wayland/X11 parents before mapping.
 - `shared_history/mod.rs`, `shared_history/model.rs`, `shared_history/store.rs` — async IPC, pure bounded history policy and cross-process SQLite transactions.
 - `open_history.rs` — opaque app-data `open-history.json` read (missing/oversized → empty) and atomic write for the Details "Date opened" column (#1525).
+- `os_recent/mod.rs` — `os_opened_times` command and the `OsRecentSource` adapter seam (newest-wins merge across sources; macOS Spotlight / Windows Recent `.lnk` adapters pending, #1526).
+- `os_recent/xbel.rs` — Linux adapter: parses `$XDG_DATA_HOME/recently-used.xbel` (percent-decoded OsString bytes, newest of visited/modified), mtime+size-keyed parse cache, 8 MiB bound (#1526).
 - `portal.rs` — xdg-desktop-portal FileChooser backend (Linux); holds the process per request and executes the idle policy's timers, bus-name release and exit (#1427).
 - `portal/idle.rs` — pure idle-exit policy for the D-Bus-activated portal: request holds, generation-checked idle timers, open-window postponement, release-name-then-exit, replaced-executable fast exit (#1427).
-- `crash_report.rs` — local crash capture (#184).
+- `crash_report.rs` — local crash capture (#184); `take_crash_report` returns a `kind` (`crash` / `unclean-exit`) and waits (bounded) for the startup session review.
+- `session_marker.rs` — unclean-exit detection (#1686; release builds only unless `TAURI_EXPLORER_SESSION_MARKER=1`, never with `e2e-hooks`): each main process holds a locked `<log dir>/sessions/session-*.marker` for its lifetime, removed by `disarm` (`release_process_resources`) on every orderly exit; the next launch claims markers whose lock it can take and `classify`s them (other version, ended host session — boot/login/display —, covering crash file, else unclean → crash file). Tests: `src-tauri/test_support/session_marker_test.rs` (incl. a real SIGKILL/SIGTERM helper process).
+- `termination_signals.rs` — Unix SIGTERM/SIGINT/SIGHUP → disarm the session marker and exit through the app's orderly path, falling back to the signal's default action after 5 s or on a second signal (#1686).
 - `environment.rs` — environment summary (distro, webview engine/version, Linux renderer mode and session, install category) probed once off the startup path; feeds `get_app_info`/About, the user-report environment block (budgeted within the relay ceiling), crash-file headers and one `Environment:` log line (#1683). Tests: `src-tauri/test_support/environment_test.rs`.
+- `recent_errors.rs` — opt-in "Recent errors" report section (#1685): bounded WARN/ERROR ring fed by a `RingLog` log-plugin Dispatch target, previous session read from the log file before the session-start offset; redacts `$HOME`; `recent_errors` command. Tests: `src-tauri/test_support/recent_errors_test.rs`.
+- `report_redaction.rs` — pure home-directory `Redactor` for report text (#1685): displayed/canonical/Debug-escaped/forward-slash/percent-encoded forms, path-boundary matches, case-insensitive on Windows, `/run/media/<user>/` segment. Tests: `src-tauri/test_support/report_redaction_test.rs`.
+- `recent_actions.rs` — in-process recent-actions trail (#1688): identifier-only (`sanitize`), newest 30; `record_action`/`recent_actions` commands; also quoted in panic crash files. Tests: `src-tauri/test_support/recent_actions_test.rs`.
 - `diagnostics_cli.rs` — `tauri-explorer --diagnostics` (#1687): dispatched first in `main.rs` (no window, webview, single-instance lock or log plugin); prints the environment summary, log folder, newest crash file and a bounded WARN/ERROR log tail. Pure `render`/`requested`; Windows attaches the parent console. Tests: `src-tauri/test_support/diagnostics_cli_test.rs`.
 - `load_diagnostics/mod.rs` — slow directory-load records (#1022): merges the frontend record with the native trace and blocker and hands it to `persist.rs`; culprit naming (including an IPC-reply gap after a settled native command); `begin_listing` arms the fallback for watched listings.
 - `load_diagnostics/fallback.rs` — native-only record for a watched listing still in flight after 7 s, settled with its outcome when the listing finishes; background refreshes are never armed.
@@ -831,6 +844,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git_index_lock.rs` — `with_locked_index`: every libgit2 index writer (stage, unstage, discard) holds `index.lock` from read to write, editing a private mtime-preserving copy and renaming it over `index.lock` then `index`, so a concurrent git command fails instead of being silently overwritten (#1617); `IndexCase` picks exact-case or the repository's `core.ignorecase` lookups.
 - `git_index_reset.rs` — `git_unstage` core: literal-path, exact-case index reset matching `git --literal-pathspecs reset` (only differing entries rewritten, skip-worktree kept, binary-searched index; #1589); `index_differs_from_tree` is discard's staged-change check.
 - `github.rs` — `git_open_prs`: open GitHub PRs for the repo's remote, for graph PR badges (#449); TTL-cached, silent-degrade. `git_issues_url`: the remote's github.com issues page for the "Git: Open Issues in Browser" palette command (#1055).
+- `http_timeouts.rs` — shared bounded `ureq` agent (10 s connect, 30 s overall) for the update manifest and GitHub PR lookups (#1827); the report relay keeps its own deliberate no-timeout policy.
 
 ## website/ — static Vercel site and serverless functions.
 

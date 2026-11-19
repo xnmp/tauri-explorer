@@ -118,6 +118,7 @@ export interface Settings {
   translucencyOpacity: number; // how much of the window material surfaces hide, 20-100 (%), see domain/vibrancy-opacity
   yaziNavigation: boolean; // left/right arrows navigate up/into folders in Details view (and List when folderPeek is off)
   folderPeek: boolean; // folder peek (inline expansion, List column flow); off = classic views (#1238)
+  osRecentSources: boolean; // Date opened also reads the OS's own recent-files record (#1526)
   folderPeekCarets: boolean; // expand carets beside folders; off = a plain click on a folder toggles its peek (#1248)
   previewFontSize: number; // base font size (px) for text/code/markdown previews
   showPreviewInfo: boolean; // preview pane chrome: file name, type badge, size and modified rows (off = content only, #494)
@@ -197,6 +198,7 @@ const DEFAULT_SETTINGS: Settings = {
   yaziNavigation: true,
   folderPeek: true,
   folderPeekCarets: true,
+  osRecentSources: true,
   previewFontSize: 12,
   showPreviewInfo: true,
   autoEnterSingleSubdir: false,
@@ -594,6 +596,9 @@ function createSettingsStore() {
     },
     get folderPeek() {
       return settings.folderPeek;
+    },
+    get osRecentSources() {
+      return settings.osRecentSources;
     },
     get folderPeekCarets() {
       return settings.folderPeekCarets;

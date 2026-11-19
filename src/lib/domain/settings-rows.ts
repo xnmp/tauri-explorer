@@ -30,6 +30,7 @@ export const SETTINGS_ROWS = {
   yaziNavigation: ["Yazi-style Navigation", "Left/right arrows navigate up/into folders in Details view (and List view when Folder Peek is off)"],
   folderPeek: ["Folder Peek", "Expand folders in place with a caret; List view flows into columns that scroll sideways. Off restores the classic views"],
   folderPeekCarets: ["Show Folder Peek Carets", "Show expand carets beside folders in Details and List. Off: a single click on a folder expands or collapses it"],
+  osRecentSources: ["Use OS Recent Files for Date Opened", "Linux only for now: also read the desktop's recent-files list (recently-used.xbel) for files opened in other applications. Read-only and local. Off: Date opened shows only files opened in Tauri Explorer"],
   autoEnterSingleSubdir: ["Auto-Enter Single Subfolder", "When a folder contains only one subfolder (and nothing else), descend into it automatically"],
   tabTitleGitRoot: ["Git Repo Root in Tab Title", "When the folder is inside a git repository, show the repo's root folder name in the tab title"],
   autoUpdate: ["Install Updates Automatically", "Download new versions in the background and offer to restart into them", "auto update upgrade release version"],
@@ -87,7 +88,7 @@ export function settingsSectionRows(platform: SettingsPlatform): SettingsSection
   ];
   const navBar = [r.navBack, r.navForward, r.navUp, r.navRefresh];
   const behavior = [
-    r.showHidden, r.millerHideEmpty, r.yaziNavigation, r.folderPeek, r.folderPeekCarets, r.autoEnterSingleSubdir, r.tabTitleGitRoot, r.autoUpdate, r.defaultPaneLayout, r.showManuallyHidden,
+    r.showHidden, r.millerHideEmpty, r.yaziNavigation, r.folderPeek, r.folderPeekCarets, r.osRecentSources, r.autoEnterSingleSubdir, r.tabTitleGitRoot, r.autoUpdate, r.defaultPaneLayout, r.showManuallyHidden,
     r.gitStatus, r.f5SyncsLocalBranches, r.recentItems, r.recycleBin, r.quickOpenDebug, r.warmWindow, r.confirmDelete,
     r.backgroundOpacity, r.backgroundImage, r.wallpaperBlur, r.terminalApp,
     r.previewFontSize, r.showPreviewInfo, r.ffmpegPath,

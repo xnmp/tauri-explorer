@@ -12,6 +12,8 @@ import { MOCK_REPO_ROOT } from "./mock-git-state";
 
 
 const mockSlowLoads: SlowLoadRecord[] = [];
+/** Mirrors the native trail (#1688): identifiers only, newest 30. */
+const mockActions: string[] = [];
 
 // Mutable so manual/E2E testing can simulate ejecting a removable drive: the
 // drives store re-polls `list_drives` every ~1.5s, so replacing this list makes
@@ -108,6 +110,19 @@ export const systemCommands: Record<string, CommandHandler> = {
   // simulated by record_frontend_crash writing localStorage.mockFrontendCrash.
   // Either is consumed on first read, mirroring take_crash_report's mark-seen.
   take_crash_report: () => {
+    // "unclean": the previous session did not exit cleanly (#1686).
+    if (localStorage.getItem(MOCK_LOCAL_KEYS.crashReport) === "unclean") {
+      localStorage.removeItem(MOCK_LOCAL_KEYS.crashReport);
+      return {
+        fileName: "crash-1700000500.txt",
+        kind: "unclean-exit",
+        contents:
+          "tauri-explorer 1.0.0 crash report\nos: linux (x86_64)\ntime: 1700000500 (unix)\n" +
+          "source: unclean exit (previous session)\npanic: Tauri Explorer did not exit cleanly\n" +
+          "location: unknown (no panic was recorded)\nsession started: 1700000000 (unix)\n\n" +
+          "The previous session ended without an orderly exit and without a recorded panic.\n",
+      };
+    }
     if (localStorage.getItem(MOCK_LOCAL_KEYS.crashReport) === "1") {
       localStorage.removeItem(MOCK_LOCAL_KEYS.crashReport);
       return {
@@ -171,6 +186,16 @@ export const systemCommands: Record<string, CommandHandler> = {
     mockSlowLoads.splice(20);
     return undefined;
   },
+  // Report trails (#1685, #1688).
+  recent_errors: () => localStorage.getItem(MOCK_LOCAL_KEYS.recentErrors) ?? "",
+  record_action: (args) => {
+    // Same rule as the native `sanitize`: identifiers only, never user text.
+    const kind = String(args.kind ?? "").trim();
+    mockActions.push(/^[A-Za-z0-9._:-]{1,64}$/.test(kind) ? kind : "(unrecognized)");
+    mockActions.splice(0, mockActions.length - 30);
+    return undefined;
+  },
+  recent_actions: () => mockActions.map((action, index) => `${index + 1}. ${action}`).join("\n"),
   recent_slow_loads: (args) => mockSlowLoads.slice(0, Math.min(20, (args.limit as number | null) ?? 20)),
   // The mock never stores the token value, only that one is saved (#1455).
   user_report_token_state: () =>
@@ -271,6 +296,13 @@ export const systemCommands: Record<string, CommandHandler> = {
   // App-data open history (#1525): shared by the page's windows and reloads.
   read_open_history: () => localStorage.getItem(MOCK_LOCAL_KEYS.openHistory) ?? "",
   write_open_history: (args) => { localStorage.setItem(MOCK_LOCAL_KEYS.openHistory, args.data as string); },
+
+  // OS "last opened" records (#1526): only paths seeded through MOCK_LOCAL_KEYS.osOpenedTimes.
+  os_opened_times: (args) => {
+    let seeded: Record<string, number> = {};
+    try { seeded = JSON.parse(localStorage.getItem(MOCK_LOCAL_KEYS.osOpenedTimes) ?? "{}"); } catch { /* none */ }
+    return Object.fromEntries((args.paths as string[]).filter((path) => path in seeded).map((path) => [path, seeded[path]]));
+  },
 
   // ----- File-picker portal -----
 

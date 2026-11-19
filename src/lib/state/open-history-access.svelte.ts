@@ -6,13 +6,13 @@
  */
 import { onFileLaunched } from "$lib/api/open";
 
-type Store = typeof import("./open-history.svelte").openHistoryStore;
+type Store = typeof import("./open-history-combined.svelte").combinedHistory;
 
 let store = $state.raw<Store | null>(null);
 let loading: Promise<Store> | null = null;
 
 export function openHistory(): Promise<Store> {
-  loading ??= import("./open-history.svelte").then((module) => (store = module.openHistoryStore));
+  loading ??= import("./open-history-combined.svelte").then((module) => (store = module.combinedHistory));
   return loading;
 }
 

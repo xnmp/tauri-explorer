@@ -23,6 +23,11 @@ mod file_history;
 mod file_mutation;
 mod file_picker;
 mod open_history;
+mod os_recent;
+mod recent_actions;
+mod recent_errors;
+mod report_redaction;
+mod session_marker;
 mod shared_history;
 // pub: criterion benches (src-tauri/benches/) call into
 // files::dir_listing::{scan_directory_parallel, sort_entries} directly.
@@ -44,6 +49,7 @@ pub mod git_log;
 mod git_observation_probe;
 mod git_watch;
 mod github;
+mod http_timeouts;
 mod image_crop;
 mod image_operation;
 mod installed_plugins;
@@ -55,6 +61,8 @@ mod native_file_drag;
 #[cfg(unix)]
 mod process_supervisor;
 mod recovery_actor;
+#[cfg(unix)]
+mod termination_signals;
 
 /// `tauri-explorer --diagnostics` (#1687): print the environment, log folder,
 /// newest crash and WARN/ERROR tail, then exit before any window, webview or
@@ -192,6 +200,8 @@ pub(crate) fn init_test_logger() {
 /// mutations. Runs on `RunEvent::Exit`, and from the updater's Windows
 /// install path, which exits the process without that event (#1679).
 pub(crate) fn release_process_resources() {
+    // First: every orderly exit, including update relaunches (#1686).
+    session_marker::disarm();
     ai::cancel_all();
     installed_plugins::shutdown();
 }
@@ -280,9 +290,15 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
     let builder = if portal::is_portal_mode() {
         builder
     } else {
-        builder.plugin(
-            window_launch::routing_plugin().expect("Could not initialize profile launch routing"),
-        )
+        match window_launch::routing_plugin() {
+            Ok(plugin) => builder.plugin(plugin),
+            Err(cause) => {
+                // Without routing this process simply is not single-instance;
+                // starting is better than a startup panic (#1597).
+                eprintln!("Could not initialize profile launch routing: {cause}");
+                builder
+            }
+        }
     };
     #[cfg(target_os = "macos")]
     let builder = builder.on_web_content_process_terminate(|webview| {
@@ -325,6 +341,11 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             let mut targets = vec![
                 Target::new(TargetKind::LogDir { file_name: None }),
                 Target::new(TargetKind::Webview),
+                // In-memory WARN/ERROR ring for the report dialog (#1685).
+                Target::new(TargetKind::Dispatch(
+                    tauri_plugin_log::fern::Dispatch::new()
+                        .chain(Box::new(recent_errors::RingLog) as Box<dyn log::Log>),
+                )),
             ];
             // Opt-in stream capture lets the qualification runner measure the
             // shipping release profile using the same native readiness logs.
@@ -395,6 +416,9 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             crash_report::log_frontend_error,
             crash_report::record_frontend_crash,
             crash_report::open_external_url,
+            recent_errors::recent_errors,
+            recent_actions::record_action,
+            recent_actions::recent_actions,
             palette::extract_palette,
             config::write_theme_file,
             update_check::prepare_update,
@@ -499,6 +523,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             shared_history::shared_history_mutate,
             open_history::read_open_history,
             open_history::write_open_history,
+            os_recent::os_opened_times,
             config::write_config_file,
             config::list_user_themes,
             config::list_user_layouts,
@@ -617,6 +642,10 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             terminal::terminal_status,
         ])
         .setup(move |app| {
+            // Before anything this session logs: earlier lines are the previous session's (#1685).
+            if let Ok(log_dir) = tauri::Manager::path(app).app_log_dir() {
+                recent_errors::capture_previous_session(log_dir);
+            }
             native_file_drag::install_snapshots(app.handle().clone());
             let t_setup = std::time::Instant::now();
             // First in setup: portal mode returns early below, and a renderer
@@ -656,7 +685,9 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             // Persist panics locally so the next launch can offer a
             // pre-filled GitHub issue (#184). Local files only — no telemetry.
             if let Ok(log_dir) = tauri::Manager::path(app).app_log_dir() {
-                crash_report::install_panic_hook(log_dir.join("crashes"));
+                let crashes = log_dir.join("crashes");
+                crash_report::prune_consumed_reports(&crashes, std::time::SystemTime::now());
+                crash_report::install_panic_hook(crashes);
             }
 
             // Initialize filesystem watcher for auto-refresh
@@ -679,6 +710,24 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             // After the portal branch: picker windows never start the frontend
             // listener, so a watcher there would be a thread with no audience.
             config_watch::init_config_watcher(app.handle());
+
+            // Unclean-exit detection (#1686): main process only, so after the
+            // portal branch; single-instance hand-offs never reach setup.
+            // Release builds only, unless opted in (`session_marker::enabled`).
+            // Signals first: an armed marker must never meet a stop request
+            // under the default action, which skips every cleanup.
+            if session_marker::enabled() {
+                #[cfg(unix)]
+                {
+                    let handle = app.handle().clone();
+                    if let Err(error) = termination_signals::install(move || handle.exit(0)) {
+                        log::warn!("Termination signal handling is unavailable: {error}");
+                    }
+                }
+                if let Ok(log_dir) = tauri::Manager::path(app).app_log_dir() {
+                    session_marker::start(log_dir);
+                }
+            }
 
             // Create window programmatically so we can inject initialization_script.
             // This replaces the static window definition in tauri.conf.json.
@@ -802,6 +851,11 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
                 if let tauri::RunEvent::ExitRequested { code: None, api, .. } = &event {
                     api.prevent_exit();
                 }
+            } else if matches!(&event, tauri::RunEvent::ExitRequested { .. }) {
+                // Nothing prevents a main-process exit: the stop is orderly
+                // from here, even if teardown (WebKitGTK) then hangs and the
+                // user kills the process (#1686).
+                session_marker::disarm();
             }
             if let tauri::RunEvent::WindowEvent {
                 label,

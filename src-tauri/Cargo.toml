@@ -1,6 +1,6 @@
 [package]
 name = "tauri-explorer"
-version = "0.29.0"
+version = "0.29.1"
 description = "A keyboard-first file manager: fuzzy quick-open, ripgrep content search, a command palette for every action"
 authors = ["xnmp"]
 license = "MIT"
@@ -89,7 +89,7 @@ hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 zip = { version = "2", default-features = false, features = ["deflate", "deflate64", "bzip2", "zstd", "lzma"] }
 # net: AsyncFd, which the Linux mount-table watch polls for POLLPRI (#888).
-tokio = { version = "1", features = ["rt", "time", "sync", "process", "macros", "net"] }
+tokio = { version = "1", features = ["rt", "time", "sync", "process", "macros", "net", "signal"] }
 notify = "8"
 tempfile = "3"
 portable-pty = "0.9"
@@ -159,7 +159,7 @@ wayland-protocols = { version = "0.32", features = ["server", "staging"] }
 wayland-protocols-wlr = { version = "0.3", features = ["server"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = {version="0.61",features= ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Registry", "Win32_System_Pipes", "Win32_System_Console"] }
+windows-sys = {version="0.61",features= ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Registry", "Win32_System_Pipes", "Win32_System_Console", "Win32_System_SystemInformation"] }
 webview2-com = "0.39"
 windows-core = "0.62.2"
 # OS build for the translucency material (#1757); already in the tree via window-vibrancy.

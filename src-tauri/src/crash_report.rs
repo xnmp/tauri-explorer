@@ -9,9 +9,11 @@
 use crate::error::AppError;
 use serde::Serialize;
 use std::{
+    collections::BTreeMap,
     fs::OpenOptions,
     io::Write,
     path::{Path, PathBuf},
+    time::{Duration, SystemTime},
 };
 use tauri::Manager;
 
@@ -46,6 +48,8 @@ fn write_crash_report(crash_dir: &Path, info: &std::panic::PanicHookInfo) -> std
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
+    // Identifiers only (#1688); try_lock, so a panic while recording cannot deadlock.
+    let recent_actions = crate::recent_actions::render_for_crash();
     // Cache read only: probing inside a panic hook could re-enter the probe.
     let report = format!(
         "tauri-explorer {} crash report\n\
@@ -53,17 +57,29 @@ fn write_crash_report(crash_dir: &Path, info: &std::panic::PanicHookInfo) -> std
          time: {} (unix)\n\
          panic: {}\n\
          location: {}\n\n\
+         recent actions (newest last):\n{}\n\n\
          backtrace:\n{}\n",
         env!("CARGO_PKG_VERSION"),
         crate::environment::crash_header(),
         epoch_secs,
         message,
         location,
+        recent_actions,
         backtrace
     );
 
     persist_crash_report(crash_dir, epoch_secs, report.as_bytes())?;
     Ok(())
+}
+
+/// Publish a complete crash file under a fresh identity (also used for the
+/// unclean-exit report, #1686).
+pub(crate) fn publish_report(
+    crash_dir: &Path,
+    epoch_secs: u64,
+    report: &[u8],
+) -> std::io::Result<PathBuf> {
+    persist_crash_report(crash_dir, epoch_secs, report)
 }
 
 fn persist_crash_report(
@@ -133,6 +149,68 @@ fn publish_crash_report(
     ))
 }
 
+/// Consumed reports (and their single-use `.claim` markers) older than this
+/// are deleted at startup.
+const RETAIN_CONSUMED_FOR: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+/// At most this many consumed report identities survive, newest first.
+const RETAIN_CONSUMED_MAX: usize = 50;
+
+/// Bound the crash folder (#1597): delete consumed (`.seen`) reports and
+/// their `.claim` markers by age and count. An identity whose report is still
+/// unseen (`crash-N.txt`) is never touched, so nothing the user has not been
+/// shown is lost. Best effort: individual failures are ignored.
+pub(crate) fn prune_consumed_reports(crash_dir: &Path, now: SystemTime) {
+    let Ok(entries) = std::fs::read_dir(crash_dir) else {
+        return;
+    };
+    // identity (file name minus .claim/.seen) -> (files, newest mtime, unseen?)
+    let mut groups: BTreeMap<String, (Vec<PathBuf>, SystemTime, bool)> = BTreeMap::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !name.starts_with(CRASH_PREFIX) {
+            continue;
+        }
+        let unseen = is_unseen_report(&path);
+        let identity = name
+            .strip_suffix(".claim")
+            .or_else(|| name.strip_suffix(".seen"))
+            .unwrap_or(name)
+            .to_string();
+        if !(unseen || name.ends_with(".claim") || name.ends_with(".seen")) {
+            continue;
+        }
+        let modified = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+        let group = groups
+            .entry(identity)
+            .or_insert((Vec::new(), SystemTime::UNIX_EPOCH, false));
+        group.0.push(path);
+        group.1 = group.1.max(modified);
+        group.2 |= unseen;
+    }
+    let mut prunable: Vec<(Vec<PathBuf>, SystemTime)> = groups
+        .into_values()
+        .filter(|(_, _, unseen)| !unseen)
+        .map(|(files, newest, _)| (files, newest))
+        .collect();
+    prunable.sort_by_key(|(_, newest)| std::cmp::Reverse(*newest));
+    for (index, (files, newest)) in prunable.into_iter().enumerate() {
+        let expired = now
+            .duration_since(newest)
+            .is_ok_and(|age| age > RETAIN_CONSUMED_FOR);
+        if expired || index >= RETAIN_CONSUMED_MAX {
+            for file in files {
+                let _ = std::fs::remove_file(file);
+            }
+        }
+    }
+}
+
 fn is_unseen_report(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
@@ -154,11 +232,73 @@ fn report_order(path: &Path) -> (u64, u32) {
         .unwrap_or((0, 0))
 }
 
+/// Whether an unconsumed crash file was written at or after `since` (Unix
+/// seconds): a session it falls in has its exit explained already (#1686).
+/// Unclean-exit reports never count: one describes an earlier session's end,
+/// published after this one started, and must not hide this session's own.
+pub(crate) fn unseen_report_since(crash_dir: &Path, since: u64) -> bool {
+    std::fs::read_dir(crash_dir).is_ok_and(|entries| {
+        entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| is_unseen_report(path) && report_order(path).0 >= since)
+            .any(|path| {
+                std::fs::read_to_string(path)
+                    .is_ok_and(|contents| crash_kind(&contents) == CrashKind::Crash)
+            })
+    })
+}
+
+/// The `source:` line that marks an unclean-exit report.
+const UNCLEAN_EXIT_SOURCE: &str = "source: unclean exit (previous session)";
+
+/// The crash file body for a session that ended without an orderly exit or a
+/// recorded panic (#1686). Its log tail is not copied in: the report dialog
+/// offers it as the opt-in "Recent errors" section (#1685).
+pub(crate) fn unclean_exit_report(
+    version: &str,
+    environment: &str,
+    epoch_secs: u64,
+    session_started: u64,
+) -> String {
+    format!(
+        "tauri-explorer {version} crash report\n\
+         {environment}\n\
+         time: {epoch_secs} (unix)\n\
+         {UNCLEAN_EXIT_SOURCE}\n\
+         panic: Tauri Explorer did not exit cleanly\n\
+         location: unknown (no panic was recorded)\n\
+         session started: {session_started} (unix)\n\n\
+         The previous session ended without an orderly exit and without a recorded \
+         panic: most likely a native crash (for example in the web view or a system \
+         library), an out-of-memory kill, or a forced termination. Its last warnings \
+         and errors can be added with \"Include recent errors\".\n"
+    )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CrashKind {
+    /// A Rust panic or an uncaught webview error.
+    Crash,
+    /// The previous session ended without an orderly exit (#1686).
+    UncleanExit,
+}
+
+pub(crate) fn crash_kind(contents: &str) -> CrashKind {
+    if contents.lines().any(|line| line == UNCLEAN_EXIT_SOURCE) {
+        CrashKind::UncleanExit
+    } else {
+        CrashKind::Crash
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct CrashReport {
     #[serde(rename = "fileName")]
     pub file_name: String,
     pub contents: String,
+    pub kind: CrashKind,
 }
 
 fn crash_dir(app: &tauri::AppHandle) -> Result<PathBuf, AppError> {
@@ -174,6 +314,8 @@ fn crash_dir(app: &tauri::AppHandle) -> Result<PathBuf, AppError> {
 pub async fn take_crash_report(app: tauri::AppHandle) -> Result<Option<CrashReport>, AppError> {
     let dir = crash_dir(&app)?;
     tokio::task::spawn_blocking(move || {
+        // An unclean exit is published by the startup review (#1686).
+        crate::session_marker::await_review(std::time::Duration::from_secs(3));
         let entries = match std::fs::read_dir(&dir) {
             Ok(entries) => entries,
             Err(_) => return Ok(None), // no crashes dir → never crashed
@@ -202,6 +344,7 @@ pub async fn take_crash_report(app: tauri::AppHandle) -> Result<Option<CrashRepo
             .map_err(|e| AppError::Other(format!("Failed to mark crash report seen: {}", e)))?;
         Ok(Some(CrashReport {
             file_name,
+            kind: crash_kind(&contents),
             contents,
         }))
     })
@@ -228,6 +371,38 @@ pub async fn log_frontend_error(message: String) {
     log::error!("[frontend] {}", truncated);
 }
 
+/// The crash file body for an uncaught webview error. Carries the recent
+/// actions like the panic hook's file does (#1688).
+pub(crate) fn frontend_crash_report(
+    message: &str,
+    stack: &str,
+    epoch_secs: u64,
+    environment: &str,
+    recent_actions: &str,
+) -> String {
+    let backtrace = if stack.is_empty() {
+        "<no stack captured>"
+    } else {
+        stack
+    };
+    format!(
+        "tauri-explorer {} crash report\n\
+         {}\n\
+         time: {} (unix)\n\
+         source: frontend (webview)\n\
+         panic: {}\n\
+         location: webview\n\n\
+         recent actions (newest last):\n{}\n\n\
+         backtrace:\n{}\n",
+        env!("CARGO_PKG_VERSION"),
+        environment,
+        epoch_secs,
+        message,
+        recent_actions,
+        backtrace
+    )
+}
+
 /// Persist a crash report for an uncaught webview error (#302), in the same
 /// file format the panic hook uses so `take_crash_report` and the next-launch
 /// crash notice treat it identically. The frontend dedupes bursts, so this is
@@ -248,24 +423,12 @@ pub async fn record_frontend_crash(
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let backtrace = if stack.is_empty() {
-            "<no stack captured>".to_string()
-        } else {
-            stack
-        };
-        let report = format!(
-            "tauri-explorer {} crash report\n\
-             {}\n\
-             time: {} (unix)\n\
-             source: frontend (webview)\n\
-             panic: {}\n\
-             location: webview\n\n\
-             backtrace:\n{}\n",
-            env!("CARGO_PKG_VERSION"),
-            crate::environment::render_crash_lines(crate::environment::summary()),
+        let report = frontend_crash_report(
+            &message,
+            &stack,
             epoch_secs,
-            message,
-            backtrace
+            &crate::environment::render_crash_lines(crate::environment::summary()),
+            &crate::recent_actions::render_for_crash(),
         );
         persist_crash_report(&dir, epoch_secs, report.as_bytes())
             .map_err(|e| AppError::Other(format!("Failed to write crash report: {}", e)))?;
@@ -292,6 +455,71 @@ pub async fn open_external_url(url: String) -> Result<(), AppError> {
 mod tests {
     use super::*;
 
+    fn touch(path: &Path, modified: SystemTime) {
+        std::fs::write(path, "x").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(modified)
+            .unwrap();
+    }
+
+    #[test]
+    fn prune_removes_old_consumed_reports_but_never_unseen_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let now = SystemTime::now();
+        let ancient = now - RETAIN_CONSUMED_FOR - Duration::from_secs(3600);
+        touch(&dir.path().join("crash-1.txt.seen"), ancient);
+        touch(&dir.path().join("crash-1.txt.claim"), ancient);
+        touch(&dir.path().join("crash-2.txt.claim"), ancient);
+        // Unseen report with an ancient claim: must survive, claim included.
+        touch(&dir.path().join("crash-3.txt"), ancient);
+        touch(&dir.path().join("crash-3.txt.claim"), ancient);
+        touch(&dir.path().join("crash-4.txt.seen"), now);
+        touch(&dir.path().join("crash-4.txt.claim"), now);
+        prune_consumed_reports(dir.path(), now);
+        let mut left: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        assert_eq!(
+            left,
+            [
+                "crash-3.txt",
+                "crash-3.txt.claim",
+                "crash-4.txt.claim",
+                "crash-4.txt.seen"
+            ]
+        );
+    }
+
+    #[test]
+    fn prune_caps_the_number_of_recent_consumed_reports() {
+        let dir = tempfile::tempdir().unwrap();
+        let now = SystemTime::now();
+        for i in 0..(RETAIN_CONSUMED_MAX + 25) {
+            let modified = now - Duration::from_secs(i as u64);
+            touch(&dir.path().join(format!("crash-{i}.txt.seen")), modified);
+            touch(&dir.path().join(format!("crash-{i}.txt.claim")), modified);
+        }
+        prune_consumed_reports(dir.path(), now);
+        let count = std::fs::read_dir(dir.path()).unwrap().count();
+        assert_eq!(count, RETAIN_CONSUMED_MAX * 2);
+        assert!(dir.path().join("crash-0.txt.seen").exists());
+    }
+
+    #[test]
+    fn prune_tolerates_a_missing_directory_and_foreign_files() {
+        let dir = tempfile::tempdir().unwrap();
+        prune_consumed_reports(&dir.path().join("absent"), SystemTime::now());
+        std::fs::write(dir.path().join("notes.txt"), "keep").unwrap();
+        prune_consumed_reports(dir.path(), SystemTime::now() + Duration::from_secs(1 << 30));
+        assert!(dir.path().join("notes.txt").exists());
+    }
+
     #[test]
     fn write_and_mark_seen_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
@@ -305,6 +533,22 @@ mod tests {
     }
 
     #[test]
+    fn frontend_crash_report_carries_the_recent_actions_before_the_stack() {
+        let report = frontend_crash_report(
+            "boom",
+            "at x",
+            1,
+            "os: linux",
+            "1. view.list\n2. help.reportIssue",
+        );
+        let actions = report.find("2. help.reportIssue").expect("actions missing");
+        assert!(actions < report.find("backtrace:").unwrap());
+        assert!(report.contains("source: frontend (webview)"));
+        let empty = frontend_crash_report("boom", "", 1, "os: linux", "");
+        assert!(empty.contains("<no stack captured>"));
+    }
+
+    #[test]
     fn panic_hook_writes_report_file() {
         let dir = tempfile::tempdir().unwrap();
         let crashes = dir.path().join("crashes");
@@ -313,6 +557,7 @@ mod tests {
         // files here. Assert only that OUR panic produced a report — never
         // an exact file count.
         install_panic_hook(crashes.clone());
+        crate::recent_actions::record_for_test("crash.trail_marker");
         let _ = std::thread::spawn(|| panic!("test crash")).join();
         let ours = std::fs::read_dir(&crashes)
             .unwrap()
@@ -321,6 +566,8 @@ mod tests {
             .find(|c| c.contains("panic: test crash"));
         let contents = ours.expect("no crash report written for the test panic");
         assert!(contents.contains("location:"));
+        // The recent-actions trail rides along (#1688).
+        assert!(contents.contains("crash.trail_marker"));
     }
 
     #[test]

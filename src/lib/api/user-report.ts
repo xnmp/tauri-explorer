@@ -35,6 +35,16 @@ export function clearUserReportToken(): Promise<void> {
   return invoke<void>("clear_user_report_token");
 }
 
+/** Redacted, bounded WARN/ERROR excerpt (#1685); "" when there is none. */
+export function recentErrors(): Promise<string> {
+  return invoke<string>("recent_errors");
+}
+
+/** Numbered recent-actions trail (#1688); "" when nothing was recorded. */
+export function recentActions(): Promise<string> {
+  return invoke<string>("recent_actions");
+}
+
 export function readClipboardReportAttachment(): Promise<UserReportAttachment> {
   return invoke<UserReportAttachment>("clipboard_read_report_attachment");
 }

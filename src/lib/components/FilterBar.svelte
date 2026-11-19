@@ -248,7 +248,7 @@
     padding: 4px 8px;
     border: 1px solid var(--layout-hairline, var(--divider));
     border-radius: var(--radius-sm, 4px);
-    background: var(--background-flyout, var(--background-card, #202020));
+    background: var(--background-card);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
     color: var(--text-secondary);
     font-size: 12px;

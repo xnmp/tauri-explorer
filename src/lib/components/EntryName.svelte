@@ -34,7 +34,7 @@
   // returns a suggestion, hidden as soon as the input already holds it.
   let suggestionRef = $state<HTMLElement | null>(null);
   const suggestedName = $derived(
-    isRenaming ? renameSuggestionStore.suggestionFor(entry.path) : null,
+    isRenaming ? renameSuggestionStore.displaySuggestionFor(entry.path) : null,
   );
   const showSuggestion = $derived(
     suggestedName !== null && suggestedName !== rename.editedName && !rename.submittingRename,

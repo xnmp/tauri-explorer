@@ -80,5 +80,5 @@ export const TRASH_PATH = "trash://";
 
 /** True for the Trash root and any path inside it. */
 export function isTrashPath(path: string): boolean {
-  return path.startsWith(TRASH_PATH);
+  return /^trash:\/\//i.test(path);
 }

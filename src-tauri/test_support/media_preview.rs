@@ -869,18 +869,37 @@ mod companion_audio {
     use std::os::unix::fs::PermissionsExt;
 
     /// Probe lists `streams`; an encode runs `encode` with `$out` as its output path.
+    ///
+    /// Waits until the script can be exec'd: another test thread's `fork`
+    /// inherits the write descriptor until that child execs, and exec of a
+    /// file still open for writing fails with ETXTBSY ("Text file busy"),
+    /// which flaked these tests in parallel runs (#1597; same race as #764).
     fn fake_ffmpeg(root: &std::path::Path, streams: &str, encode: &str) -> std::path::PathBuf {
         let script = root.join("ffmpeg");
         fs::write(
             &script,
             format!(
-                "#!/bin/sh\necho \"$*\" >> \"{calls}\"\nfor a; do out=$a; done\ncase \" $* \" in\n  *\" -map \"*) {encode} ;;\n  *) printf '%s\\n' \"Input #0, mov,mp4, from 'clip.mp4':\" {streams} >&2; exit 1 ;;\nesac\n",
+                "#!/bin/sh\n[ \"$1\" = __exec_probe ] && exit 0\necho \"$*\" >> \"{calls}\"\nfor a; do out=$a; done\ncase \" $* \" in\n  *\" -map \"*) {encode} ;;\n  *) printf '%s\\n' \"Input #0, mov,mp4, from 'clip.mp4':\" {streams} >&2; exit 1 ;;\nesac\n",
                 calls = root.join("calls").display(),
             ),
         )
         .unwrap();
         fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
-        script
+        // Once one exec succeeds no process holds a write descriptor, and our
+        // own is closed, so no later fork can inherit one.
+        for _ in 0..1000 {
+            match std::process::Command::new(&script).arg("__exec_probe").status() {
+                Ok(status) => {
+                    assert!(status.success(), "fake ffmpeg probe failed: {status}");
+                    return script;
+                }
+                Err(error) if error.raw_os_error() == Some(libc::ETXTBSY) => {
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                }
+                Err(error) => panic!("fake ffmpeg cannot run: {error}"),
+            }
+        }
+        panic!("fake ffmpeg stayed busy after 1000 exec attempts");
     }
     const VIDEO_AND_AAC: &str =
         "'  Stream #0:0[0x1](und): Video: h264 (High), yuv420p, 1920x1080' '  Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo'";

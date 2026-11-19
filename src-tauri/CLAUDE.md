@@ -41,6 +41,12 @@ the descriptor, and so the lock, until it execs.
 
 ## Portable tests
 
+Unix subprocess fixtures must execute checked-in launchers and read generated
+scripts as shell input. A concurrent fork can retain a freshly written script's
+writable descriptor until exec, causing Linux `ETXTBSY` even after `fs::write`
+returns. The companion-audio fixture uses a per-test symlink to a stable launcher
+and tests extraction with its generated input held open for writing (#1838).
+
 Cross-platform batch-worker tests must derive absolute paths from `tempfile`
 instead of Unix literals such as `/drive/a`. Windows treats those literals as
 root-relative, so batch admission rejects them before the behavior under test

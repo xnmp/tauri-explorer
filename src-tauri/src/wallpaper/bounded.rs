@@ -193,10 +193,14 @@ mod tests {
 
     #[test]
     fn work_started_late_but_before_the_deadline_returns_its_result() {
+        // The job starts after the caller is already waiting, but far inside
+        // the start window: with only `START / 2` of headroom a loaded CI
+        // runner's thread wakeup overran it and reported `NotStarted`.
+        let start = Duration::from_secs(10);
         let started = Instant::now();
-        let result = hand_off(after(START / 2), || "late", START, GRACE);
+        let result = hand_off(after(Duration::from_millis(50)), || "late", start, GRACE);
         assert_eq!(result, Ok("late"));
-        assert!(started.elapsed() < START + GRACE);
+        assert!(started.elapsed() < start);
     }
 
     #[test]

@@ -110,6 +110,19 @@ export const systemCommands: Record<string, CommandHandler> = {
   // simulated by record_frontend_crash writing localStorage.mockFrontendCrash.
   // Either is consumed on first read, mirroring take_crash_report's mark-seen.
   take_crash_report: () => {
+    // "unclean": the previous session did not exit cleanly (#1686).
+    if (localStorage.getItem(MOCK_LOCAL_KEYS.crashReport) === "unclean") {
+      localStorage.removeItem(MOCK_LOCAL_KEYS.crashReport);
+      return {
+        fileName: "crash-1700000500.txt",
+        kind: "unclean-exit",
+        contents:
+          "tauri-explorer 1.0.0 crash report\nos: linux (x86_64)\ntime: 1700000500 (unix)\n" +
+          "source: unclean exit (previous session)\npanic: Tauri Explorer did not exit cleanly\n" +
+          "location: unknown (no panic was recorded)\nsession started: 1700000000 (unix)\n\n" +
+          "The previous session ended without an orderly exit and without a recorded panic.\n",
+      };
+    }
     if (localStorage.getItem(MOCK_LOCAL_KEYS.crashReport) === "1") {
       localStorage.removeItem(MOCK_LOCAL_KEYS.crashReport);
       return {

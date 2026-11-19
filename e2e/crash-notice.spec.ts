@@ -31,6 +31,59 @@ test("crash notice appears after a crash and dismisses", async ({ page }) => {
   await expect(page.locator('[data-testid="crash-notice"]')).not.toBeVisible();
 });
 
+test("an unclean exit is offered once, with the previous session's errors as an opt-in section (#1686)", async ({ page }) => {
+  const previous = [
+    "Previous session:",
+    "[2026-11-19][09:00:01][tauri_explorer_lib::renderer_owner][ERROR] web process terminated: crashed",
+  ].join("\n");
+  await page.goto("/");
+  await page.evaluate(
+    ([crashKey, crash, errorsKey, errors]) => {
+      localStorage.setItem(crashKey, crash);
+      localStorage.setItem(errorsKey, errors);
+    },
+    [MOCK_LOCAL_KEYS.crashReport, "unclean", MOCK_LOCAL_KEYS.recentErrors, previous] as const,
+  );
+  await page.reload();
+
+  const notice = page.locator('[data-testid="crash-notice"]');
+  await expect(notice).toContainText("did not exit cleanly last time");
+  await expect(notice).not.toContainText("crashed");
+  await expect(notice).toContainText("crash-1700000500.txt");
+  await expect(notice).toContainText("nothing was sent anywhere");
+  if (process.env.CAPTURE_EVIDENCE) {
+    await notice.screenshot({ path: "screenshots/feat/unclean-exit-detection/unclean-exit-notice.png" });
+  }
+
+  await notice.getByRole("button", { name: "Report…" }).click();
+  const dialog = page.getByRole("dialog", { name: "Report Issue" });
+  await expect(dialog.getByLabel("Title")).toHaveValue("Crash: Tauri Explorer did not exit cleanly");
+  const crash = dialog.getByRole("region", { name: "Crash report" });
+  await expect(crash).toContainText("did not exit cleanly");
+  await expect(crash.getByLabel("Include the crash report")).toBeChecked();
+  // The log tail stays opt-in: offered, unticked, previewed verbatim.
+  const errors = dialog.getByRole("region", { name: "Recent errors" });
+  await expect(errors.getByLabel("Include recent errors")).not.toBeChecked();
+  await errors.getByText("Show what will be sent").click();
+  await expect(errors.locator(".diagnostics-preview")).toContainText("web process terminated: crashed");
+  await errors.getByLabel("Include recent errors").check();
+
+  await dialog.getByRole("button", { name: "Submit" }).click();
+  await expect(page.locator(".toast.success")).toContainText("Issue #5470");
+  const submitted = await page.evaluate(
+    (key) => JSON.parse(localStorage.getItem(key) ?? "null"),
+    MOCK_LOCAL_KEYS.submittedReport,
+  );
+  expect(submitted.diagnostics).toEqual([
+    expect.objectContaining({ kind: "crash-report", text: expect.stringContaining("source: unclean exit") }),
+    expect.objectContaining({ kind: "recent-errors", text: previous }),
+  ]);
+
+  // Consumed on read: the next launch is quiet.
+  await page.reload();
+  await expect(page.locator('[data-testid="crash-notice"]')).not.toBeVisible();
+});
+
 test("no crash notice on a clean launch", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator('[data-testid="crash-notice"]')).not.toBeVisible();

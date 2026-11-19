@@ -1,5 +1,19 @@
 import { describe, it, expect } from "vitest";
-import { dedupeFrontendCrash, isBenignBrowserError } from "../../src/lib/domain/crash-report";
+import { crashNoticeLead, dedupeFrontendCrash, isBenignBrowserError } from "../../src/lib/domain/crash-report";
+
+describe("crashNoticeLead (#1686)", () => {
+  it("says an unclean exit did not exit cleanly, without claiming a crash", () => {
+    const lead = crashNoticeLead("unclean-exit");
+    expect(lead).toContain("did not exit cleanly last time");
+    expect(lead).not.toContain("crashed");
+  });
+
+  it("keeps the crash wording for a crash and for a report without a kind", () => {
+    for (const kind of ["crash", undefined] as const) {
+      expect(crashNoticeLead(kind)).toContain("crashed last time");
+    }
+  });
+});
 
 describe("dedupeFrontendCrash", () => {
   it("records a first-seen message and remembers it", () => {

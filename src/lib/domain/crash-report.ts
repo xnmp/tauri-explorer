@@ -44,3 +44,17 @@ export function isBenignBrowserError(message: string | null | undefined): boolea
   const text = message.trim();
   return BENIGN_BROWSER_ERRORS.some((pattern) => pattern.test(text));
 }
+
+/** What the saved report describes (`CrashReport.kind` from `take_crash_report`). */
+export type CrashKind = "crash" | "unclean-exit";
+
+/**
+ * The crash notice's lead sentence. An unclean exit (#1686) left no panic,
+ * so it must not claim one; a report without a kind (an older backend) is a
+ * crash.
+ */
+export function crashNoticeLead(kind: CrashKind | undefined): string {
+  return kind === "unclean-exit"
+    ? "Tauri Explorer did not exit cleanly last time. Details were saved locally to"
+    : "Tauri Explorer crashed last time. A report was saved locally to";
+}

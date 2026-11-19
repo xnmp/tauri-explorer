@@ -42,3 +42,18 @@ export function createCrashReportStore() {
 }
 
 export const crashReportStore = createCrashReportStore();
+
+/**
+ * Take the launch's crash report into `store`, in a foreground window only.
+ * Taking consumes the report (it is marked seen), so a parked warm window,
+ * which may stay hidden for the whole session, must never take it: the
+ * notice would be shown where nobody sees it (#1686).
+ */
+export async function claimLaunchCrash(
+  store: Pick<ReturnType<typeof createCrashReportStore>, "offer">,
+  take: () => Promise<CrashReport | null>,
+  foreground: boolean,
+): Promise<void> {
+  if (!foreground) return;
+  store.offer(await take());
+}

@@ -72,6 +72,16 @@ fn write_crash_report(crash_dir: &Path, info: &std::panic::PanicHookInfo) -> std
     Ok(())
 }
 
+/// Publish a complete crash file under a fresh identity (also used for the
+/// unclean-exit report, #1686).
+pub(crate) fn publish_report(
+    crash_dir: &Path,
+    epoch_secs: u64,
+    report: &[u8],
+) -> std::io::Result<PathBuf> {
+    persist_crash_report(crash_dir, epoch_secs, report)
+}
+
 fn persist_crash_report(
     crash_dir: &Path,
     epoch_secs: u64,
@@ -222,11 +232,73 @@ fn report_order(path: &Path) -> (u64, u32) {
         .unwrap_or((0, 0))
 }
 
+/// Whether an unconsumed crash file was written at or after `since` (Unix
+/// seconds): a session it falls in has its exit explained already (#1686).
+/// Unclean-exit reports never count: one describes an earlier session's end,
+/// published after this one started, and must not hide this session's own.
+pub(crate) fn unseen_report_since(crash_dir: &Path, since: u64) -> bool {
+    std::fs::read_dir(crash_dir).is_ok_and(|entries| {
+        entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| is_unseen_report(path) && report_order(path).0 >= since)
+            .any(|path| {
+                std::fs::read_to_string(path)
+                    .is_ok_and(|contents| crash_kind(&contents) == CrashKind::Crash)
+            })
+    })
+}
+
+/// The `source:` line that marks an unclean-exit report.
+const UNCLEAN_EXIT_SOURCE: &str = "source: unclean exit (previous session)";
+
+/// The crash file body for a session that ended without an orderly exit or a
+/// recorded panic (#1686). Its log tail is not copied in: the report dialog
+/// offers it as the opt-in "Recent errors" section (#1685).
+pub(crate) fn unclean_exit_report(
+    version: &str,
+    environment: &str,
+    epoch_secs: u64,
+    session_started: u64,
+) -> String {
+    format!(
+        "tauri-explorer {version} crash report\n\
+         {environment}\n\
+         time: {epoch_secs} (unix)\n\
+         {UNCLEAN_EXIT_SOURCE}\n\
+         panic: Tauri Explorer did not exit cleanly\n\
+         location: unknown (no panic was recorded)\n\
+         session started: {session_started} (unix)\n\n\
+         The previous session ended without an orderly exit and without a recorded \
+         panic: most likely a native crash (for example in the web view or a system \
+         library), an out-of-memory kill, or a forced termination. Its last warnings \
+         and errors can be added with \"Include recent errors\".\n"
+    )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CrashKind {
+    /// A Rust panic or an uncaught webview error.
+    Crash,
+    /// The previous session ended without an orderly exit (#1686).
+    UncleanExit,
+}
+
+pub(crate) fn crash_kind(contents: &str) -> CrashKind {
+    if contents.lines().any(|line| line == UNCLEAN_EXIT_SOURCE) {
+        CrashKind::UncleanExit
+    } else {
+        CrashKind::Crash
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct CrashReport {
     #[serde(rename = "fileName")]
     pub file_name: String,
     pub contents: String,
+    pub kind: CrashKind,
 }
 
 fn crash_dir(app: &tauri::AppHandle) -> Result<PathBuf, AppError> {
@@ -242,6 +314,8 @@ fn crash_dir(app: &tauri::AppHandle) -> Result<PathBuf, AppError> {
 pub async fn take_crash_report(app: tauri::AppHandle) -> Result<Option<CrashReport>, AppError> {
     let dir = crash_dir(&app)?;
     tokio::task::spawn_blocking(move || {
+        // An unclean exit is published by the startup review (#1686).
+        crate::session_marker::await_review(std::time::Duration::from_secs(3));
         let entries = match std::fs::read_dir(&dir) {
             Ok(entries) => entries,
             Err(_) => return Ok(None), // no crashes dir → never crashed
@@ -270,6 +344,7 @@ pub async fn take_crash_report(app: tauri::AppHandle) -> Result<Option<CrashRepo
             .map_err(|e| AppError::Other(format!("Failed to mark crash report seen: {}", e)))?;
         Ok(Some(CrashReport {
             file_name,
+            kind: crash_kind(&contents),
             contents,
         }))
     })

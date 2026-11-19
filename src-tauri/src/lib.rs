@@ -27,6 +27,7 @@ mod os_recent;
 mod recent_actions;
 mod recent_errors;
 mod report_redaction;
+mod session_marker;
 mod shared_history;
 // pub: criterion benches (src-tauri/benches/) call into
 // files::dir_listing::{scan_directory_parallel, sort_entries} directly.
@@ -60,6 +61,8 @@ mod native_file_drag;
 #[cfg(unix)]
 mod process_supervisor;
 mod recovery_actor;
+#[cfg(unix)]
+mod termination_signals;
 
 /// `tauri-explorer --diagnostics` (#1687): print the environment, log folder,
 /// newest crash and WARN/ERROR tail, then exit before any window, webview or
@@ -197,6 +200,8 @@ pub(crate) fn init_test_logger() {
 /// mutations. Runs on `RunEvent::Exit`, and from the updater's Windows
 /// install path, which exits the process without that event (#1679).
 pub(crate) fn release_process_resources() {
+    // First: every orderly exit, including update relaunches (#1686).
+    session_marker::disarm();
     ai::cancel_all();
     installed_plugins::shutdown();
 }
@@ -706,6 +711,24 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             // listener, so a watcher there would be a thread with no audience.
             config_watch::init_config_watcher(app.handle());
 
+            // Unclean-exit detection (#1686): main process only, so after the
+            // portal branch; single-instance hand-offs never reach setup.
+            // Release builds only, unless opted in (`session_marker::enabled`).
+            // Signals first: an armed marker must never meet a stop request
+            // under the default action, which skips every cleanup.
+            if session_marker::enabled() {
+                #[cfg(unix)]
+                {
+                    let handle = app.handle().clone();
+                    if let Err(error) = termination_signals::install(move || handle.exit(0)) {
+                        log::warn!("Termination signal handling is unavailable: {error}");
+                    }
+                }
+                if let Ok(log_dir) = tauri::Manager::path(app).app_log_dir() {
+                    session_marker::start(log_dir);
+                }
+            }
+
             // Create window programmatically so we can inject initialization_script.
             // This replaces the static window definition in tauri.conf.json.
             let mut builder = tauri::WebviewWindowBuilder::new(
@@ -828,6 +851,11 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
                 if let tauri::RunEvent::ExitRequested { code: None, api, .. } = &event {
                     api.prevent_exit();
                 }
+            } else if matches!(&event, tauri::RunEvent::ExitRequested { .. }) {
+                // Nothing prevents a main-process exit: the stop is orderly
+                // from here, even if teardown (WebKitGTK) then hangs and the
+                // user kills the process (#1686).
+                session_marker::disarm();
             }
             if let tauri::RunEvent::WindowEvent {
                 label,

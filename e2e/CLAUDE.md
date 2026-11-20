@@ -49,3 +49,10 @@ For HTML preview CSP browser tests, route the forbidden image to a valid fixture
 and assert it never reaches the route plus completed/zero-natural-width image
 state. WebKit omits `requestfailed` events for CSP and blocks asynchronous
 callbacks injected into a script-disabled sandbox; neither is a portable oracle.
+
+## Scenario budgets
+
+The video-marker theme matrix splits view-mode markers, preview transitions and
+large-Tiles refresh into independent tests (#1864). Do not fold them back into
+one theme-wide scenario: WebKit's cumulative action time exhausted the default
+30-second test budget at the final refresh even while that row was actionable.

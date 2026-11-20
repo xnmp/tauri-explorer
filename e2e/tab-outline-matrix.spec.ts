@@ -443,16 +443,32 @@ async function expectBackdrop(page: Page, cell: Cell, what: string): Promise<voi
 
 /**
  * Default is flat (#1856): its surface's corners are square, so there are no
- * shade pockets below the base, and the tab casts no shadow: hiding the
- * shadow layer changes nothing.
+ * shade pockets below the base, and the tab casts no shadow.
  */
 async function expectFlat(page: Page, what: string): Promise<void> {
   await expect(page.locator('[data-region="tab-key-shadow"] .surface-pockets'), `${what}: no pockets`).toHaveAttribute("d", "");
+  await expect(page.locator('[data-region="tab-key-shadow"] .tab-shadows'), `${what}: no tab shadow`).toHaveCSS("display", "none");
+}
+
+/**
+ * Floating Islands' outline follows its layout contract: the marks draw the
+ * surface's corners at --layout-radius and stroke the outline in the
+ * islands' border colour (the outline check compares against both).
+ */
+async function expectIslandsOutlineContract(page: Page, what: string): Promise<void> {
+  const contract = await page.evaluate(() => {
+    const bar = document.querySelector('[data-region="titlebar"]')!;
+    const probe = document.createElement("div");
+    probe.style.cssText = "position: absolute; border: var(--layout-border); width: var(--layout-radius);";
+    bar.appendChild(probe);
+    const style = getComputedStyle(probe);
+    const result = { border: style.borderTopColor, radius: parseFloat(style.width) };
+    probe.remove();
+    return result;
+  });
   const g = await geometry(page);
-  const actual = await shot(page);
-  const without = await shotWith(page, '[data-region="tab-key-shadow"] .tab-shadows { visibility: hidden !important; }');
-  const { max, at } = await maxDifference(page, actual, without, [{ x0: 0, x1: Math.round(g.titlebar.width * g.dpr), y0: 0, y1: snap(g, g.titlebar.bottom) + 8 * g.dpr }]);
-  expect(max, `${what}: a shadow round the tab, worst ${at}`).toBeLessThanOrEqual(1);
+  expect(g.outlineColor, `${what}: the outline is the islands' border colour`).toBe(contract.border);
+  expect(g.surfaceRadius / g.zoom, `${what}: the surface's corners follow --layout-radius`).toBeCloseTo(contract.radius, 1);
 }
 
 async function expectStatic(page: Page, cell: Cell, what: string): Promise<void> {
@@ -460,6 +476,7 @@ async function expectStatic(page: Page, cell: Cell, what: string): Promise<void>
   await expectFoot(page, cell, what);
   await expectShadeInBar(page, what);
   if (cell.layout === "floating-islands") {
+    await expectIslandsOutlineContract(page, what);
     await expectIslands(page, what);
     await expectPockets(page, what);
     await expectShadow(page, what);

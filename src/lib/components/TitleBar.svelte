@@ -56,13 +56,14 @@
   // are the inline SVG layers below, kept in step by the lazily loaded marks.
   useTabSeam(() => titlebarEl, () => [windowTabsManager.tabs, windowTabsManager.activeTabId, tabStripVisible]);
 
-  // Floating Islands: the strip starts past the surface's rounded top-left
-  // corner where its tabs can afford it (WindowTabBar, `tabStripStart`), so
-  // the first tab keeps its whole curve (#1785). Keyed on a boolean so
-  // re-applying the same layout does not detach and re-measure the strip.
+  // The strip starts past the surface's top-left corner where its tabs can
+  // afford it (WindowTabBar, `tabStripStart`), so the first tab keeps its
+  // whole curve and foot (#1785; Default's square corner too, #1856). Keyed
+  // on a boolean so re-applying the same layout does not detach and
+  // re-measure the strip.
   let alignedStart = $state<number | null>(null);
   // The strip itself mounts only with an active tab: measure once it is there.
-  const alignStrip = $derived(Boolean(titlebarEl) && layoutStore.islands && tabStripVisible && Boolean(windowTabsManager.activeTab));
+  const alignStrip = $derived(Boolean(titlebarEl) && layoutStore.tabSeam && tabStripVisible && Boolean(windowTabsManager.activeTab));
   $effect(() => {
     const bar = titlebarEl;
     if (!alignStrip || !bar) return;

@@ -34,7 +34,9 @@
      the tab's sides read at the strength of the strip's base. */
   --default-tab-edge: color-mix(in srgb, var(--text-primary) 10%, transparent);
   /* Flat: the surface's top corners are square, so the outline runs straight
-     to the window's edges (composables/tab-strip-start.ts reads it). */
+     to the window's edges. The marks and the strip's start
+     (composables/tab-strip-start.ts) read it; a layout extending Default
+     that rounds its surface sets it too. */
   --islands-surface-radius: 0px;
 }
 
@@ -100,8 +102,8 @@
 
 /* The active tab is a hole in the strip: it, its feet and the window are one
    surface. It keeps only its accent; it clips its own content, as the feet
-   paint nothing. */
-:root[data-layout-base="default"] [data-region="tab"][aria-selected="true"] {
+   paint nothing. A drag over it still shows the tab bar's drop highlight. */
+:root[data-layout-base="default"] [data-region="tab"][aria-selected="true"]:not(.drop-target, .file-drop-target) {
   background: transparent;
   box-shadow: none;
   overflow: hidden;

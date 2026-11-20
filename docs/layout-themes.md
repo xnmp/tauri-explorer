@@ -178,6 +178,16 @@ Islands carry no `backdrop-filter`: it made each island the containing block
 of fixed overlays, so menus opened offset, and the webview cannot sample the
 native material anyway. Context menus and modal cards are opaque.
 
+### Default surfaces
+
+Default (#1856) draws the same tab seam as Floating Islands, flat: square
+surface corners, no tab shadow, and the strip shaded over the surface
+colour. The title bar, sidebar, status bar, toolbar and column header take
+`--layout-chrome-surface` when a layout sets it, else the content pane's
+own surface. A layout that extends Default and rounds its panels with
+`--layout-radius` keeps the tab's surface square unless it also sets
+`--islands-surface-radius`.
+
 ### Native window material
 
 Native material is a separate window capability, never part of a layout. A

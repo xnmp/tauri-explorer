@@ -1,7 +1,7 @@
 /**
- * Measures where the Floating Islands tab strip starts (#1734, #1785): the
- * strip padding (`tabStripPadding`) that puts the first tab's foot past the
- * rounded top-left corner of the tab's surface, reported through `onAligned`
+ * Measures where the tab strip starts when the active tab owns the window
+ * (#1734, #1785, #1856): the strip padding (`tabStripPadding`) that puts the
+ * first tab's foot past the top-left corner of the tab's surface, reported through `onAligned`
  * as the strip's room moves (window controls or the integrated title bar's
  * traffic-light inset). The tab bar decides how much of that alignment its
  * tabs can afford (`tabStripStart`).
@@ -16,8 +16,8 @@ import { getZoomFactor } from "$lib/domain/zoom";
 
 /**
  * The surface's corner radius in CSS pixels: `--islands-surface-radius`, a
- * registered length the layout sets from `--layout-radius`, so any unit a
- * layout uses (rem, em, calc) arrives resolved.
+ * registered length Floating Islands sets from `--layout-radius` (Default:
+ * 0), so any unit a layout uses (rem, em, calc) arrives resolved.
  */
 export function surfaceRadius(titlebar: HTMLElement): number {
   return parseFloat(getComputedStyle(titlebar).getPropertyValue("--islands-surface-radius")) || 0;

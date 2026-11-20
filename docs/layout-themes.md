@@ -13,7 +13,7 @@ Five layouts are built in:
 | Default | `default` | The flat, edge-to-edge layout. The active tab owns the window: tab, sidebar, toolbar, list and status bar are one surface, only the strip round the tabs is shaded, and one outline runs round the tab and along the strip's base (#1856). Ships in the startup CSS. |
 | Floating Islands | `floating-islands` | Rounded panels floating over the window backdrop (#277, #434). Ships in the startup CSS. |
 | Hairline Ledger | `hairline-ledger` | Square, dense panels ruled by 1px hairlines, monospaced metadata and an inverted selection. Loaded on demand. |
-| Compact | `compact` | Default's surfaces with tight chrome (30px title bar, 32px toolbar, 20px status bar) and 22px Details rows (#1548). Loaded on demand. |
+| Compact | `compact` | Default's surfaces (one surface, shaded tab strip, tab outline; #1858) with tight chrome (30px title bar, 32px toolbar, 20px status bar) and 22px Details rows (#1548). Loaded on demand. |
 | Soft Cards | `soft-cards` | Opaque 8px-rounded cards with 1px borders and no shadows on a slightly darker backdrop (a cool light grey on light themes). Every gap is 6px, the tab included; split panes, the preview, terminal and source-control panel become separate cards, and selected rows sit inset inside them (#1548, #1854). Loaded on demand. |
 
 Choose one in **Settings → Appearance → Layout**, with **Switch Layout...** in the
@@ -182,7 +182,7 @@ native material anyway. Context menus and modal cards are opaque.
 
 ### Default surfaces
 
-Default (#1856) draws the same tab seam as Floating Islands, flat: square
+Default (#1856) and Compact (#1858) draw the same tab seam as Floating Islands, flat: square
 surface corners, no tab shadow, and the strip shaded over the surface
 colour. The title bar, sidebar and toolbar take `--layout-chrome-surface`
 when a layout sets it, else the content pane's own surface; the column

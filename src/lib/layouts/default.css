@@ -7,9 +7,9 @@
  * attribute; a user layout that extends Default cascades after it, and the
  * chrome regions still take its --layout-chrome-surface.
  *
- * One surface: the active tab, sidebar, toolbar, column header, file list and
- * status bar share the content pane's colour. Only the strip round the tabs
- * is shaded, and the active tab is a hole in that shade through which the
+ * One surface: the active tab, sidebar, toolbar and file list share the
+ * content pane's colour. Only the strip round the tabs is shaded, and the
+ * active tab is a hole in that shade through which the
  * title bar's own surface shows. One outline runs round the tab, through its
  * curved feet and along the strip's base. Floating Islands draws the same
  * thing with rounded corners and a shadow: the hole and outline are the same
@@ -41,12 +41,13 @@
 }
 
 /* The title bar is the surface; the shade layer paints the strip over it,
-   minus the active tab's hole. The outline replaces its bottom rule. Its
-   layers stack inside it, and it stacks above the window so its menus (the
-   tab search) open over the panes, as in Floating Islands. */
+   minus the active tab's hole. Its bottom row lies below the strip's base:
+   the outline's base runs there, on the surface like the tab's sides, so the
+   whole outline stays inside the bar and the bar never needs to stack over
+   the window (menus and dialogs in the window still cover it). The outline
+   replaces the bar's bottom rule. */
 :root[data-layout-base="default"] [data-region="titlebar"] {
-  position: relative;
-  z-index: 2;
+  padding-bottom: 1px;
   background: var(--layout-chrome-surface, var(--default-surface));
   box-shadow: none;
 }
@@ -77,15 +78,10 @@
 }
 
 /* The active tab's accent is its own top border, which lies on the outline's
-   top row: the tabs paint above the outline, so the accent takes that row
-   over and the outline carries on where the accent tapers off. */
+   top row: the outline layer comes before the tabs, so at the same level the
+   accent paints over that row and the outline carries on where it tapers. */
 :root[data-layout-base="default"] [data-region="tab-edge"] {
   z-index: 0;
-}
-
-:root[data-layout-base="default"] [data-tab-room-box] {
-  position: relative;
-  z-index: 1;
 }
 
 /* Inactive tabs sit on the strip with no fill of their own: the active tab's
@@ -119,20 +115,14 @@
   visibility: hidden;
 }
 
-/* The rest of the window is the same surface. */
-:root[data-layout-base="default"] :is([data-region="sidebar-body"], [data-region="status-bar"]) {
+/* The sidebar and toolbar are the same surface. The column header and the
+   status bar keep their own opaque, quieter tones: the header must hide the
+   rows scrolling under it with one measurable colour, and the status bar's
+   warning and error text is tuned against its tone (WCAG AA). */
+:root[data-layout-base="default"] [data-region="sidebar-body"] {
   background: var(--layout-chrome-surface, var(--default-surface));
 }
 
 :root[data-layout-base="default"] [data-region="toolbar"] {
   background: var(--layout-chrome-surface, transparent);
-}
-
-/* The column header stays opaque (rows scroll under it): the pane's surface
-   over the theme base, the pane's own composite. */
-:root[data-layout-base="default"] [data-region="column-header"] {
-  background: var(
-    --layout-chrome-surface,
-    linear-gradient(var(--default-surface), var(--default-surface)), var(--background-solid)
-  );
 }

@@ -119,6 +119,9 @@ test.describe("Large pane materialization", () => {
         placeholders: document.querySelectorAll(".pane-restoring").length,
         splits: document.querySelectorAll(".pane-split").length,
         queuedFrames: queued.size,
+        // The tab seam (Floating Islands, Default) re-measures the strip a
+        // frame after a tab change (composables/tab-seam-marks.ts).
+        seamFrames: document.querySelector('[data-region="tab-edge"]') ? 1 : 0,
       };
       const firstFrame = [...queued.values()];
       queued.clear();
@@ -128,13 +131,15 @@ test.describe("Large pane materialization", () => {
       return result;
     }, state);
 
-    expect(initial).toEqual({
+    // One frame for the deferred panes, besides the tab seam's own.
+    const { seamFrames, ...rest } = initial;
+    expect(rest).toEqual({
       ready: 1,
       focusedReady: true,
       explorers: 1,
       placeholders: 6,
       splits: 6,
-      queuedFrames: 1,
+      queuedFrames: 1 + seamFrames,
     });
     await expect(page.locator(".explorer-pane.active")).toBeVisible();
     await expect.poll(() => page.evaluate(async () => {

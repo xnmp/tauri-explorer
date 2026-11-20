@@ -182,9 +182,13 @@ native material anyway. Context menus and modal cards are opaque.
 
 Default (#1856) draws the same tab seam as Floating Islands, flat: square
 surface corners, no tab shadow, and the strip shaded over the surface
-colour. The title bar, sidebar, status bar, toolbar and column header take
-`--layout-chrome-surface` when a layout sets it, else the content pane's
-own surface. A layout that extends Default and rounds its panels with
+colour. The title bar, sidebar and toolbar take `--layout-chrome-surface`
+when a layout sets it, else the content pane's own surface; the column
+header and status bar keep their opaque chrome tones (rows scroll under the
+header, and the status bar's warning text is tuned against its tone). The
+title bar's bottom row lies below the strip's base and carries the
+outline's base, so the whole outline stays inside the bar and the bar never
+stacks over menus and dialogs in the window. A layout that extends Default and rounds its panels with
 `--layout-radius` keeps the tab's surface square unless it also sets
 `--islands-surface-radius`.
 

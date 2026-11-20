@@ -122,7 +122,9 @@ interface Geometry {
   dpr: number;
   zoom: number;
   chromium: boolean;
-  titlebar: { bottom: number; width: number };
+  titlebar: { top: number; bottom: number; width: number };
+  /** The strip's base: the active tab's bottom (Default keeps a row of the bar below it for the outline). */
+  base: number;
   tab: { left: number; right: number; top: number; bottom: number } | null;
   hole: [number, number] | null;
   islands: { left: number; right: number; top: number; radius: number }[];
@@ -142,7 +144,8 @@ async function geometry(page: Page): Promise<Geometry> {
       dpr: devicePixelRatio,
       zoom,
       chromium: /Chrome\//.test(navigator.userAgent),
-      titlebar: { bottom: bar.bottom, width: bar.width },
+      titlebar: { top: bar.top, bottom: bar.bottom, width: bar.width },
+      base: tab ? tab.bottom : bar.bottom,
       tab: tab ? { left: tab.left, right: tab.right, top: tab.top, bottom: tab.bottom } : null,
       hole: hole ? (hole.split(" ").map((v) => Number(v) * zoom) as [number, number]) : null,
       islands: [...document.querySelectorAll<HTMLElement>(ISLANDS)]
@@ -210,7 +213,7 @@ async function expectOutline(page: Page, what: string): Promise<void> {
   const g = await geometry(page);
   const actual = await shot(page);
   const reference = await shotWithSurfaceBorder(page);
-  const base = snap(g, g.titlebar.bottom);
+  const base = snap(g, g.base);
   const width = Math.round(g.titlebar.width * g.dpr);
   const radius = Math.ceil(g.surfaceRadius * g.dpr);
   const corner = radius + 4 * g.dpr;
@@ -238,21 +241,27 @@ async function expectOutline(page: Page, what: string): Promise<void> {
 /**
  * The surface's outline drawn by CSS alone: the tab's stroke hidden, and a
  * box below the strip base, edge to edge and one corner radius tall (at
- * least a pixel), with a 1px border in the outline's colour on its top and
- * sides and the surface's radius on its top corners, so its border is the top edge and the two corner arcs (the
- * outline ends where each arc meets the window's side). Its top sits at the
- * title bar's bottom, the strip base.
+ * least a pixel), with a 1px border in the outline's colour on its top (and
+ * sides, when the corners are rounded) and the surface's radius on its top
+ * corners, so its border is the top edge and the two corner arcs (the outline
+ * ends where each arc meets the window's side). Its top sits at the strip's
+ * base: the title bar's bottom, or a row above it in Default (#1856).
  */
 async function shotWithSurfaceBorder(page: Page): Promise<string> {
   const g = await geometry(page);
-  if (g.tab) expect(Math.abs(g.tab.bottom - g.titlebar.bottom), "the strip base is the title bar's bottom").toBeLessThanOrEqual(0.5);
-  await page.locator('[data-region="titlebar"]').evaluate((bar, color) => {
+  // The strip's base sits in the bar's last row at most (#1856).
+  expect(g.titlebar.bottom - g.base, "the strip base is at the title bar's bottom").toBeGreaterThanOrEqual(-0.5);
+  expect(g.titlebar.bottom - g.base, "the strip base is at the title bar's bottom").toBeLessThanOrEqual(1.5);
+  await page.locator('[data-region="titlebar"]').evaluate((bar, { color, top, radius }) => {
     const box = document.createElement("div");
     box.id = "surface-border-reference";
-    const radius = "var(--islands-surface-radius)";
-    box.style.cssText = `position: absolute !important; left: 0; right: 0; top: 100%; height: max(${radius}, 1px); box-sizing: border-box; border: 1px solid ${color}; border-bottom: none; border-radius: ${radius} ${radius} 0 0; z-index: 3; pointer-events: none;`;
+    // Plain lengths: WebKit zooms a registered custom length twice when a
+    // border radius reads it under CSS zoom.
+    // Square corners (Default) have no arcs, so no sides: the top edge alone.
+    const sides = radius > 0 ? 1 : 0;
+    box.style.cssText = `position: absolute !important; left: 0; right: 0; top: ${top}px; height: ${Math.max(radius, 1)}px; box-sizing: border-box; border: solid ${color}; border-width: 1px ${sides}px 0; border-radius: ${radius}px ${radius}px 0 0; z-index: 3; pointer-events: none;`;
     bar.appendChild(box);
-  }, g.outlineColor);
+  }, { color: g.outlineColor, top: (g.base - g.titlebar.top) / g.zoom, radius: g.surfaceRadius / g.zoom });
   try {
     return await shotWith(page, '[data-region="tab-edge"] { visibility: hidden !important; }');
   } finally {
@@ -330,7 +339,7 @@ async function expectFoot(page: Page, cell: Cell, what: string): Promise<void> {
 /** Shade: hiding the strip shade changes nothing below the strip's base. */
 async function expectShadeInBar(page: Page, what: string): Promise<void> {
   const g = await geometry(page);
-  const base = snap(g, g.titlebar.bottom);
+  const base = snap(g, g.base);
   const actual = await shot(page);
   const without = await shotWith(page, '[data-region="tab-key-shadow"] .strip-shade { display: none !important; }');
   const { max, at } = await maxDifference(page, actual, without, [{ x0: 0, x1: Math.round(g.titlebar.width * g.dpr), y0: base, y1: base + 20 * g.dpr }]);
@@ -345,7 +354,7 @@ async function expectShadeInBar(page: Page, what: string): Promise<void> {
  */
 async function expectPockets(page: Page, what: string): Promise<void> {
   const g = await geometry(page);
-  const base = snap(g, g.titlebar.bottom);
+  const base = snap(g, g.base);
   const width = Math.round(g.titlebar.width * g.dpr);
   const corner = Math.ceil(g.surfaceRadius * g.dpr) + g.dpr;
   const actual = await shotWith(page, NO_ISLANDS);
@@ -459,16 +468,20 @@ async function expectIslandsOutlineContract(page: Page, what: string): Promise<v
   const contract = await page.evaluate(() => {
     const bar = document.querySelector('[data-region="titlebar"]')!;
     const probe = document.createElement("div");
-    probe.style.cssText = "position: absolute; border: var(--layout-border); width: var(--layout-radius);";
+    probe.style.cssText = "position: absolute; border: var(--layout-border);";
     bar.appendChild(probe);
-    const style = getComputedStyle(probe);
-    const result = { border: style.borderTopColor, radius: parseFloat(style.width) };
+    const style = getComputedStyle(bar);
+    const result = {
+      border: getComputedStyle(probe).borderTopColor,
+      layoutRadius: style.getPropertyValue("--layout-radius").trim(),
+      surfaceRadius: style.getPropertyValue("--islands-surface-radius").trim(),
+    };
     probe.remove();
     return result;
   });
   const g = await geometry(page);
   expect(g.outlineColor, `${what}: the outline is the islands' border colour`).toBe(contract.border);
-  expect(g.surfaceRadius / g.zoom, `${what}: the surface's corners follow --layout-radius`).toBeCloseTo(contract.radius, 1);
+  expect(parseFloat(contract.surfaceRadius), `${what}: the surface's corners follow --layout-radius (${JSON.stringify(contract)})`).toBeCloseTo(parseFloat(contract.layoutRadius), 1);
 }
 
 async function expectStatic(page: Page, cell: Cell, what: string): Promise<void> {

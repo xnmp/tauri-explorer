@@ -135,19 +135,11 @@
         </g>
       </svg>
     {/if}
-    <!-- The tab strip grows into the spacer. Their box is the strip's room:
-         nothing the strip lays out inside it (its start, its tabs) changes
-         its size, so WindowTabBar can observe it without feeding back into
-         its own observation (#1734). -->
-    <div class="tab-room" data-tab-room-box>
-      {#if windowTabsManager.activeTab}
-        <WindowTabBar {alignedStart} />
-      {/if}
-      <div class="spacer" data-tab-room></div>
-    </div>
     {#if layoutStore.tabSeam}
       <!-- The one outline (#1785): the tab, its fillets and the surface's top
-           edge and rounded top corners, a single seamless stroke. -->
+           edge and rounded top corners, a single seamless stroke. Before the
+           tabs, so a layout that lowers it (Default, #1856) has the tabs, and
+           the active tab's accent, paint over it. -->
       <svg class="tab-seam-layer tab-edge-layer" data-region="tab-edge" aria-hidden="true">
         <defs>
           <!-- Complementary columns of the strip's viewport. One path per
@@ -166,6 +158,16 @@
         </g>
       </svg>
     {/if}
+    <!-- The tab strip grows into the spacer. Their box is the strip's room:
+         nothing the strip lays out inside it (its start, its tabs) changes
+         its size, so WindowTabBar can observe it without feeding back into
+         its own observation (#1734). -->
+    <div class="tab-room" data-tab-room-box>
+      {#if windowTabsManager.activeTab}
+        <WindowTabBar {alignedStart} />
+      {/if}
+      <div class="spacer" data-tab-room></div>
+    </div>
 
     {#if windowControls}
       <div class="window-controls">

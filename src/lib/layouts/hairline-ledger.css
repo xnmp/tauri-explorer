@@ -10,8 +10,13 @@
  * Colours derive from the active colour theme, so the ledger composes with
  * every palette: hairlines are the theme's ink at 16% (rows 6%), chrome is
  * the theme's background warmed toward paper, the content surface is the
- * theme's card, and selection inverts ink and background. With the Light
+ * theme's card, and a selected row inverts ink and background. With the Light
  * theme this gives the spec's rgba(28,25,23,.16) rules on #F7F5F0 paper.
+ *
+ * The active tab owns the window (#1871): the tab, sidebar, toolbar and list
+ * share the content surface, and the paper shows in the tab strip, column
+ * header and status bar. The seam it draws is the layout contract's
+ * tab-key-shadow / tab-edge layers, square (--islands-surface-radius: 0).
  */
 
 :root {
@@ -39,10 +44,45 @@
   display: none;
 }
 
-/* Tab strip: flat tabs separated by hairlines; the active tab takes the
-   content surface and covers the strip's bottom rule, merging into it. */
+/* Tab strip: flat tabs separated by hairlines on paper. The active tab owns
+   the window (#1871), as in Default and Compact: it is a hole in the paper
+   strip through which the title bar's own surface (the content's) shows, and
+   one hairline runs round it and along the strip's base. The title bar draws
+   that seam ([data-region="tab-key-shadow"] and [data-region="tab-edge"],
+   composables/tab-seam-marks.ts); the ledger only colours it. Square: the
+   tab has no feet, and the surface's corners are square. */
+:root {
+  --islands-surface-radius: 0px;
+}
+
 :root [data-region="titlebar"]::before {
   display: none;
+}
+
+/* The bar's bottom row lies below the strip's base and carries the
+   outline's base, inside the bar, so menus and dialogs still cover it. */
+:root [data-region="titlebar"] {
+  padding-bottom: 1px;
+  background: var(--layout-surface);
+  box-shadow: none;
+}
+
+/* No tab strip (a single tab without window controls): the bar is all strip. */
+:root [data-region="titlebar"]:not(:has([data-region="tab-strip"])) {
+  background: var(--layout-chrome-surface);
+}
+
+:root [data-region="tab-key-shadow"] :is(.strip-shade, .surface-pockets) {
+  fill: var(--layout-chrome-surface);
+}
+
+:root [data-region="tab-key-shadow"] .tab-shadows {
+  display: none;
+}
+
+:root [data-region="tab-edge"] :is(.tab-edge-stroke, .surface-edge-stroke) {
+  /* The marks set its painted width. */
+  stroke: var(--layout-hairline);
 }
 
 :root [data-region="tab-strip"] {
@@ -70,16 +110,32 @@
   display: none;
 }
 
+/* The active tab is the hole: its sides are the outline, so neither it nor
+   the tab before it draws a separator there. A drag over it still shows the
+   tab bar's drop highlight. */
 :root [data-region="tab"][aria-selected="true"] {
-  background: var(--layout-surface);
   border-top: none;
+  border-right-color: transparent;
   color: var(--text-primary);
   font-weight: var(--font-weight-medium);
-  box-shadow: 0 1px 0 var(--background-solid);
 }
 
-/* Sidebar: section headers in small monospace capitals, dense items with
-   square colour markers in place of icons. */
+:root [data-region="tab"][aria-selected="true"]:not(.drop-target, .file-drop-target) {
+  background: transparent;
+  box-shadow: none;
+}
+
+:root [data-region="tab"]:has(+ [data-region="tab"][aria-selected="true"]) {
+  border-right-color: transparent;
+}
+
+/* Sidebar: the active tab's surface (#1871), section headers in small
+   monospace capitals, dense items with square colour markers in place of
+   icons. */
+:root [data-region="sidebar-body"] {
+  background: var(--layout-surface);
+}
+
 :root [data-region="sidebar-section-header"] {
   padding: 12px 14px 4px;
   border-radius: 0;
@@ -95,10 +151,14 @@
   border-radius: 0;
 }
 
+/* The marker takes the icon's own colour: a folder's (bookmarks and Recent
+   draw theirs with --icon-folder rather than an inline colour) unless the
+   item sets one, as Quick Access folders and drives do. */
 :root [data-region="sidebar-icon"] {
   width: 8px;
   height: 8px;
   flex: none;
+  color: var(--icon-folder);
   background: currentColor;
 }
 
@@ -185,16 +245,26 @@
   font-size: 12px;
 }
 
-:root [data-region="row"][aria-selected="true"],
-:root [data-region="row"][aria-selected="true"]:hover {
+:root [data-region="file-list"]:not([data-view="tiles"]) [data-region="row"][aria-selected="true"],
+:root [data-region="file-list"]:not([data-view="tiles"]) [data-region="row"][aria-selected="true"]:hover {
   background: var(--text-primary);
   border-color: transparent;
   border-radius: 0;
   color: var(--background-solid);
 }
 
-:root [data-region="row"][aria-selected="true"] [data-cell] {
+:root [data-region="file-list"]:not([data-view="tiles"]) [data-region="row"][aria-selected="true"] [data-cell] {
   color: inherit;
+}
+
+/* A selected tile is ruled, not inverted: an inverted tile is a block of the
+   theme's ink (white in dark themes) round its picture. */
+:root [data-region="file-list"][data-view="tiles"] [data-region="row"][aria-selected="true"],
+:root [data-region="file-list"][data-view="tiles"] [data-region="row"][aria-selected="true"]:hover {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: transparent;
+  border-radius: 0;
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 
 /* Status bar: one ruled monospaced line. */

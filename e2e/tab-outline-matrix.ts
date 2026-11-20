@@ -1,7 +1,7 @@
 /**
  * The active tab's outline, shadow and strip shade across the visual matrix
- * (#1734, #1785, #1856, #1858): layout (Floating Islands, Default; Compact on
- * Linux/Windows only) x macOS material (on,
+ * (#1734, #1785, #1856, #1858, #1871): layout (Floating Islands, Default;
+ * Compact and Hairline Ledger on Linux/Windows only) x macOS material (on,
  * off) x theme (light, dark), at rest with 1, 3 and 12 tabs, on hover, and
  * on frozen frames of a tab opening and closing, at 100% zoom on a 1x
  * display and 125% on a 2x one. Every check is a pixel comparison against
@@ -55,7 +55,7 @@ const SURFACE_ONLY = `[data-region="toolbar"] > *, [data-region="sidebar-body"] 
 const NO_TAB_LAYERS = '[data-region="tab-edge"], [data-region="tab-key-shadow"] { visibility: hidden !important; }';
 const PATHS = ["/home/user", "/home/user/Downloads", "/home/user/Documents"];
 
-export type Layout = "floating-islands" | "default" | "compact";
+export type Layout = "floating-islands" | "default" | "compact" | "hairline-ledger";
 /** macOS with the material, macOS without it, and Linux/Windows (never any). */
 type Platform = "mac-material" | "mac-opaque" | "opaque";
 export interface Cell { layout: Layout; platform: Platform; theme: "light" | "dark"; material: boolean }
@@ -67,8 +67,11 @@ const CELLS: Cell[] = [
   // Compact is Default's surfaces in tighter chrome (#1858): its own sizes,
   // the platform paths are Default's.
   ...(["light", "dark"] as const).map((theme): Cell => ({ layout: "compact", platform: "opaque", theme, material: false })),
+  // Hairline Ledger draws the same seam square, on its own paper (#1871).
+  ...(["light", "dark"] as const).map((theme): Cell => ({ layout: "hairline-ledger", platform: "opaque", theme, material: false })),
 ];
-const label = ({ layout, platform, theme }: Cell) => `${layout === "floating-islands" ? "islands" : layout}, ${platform}, ${theme}`;
+const SHORT: Partial<Record<Layout, string>> = { "floating-islands": "islands", "hairline-ledger": "ledger" };
+const label = ({ layout, platform, theme }: Cell) => `${SHORT[layout] ?? layout}, ${platform}, ${theme}`;
 
 async function openCell(page: Page, cell: Cell, { count = 3, active = Math.min(count - 1, 1), zoom = 100 } = {}): Promise<void> {
   await page.setViewportSize({ width: 1100, height: 600 });

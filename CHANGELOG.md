@@ -2,6 +2,21 @@
 
 All notable changes to Tauri Explorer.
 
+## v0.30.1 — 2026-11-20
+
+### Changed
+
+- Hairline Ledger layout: the active tab now owns the window, as in Default
+  and Compact. The active tab is a hole in the paper strip, one square
+  hairline runs round it and along the strip's base, and the tab, sidebar,
+  toolbar and file list share one surface (#1871).
+
+### Fixed
+
+- Hairline Ledger: sidebar markers for Recent and named folders take the
+  folder colour instead of the text colour, and a selected tile is ruled
+  with the accent instead of being inverted into a solid block (#1871).
+
 ## v0.30.0 — 2026-11-20
 
 ### Added

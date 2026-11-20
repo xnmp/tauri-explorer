@@ -12,7 +12,7 @@ Five layouts are built in:
 | --- | --- | --- |
 | Default | `default` | The flat, edge-to-edge layout. The active tab owns the window: tab, sidebar, toolbar, list and status bar are one surface, only the strip round the tabs is shaded, and one outline runs round the tab and along the strip's base (#1856). Ships in the startup CSS. |
 | Floating Islands | `floating-islands` | Rounded panels floating over the window backdrop (#277, #434). Ships in the startup CSS. |
-| Hairline Ledger | `hairline-ledger` | Square, dense panels ruled by 1px hairlines, monospaced metadata and an inverted selection. Loaded on demand. |
+| Hairline Ledger | `hairline-ledger` | Square, dense panels ruled by 1px hairlines, monospaced metadata and an inverted row selection (tiles are ruled instead). The active tab owns the window as in Default, square and without feet: tab, sidebar, toolbar and list share the content surface, the tab strip is paper, and one hairline runs round the tab and along the strip's base (#1871). Loaded on demand. |
 | Compact | `compact` | Default's surfaces (one surface, shaded tab strip, tab outline; #1858) with tight chrome (30px title bar, 32px toolbar, 20px status bar) and 22px Details rows (#1548). Loaded on demand. |
 | Soft Cards | `soft-cards` | Opaque 8px-rounded cards with 1px borders and no shadows on a slightly darker backdrop (a cool light grey on light themes). Every gap is 6px, the tab included; split panes, the preview, terminal and source-control panel become separate cards, and selected rows sit inset inside them (#1548, #1854). Loaded on demand. |
 
@@ -99,8 +99,8 @@ names are internal and change without notice; `data-region` names do not.
 | `tab-strip` | Window tab strip | |
 | `tab` | One window tab | `aria-selected="true"` on the active tab |
 | `tab-fillet` | Curves joining the active tab to the content | `data-side="left\|right"` |
-| `tab-key-shadow` | Floating Islands: inline SVG under the tab strip holding the strip shade (with the active tab's hole and the shade pockets outside the surface's rounded top corners) and the tab's key shadow | |
-| `tab-edge` | Floating Islands: inline SVG outline, the active tab plus the top edge and corners of its surface (#1785) | |
+| `tab-key-shadow` | Layouts whose active tab owns the window (Floating Islands, Default, Compact, Hairline Ledger): inline SVG under the tab strip holding the strip shade (with the active tab's hole and the shade pockets outside the surface's rounded top corners) and the tab's key shadow | |
+| `tab-edge` | Same layouts: inline SVG outline, the active tab plus the top edge and corners of its surface (#1785) | |
 | `main` | Area below the title bar | |
 | `sidebar` | Sidebar container (outer box) | |
 | `sidebar-body` | Sidebar painted body | |
@@ -182,7 +182,7 @@ native material anyway. Context menus and modal cards are opaque.
 
 ### Default surfaces
 
-Default (#1856) and Compact (#1858) draw the same tab seam as Floating Islands, flat: square
+Default (#1856), Compact (#1858) and Hairline Ledger (#1871) draw the same tab seam as Floating Islands, flat: square
 surface corners, no tab shadow, and the strip shaded over the surface
 colour. The title bar, sidebar and toolbar take `--layout-chrome-surface`
 when a layout sets it, else the content pane's own surface; the column
@@ -193,6 +193,12 @@ outline's base, so the whole outline stays inside the bar and the bar never
 stacks over menus and dialogs in the window. A layout that extends Default and rounds its panels with
 `--layout-radius` keeps the tab's surface square unless it also sets
 `--islands-surface-radius`.
+
+Hairline Ledger colours the seam in its own stylesheet: the strip is its
+paper (`--layout-chrome-surface`), the title bar, sidebar and toolbar take
+its content surface (`--layout-surface`), the outline is `--layout-hairline`,
+and the tab has no feet (its `tab-fillet` is not displayed, so the marks
+read a zero fillet and draw square corners).
 
 ### Native window material
 

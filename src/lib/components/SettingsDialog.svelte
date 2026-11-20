@@ -172,6 +172,12 @@
             <LayoutThemeSetting {onClose} />
           </SettingRow>
 
+          <SettingRow label={rows.compact[0]}
+            description={rows.compact[1]}
+            hidden={!matchesSearch(...rows.compact)}>
+            <SettingToggle checked={settingsStore.state.compact} onchange={() => settingsStore.update({ compact: !settingsStore.state.compact })} />
+          </SettingRow>
+
           <SettingRow label="Icon Theme"
             description="Choose file icon style"
             hidden={!matchesSearch(...rows.iconTheme)}>

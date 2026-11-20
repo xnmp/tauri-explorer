@@ -36,6 +36,8 @@
   /* Details rows sit inside the card, so a selection or focus outline never
      meets the card's edge (#1854). */
   --layout-row-inset: 3px;
+  /* Compact (#1878): the 30px bar keeps the tab 6px below its top. */
+  --layout-compact-tab-height: 24px;
   --soft-cards-edge: color-mix(in srgb, var(--text-primary) 10%, transparent);
   /* Dark themes deepen the base toward black; light themes get a cooler,
      lighter grey instead of a muddy darkened base (the default light theme

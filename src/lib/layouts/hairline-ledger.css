@@ -55,7 +55,7 @@
 }
 
 /* Tab strip: flat tabs separated by hairlines on paper. The active tab owns
-   the window (#1871), as in Default and Compact: it is a hole in the paper
+   the window (#1871), as in Default: it is a hole in the paper
    strip through which the title bar's own surface (the content's) shows, and
    one hairline runs round it and along the strip's base. The title bar draws
    that seam ([data-region="tab-key-shadow"] and [data-region="tab-edge"],

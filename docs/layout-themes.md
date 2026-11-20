@@ -6,19 +6,28 @@ row height. It is independent of the **colour theme** (Settings → Appearance �
 Color Theme), which supplies the palette. Any layout can be combined with any
 colour theme.
 
-Five layouts are built in:
+Four layouts are built in:
 
 | Layout | Id | What it does |
 | --- | --- | --- |
 | Default | `default` | The flat, edge-to-edge layout. The active tab owns the window: tab, sidebar, toolbar, list and status bar are one surface, only the strip round the tabs is shaded, and one outline runs round the tab and along the strip's base (#1856). A rule a step darker than that outline separates the sidebar from the file pane (#1879). Ships in the startup CSS. |
 | Floating Islands | `floating-islands` | Rounded panels floating over the window backdrop (#277, #434). Ships in the startup CSS. |
 | Hairline Ledger | `hairline-ledger` | Square, dense panels ruled by 1px hairlines, all chrome in its monospace (file names and previewed documents keep the theme's face, #1879) and an inverted row selection (tiles are ruled instead). The active tab owns the window as in Default, square and without feet: tab, sidebar, toolbar and list share the content surface, the tab strip is paper, and one hairline runs round the tab and along the strip's base (#1871). Loaded on demand. |
-| Compact | `compact` | Default's surfaces (one surface, shaded tab strip, tab outline; #1858) with tight chrome (30px title bar, 32px toolbar, 20px status bar) and 22px Details rows (#1548). Loaded on demand. |
 | Soft Cards | `soft-cards` | Opaque 8px-rounded cards with 1px borders and no shadows on a slightly darker backdrop (a cool light grey on light themes). Every gap is 6px, the tab included; split panes, the preview, terminal and source-control panel become separate cards, and selected rows sit inset inside them (#1548, #1854). Loaded on demand. |
 
 Choose one in **Settings → Appearance → Layout**, with **Switch Layout...** in the
 command palette (live preview while you move through the list), or with
 **Toggle Floating Islands Layout**.
+
+**Compact** (Settings → Appearance → Compact, or **Toggle Compact Mode** in
+the command palette) is a density, not a layout (#1878): it tightens
+whichever layout is applied, built-in or your own. The title bar, tabs,
+toolbar, status bar, column header and sidebar entries get shorter, Details
+rows drop to 22px and List rows to a 26px slot, and Tiles keep about three
+quarters of their gaps and padding (the tile, icon and name keep their size).
+On Default that is 30px title bar, 26px tabs, 32px toolbar and 20px status
+bar, the sizes of the former Compact layout (#1548). See
+[Compact density](#compact-density) for what a layout can tune.
 
 ## Installing a custom layout
 
@@ -54,7 +63,7 @@ An optional leading comment names the layout:
 | --- | --- |
 | `@name` | Name shown in the selector. Defaults to the file name in title case (`dense-grid.css` → "Dense Grid"). |
 | `@description` | Shown in the layout picker. |
-| `@extends` | Built-in base: `default` (the default), `floating-islands`, `hairline-ledger`, `compact` or `soft-cards`. The base's stylesheet and structural arrangement apply first and your file cascades on top. An unknown value means `default`. |
+| `@extends` | Built-in base: `default` (the default), `floating-islands`, `hairline-ledger` or `soft-cards`. The base's stylesheet and structural arrangement apply first and your file cascades on top. An unknown value means `default`, and so does `compact`, the former Compact layout (#1878): its surfaces were Default's, and its sizes are now the Compact setting. |
 
 `@extends floating-islands` also takes the Floating Islands *arrangement*:
 with the sidebar hidden, Miller columns move into their own island, and split
@@ -81,6 +90,11 @@ variables keep the Default value shown.
 | `--layout-hairline` | `var(--divider)` | Rule colour between chrome regions. |
 | `--layout-row-height` | `32px` | Details row height, in `px`, clamped to 20–64. Virtual scrolling and marquee selection follow it. |
 | `--layout-row-inset` | `0px` | Horizontal inset of every Details row inside the file list. The column header's text moves in by the same amount, so columns stay aligned; a selection or focus outline then never touches the panel edge. |
+| `--layout-compact-titlebar-height` | `30px` | Title bar height at compact density. |
+| `--layout-compact-tab-height` | `26px` | Tab (and window control) height at compact density. |
+| `--layout-compact-toolbar-height` | `32px` | Toolbar height at compact density. |
+| `--layout-compact-status-bar-height` | `20px` | Status bar height at compact density. |
+| `--layout-compact-row-height` | `22px` | Details row height at compact density; it replaces `--layout-row-height` while Compact is on. |
 
 Colour theme variables (`--text-primary`, `--background-card`, `--accent`,
 `--surface-stroke`, `--divider`, ...) are available for building colours, which
@@ -99,7 +113,7 @@ names are internal and change without notice; `data-region` names do not.
 | `tab-strip` | Window tab strip | |
 | `tab` | One window tab | `aria-selected="true"` on the active tab |
 | `tab-fillet` | Curves joining the active tab to the content | `data-side="left\|right"` |
-| `tab-key-shadow` | Layouts whose active tab owns the window (Floating Islands, Default, Compact, Hairline Ledger): inline SVG under the tab strip holding the strip shade (with the active tab's hole and the shade pockets outside the surface's rounded top corners) and the tab's key shadow | |
+| `tab-key-shadow` | Layouts whose active tab owns the window (Floating Islands, Default, Hairline Ledger): inline SVG under the tab strip holding the strip shade (with the active tab's hole and the shade pockets outside the surface's rounded top corners) and the tab's key shadow | |
 | `tab-edge` | Same layouts: inline SVG outline, the active tab plus the top edge and corners of its surface (#1785) | |
 | `main` | Area below the title bar | |
 | `sidebar` | Sidebar container (outer box) | |
@@ -132,6 +146,7 @@ Root (`<html>`) attributes describe the window and can scope rules:
 | --- | --- |
 | `data-layout` | Applied layout id (`default` after a fallback). |
 | `data-layout-base` | Applied built-in base. |
+| `data-density` | `compact` while the Compact setting is on (#1878); absent otherwise. |
 | `data-theme` | Active colour theme id. |
 | `data-native-backdrop` | A native window material is behind this window (the Translucency setting). The body is transparent; paint opaque surfaces only where you want them. |
 | `data-material` | Which material: `vibrancy` (macOS), `acrylic` (Windows 11 22H2+) or `mica` (earlier Windows 11). The page tints the window body with the theme base. |
@@ -183,7 +198,7 @@ native material anyway. Context menus and modal cards are opaque.
 
 ### Default surfaces
 
-Default (#1856), Compact (#1858) and Hairline Ledger (#1871) draw the same tab seam as Floating Islands, flat: square
+Default (#1856) and Hairline Ledger (#1871) draw the same tab seam as Floating Islands, flat: square
 surface corners, no tab shadow, and the strip shaded over the surface
 colour. The title bar, sidebar and toolbar take `--layout-chrome-surface`
 when a layout sets it, else the content pane's own surface; the column
@@ -201,6 +216,32 @@ its content surface (`--layout-surface`), the outline is `--layout-hairline`,
 and the tab has no feet (its `tab-fillet` is not displayed, so the marks
 read a zero fillet and draw square corners).
 
+### Compact density
+
+The Compact setting (#1878) puts `data-density="compact"` on the root and
+injects one more stylesheet (`src/lib/layouts/compact-density.css`) after
+every layout stylesheet, your file included. Its rules are scoped to
+`:root[data-density="compact"]`, so they outrank a layout's `:root [...]`
+rule on specificity and a base-scoped one on order. It changes only the
+vertical dimension (heights, vertical padding, text size); horizontal
+padding, radii and colours stay your layout's.
+
+A layout honours Compact by setting no fixed size that the density sheet
+does not override, and tunes its compact sizes with the
+`--layout-compact-*` variables above rather than by fighting the sheet:
+Floating Islands sets `--layout-compact-status-bar-height: 16px` (its status
+bar is already 18px) and Soft Cards `--layout-compact-tab-height: 24px` (its
+tab stays 6px below the top of the 30px bar). To restyle something else at
+compact density, scope a rule to `:root[data-density="compact"]` and give it
+one more attribute or class than the density rule (for example
+`:root[data-density="compact"][data-layout] [data-region="toolbar"]`).
+`--layout-row-height` set on `:root` is ignored while Compact is on; set
+`--layout-compact-row-height` instead.
+
+The tab seam (`tab-key-shadow`, `tab-edge`) measures the rendered tab, so
+it follows compact heights with no extra rules. Tiles spacing is not CSS:
+the virtualized grid computes it (`domain/tile-layout.ts`).
+
 ### Native window material
 
 Native material is a separate window capability, never part of a layout. A
@@ -216,8 +257,9 @@ is created, so the setting reaches new windows and the next launch.
 
 1. Application styles (component CSS, colour theme).
 2. Floating Islands and Default rules, scoped to `:root[data-layout-base="floating-islands"]` and `:root[data-layout-base="default"]`.
-3. The base stylesheet of a lazily loaded built-in (Hairline Ledger, Compact, Soft Cards).
+3. The base stylesheet of a lazily loaded built-in (Hairline Ledger, Soft Cards).
 4. Your layout file.
+5. The compact density stylesheet, while the Compact setting is on (#1878).
 
 Layout stylesheets are inserted after all application CSS, so a rule of equal
 specificity wins. Component rules are usually a single class, which an
@@ -242,9 +284,9 @@ change, and vice versa.
 
 A full example covering spacing, borders/radii, surfaces, split panes and
 native material is in [`docs/examples/layouts/roomy-cards.css`](examples/layouts/roomy-cards.css).
-Hairline Ledger (`src/lib/layouts/hairline-ledger.css`), Compact
-(`compact.css`) and Soft Cards (`soft-cards.css`) are written against the same
-contract and are larger references.
+Hairline Ledger (`src/lib/layouts/hairline-ledger.css`) and Soft Cards
+(`soft-cards.css`) are written against the same contract and are larger
+references; `compact-density.css` shows the compact density rules.
 
 ## Fallback and recovery
 
@@ -279,3 +321,11 @@ The macOS **Window Vibrancy** / **Native Blur** toggles and the Windows
 **Translucency** setting with the **Translucency Opacity** slider (#1757).
 Either platform's former setting turns Translucency on, and a Windows
 Backdrop Opacity becomes the slider value that gives islands the same alpha.
+
+The **Compact** layout (`"layoutTheme": "compact"`, #1548) became the
+**Compact** setting (#1878). A saved `"layoutTheme": "compact"` loads as
+`"layoutTheme": "default"` with `"compact": true`, which looks the same,
+and is written back that way. The id is folded whenever settings load, not
+once, so a value written again by an older build migrates too. A user
+layout with `@extends compact` resolves as Default; turn Compact on to get
+the tighter sizes back.

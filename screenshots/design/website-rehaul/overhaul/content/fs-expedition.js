@@ -9,13 +9,12 @@
   var TX = (window.TX_FS = window.TX_FS || {});
 
   /* ---------------- helpers ---------------- */
-  var ASSETS = "../peel-mock/assets/";
+  var ASSETS = "assets-expedition/";
   function body(s) { return s.replace(/^\n/, "").replace(/\n$/, ""); }
   function D(name, date, kids) { return { name: name, kind: "dir", date: date, kids: kids }; }
   function T(name, date, text) { return { name: name, kind: "file", date: date, text: body(text) }; }
   function B(name, date, size, type) { var n = { name: name, kind: "file", date: date, size: size }; if (type) n.type = type; return n; }
   function IMG(name, date, file, px, size) { return { name: name, kind: "file", date: date, src: ASSETS + file, px: px, size: size }; }
-  function PIC(name, date, file, px, size) { return { name: name, kind: "file", date: date, src: "assets-expedition/" + file, px: px, size: size }; }   // Mirela's exports
   function JS(name, date, obj) { return { name: name, kind: "file", date: date, text: JSON.stringify(obj, null, 2) }; }
   function G(kids) { return kids; }   // a group of siblings, spliced into its parent folder
   function pad(n) { return (n < 10 ? "0" : "") + n; }
@@ -690,7 +689,7 @@ Shared work for the Varda Icefield Resurvey 2026. Everybody can read it all.
     D("stores", at(FLY_OUT, "06:30"), [
       T("daily-count.csv", at(FLY_OUT, "06:30"), countCsv(FLY_OUT)),
       T("food-tent layout.txt", at(1, "17:00"), STORES_LAYOUT),
-      PIC("D12 - the cheese (evidence).webp", at(12, "19:40"), "the-cheese.webp", "1280x1280", "1.4 MB")
+      IMG("D12 - the cheese (evidence).webp", at(12, "19:40"), "the-cheese.webp", "1280x1280", "1.4 MB")
     ]),
     D("survey", at(56, "18:20"), [
       T("cairns-found.csv", at(58, "17:30"), cairnsFound(true)),
@@ -732,9 +731,9 @@ Shared work for the Varda Icefield Resurvey 2026. Everybody can read it all.
       ])
     ]),
     D(".cal", at(41, "20:22"), [
-      IMG("cal-0611.webp", at(40, "04:11"), "alpine-lake.webp", "3000x2000", "8.9 MB"),
-      IMG("cal-0626.webp", at(40, "04:26"), "foggy-pines.webp", "3000x2000", "9.4 MB"),
-      IMG("cal-1238.webp", at(39, "10:38"), "river-canyon.webp", "3000x2000", "10.1 MB")
+      IMG("cal-0611.webp", at(40, "04:11"), "cal-0611.webp", "1536x1024", "2.0 MB"),
+      IMG("cal-0626.webp", at(40, "04:26"), "cal-0626.webp", "1536x1024", "2.3 MB"),
+      IMG("cal-1238.webp", at(39, "10:38"), "cal-1238.webp", "1536x1024", "2.6 MB")
     ])
   ]);
 
@@ -1285,7 +1284,7 @@ Somebody has to check them who isn't one of us. That will be the paper. Until th
     ]),
     D("survey", at(58, "19:30"), [
       T("ice-temp C17-C19.csv", at(58, "19:30"), iceTempCsv()),
-      PIC("VAR-027 core, C18 0-2 m (plaster labels, sorry Ruth).webp", at(43, "14:20"), "ice-core.webp", "1536x1024", "1.3 MB"),
+      IMG("VAR-027 core, C18 0-2 m (plaster labels, sorry Ruth).webp", at(43, "14:20"), "ice-core.webp", "1536x1024", "1.3 MB"),
       T("dye test D25.csv", at(25, "21:10"), `
 time_utc,site,observation,distance_m,direction
 ${at(25, "09:00")},melt pond C19,dye in (fluorescein 20 g),0,-
@@ -1686,21 +1685,21 @@ I keep looking east from camp. You can't see anything from here. That's the poin
     D("Pictures", at(46, "20:00"), [
       D("2026 Varda", at(46, "20:00"), [
         D("selects", at(46, "20:00"), [
-          IMG("D00_lund-harbour, the evening before.webp", at(0, "18:40"), "sea-cliffs.webp", "3000x2000", "9.8 MB"),
-          IMG("D01_sandur from the Otter.webp", at(1, "07:05"), "dunes.webp", "3000x2000", "7.1 MB"),
-          PIC("D01_the Lund snout, flying in.webp", at(1, "06:52"), "lund-snout-from-the-air.webp", "1024x1536", "2.6 MB"),
-          PIC("D02_camp going up.webp", at(2, "14:20"), "tents-going-up.webp", "1536x1024", "2.3 MB"),
-          PIC("D05_the camp raven (he wanted the tent peg).webp", at(5, "10:12"), "the-camp-raven.webp", "1280x1280", "1.9 MB"),
-          PIC("D10_cairn 8, three flat stones.webp", at(10, "13:40"), "cairn-8.webp", "1024x1536", "2.5 MB"),
-          PIC("D16_snow bunting.webp", at(16, "07:55"), "snow-bunting.webp", "1024x1536", "1.8 MB"),
-          PIC("D19_Ansel's glove, cairn 12 (nobody admits it).webp", at(19, "08:30"), "glove-on-cairn-12.webp", "1536x1024", "2.4 MB"),
-          PIC("D22_oatcakes on the pan lid.webp", at(22, "17:30"), "oatcakes-on-the-pan-lid.webp", "1280x1280", "2.2 MB"),
-          PIC("D25_tamsin at the theodolite.webp", at(25, "08:10"), "at-the-theodolite.webp", "1024x1536", "1.7 MB"),
-          PIC("D29_ptarmigan (it is there. look left).webp", at(29, "11:05"), "ptarmigan.webp", "1536x1024", "2.6 MB"),
-          PIC("D31_the plateau at nine in the evening (pano).webp", at(31, "19:00"), "plateau-panorama.webp", "1600x544", "1.2 MB"),
-          PIC("D33_fox tracks past the green tent.webp", at(33, "05:10"), "fox-tracks.webp", "1536x1024", "2.1 MB"),
-          PIC("D43_aurora over camp.webp", at(43, "21:30"), "aurora-over-camp.webp", "1536x1024", "1.6 MB"),
-          PIC("D45_two crates of oranges.webp", at(45, "09:45"), "oranges-off-the-otter.webp", "1536x1024", "2.0 MB"),
+          IMG("D00_lund-harbour, the evening before.webp", at(0, "18:40"), "lund-harbour.webp", "1536x1024", "2.7 MB"),
+          IMG("D01_sandur from the Otter.webp", at(1, "07:05"), "sandur-from-the-air.webp", "1536x1024", "2.8 MB"),
+          IMG("D01_the Lund snout, flying in.webp", at(1, "06:52"), "lund-snout-from-the-air.webp", "1024x1536", "2.6 MB"),
+          IMG("D02_camp going up.webp", at(2, "14:20"), "tents-going-up.webp", "1536x1024", "2.3 MB"),
+          IMG("D05_the camp raven (he wanted the tent peg).webp", at(5, "10:12"), "the-camp-raven.webp", "1280x1280", "1.9 MB"),
+          IMG("D10_cairn 8, three flat stones.webp", at(10, "13:40"), "cairn-8.webp", "1024x1536", "2.5 MB"),
+          IMG("D16_snow bunting.webp", at(16, "07:55"), "snow-bunting.webp", "1024x1536", "1.8 MB"),
+          IMG("D19_Ansel's glove, cairn 12 (nobody admits it).webp", at(19, "08:30"), "glove-on-cairn-12.webp", "1536x1024", "2.4 MB"),
+          IMG("D22_oatcakes on the pan lid.webp", at(22, "17:30"), "oatcakes-on-the-pan-lid.webp", "1280x1280", "2.2 MB"),
+          IMG("D25_tamsin at the theodolite.webp", at(25, "08:10"), "at-the-theodolite.webp", "1024x1536", "1.7 MB"),
+          IMG("D29_ptarmigan (it is there. look left).webp", at(29, "11:05"), "ptarmigan.webp", "1536x1024", "2.6 MB"),
+          IMG("D31_the plateau at nine in the evening (pano).webp", at(31, "19:00"), "plateau-panorama.webp", "1600x544", "1.2 MB"),
+          IMG("D33_fox tracks past the green tent.webp", at(33, "05:10"), "fox-tracks.webp", "1536x1024", "2.1 MB"),
+          IMG("D43_aurora over camp.webp", at(43, "21:30"), "aurora-over-camp.webp", "1536x1024", "1.6 MB"),
+          IMG("D45_two crates of oranges.webp", at(45, "09:45"), "oranges-off-the-otter.webp", "1536x1024", "2.0 MB"),
           B("D07_ruth-weighing-ansel.raw", at(7, "18:10"), "25.6 MB"),
           B("D20_jonas-and-the-recorder-mast.raw", at(20, "12:20"), "25.9 MB"),
           B("D36_tamsin-ice-bath (she is not amused).raw", at(36, "15:05"), "26.4 MB"),
@@ -2062,7 +2061,7 @@ Yours, N. Halloran
         B("plate 11 - Aas with a ladle (and a halo).raw", "2025-11-03T14:11:00", "58.9 MB"),
         B("plate 12 - Holm at the theodolite.raw", "2025-11-03T14:12:00", "60.4 MB"),
         B("plate 13 - mist below the rim.raw", "2025-11-03T14:13:00", "57.7 MB"),
-        IMG("plate 14.webp", "2025-11-03T14:14:00", "crane.webp", "2400x2400", "6.2 MB"),
+        IMG("plate 14.webp", "2025-11-03T14:14:00", "plate-14.webp", "1280x1280", "2.4 MB"),
         B("plate 15 - Sandvik frowning at a herring.raw", "2025-11-03T14:15:00", "59.0 MB"),
         T("scan notes.txt", at(34, "22:05"), `
 Sketchbook 2, scanned 2025 from the Holm papers, box 3 (not Sandvik's box: Holm kept it).

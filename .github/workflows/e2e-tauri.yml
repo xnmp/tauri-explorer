@@ -105,9 +105,10 @@ jobs:
         with:
           components: clippy
 
-      # A target directory is reusable only with the same compiler identity.
+      # A target directory is reusable only with the same compiler and image.
       # Keep the raw identity in the diagnostic artifact and use its digest in
-      # the key so stable-channel updates cannot restore incompatible outputs.
+      # the key: CMake caches absolute native tool paths, so a runner-image
+      # update must also invalidate outputs even when rustc stays unchanged.
       - name: Record Rust cache identity
         if: ${{ needs.changes.outputs.code == 'true' }}
         id: rust-provenance
@@ -119,7 +120,12 @@ jobs:
           printf 'revision=%s\nrunner_os=%s\nrunner_arch=%s\n' \
             "$GITHUB_SHA" "$RUNNER_OS" "$RUNNER_ARCH" \
             > native-contract-diagnostics/provenance.txt
-          toolchain_key="$(rustc -Vv | sha256sum | cut -c1-16)"
+          toolchain_key="$(
+            {
+              rustc -Vv
+              printf 'image_os=%s\nimage_version=%s\n' "${ImageOS:?}" "${ImageVersion:?}"
+            } | tee native-contract-diagnostics/toolchain-identity.txt | sha256sum | cut -c1-16
+          )"
           printf 'cache-key=%s\n' "$toolchain_key" >> "$GITHUB_OUTPUT"
           printf 'started-epoch=%s\n' "$(date +%s)" >> "$GITHUB_OUTPUT"
 

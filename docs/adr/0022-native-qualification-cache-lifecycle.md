@@ -19,7 +19,10 @@ process lifecycle, rather than an incidental CI optimization.
 ## Decision
 
 - The Rust target cache key includes runner operating system and architecture,
-  a digest of the exact compiler identity, and Cargo/target input hashes.
+  a digest of the exact Rust compiler identity and runner image OS/version,
+  and Cargo/target input hashes. CMake records absolute native tool paths;
+  an image update can remove those tools without changing Rust, so target
+  products must never cross runner image versions.
   Registry and Git dependency caching remains separate from target caching.
 - Target restoration uses the exact key only. Cargo remains responsible for
   fingerprinting source changes within a compatible target directory.

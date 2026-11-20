@@ -6,9 +6,9 @@ and this directory, `state/git-graph-*.ts` and `state/git-pr-*.svelte.ts`,
 `github.rs` and `git_avatar.rs`. Root `CLAUDE.md`'s refresh split applies: the
 graph once built a private refresh stack and produced #431/#432.
 
-## History, lineage and comparison
+## History and lineage
 
-- Git-graph fork-point lookup uses exact `refs/heads/` or `refs/remotes/` identities in `git_merge_base`, never the loaded graph topology. Clear history curation before revealing the result (the ordinary branch filter uses ambiguous shorthands), page through the existing query owner, and retire lookup results on user selection/filter/comparison changes or disposal (#1083). Comparison start, cancel, and exit are navigation choices even though they call the detail session directly.
+- Git-graph fork-point lookup uses exact `refs/heads/` or `refs/remotes/` identities in `git_merge_base`, never the loaded graph topology. Clear history curation before revealing the result (the ordinary branch filter uses ambiguous shorthands), page through the existing query owner, and retire lookup results on user selection/filter changes or disposal (#1083).
 - Git graph lineage is first-parent topology plus the branch paths from
   `assignLayout`, never a lane number or color: paths can curve between lanes
   and color slots are recycled. Compute trace/jump semantics in the domain
@@ -18,9 +18,6 @@ graph once built a private refresh stack and produced #431/#432.
   Keep both the base ref and selected GitHub remote in the PR IPC shape so a
   current remote-tracking base wins over a stale local base; a merge merely
   adjacent to a PR ref is not enough to classify it as housekeeping (#527).
-- Git-graph commit comparison is a tree-to-tree operation, not a first-parent
-  diff: normalize the chosen commits to older → newer before requesting both
-  the changed-file list and every per-file patch, including preview-pane routes.
 - Graph reference disclosures capture the scroller's actual position when opened.
   A native scroll notification can arrive after the click for positioning that
   already happened. Compare positions rather than dismissing on every delivery;

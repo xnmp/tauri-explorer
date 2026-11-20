@@ -690,8 +690,6 @@
               <GitGraphCommitDetail
                 {commit} {synthetic} showMeta={prefs.showDetailMeta} detail={detailSession}
                 commitPanel={commitPanelStore} {workingTree} {formatDate}
-                onBeginComparison={() => { cancelNavigation(); detailSession.beginComparison(); }}
-                onExitComparison={() => { cancelNavigation(); void detailSession.exitComparison(); }}
                 onClose={closeDetails}
               />
             </div>

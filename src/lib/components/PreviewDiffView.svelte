@@ -1,14 +1,14 @@
 <!--
   PreviewDiffView — the preview pane's SCM diff: a working-tree diff with
   stage / unstage / discard / open-file actions (VSCode parity), or a
-  commit / comparison file diff routed from the git graph (#366). Its chrome
+  commit file diff routed from the git graph (#366). Its chrome
   renders as direct children of `.preview-pane`, whose dock and fullscreen
   layout rules place it like the file and plugin-target chrome.
 -->
 <script lang="ts">
   import { onDestroy } from "svelte";
   import { gitDiff } from "$lib/api/git";
-  import { gitCommitFileDiff, gitCompareCommitFileDiff } from "$lib/api/git-log";
+  import { gitCommitFileDiff } from "$lib/api/git-log";
   import { openFile } from "$lib/api/open";
   import { diffSubtitle as diffSubtitleOf, visibleDiffLines } from "$lib/domain/diff";
   import { dialogStore } from "$lib/state/dialogs.svelte";
@@ -31,7 +31,6 @@
     current: () => scmStore,
     workingDiff: (repoRoot, path, staged) => gitDiff(repoRoot, path, { staged }),
     commitFileDiff: gitCommitFileDiff,
-    compareCommitFileDiff: gitCompareCommitFileDiff,
   });
   // Closing the diff unmounts this view: invalidate any in-flight request,
   // as the pane-lifetime loader did when the diff target went away.
@@ -86,8 +85,8 @@
 <div class="preview-header">
   <span class="preview-filename" title={diffPath}>{diffPath.split("/").pop()}</span>
   {#if commitDiff}
-    <span class="preview-type-badge diff-commit" title={commitDiff.baseOid ? `${commitDiff.baseOid} → ${commitDiff.oid}` : commitDiff.oid}>
-      {commitDiff.baseOid ? `compare ${commitDiff.baseOid.slice(0, 7)} → ${commitDiff.oid.slice(0, 7)}` : `commit ${commitDiff.oid.slice(0, 7)}`}
+    <span class="preview-type-badge diff-commit" title={commitDiff.oid}>
+      commit {commitDiff.oid.slice(0, 7)}
     </span>
   {:else if activeDiff}
     <span class="preview-type-badge" class:diff-staged={activeDiff.staged} class:diff-unstaged={!activeDiff.staged}>

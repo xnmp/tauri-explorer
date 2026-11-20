@@ -26,22 +26,18 @@ const summary = (paths: string[]): GitStatusSummary => ({
 
 function fixture() {
   const commitFiles: ReturnType<typeof deferred<CommitFile[]>>[] = [];
-  const compareFiles: ReturnType<typeof deferred<CommitFile[]>>[] = [];
   const summaries: ReturnType<typeof deferred<ApiResult<GitStatusSummary>>>[] = [];
   const workingDiffs: ReturnType<typeof deferred<ApiResult<string>>>[] = [];
   const commitDiffs: ReturnType<typeof deferred<string>>[] = [];
-  const compareDiffs: ReturnType<typeof deferred<string>>[] = [];
   const parseDiff = vi.fn(parseUnifiedDiff);
   const session = createGitGraphDetail("/repo", "detail-test", {
     commitFiles: vi.fn(() => { const d = deferred<CommitFile[]>(); commitFiles.push(d); return d.promise; }),
-    compareFiles: vi.fn(() => { const d = deferred<CommitFile[]>(); compareFiles.push(d); return d.promise; }),
     summary: vi.fn(() => { const d = deferred<ApiResult<GitStatusSummary>>(); summaries.push(d); return d.promise; }),
     workingDiff: vi.fn(() => { const d = deferred<ApiResult<string>>(); workingDiffs.push(d); return d.promise; }),
     commitDiff: vi.fn(() => { const d = deferred<string>(); commitDiffs.push(d); return d.promise; }),
-    compareDiff: vi.fn(() => { const d = deferred<string>(); compareDiffs.push(d); return d.promise; }),
     parseDiff,
   });
-  return { session, commitFiles, compareFiles, summaries, workingDiffs, commitDiffs, compareDiffs, parseDiff };
+  return { session, commitFiles, summaries, workingDiffs, commitDiffs, parseDiff };
 }
 
 describe("git graph detail session", () => {
@@ -67,19 +63,6 @@ describe("git graph detail session", () => {
     await old;
     expect(f.session.selected?.oid).toBe("new");
     expect(f.session.files.map(({ path }) => path)).toEqual(["new.ts"]);
-  });
-
-  it("orders a comparison older to newer and loads its tree diff", async () => {
-    const f = fixture();
-    const initial = f.session.select(commit("new", 20));
-    f.commitFiles[0].resolve([file("single")]);
-    await initial;
-    f.session.beginComparison();
-    const compared = f.session.select(commit("old", 10));
-    f.compareFiles[0].resolve([file("changed.ts")]);
-    await compared;
-    expect(f.session.comparison).toMatchObject({ older: { oid: "old" }, newer: { oid: "new" } });
-    expect(f.session.files.map(({ path }) => path)).toEqual(["changed.ts"]);
   });
 
   it("distinguishes staged and unstaged diffs for the same path and rejects old finally", async () => {
@@ -250,26 +233,36 @@ describe("git graph detail session", () => {
     expect(f.session.files.map(({ path }) => path)).toEqual(["normal.ts"]);
   });
 
-  it("revokes a comparison diff when exiting to the same newer commit", async () => {
+  it("revokes a diff and files from an earlier selection of the same commit", async () => {
     const f = fixture();
-    const newer = f.session.select(commit("new", 20));
+    const first = f.session.select(commit("same", 20));
     f.commitFiles[0].resolve([file("same.ts")]);
-    await newer;
-    f.session.beginComparison();
-    const comparison = f.session.select(commit("old", 10));
-    f.compareFiles[0].resolve([file("same.ts")]);
-    await comparison;
+    await first;
     const oldDiff = f.session.toggleDiff(file("same.ts"));
-    const exiting = f.session.exitComparison();
-    f.commitFiles[1].resolve([file("same.ts")]);
-    await exiting;
-    f.compareDiffs[0].resolve("obsolete comparison");
+    f.session.close();
+    const reopened = f.session.select(commit("same", 20));
+    f.commitDiffs[0].resolve("obsolete selection");
     await oldDiff;
     expect(f.session.openDiff).toBeNull();
+    expect(f.session.diffLoading).toBe(false);
+    f.commitFiles[1].resolve([file("same.ts")]);
+    await reopened;
     const currentDiff = f.session.toggleDiff(file("same.ts"));
-    f.commitDiffs[0].resolve("normal current");
+    f.commitDiffs[1].resolve("current selection");
     await currentDiff;
-    expect(f.session.openDiff?.lines[0]?.text).toBe("normal current");
+    expect(f.session.openDiff?.lines[0]?.text).toBe("current selection");
+  });
+
+  it("rejects files loaded for a closed selection when the same commit is reopened", async () => {
+    const f = fixture();
+    const stale = f.session.select(commit("same", 1));
+    f.session.close();
+    const reopened = f.session.select(commit("same", 1));
+    f.commitFiles[1].resolve([file("current.ts")]);
+    await reopened;
+    f.commitFiles[0].resolve([file("stale.ts")]);
+    await stale;
+    expect(f.session.files.map(({ path }) => path)).toEqual(["current.ts"]);
   });
 
   it("retries an initial file failure after closing and reopening the commit", async () => {

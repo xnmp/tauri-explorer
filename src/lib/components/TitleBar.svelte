@@ -51,7 +51,7 @@
   let isMaximized = $state(false);
   let titlebarEl: HTMLDivElement | undefined = $state();
 
-  // Floating Islands: the active tab owns the window (#1734, #1785). Its hole
+  // The active tab owns the window (#1734, #1785; Default too, #1856). Its hole
   // in the strip shade, key shadow and the outline it shares with its surface
   // are the inline SVG layers below, kept in step by the lazily loaded marks.
   useTabSeam(() => titlebarEl, () => [windowTabsManager.tabs, windowTabsManager.activeTabId, tabStripVisible]);
@@ -105,7 +105,7 @@
 {#if showTitleBar}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="titlebar" data-region="titlebar" bind:this={titlebarEl} class:integrated={isMac && settingsStore.integratedTitleBar} onmousedown={handleDragStart}>
-    {#if layoutStore.islands}
+    {#if layoutStore.tabSeam}
       <!-- Strip shade with the active tab's hole (the tab's surface, the
            window body, shows through it), then the tab's lift and key shadow
            (light from the top left), cut out under the tab itself. -->
@@ -144,7 +144,7 @@
       {/if}
       <div class="spacer" data-tab-room></div>
     </div>
-    {#if layoutStore.islands}
+    {#if layoutStore.tabSeam}
       <!-- The one outline (#1785): the tab, its fillets and the surface's top
            edge and rounded top corners, a single seamless stroke. -->
       <svg class="tab-seam-layer tab-edge-layer" data-region="tab-edge" aria-hidden="true">

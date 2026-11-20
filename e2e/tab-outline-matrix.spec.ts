@@ -1,6 +1,6 @@
 /**
  * The active tab's outline, shadow and strip shade across the visual matrix
- * (#1734, #1785): layout (Floating Islands, default) x macOS material (on,
+ * (#1734, #1785, #1856): layout (Floating Islands, default) x macOS material (on,
  * off) x theme (light, dark), at rest with 1, 3 and 12 tabs, on hover, and
  * on frozen frames of a tab opening and closing, at 100% zoom on a 1x
  * display and 125% on a 2x one. Every check is a pixel comparison against
@@ -8,15 +8,19 @@
  * wallpaper:
  *
  * - outline: outside the tab, the one outline reads exactly as a CSS border
- *   round the top of the tab's surface (edge to edge, rounded top corners):
- *   no doubling, gap, colour or alpha change, fade or step at a handover;
- * - islands: every island's top edge and corners read exactly as without
- *   the tab's layers (the tab never opens or squares an island);
+ *   round the top of the tab's surface (edge to edge, with the layout's top
+ *   corners: rounded in Floating Islands, square in Default): no doubling,
+ *   gap, colour or alpha change, fade or step at a handover;
+ * - islands (Floating Islands): every island's top edge and corners read
+ *   exactly as without the tab's layers (the tab never opens or squares an
+ *   island);
  * - foot: the tab and its surface are one across the strip base;
  * - shade: the strip shade never paints below the strip's base, and the
- *   pockets of shade below it only outside the surface's top corners;
- * - shadow: a light shadow on the tab's left and top, a heavier one on its
- *   right, none below the base, and only ever round one tab;
+ *   pockets of shade below it only outside the surface's rounded top corners
+ *   (Default's square corners have none);
+ * - shadow (Floating Islands): a light shadow on the tab's left and top, a
+ *   heavier one on its right, none below the base, and only ever round one
+ *   tab; Default is flat and casts none;
  * - opacity: without the material no pixel depends on the window backdrop
  *   (no stray translucency); with it the strip shows the backdrop.
  */
@@ -37,6 +41,11 @@ const OTHER_BACKDROP = `html { background: linear-gradient(90deg, #ff0040, #00ff
 const ISLANDS = '[data-region="sidebar"], [data-region="panes"]:not([data-split]), [data-region="panes"][data-split] [data-region="pane"], [data-region="preview"], [data-region="miller-island"]';
 /** The islands hidden: only the window body (the tab's surface) and the strip paint. */
 const NO_ISLANDS = `${ISLANDS}, [data-region="status-bar"] { visibility: hidden !important; }`;
+/**
+ * Default: the sidebar, panes and status bar are the surface itself (#1856),
+ * so they stay; their contents (and the sidebar's divider) are hidden.
+ */
+const SURFACE_ONLY = `[data-region="toolbar"] > *, [data-region="sidebar-body"] > *, [data-region="column-header"], [data-region="file-list"] > * { visibility: hidden !important; } [data-region="sidebar-body"] { box-shadow: none !important; }`;
 /** The tab's layers hidden: the islands drawn alone. */
 const NO_TAB_LAYERS = '[data-region="tab-edge"], [data-region="tab-key-shadow"] { visibility: hidden !important; }';
 const PATHS = ["/home/user", "/home/user/Downloads", "/home/user/Documents"];
@@ -83,7 +92,7 @@ async function openCell(page: Page, cell: Cell, { count = 3, active = Math.min(c
     await expect(page.locator("html")).not.toHaveAttribute("data-material");
   }
   // The lazily loaded marks have drawn the outline.
-  if (cell.layout === "floating-islands") await expect(page.locator('[data-region="tab-edge"] .tab-edge-stroke')).toHaveAttribute("d", /\S/);
+  await expect(page.locator('[data-region="tab-edge"] .tab-edge-stroke')).toHaveAttribute("d", /\S/);
   await page.mouse.move(5, 590);
   await settle(page);
 }
@@ -119,6 +128,8 @@ interface Geometry {
   islands: { left: number; right: number; top: number; radius: number }[];
   /** The surface's top-corner radius (device-independent CSS px, zoomed). */
   surfaceRadius: number;
+  /** The outline's colour, as the stylesheet gives it. */
+  outlineColor: string;
 }
 
 async function geometry(page: Page): Promise<Geometry> {
@@ -140,7 +151,9 @@ async function geometry(page: Page): Promise<Geometry> {
           const r = el.getBoundingClientRect();
           return { left: r.left, right: r.right, top: r.top, radius: (parseFloat(getComputedStyle(el).getPropertyValue("--layout-radius")) || 14) * zoom };
         }),
-      surfaceRadius: (parseFloat(getComputedStyle(document.querySelector('[data-region="titlebar"]')!).getPropertyValue("--layout-radius")) || 14) * zoom,
+      // The radius the marks draw (0 in Default), not --layout-radius.
+      surfaceRadius: (parseFloat(getComputedStyle(document.querySelector('[data-region="titlebar"]')!).getPropertyValue("--islands-surface-radius")) || 0) * zoom,
+      outlineColor: getComputedStyle(document.querySelector('[data-region="tab-edge"] .surface-edge-stroke')!).stroke,
     };
   }, ISLANDS);
 }
@@ -188,9 +201,9 @@ const snap = (g: Geometry, visual: number) => (g.chromium ? Math.round(visual) *
 
 /**
  * Outline: outside the tab's hole, the one outline reads exactly as a CSS
- * border round the top of the tab's surface: 1px, the islands' border
- * colour, edge to edge below the strip base with the surface's rounded top
- * corners (#1785). A doubled stroke, a gap, a colour or alpha change, a fade
+ * border round the top of the tab's surface: 1px, the outline's colour, edge
+ * to edge below the strip base with the surface's top corners (#1785; square
+ * in Default, #1856). A doubled stroke, a gap, a colour or alpha change, a fade
  * or a step at a handover would all differ.
  */
 async function expectOutline(page: Page, what: string): Promise<void> {
@@ -224,21 +237,22 @@ async function expectOutline(page: Page, what: string): Promise<void> {
 
 /**
  * The surface's outline drawn by CSS alone: the tab's stroke hidden, and a
- * box below the strip base, edge to edge and one corner radius tall, with
- * the islands' border on its top and sides and their radius on its top
- * corners, so its border is the top edge and the two corner arcs (the
+ * box below the strip base, edge to edge and one corner radius tall (at
+ * least a pixel), with a 1px border in the outline's colour on its top and
+ * sides and the surface's radius on its top corners, so its border is the top edge and the two corner arcs (the
  * outline ends where each arc meets the window's side). Its top sits at the
  * title bar's bottom, the strip base.
  */
 async function shotWithSurfaceBorder(page: Page): Promise<string> {
   const g = await geometry(page);
   if (g.tab) expect(Math.abs(g.tab.bottom - g.titlebar.bottom), "the strip base is the title bar's bottom").toBeLessThanOrEqual(0.5);
-  await page.locator('[data-region="titlebar"]').evaluate((bar) => {
+  await page.locator('[data-region="titlebar"]').evaluate((bar, color) => {
     const box = document.createElement("div");
     box.id = "surface-border-reference";
-    box.style.cssText = "position: absolute !important; left: 0; right: 0; top: 100%; height: var(--layout-radius); box-sizing: border-box; border: var(--layout-border); border-bottom: none; border-radius: var(--layout-radius) var(--layout-radius) 0 0; z-index: 3; pointer-events: none;";
+    const radius = "var(--islands-surface-radius)";
+    box.style.cssText = `position: absolute !important; left: 0; right: 0; top: 100%; height: max(${radius}, 1px); box-sizing: border-box; border: 1px solid ${color}; border-bottom: none; border-radius: ${radius} ${radius} 0 0; z-index: 3; pointer-events: none;`;
     bar.appendChild(box);
-  });
+  }, g.outlineColor);
   try {
     return await shotWith(page, '[data-region="tab-edge"] { visibility: hidden !important; }');
   } finally {
@@ -268,14 +282,16 @@ async function expectIslands(page: Page, what: string): Promise<void> {
 }
 
 /**
- * Foot: the tab and its surface are one (#1785). With the islands hidden
- * (their shadows reach up toward the base by design), under the tab's
+ * Foot: the tab and its surface are one (#1785). With Floating Islands'
+ * islands hidden (their shadows reach up toward the base by design), or
+ * Default's contents hidden (its sidebar and panes are the surface itself,
+ * #1856), under the tab's
  * straight body every row from one above the base to four below it reads as
  * the tab body just above (same column): no edge, shade or shadow crosses
  * the base as a band or hairline (#1734 real-Mac capture: a 3px band with
  * the material, a 1px hairline two rows down without it).
  */
-async function expectFoot(page: Page, what: string): Promise<void> {
+async function expectFoot(page: Page, cell: Cell, what: string): Promise<void> {
   const g = await geometry(page);
   if (!g.tab || !g.hole) return;
   // The tab's painted body: its hole less the fillets. A sliding tab is
@@ -283,7 +299,7 @@ async function expectFoot(page: Page, what: string): Promise<void> {
   const fillet = 14 * g.zoom;
   const body = { left: g.hole[0] + fillet, right: g.hole[1] - fillet };
   if (body.right - body.left < 6) return;
-  const image = await shotWith(page, NO_ISLANDS);
+  const image = await shotWith(page, cell.layout === "floating-islands" ? NO_ISLANDS : SURFACE_ONLY);
   const result = await page.evaluate(async ({ data, tab, dpr, seam }) => {
     const image = new Image();
     image.src = `data:image/png;base64,${data}`;
@@ -295,11 +311,12 @@ async function expectFoot(page: Page, what: string): Promise<void> {
     context.drawImage(image, 0, 0);
     const D = context.getImageData(0, 0, image.width, image.height);
     let worst = { d: 0, at: "" };
+    const differs = (i: number, ref: number) => Math.max(...[0, 1, 2].map((k) => Math.abs(D.data[i + k] - D.data[ref + k])));
     for (let x = Math.ceil((tab.left + 2) * dpr); x < Math.floor((tab.right - 2) * dpr); x++) {
       const ref = ((seam - 3 * dpr) * D.width + x) * 4;
       for (let y = seam - dpr; y < seam + 5 * dpr; y++) {
         const i = (y * D.width + x) * 4;
-        const d = Math.max(...[0, 1, 2].map((k) => Math.abs(D.data[i + k] - D.data[ref + k])));
+        const d = differs(i, ref);
         if (d > worst.d) worst = { d, at: `(${x},${y}) ${[0, 1, 2].map((k) => D.data[i + k])} vs body ${[0, 1, 2].map((k) => D.data[ref + k])}` };
       }
     }
@@ -415,55 +432,39 @@ async function expectBackdrop(page: Page, cell: Cell, what: string): Promise<voi
     const { max } = await maxDifference(page, actual, other, [strip]);
     expect(max, `${what}: the material shows through the strip`).toBeGreaterThan(8);
   }
-  if (cell.layout !== "floating-islands") return;
   const tag = await page.addStyleTag({ content: OTHER_BACKDROP });
   await settle(page);
   await expectOutline(page, `${what} over another backdrop`);
-  await expectIslands(page, `${what} over another backdrop`);
-  await expectFoot(page, `${what} over another backdrop`);
+  if (cell.layout === "floating-islands") await expectIslands(page, `${what} over another backdrop`);
+  await expectFoot(page, cell, `${what} over another backdrop`);
   await tag.evaluate((el) => el.remove());
   await settle(page);
 }
 
 /**
- * Default layout: where the active tab stands over the content pane, the
- * two are one surface. (Over the sidebar it is not: the tab is the pane's
- * surface by design, #243.)
+ * Default is flat (#1856): its surface's corners are square, so there are no
+ * shade pockets below the base, and the tab casts no shadow: hiding the
+ * shadow layer changes nothing.
  */
-async function expectFusedTab(page: Page, what: string): Promise<void> {
+async function expectFlat(page: Page, what: string): Promise<void> {
+  await expect(page.locator('[data-region="tab-key-shadow"] .surface-pockets'), `${what}: no pockets`).toHaveAttribute("d", "");
   const g = await geometry(page);
-  if (!g.tab) return;
-  const image = await shot(page);
-  const step = await page.evaluate(async ({ data, tab, dpr, pane }) => {
-    const image = new Image();
-    image.src = `data:image/png;base64,${data}`;
-    await image.decode();
-    const canvas = document.createElement("canvas");
-    canvas.width = image.width;
-    canvas.height = image.height;
-    const context = canvas.getContext("2d")!;
-    context.drawImage(image, 0, 0);
-    const D = context.getImageData(0, 0, image.width, image.height);
-    const px = (x: number, y: number) => { const i = (Math.round(y * dpr) * D.width + Math.round(x * dpr)) * 4; return [D.data[i], D.data[i + 1], D.data[i + 2]]; };
-    const x = Math.max(pane.left + 4, tab.left + (tab.right - tab.left) * 0.5);
-    if (x > Math.min(pane.right, tab.right) - 16) return 0;
-    const [a, b] = [px(x, tab.bottom - 2), px(x, tab.bottom + 2)];
-    return Math.max(...a.map((v, i) => Math.abs(v - b[i])));
-  }, { data: image, tab: g.tab, dpr: g.dpr, pane: await page.locator(".explorer-pane").first().boundingBox().then((b) => ({ left: b!.x, right: b!.x + b!.width })) });
-  expect(step, `${what}: active tab meets its content`).toBeLessThanOrEqual(8);
+  const actual = await shot(page);
+  const without = await shotWith(page, '[data-region="tab-key-shadow"] .tab-shadows { visibility: hidden !important; }');
+  const { max, at } = await maxDifference(page, actual, without, [{ x0: 0, x1: Math.round(g.titlebar.width * g.dpr), y0: 0, y1: snap(g, g.titlebar.bottom) + 8 * g.dpr }]);
+  expect(max, `${what}: a shadow round the tab, worst ${at}`).toBeLessThanOrEqual(1);
 }
 
 async function expectStatic(page: Page, cell: Cell, what: string): Promise<void> {
+  await expectOutline(page, what);
+  await expectFoot(page, cell, what);
+  await expectShadeInBar(page, what);
   if (cell.layout === "floating-islands") {
-    await expectOutline(page, what);
     await expectIslands(page, what);
-    await expectFoot(page, what);
-    await expectShadeInBar(page, what);
     await expectPockets(page, what);
     await expectShadow(page, what);
   } else {
-    await expect(page.locator(".tab-seam-layer")).toHaveCount(0);
-    await expectFusedTab(page, what);
+    await expectFlat(page, what);
   }
 }
 
@@ -543,7 +544,7 @@ for (const cell of CELLS) {
 test.describe("Tab outline matrix at 125% zoom on a 2x display (#1734, #1785)", () => {
   test.use({ deviceScaleFactor: 2 });
   test.describe.configure({ timeout: 120_000 });
-  for (const cell of CELLS.filter((c) => c.layout === "floating-islands")) {
+  for (const cell of CELLS) {
     test(`at rest, opening and closing: ${label(cell)}`, async ({ page }) => {
       await openCell(page, cell, { count: 3, zoom: 125 });
       await expectStatic(page, cell, "125% 2x");

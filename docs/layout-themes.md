@@ -10,7 +10,7 @@ Five layouts are built in:
 
 | Layout | Id | What it does |
 | --- | --- | --- |
-| Default | `default` | The flat, edge-to-edge layout. |
+| Default | `default` | The flat, edge-to-edge layout. The active tab owns the window: tab, sidebar, toolbar, list and status bar are one surface, only the strip round the tabs is shaded, and one outline runs round the tab and along the strip's base (#1856). Ships in the startup CSS. |
 | Floating Islands | `floating-islands` | Rounded panels floating over the window backdrop (#277, #434). Ships in the startup CSS. |
 | Hairline Ledger | `hairline-ledger` | Square, dense panels ruled by 1px hairlines, monospaced metadata and an inverted selection. Loaded on demand. |
 | Compact | `compact` | Default's surfaces with tight chrome (30px title bar, 32px toolbar, 20px status bar) and 22px Details rows (#1548). Loaded on demand. |
@@ -192,7 +192,7 @@ is created, so the setting reaches new windows and the next launch.
 ## Precedence
 
 1. Application styles (component CSS, colour theme).
-2. Floating Islands rules, scoped to `:root[data-layout-base="floating-islands"]`.
+2. Floating Islands and Default rules, scoped to `:root[data-layout-base="floating-islands"]` and `:root[data-layout-base="default"]`.
 3. The base stylesheet of a lazily loaded built-in (Hairline Ledger, Compact, Soft Cards).
 4. Your layout file.
 

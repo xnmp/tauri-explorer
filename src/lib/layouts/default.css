@@ -1,0 +1,136 @@
+/*
+ * Default layout: the flat, edge-to-edge arrangement, where the active tab
+ * owns the window (#1856).
+ *
+ * Written against the layout contract (docs/layout-themes.md) and shipped in
+ * the startup CSS, like Floating Islands, so every rule is scoped to its base
+ * attribute; a user layout that extends Default cascades after it, and the
+ * chrome regions still take its --layout-chrome-surface.
+ *
+ * One surface: the active tab, sidebar, toolbar, column header, file list and
+ * status bar share the content pane's colour. Only the strip round the tabs
+ * is shaded, and the active tab is a hole in that shade through which the
+ * title bar's own surface shows. One outline runs round the tab, through its
+ * curved feet and along the strip's base. Floating Islands draws the same
+ * thing with rounded corners and a shadow: the hole and outline are the same
+ * inline SVG layers in the title bar ([data-region="tab-key-shadow"],
+ * [data-region="tab-edge"]), kept in step by composables/tab-seam-marks.ts;
+ * this file only colours them and squares the surface's corners.
+ */
+
+:root[data-layout-base="default"] {
+  /* The surface the tab owns: the content pane's own fill. */
+  --default-surface: var(
+    --layout-surface,
+    color-mix(in srgb, var(--background-card) calc(var(--content-opacity, 1) * 100%), transparent)
+  );
+  /* The strip's shade over that surface: a cool grey in light themes (the
+     theme's ink nudged toward its accent), deeper in dark ones. */
+  --default-strip-shade: light-dark(
+    color-mix(in srgb, color-mix(in srgb, var(--text-primary) 75%, var(--accent)) 10%, transparent),
+    rgba(0, 0, 0, 0.4)
+  );
+  /* The outline: the theme's ink, a step stronger than --surface-stroke so
+     the tab's sides read at the strength of the strip's base. */
+  --default-tab-edge: color-mix(in srgb, var(--text-primary) 10%, transparent);
+  /* Flat: the surface's top corners are square, so the outline runs straight
+     to the window's edges (composables/tab-strip-start.ts reads it). */
+  --islands-surface-radius: 0px;
+}
+
+/* The title bar is the surface; the shade layer paints the strip over it,
+   minus the active tab's hole. The outline replaces its bottom rule. Its
+   layers stack inside it, and it stacks above the window so its menus (the
+   tab search) open over the panes, as in Floating Islands. */
+:root[data-layout-base="default"] [data-region="titlebar"] {
+  position: relative;
+  z-index: 2;
+  background: var(--layout-chrome-surface, var(--default-surface));
+  box-shadow: none;
+}
+
+:root[data-layout-base="default"] [data-region="titlebar"]::before {
+  display: none;
+}
+
+/* No tab strip (a single tab without window controls): the bar is all strip. */
+:root[data-layout-base="default"] [data-region="titlebar"]:not(:has([data-region="tab-strip"])) {
+  background:
+    linear-gradient(var(--default-strip-shade), var(--default-strip-shade)),
+    var(--layout-chrome-surface, var(--default-surface));
+}
+
+:root[data-layout-base="default"] [data-region="tab-key-shadow"] :is(.strip-shade, .surface-pockets) {
+  fill: var(--default-strip-shade);
+}
+
+/* Flat: no lift or key shadow. */
+:root[data-layout-base="default"] [data-region="tab-key-shadow"] .tab-shadows {
+  display: none;
+}
+
+:root[data-layout-base="default"] [data-region="tab-edge"] :is(.tab-edge-stroke, .surface-edge-stroke) {
+  /* The marks set its painted width. */
+  stroke: var(--default-tab-edge);
+}
+
+/* The active tab's accent is its own top border, which lies on the outline's
+   top row: the tabs paint above the outline, so the accent takes that row
+   over and the outline carries on where the accent tapers off. */
+:root[data-layout-base="default"] [data-region="tab-edge"] {
+  z-index: 0;
+}
+
+:root[data-layout-base="default"] [data-tab-room-box] {
+  position: relative;
+  z-index: 1;
+}
+
+/* Inactive tabs sit on the strip with no fill of their own: the active tab's
+   feet reach over their bottom corners. Their separators and hover pill stay. */
+:root[data-layout-base="default"] [data-region="tab"]:not([aria-selected="true"]) {
+  background: transparent;
+  border-top-color: transparent;
+}
+
+/* No separator beside the active tab: its foot takes that corner. */
+:root[data-layout-base="default"] [data-region="tab"]:has(+ [data-region="tab"][aria-selected="true"])::after {
+  opacity: 0;
+}
+
+/* The active tab is a hole in the strip: it, its feet and the window are one
+   surface. It keeps only its accent; it clips its own content, as the feet
+   paint nothing. */
+:root[data-layout-base="default"] [data-region="tab"][aria-selected="true"] {
+  background: transparent;
+  box-shadow: none;
+  overflow: hidden;
+}
+
+:root[data-layout-base="default"] [data-region="tab"][aria-selected="true"]::before {
+  display: none;
+}
+
+/* The feet paint nothing (the shade's hole shapes their flare) but stay laid
+   out: the marks read their width as the resolved --fillet. */
+:root[data-layout-base="default"] [data-region="tab-fillet"] {
+  visibility: hidden;
+}
+
+/* The rest of the window is the same surface. */
+:root[data-layout-base="default"] :is([data-region="sidebar-body"], [data-region="status-bar"]) {
+  background: var(--layout-chrome-surface, var(--default-surface));
+}
+
+:root[data-layout-base="default"] [data-region="toolbar"] {
+  background: var(--layout-chrome-surface, transparent);
+}
+
+/* The column header stays opaque (rows scroll under it): the pane's surface
+   over the theme base, the pane's own composite. */
+:root[data-layout-base="default"] [data-region="column-header"] {
+  background: var(
+    --layout-chrome-surface,
+    linear-gradient(var(--default-surface), var(--default-surface)), var(--background-solid)
+  );
+}

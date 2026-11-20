@@ -24,8 +24,12 @@
  *   tab; Default is flat and casts none;
  * - opacity: without the material no pixel depends on the window backdrop
  *   (no stray translucency); with it the strip shows the backdrop.
+ *
+ * Shared by one spec file per layout (tab-outline-matrix-<layout>.spec.ts,
+ * #1866): the CI shard planner places whole files, and the full matrix took
+ * ~29 minutes of a 40-minute WebKit shard.
  */
-import { test, expect, type Page } from "./fixtures";
+import { expect, type Page } from "./fixtures";
 import { pressShortcut, seedSettings, waitForEntries } from "./helpers";
 import { steppedFrames } from "./tab-frames";
 
@@ -51,10 +55,10 @@ const SURFACE_ONLY = `[data-region="toolbar"] > *, [data-region="sidebar-body"] 
 const NO_TAB_LAYERS = '[data-region="tab-edge"], [data-region="tab-key-shadow"] { visibility: hidden !important; }';
 const PATHS = ["/home/user", "/home/user/Downloads", "/home/user/Documents"];
 
-type Layout = "floating-islands" | "default" | "compact";
+export type Layout = "floating-islands" | "default" | "compact";
 /** macOS with the material, macOS without it, and Linux/Windows (never any). */
 type Platform = "mac-material" | "mac-opaque" | "opaque";
-interface Cell { layout: Layout; platform: Platform; theme: "light" | "dark"; material: boolean }
+export interface Cell { layout: Layout; platform: Platform; theme: "light" | "dark"; material: boolean }
 
 const CELLS: Cell[] = [
   ...(["floating-islands", "default"] as const).flatMap((layout) =>
@@ -546,50 +550,51 @@ async function framesOf(page: Page, cell: Cell, what: string, action: () => Prom
 const openTab = (page: Page) => () => pressShortcut(page, "t", { ctrlKey: true });
 const closeTab = (page: Page) => () => page.locator('.tab-viewport .tab.active .tab-close').click();
 
-for (const cell of CELLS) {
-  test.describe(`Tab outline matrix: ${label(cell)} (#1734, #1785)`, () => {
-    // 1x explicitly: the WebKit project otherwise renders at 2x (covered below).
-    test.use({ deviceScaleFactor: 1 });
-    test.describe.configure({ timeout: 120_000 });
-    test("at rest with 1, 3 and 12 tabs, and on hover", async ({ page }) => {
-      for (const count of [1, 3, 12]) {
-        await openCell(page, cell, { count, active: count === 12 ? 9 : Math.min(count - 1, 1) });
-        await expectStatic(page, cell, `${count} tabs`);
-        await expectBackdrop(page, cell, `${count} tabs`);
-      }
-      // Hover an inactive tab and the active one: neither changes the outline,
-      // the shade or the shadow.
-      await openCell(page, cell, { count: 3 });
-      const tabs = page.locator('.tab-viewport [data-region="tab"]');
-      for (const index of [0, 1]) {
-        await tabs.nth(index).hover();
-        await settle(page);
-        await expectStatic(page, cell, `hover tab ${index}`);
-      }
-    });
-
-    // Three held frames per slide, not every frame: the matrix already costs
-    // minutes per engine (stepped frames: floating-islands.spec.ts).
-    test("opening and closing a tab, held at 15%, 50% and 85% of the slide", async ({ page }) => {
-      await framesOf(page, cell, "opening", openTab(page));
-      await framesOf(page, cell, "closing", closeTab(page));
-    });
-  });
+/** The matrix's cells for one layout (one spec file each, #1866). */
+export function cellsFor(layout: Layout): Cell[] {
+  const cells = CELLS.filter((cell) => cell.layout === layout);
+  if (cells.length === 0) throw new Error(`no tab outline matrix cells for ${layout}`);
+  return cells;
 }
 
-test.describe("Tab outline matrix at 125% zoom on a 2x display (#1734, #1785)", () => {
-  test.use({ deviceScaleFactor: 2 });
-  test.describe.configure({ timeout: 120_000 });
-  for (const cell of CELLS) {
-    test(`at rest, opening and closing: ${label(cell)}`, async ({ page }) => {
-      await openCell(page, cell, { count: 3, zoom: 125 });
-      await expectStatic(page, cell, "125% 2x");
-      await expectBackdrop(page, cell, "125% 2x");
-      for (const [what, action] of [["opening", openTab(page)], ["closing", closeTab(page)]] as const) {
-        await openCell(page, cell, { count: 3, zoom: 125 });
-        await freezeAt(page, action, 0.5);
-        await expectStatic(page, cell, `125% 2x ${what} at 0.5`);
-      }
-    });
+export { label };
+
+/** At rest with 1, 3 and 12 tabs, then hovering an inactive and the active tab. */
+export async function atRestAndHover(page: Page, cell: Cell): Promise<void> {
+  for (const count of [1, 3, 12]) {
+    await openCell(page, cell, { count, active: count === 12 ? 9 : Math.min(count - 1, 1) });
+    await expectStatic(page, cell, `${count} tabs`);
+    await expectBackdrop(page, cell, `${count} tabs`);
   }
-});
+  // Hover an inactive tab and the active one: neither changes the outline,
+  // the shade or the shadow.
+  await openCell(page, cell, { count: 3 });
+  const tabs = page.locator('.tab-viewport [data-region="tab"]');
+  for (const index of [0, 1]) {
+    await tabs.nth(index).hover();
+    await settle(page);
+    await expectStatic(page, cell, `hover tab ${index}`);
+  }
+}
+
+/**
+ * Opening and closing a tab, held at 15%, 50% and 85% of the slide. Three
+ * held frames per slide, not every frame: the matrix already costs minutes
+ * per engine (stepped frames: floating-islands.spec.ts).
+ */
+export async function openingAndClosing(page: Page, cell: Cell): Promise<void> {
+  await framesOf(page, cell, "opening", openTab(page));
+  await framesOf(page, cell, "closing", closeTab(page));
+}
+
+/** At 125% zoom on a 2x display: at rest, then held halfway through a slide each way. */
+export async function zoomed(page: Page, cell: Cell): Promise<void> {
+  await openCell(page, cell, { count: 3, zoom: 125 });
+  await expectStatic(page, cell, "125% 2x");
+  await expectBackdrop(page, cell, "125% 2x");
+  for (const [what, action] of [["opening", openTab(page)], ["closing", closeTab(page)]] as const) {
+    await openCell(page, cell, { count: 3, zoom: 125 });
+    await freezeAt(page, action, 0.5);
+    await expectStatic(page, cell, `125% 2x ${what} at 0.5`);
+  }
+}

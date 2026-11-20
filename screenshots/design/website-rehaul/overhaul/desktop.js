@@ -181,6 +181,215 @@
     return { close: () => away("closed"), minimize: () => away("minimized"), open, get state() { return state; } };
   }
 
+  /* ---------------- the window's place: moved, resized, snapped, maximised ----------------
+     The window starts in its home cell of the floor's grid (`home`, an empty grid item in the same cell) and stays
+     there, following the bench as it tucks, until the visitor moves or resizes it. From then it is `placed`: fixed
+     bounds in page pixels, kept for the session (sessionStorage, so switching machine, which reloads the page,
+     keeps them) and clamped back onto the desktop whenever the page or the bench changes size.
+     Maximised, it is back in its home cell with the bench tucked (`chrome(on)` does that, the page's own); restore
+     returns to the bounds it had, or home. Moves arrive two ways: `appDrag` (the app's title bar is inside the
+     frame, so the app reports the drag: bridge event `window-drag`) and the grips round the window (host side).
+     Geometry is TXMove's (desk-move.js). Gestures are disabled on the stacked (narrow) layout. */
+  function makeFrame({ stage, home, maxProbe, iframe, area, reach, chrome, enabled = () => true, storageKey = "", narrow = "(max-width: 860px)" }) {
+    const M = window.TXMove;
+    const stacked = matchMedia(narrow);
+    let placed = null, maxed = false, restoreTo = null, maxFrom = null, snap = null, unsnapSize = null;
+    let tween = 0, moving = null, app = null;
+    const rect = el => { const r = el.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; };
+    const edges = b => ({ left: b.x, top: b.y, right: b.x + b.w, bottom: b.y + b.h });
+    const live = () => !stacked.matches;
+    const fit = b => M.fit(b, area(), reach());
+
+    // ---- painting
+    function write(b) {
+      stage.classList.add("placed");
+      stage.style.translate = `${b.x}px ${b.y}px`; stage.style.width = b.w + "px"; stage.style.height = b.h + "px";
+    }
+    // `placed` is what the visitor chose; what shows is that, fitted to the desktop as it is now, so a page that
+    // shrinks for a moment (devtools, a narrow layout) gives the window back its bounds when it grows again
+    function render() {
+      if (placed && live()) return write(fit(placed));
+      stage.classList.remove("placed");
+      stage.style.translate = stage.style.width = stage.style.height = "";
+    }
+    const current = () => placed && live() ? fit(placed) : rect(stage);
+    function save() {
+      if (!storageKey) return;
+      try { sessionStorage.setItem(storageKey, JSON.stringify({ placed, snap, unsnapSize })); } catch (_) { /* this visit only */ }
+    }
+    function load() {
+      let s = null; try { s = JSON.parse(sessionStorage.getItem(storageKey) || "null"); } catch (_) { s = null; }
+      if (!s || !M.isBounds(s.placed)) return;
+      placed = { x: s.placed.x, y: s.placed.y, w: s.placed.w, h: s.placed.h };
+      if ((s.snap === "left" || s.snap === "right") && s.unsnapSize && s.unsnapSize.w > 0 && s.unsnapSize.h > 0) { snap = s.snap; unsnapSize = { w: +s.unsnapSize.w, h: +s.unsnapSize.h }; }
+    }
+
+    // ---- animated changes of bounds, towards a target that may itself be moving (the grid while the bench tucks)
+    function stopTween() { cancelAnimationFrame(tween); tween = 0; }
+    // `from` is read before the page's chrome changes: a window in its home cell moves with the grid at once
+    function glide(target, done, { ms = 380, from = current() } = {}) {
+      stopTween();
+      if (reduced() || !live()) { done(); render(); return; }
+      const t0 = performance.now();
+      write(from);   // now: the page's chrome may already have moved the home cell under a window still in it
+      const step = now => {
+        const t = Math.min(1, (now - t0) / ms);
+        write(M.lerp(from, target(), M.settle(t)));
+        if (t < 1) tween = requestAnimationFrame(step); else { tween = 0; done(); render(); }
+      };
+      tween = requestAnimationFrame(step);
+    }
+
+    // ---- maximise and restore
+    // Not saved: a reload (switching machine) finds the window restored, at the bounds it had.
+    function maximize(restore = placed, instant = false) {
+      if (maxed) return;
+      const from = maxFrom = current(); restoreTo = restore;
+      maxed = true; chrome(true);
+      if (instant) { stopTween(); placed = null; render(); return; }
+      // to the maximised bounds (the probe has them at once), then into the home cell once the grid has caught up
+      // with the bench tucking away, so the window never shrinks on its way to filling the desktop
+      const to = rect(maxProbe);
+      glide(() => to, () => { placed = to; joinHome(); }, { from });
+    }
+    function joinHome(t0 = performance.now()) {
+      const step = now => {
+        const h = rect(home);
+        if (now - t0 > 700 || (Math.abs(h.x - placed.x) < 1 && Math.abs(h.y - placed.y) < 1 && Math.abs(h.w - placed.w) < 1 && Math.abs(h.h - placed.h) < 1)) {
+          tween = 0; placed = null; render(); return;
+        }
+        tween = requestAnimationFrame(step);
+      };
+      tween = requestAnimationFrame(step);
+    }
+    function setMax(on, { instant = false } = {}) {
+      if (on === maxed) return;
+      if (on) return maximize(placed, instant);
+      const from = current();
+      maxed = false; chrome(false);
+      const back = restoreTo; restoreTo = null;
+      const done = () => { placed = back; save(); };
+      if (instant) { stopTween(); done(); render(); }
+      else glide(() => back ? fit(back) : rect(home), done, { from });
+    }
+
+    // ---- the snap preview: a quiet outline of where the window will land
+    const ghost = document.createElement("div");
+    ghost.className = "snap-ghost"; ghost.setAttribute("aria-hidden", "true");
+    stage.before(ghost);
+    let ghostZone = null;
+    const snapBounds = zone => zone === "max" ? rect(maxProbe) : M.halfOf(zone, edges(rect(home)));
+    function showGhost(zone) {
+      if (zone === ghostZone) return;
+      ghostZone = zone;
+      if (!zone) { ghost.classList.remove("on"); return; }
+      const b = snapBounds(zone), was = ghost.classList.contains("on");
+      if (!was) { ghost.style.transition = "none"; const c = current(); ghost.style.translate = `${c.x}px ${c.y}px`; ghost.style.width = c.w + "px"; ghost.style.height = c.h + "px"; ghost.getBoundingClientRect(); ghost.style.transition = ""; }
+      ghost.style.translate = `${b.x}px ${b.y}px`; ghost.style.width = b.w + "px"; ghost.style.height = b.h + "px";
+      ghost.classList.add("on");
+    }
+
+    // ---- moving: p is the pointer in page pixels
+    function beginMove(p) {
+      if (!live() || !enabled() || moving) return null;
+      stopTween();
+      let start = current();
+      if (maxed) {   // a maximised window comes off the top at its restored size, under the pointer
+        const size = restoreTo || maxFrom || start;
+        maxed = false; restoreTo = null; chrome(false);
+        start = fit(M.unsnapAt(p, start, size));
+      } else if (snap && unsnapSize) start = fit(M.unsnapAt(p, start, unsnapSize));
+      snap = null; unsnapSize = null;
+      placed = start; write(start);
+      stage.classList.add("lifted");
+      const A = area(), R = reach();
+      moving = { p0: p, start, A, R, last: p, raf: 0, zone: null, end: M.gesture("", () => { app = null; g.end(); }) };
+      const frame = () => {
+        moving.raf = 0;
+        const q = moving.last;
+        placed = M.fit(M.moveBy(moving.start, q.x - moving.p0.x, q.y - moving.p0.y), moving.A, moving.R);
+        write(placed);
+        moving.zone = M.snapZone(q, moving.A);
+        showGhost(moving.zone);
+      };
+      const g = {
+        to(q) { if (!moving) return; moving.last = q; if (!moving.raf) moving.raf = requestAnimationFrame(frame); },
+        end(q) {
+          if (!moving) return;
+          moving.last = q || moving.last; cancelAnimationFrame(moving.raf); frame();
+          const { zone, start: from, end } = moving;
+          moving = null; end(); showGhost(null);
+          stage.classList.remove("lifted");
+          if (zone === "max") return maximize(from);
+          if (zone === "left" || zone === "right") {
+            const to = snapBounds(zone);
+            snap = zone; unsnapSize = { w: from.w, h: from.h };
+            return glide(() => to, () => { placed = to; save(); }, { ms: 300 });
+          }
+          save();
+        },
+      };
+      return g;
+    }
+    /** The app's `window-drag` event. Screen deltas move the window: the frame moves under the pointer, so its own
+        coordinates would feed the window's motion back into the drag. */
+    function appDrag(d) {
+      const ok = d && ["screenX", "screenY", "clientX", "clientY"].every(k => typeof d[k] === "number" && Number.isFinite(d[k]));
+      if (!ok) return;
+      if (d.phase === "start") {
+        app?.g.end(); app = null;
+        const r = iframe().getBoundingClientRect(), p = { x: r.left + d.clientX, y: r.top + d.clientY };
+        const g = beginMove(p);
+        if (g) app = { g, p, sx: d.screenX, sy: d.screenY };
+        return;
+      }
+      if (!app) return;
+      const q = { x: app.p.x + d.screenX - app.sx, y: app.p.y + d.screenY - app.sy };
+      if (d.phase === "move") app.g.to(q);
+      else if (d.phase === "end") { const g = app.g; app = null; g.end(q); }
+    }
+
+    // ---- resizing from the grips round the window
+    const CURSOR = { n: "ns-resize", s: "ns-resize", e: "ew-resize", w: "ew-resize", ne: "nesw-resize", sw: "nesw-resize", nw: "nwse-resize", se: "nwse-resize" };
+    for (const edge of Object.keys(CURSOR)) {
+      const grip = document.createElement("div");
+      grip.className = "win-grip"; grip.dataset.edge = edge; grip.setAttribute("aria-hidden", "true");
+      stage.append(grip);
+      let r = null;
+      M.attach(grip, {
+        cursor: CURSOR[edge],
+        begin(p) {
+          if (!live() || !enabled() || maxed || moving) return false;
+          stopTween();
+          r = { p0: p, start: current(), A: area() };
+          snap = null; unsnapSize = null;
+          placed = r.start; write(placed);
+          stage.classList.add("resizing");
+        },
+        to(p) { if (r) { placed = M.resize(r.start, edge, p.x - r.p0.x, p.y - r.p0.y, r.A); write(placed); } },
+        end() { r = null; stage.classList.remove("resizing"); placed = fit(placed); render(); save(); },
+      });
+    }
+
+    // ---- the desktop changes size: back onto it
+    let fixRaf = 0;
+    function reclamp() {
+      fixRaf = 0;
+      if (!moving && !tween) render();   // otherwise a gesture or a glide owns the bounds, and ends on fitted ones
+    }
+    const soon = () => { if (!fixRaf) fixRaf = requestAnimationFrame(reclamp); };
+    addEventListener("resize", soon);
+    stacked.addEventListener?.("change", soon);
+
+    load(); render();
+    return {
+      appDrag, setMax, reclamp: soon,
+      get maxed() { return maxed; },
+      get bounds() { return placed ? { ...placed } : null; },
+      get snapped() { return snap; },
+    };
+  }
+
   /* ---------------- which build to offer first ---------------- */
   function platform() {
     const p = String((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || "") + " " + navigator.userAgent;
@@ -191,5 +400,5 @@
     return null;
   }
 
-  window.TXDesk = { wall: makeWall, windowing: makeWindowing, platform, generated, contourMap, mix };
+  window.TXDesk = { wall: makeWall, windowing: makeWindowing, frame: makeFrame, platform, generated, contourMap, mix };
 })();

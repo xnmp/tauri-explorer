@@ -26,6 +26,8 @@ describe("site-demo leak guard", () => {
     "src/lib/api/mock-git-fixture.ts",
     "src/lib/domain/demo-repo-worktree.ts",
     "src/lib/state/site-demo-bridge-seams.ts",
+    "src/lib/state/site-demo-window-drag.ts",
+    "src/lib/domain/demo-window-drag.ts",
   ])("reports a chunk built from %s", (source) => {
     expect(findSiteDemoLeaks({ ...cleanManifest, [source]: { file: "_app/chunks/x.js", src: source } }, []))
       .toEqual([`_app/chunks/x.js is built from site-demo module ${source}`]);

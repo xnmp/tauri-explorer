@@ -143,7 +143,7 @@ kbd + kbd { margin-left: 3px; }
 .acts .sep { width: 1px; height: 22px; margin: 0 2px; background: var(--m-line-2); }
 
 /* ---------- the desktop: the window floats on the wallpaper, the bench beside it ---------- */
-.floor { position: relative; z-index: 1; overflow: visible; display: grid; grid-template-columns: minmax(0, 1fr) var(--wb-rail); gap: 24px; padding: var(--desk-top) 16px var(--desk-bot) var(--desk-pad); min-height: 0; }
+.floor { position: relative; z-index: 1; overflow: visible; display: grid; grid-template-columns: minmax(0, 1fr) var(--wb-rail); grid-template-rows: minmax(0, 1fr); gap: 24px; padding: var(--desk-top) var(--desk-right) var(--desk-bot) var(--desk-pad); min-height: 0; }
 .stage { position: relative; min-width: 0; min-height: 0; isolation: isolate; }
 /* one pass of light across the window as it arrives */
 .sheen { position: absolute; inset: 0; z-index: 2; overflow: hidden; border-radius: var(--win-r); pointer-events: none; }
@@ -527,7 +527,7 @@ body.offline .rail, body.offline .sheen, body.offline .dock, body.offline .stage
 @keyframes wb-hint-in { from { opacity: 0; transform: scale(.6); } }
 @media (min-width: 861px) {
   .floor { transition: grid-template-columns .5s var(--ease), column-gap .5s var(--ease); }
-  .floor.tucked { grid-template-columns: minmax(0, 1fr) 56px; column-gap: 22px; }
+  .floor.tucked { grid-template-columns: minmax(0, 1fr) var(--rail-tucked); column-gap: var(--rail-tucked-gap); }
   .rail-body { min-width: var(--wb-rail); }   /* the bench keeps its layout while it slides; the rail clips it */
   .floor.tucked .rail-body { opacity: 0; visibility: hidden; transition: opacity .12s, visibility 0s .12s; }
   .floor.tucked .rail-tab { opacity: 1; visibility: visible; transition: opacity .3s var(--ease) .25s, visibility 0s; }
@@ -601,6 +601,8 @@ body.offline .rail, body.offline .sheen, body.offline .dock, body.offline .stage
     <li role="none"><button class="dicon" id="di-note" type="button" role="option" aria-selected="false" title="Double-click or press Enter to open"><span class="doc" aria-hidden="true"><svg viewBox="0 0 46 56"><path d="M4 3.5h26L42 15.5v37H4z" fill="#fbfaf6" stroke="rgba(0,0,0,.25)"/><path d="M30 3.5v12h12" fill="#e7e3d8" stroke="rgba(0,0,0,.2)"/><path d="M10 24h24M10 30h26M10 36h20M10 42h14" stroke="#9a958a" stroke-width="2" stroke-linecap="round"/></svg></span><span>there is no wifi.txt</span></button></li>
   </ul>
   <p class="wp-cap" id="wp-cap"></p>
+  <div class="win-home" aria-hidden="true"></div>
+  <div class="win-max-probe" aria-hidden="true"></div>
   <section class="stage" aria-label="Tauri Explorer, running in this page">
     <div class="frost" aria-hidden="true"></div>
     <div class="boot" aria-hidden="true"><img src="assets-desktop/app-icon.png" alt=""></div>
@@ -760,6 +762,7 @@ body.offline .rail, body.offline .sheen, body.offline .dock, body.offline .stage
 </div>
 
 <script src="bridge/tx-bridge.js"></script>
+<script src="desk-move.js"></script>
 <script src="host-apps.js"></script>
 <script src="desktop.js"></script>
 <script>
@@ -1070,6 +1073,22 @@ if (qs.get("rail") === "tucked") {   // a shared link with the bench tucked away
   FLOOR.classList.add("tucked", "still");
   requestAnimationFrame(() => requestAnimationFrame(() => FLOOR.classList.remove("still")));
 }
+// The window moves and resizes as any desktop window does (desktop.js TXDesk.frame): by the app's own title bar, which
+// reports the drag (`window-drag`), and by the grips round it. Its bounds last the session, so they survive switching
+// machine (a reload); placed now, before the window rises.
+const FRAME = TXDesk.frame({
+  stage: $(".stage"), home: $(".win-home"), maxProbe: $(".win-max-probe"), iframe: () => $("#app iframe") || $("#app"),
+  area: () => ({ left: 0, top: $(".strip").getBoundingClientRect().bottom, right: innerWidth, bottom: innerHeight }),
+  // a title bar stays left of the bench (tucked or not) and above the dock, so it can always be grabbed again
+  reach: () => {
+    const r = $("#rail").getBoundingClientRect(), d = $("#dock").getBoundingClientRect();
+    return { right: r.width ? r.left - 8 : innerWidth, bottom: d.height && d.top > innerHeight / 2 ? d.top - 6 : innerHeight };
+  },
+  chrome: on => maxChrome(on),
+  enabled: () => !document.body.classList.contains("desk-away"),
+  storageKey: "tx-workshop-window-v1",
+});
+try { new ResizeObserver(() => FRAME.reclamp()).observe($("#rail")); } catch (_) { /* the page's resize still re-clamps */ }
 const initSettings = Object.fromEntries(SETTING_KEYS.filter(k => k in start && typeof start[k] !== "object").map(k => [k, start[k]]));
 initSettings.viewMode = start.viewMode;   // the default for the first pane
 if (!fromUrl && start.translucency && LOOK_HERE && LOOK_HERE.opacity) initSettings[MAT.opacity] = LOOK_HERE.opacity;
@@ -2195,7 +2214,7 @@ $("#mat-op").addEventListener("input", e => {
 // The frame is never destroyed: closed or minimised, it is hidden, so tabs, the path and settings are all still there.
 const DOCK = $("#dock"), STAGE = $(".stage");
 const DI = [...document.querySelectorAll(".dicon")];
-let maxed = false, tuckedBeforeMax = false;   // before the windowing, which may report its first state at once
+let tuckedBeforeMax = false;   // before the windowing, which may report its first state at once
 const win = TXDesk.windowing({ stage: STAGE, iconRect: () => $("#di-app").getBoundingClientRect(), dockRect: () => $("#dock-app img").getBoundingClientRect(), onChange: deskState });
 function deskState(state) {
   const away = state !== "open";
@@ -2204,7 +2223,7 @@ function deskState(state) {
   DOCK.dataset.state = state;
   paintDock(state);
   if (away) {
-    if (maxed) setMax(false);
+    if (FRAME.maxed) FRAME.setMax(false, { instant: true });
     if (!document.body.classList.contains("switching")) {
       const min = state === "minimized";
       $("#rail-closed p").innerHTML = min ? "<b>Tauri Explorer is minimised</b>It is waiting in the dock with every tab where you left it." : "<b>Tauri Explorer is closed</b>The bench changes the window, so it waits for the window to come back.";
@@ -2219,29 +2238,33 @@ function deskState(state) {
 const desk = {
   close: () => win.close(),
   minimize: () => win.minimize(),
-  maximize: () => setMax(!maxed),
+  maximize: () => FRAME.setMax(!FRAME.maxed),
   open: () => win.open().then(focusApp),
-  get state() { return maxed && win.state === "open" ? "maximized" : win.state; },
+  get state() { return FRAME.maxed && win.state === "open" ? "maximized" : win.state; },
+  get bounds() { return FRAME.bounds; },
 };
 // The dock is the host's own word on the window: it says when the window is maximised (the app's title-bar buttons and
 // their tooltips are the app's, which the page does not touch).
 function paintDock(state = win.state) {
-  const max = maxed && state === "open";
+  const max = FRAME.maxed && state === "open";
   $("#dock-st").textContent = max ? "Maximised" : { open: "Running", closed: "Closed", minimized: "Minimised" }[state];
   $("#dock-app").setAttribute("aria-label", `Tauri Explorer, ${max ? "maximised: minimise" : { open: "running: minimise", closed: "closed: open", minimized: "minimised: restore" }[state]}`);
   $("#dock-app").title = max ? "Tauri Explorer: maximised. Click to minimise" : "";
 }
-function setMax(on) {
-  if (on === maxed) return;
-  maxed = on; paintDock();
+// Maximised: the bench tucks to its tab and the floor's margins tighten (TXDesk.frame moves the window there); restored,
+// the bench comes back as it was.
+function maxChrome(on) {
   if (on) { tuckedBeforeMax = tucked; setTucked(true); } else setTucked(tuckedBeforeMax);
   document.body.classList.toggle("desk-max", on);
+  paintDock();
 }
 window.__desk = desk;
 stage.on("window-control", d => {
   const a = d && d.action;
   if (a === "close") desk.close(); else if (a === "minimize") desk.minimize(); else if (a === "maximize") { if (win.state !== "open") desk.open(); desk.maximize(); }
 });
+// a drag on the title bar's empty space moves the window (a double-click there maximises, as `window-control`)
+stage.on("window-drag", d => FRAME.appDrag(d));
 $("#dock-app").addEventListener("click", () => win.state === "open" ? desk.minimize() : desk.open());
 $("#reopen").addEventListener("click", () => desk.open());
 

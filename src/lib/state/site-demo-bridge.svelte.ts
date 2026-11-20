@@ -30,6 +30,7 @@ import { windowTabsManager } from "./window-tabs.svelte";
 import { windowMaterial } from "./window-translucency.svelte";
 import { buildDemoCatalog, DEMO_PANELS, demoPanelState, type DemoPanelId } from "./site-demo-catalog";
 import { changeEmitter, focusIsLost, forwardWindowControls, pickFocusTarget } from "./site-demo-bridge-seams";
+import { forwardWindowDrags } from "./site-demo-window-drag";
 
 const VIEW_MODES = ["details", "list", "tiles"] as const;
 type DemoViewMode = (typeof VIEW_MODES)[number];
@@ -321,6 +322,8 @@ export function startSiteDemoBridge({ host, origin, media, boot }: SiteDemoBridg
   };
   // The title bar's window buttons: the host decides what a window does.
   forwardWindowControls(control, emit);
+  // A drag on the title bar's empty space moves the host's window, as `startDragging()` moves a native one.
+  forwardWindowDrags(document, emit);
   // Every executed change, including undo/redo, publishes to this feed.
   onMockFsChange((change) => emit("fs-change", { ...change, trashCount: mockTrashCount() }));
 

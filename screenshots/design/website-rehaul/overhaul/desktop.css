@@ -16,7 +16,10 @@
   --g-shadow: 0 1px 2px rgba(0, 0, 0, .1), 0 10px 28px -10px rgba(0, 0, 0, .32), 0 36px 72px -32px rgba(0, 0, 0, .42);
   --g-sheen: linear-gradient(180deg, rgba(255, 255, 255, .34), rgba(255, 255, 255, 0) 38%);
   --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .07 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  --desk-pad: 24px; --desk-top: 18px; --desk-bot: 76px; --win-r: 12px;
+  --desk-pad: 24px; --desk-top: 18px; --desk-bot: 76px; --desk-right: 16px; --win-r: 12px;
+  /* maximised: the floor's tighter margins and the bench tucked to a tab (workshop.html's .floor.tucked); the
+     window's maximise preview (.win-max-probe) reads the same values */
+  --desk-pad-max: 12px; --desk-top-max: 10px; --rail-tucked: 56px; --rail-tucked-gap: 22px;
   --pop: cubic-bezier(.2, .9, .25, 1.08);
 }
 :root[data-scheme="dark"] {
@@ -255,7 +258,51 @@ body.has-toast .wp-cap { opacity: 0; }
 .toast-x:focus-visible { outline: 2px solid var(--h-acc); outline-offset: 1px; }
 
 /* ---------------- maximised ---------------- */
-body.desk-max { --desk-pad: 12px; --desk-top: 10px; }
+body.desk-max { --desk-pad: var(--desk-pad-max); --desk-top: var(--desk-top-max); }
+
+/* ---------------- moving and resizing the window (desktop.js TXDesk.frame, desk-move.js) ----------------
+   Home: the window is the grid item in the floor's first cell, beside .win-home (an empty item in the same cell,
+   measured while the window is elsewhere). Placed: fixed bounds (translate, width, height) written by the frame.
+   The bench stays on top: a window dragged towards it slides beneath its glass. */
+.win-home { grid-area: 1 / 1; visibility: hidden; pointer-events: none; min-width: 0; min-height: 0; }
+.stage { grid-area: 1 / 1; }
+.rail { grid-column: 2; grid-row: 1; z-index: 3; }
+.stage.placed { position: fixed; left: 0; top: 0; margin: 0; }
+.win-max-probe { position: absolute; left: var(--desk-pad-max); top: var(--desk-top-max); bottom: var(--desk-bot);
+  right: calc(var(--desk-right) + var(--rail-tucked) + var(--rail-tucked-gap)); visibility: hidden; pointer-events: none; }
+/* lifted while it moves: the shadow deepens and spreads, as a window picked up off the desk */
+.stage .frost { transition: box-shadow .22s var(--ease); }
+.stage.lifted .frost { box-shadow: 0 2px 4px rgba(0, 0, 0, .2), 0 22px 44px -10px rgba(0, 0, 0, .5), 0 70px 130px -30px rgba(0, 0, 0, .66), 0 0 0 1px color-mix(in srgb, #000 40%, transparent); }
+:root[data-scheme="light"] .stage.lifted .frost { box-shadow: 0 2px 4px rgba(0, 0, 0, .12), 0 22px 44px -10px rgba(0, 0, 0, .34), 0 70px 130px -30px rgba(0, 0, 0, .48), 0 0 0 1px rgba(0, 0, 0, .16); }
+/* the grips: thin and invisible, mostly outside the window's edge, a little inside it (the corners a little more) */
+.win-grip { position: absolute; z-index: 7; touch-action: none; }
+.win-grip[data-edge="n"] { top: -6px; left: 12px; right: 12px; height: 9px; cursor: ns-resize; }
+.win-grip[data-edge="s"] { bottom: -6px; left: 12px; right: 12px; height: 10px; cursor: ns-resize; }
+.win-grip[data-edge="e"] { right: -6px; top: 12px; bottom: 12px; width: 10px; cursor: ew-resize; }
+.win-grip[data-edge="w"] { left: -6px; top: 12px; bottom: 12px; width: 10px; cursor: ew-resize; }
+.win-grip:is([data-edge="ne"], [data-edge="nw"], [data-edge="se"], [data-edge="sw"]) { width: 18px; height: 18px; }
+.win-grip[data-edge="nw"] { top: -6px; left: -6px; cursor: nwse-resize; }
+.win-grip[data-edge="ne"] { top: -6px; right: -6px; cursor: nesw-resize; }
+.win-grip[data-edge="sw"] { bottom: -6px; left: -6px; cursor: nesw-resize; }
+.win-grip[data-edge="se"] { bottom: -6px; right: -6px; cursor: nwse-resize; }
+@media (pointer: coarse) {   /* a finger needs more than a hairline */
+  .win-grip:is([data-edge="n"], [data-edge="s"]) { height: 22px; } .win-grip[data-edge="n"] { top: -14px; } .win-grip[data-edge="s"] { bottom: -14px; }
+  .win-grip:is([data-edge="e"], [data-edge="w"]) { width: 22px; } .win-grip[data-edge="e"] { right: -14px; } .win-grip[data-edge="w"] { left: -14px; }
+  .win-grip:is([data-edge="ne"], [data-edge="nw"], [data-edge="se"], [data-edge="sw"]) { width: 30px; height: 30px; margin: -8px; }
+}
+body.desk-max .win-grip { display: none; }   /* a maximised window is not resized, as on any desktop */
+/* where a snap will put the window: a quiet outline under it */
+.snap-ghost { position: fixed; left: 0; top: 0; z-index: 2; width: 0; height: 0; border-radius: var(--win-r); pointer-events: none; opacity: 0;
+  background: color-mix(in srgb, var(--h-acc) 10%, color-mix(in srgb, var(--h-paper) 18%, transparent));
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--h-acc) 55%, transparent), inset 0 0 0 4px color-mix(in srgb, var(--h-paper) 22%, transparent);
+  -webkit-backdrop-filter: blur(8px) saturate(1.1); backdrop-filter: blur(8px) saturate(1.1);
+  transition: opacity .16s ease, translate .22s var(--ease), width .22s var(--ease), height .22s var(--ease); }
+.snap-ghost.on { opacity: 1; }
+/* during a move or resize: nothing under the pointer takes it (frames included), and no text is selected */
+.desk-shield { position: fixed; inset: 0; z-index: 90; background: transparent; }
+body.desk-gesture { -webkit-user-select: none; user-select: none; }
+@media (max-width: 860px) { .win-home, .win-max-probe, .win-grip, .snap-ghost { display: none; } }
+@media (prefers-reduced-motion: reduce) { .snap-ghost, .stage .frost { transition: none; } }
 
 /* ---------------- the opening: wallpaper, then the window rises, then the bench ---------------- */
 body.pre .wall .wl { transition: none; }

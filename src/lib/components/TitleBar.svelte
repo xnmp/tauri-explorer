@@ -84,7 +84,8 @@
     if (!titlebar.startsWindowDrag(event.target as Element)) return;
 
     if (event.detail === 2) {
-      await appWindow?.toggleMaximize();
+      // Native: toggleMaximize; the site demo's host: its own maximize.
+      await windowControl("maximize");
       return;
     }
     await appWindow?.startDragging();

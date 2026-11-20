@@ -682,7 +682,7 @@
     for (const el of inert) el.inert = true;
     document.body.classList.add("ha-open"); document.body.classList.toggle("ha-cinema", !!def.cinema);
     scrim.classList.add("on");
-    cur = { win, id, part, file, opts, inert, drag: null, onResize: null };
+    cur = { win, id, part, file, opts, inert, onResize: null };
     part.mount?.();
 
     // grows out of the file it was opened from
@@ -703,21 +703,20 @@
         else if (!e.shiftKey && (i === f.length - 1 || i < 0)) { e.preventDefault(); f[0].focus(); }
       }
     });
-    // dragged by the title bar
-    const bar = win.querySelector(".ha-bar");
-    bar.addEventListener("pointerdown", e => {
-      if (e.button || e.target.closest("button, .ha-tools") || win.classList.contains("ha-full")) return;
-      const r = win.getBoundingClientRect();
-      cur.drag = [e.clientX - r.left, e.clientY - r.top];
-      bar.setPointerCapture(e.pointerId); win.classList.add("ha-dragging");
+    // dragged by the title bar, as the explorer's window is (desk-move.js: same threshold, lift and clamping)
+    const bar = win.querySelector(".ha-bar"), M = window.TXMove;
+    let from = null;
+    M.attach(bar, {
+      cursor: "grabbing",
+      accept: e => cur?.win === win && !e.target.closest("button, .ha-tools") && !win.classList.contains("ha-full"),
+      begin: p => { const r = win.getBoundingClientRect(); from = { p, b: { x: r.left, y: r.top, w: r.width, h: r.height } }; win.classList.add("ha-dragging"); },
+      to: p => {
+        if (!from) return;
+        const A = area(), b = M.clampPosition(M.moveBy(from.b, p.x - from.p.x, p.y - from.p.y), { left: 0, top: A.top, right: innerWidth, bottom: innerHeight }, { right: innerWidth, bottom: A.bottom });
+        win.style.left = Math.round(b.x) + "px"; win.style.top = Math.round(b.y) + "px";
+      },
+      end: () => { from = null; win.classList.remove("ha-dragging"); },
     });
-    bar.addEventListener("pointermove", e => {
-      if (!cur?.drag) return;
-      const w = win.offsetWidth, x = Math.min(innerWidth - 80, Math.max(80 - w, e.clientX - cur.drag[0])), y = Math.min(innerHeight - 40, Math.max(area().top, e.clientY - cur.drag[1]));
-      win.style.left = x + "px"; win.style.top = y + "px";
-    });
-    const endDrag = () => { if (cur) cur.drag = null; win.classList.remove("ha-dragging"); };
-    bar.addEventListener("pointerup", endDrag); bar.addEventListener("pointercancel", endDrag);
     cur.onResize = () => { if (small() || win.classList.contains("ha-full")) place(win, id, part.size); part.resize?.(); };
     if (part.scroller) { const s = win.querySelector(part.scroller); s.tabIndex = 0; s.setAttribute("aria-label", file.name); }
     // a program may name what takes the keyboard first (a lock's first tile); else the scrolling page, else the window

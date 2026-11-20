@@ -125,6 +125,29 @@ All events after `ready` fire only on change.
 | `overlay` | `{ open, fullscreen, modal }`: a dialog/palette/Quick Open/Search, or the fullscreen preview |
 | `open-external` | `{ path, name, kind, text?, src?, poster?, size, date, rect }`, see below |
 | `window-control` | `{ action: "minimize" \| "maximize" \| "close" }`: one of the title bar's window buttons (`showWindowControls`) was pressed. The app does nothing else (the tab, panes and state stay as they are); the host decides what the window does, and can call `focusApp()` when it shows it again |
+| `window-drag` | `{ phase: "start" \| "move" \| "end", screenX, screenY, clientX, clientY }`: the title bar is being dragged, as a native window is moved by it (see Moving the window) |
+
+### Moving the window
+
+The demo has no window of its own, so where the desktop app's title bar calls `startDragging()`, the demo reports
+the drag and the host moves whatever stands in for the window:
+
+- **What drags.** The title bar's drag region, as on the desktop: its empty space (beside and after the tabs),
+  never a tab, a button or an input (`titlebar.startsWindowDrag`). A press becomes a drag after 4 px of travel, so
+  a click never moves the window. One pointer at a time; mouse, pen and touch alike (the bar is `touch-action:
+  none` in the demo, so a swipe drags instead of panning).
+- **Events.** `start` carries the press point, then a `move` per pointer move, then `end` on release (or, after
+  a cancelled pointer, at the last point). The app captures the pointer, so the moves keep coming while the frame
+  moves away under it.
+- **Coordinates.** Move the window by the change in `screenX`/`screenY` since `start`: they do not depend on where
+  the frame is, whereas the frame-relative `clientX`/`clientY` change as the window moves (the host's motion would
+  feed back into the drag). `clientX`/`clientY` place the pointer on the host page at `start` (add the iframe's
+  offset), e.g. to keep it at the same place along the title bar when a maximised window is pulled off the top.
+- **Double-click** on the drag region is the desktop's maximise/restore: it arrives as `window-control
+  { action: "maximize" }`, the same event as the maximise button, so a host that toggles maximise on that event
+  gets both.
+- Resizing is the host's alone (the frame cannot see its own edges): the Workshop puts invisible grips round the
+  window (`desktop.js` `TXDesk.frame`, geometry in `desk-move.js`).
 
 ### `open-external`
 

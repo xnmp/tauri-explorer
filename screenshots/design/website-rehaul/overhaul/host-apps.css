@@ -14,6 +14,8 @@ body.ha-cinema .ha-scrim { background: rgba(0, 0, 0, .95); transition: opacity .
 }
 .ha-win.ha-closing { transition: transform .26s cubic-bezier(.5, 0, .8, .4), opacity .24s ease .02s; pointer-events: none; }
 .ha-win.ha-dragging { transition: none; user-select: none; }
+/* lifted while it moves, as the explorer's window is (desktop.css, .stage.lifted) */
+.ha-win.ha-win.ha-dragging { box-shadow: 0 0 0 1px rgba(0, 0, 0, .28), 0 2px 4px rgba(0, 0, 0, .2), 0 22px 44px -10px rgba(0, 0, 0, .5), 0 70px 130px -30px rgba(0, 0, 0, .66); }
 .ha-win.ha-full { inset: 0 !important; width: auto !important; height: auto !important; border-radius: 0; }
 .ha-win:focus-visible { outline: none; }
 .ha-win :focus-visible { outline: 2px solid #3d7eff; outline-offset: 2px; }

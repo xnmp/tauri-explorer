@@ -324,8 +324,9 @@ Backdrop Opacity becomes the slider value that gives islands the same alpha.
 
 The **Compact** layout (`"layoutTheme": "compact"`, #1548) became the
 **Compact** setting (#1878). A saved `"layoutTheme": "compact"` loads as
-`"layoutTheme": "default"` with `"compact": true`, which looks the same,
-and is written back that way. The id is folded whenever settings load, not
+`"layoutTheme": "default"` with `"compact": true`, which keeps its
+heights (Default's horizontal spacing and 13px tab text replace the old
+layout's tighter ones), and is written back that way. The id is folded whenever settings load, not
 once, so a value written again by an older build migrates too. A user
 layout with `@extends compact` resolves as Default; turn Compact on to get
 the tighter sizes back.

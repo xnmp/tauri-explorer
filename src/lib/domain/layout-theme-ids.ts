@@ -75,8 +75,9 @@ const LEGACY_COMPACT_LAYOUT_ID = "compact";
 
 /**
  * Fold the retired Compact layout into the `compact` density setting (#1878):
- * `layoutTheme: "compact"` becomes Default with `compact: true`, which looks
- * the same. Applies to any blob, whatever its migration stamp, because a
+ * `layoutTheme: "compact"` becomes Default with `compact: true`, which keeps
+ * its heights (Default's own horizontal spacing and 13px tab text replace
+ * the old layout's tighter ones). Applies to any blob, whatever its migration stamp, because a
  * downgraded build can write the old id again. Returns the input itself when
  * there is nothing to fold, so callers can tell whether it changed.
  */

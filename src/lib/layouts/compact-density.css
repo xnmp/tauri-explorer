@@ -65,10 +65,11 @@
   font-size: 12px;
 }
 
-/* Details and List: a header of 22px buttons, and 12px text. Details rows take
-   --layout-row-height; a List entry loses 2px of padding above and below to
-   fit its smaller slot (layoutStore.listRowHeight). Tiles keep their text;
-   their spacing tightens in domain/tile-layout.ts. */
+/* Details: a header of 22px buttons and 12px cell text; rows take
+   --layout-row-height. A List entry keeps its 13px text and loses 2px of
+   padding above and below to fit its smaller slot (layoutStore.listRowHeight);
+   one with a thumbnail keeps its slot, so it keeps its padding too. Tiles keep
+   their text; their spacing tightens in domain/tile-layout.ts. */
 :root[data-density="compact"] [data-region="column-header"] {
   min-height: 22px;
   padding-top: 0;

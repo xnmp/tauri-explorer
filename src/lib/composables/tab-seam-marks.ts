@@ -126,7 +126,9 @@ export function attachTabSeam(titlebar: HTMLElement): TabSeam {
 
     const stroke = paintedWidth(grid, 1);
     const corners = surfaceCorners(surface, shown?.foot ?? null);
-    const shade = strip ? stripShadePath(width, height, shown?.contour ?? null, { left: viewLeft, right: viewRight }) : "";
+    // The shade stops at the strip's base: the bar's bottom in Floating
+    // Islands; Default keeps a row below it for the outline (#1856).
+    const shade = strip ? stripShadePath(width, base, shown?.contour ?? null, { left: viewLeft, right: viewRight }) : "";
     const pockets = surfacePocketsPath(surface, base, corners);
     const edge = surfaceEdgePath(shown?.contour ?? null, stroke, surface, base, corners);
     const surfaceEdge = surfaceEdgePath(null, stroke, surface, base, corners);
@@ -143,7 +145,7 @@ export function attachTabSeam(titlebar: HTMLElement): TabSeam {
     set(svg(shadowLayer, ".surface-pockets"), "d", pockets);
     const barClip = svg(shadowLayer, ".tab-bar-clip");
     set(barClip, "width", String(width));
-    set(barClip, "height", String(height));
+    set(barClip, "height", String(base));
     // Shadows: the tab's own silhouette, cut out under the tab.
     set(svg(shadowLayer, ".tab-lift"), "d", shadow?.silhouette ?? "");
     set(svg(shadowLayer, ".tab-key"), "d", shadow?.silhouette ?? "");

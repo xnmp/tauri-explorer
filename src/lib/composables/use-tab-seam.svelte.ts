@@ -1,5 +1,5 @@
 /**
- * Wires the Floating Islands tab marks (`tab-seam-marks.ts`, #1734) to the
+ * Wires the tab seam marks (`tab-seam-marks.ts`, #1734) to the
  * title bar. The marks module is loaded lazily, to keep it out of the startup
  * bundle, and cached: once loaded, every tab change re-measures synchronously
  * inside the same flush. Awaiting `import()` per change let Chromium paint
@@ -19,7 +19,8 @@ function load(): Promise<Marks> {
 }
 
 /**
- * Keep the marks on `titlebar()` while the Floating Islands layout applies.
+ * Keep the marks on `titlebar()` while the layout's active tab owns the
+ * window (`layoutStore.tabSeam`: Floating Islands and Default).
  * `changes()` reads whatever reactive state moves the active tab (tab list,
  * active tab, strip visibility); each change re-measures immediately.
  */
@@ -28,7 +29,7 @@ export function useTabSeam(titlebar: () => HTMLElement | undefined, changes: () 
 
   $effect(() => {
     const bar = titlebar();
-    if (!bar || !layoutStore.islands) return;
+    if (!bar || !layoutStore.tabSeam) return;
     let disposed = false;
     const attach = (marks: Marks) => {
       if (!disposed) seam = marks.attachTabSeam(bar);

@@ -3,9 +3,12 @@
  * @description Panels as quiet rounded cards with thin borders and no shadows.
  *
  * Built-in layout theme (#1548): a middle ground between Default and Floating
- * Islands. The sidebar, pane area and preview become opaque cards (6px
- * radius, 1px border, no shadow, no blur) separated by 6px of a slightly
- * darker window backdrop; title bar and status bar sit on that backdrop.
+ * Islands. The sidebar, pane area, preview, terminal and source-control panel
+ * become opaque cards (8px radius, 1px border, no shadow, no blur) on a
+ * backdrop slightly darker than the theme base (a cool light grey on light
+ * themes). Every gap is 6px (#1848, #1854): the tab sits 6px from the
+ * window's top and left edges, the cards 6px below the tab, 6px apart and
+ * 6px from the window's sides.
  *
  * Written only against the layout contract (docs/layout-themes.md). Loaded
  * lazily and injected after all application CSS, like a user layout. The
@@ -14,19 +17,37 @@
  *
  * Surfaces are opaque on purpose: the Details column header is sticky over
  * scrolling rows, so the chrome surface behind it must never be transparent.
+ *
+ * Dark and light differ only through light-dark(), which follows the colour
+ * theme's color-scheme, so no rule names a theme.
  */
 
 :root {
   --layout-gap: 6px;
-  --layout-inset: 0 6px 0 6px;
-  --layout-radius: 6px;
+  /* The title bar ends at the tab's bottom edge, so the top inset is the
+     tab-to-card gap. */
+  --layout-inset: var(--layout-gap) var(--layout-gap) 0 var(--layout-gap);
+  --layout-radius: 8px;
   --layout-border: 1px solid var(--soft-cards-edge);
   --layout-shadow: none;
   --layout-surface: linear-gradient(var(--background-card), var(--background-card)), var(--background-solid);
   --layout-chrome-surface: var(--layout-surface);
   --layout-hairline: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  /* Details rows sit inside the card, so a selection or focus outline never
+     meets the card's edge (#1854). */
+  --layout-row-inset: 3px;
   --soft-cards-edge: color-mix(in srgb, var(--text-primary) 10%, transparent);
-  --soft-cards-backdrop: color-mix(in srgb, var(--background-solid) 86%, black);
+  /* Dark themes deepen the base toward black; light themes get a cooler,
+     lighter grey instead of a muddy darkened base (the default light theme
+     lands near #e6e9ef). */
+  --soft-cards-backdrop: light-dark(
+    color-mix(in srgb, var(--background-solid) 67%, #c9d1de),
+    color-mix(in srgb, var(--background-solid) 86%, black)
+  );
+  /* A 1px light catch along each card's top edge, dark themes only. */
+  --soft-cards-highlight: light-dark(transparent, rgba(255, 255, 255, 0.05));
+  /* Small controls inside the cards (rows, sidebar items, address bar). */
+  --soft-cards-control-radius: 4px;
   /* Structural card (sidebar): the secondary card tone, so content reads as
      the foreground surface. */
   --soft-cards-structural:
@@ -54,11 +75,15 @@
 }
 
 /* Title bar: tabs float on the backdrop as small cards; no fillets fusing the
-   active tab into the content. */
+   active tab into the content. The bar is 6px of backdrop plus the 28px tab,
+   and the strip starts 6px in, so the first tab lines up with the sidebar
+   card. A macOS integrated title bar keeps its own traffic-light padding in
+   front of the strip; window controls centre themselves in the bar. */
 :root [data-region="titlebar"] {
+  height: 34px;
   background: transparent;
   box-shadow: none;
-  align-items: center;
+  align-items: flex-end;
 }
 
 :root [data-region="titlebar"]::before,
@@ -67,10 +92,14 @@
   display: none;
 }
 
+:root [data-region="tab-strip"] {
+  padding-left: var(--layout-gap);
+}
+
 :root [data-region="tab"] {
   height: 28px;
   border: 1px solid transparent;
-  border-radius: var(--layout-radius);
+  border-radius: 6px;
   background: transparent;
   transform: none;
 }
@@ -78,8 +107,25 @@
 :root [data-region="tab"][aria-selected="true"] {
   background: var(--layout-surface);
   border-color: var(--soft-cards-edge);
-  box-shadow: none;
+  box-shadow: inset 0 1px 0 var(--soft-cards-highlight);
   color: var(--text-primary);
+}
+
+/* Each card's top highlight is an overlay: the cards' own children paint
+   opaque surfaces over anything the card itself draws. */
+:root [data-region="sidebar"]::after,
+:root [data-region="panes"]:not([data-split])::after,
+:root [data-region="panes"][data-split] [data-region="pane"]::after,
+:root [data-region="preview"]::after,
+:root [data-region="scm"]::after,
+:root [data-region="terminal"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 1px 0 var(--soft-cards-highlight);
+  pointer-events: none;
+  z-index: 1;
 }
 
 /* Sidebar card. */
@@ -94,7 +140,7 @@
 }
 
 :root [data-region="sidebar-item"] {
-  border-radius: 4px;
+  border-radius: var(--soft-cards-control-radius);
 }
 
 /* Pane card. A single pane is the card; in a split the container steps aside
@@ -119,23 +165,63 @@
   border-color: color-mix(in srgb, var(--accent) 60%, transparent);
 }
 
-/* The divider is the gap between cards, not a drawn line, even while hovered
-   or dragged; the base rules key the line on the split direction, so only
-   !important outranks them here. */
+/* The divider is the gap between cards, not a drawn line or a tinted strip,
+   even while hovered or dragged; the base rules key both on the split
+   direction and drag state, so only !important outranks them here. Its grip
+   shows only while the pointer is over the gap or the split is being
+   dragged (#1854). */
 :root [data-region="split-divider"] {
   border-color: transparent !important;
+  background: transparent !important;
+}
+
+:root [data-region="split-grip"] {
+  opacity: 0;
+}
+
+:root [data-region="split-divider"]:is(:hover, :focus-visible, [data-dragging]) [data-region="split-grip"] {
+  opacity: 1;
+  background: color-mix(in srgb, var(--text-primary) 40%, transparent) !important;
+}
+
+:root [data-region="split-divider"][data-dragging] [data-region="split-grip"] {
+  background: var(--accent) !important;
 }
 
 :root [data-region="toolbar"] {
   border-bottom-color: var(--layout-hairline);
 }
 
-:root [data-region="row"] {
-  border-radius: 4px;
+/* Address bar: a small rounded field, not a pill. */
+:root [data-region="address-bar"] {
+  border-radius: 5px;
+  --breadcrumb-radius: var(--soft-cards-control-radius);
+}
+
+:root [data-region="toolbar"] button {
+  border-radius: 5px;
+}
+
+/* Rows in every view: small radius, and selection is an accent wash with a
+   thin accent ring instead of a side bar. Details rows are inset by
+   --layout-row-inset; List and Tiles already sit inside the list's padding. */
+:root [data-region="file-list"] [data-region="row"] {
+  border-radius: var(--soft-cards-control-radius);
+}
+
+:root [data-region="file-list"] [data-region="row"][aria-selected="true"] {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-color: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+:root [data-region="file-list"] [data-region="row"][aria-selected="true"]:hover {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
 /* Preview card. */
 :root [data-region="preview"] {
+  position: relative;
   overflow: hidden;
 }
 
@@ -147,14 +233,59 @@
   overflow: visible;
 }
 
-:root [data-region="scm"][data-island] {
+:root[data-preview-fullscreen] [data-region="preview"]::after {
+  display: none;
+}
+
+/* Source-control card: inline beside the file list it becomes a card inset
+   in the pane; floating it is a card of its own. */
+:root [data-region="scm"] {
+  margin: var(--layout-gap) 0 var(--layout-gap) var(--layout-gap);
   border: var(--layout-border);
   border-radius: var(--layout-radius);
+  background: var(--soft-cards-structural);
   box-shadow: none;
+}
+
+:root [data-region="scm"][data-island] {
+  margin: 0;
+}
+
+/* Terminal card under the panes, inset like them. The panel counter-zooms
+   itself (#419), so its lengths re-apply the app zoom to line up with the
+   other cards. */
+:root [data-region="terminal"] {
+  margin: calc(var(--layout-gap) * var(--app-zoom, 1)) calc(var(--layout-gap) * var(--app-zoom, 1)) 0;
+  border: var(--layout-border);
+  border-radius: calc(var(--layout-radius) * var(--app-zoom, 1));
+  overflow: hidden;
 }
 
 /* Status bar: quiet text on the backdrop. */
 :root [data-region="status-bar"] {
   background: transparent;
   box-shadow: none;
+}
+
+/* Thin scrollbars: a 4px thumb in an 8px gutter, so it sits a few pixels in
+   from the card edge, kept clear of the rounded corners and with no track. */
+:root ::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-primary) 22%, transparent);
+  border: 2px solid transparent;
+  border-radius: 4px;
+  background-clip: padding-box;
+}
+
+:root ::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-primary) 38%, transparent);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+:root ::-webkit-scrollbar-track:vertical {
+  margin: var(--layout-gap) 0;
+}
+
+:root ::-webkit-scrollbar-track:horizontal {
+  margin: 0 var(--layout-gap);
 }

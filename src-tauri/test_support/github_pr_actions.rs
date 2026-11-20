@@ -137,18 +137,40 @@ fn pr_actions_merge_and_approve_use_explicit_repo_and_number() {
     );
 }
 #[test]
-fn pr_actions_refuse_stale_or_detached_head_before_spawning() {
+fn pr_actions_create_accepts_any_existing_local_branch_not_only_head() {
     let (_dir, root, exe) = fixture();
-    assert!(
-        execute_pr_action(&root, create_for("other", &fixture_slug(&root)), &exe)
-            .unwrap_err()
-            .to_string()
-            .contains("branch")
-    );
     let repo = git2::Repository::open(&root).unwrap();
-    repo.set_head_detached(repo.head().unwrap().target().unwrap())
+    let head = repo.head().unwrap().peel_to_commit().unwrap();
+    repo.branch("sidebar", &head, false).unwrap();
+    // HEAD stays on `feature`; a detached HEAD must not matter either.
+    repo.set_head_detached(head.id()).unwrap();
+    execute_pr_action(&root, create_for("sidebar", &fixture_slug(&root)), &exe).unwrap();
+    let args = argv(&root);
+    let head_flag = args.iter().position(|arg| arg == "--head").unwrap();
+    assert_eq!(args[head_flag + 1], "sidebar");
+}
+#[test]
+fn pr_actions_refuse_missing_local_branch_before_spawning() {
+    let (_dir, root, exe) = fixture();
+    let repo = git2::Repository::open(&root).unwrap();
+    let head = repo.head().unwrap().peel_to_commit().unwrap();
+    repo.branch("gone", &head, false).unwrap();
+    repo.find_branch("gone", git2::BranchType::Local)
+        .unwrap()
+        .delete()
         .unwrap();
-    assert!(execute_pr_action(&root, create_for("feature", &fixture_slug(&root)), &exe).is_err());
+    // A remote-tracking ref of the same name is not a local branch.
+    repo.reference("refs/remotes/origin/remote-only", head.id(), false, "test")
+        .unwrap();
+    for branch in ["gone", "remote-only", "origin/remote-only"] {
+        let error = execute_pr_action(&root, create_for(branch, &fixture_slug(&root)), &exe)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains(&format!("Branch {branch} no longer exists")),
+            "{branch}: {error}"
+        );
+    }
     assert!(!Path::new(&root).join("argv").exists());
 }
 #[test]
@@ -222,7 +244,6 @@ fn pr_actions_confirmed_repository_change_refuses_all_mutations_before_spawning(
     let (_dir, root, exe) = fixture();
     let displayed = pr_context(&root).unwrap();
     assert_eq!(displayed.repo_slug, fixture_slug(&root));
-    assert_eq!(displayed.head_branch.as_deref(), Some("feature"));
     let requests = [
         create_for("feature", &displayed.repo_slug),
         PrAction::Merge {

@@ -217,7 +217,7 @@
     <div class="icon" class:thumbnail={settingsStore.state.rowThumbnails} data-drag-icon style:--file-icon-color={entry.kind !== "directory" ? getFileIconColor(entry) : undefined} aria-hidden="true">
       {#if settingsStore.state.rowThumbnails}<RowThumbnail {entry} />{:else}<FileIcon {entry} size="small" />{/if}
     </div>
-    <span class="name-text" data-drag-name><EntryName {entry} {explorer} variant="details" bold={expanded} {label} tooltip={label ? `${entry.name}\n${prompt ?? label}` : undefined} /></span>
+    <span class="name-text" data-drag-name><EntryName {entry} {explorer} directory={parentPath} variant="details" bold={expanded} {label} tooltip={label ? `${entry.name}\n${prompt ?? label}` : undefined} /></span>
     {#if explorer.rowClickOwnsPeek(entry) && !isRenaming}<PeekOpenButton {entry} {explorer} />{/if}
     {#if peek && rowShowsPeekToggle({ caretsShown: carets, isDirectory: entry.kind === "directory", canPeek }) && !isRenaming}<PeekToggleButton {entry} {expanded} {explorer} />{/if}
     <GitStatusBadge directory={parentPath} entryName={entry.name} hideOnRename={isRenaming} />
@@ -397,6 +397,11 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     flex: 1;
+  }
+
+  /* The Git chip's tint would otherwise touch the Date column (#1852). */
+  .name-cell > :global(.git-indicator) {
+    margin-right: 8px;
   }
 
   .name-cell:has(:global(:is(.peek-open, .peek-toggle))) .name-text {

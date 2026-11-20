@@ -2,7 +2,7 @@
  * E2E: every preview format stays inside its pane in a narrow split at 80,
  * 100 and 150 % UI zoom, in each dock position, at the default and the
  * minimum dock size, and in a narrow window (#792). So do the SCM diff and
- * the git-graph comparison routed through the preview.
+ * the git-graph commit file diff routed through the preview.
  *
  * "Inside" is reachability, not clipping: the preview pane clips with
  * `overflow: hidden`, so content that spills past its region would silently
@@ -640,8 +640,16 @@ for (const dock of DOCKS) {
   }
 }
 
+/**
+ * The changed file of the mock "Update README with usage" commit
+ * (`MOCK_LONG_COMMIT_FILE_PATH` in src/lib/api/mock-git-state.ts), written out
+ * so this spec does not pull the mock backend into the Playwright process.
+ * Its long name is what stresses the diff header's containment.
+ */
+const LONG_COMMIT_FILE_NAME = "AnExtremelyLongGeneratedComponentFileNameThatOverflowsThePanel.svelte";
+
 for (const dock of DOCKS) {
-  test(`a commit comparison is contained in a minimum ${dock} dock at 150% in a medium window`, async ({ page }) => {
+  test(`a commit file diff is contained in a minimum ${dock} dock at 150% in a medium window`, async ({ page }) => {
     test.setTimeout(60_000);
     await openWithPreview(page, "/home/user/Documents/project", {
       viewport: "medium",
@@ -654,18 +662,13 @@ for (const dock of DOCKS) {
     await page.keyboard.press("Enter");
     const view = page.locator('[data-testid="git-graph-view"]');
     await expect(view.locator(".commit-row").first()).toContainText("Uncommitted Changes");
-    const newer = view.locator(".commit-row").nth(2);
-    const older = view.locator(".commit-row").nth(6);
-    const [newerOid, olderOid] = [await newer.getAttribute("data-oid"), await older.getAttribute("data-oid")];
-    await newer.click();
-    await page.getByRole("button", { name: "Compare this commit" }).click();
-    await older.click();
-    await page.locator(".detail-file", { hasText: "src/compared.ts" }).click();
+    const row = view.locator(".commit-row", { hasText: "Update README with usage" });
+    const oid = await row.getAttribute("data-oid");
+    await row.click();
+    await page.locator(".detail-file", { hasText: LONG_COMMIT_FILE_NAME }).click();
 
-    await expect(pane(page).locator(".preview-type-badge")).toHaveText(
-      `compare ${olderOid!.slice(0, 7)} → ${newerOid!.slice(0, 7)}`,
-    );
-    await expectDiffRendered(page, "compared.ts");
-    await expectContained(page, "commit comparison", { fileLists: false });
+    await expect(pane(page).locator(".preview-type-badge")).toHaveText(`commit ${oid!.slice(0, 7)}`);
+    await expectDiffRendered(page, LONG_COMMIT_FILE_NAME);
+    await expectContained(page, "commit file diff", { fileLists: false });
   });
 }

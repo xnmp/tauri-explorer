@@ -1,23 +1,15 @@
-import {
-  gitCommitFileDiff,
-  gitCompareCommitFiles,
-  gitCompareCommitFileDiff,
-  type CommitFile,
-} from "$lib/api/git-log";
+import { gitCommitFileDiff, type CommitFile } from "$lib/api/git-log";
 import { gitDiff } from "$lib/api/git";
 import { buildStageFiles, type StageSection } from "$lib/domain/commit-panel";
 import { parseUnifiedDiff, type DiffHunk, type DiffLine, type ParsedDiff } from "$lib/domain/diff";
 import {
   acceptsDetailLoad,
-  closeCommitComparison,
-  createCommitComparisonState,
-  exitCommitComparison,
-  selectComparisonCommit,
-  startCommitComparison,
-  type CommitComparison,
-  type CommitComparisonState,
+  closeDetailSelection,
+  createDetailSelection,
+  selectDetailCommit,
   type DetailLoad,
-} from "$lib/domain/git-graph-comparison";
+  type DetailSelection,
+} from "$lib/domain/git-graph-selection";
 import {
   beginSlot, clearSlot, idleSlot, isSlotCurrent, isSlotLoading, settleSlot, slotData,
   type Slot, type SlotOutcome,
@@ -46,15 +38,12 @@ interface DiffIdentity {
   readonly staged: boolean;
   readonly generation: number;
 }
-export type DetailComparison = Readonly<CommitComparison<GraphCommit>>;
 
 export interface GitGraphDetailDependencies {
   commitFiles(repoPath: string, oid: string): Promise<CommitFile[]>;
-  compareFiles(repoPath: string, olderOid: string, newerOid: string): Promise<CommitFile[]>;
   summary: typeof fetchGitSummary;
   workingDiff: typeof gitDiff;
   commitDiff: typeof gitCommitFileDiff;
-  compareDiff: typeof gitCompareCommitFileDiff;
   parseDiff(text: string): ParsedDiff;
 }
 
@@ -76,28 +65,23 @@ const snapshotCommit = (commit: GraphCommit): GraphCommit => Object.freeze({
   ...commit,
   parents: Object.freeze([...commit.parents]),
 });
-const snapshotComparisonState = (
-  state: CommitComparisonState<GraphCommit>,
-): CommitComparisonState<GraphCommit> => Object.freeze({
-  ...state,
-  comparison: state.comparison ? Object.freeze({ ...state.comparison }) : null,
-});
+const snapshotSelection = (
+  state: DetailSelection<GraphCommit>,
+): DetailSelection<GraphCommit> => Object.freeze({ ...state });
 
-/** Owns one mounted graph's selected commit, comparison, file, and inline-diff lifetimes. */
+/** Owns one mounted graph's selected commit, file, and inline-diff lifetimes. */
 export function createGitGraphDetail(
   repoPath: string,
   summaryConsumerId: string,
   dependencies: GitGraphDetailDependencies = {
     commitFiles: cachedCommitFiles,
-    compareFiles: gitCompareCommitFiles,
     summary: fetchGitSummary,
     workingDiff: gitDiff,
     commitDiff: gitCommitFileDiff,
-    compareDiff: gitCompareCommitFileDiff,
     parseDiff: parseUnifiedDiff,
   },
 ) {
-  let comparisonState = $state.raw(snapshotComparisonState(createCommitComparisonState<GraphCommit>()));
+  let selection = $state.raw(snapshotSelection(createDetailSelection<GraphCommit>()));
   // Files and the inline diff are latest-request-wins slots (#1569); tokens
   // come from one counter. A diff's key is the file it shows: loading/ready
   // diffs are open, and a failure closes it while reporting its error.
@@ -117,15 +101,13 @@ export function createGitGraphDetail(
   const clearFiles = () => filesSlot.set(clearSlot(filesSlot.get()));
   const clearDiff = () => diffSlot.set(clearSlot(diffSlot.get()));
 
-  async function loadTransition(load: Exclude<DetailLoad<GraphCommit>, null>): Promise<void> {
+  async function loadSelection(load: DetailLoad<GraphCommit>): Promise<void> {
     const token = ++tokens;
     filesSlot.set(beginSlot(filesSlot.get(), undefined, token));
     let outcome: SlotOutcome<readonly DetailFile[]>;
     try {
       let loaded: readonly DetailFile[];
-      if (load.kind === "comparison") {
-        loaded = await dependencies.compareFiles(repoPath, load.older.oid, load.newer.oid);
-      } else if (load.commit.oid === UNCOMMITTED_OID) {
+      if (load.commit.oid === UNCOMMITTED_OID) {
         const result = await dependencies.summary(repoPath, { consumerId: summaryConsumerId });
         if (!result.ok) throw new Error(result.error);
         loaded = buildStageFiles(result.data);
@@ -136,62 +118,42 @@ export function createGitGraphDetail(
     } catch (cause) {
       outcome = { ok: false, error: errorMessage(cause) };
     }
-    if (acceptsDetailLoad(comparisonState, load)) filesSlot.set(settleSlot(filesSlot.get(), token, outcome));
+    if (acceptsDetailLoad(selection, load)) filesSlot.set(settleSlot(filesSlot.get(), token, outcome));
   }
 
   async function select(commit: GraphCommit): Promise<void> {
     if (disposed) return;
-    const transition = selectComparisonCommit(comparisonState, snapshotCommit(commit), UNCOMMITTED_OID);
-    comparisonState = snapshotComparisonState(transition.state);
-    if (!transition.clearFiles) return;
+    const transition = selectDetailCommit(selection, snapshotCommit(commit));
+    selection = snapshotSelection(transition.state);
     clearFiles();
     clearDiff();
-    if (transition.load) await loadTransition(transition.load);
+    if (transition.load) await loadSelection(transition.load);
   }
 
   function close(): void {
-    comparisonState = snapshotComparisonState(closeCommitComparison(comparisonState).state);
+    selection = snapshotSelection(closeDetailSelection(selection));
     clearFiles();
     clearDiff();
-  }
-
-  function beginComparison(): void {
-    if (disposed) return;
-    const transition = startCommitComparison(comparisonState, UNCOMMITTED_OID);
-    comparisonState = snapshotComparisonState(transition.state);
-    if (!transition.clearFiles) return;
-    clearFiles();
-    clearDiff();
-  }
-
-  async function exitComparison(): Promise<void> {
-    if (disposed) return;
-    const transition = exitCommitComparison(comparisonState, UNCOMMITTED_OID);
-    comparisonState = snapshotComparisonState(transition.state);
-    clearFiles();
-    clearDiff();
-    if (transition.load?.kind === "normal") await loadTransition(transition.load);
   }
 
   /** Settles the diff for `token` unless the detail it was opened for has gone. */
   const settleDiff = (token: number, identity: DiffIdentity, outcome: SlotOutcome<ParsedDiffSnapshot>): boolean => {
-    if (comparisonState.generation !== identity.generation) return false;
+    if (selection.generation !== identity.generation) return false;
     const before = diffSlot.get();
     diffSlot.set(settleSlot(before, token, outcome));
     return diffSlot.get() !== before;
   };
 
   async function toggleDiff(file: DetailFile): Promise<string | null> {
-    if (disposed || !comparisonState.selected) return null;
+    if (disposed || !selection.selected) return null;
     const staged = file.staged === true;
     const open = openIdentity(diffSlot.get());
     if (open?.path === file.path && open.staged === staged) {
       clearDiff();
       return null;
     }
-    const selected = comparisonState.selected;
-    const comparison = comparisonState.comparison;
-    const identity: DiffIdentity = Object.freeze({ path: file.path, staged, generation: comparisonState.generation });
+    const selected = selection.selected;
+    const identity: DiffIdentity = Object.freeze({ path: file.path, staged, generation: selection.generation });
     const token = ++tokens;
     // A newly opened diff never shows the previous file's lines while it loads.
     diffSlot.set(beginSlot(idleSlot(), identity, token));
@@ -201,12 +163,10 @@ export function createGitGraphDetail(
         const result = await dependencies.workingDiff(repoPath, file.path, { staged });
         if (!result.ok) throw new Error(result.error);
         text = result.data;
-      } else if (comparison) {
-        text = await dependencies.compareDiff(repoPath, comparison.older.oid, comparison.newer.oid, file.path);
       } else {
         text = await dependencies.commitDiff(repoPath, selected.oid, file.path);
       }
-      if (comparisonState.generation !== identity.generation || !isSlotCurrent(diffSlot.get(), token)) return null;
+      if (selection.generation !== identity.generation || !isSlotCurrent(diffSlot.get(), token)) return null;
       settleDiff(token, identity, { ok: true, data: snapshotDiff(dependencies.parseDiff(text)) });
       return null;
     } catch (cause) {
@@ -216,21 +176,20 @@ export function createGitGraphDetail(
   }
 
   function captureSelection(): DetailSelectionToken | null {
-    const selected = comparisonState.selected;
-    return selected ? Object.freeze({ generation: comparisonState.generation, oid: selected.oid }) : null;
+    const selected = selection.selected;
+    return selected ? Object.freeze({ generation: selection.generation, oid: selected.oid }) : null;
   }
 
   const acceptsSelection = (token: DetailSelectionToken) =>
-    comparisonState.generation === token.generation && comparisonState.selected?.oid === token.oid;
+    selection.generation === token.generation && selection.selected?.oid === token.oid;
 
   async function refreshUncommittedFiles(expected = captureSelection()): Promise<boolean> {
-    if (disposed || comparisonState.selected?.oid !== UNCOMMITTED_OID
-      || comparisonState.first || comparisonState.comparison || !expected
+    if (disposed || selection.selected?.oid !== UNCOMMITTED_OID || !expected
       || !acceptsSelection(expected)) return false;
     // The accepted mutation has already changed the index/worktree. Its old
     // diff is invalid even when the same path and side remain in the summary.
     clearDiff();
-    const generation = comparisonState.generation;
+    const generation = selection.generation;
     const token = ++tokens;
     // The files already shown stay visible while the forced scan runs.
     filesSlot.set(beginSlot(filesSlot.get(), undefined, token));
@@ -241,9 +200,8 @@ export function createGitGraphDetail(
       filesSlot.set(settleSlot(filesSlot.get(), token, { ok: false, error: errorMessage(cause), keepPrevious: true }));
       return false;
     }
-    if (!isSlotCurrent(filesSlot.get(), token) || comparisonState.generation !== generation
-      || comparisonState.selected?.oid !== UNCOMMITTED_OID
-      || comparisonState.first || comparisonState.comparison
+    if (!isSlotCurrent(filesSlot.get(), token) || selection.generation !== generation
+      || selection.selected?.oid !== UNCOMMITTED_OID
       || !acceptsSelection(expected)) return false;
     if (!result.ok) {
       filesSlot.set(settleSlot(filesSlot.get(), token, { ok: false, error: result.error, keepPrevious: true }));
@@ -254,9 +212,7 @@ export function createGitGraphDetail(
   }
 
   return {
-    get selected() { return comparisonState.selected; },
-    get comparisonFirst() { return comparisonState.first; },
-    get comparison(): DetailComparison | null { return comparisonState.comparison; },
+    get selected() { return selection.selected; },
     get files() { return filesView; },
     get openDiffPath() { return openDiffIdentity?.path ?? null; },
     get openDiff() { return openDiff; },
@@ -267,8 +223,6 @@ export function createGitGraphDetail(
     },
     select,
     close,
-    beginComparison,
-    exitComparison,
     toggleDiff,
     closeDiff: clearDiff,
     captureSelection,

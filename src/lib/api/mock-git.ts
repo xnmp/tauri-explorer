@@ -77,6 +77,8 @@ export const gitCommands: Record<string, CommandHandler> = {
           "src": "Modified",
           "CHANGELOG.md": "Modified",
           ".env.example": "Untracked",
+          // An ignored entry, so file-list specs cover the dimmed, chipless name (#1852).
+          "babel.config.js": "Ignored",
         },
       };
     }

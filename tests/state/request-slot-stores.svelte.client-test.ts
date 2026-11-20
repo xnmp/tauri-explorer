@@ -257,7 +257,7 @@ function detailFixture() {
   const unused = () => Promise.reject(new Error("unused"));
   const session = createGitGraphDetail("/d", "detail-client", {
     commitFiles: () => track(commitFiles), commitDiff: () => track(commitDiffs),
-    compareFiles: unused, summary: unused, workingDiff: unused, compareDiff: unused,
+    summary: unused, workingDiff: unused,
     parseDiff: parseUnifiedDiff,
   });
   return { session, commitFiles, commitDiffs };

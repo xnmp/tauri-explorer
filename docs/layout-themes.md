@@ -10,11 +10,11 @@ Five layouts are built in:
 
 | Layout | Id | What it does |
 | --- | --- | --- |
-| Default | `default` | The flat, edge-to-edge layout. |
+| Default | `default` | The flat, edge-to-edge layout. The active tab owns the window: tab, sidebar, toolbar, list and status bar are one surface, only the strip round the tabs is shaded, and one outline runs round the tab and along the strip's base (#1856). Ships in the startup CSS. |
 | Floating Islands | `floating-islands` | Rounded panels floating over the window backdrop (#277, #434). Ships in the startup CSS. |
 | Hairline Ledger | `hairline-ledger` | Square, dense panels ruled by 1px hairlines, monospaced metadata and an inverted selection. Loaded on demand. |
-| Compact | `compact` | Default's surfaces with tight chrome (30px title bar, 32px toolbar, 20px status bar) and 22px Details rows (#1548). Loaded on demand. |
-| Soft Cards | `soft-cards` | Opaque rounded cards with 1px borders and no shadows, 6px apart on a slightly darker backdrop; split panes become separate cards (#1548). Loaded on demand. |
+| Compact | `compact` | Default's surfaces (one surface, shaded tab strip, tab outline; #1858) with tight chrome (30px title bar, 32px toolbar, 20px status bar) and 22px Details rows (#1548). Loaded on demand. |
+| Soft Cards | `soft-cards` | Opaque 8px-rounded cards with 1px borders and no shadows on a slightly darker backdrop (a cool light grey on light themes). Every gap is 6px, the tab included; split panes, the preview, terminal and source-control panel become separate cards, and selected rows sit inset inside them (#1548, #1854). Loaded on demand. |
 
 Choose one in **Settings → Appearance → Layout**, with **Switch Layout...** in the
 command palette (live preview while you move through the list), or with
@@ -80,6 +80,7 @@ variables keep the Default value shown.
 | `--layout-app-surface` | native-material tint | Window body (`[data-region="app"]`) under native material. Unset, the page paints the theme tint (on macOS, the theme base at 15% on light themes and 55% on dark ones). Floating Islands sets its own (see below). |
 | `--layout-hairline` | `var(--divider)` | Rule colour between chrome regions. |
 | `--layout-row-height` | `32px` | Details row height, in `px`, clamped to 20–64. Virtual scrolling and marquee selection follow it. |
+| `--layout-row-inset` | `0px` | Horizontal inset of every Details row inside the file list. The column header's text moves in by the same amount, so columns stay aligned; a selection or focus outline then never touches the panel edge. |
 
 Colour theme variables (`--text-primary`, `--background-card`, `--accent`,
 `--surface-stroke`, `--divider`, ...) are available for building colours, which
@@ -110,7 +111,8 @@ names are internal and change without notice; `data-region` names do not.
 | `miller` | Miller columns strip | |
 | `panes` | The pane area | `data-split` when it holds more than one pane |
 | `pane` | One explorer pane | `data-active` on the focused pane of a split |
-| `split-divider` | Divider between split panes | `aria-orientation` |
+| `split-divider` | Divider between split panes | `aria-orientation`; `data-dragging` while it is being dragged |
+| `split-grip` | The grip drawn on a split divider | |
 | `toolbar` | Pane navigation bar | |
 | `address-bar` | Breadcrumb / path field | |
 | `file-list` | File list of any view | `data-view="details\|list\|tiles"` |
@@ -178,6 +180,20 @@ Islands carry no `backdrop-filter`: it made each island the containing block
 of fixed overlays, so menus opened offset, and the webview cannot sample the
 native material anyway. Context menus and modal cards are opaque.
 
+### Default surfaces
+
+Default (#1856) and Compact (#1858) draw the same tab seam as Floating Islands, flat: square
+surface corners, no tab shadow, and the strip shaded over the surface
+colour. The title bar, sidebar and toolbar take `--layout-chrome-surface`
+when a layout sets it, else the content pane's own surface; the column
+header and status bar keep their opaque chrome tones (rows scroll under the
+header, and the status bar's warning text is tuned against its tone). The
+title bar's bottom row lies below the strip's base and carries the
+outline's base, so the whole outline stays inside the bar and the bar never
+stacks over menus and dialogs in the window. A layout that extends Default and rounds its panels with
+`--layout-radius` keeps the tab's surface square unless it also sets
+`--islands-surface-radius`.
+
 ### Native window material
 
 Native material is a separate window capability, never part of a layout. A
@@ -192,7 +208,7 @@ is created, so the setting reaches new windows and the next launch.
 ## Precedence
 
 1. Application styles (component CSS, colour theme).
-2. Floating Islands rules, scoped to `:root[data-layout-base="floating-islands"]`.
+2. Floating Islands and Default rules, scoped to `:root[data-layout-base="floating-islands"]` and `:root[data-layout-base="default"]`.
 3. The base stylesheet of a lazily loaded built-in (Hairline Ledger, Compact, Soft Cards).
 4. Your layout file.
 

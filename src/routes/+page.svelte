@@ -13,6 +13,7 @@
   import { vibrancyCoverageVariables } from "$lib/domain/vibrancy-opacity";
   import { layoutStore } from "$lib/state/layout.svelte";
   import "$lib/layouts/floating-islands.css";
+  import "$lib/layouts/default.css";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { resolveLaunchHomePath } from "$lib/state/window-title.svelte";
   import { markStartup, reportStartupReady } from "$lib/state/startup-timing";
@@ -538,7 +539,13 @@
 
   /* Fullscreen is inside this stacking context. It must cover the later
      status bar (1) and terminal resize handle (2), below root dialogs (#970). */
-  :global([data-preview-fullscreen]) .main-content {
+  /* Likewise while a full-window overlay opened from inside it is mounted (a
+     dialog, or a menu's dismissing backdrop: composables/window-overlay.ts).
+     Above it otherwise sit the title bar (Floating Islands lifts it over the
+     islands, and the active tab is lifted over its neighbours) and the status
+     bar, which would stay sharp and take clicks through the overlay (#1859). */
+  :global([data-preview-fullscreen]) .main-content,
+  :global([data-window-overlay-open]) .main-content {
     z-index: 3;
   }
 

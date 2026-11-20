@@ -33,8 +33,9 @@
   import NamedFolderIcon from "./NamedFolderIcon.svelte";
   import type { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
-  /** Floating Islands: the strip start that aligns it with the content
-   *  islands (`composables/tab-strip-start.ts`); null leaves the stylesheet's. */
+  /** Where the active tab owns the window (Floating Islands, Default): the
+   *  strip start that keeps the first tab's foot clear of the surface's
+   *  corner (`composables/tab-strip-start.ts`); null leaves the stylesheet's. */
   let { alignedStart = null }: { alignedStart?: number | null } = $props();
 
   const tabs = $derived(windowTabsManager.tabs);
@@ -52,9 +53,8 @@
   const motion = createTabStripMotion(stripTabsOf(windowTabsManager.tabs, windowTabsManager.activeTabId));
   $effect.pre(() => motion.follow(stripTabsOf(tabs, activeTabId)));
   const activeMinimum = $derived(renamingTabId ? 180 : 120);
-  // Floating Islands starts the strip over the content islands only while
-  // its tabs fit there at a comfortable width; a narrower window gives that
-  // room back to them (#1734).
+  // The aligned start applies only while the tabs fit there at a
+  // comfortable width; a narrower window gives that room back to them (#1734).
   function layoutFor(count: number) {
     const start = alignedStart === null ? null : tabStripStart(alignedStart, TAB_STRIP_PADDING, roomAtFloor, count, activeMinimum);
     const space = Math.max(0, roomAtFloor - (start === null ? 0 : start - TAB_STRIP_PADDING));

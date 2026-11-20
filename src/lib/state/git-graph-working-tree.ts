@@ -132,7 +132,7 @@ export function createGitGraphWorkingTree(deps: GitGraphWorkingTreeDeps) {
           }
         } else {
           detail.closeDiff();
-          scm.openCommitDiff(repoPath, forPreview.oid, file.path, detail.comparison?.older.oid);
+          scm.openCommitDiff(repoPath, forPreview.oid, file.path);
           return;
         }
       }

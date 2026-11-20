@@ -16,7 +16,7 @@ import {
   resolveLayoutTheme,
   withLayoutFailure,
 } from "$lib/domain/layout-theme";
-import { isBuiltinLayoutId, legacyLayoutThemeId, withLegacyLayoutMirror } from "$lib/domain/layout-theme-ids";
+import { isBuiltinLayoutId, legacyLayoutThemeId, tabOwnsWindow, withLegacyLayoutMirror } from "$lib/domain/layout-theme-ids";
 import { readFileSync } from "node:fs";
 
 // Vitest stubs CSS imports, so the shipped stylesheets are read from disk.
@@ -219,6 +219,13 @@ describe("legacy Floating Islands preference (#277, #434)", () => {
 
     const current = migrateSettings({ floatingIslands: true, layoutTheme: "default", settingsVersion: CURRENT_SETTINGS_VERSION }, defaults);
     expect(current).toEqual({ settings: expect.objectContaining({ layoutTheme: "default" }), changed: false });
+  });
+});
+
+describe("tabOwnsWindow (#1785, #1856, #1858)", () => {
+  it("draws the tab seam on Floating Islands, Default and Compact only", () => {
+    for (const base of ["floating-islands", "default", "compact"] as const) expect(tabOwnsWindow(base)).toBe(true);
+    for (const base of ["hairline-ledger", "soft-cards"] as const) expect(tabOwnsWindow(base)).toBe(false);
   });
 });
 

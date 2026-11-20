@@ -1,6 +1,6 @@
 /**
  * Preview diff loading: the working-tree diff of the SCM store's open file
- * and the commit / comparison file diff routed from the git graph (#366).
+ * and the commit file diff routed from the git graph (#366).
  *
  * One request generation owns `parsed` / `loading` / `error`, so a superseded
  * response never lands. A redundant reload of the working-tree target already
@@ -16,7 +16,6 @@ export interface CommitDiffTarget {
   repoPath: string;
   oid: string;
   path: string;
-  baseOid?: string;
 }
 
 export interface PreviewDiffDeps {
@@ -27,7 +26,6 @@ export interface PreviewDiffDeps {
   };
   workingDiff: (repoRoot: string, path: string, staged: boolean) => Promise<ApiResult<string>>;
   commitFileDiff: (repoPath: string, oid: string, path: string) => Promise<string>;
-  compareCommitFileDiff: (repoPath: string, baseOid: string, oid: string, path: string) => Promise<string>;
 }
 
 export function createPreviewDiff(deps: PreviewDiffDeps) {
@@ -62,9 +60,7 @@ export function createPreviewDiff(deps: PreviewDiffDeps) {
     loading = true;
     error = null;
     try {
-      const text = target.baseOid
-        ? await deps.compareCommitFileDiff(target.repoPath, target.baseOid, target.oid, target.path)
-        : await deps.commitFileDiff(target.repoPath, target.oid, target.path);
+      const text = await deps.commitFileDiff(target.repoPath, target.oid, target.path);
       if (gen !== requestGen || deps.current().commitDiff !== target) return;
       parsed = parseUnifiedDiff(text);
     } catch (err) {

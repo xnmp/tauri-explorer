@@ -13,6 +13,7 @@
   import { renameSuggestionStore } from "$lib/state/rename-suggestion.svelte";
   import { rectDimToCSS } from "$lib/domain/zoom";
   import EntryNameLabel from "./EntryNameLabel.svelte";
+  import { useEntryGitStatus } from "$lib/composables/use-entry-git-status.svelte";
 
   interface Props {
     entry: FileEntry;
@@ -22,9 +23,15 @@
     /** Display text in place of the filename (#1449); rename still edits the filename. */
     label?: string | null;
     tooltip?: string;
+    /** The directory the entry's Git status is keyed by; defaults to the pane's current path. */
+    directory?: string;
+    /** Tint the name by its Git status (#1852); off where no status chip is shown (Miller columns). */
+    gitTint?: boolean;
   }
 
-  let { entry, explorer, variant, bold = false, label, tooltip }: Props = $props();
+  let { entry, explorer, variant, bold = false, label, tooltip, directory, gitTint = true }: Props = $props();
+
+  const git = useEntryGitStatus(() => entry.name, () => directory);
 
   const rename = useInlineRename(() => explorer);
 
@@ -261,7 +268,7 @@
     </span>
   {/if}
 {:else}
-  <EntryNameLabel name={entry.name} {variant} {bold} text={label} {tooltip} />
+  <EntryNameLabel name={entry.name} {variant} {bold} text={label} {tooltip} git={gitTint ? git.presentation : null} />
 {/if}
 
 <style>

@@ -1,0 +1,181 @@
+/* =====================================================================================================
+   THE PHONE (phone.js). html.phone is set before first paint from TXPhone.QUERY. The window fills the screen
+   between a slim top bar and the bottom sheet's peek; no wallpaper, dock, bench or window chrome that needs a
+   mouse. Safe areas respected, nothing scrolls sideways, and only the sheet's own body scrolls.
+   ===================================================================================================== */
+.ph-sheet, .ph-only, .btn.ph-only { display: none; }
+/* A touch-only tablet keeps the desktop, but it cannot install the app either: it gets Send too, as a quiet button
+   beside Download. A computer with a mouse never sees it. */
+@media (hover: none) and (pointer: coarse) {
+  :root:not(.phone) .strip .btn.ph-send { display: inline-flex; height: 40px; color: var(--h-text); background: linear-gradient(180deg, var(--m-raise), var(--m-plate-2)); box-shadow: inset 0 0 0 1px var(--m-line-2), inset 0 1px 0 var(--m-hi), 0 1px 2px var(--m-shade); }
+}
+
+:root.phone {
+  --ph-top: calc(54px + env(safe-area-inset-top, 0px));
+  --ph-peek: 132px;
+  --ph-gut: max(16px, env(safe-area-inset-left, 0px));
+  --ph-gut-r: max(16px, env(safe-area-inset-right, 0px));
+  --win-r: 0px;
+  background: var(--h-paper);
+  -webkit-text-size-adjust: 100%; text-size-adjust: 100%;
+  overflow: hidden;
+}
+:root.phone body { display: block; height: 100vh; height: 100dvh; min-height: 0; overflow: hidden; background: var(--h-paper); overscroll-behavior: none; }
+:root.phone .ph-only { display: revert; }
+:root.phone .btn.ph-only { display: inline-flex; }
+
+/* what a phone never shows (and never loads: the wallpaper is not drawn, see workshop.html) */
+:root.phone :is(.wall, .rail, .dock, .drive, .desk-icons, .wp-cap, .phone-note, .nudge, .gd-try, .tray, .pitch, .sep, .dl-group, .btn.gh, .lockbar .pips, .sheen, .stage .frost, .stage .rim, .win-home, .win-max-probe, .snap-ghost, .lark) { display: none !important; }
+
+/* ---------------- the top bar ---------------- */
+:root.phone .strip { position: fixed; left: 0; right: 0; top: 0; z-index: 30; display: flex; flex-wrap: nowrap; align-items: center; gap: 8px; height: var(--ph-top);
+  padding: env(safe-area-inset-top, 0px) var(--ph-gut-r) 0 var(--ph-gut); border-radius: 0; --g-alpha: 94%; }
+:root.phone .strip::before { opacity: .55; }
+:root.phone .mark { gap: 9px; min-width: 0; }
+:root.phone .mark .appicon { width: 30px; height: 30px; }
+:root.phone .mark b { font-size: 18px; white-space: nowrap; }
+:root.phone .acts { order: 0; flex: none; margin-left: auto; gap: 8px; }
+:root.phone .lockbar { height: 34px; padding: 0 10px 0 8px; gap: 6px; }
+:root.phone .lockbar #lb-t { font-size: 12.5px; }
+:root.phone .btn.help { width: 40px; height: 40px; border-radius: 20px; }
+.ph-send { height: 40px; padding: 0 14px 0 12px; border-radius: 12px; font-size: 14px; }
+.ph-send svg { width: 16px; height: 16px; transform: translateY(1px); }
+@media (max-width: 374px) { :root.phone .mark b { font-size: 16px; } :root.phone .lockbar #lb-t { display: none; } }
+
+/* ---------------- the window fills the screen ---------------- */
+:root.phone .floor { position: fixed; left: 0; right: 0; top: var(--ph-top); bottom: var(--ph-peek); display: block; padding: 0 env(safe-area-inset-right, 0px) 0 env(safe-area-inset-left, 0px); margin: 0; z-index: 1; transition: none; }
+:root.phone .stage { position: absolute !important; inset: 0 !important; width: auto !important; height: auto !important; translate: none !important; min-height: 0; margin: 0; border-radius: 0; animation: none !important; background: var(--h-paper); }
+:root.phone #app { border-radius: 0; }
+:root.phone .stage .boot { background: var(--h-paper); }
+:root.phone .notice { border-radius: 0; }
+:root.phone .offer { left: 12px; right: 12px; bottom: 12px; width: auto; }
+/* toasts drop from under the strip: the sheet can stand anywhere up to the top, and would cover one rising from below */
+:root.phone .toasts { left: 12px; right: 12px; top: calc(var(--ph-top) + 8px); bottom: auto; z-index: 45; width: auto; align-items: stretch; }
+:root.phone .toast { font-size: 14px; animation-name: ph-toast; }
+@keyframes ph-toast { from { transform: translateY(-14px) scale(.96); } }
+
+/* ---------------- the bottom sheet ---------------- */
+:root.phone .ph-sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; display: flex; flex-direction: column; height: 70vh;
+  padding: 0 env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+  border-radius: 22px 22px 0 0; color: var(--h-text);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--h-paper) 86%, var(--h-side)), var(--h-paper) 60px);
+  box-shadow: 0 -1px 0 var(--m-line-2), 0 -12px 34px -12px rgba(0, 0, 0, .35), inset 0 1px 0 var(--m-hi);
+  transform: translateY(100%); transition: transform .42s cubic-bezier(.2, .9, .25, 1); will-change: transform; touch-action: none; }
+:root.phone .ph-sheet.moving { transition: none; }
+.ph-handle { all: unset; box-sizing: border-box; flex: none; display: grid; place-items: center; width: 100%; height: 24px; cursor: grab; touch-action: none; }
+.ph-handle i { width: 40px; height: 5px; border-radius: 3px; background: color-mix(in srgb, var(--h-ink) 26%, transparent); transition: background-color .2s, width .2s var(--pop); }
+.ph-handle:focus-visible i { background: var(--h-acc); width: 56px; }
+.ph-handle:focus-visible { outline: none; }
+.ph-peek { flex: none; padding: 0 var(--ph-gut-r) 12px var(--ph-gut); touch-action: none; }
+.ph-body { flex: none; overflow: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; touch-action: pan-y; padding: 4px var(--ph-gut-r) 28px var(--ph-gut);
+  border-top: 1px solid var(--m-line); transition: height .42s cubic-bezier(.2, .9, .25, 1); }
+.ph-sheet.moving .ph-body { transition: none; }
+
+/* the peek, outside the tour: one line that invites a pull */
+.ph-explore { display: flex; align-items: center; gap: 10px; }
+.ph-open { all: unset; box-sizing: border-box; flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 6px 10px 6px 6px; border-radius: 14px; cursor: pointer; }
+.ph-open:focus-visible, .ph-tour-again:focus-visible, .ph-x:focus-visible { outline: 2px solid var(--h-acc); outline-offset: 2px; }
+.ph-sw { flex: none; display: grid; grid-template-columns: repeat(3, 12px); grid-template-rows: repeat(2, 12px); gap: 3px; padding: 6px; border-radius: 11px; background: var(--m-well); box-shadow: inset 0 0 0 1px var(--m-line); }
+.ph-sw i { border-radius: 4px; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .12); }
+.ph-ot { display: grid; gap: 3px; min-width: 0; }
+.ph-ot b { font: 720 17px/1.1 var(--wb-display); font-variation-settings: "wdth" 88, "opsz" 36; letter-spacing: -.01em; }
+.ph-ot small { font: 500 13px/1.25 var(--wb-font); color: var(--h-text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ph-chev { margin-left: auto; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 16px; color: var(--h-text-2); background: var(--m-well); transition: transform .3s var(--pop); }
+.ph-chev svg { width: 13px; height: 13px; }
+.ph-sheet[data-at="2"] .ph-chev { transform: rotate(180deg); }
+.ph-tour-again { all: unset; box-sizing: border-box; flex: none; height: 44px; padding: 0 16px; border-radius: 12px; font: 650 14px/44px var(--wb-font); cursor: pointer; color: var(--h-text);
+  background: color-mix(in srgb, var(--h-acc) 14%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--h-acc) 40%, transparent); }
+
+/* the peek, during the tour: progress, the step, what it did, and the way on */
+.ph-tour { display: grid; gap: 6px; }
+.ph-tour-top { display: flex; align-items: center; gap: 10px; min-height: 30px; }
+.ph-tour-top img { width: 30px; height: 30px; filter: drop-shadow(0 2px 4px rgba(0, 0, 0, .25)); }
+.ph-dots { display: flex; gap: 6px; }
+.ph-dots i { width: 7px; height: 7px; border-radius: 50%; background: color-mix(in srgb, var(--h-ink) 18%, transparent); transition: background-color .3s, width .3s var(--pop); }
+.ph-dots i.on { background: var(--h-acc); }
+.ph-dots i.cur { width: 20px; border-radius: 4px; box-shadow: 0 0 8px var(--m-glow); }
+.ph-n { font: 600 12.5px/1 var(--wb-font); color: var(--h-text-2); font-variant-numeric: tabular-nums; }
+.ph-x { all: unset; box-sizing: border-box; margin-left: auto; margin-right: -8px; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 22px; cursor: pointer; color: var(--h-text-2); }
+.ph-x svg { width: 15px; height: 15px; }
+.ph-tour h2 { margin: 0; font: 740 22px/1.1 var(--wb-display); font-variation-settings: "wdth" 86, "opsz" 48; letter-spacing: -.018em; }
+.ph-tour.intro h2 { font-size: 24px; }
+.ph-tour p { margin: 0; min-height: 2.9em; font: 450 15px/1.45 var(--wb-font); color: var(--h-text-2); text-wrap: pretty; }
+.ph-acts { display: flex; gap: 10px; margin-top: 6px; }
+.ph-acts .btn { flex: 1; height: 48px; font-size: 15px; border-radius: 14px; }
+.ph-acts .btn.primary { flex: 1.6; }
+.ph-acts .btn svg { width: 17px; height: 17px; }
+.ph-acts .btn[disabled] { opacity: .6; }
+.btn.ph-ghost { background: var(--m-well); box-shadow: inset 0 0 0 1px var(--m-line-2); }
+
+/* the sheet's sections */
+.ph-sec { padding: 16px 0 6px; }
+.ph-sec + .ph-sec { border-top: 1px solid var(--m-line); }
+.ph-sec > h3 { margin: 0 0 4px; font: 720 18px/1.1 var(--wb-display); font-variation-settings: "wdth" 88, "opsz" 36; letter-spacing: -.01em; }
+.ph-sec > p { margin: 0 0 12px; font: 450 13.5px/1.4 var(--wb-font); color: var(--h-text-2); }
+:root.phone .ph-sec .chips { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px 12px; }
+:root.phone .ph-sec .chip .tile { height: 64px; }
+:root.phone .ph-sec .chip small { font-size: 12.5px; }
+:root.phone .ph-sec .seg button { min-height: 60px; padding: 10px 2px 9px; font-size: 12px; }
+:root.phone .ph-sec .switches { grid-template-columns: 1fr 1fr; }
+:root.phone .ph-sec .sw { height: 52px; }
+:root.phone .ph-sec .shelf { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+:root.phone .ph-sec .card { transform: none; }
+.ph-machines { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.ph-m { all: unset; box-sizing: border-box; display: grid; grid-template-columns: 76px minmax(0, 1fr); align-items: center; gap: 12px; width: 100%; min-height: 64px; padding: 6px 12px 6px 6px; border-radius: 14px; cursor: pointer;
+  background: linear-gradient(180deg, var(--m-raise), var(--m-plate-2)); box-shadow: inset 0 0 0 1px var(--m-line-2), inset 0 1px 0 var(--m-hi); }
+.ph-m:focus-visible { outline: 2px solid var(--ma, var(--h-acc)); outline-offset: 2px; }
+.ph-m[aria-current="true"] { box-shadow: inset 0 0 0 2px var(--ma, var(--h-acc)), inset 0 1px 0 var(--m-hi); cursor: default; }
+.ph-m .th { width: 76px; height: 52px; border-radius: 10px; background: var(--ma) center / cover no-repeat; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .2); }
+.ph-m b { display: block; font: 680 15px/1.2 var(--wb-font); }
+.ph-m small { display: block; margin-top: 2px; font: 450 12.5px/1.35 var(--wb-font); color: var(--h-text-2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ph-cta { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; padding: 18px 0 4px; }
+.ph-cta .btn { height: 50px; font-size: 15px; border-radius: 14px; }
+.ph-cta .btn svg { width: 17px; height: 17px; }
+.ph-cta p { grid-column: 1 / -1; margin: 0; font: 450 12.5px/1.4 var(--wb-font); color: var(--h-text-2); }
+
+/* ---------------- a program's window: the whole screen, with a close a thumb finds ---------------- */
+:root.phone .ha-win .ha-min, :root.phone .ha-win .ha-max { display: none; }
+:root.phone .ha-win .ha-bar { height: calc(56px + env(safe-area-inset-top, 0px)); padding-top: env(safe-area-inset-top, 0px); padding-left: max(14px, env(safe-area-inset-left, 0px)); padding-right: max(8px, env(safe-area-inset-right, 0px)); }
+:root.phone .ha-win .ha-x { width: 44px; height: 44px; border-radius: 22px; background: color-mix(in srgb, var(--bar-ink) 9%, transparent); }
+:root.phone .ha-win .ha-x svg { width: 15px; height: 15px; }
+:root.phone .ha-win .ha-foot { padding-bottom: env(safe-area-inset-bottom, 0px); }
+/* the locks: wheels and their arrows big enough for a thumb, the tiles a keyboard's width */
+:root.phone .lk-wheel button { height: 44px; }
+:root.phone .lk-wheel { width: 50px; }
+:root.phone .lk-wheels { gap: 6px; padding: 10px; }
+:root.phone .lk-try, :root.phone .lk-hint { height: 48px; }
+:root.phone .lk-tile { width: 42px; height: 52px; font-size: 24px; }
+
+/* ---------------- the machines picker: it takes the window's place, so the tour card below stays in reach ---------------- */
+:root.phone .picker { top: var(--ph-top); bottom: var(--ph-peek); padding: 0; place-items: stretch; z-index: 25; }
+:root.phone .pk-scrim { display: none; }
+:root.phone .pk-panel { width: 100%; max-height: none; height: 100%; border-radius: 0; padding: 14px var(--ph-gut-r) 20px var(--ph-gut); overflow: auto; overscroll-behavior: contain; }
+:root.phone .pk-x { width: 44px; height: 44px; border-radius: 22px; }
+:root.phone .pk-panel { --g-bg: var(--g-tint); }
+
+/* ---------------- light work: no glass blur, no idle motion ---------------- */
+/* --g-bg resolves on the root, so the opacity that stands in for the blur is set there */
+:root.phone, :root.phone[data-scheme], :root.phone[data-scheme][data-wp] { --g-alpha: 97%; }
+:root.phone .glass { -webkit-backdrop-filter: none; backdrop-filter: none; }
+:root.phone .tray .clock i, :root.phone .gd-card .gd-live .led { animation: none; }
+@media (prefers-reduced-motion: reduce) { :root.phone .ph-sheet, :root.phone .ph-body { transition: none; } }
+
+/* ---------------- a phone on its side: a low strip, and the tour card in two columns so the window keeps its height ---------------- */
+@media (max-height: 500px) {
+  :root.phone { --ph-top: calc(44px + env(safe-area-inset-top, 0px)); }
+  :root.phone .ph-send, :root.phone .strip .btn.help { height: 34px; }
+  :root.phone .strip .btn.help { width: 34px; }
+  .ph-handle { height: 16px; }
+  .ph-peek { padding-bottom: max(8px, env(safe-area-inset-bottom, 0px)); }
+  .ph-tour { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "top acts" "h acts" "p acts"; column-gap: 20px; row-gap: 2px; align-items: center; }
+  .ph-tour-top { grid-area: top; min-height: 22px; }
+  .ph-tour-top img { width: 22px; height: 22px; }
+  .ph-tour h2, .ph-tour.intro h2 { grid-area: h; font-size: 18px; }
+  .ph-tour p { grid-area: p; min-height: 0; font-size: 13.5px; line-height: 1.35; }
+  .ph-acts { grid-area: acts; margin: 0; align-self: end; }
+  .ph-acts .btn { flex: none; height: 44px; padding: 0 18px; }
+  .ph-x { width: 36px; height: 36px; }
+}
+
+/* the sheet's panel switches: one to a row, so their names fit */
+:root.phone #ph-switches { grid-template-columns: 1fr; }

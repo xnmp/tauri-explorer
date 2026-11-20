@@ -106,6 +106,8 @@ target. Messages from any other window, origin or version are ignored.
 | `playVideo(path)` | selects a fixture video with the preview pane shown (the preview has the play control; it does not autoplay) → `false` when the file is not a video |
 | `setCustomTheme({ name, dark, v })` | `v` = `[paper, panel, ink, ink2, accent, folder]` as hex → the new theme id (`site-<slug>`), applied and added to the catalog; `null` when invalid |
 | `focusApp()` | gives the frame keyboard focus again (after the host re-shows a closed or minimized window): the element that had focus keeps it, else the active pane's selected row or file list → `true` when the frame has focus |
+| `closeOverlays()` | closes Quick Open, the palettes, Search in Files and every other dialog, as Escape would (a dialog guarding unsaved input, such as a rename in progress, stays open) → `true` when none is open afterwards |
+| `setTouchLayout(on)` | the host's phone layout. `true`: on a touch screen a single tap on a file or folder row opens it, as a double-click does (folders navigate, files reach `open-external`; the tap still selects first), and the app's text fields are at least 16 px, so a phone never zooms the page when one takes focus (iOS zooms the top page for a smaller field, even in this frame; pinch zoom is untouched), and file rows draw no keyboard-cursor ring (the app still moves its cursor; with no keyboard the ring would read as a stray selection). Only touch and pen taps count: a press that scrolls, moves 10 px or more, is held past 500 ms (the context menu) or is a mouse click is not one, and a tap on a control inside a row (a peek caret, the rename box) keeps its own behaviour. Default off; the app's double-click and Enter keep working either way → `true`, `false` for a non-boolean |
 
 ### Events (`stage.on(event, fn)`, or `"*"` for `(event, data)`)
 
@@ -122,7 +124,7 @@ All events after `ready` fire only on change.
 | `view` | `{ viewMode, pane }` (`viewMode` null when that pane closed) |
 | `select` | `{ path, paths }` (active pane; `path` is the last selected) |
 | `fs-change` | `{ op, path, from?, trashCount }`, `op` ∈ `mkdir create write rename move copy symlink trash delete restore purge compress extract` (`purge`: emptied from the Recycle Bin; `from` on rename/move/copy). Every change is reported once, whether it came from the UI, the terminal, or undo/redo |
-| `overlay` | `{ open, fullscreen, modal }`: a dialog/palette/Quick Open/Search, or the fullscreen preview |
+| `overlay` | `{ open, fullscreen, modal, kind }`: a dialog/palette/Quick Open/Search, or the fullscreen preview. `kind` names it: `"quick-open"`, `"command-palette"`, `"content-search"`, `"theme-picker"`, `"keybindings"`, `"settings"`, or `null` (another dialog, the fullscreen preview, or none) |
 | `open-external` | `{ path, name, kind, text?, src?, poster?, size, date, rect }`, see below |
 | `window-control` | `{ action: "minimize" \| "maximize" \| "close" }`: one of the title bar's window buttons (`showWindowControls`) was pressed. The app does nothing else (the tab, panes and state stay as they are); the host decides what the window does, and can call `focusApp()` when it shows it again |
 | `window-drag` | `{ phase: "start" \| "move" \| "end", screenX, screenY, clientX, clientY }`: the title bar is being dragged, as a native window is moved by it (see Moving the window) |

@@ -29,8 +29,9 @@ import { themeStore } from "./theme.svelte";
 import { windowTabsManager } from "./window-tabs.svelte";
 import { windowMaterial } from "./window-translucency.svelte";
 import { buildDemoCatalog, DEMO_PANELS, demoPanelState, type DemoPanelId } from "./site-demo-catalog";
-import { changeEmitter, focusIsLost, forwardWindowControls, pickFocusTarget } from "./site-demo-bridge-seams";
+import { changeEmitter, focusIsLost, forwardWindowControls, overlayKind, pickFocusTarget } from "./site-demo-bridge-seams";
 import { forwardWindowDrags } from "./site-demo-window-drag";
+import { installTouchLayout } from "./site-demo-tap-open";
 
 const VIEW_MODES = ["details", "list", "tiles"] as const;
 type DemoViewMode = (typeof VIEW_MODES)[number];
@@ -272,6 +273,9 @@ export function startSiteDemoBridge({ host, origin, media, boot }: SiteDemoBridg
   const post = (type: "event" | "response", body: Record<string, unknown>) => host.postMessage(appMessage(type, body), origin);
   const emit = (event: string, data: unknown) => post("event", { event, data: plain(data) });
 
+  // The host's phone layout: a single tap opens a row, and text fields never make the phone zoom.
+  const touchLayout = installTouchLayout(document);
+
   const handlers: Record<string, (...params: unknown[]) => unknown> = {
     getState: () => snapshot(media),
     getCatalog: () => plain(buildDemoCatalog()),
@@ -297,6 +301,9 @@ export function startSiteDemoBridge({ host, origin, media, boot }: SiteDemoBridg
     readFile: (path) => (typeof path === "string" ? openPayload(path, media) : null),
     setCustomTheme,
     focusApp,
+    // Dialogs, palettes and Quick Open close as Escape would close them (a dialog guarding unsaved input stays).
+    closeOverlays: () => { dialogStore.closeAll(); return !dialogStore.hasModalOpen; },
+    setTouchLayout: (on) => { if (typeof on !== "boolean") return false; touchLayout.set(on); return true; },
   };
 
   window.addEventListener("message", async (event) => {
@@ -363,7 +370,7 @@ export function startSiteDemoBridge({ host, origin, media, boot }: SiteDemoBridg
     watch("settings", () => settingsStore.state);
     watch("keybindings", userKeybindings);
     watch("panels", demoPanelState);
-    watch("overlay", () => ({ open: fullscreen || dialogStore.hasModalOpen, fullscreen, modal: dialogStore.hasModalOpen }));
+    watch("overlay", () => ({ open: fullscreen || dialogStore.hasModalOpen, fullscreen, modal: dialogStore.hasModalOpen, kind: overlayKind(dialogStore) }));
     for (const slot of [0, 1]) {
       // A new pane has no path ("") until its first navigation: report only real paths.
       watch("navigate", () => paneExplorers()[slot]?.explorer.currentPath || null, (path) => ({ path, pane: slot }));

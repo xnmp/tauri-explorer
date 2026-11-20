@@ -1,0 +1,130 @@
+/* =====================================================================================================
+   THE GUIDE (guide.js): the welcome card, the "Try this" checklist in the desktop's lower band, the cue that rings
+   the place a step happened, and the tooltips. Same glass, radii and type as the desktop (desktop.css), tinted from
+   the theme's colours (--h-*), so it re-dresses with every theme and machine.
+   ===================================================================================================== */
+
+/* ---------------- the welcome card ---------------- */
+.gd-welcome { position: fixed; inset: 0; z-index: 64; display: grid; place-items: center; padding: 24px; }
+.gd-welcome[hidden] { display: none; }
+.gd-scrim { position: absolute; inset: 0; background: rgba(8, 9, 14, .34); animation: gd-fade .35s ease backwards; }
+:root[data-wp="light"] .gd-scrim { background: rgba(20, 22, 30, .26); }
+.gd-card { position: relative; display: grid; justify-items: start; gap: 14px; width: min(452px, 100%); padding: 30px 30px 26px; border-radius: 22px; color: var(--h-text);
+  --g-alpha: 90%; animation: gd-rise .5s var(--pop) backwards .05s; }
+.gd-card .gd-icon { width: 60px; height: 60px; margin: -4px 0 2px -4px; filter: drop-shadow(0 6px 14px rgba(0, 0, 0, .3)) drop-shadow(0 0 18px color-mix(in srgb, var(--h-acc) 28%, transparent)); }
+.gd-card h2 { margin: 0; font: 760 30px/1.02 var(--wb-display); font-variation-settings: "wdth" 86, "opsz" 60; letter-spacing: -.025em; }
+.gd-card .gd-what { margin: -4px 0 0; max-width: 34ch; font: 500 17px/1.4 var(--wb-font); color: var(--h-text); text-wrap: pretty; }
+.gd-card .gd-live { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: baseline; margin: 2px 0 6px; padding: 11px 13px; border-radius: 12px; font: 500 13.5px/1.45 var(--wb-font); color: var(--h-text-2);
+  background: var(--m-well); box-shadow: inset 0 0 0 1px var(--m-line); }
+.gd-card .gd-live .led { transform: translateY(-1px); animation: gd-breathe 2.4s ease-in-out infinite; }
+.gd-acts { display: flex; flex-wrap: wrap; gap: 10px; }
+.gd-acts .btn { height: 42px; padding: 0 18px; font-size: 14px; border-radius: max(9px, calc(var(--wb-r) * .7)); }
+.gd-dl svg { width: 16px; height: 16px; }
+.gd-x { all: unset; position: absolute; top: 14px; right: 14px; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 17px; color: var(--h-text-2); cursor: pointer; transition: background-color .15s, color .15s; }
+.gd-x svg { width: 14px; height: 14px; }
+.gd-x:hover { background: var(--m-hover); color: var(--h-text); }
+.gd-x:focus-visible { outline: 2px solid var(--h-acc); outline-offset: 2px; }
+@keyframes gd-fade { from { opacity: 0; } }
+@keyframes gd-rise { from { transform: translateY(18px) scale(.97); } }
+@keyframes gd-breathe { 50% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--h-acc) 50%, transparent), 0 0 2px 0 var(--m-glow); } }
+
+/* ---------------- the checklist ---------------- */
+.gd-try { --gd-left: 330px; --gd-home: var(--desk-pad, 24px); position: fixed; left: var(--gd-left); bottom: 12px; z-index: 19; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; pointer-events: none; }
+.gd-try[hidden] { display: none; }
+.gd-try > * { pointer-events: auto; }
+.gd-pill { appearance: none; border: 0; margin: 0; font: inherit; display: flex; align-items: center; gap: 11px; height: 52px; padding: 0 18px 0 14px; border-radius: 18px; cursor: pointer; color: var(--chrome-ink, var(--h-text)); order: 2; transition: transform .2s var(--pop); }
+.gd-pill:hover { transform: translateY(-2px); }
+.gd-pill:active { transform: translateY(0); }
+.gd-pill:focus-visible { outline: 2px solid var(--h-acc); outline-offset: 3px; }
+.gd-pill .gd-leds { display: flex; gap: 5px; padding: 7px 8px; border-radius: 10px; background: var(--m-well); box-shadow: inset 0 1px 2px var(--m-shade), inset 0 0 0 1px var(--m-line); }
+.gd-pill .gd-pt { font: 650 13.5px/1 var(--wb-font); white-space: nowrap; }
+.gd-pill .gd-pn { font: 500 12.5px/1 var(--wb-font); color: var(--chrome-ink-2, var(--h-text-2)); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.gd-pill[aria-expanded="true"] { box-shadow: var(--g-ring), var(--g-lip), var(--g-shadow), inset 0 0 0 1.5px color-mix(in srgb, var(--h-acc) 55%, transparent); }
+.gd-pill.ticked .gd-leds { animation: gd-tick .6s var(--pop); }
+.gd-try.tight .gd-pill .gd-pt { display: none; }
+.gd-try.tight .gd-pill { padding: 0 14px 0 10px; }
+
+.gd-list { order: 1; margin-left: min(0px, calc(var(--gd-home) - var(--gd-left))); width: 348px; max-height: calc(100vh - var(--wb-strip) - 96px); overflow: auto; overscroll-behavior: contain; padding: 6px 6px 8px; border-radius: 18px; color: var(--h-text);
+  --g-alpha: 88%; transform-origin: 30px 100%; animation: gd-pop .32s var(--pop) backwards; scrollbar-width: thin; }
+.gd-list[hidden] { display: none; }
+@keyframes gd-pop { from { transform: translateY(10px) scale(.96); } }
+.gd-head { display: flex; align-items: center; gap: 10px; padding: 10px 6px 8px 14px; }
+.gd-head h2 { margin: 0; font: 730 19px/1.05 var(--wb-display); font-variation-settings: "wdth" 86, "opsz" 36; letter-spacing: -.015em; }
+.gd-count { font: 500 12.5px/1 var(--wb-font); color: var(--h-text-2); font-variant-numeric: tabular-nums; }
+.gd-fold { all: unset; margin-left: auto; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 9px; color: var(--h-text-2); cursor: pointer; transition: background-color .15s, color .15s; }
+.gd-fold svg { width: 12px; height: 12px; transform: rotate(180deg); }
+.gd-fold:hover { background: var(--m-hover); color: var(--h-text); }
+.gd-fold:focus-visible { outline: 2px solid var(--h-acc); outline-offset: -2px; }
+.gd-rows { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; }
+.gd-row { position: relative; display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; column-gap: 11px; align-items: center; min-height: 46px; padding: 9px 10px 9px 10px; border-radius: 12px; transition: background-color .2s; }
+.gd-row:hover { background: var(--m-hover); }
+.gd-mark { grid-row: 1 / span 3; align-self: start; margin-top: 2px; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; color: transparent;
+  background: var(--m-well); box-shadow: inset 0 1px 2px var(--m-shade), inset 0 0 0 1px var(--m-line-2); transition: background-color .25s, box-shadow .25s, color .25s; }
+.gd-mark svg { width: 12px; height: 12px; }
+.gd-row.done .gd-mark { color: var(--h-on-acc); background: linear-gradient(180deg, color-mix(in srgb, var(--h-acc) 82%, #fff), var(--h-acc)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--h-acc) 60%, #000), 0 0 12px -2px var(--m-glow); }
+.gd-row.ticked .gd-mark { animation: gd-tick .6s var(--pop); }
+@keyframes gd-tick { 40% { transform: scale(1.25); } }
+.gd-t { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; min-width: 0; }
+.gd-t b { font: 650 14px/1.25 var(--wb-font); letter-spacing: -.005em; }
+.gd-keys { display: inline-flex; align-items: center; }
+.gd-keys:empty { display: none; }
+.gd-keys kbd { height: 20px; min-width: 20px; padding: 0 5px; font-size: 9.5px; }
+/* the next step to try says what it is; the others keep to their names until hovered or focused */
+.gd-l { display: none; }
+.gd-row.cur .gd-l, .gd-row:not(.done):is(:hover, :focus-within) .gd-l { display: block; }
+.gd-l, .gd-did { grid-column: 2 / span 2; font: 400 12.5px/1.4 var(--wb-font); color: var(--h-text-2); margin-top: 3px; text-wrap: pretty; }
+.gd-did { display: none; color: var(--h-acc-text); font-weight: 550; }
+.gd-row.told .gd-did { display: block; animation: gd-fade .3s ease; }
+.gd-row.told .gd-l { display: none; }
+.gd-go { grid-column: 3; grid-row: 1; appearance: none; border: 0; height: 28px; padding: 0 11px; border-radius: 8px; cursor: pointer; font: 650 12px/1 var(--wb-font); white-space: nowrap; color: var(--h-text);
+  background: color-mix(in srgb, var(--h-acc) 14%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--h-acc) 42%, transparent); transition: background-color .15s, transform .1s; }
+.gd-go:hover { background: color-mix(in srgb, var(--h-acc) 24%, transparent); }
+.gd-go:active { transform: translateY(1px); }
+.gd-go:focus-visible { outline: 2px solid var(--h-acc); outline-offset: 2px; }
+.gd-go:disabled { opacity: .55; cursor: progress; }
+.gd-row.done .gd-go { display: none; }
+.gd-row:not(.cur):not(:hover):not(:focus-within) .gd-go { background: none; box-shadow: inset 0 0 0 1px var(--m-line-2); color: var(--h-text-2); }
+.gd-row.cur { background: color-mix(in srgb, var(--h-acc) 7%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--h-acc) 18%, transparent); }
+.gd-row.done .gd-t b { color: var(--h-text-2); }
+.gd-end { margin: 6px 4px 2px; padding: 14px 14px 12px; border-radius: 14px; background: linear-gradient(150deg, color-mix(in srgb, var(--h-acc) 16%, transparent), color-mix(in srgb, var(--h-folder) 10%, transparent)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--h-acc) 30%, transparent); }
+.gd-end[hidden] { display: none; }
+.gd-end p { margin: 0 0 12px; font: 400 13px/1.45 var(--wb-font); color: var(--h-text-2); text-wrap: pretty; }
+.gd-end p b { display: block; margin-bottom: 2px; font: 700 16px/1.2 var(--wb-display); font-variation-settings: "wdth" 88; color: var(--h-text); }
+.gd-end-acts { display: flex; flex-wrap: wrap; gap: 6px; }
+.gd-end .btn { height: 36px; }
+/* all five: one pass of light along the lit row of LEDs */
+.gd-try.payoff .gd-pill .gd-leds .led { animation: gd-led .9s var(--pop) backwards; }
+.gd-try.payoff .gd-pill .gd-leds .led:nth-child(2) { animation-delay: .07s; } .gd-try.payoff .gd-pill .gd-leds .led:nth-child(3) { animation-delay: .14s; }
+.gd-try.payoff .gd-pill .gd-leds .led:nth-child(4) { animation-delay: .21s; } .gd-try.payoff .gd-pill .gd-leds .led:nth-child(5) { animation-delay: .28s; }
+.gd-try.payoff .gd-end { animation: gd-rise .55s var(--pop) backwards; }
+@keyframes gd-led { 40% { transform: scale(1.8); box-shadow: 0 0 0 2px color-mix(in srgb, var(--h-acc) 40%, transparent), 0 0 14px 3px var(--m-glow); } }
+/* while a window or the machines are on stage, or the desktop is in its story moments, the band stays clear */
+body.ha-open .gd-try, body.finale-on .gd-try, body.desk-gesture .gd-try .gd-list { visibility: hidden; }
+
+/* ---------------- the cue ---------------- */
+.gd-cue { position: fixed; z-index: 58; pointer-events: none; box-shadow: 0 0 0 2px var(--h-acc), 0 0 0 6px color-mix(in srgb, var(--h-acc) 22%, transparent), 0 0 26px 4px var(--m-glow);
+  animation: gd-cue 2.2s var(--ease) forwards; }
+.gd-cue.inset { box-shadow: inset 0 0 0 2px var(--h-acc), inset 0 0 0 6px color-mix(in srgb, var(--h-acc) 20%, transparent), inset 0 0 40px 2px var(--m-glow); }
+@keyframes gd-cue { 0% { opacity: 0; transform: scale(1.04); } 12% { opacity: 1; transform: none; } 30% { opacity: .55; } 48% { opacity: 1; } 78% { opacity: 1; } 100% { opacity: 0; } }
+
+/* ---------------- tooltips ---------------- */
+.gd-tip { --arrow: 50%; position: fixed; left: 0; top: 0; z-index: 66; max-width: 264px; padding: 9px 12px 10px; border-radius: 11px; pointer-events: none;
+  font: 500 12.5px/1.42 var(--wb-font); color: var(--h-text); --g-alpha: 94%; opacity: 0; translate: 0 3px; transition: opacity .14s ease, translate .18s var(--ease); text-wrap: pretty; }
+.gd-tip.on { opacity: 1; translate: 0 0; }
+.gd-tip[hidden] { display: none; }
+.gd-tip::after { content: ""; position: absolute; width: 10px; height: 10px; background: inherit; transform: rotate(45deg); box-shadow: inherit; clip-path: polygon(100% 0, 100% 100%, 0 100%); }
+.gd-tip[data-side="above"]::after { left: calc(var(--arrow) - 5px); bottom: -5px; }
+.gd-tip[data-side="below"]::after { left: calc(var(--arrow) - 5px); top: -5px; transform: rotate(225deg); }
+.gd-tip[data-side="left"]::after { top: calc(var(--arrow) - 5px); right: -5px; transform: rotate(-45deg); }
+.gd-tip[data-side="right"]::after { top: calc(var(--arrow) - 5px); left: -5px; transform: rotate(135deg); }
+
+/* ---------------- the "?" in the top bar ---------------- */
+.btn.help { width: 38px; height: 38px; padding: 0; border-radius: 19px; font: 700 15px/1 var(--wb-display); background: color-mix(in srgb, var(--h-paper) 45%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--h-ink) 16%, transparent), inset 0 1px 0 var(--m-hi), 0 1px 2px var(--m-shade); }
+.btn.help:hover { background: color-mix(in srgb, var(--h-paper) 70%, transparent); transform: translateY(-1px); }
+
+@media (prefers-reduced-motion: reduce) {
+  .gd-cue { animation: gd-cue-still 1.6s linear forwards; }
+  @keyframes gd-cue-still { 0%, 85% { opacity: 1; } 100% { opacity: 0; } }
+  .gd-card .gd-live .led { animation: none; }
+}

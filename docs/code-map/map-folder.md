@@ -380,8 +380,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `terminal.svelte.ts` — embedded terminal panel state (#139).
 - `site-demo-boot.ts` — site-demo build only: separate in-memory local/session storage, `hello`/`init` handshake with a same-origin parent (timeout → built-in fixtures), seeds the `domain/demo-boot.ts` plan, installs the fixture world (failing closed to the built-in fixtures) and demo shell, starts the bridge with the boot report.
 - `site-demo-bridge.svelte.ts` — site-demo host bridge: same-origin postMessage requests (settings, keybindings, commands, navigation, panels, custom theme, readFile, focusApp) and store-derived events (`ready`, `appearance`, `settings`, `panels`, `navigate`, `select`, `fs-change`, `overlay`, `open-external`, `window-control`, `window-drag`). Protocol doc: `screenshots/design/website-rehaul/overhaul/bridge/README.md`.
-- `site-demo-bridge-seams.ts` — the bridge's pure decisions: focusApp's target order, change-only `appearance` emission, `window-control` forwarding.
+- `site-demo-bridge-seams.ts` — the bridge's pure decisions: focusApp's target order, change-only `appearance` emission, `window-control` forwarding, the `overlay` event's `kind`.
 - `site-demo-window-drag.ts` — site demo: pointer drags on the title bar's drag region (`titlebar.startsWindowDrag`) become `window-drag` bridge events for the host's window; installed only by the bridge.
+- `site-demo-tap-open.ts` — site demo: the host's touch layout (`setTouchLayout`): a single tap opens a row through its double-click path, text fields ≥16px, no keyboard-cursor ring on rows; installed only by the bridge.
 - `site-demo-catalog.ts` — site-demo catalog (themes with probed colours, layouts, icon themes, commands with keybindings) and the panel ↔ setting/command map.
 - `site-demo-terminal.ts` — site-demo shell behind the mock PTY: `ShellFs` over the mock filesystem, mutations through mock commands, panes refreshed via `directoryChanged`.
 - `jobs.svelte.ts` — background jobs store (Ctrl+J); `retryJob` runs a failed job's `retry` once, then drops the entry or keeps it with the new error; a retrying entry is active (`isJobActive`: not dismissable or cleared); `dropRetries(owner)` for retired plugins.
@@ -686,6 +687,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `demo-repo-worktree.ts` — fixture repositories' three trees (HEAD, index, working tree): status, stage/unstage, discard, commit/amend, git-format unified diffs, hunk patch apply, `.gitignore` subset.
 - `demo-protocol.ts` — site demo bridge protocol v1: message parsing, custom theme CSS, open-external kinds, `fs-change` derivation.
 - `demo-window-drag.ts` — site demo: pure title-bar drag gesture (press, 4px threshold, start/move/end in screen coordinates, one pointer, malformed points dropped) behind `window-drag`.
+- `demo-tap-open.ts` — site demo: pure tap recogniser (touch/pen primary press, <10px travel, ≤500ms, second finger or cancel aborts) behind the touch layout's tap-to-open.
 - `demo-shell.ts` — site demo in-memory shell session: line parsing, editing, history, Tab completion, typeahead while busy.
 - `demo-shell-commands.ts` — the demo shell's commands (ls, cd, cat, grep, find, tree, mkdir, mv, cp, rm, git log/status, …) over a narrow `ShellFs` port.
 - `ai-rename.ts` — pure AI-rename suggestion logic (#145).

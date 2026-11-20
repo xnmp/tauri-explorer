@@ -95,7 +95,8 @@
     return loaded.get(src);
   }
 
-  function makeWall(root, { onDress } = {}) {
+  // `images()`: whether pictures may load at all (false on the phone layout, which never shows the wallpaper)
+  function makeWall(root, { onDress, images = () => true } = {}) {
     const layers = [...root.querySelectorAll(".wl")], contour = root.querySelector(".contour");
     if (contour) { const m = contourMap(); contour.style.webkitMaskImage = m; contour.style.maskImage = m; }
     let front = 0, seq = 0, shownKey = "";
@@ -122,7 +123,7 @@
     // When it fails to load, `key`'s registered wallpaper is tried instead, so pass the theme id as the key.
     async function show(key, palette, explicit) {
       const my = ++seq, v = palette.v, dark = !!palette.dark;
-      const e = explicit && explicit.src ? { ...explicit, src: resolveSrc(explicit.src) } : entryFor(key);
+      const e = !images() ? null : explicit && explicit.src ? { ...explicit, src: resolveSrc(explicit.src) } : entryFor(key);
       const gen = generated(v, dark), genDress = { dark, avg: mix(v[0], v[4], .18), title: "", key };
       const ready = e && loaded.has(e.src) ? await Promise.race([loaded.get(e.src), new Promise(r => setTimeout(() => r(null), 30))]) : null;
       if (my !== seq) return;

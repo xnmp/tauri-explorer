@@ -119,6 +119,8 @@
       setCustomTheme: function (theme) { return call("setCustomTheme", theme); },
       /** Give the app keyboard focus again (e.g. after re-showing a closed or minimized window). */
       focusApp: function () { return call("focusApp"); },
+      setTouchLayout: function (on) { return call("setTouchLayout", on); },
+      closeOverlays: function () { return call("closeOverlays"); },
       on: function (event, fn) {
         (listeners[event] = listeners[event] || []).push(fn);
         return function () { listeners[event] = (listeners[event] || []).filter(function (f) { return f !== fn; }); };

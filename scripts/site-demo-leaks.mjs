@@ -11,7 +11,7 @@ const SITE_DEMO_SOURCES = [
   /^src\/lib\/state\/site-demo-/,
   /^src\/lib\/api\/mock-world/,
   /^src\/lib\/api\/mock-git-fixture/,
-  /^src\/lib\/domain\/demo-(boot|fixture|shell|protocol|repo|window-drag)/,
+  /^src\/lib\/domain\/demo-(boot|fixture|shell|protocol|repo|window-drag|tap-open)/,
 ];
 
 const SITE_DEMO_MARKERS = [

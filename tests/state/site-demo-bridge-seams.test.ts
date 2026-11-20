@@ -71,3 +71,25 @@ describe("window controls", () => {
     expect(SITE_DEMO_BUILD).toBe(false);
   });
 });
+
+describe("the overlay event's kind", async () => {
+  const { overlayKind } = await import("$lib/state/site-demo-bridge-seams");
+  const none = { isQuickOpenOpen: false, isCommandPaletteOpen: false, isContentSearchOpen: false, isThemePickerOpen: false, isKeybindingsOpen: false, isSettingsOpen: false };
+
+  it("names the open overlay", () => {
+    expect(overlayKind({ ...none, isQuickOpenOpen: true })).toBe("quick-open");
+    expect(overlayKind({ ...none, isCommandPaletteOpen: true })).toBe("command-palette");
+    expect(overlayKind({ ...none, isContentSearchOpen: true })).toBe("content-search");
+    expect(overlayKind({ ...none, isThemePickerOpen: true })).toBe("theme-picker");
+    expect(overlayKind({ ...none, isKeybindingsOpen: true })).toBe("keybindings");
+    expect(overlayKind({ ...none, isSettingsOpen: true })).toBe("settings");
+  });
+
+  it("is null when none of them is open (another dialog, or nothing)", () => {
+    expect(overlayKind(none)).toBeNull();
+  });
+
+  it("prefers Quick Open when two report open at once", () => {
+    expect(overlayKind({ ...none, isQuickOpenOpen: true, isSettingsOpen: true })).toBe("quick-open");
+  });
+});

@@ -43,3 +43,30 @@ export function forwardWindowControls(
 ): void {
   control.windowControl = (action) => emit("window-control", { action });
 }
+
+/** The overlay flags the bridge reads from the dialog store, by name. */
+export interface OverlayFlags {
+  isQuickOpenOpen: boolean;
+  isCommandPaletteOpen: boolean;
+  isContentSearchOpen: boolean;
+  isThemePickerOpen: boolean;
+  isKeybindingsOpen: boolean;
+  isSettingsOpen: boolean;
+}
+
+export type OverlayKind = "quick-open" | "command-palette" | "content-search" | "theme-picker" | "keybindings" | "settings";
+
+/**
+ * Which overlay the `overlay` event names (`kind`): the first open one, in the
+ * order a host is likeliest to care about; null when none of these is open
+ * (another dialog, the fullscreen preview, or nothing).
+ */
+export function overlayKind(flags: OverlayFlags): OverlayKind | null {
+  if (flags.isQuickOpenOpen) return "quick-open";
+  if (flags.isCommandPaletteOpen) return "command-palette";
+  if (flags.isContentSearchOpen) return "content-search";
+  if (flags.isThemePickerOpen) return "theme-picker";
+  if (flags.isKeybindingsOpen) return "keybindings";
+  if (flags.isSettingsOpen) return "settings";
+  return null;
+}

@@ -1,7 +1,10 @@
 <!doctype html>
 <html lang="en" data-scheme="light">
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#eceff4">
+<script>/* the phone layout before first paint (phone.js TXPhone.QUERY; kept in step there) */
+(function () { var q = matchMedia("(max-width: 600px), (max-height: 500px) and (pointer: coarse)"), set = function () { document.documentElement.classList.toggle("phone", q.matches); }; set(); q.addEventListener ? q.addEventListener("change", set) : q.addListener(set); })();</script>
 <title>Tauri Explorer</title>
 <meta name="description" content="Tauri Explorer is a keyboard-driven file explorer you can rearrange. The real app runs in this page.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -9,6 +12,8 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,400..800&family=Instrument+Sans:wdth,wght@75..100,400..700&family=Martian+Mono:wdth,wght@75..112.5,400..700&family=Newsreader:ital,opsz,wght@0,6..72,400..600;1,6..72,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <link rel="stylesheet" href="host-apps.css">
 <link rel="stylesheet" href="desktop.css">
+<link rel="stylesheet" href="guide.css">
+<link rel="stylesheet" href="phone.css">
 <style>
 /* The workbench. The page keeps its own copy of the active theme's six colours (--h-*), set from the setup by the
    stage adapter's catalogue, so it never reads tokens from the embedded window. Every surface is mixed from them:
@@ -584,6 +589,8 @@ body.offline .rail, body.offline .sheen, body.offline .dock, body.offline .stage
       <time class="clock" id="clock" datetime="2026-09-19T22:47" title="Camp time on Day 41 of the Varda Icefield Resurvey: Saturday 19 September 2026">Day 41 <b id="clock-t">22<i>:</i>47</b></time>
     </div>
     <div class="lockbar" id="lockbar" role="status" aria-live="polite" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 7V5.2a3 3 0 0 1 6 0V7" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="3.2" y="7" width="9.6" height="7" rx="1.8" fill="currentColor"/></svg><span id="lb-t"></span><span class="pips" id="lb-pips" aria-hidden="true"></span></div>
+    <button class="btn help" id="help" type="button" aria-label="Welcome and tour" data-tip="What this page is, and five things to try.">?</button>
+    <button class="btn primary ph-send ph-only" id="ph-send" type="button" aria-label="Send this to my computer"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M8 10V2.5M5 5.3 8 2.3l3 3M3.5 8.5v4c0 .6.4 1 1 1h7c.6 0 1-.4 1-1v-4"/></svg><span>Send</span></button>
     <span class="sep" aria-hidden="true"></span>
     <a class="btn gh" href="https://github.com/xnmp/tauri-explorer"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 .8a7.2 7.2 0 0 0-2.3 14c.4.1.5-.2.5-.4v-1.3c-2 .4-2.4-.9-2.4-.9-.3-.8-.8-1.1-.8-1.1-.7-.5 0-.5 0-.5.7.1 1.1.8 1.1.8.6 1.1 1.7.8 2.1.6.1-.5.3-.8.5-1-1.6-.2-3.3-.8-3.3-3.6 0-.8.3-1.4.8-2-.1-.2-.3-.9.1-1.9 0 0 .6-.2 2 .7a6.8 6.8 0 0 1 3.6 0c1.4-.9 2-.7 2-.7.4 1 .2 1.7.1 1.9.5.5.8 1.2.8 2 0 2.8-1.7 3.4-3.3 3.6.3.2.5.7.5 1.4v2c0 .2.1.5.6.4A7.2 7.2 0 0 0 8 .8z"/></svg>GitHub</a>
     <div class="dl-group">
@@ -644,8 +651,8 @@ body.offline .rail, body.offline .sheen, body.offline .dock, body.offline .stage
     <div class="rail-top">
     <div class="tabs" role="tablist" aria-label="Bench and shelf" data-at="0">
       <span class="thumb" aria-hidden="true"></span>
-      <button role="tab" id="tab-bench" aria-controls="p-bench" aria-selected="true">Bench<i class="led" id="bench-led" aria-hidden="true"></i></button>
-      <button role="tab" id="tab-shelf" aria-controls="p-shelf" aria-selected="false" tabindex="-1">Shelf</button>
+      <button role="tab" id="tab-bench" aria-controls="p-bench" aria-selected="true" data-tip="Turn parts of the window on and off, run its actions and change how it looks.">Bench<i class="led" id="bench-led" aria-hidden="true"></i></button>
+      <button role="tab" id="tab-shelf" aria-controls="p-shelf" aria-selected="false" tabindex="-1" data-tip="Ready-made setups: one click dresses the whole window, panels, colours and keys.">Shelf</button>
     </div>
     <button class="rail-fold" id="rail-fold" type="button" aria-expanded="true" aria-controls="rail-body" title="Tuck the bench away and give the window the room">
       <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M6.5 4l4 4-4 4M3 4l4 4-4 4"/></svg><span class="sr">Tuck the bench away</span>
@@ -671,12 +678,12 @@ body.offline .rail, body.offline .sheen, body.offline .dock, body.offline .stage
         <section class="sect" data-sect="look">
           <h3 class="sect-h"><button class="disc" type="button" id="h-look" aria-expanded="true" aria-controls="sb-look"><span class="t">Look</span><i class="led" aria-hidden="true"></i><span class="sum"></span><span class="chev" aria-hidden="true"><svg viewBox="0 0 12 12"><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" d="m3 4.5 3 3 3-3"/></svg></span></button></h3>
           <div class="sect-b" id="sb-look"><div class="sect-in">
-            <div class="lede-row"><p class="lede">Colours, shape, icons and how files are laid out.</p><button class="btn small" type="button" id="open-themes">Theme picker</button></div>
+            <div class="lede-row"><p class="lede">Colours, shape, icons and how files are laid out.</p><button class="btn small" type="button" id="open-themes" data-tip="The app's own theme picker, inside the window.">Theme picker</button></div>
             <div class="look-h" id="lbl-colours">Colours</div>
             <div class="chips" id="chips" role="group" aria-labelledby="lbl-colours"></div>
             <div class="look-h" id="lbl-mat">Window <small>Translucency opacity: how solid the panels are over the wallpaper</small></div>
             <div class="mat" role="group" aria-labelledby="lbl-mat">
-              <button class="msw" type="button" role="switch" aria-checked="false" id="mat-on"><span class="tog" aria-hidden="true"></span><span class="nm">Translucent</span></button>
+              <button class="msw" type="button" role="switch" aria-checked="false" id="mat-on" data-tip="Lets the wallpaper show through the window, softly blurred. The slider sets how solid the panels are."><span class="tog" aria-hidden="true"></span><span class="nm">Translucent</span></button>
               <label class="rng" id="mat-rng" data-off><span class="sr">Translucency opacity</span><span class="cap" aria-hidden="true">Glass</span><input class="range" id="mat-op" type="range" min="20" max="100" step="1" value="55" disabled aria-label="Translucency opacity: lower is more see-through, 100% is solid"><span class="cap" aria-hidden="true">Solid</span></label>
               <output id="mat-out" for="mat-op">55%</output>
             </div>
@@ -721,7 +728,7 @@ body.offline .rail, body.offline .sheen, body.offline .dock, body.offline .stage
 
     <section class="file sect shut" id="file" data-sect="file" aria-label="The setup as a file">
       <header>
-        <button class="disc" type="button" id="file-tog" aria-expanded="false" aria-controls="ed">
+        <button class="disc" type="button" id="file-tog" aria-expanded="false" aria-controls="ed" data-tip="Everything on the bench, written as the app's settings file. Edit it here, or copy it into the app on your computer.">
           <svg class="ficon" viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" d="M4 1.8h5.2L12.5 5v9.2H4z"/><path fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" d="M6.3 8.2 5.2 9.6l1.1 1.4M9.7 8.2l1.1 1.4-1.1 1.4"/></svg>
           <span class="fn">setup.json</span>
           <span class="st" id="file-st" hidden><i class="led" aria-hidden="true"></i><span id="file-st-t"></span></span>
@@ -765,6 +772,9 @@ body.offline .rail, body.offline .sheen, body.offline .dock, body.offline .stage
 <script src="desk-move.js"></script>
 <script src="host-apps.js"></script>
 <script src="desktop.js"></script>
+<script src="guide-core.js"></script>
+<script src="guide.js"></script>
+<script src="phone.js"></script>
 <script>
 "use strict";
 /* =====================================================================================================
@@ -834,6 +844,20 @@ const reduced = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 const ROOT = document.documentElement;
 const RAIL = $(".rail");
 const APP = $("#app");
+// The phone layout (phone.js, phone.css): html.phone is set before first paint and follows the screen.
+const PHONE = () => ROOT.classList.contains("phone");
+// What a phone's window can show at ~390px: list or tiles, the address bar, the terminal, the commit graph. Sidebar,
+// preview, split, Miller columns and source control each squeeze the file list to a sliver or scroll it sideways, and
+// Details scrolls sideways; translucency costs a phone more than it shows. A setup keeps its look and loses those.
+const PHONE_OFF = ["showSidebar", "showPreviewPane", "showStatusBar", "showScmPanel", "split", "translucency"];
+function phoneSafe(s) {
+  const o = { ...s };
+  for (const k of PHONE_OFF) if (k in o) o[k] = false;
+  if ("millerLayers" in o) o.millerLayers = 0;
+  if (o.viewMode === "details") o.viewMode = "list";
+  return o;
+}
+const forHere = s => PHONE() ? phoneSafe(s) : s;
 
 /* ======================= the headline answers back ======================= */
 // "Every panel optional. Every key yours.": flip a panel and "panel" becomes its name for a moment; press a shortcut (or
@@ -959,7 +983,7 @@ const FS_FIRST = (() => {
 })();
 const fromUrl = qs.get("setup") ? decodeSetup(qs.get("setup")) : null;
 const startPath = qs.get("at") || (u0.setup && u0.setup.path) || undefined;
-const start = fromUrl ? full(fromUrl) : FS_FIRST;
+const start = forHere(fromUrl ? full(fromUrl) : FS_FIRST);
 // A machine's own desktop picture, worn while it wears its first theme: `TX_FS.<id>.desktop` when the fixture names one,
 // else its HOUSE theme's wallpaper when it arrives in one (the expedition's Nord Snow taiga), else
 // `assets-desktop/fs-<id>.webp` by convention. A missing picture falls back to the
@@ -987,12 +1011,14 @@ const lookParam = sw => sw.v.map(c => String(c).replace("#", "")).join("-") + "-
 const PREDRESS = { horizon: { v: ["#141620", "#1f212e", "#d5d8da", "#b0b4b8", "#e95678", "#fab795"], dark: true } };
 const dressCache = { read() { try { const o = JSON.parse(localStorage.getItem(DRESS_STORE) || "{}"); return o && typeof o === "object" ? o : {}; } catch (_) { return {}; } },
   write(o) { try { localStorage.setItem(DRESS_STORE, JSON.stringify(o)); } catch (_) { /* storage blocked: links still carry their look */ } } };
+let guide = null;   // the newcomer's guide (guide.js), mounted once the window is up
+let phone = null;   // the phone's sheet and tour (phone.js), on a phone
 /* ======================= the desktop: the wallpaper follows the theme ======================= */
 const CAP = $("#wp-cap");
 let wallTitle = "", wallCredit = null;
 let wallAvg = null;
 const HERE_ACCENT = ({ expedition: "#5e81ac", count: "#8a5cc7", escape: "#e0a72e" })[fsId] || null;   // as MACHINE_DEFAULTS
-const WALL = TXDesk.wall($("#wall"), { onDress(d) {
+const WALL = TXDesk.wall($("#wall"), { images: () => !PHONE(), onDress(d) {
   if (d.avg) ROOT.style.setProperty("--wp-avg", d.avg);
   if (/^#[0-9a-f]{6}$/i.test(d.avg || "")) wallAvg = d.avg;
   ROOT.dataset.wp = d.dark ? "dark" : "light";
@@ -1093,6 +1119,7 @@ const initSettings = Object.fromEntries(SETTING_KEYS.filter(k => k in start && t
 initSettings.viewMode = start.viewMode;   // the default for the first pane
 if (!fromUrl && start.translucency && LOOK_HERE && LOOK_HERE.opacity) initSettings[MAT.opacity] = LOOK_HERE.opacity;
 Object.assign(initSettings, PRESENTATION);
+if (PHONE()) { initSettings.showWindowControls = false; initSettings.viewMode = start.viewMode; }   // a phone's window has no desktop to close or minimise onto
 initSettings.millerLayersPreferred = 1;   // the Miller toggle adds one ancestor column, not two
 
 // The opening: the wallpaper, then the window rising (frosted while the app boots), then the bench once the app is ready.
@@ -1116,7 +1143,9 @@ frame.setAttribute("title", "Tauri Explorer, running in this page");
 // its color-scheme equal to the app's, from the `appearance` event), and .frost behind it supplies the blur.
 frame.setAttribute("allowtransparency", "true");
 frame.style.background = "transparent";
-const focusApp = () => { try { if (typeof stage.focusApp === "function") return void stage.focusApp().catch(() => {}); frame.contentWindow.focus(); } catch (_) { frame.focus(); } };
+// On a phone the keyboard is the screen's: a focus the visitor did not tap for would only draw a ring (or raise the
+// on-screen keyboard over the tour), so the window takes focus from their own taps alone.
+const focusApp = () => { if (ROOT.classList.contains("phone")) return; try { if (typeof stage.focusApp === "function") return void stage.focusApp().catch(() => {}); frame.contentWindow.focus(); } catch (_) { frame.focus(); } };
 
 // Keys pressed inside the window: a bound shortcut is acknowledged by the headline (cosmetic; read from the same-origin
 // frame's own key events, never its DOM).
@@ -1210,10 +1239,11 @@ const setSplit = on => on ? stage.setSplit(true, { path: curPath.startsWith("/")
 // panels and the keys.
 async function apply(s, opts) { await applyNow(s, opts); await refresh(); }
 async function applyNow(s, { complete = false } = {}) {
+  s = forHere(s);
   const patch = {};
   for (const k of SETTING_KEYS) if (k in s) patch[k === "translucency" ? MAT.on : k] = s[k];
   if (s.viewMode && VIEWS.some(v => v.id === s.viewMode)) patch.viewMode = s.viewMode;
-  if (complete) patch.showWindowControls = true;   // the window's own close, minimise and maximise stay reachable
+  if (complete) patch.showWindowControls = !PHONE();   // the window's own close, minimise and maximise stay reachable (a phone has nowhere to put the window)
   if (s.showScmPanel) patch.showGitStatus = true;   // the app draws the source control panel only while Git status is on
   if (patch.theme && typeof patch.theme === "object") { const id = await customId(patch.theme); if (id) patch.theme = id; else delete patch.theme; }
   if (Object.keys(patch).length) await stage.setSettings(patch);
@@ -1255,9 +1285,21 @@ const SWITCHES = [
   { id: "scm", panel: "scm", key: "showScmPanel", label: "Source control", wide: true },
 ].filter(w => !w.panel || PANEL[w.panel]);
 const isOn = (s, w) => w.key === "millerLayers" ? s.millerLayers > 0 : !!s[w.key];
+// Plain words for each switch, shown as its tooltip and read as its description (guide.js).
+const SWITCH_TIP = {
+  address: "The path of the folder you are in, along the top. Click it to type a path.",
+  sidebar: "Bookmarks, drives and the Recycle Bin, down the left side.",
+  miller: "Shows the folder above this one in a column beside it, so you can step back up in one click.",
+  status: "A line along the bottom: how many items there are, and what is selected.",
+  preview: "Shows the selected file beside the list: pictures, text and video.",
+  split: "Two folders side by side, for moving and comparing files.",
+  terminal: "A command line under the files, already in the folder you are in.",
+  peek: "Opens a folder inside the list, without leaving the one you are in (details view).",
+  scm: "For folders kept in git: which files changed, and saving those changes as a commit.",
+};
 const glyph = id => `<svg class="g" viewBox="0 0 24 18" aria-hidden="true"><rect class="frame" x=".6" y=".6" width="22.8" height="16.8" rx="2.6"/>${GLYPH[id] || ""}</svg>`;
 function renderSwitches() {
-  $("#switches").innerHTML = SWITCHES.map(w => `<li${w.wide ? ' class="wide"' : ""}><button class="sw" type="button" role="switch" aria-checked="false" data-p="${w.id}" title="${esc(w.note || (PANEL[w.panel] || {}).note || w.label)}">${glyph(w.id)}<span class="nm">${esc(w.label)}${w.id === "scm" ? '<span class="d" data-repo-slot></span>' : ""}</span><span class="tog" aria-hidden="true"></span></button></li>`).join("");
+  $("#switches").innerHTML = SWITCHES.map(w => `<li${w.wide ? ' class="wide"' : ""}><button class="sw" type="button" role="switch" aria-checked="false" data-p="${w.id}" data-tip="${esc(SWITCH_TIP[w.id] || w.note || (PANEL[w.panel] || {}).note || w.label)}">${glyph(w.id)}<span class="nm">${esc(w.label)}${w.id === "scm" ? '<span class="d" data-repo-slot></span>' : ""}</span><span class="tog" aria-hidden="true"></span></button></li>`).join("");
   paintRepo();
 }
 $("#switches").addEventListener("click", e => { const b = e.target.closest("[data-p]"); if (b) flipSwitch(b); });
@@ -1274,6 +1316,7 @@ function paintSwitches(s) {
   const now = new Set(SWITCHES.filter(w => isOn(s, w)).map(w => w.id));
   for (const w of SWITCHES) {
     const b = $(`#switches [data-p="${w.id}"]`), on = now.has(w.id);
+    $(`#ph-switches [data-p="${w.id}"]`)?.setAttribute("aria-checked", String(on));
     b.setAttribute("aria-checked", String(on));
     // brought in from inside the window (a key, the palette, a summoned preview): flip with a flash
     if (lastOn && on && !lastOn.has(w.id) && document.activeElement !== b) { b.classList.remove("arrive"); void b.offsetWidth; b.classList.add("arrive"); }
@@ -1414,7 +1457,7 @@ function paintActions(s) {
     li.querySelector(".k").innerHTML = bound.length ? bound.map(caps).join(" ") : `<span class="none">no key</span>`;
     li.querySelector("em").textContent = a.state ? a.state(s) : "";
   }
-  fitKeys(); paintRepo();
+  fitKeys(); paintRepo(); guide?.repaint();
   const changed = Object.keys(s.keybindings || {}).length;
   setSummary("actions", changed ? `${changed} key${changed === 1 ? "" : "s"} changed` : `${ACTIONS.length} actions, default keys`);
 }
@@ -1471,7 +1514,11 @@ const chip = (key, name, v, note, cls = "", dark) => {
     + `<span class="t-main" style="background-color:${paper}"><span class="t-aa" style="color:${ink}">Aa</span><span class="t-ln" style="background-color:${ink2}"></span><span class="t-acc" style="background-color:${acc}"></span></span>`
     + `</span></span><small>${esc(name.replace(/ \(.*\)$/, ""))}</small></button>`;
 };
-const segBtn = (kind, id, label, note) => `<button type="button" data-${kind}="${esc(id)}" title="${esc(note || label)}" aria-pressed="false">${(PICTO[kind] || {})[id] || PICTO[kind].default || ""}<span>${esc(label)}</span></button>`;
+const SEG_TIP = {
+  layout: { default: "Classic: one flat window, sidebar and list side by side.", "floating-islands": "Each part floats as its own rounded card, with space between.", "soft-cards": "Rounded panels with soft edges on a tinted backdrop.", compact: "Tighter rows and smaller chrome: more files on screen.", "hairline-ledger": "Thin rules and square corners, like a printed ledger." },
+  view: { details: "One file per row, with its date and size.", list: "Names only, in columns, to see more at once.", tiles: "Big thumbnails: best for pictures." },
+};
+const segBtn = (kind, id, label, note) => `<button type="button" data-${kind}="${esc(id)}" ${(SEG_TIP[kind] || {})[id] ? `data-tip="${esc(SEG_TIP[kind][id])}"` : `title="${esc(note || label)}"`} aria-pressed="false">${(PICTO[kind] || {})[id] || PICTO[kind].default || ""}<span>${esc(label)}</span></button>`;
 function renderLook() {
   // one list: the app's themes, Peach Alloy and every Omarchy theme loaded (each keeps its own wallpaper; the credit lives on the desktop caption)
   $("#chips").innerHTML = THEMES.map(t => chip(t.id, t.name, t.swatch, t.note)).join("")
@@ -1497,8 +1544,8 @@ RAIL.addEventListener("click", async e => {
 $("#open-themes").addEventListener("click", async () => { await stage.run("view.switchTheme"); focusApp(); });
 const sameTheme = (a, b) => (isThemeObj(a) || isThemeObj(b)) ? isThemeObj(a) && isThemeObj(b) && JSON.stringify(a.v) === JSON.stringify(b.v) : a === b;
 function paintLook(s) {
-  RAIL.querySelectorAll(".chip").forEach(c => { const t = foundTheme(c.dataset.theme) || c.dataset.theme; c.setAttribute("aria-pressed", String(sameTheme(t, s.theme))); });
-  for (const [k, f] of [["layout", "layoutTheme"], ["icons", "iconTheme"], ["view", "viewMode"]]) RAIL.querySelectorAll(`#seg-${k} button`).forEach(b => b.setAttribute("aria-pressed", String(b.dataset[k] === s[f])));
+  document.querySelectorAll("#rail .chip, #ph-body .chip").forEach(c => { const t = foundTheme(c.dataset.theme) || c.dataset.theme; c.setAttribute("aria-pressed", String(sameTheme(t, s.theme))); });
+  for (const [k, f] of [["layout", "layoutTheme"], ["icons", "iconTheme"], ["view", "viewMode"]]) document.querySelectorAll(`#seg-${k} button, #ph-seg-${k} button`).forEach(b => b.setAttribute("aria-pressed", String(b.dataset[k] === s[f])));
   const lay = LAYOUTS.find(l => l.id === s.layoutTheme);
   setSummary("look", `${themeName(s.theme)} · ${lay ? lay.name : "Default"}`);
 }
@@ -1558,16 +1605,17 @@ function describe(s) {
 }
 let named = null;
 const allShelf = () => [...SHELF, ...found.setups.map(f => ({ ...f, found: true }))];
-function nameNow(s) {
-  if (named && shape(named.setup) === shape(s)) return named;
-  return allShelf().find(x => shape(x.setup) === shape(s)) || { id: null, name: "Your setup", line: describe(s) };
+function nameNow(s) {   // on a phone, a setup is worn as it fits there (phoneSafe)
+  const here = shape(forHere(s)), as = x => shape(forHere(x.setup)) === here;
+  if (named && as(named)) return named;
+  return allShelf().find(as) || { id: null, name: "Your setup", line: describe(s) };
 }
 // A card's backdrop is the desktop that look wears: its wallpaper, over the backdrop generated from its colours.
 function backdropOf(theme) {
   const sw = swatchOf(theme), reg = window.TX_WALLPAPERS || {}, house = houseOf(sw.v), om = omarchyOf(sw.v);
   const src = house ? (reg[house.id] || house.wall).src : om ? ((om.wallpapers || [])[0] || {}).src : typeof theme === "string" && reg[theme] ? reg[theme].src : null;
   const gen = TXDesk.generated(sw.v, sw.dark);
-  return src && /^[\w./-]+$/.test(src) ? `url('${src}') center / cover no-repeat, ${gen}` : gen;
+  return src && !PHONE() && /^[\w./-]+$/.test(src) ? `url('${src}') center / cover no-repeat, ${gen}` : gen;   // a phone loads no wallpapers
 }
 function mini(s) {
   const sw = swatchOf(s.theme), [p, side, ink, muted, acc, fold] = sw.v, view = s.viewMode || "details";
@@ -1596,7 +1644,8 @@ function placeOf(at) {
   if (at === "repo") return (repoTarget() || {}).path || null;
   return at.startsWith("~") ? (HOME ? HOME + at.slice(1) : null) : at;
 }
-async function fit(entry) {
+async function fit(entry) { await asPage(() => fitNow(entry)); if (nameNow(setup).id === entry.id) guide?.observe({ type: "setup", id: entry.id }); }
+async function fitNow(entry) {
   named = entry;
   const card = RAIL.querySelector(`.card[data-id="${CSS.escape(entry.id)}"]`);
   if (card) { card.classList.remove("pop"); void card.offsetWidth; card.classList.add("pop"); }
@@ -1640,7 +1689,8 @@ function paintNow() {
   setSummary("setups", now.id ? `Wearing ${now.name}` : now.name);
   const key = shape(s); if ($("#now-mini").dataset.k !== key) { $("#now-mini").innerHTML = mini(s); $("#now-mini").dataset.k = key; }
   $("#now-line").innerHTML = hoverLine && hoverLine.id !== now.id ? `<b>${esc(hoverLine.name)}.</b> ${esc(hoverLine.line)}` : esc(now.line) + (now.found && now.by ? ` <b>By ${esc(now.by)}.</b>` : "");
-  RAIL.querySelectorAll(".card").forEach(c => { const on = c.dataset.id === now.id; c.setAttribute("aria-pressed", String(on)); c.querySelector(".led").classList.toggle("on", on); });
+  phone?.repaint();
+  document.querySelectorAll("#rail .card, #ph-body .card").forEach(c => { const on = c.dataset.id === now.id; c.setAttribute("aria-pressed", String(on)); c.querySelector(".led").classList.toggle("on", on); });
 }
 
 /* ======================= found files: the older setup shape, translated ======================= */
@@ -2044,13 +2094,19 @@ let paintT = 0;
 const paintSoon = () => { clearTimeout(paintT); paintT = setTimeout(paint, 30); };
 const paneAt = i => st.panes.find(p => p.index === i || p.paneId === i);
 const makeActive = i => { const t = paneAt(i); if (t) for (const p of st.panes) p.active = p === t; };
-stage.on("settings", s => { st.settings = s; paintSoon(); });
-stage.on("panels", p => { st.panels = p; paintSoon(); });
+// What the guide hears (guide-core.js `completes`): a change the page made while fitting a whole setup or starting up
+// is the setup's, not a panel's or a theme's.
+let pageApplying = 0;
+const pageCause = () => pageApplying > 0 ? "page" : null;
+async function asPage(fn) { pageApplying++; try { return await fn(); } finally { setTimeout(() => { pageApplying--; }, 700); } }
+stage.on("settings", s => { const before = st.settings && st.settings.theme; st.settings = s; paintSoon(); guide?.observe({ type: "theme", before, after: s.theme, cause: pageCause() }); });
+stage.on("panels", p => { const before = st.panels; st.panels = p; paintSoon(); guide?.observe({ type: "panels", before, after: p, cause: pageCause() }); });
 stage.on("keybindings", k => { st.keybindings = k; paintSoon(); });
 stage.on("view", ({ viewMode, pane }) => {
   if (viewMode == null) { st.panes = st.panes.filter(p => p !== paneAt(pane)); return paintSoon(); }
-  const p = paneAt(pane); if (p) { p.viewMode = viewMode; makeActive(pane); } else st.panes.push({ index: pane, path: null, viewMode, active: false });
+  const p = paneAt(pane), before = p && p.viewMode; if (p) { p.viewMode = viewMode; makeActive(pane); } else st.panes.push({ index: pane, path: null, viewMode, active: false });
   paintSoon();
+  guide?.observe({ type: "view", before, after: viewMode });
 });
 stage.on("navigate", ({ path, pane }) => {
   if (!path) { st.panes = st.panes.filter(p => p !== paneAt(pane)); if (st.panes.length && !st.panes.some(p => p.active)) st.panes[0].active = true; return paintSoon(); }
@@ -2071,7 +2127,7 @@ stage.on("select", async ({ path }) => {
   hintsSoon();
 });
 stage.on("fs-change", ({ trashCount }) => { if (typeof trashCount === "number") st.trashCount = trashCount; hintsSoon(); });
-stage.on("overlay", () => hintsSoon());
+stage.on("overlay", d => { hintsSoon(); guide?.observe({ type: "overlay", kind: d && d.kind }); });
 
 /* ======================= opened files go to the system's app ======================= */
 const KIND = { markdown: "md", text: "txt", csv: "csv", image: "img", video: "video", audio: "audio", pdf: "pdf", binary: "file" };
@@ -2377,13 +2433,14 @@ function openPicker() {
   hideNudge(true);
   PICKER.hidden = false;
   for (const el of PICK_INERT) el.inert = true;
-  (PICKER.querySelector('.mcard[aria-current="false"]') || $("#pk-x")).focus();
+  PICKER.querySelector(".pk-panel").scrollTop = 0;
+  (PICKER.querySelector('.mcard[aria-current="false"]') || $("#pk-x")).focus({ preventScroll: PHONE() });
 }
 function closePicker(restore = true) {
   if (PICKER.hidden) return;
   PICKER.hidden = true;
   for (const el of PICK_INERT) el.inert = false;
-  if (restore) $("#drive").focus();
+  if (restore) (PHONE() ? document.querySelector("#ph-peek button") : $("#drive"))?.focus();
 }
 $("#drive").addEventListener("click", openPicker);
 $("#pk-x").addEventListener("click", () => closePicker());
@@ -2412,7 +2469,7 @@ function hideNudge(seen) {
   const others = MACHINES.filter(m => m.id !== fsId);
   $("#nd-t").innerHTML = `<b>${MACHINES.length} machines, ${MACHINES.length} stories.</b> This is ${esc(HERE.title)}. ${esc(others[0].title)} is one click away.`;
   setTimeout(() => {
-    if (!PICKER.hidden || win.state !== "open") return;
+    if (!PICKER.hidden || win.state !== "open" || (guide && (guide.quiet() || guide.progress.done.includes("machine"))) || document.body.classList.contains("ha-open")) return;
     $("#nudge").hidden = false;
     try { localStorage.setItem(NUDGE_KEY, "1"); } catch (_) { /* shown once per visit instead */ }
     nudgeT = setTimeout(() => hideNudge(false), 12000);
@@ -2465,19 +2522,221 @@ async function copy(text, btn, done) {
 }
 $("#copy-json").addEventListener("click", e => copy(pretty(setup) + "\n", e.currentTarget, "JSON copied"));
 
+/* ======================= the guide: welcome, "Try this", tooltips (guide.js, guide-core.js) ======================= */
+// The steps happen in the live window, as the visitor's own clicks would do them; the guide only says what happened.
+const THEME_TRY = ["tokyo-night", "catppuccin-mocha", "rose-pine", "nord", "dracula", "everforest", "gruvbox", "dark", "light"];
+function scrollBench(el) {   // into view at once, so the cue rings where it now is
+  const panel = el && el.closest(".panel"); if (!panel || panel.hidden) return;
+  const r = el.getBoundingClientRect(), pr = panel.getBoundingClientRect();
+  if (r.top < pr.top + 8 || r.bottom > pr.bottom - 30) panel.scrollTop += r.top - pr.top - (pr.height - r.height) / 2;
+}
+function openSect(id) { const sect = document.querySelector(`[data-sect="${id}"]`); if (sect && sect.classList.contains("shut")) setFold(sect, false); }
+// a bench control is a fair cue only while the bench shows; tucked (or maximised), the window itself is
+const benchShows = () => !tucked || !WIDE.matches;
+async function doStep(id) {
+  if (win.state !== "open") await desk.open();
+  closePicker(false);
+  switch (id) {
+    case "goto": {
+      const li = $('#actions [data-a="goto"]'), a = ACTIONS.find(x => x.id === "goto");
+      if (!li || !a) return null;
+      doAction(li, a);
+      return { target: STAGE, inset: true };
+    }
+    case "theme": {
+      const cur = typeof setup.theme === "string" ? setup.theme : "";
+      const darkNow = swatchOf(setup.theme).dark;
+      const pick = THEME_TRY.filter(t => THEME[t] && t !== cur).sort((a, b) => (THEME[a].dark === darkNow) - (THEME[b].dark === darkNow))[0] || THEMES.find(t => t.id !== cur)?.id;
+      if (!pick) return null;
+      named = null;
+      await apply({ theme: pick });
+      selectTab($("#tab-bench")); openSect("look");
+      const chipEl = $(`#chips [data-theme="${CSS.escape(pick)}"]`); scrollBench(chipEl);
+      return { target: benchShows() && chipEl ? chipEl.querySelector(".tile") : STAGE, inset: !benchShows(), name: THEME[pick].name };
+    }
+    case "panel": {
+      const order = ["preview", "sidebar", "status", "address"];
+      const wid = order.find(w => !isOn(setup, SWITCHES.find(x => x.id === w) || {})) || "preview";
+      const b = $(`#switches [data-p="${wid}"]`); if (!b) return null;
+      selectTab($("#tab-bench")); openSect("panels"); scrollBench(b);
+      await flipSwitch(b);
+      return { target: benchShows() ? b : STAGE, inset: !benchShows() };
+    }
+    case "setup": {
+      const nowId = nameNow(setup).id;
+      const entry = ["darkroom", "peach", "git", "night", "blank"].map(x => SHELF.find(e => e.id === x)).find(e => e && e.id !== nowId);
+      if (!entry) return null;
+      selectTab($("#tab-shelf")); openSect("setups");
+      const cardEl = RAIL.querySelector(`.card[data-id="${CSS.escape(entry.id)}"]`); scrollBench(cardEl);
+      await fit(entry);
+      return { target: benchShows() && cardEl ? cardEl : STAGE, inset: !benchShows(), name: entry.name };
+    }
+    case "machine": {
+      if (MACHINES.length < 2) return null;
+      openPicker();
+      return { target: null };
+    }
+  }
+  return null;
+}
+const midStoryHere = lockList.size > 0 || found.setups.length > 0 || found.themes.length > 0;
+{
+  const midStory = midStoryHere;
+  guide = TXGuide.mount({
+    fsId: fsId || null,
+    allowWelcome: !fromUrl && !arriving && !midStory && !qs.get("at"),
+    keyHTML: id => CMD[id] ? (k => k ? caps(k) : "")(keyOf(setup, id)) : "",
+    download: { href: $("#dl").href, label: $("#dl-t").textContent },
+    doStep,
+    busy: () => document.body.classList.contains("ha-open") || !PICKER.hidden || document.body.classList.contains("finale-on"),
+    inert: () => [$(".strip"), FLOOR, DOCK, $("#drive"), $("#toasts"), $("#gd-try"), $("#nudge")].filter(Boolean),
+    focusApp,
+    onQuiet: () => hideNudge(false),
+    phone: PHONE,
+    onPhoneWelcome: () => phone?.intro(),
+    phoneTourOn: () => !!(phone && PHONE() && phone.on),
+  });
+  guide.onChange((p, was) => { if (p.open && !was.open) hideNudge(false); });
+  // the story's moments (a file open, the picker, the finale) and the window's state keep the guide in step
+  new MutationObserver(() => guide.sync()).observe(document.body, { attributes: true, attributeFilter: ["class"] });
+  new MutationObserver(() => guide.sync()).observe(PICKER, { attributes: true, attributeFilter: ["hidden"] });
+  guide.observe({ type: "machine", here: fsId, first: guide.progress.firstFs });
+  guide.tips(document);
+  $("#help").addEventListener("click", () => guide.welcome());
+}
+
+/* ======================= the phone: the sheet, the tour, and sending the page to a computer ======================= */
+// Sending: a phone cannot install a desktop app, so the call to action hands this page to the visitor's computer: the
+// system share sheet where there is one, else the link copied. The link is the page on the machine the visitor was on,
+// not their phone's setup: a computer has room for everything the phone left out, and a fresh arrival gets the welcome.
+async function sendToComputer() {
+  const link = new URL(location.pathname, location.origin);
+  if (qs.get("fs") && fsId) link.searchParams.set("fs", fsId);
+  const url = link.href;
+  const data = { title: "Tauri Explorer", text: "Tauri Explorer, a file explorer you can make your own. Open this on your computer to try it and download it.", url };
+  if (navigator.share && (!navigator.canShare || navigator.canShare(data))) {
+    try { await navigator.share(data); toast(`<span><b>Sent.</b> Open the link on your computer to download Tauri Explorer.</span>`, { ms: 5000 }); return; }
+    catch (e) { if (e && e.name === "AbortError") return; }   // cancelled: nothing to say
+  }
+  let ok = false;
+  try { await navigator.clipboard.writeText(url); ok = true; } catch (_) {
+    const t = document.createElement("textarea"); t.value = url; t.setAttribute("readonly", ""); t.style.cssText = "position:fixed;opacity:0;font-size:16px"; document.body.append(t); t.select();
+    try { ok = document.execCommand("copy"); } catch (__) { ok = false; } t.remove();
+  }
+  toast(ok ? `<span><b>Link copied.</b> Open it on your computer to download Tauri Explorer.</span>` : `<span>Copy this link to your computer: <a href="${esc(url)}">${esc(location.host + location.pathname)}</a></span>`, { ms: 6500 });
+}
+$("#ph-send").addEventListener("click", () => sendToComputer());
+// The tour's steps in the live window. Each starts from a clear window (Quick Open or a palette left open closes).
+async function tourStep(id) {
+  await stage.closeOverlays().catch(() => {});
+  closePicker(false);
+  switch (id) {
+    case "goto": await stage.run("general.openQuickOpen"); return {};
+    case "view": { const v = setup.viewMode === "tiles" ? "list" : "tiles"; await stage.setViewMode(v); await refresh(); return v === "tiles" ? {} : { caption: "The same folder as a list. Details, list and tiles: each pane keeps its own." }; }
+    case "theme": {
+      const cur = typeof setup.theme === "string" ? setup.theme : "", darkNow = swatchOf(setup.theme).dark;
+      const pick = THEME_TRY.filter(t => THEME[t] && t !== cur).sort((a, b) => (THEME[a].dark === darkNow) - (THEME[b].dark === darkNow))[0];
+      if (!pick) return null;
+      named = null; await apply({ theme: pick });
+      return { caption: `Now in ${THEME[pick].name}. A theme dresses the whole window; there are dozens, and you can make your own.` };
+    }
+    case "panel": await stage.setPanel("terminal", true); await refresh(); return {};
+    case "graph": {
+      await stage.setPanel("terminal", false);
+      const r = repoTarget(); if (!r) return null;
+      if (!repoAt(curPath)) { if (await stage.navigate(r.path)) curPath = r.path; }
+      await stage.run("git.showGraph"); await refresh();
+      return { caption: `The history of ${r.path.split("/").pop()}, every branch drawn as it happened.` };
+    }
+    case "setup": {
+      const nowId = nameNow(setup).id;
+      const entry = ["darkroom", "peach", "night", "git", "blank"].map(x => SHELF.find(e => e.id === x)).find(e => e && e.id !== nowId);
+      if (!entry) return null;
+      await fit(entry);
+      return { caption: `Now wearing ${entry.name}: its theme, layout and view in one tap. On a computer it brings its panels too.` };
+    }
+    case "machine": if (MACHINES.length < 2) return null; openPicker(); return {};
+  }
+  return null;
+}
+// The sheet's sections: what a phone can change, at a thumb's size.
+const PHONE_SWITCHES = ["address", "terminal"];   // the panels that fit a phone's window (see PHONE_OFF)
+function fillSheet(body) {
+  const seg = (kind, ids) => ids.map(id => segBtn(kind, id.id, id.label)).join("");
+  body.innerHTML = `
+    <section class="ph-sec"><h3>Colours</h3><p>One tap dresses the whole window.</p><div class="chips" id="ph-chips" role="group" aria-label="Colours"></div></section>
+    <section class="ph-sec"><h3>Layout</h3><p>The shape of the window around your files.</p><div class="seg" id="ph-seg-layout" role="group" aria-label="Layout">${seg("layout", LAYOUTS.map(l => ({ id: l.id, label: SHORT[l.id] || l.name })))}</div></section>
+    <section class="ph-sec"><h3>View</h3><div class="seg" id="ph-seg-view" role="group" aria-label="View">${seg("view", VIEWS.filter(v => v.id !== "details").map(v => ({ id: v.id, label: cap1(v.id) })))}</div></section>
+    <section class="ph-sec"><h3>Panels</h3><p>The ones that fit a phone. A computer has room for nine.</p><ul class="switches" id="ph-switches" aria-label="Panels">${SWITCHES.filter(w => PHONE_SWITCHES.includes(w.id)).map(w => `<li><button class="sw" type="button" role="switch" aria-checked="false" data-p="${w.id}" data-tip="${esc(SWITCH_TIP[w.id] || w.label)}">${glyph(w.id)}<span class="nm">${esc(w.label)}</span><span class="tog" aria-hidden="true"></span></button></li>`).join("")}</ul></section>
+    <section class="ph-sec"><h3>Ready-made setups</h3><p>Whole windows, each made for someone. On a phone they keep to what fits.</p><ul class="shelf" id="ph-shelf" aria-label="Ready-made setups">${SHELF.filter(x => !x.wide).map(x => cardHTML({ ...x, setup: phoneSafe(x.setup) })).join("")}</ul></section>
+    ${MACHINES.length > 1 ? `<section class="ph-sec"><h3>Machines</h3><p>Three computers, three stories. The window opens again on the one you pick.</p><ul class="ph-machines" id="ph-machines">${MACHINES.map(m => `<li><button class="ph-m" type="button" data-fs="${esc(m.id)}" aria-current="${m.id === fsId}" style="--ma:${esc(m.accent)}"><span class="th" aria-hidden="true"></span><span><b>${esc(m.title)}</b><small>${m.id === fsId ? "You are here. " : ""}${esc(m.body)}</small></span></button></li>`).join("")}</ul></section>` : ""}
+    <div class="ph-cta"><button class="btn primary" type="button" data-send><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M8 10V2.5M5 5.3 8 2.3l3 3M3.5 8.5v4c0 .6.4 1 1 1h7c.6 0 1-.4 1-1v-4"/></svg><span>Send this to my computer</span></button><a class="btn" href="https://github.com/xnmp/tauri-explorer">GitHub</a><p>Free and open source, for Linux, macOS and Windows.</p></div>`;
+  paintSheetChips();
+  body.addEventListener("click", async e => {
+    const b = e.target.closest("button"); if (!b) return;
+    if (b.hasAttribute("data-send")) return sendToComputer();
+    if (b.dataset.fs) { if (b.dataset.fs !== fsId) switchTo(b.dataset.fs); return; }
+    if (b.matches(".sw[data-p]")) return flipSwitch(b);
+    if (b.matches(".card")) { const x = SHELF.find(c => c.id === b.dataset.id); if (x) fit(x); return; }
+    named = null;
+    if (b.dataset.theme) { const t = foundTheme(b.dataset.theme); await apply({ theme: t || b.dataset.theme }); }
+    else if (b.dataset.layout) await apply({ layoutTheme: b.dataset.layout });
+    else if (b.dataset.view) { await stage.setViewMode(b.dataset.view); await refresh(); }
+  });
+}
+// the app's themes and the page's own (Omarchy's too, which bring their own pictures on a computer)
+function paintSheetChips() {
+  const box = $("#ph-chips"); if (!box) return;
+  box.innerHTML = THEMES.map(t => chip(t.id, t.name, t.swatch, t.note)).join("") + HOUSE.map(h => chip("house:" + h.id, h.name, h.v, "", "", h.dark)).join("") + OMARCHY.map(o => chip("omarchy:" + o.id, o.name, o.v.slice(0, 6), "", "", !!o.dark)).join("");
+}
+// The machines' pictures load only once the visitor scrolls the sheet open to everything.
+function sheetPictures(at) {
+  if (at < 2) return;
+  for (const b of document.querySelectorAll("#ph-machines .ph-m")) { const th = b.querySelector(".th"); if (!th.dataset.set) { th.dataset.set = "1"; th.style.background = machineBackdrop(b.dataset.fs); } }
+}
+const tourSteps = () => TXGuideCore.STEPS.filter(x => (x.id !== "graph" || REPO_LIST.length > 0) && (x.id !== "machine" || MACHINES.length > 1));
+function mountPhone() {
+  if (phone || !PHONE()) return;
+  phone = TXPhone.mount({
+    steps: tourSteps(), run: tourStep, fill: fillSheet, send: () => sendToComputer(), guide, clear: () => closePicker(false),
+    welcome: !guide.progress.welcomed && !fromUrl && !midStoryHere && !qs.get("at"),
+    swatch: () => swatchOf(setup.theme).v.map(c => `<i style="background:${esc(c)}"></i>`).join(""),
+    onDetent: sheetPictures,
+  });
+  guide.tips($("#ph-sheet"));
+  paintSwitches(setup); paintLook(setup); paintNow();
+}
+// The phone layout follows the screen (a tablet turned, a window narrowed): the app takes touch from it.
+const PHONE_Q = matchMedia(TXPhone.QUERY);
+const touchLayout = () => Promise.resolve(stage.setTouchLayout?.(PHONE())).catch(() => {});
+touchLayout();
+PHONE_Q.addEventListener?.("change", async () => {
+  ROOT.classList.toggle("phone", PHONE_Q.matches);
+  touchLayout(); mountPhone(); guide.sync();
+  if (PHONE()) await apply({ ...phoneSafe(setup), showWindowControls: false });
+  else await stage.setSettings({ showWindowControls: true });
+  dress(setup);
+});
+
 /* ======================= start ======================= */
 visits.push(curPath);
 renderSwitches(); renderActions(); renderLook(); renderShelf();
+mountPhone();
 setTucked(tucked);
-if (fromUrl || typeof start.theme === "object") await apply(start, { complete: true });   // a custom theme needs the running app
-else {   // the init settings cover the look; the runtime panels and view follow the same path as any setup
-  if (start.terminal || start.split) await apply({ terminal: start.terminal, split: start.split });
-  await refresh();
-}
+await asPage(async () => {
+  if (fromUrl || typeof start.theme === "object") await apply(start, { complete: true });   // a custom theme needs the running app
+  else {   // the init settings cover the look; the runtime panels and view follow the same path as any setup
+    if (start.terminal || start.split) await apply({ terminal: start.terminal, split: start.split });
+    await refresh();
+  }
+});
 document.body.classList.remove("booting");
 document.body.classList.add("live", "rail-in");
+guide.start();
 setTimeout(() => document.body.classList.remove("enter", "rail-in", "arrive"), 1800);
 focusApp();
+// The app takes focus for its list as it boots; on a phone that would only draw a keyboard ring, so the page keeps it.
+if (PHONE() && document.activeElement === frame) frame.blur();
 }
 </script>
 

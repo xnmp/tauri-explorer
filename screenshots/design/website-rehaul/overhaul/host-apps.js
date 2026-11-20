@@ -13,7 +13,8 @@
 (function () {
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
   const reduce = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const small = () => matchMedia("(max-width: 600px)").matches;
+  // a program fills the screen on a phone (the page's html.phone, phone.js) or any narrow window
+  const small = () => document.documentElement.classList.contains("phone") || matchMedia("(max-width: 600px)").matches;
   const extOf = n => (String(n).match(/\.([^.]+)$/)?.[1] || "").toLowerCase();
   const AUDIO_RE = /\.(wav|flac|mp3|ogg|m4a|aiff?)$/i;
 

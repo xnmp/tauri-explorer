@@ -62,7 +62,11 @@ end
 `;
 }
 
-/** Lowercase hex SHA-256 of a file's bytes. */
+/**
+ * Lowercase hex SHA-256 of a file's bytes.
+ * @param {string} path
+ * @returns {string}
+ */
 export function sha256File(path) {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }

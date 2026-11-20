@@ -635,7 +635,7 @@ test.describe("Active tab owns the window (#1734, #1785)", () => {
     await tag.evaluate((el) => el.remove());
     const worst = Math.max(...actual.map((pixel, i) => distance(pixel, reference[i])));
     // Up to 4: any restyle (even a no-op one) re-rasterises the islands'
-    // anti-aliased corner arcs by that much, as in tab-outline-matrix.spec.ts.
+    // anti-aliased corner arcs by that much, as in tab-outline-matrix.ts.
     expect(worst, "the islands' edges under the tab vs drawn alone").toBeLessThanOrEqual(4);
   });
 

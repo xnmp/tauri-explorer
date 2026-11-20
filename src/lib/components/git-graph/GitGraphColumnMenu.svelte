@@ -23,6 +23,7 @@
 
 <button
   class="menu-backdrop"
+  data-window-overlay
   aria-label="Close column menu"
   onclick={onClose}
   oncontextmenu={(e) => { e.preventDefault(); onClose(); }}

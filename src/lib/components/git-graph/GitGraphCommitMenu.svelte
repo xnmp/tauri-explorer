@@ -54,6 +54,7 @@
 <!-- Backdrop closes the menu on any outside interaction. -->
 <button
   class="menu-backdrop"
+  data-window-overlay
   aria-label="Close menu"
   onclick={actions.closeMenu}
   oncontextmenu={onBackdropContextMenu}

@@ -187,6 +187,7 @@
   <div
     bind:this={overlayRef}
     class="modal-overlay {overlayClass}"
+    data-window-overlay={scope ? undefined : ""}
     class:top-aligned={align === "top"}
     class:suspended={!top}
     class:pane-scoped={!!scope}

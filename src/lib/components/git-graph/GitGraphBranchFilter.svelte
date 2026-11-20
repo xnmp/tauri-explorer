@@ -89,6 +89,7 @@
 {#if open}
   <button
     class="menu-backdrop"
+    data-window-overlay
     aria-label="Close branch filter"
     onclick={() => (open = false)}
   ></button>

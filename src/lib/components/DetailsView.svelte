@@ -213,7 +213,7 @@
   {#if columnMenuPos}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <!-- svelte-ignore a11y_click_events_have_key_events -- click-outside backdrop pattern (matches CaretPicker/NavigationHistoryMenu); Escape/Tab away is not the primary dismiss path but the menu items themselves remain keyboard-focusable -->
-    <div class="column-menu-backdrop" onclick={closeColumnMenu} oncontextmenu={(e) => { e.preventDefault(); e.stopPropagation(); closeColumnMenu(); }}></div>
+    <div class="column-menu-backdrop" data-window-overlay onclick={closeColumnMenu} oncontextmenu={(e) => { e.preventDefault(); e.stopPropagation(); closeColumnMenu(); }}></div>
     <div class="column-menu" use:positionColumnMenu>
       {#if labels}
       <button class="column-menu-item" onclick={() => { settingsStore.toggleColumn("prompt"); closeColumnMenu(); }}>

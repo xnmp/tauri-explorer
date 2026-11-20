@@ -430,6 +430,7 @@
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <div
     class="context-menu-backdrop"
+    data-window-overlay
     onclick={() => contextMenuStore.close()}
     oncontextmenu={(e) => {
       e.preventDefault();

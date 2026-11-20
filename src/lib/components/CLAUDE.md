@@ -52,6 +52,7 @@ the complete defaults and verify that resizing or hiding one preserves the other
 
 ## Overlays, menus and dialogs
 
+- A full-window overlay mounted under `.main-content` (a dialog, or a menu's dismissing `position: fixed; inset: 0` backdrop) carries `data-window-overlay`: `+page.svelte` then lifts `.main-content` above the title bar and status bar, which otherwise stay sharp and take clicks through it (Floating Islands' bar and every layout's active tab sit above the window body). `Modal.svelte` sets it unless pane-scoped (#1859).
 - Fixed overlays under root CSS zoom are engine-specific: `fixedFromClient` and `fixedFromRect` divide once only on Chromium; WKWebView uses two divisions, while WebKitGTK's CSS-space rect offsets its second scale. Keep the live Chromium check wired through the context-menu conversion (#493).
 - Plugin context-menu actions that invoke an AI service carry `group: "ai"`; `ContextMenu.svelte` renders those applicable actions in its shared AI submenu while leaving non-AI plugin actions top-level.
 - The Theme from Image context-menu action also belongs in that shared AI submenu, even though palette extraction runs locally; keep its single, real-image selection predicate intact.

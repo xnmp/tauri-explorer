@@ -16,6 +16,7 @@
 
 <div
   class="section-menu-backdrop"
+  data-window-overlay
   onclick={onclose}
   oncontextmenu={(e) => { e.preventDefault(); onclose(); }}
   onkeydown={(e) => { if (e.key === 'Escape') onclose(); }}

@@ -2,6 +2,40 @@
 
 All notable changes to Tauri Explorer.
 
+## v0.30.0 — 2026-11-20
+
+### Added
+
+- Git status: a changed file's name now takes its status colour (modified
+  amber, added or untracked green, deleted or conflicted red, renamed blue),
+  and the status letter sits in a small tinted chip. Ignored files are
+  dimmed. This applies in every view mode, and themes can override the
+  colours (#1852).
+- Git graph: right-click a local branch pill and choose "Create pull
+  request…" to open a PR for any local branch, not only the checked-out
+  one (#1847).
+
+### Changed
+
+- Default and Compact layouts: the active tab now owns the window. The tab,
+  sidebar, toolbar and file list share one surface colour, only the strip
+  round the tabs is shaded, and one outline runs round the active tab
+  through its curved feet and along the strip's base (#1856, #1858).
+- Soft Cards layout: even 6px spacing round the cards, an inset rounded
+  selection in every view mode, a lighter backdrop in light themes, thin
+  scrollbars, and the terminal and source-control panel drawn as cards
+  (#1848, #1854).
+- Git graph: the toolbar's Create PR button moved to the branch pill's
+  context menu, and the two-commit comparison was removed (#1846, #1847).
+
+### Fixed
+
+- Dialogs and menus opened from a pane, the sidebar or the toolbar now cover
+  the title bar and status bar. In Floating Islands the title bar stayed
+  sharp over a dialog's dimmed backdrop, and clicking a tab went through it
+  and switched tabs; in Default the active tab did the same. A click there
+  now only closes the dialog or menu (#1859).
+
 ## v0.29.2 — 2026-11-19
 
 ### Fixed

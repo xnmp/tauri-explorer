@@ -10,9 +10,9 @@ Five layouts are built in:
 
 | Layout | Id | What it does |
 | --- | --- | --- |
-| Default | `default` | The flat, edge-to-edge layout. The active tab owns the window: tab, sidebar, toolbar, list and status bar are one surface, only the strip round the tabs is shaded, and one outline runs round the tab and along the strip's base (#1856). Ships in the startup CSS. |
+| Default | `default` | The flat, edge-to-edge layout. The active tab owns the window: tab, sidebar, toolbar, list and status bar are one surface, only the strip round the tabs is shaded, and one outline runs round the tab and along the strip's base (#1856). A rule a step darker than that outline separates the sidebar from the file pane (#1879). Ships in the startup CSS. |
 | Floating Islands | `floating-islands` | Rounded panels floating over the window backdrop (#277, #434). Ships in the startup CSS. |
-| Hairline Ledger | `hairline-ledger` | Square, dense panels ruled by 1px hairlines, monospaced metadata and an inverted row selection (tiles are ruled instead). The active tab owns the window as in Default, square and without feet: tab, sidebar, toolbar and list share the content surface, the tab strip is paper, and one hairline runs round the tab and along the strip's base (#1871). Loaded on demand. |
+| Hairline Ledger | `hairline-ledger` | Square, dense panels ruled by 1px hairlines, all chrome in its monospace (file names and previewed documents keep the theme's face, #1879) and an inverted row selection (tiles are ruled instead). The active tab owns the window as in Default, square and without feet: tab, sidebar, toolbar and list share the content surface, the tab strip is paper, and one hairline runs round the tab and along the strip's base (#1871). Loaded on demand. |
 | Compact | `compact` | Default's surfaces (one surface, shaded tab strip, tab outline; #1858) with tight chrome (30px title bar, 32px toolbar, 20px status bar) and 22px Details rows (#1548). Loaded on demand. |
 | Soft Cards | `soft-cards` | Opaque 8px-rounded cards with 1px borders and no shadows on a slightly darker backdrop (a cool light grey on light themes). Every gap is 6px, the tab included; split panes, the preview, terminal and source-control panel become separate cards, and selected rows sit inset inside them (#1548, #1854). Loaded on demand. |
 
@@ -118,6 +118,7 @@ names are internal and change without notice; `data-region` names do not.
 | `file-list` | File list of any view | `data-view="details\|list\|tiles"` |
 | `column-header` | Details column header | |
 | `row` | One entry, in every view (scope with `[data-view]` on `file-list`) | `aria-selected="true"` when selected |
+| `entry-name` | An entry's file name, in every view, and its rename field (#1879) | |
 | `[data-cell]` | Details cells: `name`, `date`, `type`, `size`, `length`, `resolution` | |
 | `preview` | Preview panel wrapper | |
 | `preview-body` | Preview panel content | `data-fullscreen` while fullscreen |

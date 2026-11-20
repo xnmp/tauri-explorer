@@ -27,10 +27,11 @@
 </script>
 
 {#if placeholder}
-  <span class="name-tiles rename-placeholder" aria-hidden="true">{shown}</span>
+  <span class="name-tiles rename-placeholder" data-region="entry-name" aria-hidden="true">{shown}</span>
 {:else}
   <span
     class="entry-name"
+    data-region="entry-name"
     style:font-weight={bold ? 600 : undefined}
     class:name-details={variant === "details"}
     class:name-list={variant === "list"}

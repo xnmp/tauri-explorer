@@ -67,7 +67,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `FileItem.svelte` — single entry row/tile (icon, name, badges, selection state).
 - `EntryCell.svelte` — shared List option / Tiles gridcell with roving focus, selection semantics and drag-drop interactions.
 - `EntryName.svelte` — shared inline rename input/display across all views.
-- `EntryNameLabel.svelte` — explorer-free displayed name per view variant (and the tile rename placeholder); EntryName and FileTiles render names through it.
+- `EntryNameLabel.svelte` — explorer-free displayed name per view variant (and the tile rename placeholder); EntryName and FileTiles render names through it; carries the `entry-name` layout hook (#1879).
 - `FileIcon.svelte` — shared Material/Classic/Minimal/Catppuccin dispatch; optional pack override supplies stable picker previews across every file view.
 - `MaterialFileIcon.svelte`, `CatppuccinFileIcon.svelte` — pack-specific SVG artwork using the shared file identity/category descriptor and existing tint tokens; Catppuccin uses vendored CSS-variable SVGs and light/dark palettes.
 - `FolderIcon.svelte`, `FolderDecoration.svelte` — shared folder silhouettes and link/repository decoration, including outlined packs and photo-folder previews; repository folders are Git-tinted with a pack-styled branch glyph on the folder body (`repositoryFolderStyle` / `repositoryEmblem`), never in the bottom-right peek-caret corner (#1477, #1490).
@@ -730,8 +730,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 ## src/lib/layouts/ — built-in layout themes (#1306; contract in docs/layout-themes.md).
 
 - `floating-islands.css` — Floating Islands, bundled in startup CSS and scoped to `[data-layout-base="floating-islands"]`.
-- `default.css` — Default (#1856) and Compact (#1858), bundled in startup CSS and scoped to those two bases: one surface for tab, sidebar, toolbar and list; colours the shared tab seam layers (strip shade with the tab's hole, one outline, square corners, no shadow).
-- `hairline-ledger.css` — Hairline Ledger, lazy `?inline` sheet injected like a user layout; colours the shared tab seam square, on its paper (#1871).
+- `default.css` — Default (#1856) and Compact (#1858), bundled in startup CSS and scoped to those two bases: one surface for tab, sidebar, toolbar and list; colours the shared tab seam layers (strip shade with the tab's hole, one outline, square corners, no shadow); rules the sidebar off from the pane (#1879).
+- `hairline-ledger.css` — Hairline Ledger, lazy `?inline` sheet injected like a user layout; colours the shared tab seam square, on its paper (#1871); chrome in its monospace, names in the theme face (#1879).
 - `compact.css` — Compact (#1548): Default surfaces, tight chrome, 22px Details rows; lazy `?inline` sheet.
 - `soft-cards.css` — Soft Cards (#1548): opaque bordered cards, no shadows, 6px gaps, flat arrangement; lazy `?inline` sheet.
 

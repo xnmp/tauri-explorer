@@ -8,7 +8,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const THEMES_DIR = new URL("../../src/lib/themes/", import.meta.url);
-const NON_THEME_FILES = new Set(["index.css", "syntax.css"]);
+const NON_THEME_FILES = new Set(["index.css", "syntax.css", "git-status.css"]);
 /** WCAG 1.4.11 non-text contrast for a graphical object. */
 const NON_TEXT = 3;
 /** Minimum hue separation from the error colour, in degrees. */

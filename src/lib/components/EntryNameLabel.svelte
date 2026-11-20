@@ -6,6 +6,7 @@
 -->
 <script lang="ts">
   import { displayName } from "$lib/domain/wire-name";
+  import type { GitStatusPresentation } from "$lib/domain/git-status-presentation";
 
   interface Props {
     name: string;
@@ -16,9 +17,11 @@
     /** Shown in place of the name (a lineage child's prompt, #1449); the name stays in `tooltip`. */
     text?: string | null;
     tooltip?: string;
+    /** Git status (#1852): tints the name in its status colour; ignored dims it. */
+    git?: GitStatusPresentation | null;
   }
 
-  let { name, variant, placeholder = false, bold = false, text, tooltip }: Props = $props();
+  let { name, variant, placeholder = false, bold = false, text, tooltip, git = null }: Props = $props();
   // `name` is the wire identity; bytes that are not UTF-8 show as U+FFFD (#1592).
   const shown = $derived(displayName(name));
 </script>
@@ -32,6 +35,9 @@
     class:name-details={variant === "details"}
     class:name-list={variant === "list"}
     class:name-tiles={variant === "tiles"}
+    class:git-tinted={!!git}
+    data-git-tone={git?.tone}
+    style:--git-color={git?.color}
     title={tooltip ?? (variant === "tiles" ? shown : undefined)}
   >{text || shown}</span>
 {/if}
@@ -43,6 +49,12 @@
   .rename-placeholder {
     visibility: hidden;
     pointer-events: none;
+  }
+
+  /* Git status tint (#1852). Selected rows keep it: their accent wash is a
+     light 8% tint, so the theme's --git-* shades stay readable on it. */
+  .git-tinted {
+    color: var(--git-color);
   }
 
   .name-details {

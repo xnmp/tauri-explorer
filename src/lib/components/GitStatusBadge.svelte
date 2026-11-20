@@ -1,14 +1,10 @@
 <!--
-  Git status indicator badge.
-  Shows single-letter git status (M/U/A/D/!/R) with color coding.
-  Issue: fix/view-component-duplication
+  Git status chip (#1852): the status letter (M/U/A/D/!/R/C/T) on a faint
+  tint of its theme colour (`--git-*`, themes/git-status.css). Ignored entries
+  show no chip; their name is dimmed by EntryNameLabel instead.
 -->
 <script lang="ts">
-  import { gitStatusLetter } from "$lib/domain/git";
-  import { settingsStore } from "$lib/state/settings.svelte";
-  import { gitStatusStore } from "$lib/state/git-status.svelte";
-  import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { getPaneIdContext } from "$lib/state/pane-context";
+  import { useEntryGitStatus } from "$lib/composables/use-entry-git-status.svelte";
 
   interface Props {
     entryName: string;
@@ -17,25 +13,15 @@
     hideOnRename?: boolean;
   }
 
-  let { entryName, hideOnRename = false, directory: parentDirectory }: Props = $props();
+  let { entryName, hideOnRename = false, directory }: Props = $props();
 
-  // Statuses are keyed per directory; look up via the directory this entry
-  // is rendered in (the owning pane's current path) so dual panes showing
-  // different directories don't bleed badges into each other.
-  const paneId = getPaneIdContext();
-  const directory = $derived(
-    parentDirectory ?? (paneId ? windowTabsManager.getExplorer(paneId)?.currentPath ?? "" : ""),
-  );
-  const gitStatus = $derived(
-    settingsStore.showGitStatus && directory
-      ? gitStatusStore.getStatus(directory, entryName)
-      : null,
-  );
+  const git = useEntryGitStatus(() => entryName, () => directory);
 </script>
 
-{#if gitStatus && !hideOnRename}
-  <span class="git-indicator git-{gitStatus.toLowerCase()}" title="Git: {gitStatus}">
-    {gitStatusLetter(gitStatus)}
+{#if git.presentation?.letter && !hideOnRename}
+  <span class="git-indicator git-{git.presentation.tone}" class:emphasis={git.presentation.emphasis}
+    style:--git-color={git.presentation.color} title="Git: {git.presentation.status}">
+    {git.presentation.letter}
   </span>
 {/if}
 
@@ -44,21 +30,24 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 14px;
-    font-size: 11px;
-    font-weight: 600;
-    flex-shrink: 0;
+    box-sizing: border-box;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 3px;
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--git-color) 14%, transparent);
+    color: var(--git-color);
+    font-size: 10px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
     line-height: 1;
-    opacity: 0.85;
+    flex-shrink: 0;
   }
 
-  .git-modified { color: #d4a017; }
-  .git-untracked { color: #22c55e; }
-  .git-added { color: #22c55e; }
-  .git-deleted { color: #ef4444; }
-  .git-conflicted { color: #ef4444; font-weight: 800; }
-  .git-renamed { color: #60a5fa; }
-  .git-copied { color: #60a5fa; }
-  .git-ignored { color: #6b7280; }
-  .git-typechange { color: #a78bfa; }
+  /* Conflicts need attention: an outline and a heavier letter. The fill stays
+     as faint as the other chips', so the letter keeps its contrast. */
+  .git-indicator.emphasis {
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--git-color) 60%, transparent);
+    font-weight: 800;
+  }
 </style>

@@ -9,6 +9,7 @@
  */
 
 @import "./syntax.css";
+@import "./git-status.css";
 @import "./light.css";
 @import "./dark.css";
 @import "./solarized-light.css";

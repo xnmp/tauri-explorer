@@ -55,7 +55,8 @@
     flex-shrink: 0;
     overflow: hidden;
     border-right: 1px solid var(--divider);
-    background: var(--background-card);
+    /* Under a window material it is the pane's surface (#1789). */
+    background: var(--scm-panel-surface, var(--background-card));
   }
 
   .scm-panel.resizing {

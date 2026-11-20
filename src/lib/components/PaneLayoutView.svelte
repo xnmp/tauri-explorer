@@ -97,6 +97,8 @@
     min-width: 0;
     min-height: 0;
     overflow: hidden;
+    /* Set only under a window material (routes/+page.svelte, #1789). */
+    background: var(--pane-frame-surface, transparent);
   }
 
   .pane-restoring {
@@ -168,7 +170,9 @@
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
-    background: transparent;
+    /* Bare window between the panes: transparent, except under a window
+       material in the flat layouts, where it is the faded window base. */
+    background: var(--split-divider-surface, transparent);
     transition:
       background var(--transition-fast),
       border-color var(--transition-fast);
@@ -194,12 +198,12 @@
   }
 
   .pane-divider:hover {
-    background: color-mix(in srgb, var(--accent) 15%, transparent);
+    background: linear-gradient(color-mix(in srgb, var(--accent) 15%, transparent), color-mix(in srgb, var(--accent) 15%, transparent)), var(--split-divider-surface, transparent);
     border-color: var(--accent);
   }
 
   .pane-split.resizing > .pane-divider {
-    background: color-mix(in srgb, var(--accent) 20%, transparent);
+    background: linear-gradient(color-mix(in srgb, var(--accent) 20%, transparent), color-mix(in srgb, var(--accent) 20%, transparent)), var(--split-divider-surface, transparent);
     border-color: var(--accent);
   }
 

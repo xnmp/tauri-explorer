@@ -76,54 +76,19 @@ export function customThemeId(name: string): string {
   return `site-${slug || "custom"}`;
 }
 
-/** Least alpha of a custom theme's panel layer: about a built-in dark
- *  theme's card (#1789). */
-export const CUSTOM_PANEL_MIN_ALPHA = 0.5;
-
-const channels = (hex: string): [number, number, number] => {
-  const h = hex.length === 4 ? hex.replace(/[0-9a-f]/gi, (c) => c + c).slice(1) : hex.slice(1);
-  return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)) as [number, number, number];
-};
-
-/**
- * The translucent layer that, painted over `paper`, shows exactly `panel`:
- * the least alpha (from `minAlpha`) whose colour stays inside sRGB.
- *
- * Every theme's panels are translucent cards over its base (the stack the
- * window material fades, #1757). A host's panel colour given as an opaque
- * card hid the material entirely: the window stayed solid at every
- * Translucency Opacity (#1789). Over its paper this layer looks the same.
- */
-export function panelLayerOver(paper: string, panel: string, minAlpha = CUSTOM_PANEL_MIN_ALPHA): string {
-  const p = channels(paper);
-  const q = channels(panel);
-  const floor = Math.min(1, Math.max(0, minAlpha));
-  const least = q.reduce((a, qc, i) => {
-    const pc = p[i];
-    if (qc > pc) return Math.max(a, (qc - pc) / (255 - pc));
-    if (qc < pc) return Math.max(a, (pc - qc) / pc);
-    return a;
-  }, floor);
-  // Rounded up, so the colour derived from it stays in gamut.
-  const alpha = Math.min(1, Math.ceil(least * 1000 - 1e-9) / 1000);
-  const rgb = q.map((qc, i) => Math.round(Math.min(255, Math.max(0, p[i] + (qc - p[i]) / alpha)) * 100) / 100);
-  return `rgba(${rgb.join(", ")}, ${alpha})`;
-}
-
 /**
  * Override rules layered after a generated base theme: the six host colours
  * set the surfaces, text, accent and folder tokens directly.
  */
 export function customThemeOverrides(id: string, theme: DemoCustomTheme): string {
   const [paper, panel, ink, ink2, accent, folder] = theme.v;
-  const panelLayer = panelLayerOver(paper, panel);
   return `[data-theme="${id}"] {
   --theme-description: "Custom colours from the page";
   color-scheme: ${theme.dark ? "dark" : "light"};
   --background-solid: ${paper};
   --theme-background-image: none;
-  --background-card: ${panelLayer};
-  --background-card-secondary: ${panelLayer};
+  --background-card: ${panel};
+  --background-card-secondary: ${panel};
   --miller-bg: ${panel};
   --text-primary: ${ink};
   --text-secondary: ${ink2};

@@ -462,53 +462,54 @@
 
   /* Flat layouts (Default, Compact) under a material (#1789): the window is
      its opaque self, faded uniformly to the Translucency Opacity coverage.
-     Each surface the window is tiled into paints its opaque stack (its fill
-     over the window base) on a layer at that opacity, and nothing else
-     paints under or over it, so every surface lets the same share of the
-     material through and keeps exactly its opaque colour relationships to
-     its neighbours: the title bar, tab and pane one colour, the sidebar its
-     own. A tint under translucent surfaces could not: a surface hid the
-     material by its own alpha, and its colour drifted toward its fill. The
-     layer sits at z-index -1 in the surface's stacking context, below every
-     sibling's content; the surface's own background steps aside. */
-  :global(:root[data-material]:is([data-layout-base="default"], [data-layout-base="compact"])) {
-    --pane-surface: transparent;
-    --titlebar-surface: transparent;
-    --sidebar-surface: transparent;
-    --statusbar-surface: transparent;
-    --preview-surface: transparent;
+     Each surface paints ONE colour: its opaque colour on Translucency off
+     (its fill over the window base, composited) at that coverage. So every
+     surface lets the same share of the material through and keeps its
+     opaque colour relationships to its neighbours: the title bar, tab and
+     pane one colour, the sidebar its own. Nothing is painted under it (the
+     window body is transparent), so nothing compounds; and a surface's
+     border sits on its own background, as on an opaque window, so no
+     border is a slit of bare material.
+
+     Compositing a translucent colour P over an opaque B into one colour
+     needs P's alpha as a number, which only relative colour syntax can
+     read: color-mix(P' 99.9%, B), where P' is P's colour at alpha
+     a / (999 (1 - a)), weighs P by a and B by 1 - a exactly (premultiplied
+     interpolation), and forcing the result opaque gives a P + (1 - a) B.
+     Engines without relative colour keep the window as before #1789 (the
+     theme base tinted under the surfaces). */
+  @supports (color: rgb(from red r g b / calc(alpha * 0.5))) {
+    :global(:root[data-material]:is([data-layout-base="default"], [data-layout-base="compact"])) {
+      --material-base-opaque: rgb(from color-mix(in srgb, rgb(from var(--background-mica, transparent) r g b / min(1, alpha / (999 * max(0.0001, 1 - alpha)))) 99.9%, var(--background-solid)) r g b / 1);
+      --material-pane-opaque: rgb(from color-mix(in srgb, rgb(from var(--pane-fill) r g b / min(1, alpha / (999 * max(0.0001, 1 - alpha)))) 99.9%, var(--material-base-opaque)) r g b / 1);
+      --material-sidebar-opaque: rgb(from color-mix(in srgb, rgb(from var(--sidebar-fill) r g b / min(1, alpha / (999 * max(0.0001, 1 - alpha)))) 99.9%, var(--material-base-opaque)) r g b / 1);
+      --material-statusbar-opaque: rgb(from color-mix(in srgb, rgb(from var(--statusbar-fill) r g b / min(1, alpha / (999 * max(0.0001, 1 - alpha)))) 99.9%, var(--material-base-opaque)) r g b / 1);
+      --material-preview-opaque: rgb(from color-mix(in srgb, rgb(from var(--preview-fill) r g b / min(1, alpha / (999 * max(0.0001, 1 - alpha)))) 99.9%, var(--material-base-opaque)) r g b / 1);
+      /* The pane's surface is its frame's: an inactive split pane dims its
+         content with opacity, which would fade a surface on the pane itself
+         and let more of the material through. */
+      --pane-frame-surface: rgb(from var(--material-pane-opaque) r g b / var(--material-surface-coverage, 0.82));
+      --pane-surface: transparent;
+      --titlebar-surface: var(--pane-frame-surface);
+      --sidebar-surface: rgb(from var(--material-sidebar-opaque) r g b / var(--material-surface-coverage, 0.82));
+      --statusbar-surface: rgb(from var(--material-statusbar-opaque) r g b / var(--material-surface-coverage, 0.82));
+      --preview-surface: rgb(from var(--material-preview-opaque) r g b / var(--material-surface-coverage, 0.82));
+      /* The gap between split panes is bare window. */
+      --split-divider-surface: rgb(from var(--material-base-opaque) r g b / var(--material-surface-coverage, 0.82));
+      /* Chrome nested in the pane is the pane (#1789 review): Miller columns
+         and the source control panel painted their own translucent fills
+         over it, hiding more of the material. */
+      --miller-bg: transparent;
+      --scm-panel-surface: transparent;
+    }
+
+    /* Nothing under the surfaces. */
+    :global(:root[data-material]:is([data-layout-base="default"], [data-layout-base="compact"])) .explorer {
+      background: var(--layout-app-surface, transparent);
+    }
   }
 
-  :global(:root[data-material]:is([data-layout-base="default"], [data-layout-base="compact"]) :is([data-region="status-bar"], [data-region="split-divider"])) {
-    position: relative;
-  }
-
-  :global(:root[data-material]:is([data-layout-base="default"], [data-layout-base="compact"]) :is([data-region="titlebar"], [data-region="sidebar-body"], .pane-frame, [data-region="split-divider"], [data-region="preview-body"], [data-region="status-bar"])::after) {
-    content: "";
-    position: absolute;
-    inset: 0;
-    z-index: -1;
-    pointer-events: none;
-    border-radius: inherit;
-    background: linear-gradient(var(--material-tile-fill, transparent), var(--material-tile-fill, transparent)), var(--window-base);
-    opacity: var(--material-surface-coverage, 0.8);
-  }
-
-  :global(:root[data-material] [data-region="titlebar"]),
-  :global(:root[data-material] .pane-frame) {
-    --material-tile-fill: var(--pane-fill);
-  }
-  :global(:root[data-material] [data-region="sidebar-body"]) {
-    --material-tile-fill: var(--sidebar-fill);
-  }
-  :global(:root[data-material] [data-region="status-bar"]) {
-    --material-tile-fill: var(--statusbar-fill);
-  }
-  :global(:root[data-material] [data-region="preview-body"]) {
-    --material-tile-fill: var(--preview-fill);
-  }
-
-  /* The user asked for solid surfaces: the layers are opaque. */
+  /* The user asked for solid surfaces: every surface is opaque. */
   @media (prefers-reduced-transparency: reduce) {
     :global(:root[data-material]) {
       --material-surface-coverage: 1 !important;
@@ -718,17 +719,13 @@
     );
   }
 
-  /* Flat layouts paint the material's share surface by surface (the
-     --material-surface-coverage layers above), so the window body adds
-     nothing under them (#1789). */
-  :global(:root[data-material]:is([data-layout-base="default"], [data-layout-base="compact"])) .explorer {
-    background: var(--layout-app-surface, transparent);
-  }
-
   /* The user asked for solid surfaces: no window shows the material behind
-     the app. Floating Islands also solidifies its islands (its own rule). */
+     the app. Floating Islands also solidifies its islands (its own rule).
+     The flat layouts' transparent window body above outranks the plain
+     selector, so it is listed too (#1789 review). */
   @media (prefers-reduced-transparency: reduce) {
-    :global([data-material]) .explorer {
+    :global([data-material]) .explorer,
+    :global(:root[data-material]:is([data-layout-base="default"], [data-layout-base="compact"])) .explorer {
       background: var(--background-solid);
     }
   }

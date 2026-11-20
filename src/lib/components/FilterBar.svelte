@@ -248,7 +248,9 @@
     padding: 4px 8px;
     border: 1px solid var(--layout-hairline, var(--divider));
     border-radius: var(--radius-sm, 4px);
-    background: var(--background-card);
+    /* A popup is opaque: the card colour over the theme base, not the
+       translucent card itself, which showed the rows through it (#1789). */
+    background: linear-gradient(var(--background-card), var(--background-card)), var(--background-solid);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
     color: var(--text-secondary);
     font-size: 12px;

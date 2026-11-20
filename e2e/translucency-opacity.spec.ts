@@ -4,6 +4,7 @@
  */
 import { test, expect, type Page } from "./fixtures";
 import { HOME_URL, applySettingsAndReload, pressShortcut, seedSettings, waitForEntries } from "./helpers";
+import { colourDistance, materialShot, type Painted } from "./material-pixels";
 
 test.describe("Translucency Opacity (#1735)", () => {
   async function open(page: Page, { platform = "MacIntel", translucency = true, theme = "dark", extra = {} } = {}) {
@@ -28,66 +29,140 @@ test.describe("Translucency Opacity (#1735)", () => {
     await expect(page.locator(".settings-dialog")).toBeVisible();
   }
 
-  /** The island's alpha over the window body as the page computes it: the
-   *  alpha of its base layer (a probe painted with the variable). The panel
-   *  colour on it is the theme's card at the same share (#1789). */
-  async function islandAlpha(page: Page): Promise<number> {
-    return page.evaluate(() => {
-      const probe = document.createElement("div");
-      probe.style.background = "var(--islands-fill-base)";
-      document.documentElement.appendChild(probe);
-      const colour = getComputedStyle(probe).backgroundColor;
-      probe.remove();
-      // `rgba(r, g, b, a)` or the modern `color(srgb r g b / a)`; no alpha = opaque.
-      const slash = /\/\s*([\d.]+%?)\s*\)/.exec(colour);
-      const comma = /rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\s*\)/.exec(colour);
-      const raw = slash?.[1] ?? comma?.[1];
-      if (raw === undefined) return 1;
-      return raw.endsWith("%") ? Number(raw.slice(0, -1)) / 100 : Number(raw);
-    });
+  /**
+   * What the islands paint, from pixels (#1789 review): the share of the
+   * material the content island, the sidebar island and the window body hide
+   * in total, and their colours. Points sit near each island's bottom, away
+   * from rows; the body point is left of the sidebar, where no island shadow
+   * falls (they fall right and down).
+   */
+  async function islands(page: Page): Promise<{ island: Painted; sidebar: Painted; body: Painted }> {
+    const box = async (selector: string) => (await page.locator(selector).first().boundingBox())!;
+    const panes = await box('[data-region="panes"]');
+    const sidebar = await box('[data-region="sidebar"]');
+    const shot = await materialShot(page);
+    return {
+      island: shot.at(panes.x + panes.width * 0.6, panes.y + panes.height - 30),
+      sidebar: shot.at(sidebar.x + 20, sidebar.y + sidebar.height - 30),
+      body: shot.at(sidebar.x - 3, sidebar.y + sidebar.height / 2),
+    };
   }
+
+  /** The content island's share of the material, from pixels. */
+  const islandAlpha = async (page: Page) => (await islands(page)).island.alpha;
 
   const slider = (page: Page) => page.locator(".translucency-opacity-input");
 
-  test("moving the slider changes the island fill alpha live and persists", async ({ page }) => {
+  /** Moves the slider in Settings, then closes it (its backdrop covers the islands). */
+  async function setSlider(page: Page, value: number) {
+    if (!(await page.locator(".settings-dialog").isVisible())) await openSettings(page);
+    await slider(page).fill(String(value));
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".settings-dialog")).toBeHidden();
+  }
+
+  test("moving the slider changes the islands' share live and persists", async ({ page }) => {
     await open(page);
     await expect(page.locator("html")).toHaveAttribute("data-material", "vibrancy");
-    // Default 55% = today's dark defaults: alpha 1 - 0.455 / 0.7.
-    expect(await islandAlpha(page)).toBeCloseTo(0.35, 2);
+    // The dark island hides its coverage: 0.545 at the default.
+    expect(await islandAlpha(page)).toBeCloseTo(0.545, 1);
 
     await openSettings(page);
     await expect(slider(page)).toHaveValue("55");
-    await slider(page).fill("20");
-    // Dark island coverage 0.2 over body 0.11: alpha ~ 0.101.
-    await expect.poll(() => islandAlpha(page)).toBeCloseTo(0.101, 2);
+    await setSlider(page, 20);
+    await expect.poll(() => islandAlpha(page)).toBeLessThan(0.22);
+    expect(await islandAlpha(page)).toBeGreaterThan(0.18);
     const seeThrough = await islandAlpha(page);
 
-    await slider(page).fill("100");
-    await expect.poll(() => islandAlpha(page)).toBeCloseTo(1, 2);
+    await setSlider(page, 100);
+    await expect.poll(() => islandAlpha(page)).toBeGreaterThan(0.99);
     expect(await islandAlpha(page)).toBeGreaterThan(seeThrough);
 
-    await slider(page).fill("20");
+    await setSlider(page, 20);
     await page.reload();
     await waitForEntries(page);
-    expect(await islandAlpha(page)).toBeCloseTo(0.101, 2);
+    expect(Math.abs((await islandAlpha(page)) - 0.2)).toBeLessThanOrEqual(0.02);
   });
 
   test("light themes change too and stay readable", async ({ page }) => {
     await open(page, { theme: "light" });
     const normal = await islandAlpha(page);
-    await openSettings(page);
-    await slider(page).fill("20");
-    // The theme's panel colour carries its own alpha, so compare relatively:
-    // light island alpha goes 0.98 -> 0.79 (x0.8), more see-through but readable.
+    await setSlider(page, 20);
     await expect.poll(async () => (await islandAlpha(page)) / normal).toBeLessThan(0.9);
-    expect((await islandAlpha(page)) / normal).toBeGreaterThan(0.7);
+    expect((await islandAlpha(page)) / normal).toBeGreaterThan(0.6);
   });
 
   test("the setting beats a theme's own coverage values", async ({ page }) => {
-    await open(page, { extra: { translucencyOpacity: 100 } });
+    await open(page, { extra: { translucencyOpacity: 81 } });
     // A stylesheet value (a theme) loses to the inline setting.
     await page.addStyleTag({ content: ":root { --island-coverage-dark: 0.1; }" });
-    expect(await islandAlpha(page)).toBeCloseTo(1, 2);
+    expect(Math.abs((await islandAlpha(page)) - 0.808)).toBeLessThanOrEqual(0.02);
+  });
+
+  /**
+   * #1789 review: each island is one layer, so it hides exactly its coverage
+   * (a base layer under a translucent panel compounded: dark islands hid
+   * 0.64 at the default), in the theme's own island colour: its card over its
+   * base, as with Translucency off.
+   */
+  for (const theme of ["dark", "ocean-blue"]) {
+    test(`dark islands hide exactly their coverage in the theme's own colours (${theme})`, async ({ page }) => {
+      // Translucency off, in a page of its own (the seeded settings re-apply on every load).
+      const off = await page.context().newPage();
+      await open(off, { theme, translucency: false });
+      const opaque = await islands(off);
+      await off.close();
+      for (const [value, island, sidebar] of [[20, 0.2, 0.176], [55, 0.545, 0.48], [81, 0.808, 0.712]] as const) {
+        const glassPage = await page.context().newPage();
+        await open(glassPage, { theme, extra: { translucencyOpacity: value } });
+        const glass = await islands(glassPage);
+        await glassPage.close();
+        expect(Math.abs(glass.island.alpha - island), `${value}%: island share ${glass.island.alpha}`).toBeLessThanOrEqual(0.015);
+        expect(Math.abs(glass.sidebar.alpha - sidebar), `${value}%: sidebar share ${glass.sidebar.alpha}`).toBeLessThanOrEqual(0.015);
+        if (value >= 55) {
+          // Over the body's tint the island's colour moves a little toward it.
+          expect(colourDistance(glass.island.rgb, opaque.island.rgb), `${value}%: island colour`).toBeLessThanOrEqual(6);
+        }
+      }
+    });
+  }
+
+  /** v0.29 rendered these on the default share; light islands are their themes' translucent colour (#1789 review). */
+  for (const [theme, island, sidebar] of [["light", 0.396, 0.329], ["tahoe", 0.549, 0.435], ["solarized-light", 0.396, 0.329]] as const) {
+    test(`light islands look as they did in v0.29 (${theme})`, async ({ page }) => {
+      await open(page, { theme });
+      const glass = await islands(page);
+      expect(Math.abs(glass.island.alpha - island), `island share ${glass.island.alpha}`).toBeLessThanOrEqual(0.015);
+      expect(Math.abs(glass.sidebar.alpha - sidebar), `sidebar share ${glass.sidebar.alpha}`).toBeLessThanOrEqual(0.015);
+    });
+  }
+
+  for (const theme of ["dark", "light", "tahoe"]) {
+    test(`100% is solid: islands, sidebar and window body (${theme})`, async ({ page }) => {
+      await open(page, { theme, extra: { translucencyOpacity: 100 } });
+      const glass = await islands(page);
+      for (const [name, painted] of Object.entries(glass)) {
+        expect(painted.alpha, `${name} share at 100%`).toBeGreaterThanOrEqual(0.99);
+      }
+    });
+  }
+
+  test("a v0.29 settings file keeps its look: a migrated 65% Windows backdrop stays 0.65 over the body", async ({ page }) => {
+    // What v0.29 wrote after migrating `windowsBackdropOpacity: 65` (#1757):
+    // settings version 3 with the slider at 81. v0.29 painted the island at
+    // 0.808 of the material in total (alpha 0.654 over a 0.445 body).
+    await page.addInitScript(() => {
+      Object.defineProperty(window.navigator, "platform", { get: () => "MacIntel", configurable: true });
+      localStorage.setItem("explorer-settings", JSON.stringify({
+        settingsVersion: 3, translucency: true, translucencyOpacity: 81, layoutTheme: "floating-islands", theme: "dark",
+      }));
+    });
+    await page.goto("/");
+    await waitForEntries(page);
+    await expect(page.locator("html")).toHaveAttribute("data-material", "vibrancy");
+    const glass = await islands(page);
+    expect(Math.abs(glass.island.alpha - 0.808), `island share ${glass.island.alpha}`).toBeLessThanOrEqual(0.015);
+    expect(Math.abs(glass.sidebar.alpha - 0.712), `sidebar share ${glass.sidebar.alpha}`).toBeLessThanOrEqual(0.015);
   });
 
   test("on Linux with translucency on: no material, no backdrop, no Translucency row", async ({ page }) => {
@@ -155,12 +230,11 @@ test.describe("Translucency Opacity (#1735)", () => {
       });
       for (const value of vars) expect(value).not.toBe("");
 
-      expect(await islandAlpha(page)).toBeCloseTo(0.35, 2);
-      await openSettings(page);
-      await slider(page).fill("20");
-      await expect.poll(() => islandAlpha(page)).toBeCloseTo(0.101, 2);
-      await slider(page).fill("100");
-      await expect.poll(() => islandAlpha(page)).toBeCloseTo(1, 2);
+      expect(await islandAlpha(page)).toBeCloseTo(0.545, 1);
+      await setSlider(page, 20);
+      await expect.poll(() => islandAlpha(page)).toBeLessThan(0.22);
+      await setSlider(page, 100);
+      await expect.poll(() => islandAlpha(page)).toBeGreaterThan(0.99);
     });
 
     test("Settings shows one Translucency toggle and no backdrop rows", async ({ page }) => {

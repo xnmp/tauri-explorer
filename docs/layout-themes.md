@@ -148,7 +148,7 @@ Set these on `:root` in a colour theme; unset, the defaults apply.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `--island-surface` | light: `--vibrancy-island-card`, else `--background-card`; dark: `--background-card` | Panel colour of every island, painted over the theme base at the island's alpha (#1789). |
+| `--island-surface` | light: `--vibrancy-island-card`, else `--background-card`; dark: `--background-card` over `--background-solid`, composited into one opaque colour (sidebar: `--background-card-secondary` over it) | Colour of every island, painted as one layer at the island's alpha (#1789). Light themes give a translucent colour on purpose; its own alpha then scales the island's share (see below). |
 | `--island-body-coverage` / `-dark` | `0.15` / `0.3` | Share of the material the window body hides. |
 | `--island-coverage` / `-dark` | `0.983` / `0.545` | Total share a content island (panes, preview, Miller) hides, body included. |
 | `--island-structural-coverage` / `-dark` | `0.762` / `0.48` | Total share the sidebar hides, body included. |
@@ -156,17 +156,26 @@ Set these on `:root` in a colour theme; unset, the defaults apply.
 The "Translucency Opacity" setting (Appearance, shown while Translucency is
 on, default 55%) overrides all six values inline on the root, so it beats a
 theme's own; `domain/vibrancy-opacity.ts` maps the slider and its default
-reproduces the table above. Lower is more see-through; at 100% every island
-is opaque and the body hides 95%, so the window looks as it does without the
-material. It also sets `--island-strip-shade` / `-dark` (default `0.35` /
-`0.5`, up to the opaque strip's `0.62` / `0.9`), `--material-surface-coverage`
-(default `0.8`, see Flat layouts) and `--material-window-coverage` / `-dark`
-(default `0.15` / `0.55`), the share of the material the window tint of other
-layouts hides. The variables are removed when there is no material.
+reproduces the table above. Lower is more see-through. Below 100% the mapping
+is the one v0.28/v0.29 shipped, so a saved value keeps its look; at 100%
+`--material-opaque` is `1` and the window is solid, as without the material
+(the window body opaque, a theme's `--vibrancy-tint` included). It also sets
+`--island-strip-shade` / `-dark` (`0.35` / `0.5`, the opaque strip's `0.62` /
+`0.9` at 100%), `--material-surface-coverage` (default `0.82`, see Flat
+layouts) and `--material-window-coverage` / `-dark` (default `0.15` / `0.55`),
+the share of the material the window tint of other layouts hides. The
+variables are removed when there is no material.
 
 Alphas compound over the body, so an island's own alpha is derived:
-`island alpha = 1 - (1 - coverage) / (1 - body coverage)`. The light defaults
-reproduce the earlier alphas exactly. The window body is the theme base
+`island alpha = 1 - (1 - coverage) / (1 - body coverage)`. Each island paints
+one layer at that alpha, never a base layer under its colour (#1789: that
+compounded, and dark islands hid 0.64 instead of 0.545). With an opaque
+island colour (every dark theme) the island hides exactly its coverage. A
+translucent light island colour hides the alpha times its own alpha: Light
+and Solarized Light (`--vibrancy-island-card` at 0.3) hide 0.40 at the
+default, sidebar 0.33; Tahoe (0.5) 0.55 and 0.44. Engines without CSS
+relative colour paint dark islands in the base lifted 10% toward white, as
+before #1789. The window body is the theme base
 nudged 6% toward the accent; a theme's `--vibrancy-tint` or a layout's
 `--layout-app-surface` still wins. Under `prefers-reduced-transparency`
 every surface is opaque.
@@ -186,16 +195,22 @@ native material anyway. Context menus and modal cards are opaque.
 
 Default and Compact fade the opaque window uniformly (#1789): every surface
 hides `--material-surface-coverage` of the material (Translucency Opacity:
-0.6 at 20%, 0.8 at the default, 1 at 100%) and keeps exactly its opaque
-colour. Each surface the window is tiled into (title bar, sidebar body, each
-pane frame, split divider, preview, status bar) paints its own fill over the
-window base on an `::after` layer at that opacity; the elements themselves
-and the window body paint nothing. Chrome stacked on a surface (active tab,
-navigation bar, Details column header) paints nothing under a material: a
-translucent layer on a translucent layer compounds, hiding more of the
-material and pulling the colour toward its own. So the tab, title bar,
-navigation bar and column header are the pane's colour; the column header's
-darker band exists only on an opaque window. A layout's `--layout-surface` /
+0.74 at 20%, 0.82 at the default, 1 at 100%; never less than the panes hid
+before) and keeps exactly its opaque colour. Each surface (title bar, sidebar,
+each pane frame, split divider, preview, status bar) paints one colour: its
+fill over the window base, composited into one opaque colour with CSS
+relative colour syntax (`routes/+page.svelte`), at that coverage. The window
+body paints nothing, and a surface's border sits on its own background, so no
+border is a slit of bare material. The pane's surface is on its frame, so an
+inactive split pane's dimming fades only its content. Chrome stacked on a
+surface (active tab, navigation bar, Details column header, Miller columns,
+the source control panel) paints nothing under a material: a translucent
+layer on a translucent layer compounds, hiding more of the material and
+pulling the colour toward its own. So they are the pane's colour; the column
+header's darker band and Miller's own tone exist only on an opaque window.
+The terminal stays opaque (xterm paints its own background), and popups
+paint the card over the theme base, opaque. Engines without relative colour
+keep the window as before #1789. A layout's `--layout-surface` /
 `--layout-chrome-surface` still win on the elements.
 
 ### Native window material

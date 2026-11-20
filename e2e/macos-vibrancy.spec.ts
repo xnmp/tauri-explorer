@@ -4,7 +4,7 @@
  */
 import { test, expect, type Page } from "./fixtures";
 import { HOME_URL, applySettingsAndReload, waitForEntries } from "./helpers";
-import { decodePng } from "./png-pixels";
+import { colourDistance, emulateReducedTransparency, hideContent, materialShot, type MaterialShot, type Rgb } from "./material-pixels";
 
 test.describe("macOS vibrancy", () => {
   // The browser publishes no native material, so the platform fallback decides:
@@ -106,7 +106,6 @@ test.describe("theme colours over the macOS material (#1733, #1789)", () => {
    * hide the same share and keep its opaque colour: the tab, title bar,
    * navigation bar and column header are the pane's colour, the sidebar its own.
    */
-  type Rgb = [number, number, number];
   const REGIONS = {
     tab: '[data-region="tab"][aria-selected="true"]',
     titlebar: '[data-region="titlebar"]',
@@ -136,27 +135,16 @@ test.describe("theme colours over the macOS material (#1733, #1789)", () => {
     };
   }
 
-  async function shotOver(page: Page, backdrop: string) {
-    await page.addStyleTag({ content: `html { background: ${backdrop} !important; }` });
-    return decodePng(await page.screenshot({ animations: "disabled" }));
-  }
-
   /** Alpha and colour of every region, solved from black and white backdrops. */
   async function surfaces(page: Page): Promise<Record<Region, { alpha: number; rgb: Rgb }>> {
     const points = await probePoints(page);
-    const black = await shotOver(page, "#000");
-    const white = await shotOver(page, "#fff");
+    const shot = await materialShot(page);
     const out = {} as Record<Region, { alpha: number; rgb: Rgb }>;
-    for (const [name, { x, y }] of Object.entries(points) as [Region, { x: number; y: number }][]) {
-      const b = black.pixel(Math.round(x), Math.round(y));
-      const w = white.pixel(Math.round(x), Math.round(y));
-      const alpha = 1 - (w[0] - b[0] + w[1] - b[1] + w[2] - b[2]) / 3 / 255;
-      out[name] = { alpha, rgb: b.map((c) => (alpha > 0.01 ? c / alpha : 0)) as Rgb };
-    }
+    for (const [name, { x, y }] of Object.entries(points) as [Region, { x: number; y: number }][]) out[name] = shot.at(x, y);
     return out;
   }
 
-  const near = (a: Rgb, b: Rgb) => Math.max(...a.map((c, i) => Math.abs(c - b[i])));
+  const near = colourDistance;
 
   for (const theme of ["dark", "light", "ocean-blue"]) {
     test(`Default fades the opaque window uniformly, the tab one with the pane (${theme}, #1789)`, async ({ page }) => {
@@ -172,8 +160,8 @@ test.describe("theme colours over the macOS material (#1733, #1789)", () => {
 
       for (const region of Object.keys(REGIONS) as Region[]) {
         // One share of the material everywhere: no surface compounds another.
-        expect(glass[region].alpha, region).toBeGreaterThan(0.78);
-        expect(glass[region].alpha, region).toBeLessThan(0.82);
+        expect(glass[region].alpha, region).toBeGreaterThan(0.8);
+        expect(glass[region].alpha, region).toBeLessThan(0.84);
       }
       // The tab, title bar, navigation bar and column header ARE the pane.
       for (const region of ["tab", "titlebar", "navbar", "header"] as const) {
@@ -185,19 +173,29 @@ test.describe("theme colours over the macOS material (#1733, #1789)", () => {
     });
   }
 
-  test("the slider moves the share from glass to the opaque window (#1789)", async ({ page }) => {
+  test("the slider moves the share from glass to the opaque window (#1789)", async ({ page, browserName }) => {
     await openVibrant(page, "dark", "MacIntel", "default", { translucencyOpacity: 20, showWindowControls: true, integratedTitleBar: true });
     const glass = await surfaces(page);
     await applySettingsAndReload(page, { translucencyOpacity: 100 });
     await waitForEntries(page);
     const solid = await surfaces(page);
     for (const region of Object.keys(REGIONS) as Region[]) {
-      expect(glass[region].alpha, region).toBeGreaterThan(0.57);
-      expect(glass[region].alpha, region).toBeLessThan(0.63);
+      // Never less than the panes hid before #1789 (0.68 dark, 0.733 light).
+      expect(glass[region].alpha, region).toBeGreaterThan(0.72);
+      expect(glass[region].alpha, region).toBeLessThan(0.76);
       expect(solid[region].alpha, region).toBeGreaterThan(0.98);
     }
     // Translucency on does not paint the window body itself: the surfaces do.
     expect(await page.evaluate(() => getComputedStyle(document.querySelector(".explorer")!).backgroundColor)).toBe("rgba(0, 0, 0, 0)");
+    // Reduced transparency makes the window solid, the body included
+    // (emulated through Chromium's DevTools protocol).
+    if (browserName !== "chromium") return;
+    await emulateReducedTransparency(page);
+    await page.reload();
+    await waitForEntries(page);
+    expect(await page.evaluate(() => matchMedia("(prefers-reduced-transparency: reduce)").matches)).toBe(true);
+    const body = await page.evaluate(() => getComputedStyle(document.querySelector(".explorer")!).backgroundColor);
+    expect(body, "the window body under reduced transparency").not.toMatch(/rgba\(.*, 0(\.\d+)?\)|\/ 0(\.\d+)?\)/);
   });
 
   test("Floating Islands paints its own window body: light 15%, dark 30% (#1734)", async ({ page }) => {
@@ -217,7 +215,11 @@ test.describe("theme colours over the macOS material (#1733, #1789)", () => {
   test("a theme's own tint wins on Floating Islands: Tahoe's lighter lavender wash", async ({ page }) => {
     await openVibrant(page, "tahoe", "MacIntel", "floating-islands");
     const { body } = await tint(page);
-    expect(body).toBe("rgba(170, 190, 255, 0.12)");
+    // Serialised as rgba() or color(srgb ...): compare the numbers.
+    const nums = (body.match(/[\d.]+/g) ?? []).map(Number);
+    const [r, g, b, a] = body.startsWith("color(") ? [nums[0] * 255, nums[1] * 255, nums[2] * 255, nums[3]] : nums;
+    expect([r, g, b].map(Math.round)).toEqual([170, 190, 255]);
+    expect(a).toBeCloseTo(0.12, 2);
   });
 
   test("a layout's own window surface wins over the tint", async ({ page }) => {
@@ -245,4 +247,122 @@ test.describe("theme colours over the macOS material (#1733, #1789)", () => {
     expect(opaque).not.toBe("rgba(0, 0, 0, 0)");
   });
 
+});
+
+/**
+ * #1789 review: in Default and Compact every point of the window hides the
+ * Translucency Opacity share of the material, borders and the gap between
+ * split panes included (a 1px border over a transparent window was a slit of
+ * bare material), and 100% is solid everywhere.
+ */
+test.describe("flat layouts: one coverage across the whole window (#1789)", () => {
+  type Split = "row" | "column";
+  async function openFlat(page: Page, settings: Record<string, unknown>, split?: Split): Promise<void> {
+    await page.setViewportSize({ width: 1200, height: 760 });
+    await page.addInitScript(() => Object.defineProperty(window.navigator, "platform", { get: () => "MacIntel", configurable: true }));
+    await page.addInitScript(({ settings, split }) => {
+      localStorage.setItem("explorer-settings", JSON.stringify({
+        translucency: true, showWindowControls: true, integratedTitleBar: true, showStatusBar: true, ...settings,
+      }));
+      if (split) {
+        const leaf = (id: string, path: string) => ({ type: "leaf", id, path });
+        localStorage.setItem("explorer-tabs", JSON.stringify({ version: 3, activeTabId: "t", tabs: [{ id: "t", kind: "explorer", activePaneId: "a", layout: {
+          type: "split", id: "s", direction: split, ratio: 0.5, first: leaf("a", "/home/user"), second: leaf("b", "/home/user/Documents"),
+        } }] }));
+      }
+    }, { settings, split });
+    await page.goto("/");
+    await waitForEntries(page);
+    await expect(page.locator("html")).toHaveAttribute("data-material", "vibrancy");
+  }
+
+  /** Every point on a row and a column through the window body, inset from its edges (text and icons hidden). */
+  async function scan(page: Page): Promise<{ min: number; at: string }> {
+    await hideContent(page);
+    const shot: MaterialShot = await materialShot(page);
+    const main = (await page.locator('[data-region="app"]').boundingBox())!;
+    const points: [number, number][] = [];
+    const x0 = Math.ceil(main.x + 12), x1 = Math.floor(main.x + main.width - 12);
+    const y0 = Math.ceil(main.y + 12), y1 = Math.floor(main.y + main.height - 12);
+    for (const fy of [0.3, 0.7]) for (let x = x0; x <= x1; x++) points.push([x, Math.round(main.y + main.height * fy)]);
+    for (const fx of [0.3, 0.45, 0.8]) for (let y = y0; y <= y1; y++) points.push([Math.round(main.x + main.width * fx), y]);
+    let min = 2, minAt: [number, number] = [0, 0];
+    for (const [x, y] of points) {
+      const { alpha } = shot.at(x, y);
+      if (alpha < min) { min = alpha; minAt = [x, y]; }
+    }
+    // Name what is there, so a failure points at the surface with the hole.
+    const owner = await page.evaluate(([x, y]) => {
+      const path: string[] = [];
+      for (let e = document.elementFromPoint(x, y); e && path.length < 3; e = e.parentElement) {
+        path.push(e.tagName.toLowerCase() + ((e as HTMLElement).dataset.region ? `[${(e as HTMLElement).dataset.region}]` : "") + (typeof e.className === "string" && e.className ? `.${e.className.split(" ")[0]}` : ""));
+      }
+      return path.join(" < ");
+    }, minAt);
+    return { min, at: `(${minAt[0]}, ${minAt[1]}) ${owner}` };
+  }
+
+  for (const layoutTheme of ["default", "compact"]) {
+    for (const split of ["row", "column"] as const) {
+      for (const previewPanePosition of ["right", "bottom"]) {
+        test(`${layoutTheme}, ${split} split, preview ${previewPanePosition}: no slit at 20, 55 or 100`, async ({ page }) => {
+          for (const [translucencyOpacity, share] of [[20, 0.74], [55, 0.82], [100, 1]] as const) {
+            await openFlat(page, { layoutTheme, theme: "dark", translucencyOpacity, showPreviewPane: true, previewPanePosition }, split);
+            await expect(page.locator('[data-region="split-divider"]')).toHaveCount(1);
+            await expect(page.locator('[data-region="preview-body"]')).toBeVisible();
+            const { min, at } = await scan(page);
+            expect(min, `${translucencyOpacity}%: least share of the material hidden, at ${at}`).toBeGreaterThanOrEqual(share - 0.02);
+          }
+        });
+      }
+    }
+  }
+
+  test("reduced transparency makes the whole window solid, split and preview included", async ({ page, browserName }) => {
+    test.skip(browserName !== "chromium", "emulated through Chromium's DevTools protocol");
+    await emulateReducedTransparency(page);
+    await openFlat(page, { layoutTheme: "default", theme: "dark", translucencyOpacity: 20, showPreviewPane: true }, "row");
+    expect(await page.evaluate(() => matchMedia("(prefers-reduced-transparency: reduce)").matches)).toBe(true);
+    const { min, at } = await scan(page);
+    expect(min, `least share hidden, at ${at}`).toBeGreaterThanOrEqual(0.99);
+  });
+
+  test("Miller columns and the source control panel are the pane: one share, the pane's colour", async ({ page }) => {
+    await openFlat(page, { layoutTheme: "default", theme: "dark", translucencyOpacity: 55, millerLayers: 1, showScmPanel: true, showGitStatus: true });
+    await page.goto("/?path=/home/user/Documents");
+    await waitForEntries(page);
+    const miller = page.locator(".explorer-pane:visible .miller-columns").first();
+    const scm = page.locator(".explorer-pane:visible .scm-panel").first();
+    await expect(miller).toBeVisible();
+    await expect(scm).toBeVisible();
+    const shot = await materialShot(page);
+    const pane = (await page.locator('.explorer-pane:visible .file-list').first().boundingBox())!;
+    const paint = shot.at(pane.x + pane.width * 0.6, pane.y + pane.height - 12);
+    for (const [name, panel] of [["miller", miller], ["scm", scm]] as const) {
+      const box = (await panel.boundingBox())!;
+      const point = shot.at(box.x + box.width / 2, box.y + box.height - 12);
+      expect(point.alpha, `${name} share`).toBeCloseTo(paint.alpha, 1);
+      expect(Math.abs(point.alpha - paint.alpha), `${name} share vs the pane's`).toBeLessThanOrEqual(0.02);
+      expect(colourDistance(point.rgb, paint.rgb), `${name} colour vs the pane's`).toBeLessThanOrEqual(4);
+    }
+  });
+
+  test("the filter's status popup is opaque over the translucent pane", async ({ page }) => {
+    await openFlat(page, { layoutTheme: "default", theme: "dark", translucencyOpacity: 20 });
+    await page.evaluate(() => {
+      ((window as unknown as { __mockControl?: { aiTextUnavailable?: boolean } }).__mockControl ??= {}).aiTextUnavailable = true;
+    });
+    await page.keyboard.press("Control+f");
+    const input = page.locator(".filter-input:visible").first();
+    await expect(input).toBeFocused();
+    await input.fill("notes");
+    await input.press("Alt+Enter");
+    const popup = page.locator(".filter-ai-status:visible").first();
+    await expect(popup).toContainText("Settings → AI");
+    const box = (await popup.boundingBox())!;
+    const shot = await materialShot(page);
+    // A point inside the popup, clear of its text (the padding at its right).
+    const point = shot.at(box.x + box.width - 3, box.y + box.height / 2);
+    expect(point.alpha).toBeGreaterThanOrEqual(0.99);
+  });
 });

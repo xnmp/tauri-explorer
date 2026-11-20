@@ -68,6 +68,14 @@ check on the "Main branch" ruleset.
 Pushes to main still run `ci.yml`. `ci.yml` also runs nightly (`schedule`,
 default branch dev) with the test-result cache bypassed.
 
+After a release is published, `release.yml`'s `homebrew` job writes
+`Casks/tauri-explorer.rb` to `<owner>/homebrew-tap`, rendered by
+`scripts/homebrew-cask.mjs` from the published aarch64 DMG (#1876). It needs
+the `HOMEBREW_TAP_TOKEN` secret (a fine-grained token with Contents
+read/write on the tap only); without it the job warns and the tap stays on
+the previous release. It is its own job so a tap failure never touches the
+release, and "Re-run failed jobs" retries only the tap write.
+
 `ci-auto-rerun.yml` (`workflow_run`, so the default-branch copy runs) re-runs a
 failed first attempt's failed jobs once, only when every failed non-gate job
 stopped at an install/setup step (`SETUP_STEP` in `scripts/ci-jobs.mjs`). Gate

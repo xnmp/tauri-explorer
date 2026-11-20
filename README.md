@@ -19,6 +19,10 @@ If you've ever opened your editor just to move files faster than your file manag
 Grab the newest release from the [releases page](https://github.com/xnmp/tauri-explorer/releases) — AppImage/deb/rpm, MSI, or dmg. On Linux it can even [replace your system file picker](https://tauri-explorer.vercel.app) (xdg-desktop-portal FileChooser backend).
 
 ```bash
+# macOS (Apple Silicon): the signed release via Homebrew. The app then
+# updates itself.
+brew install --cask xnmp/tap/tauri-explorer
+
 # macOS (Apple Silicon or Intel) — one command; builds from source (checks
 # for git/rustup/bun/Xcode CLT, clones, builds via the Tauri CLI), installs
 # to /Applications, and clears the quarantine flag (sudo only if needed).
@@ -28,7 +32,7 @@ curl -fsSL https://raw.githubusercontent.com/xnmp/tauri-explorer/main/mac_instal
 
 ```
 
-The macOS DMG (Apple Silicon) is signed with a Developer ID and notarized, so it opens without any quarantine workaround. Windows binaries aren't code-signed yet and show a SmartScreen warning on first launch. The release page is the supported binary install route; the repository-root `PKGBUILD` provides an Arch source build. The retired Homebrew cask and winget manifests have been removed, and the `packaging/aur` binary recipe is not a current release channel.
+The macOS DMG (Apple Silicon) is signed with a Developer ID and notarized, so it opens without any quarantine workaround. Windows binaries aren't code-signed yet and show a SmartScreen warning on first launch. The release page and, on macOS, the Homebrew cask (updated by every release, #1876) are the supported binary install routes; the repository-root `PKGBUILD` provides an Arch source build. The winget manifests have been removed, and the `packaging/aur` binary recipe is not a current release channel.
 
 On Arch, run `./arch_install.sh` from a checkout to install the latest release through pacman without compiling: it asks for your sudo password first, then repackages the release `.deb`, verifies it against GitHub's published digest, and replaces any earlier source or binary package. It does nothing if that version is already installed. When no prebuilt package can be used (for example on aarch64 or offline), it sends a desktop notification and asks before building from source; `--yes` accepts that build for unattended runs. The release binary has no AVIF thumbnails, which only source builds enable.
 

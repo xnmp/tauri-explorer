@@ -486,6 +486,7 @@ They are not "bats", Madam Clerk. They are household.
     ]),
     D("bats", nov(14, "05:30"), [
       T("bat census (H).csv", nov(14, "05:30"), BAT_CENSUS),
+      IMG("east gable at dusk - emergence count (H).webp", "2026-09-12T19:40:00", "bats-east-gable-dusk.webp", "1536x1024", "2.6 MB"),
       T("the bats, by name.md", "2026-09-30T03:00:00", BATS_BY_NAME)
     ])
   ]);
@@ -1841,11 +1842,44 @@ are such people. I am told they are closer than you think.
 
 H.
 `;
-  var Pictures = D("Pictures", "2026-10-31T23:30:00", [
-    D("selfies", "2026-10-31T23:30:00", [
+  var CAPTIONS = `
+CAPTIONS FOR MY SELFIES (dictated. H. typing, and adding nothing)
+
+- Battlements, moonrise. A toast to the moon, who has never once replied to a letter at length.
+- With Ignatius. The eldest. He sat beautifully. [H.: He was asleep.]
+- The drawbridge. An evening constitutional. The hat came out very well. [H.: Only the hat came out.]
+- Lower Meadow. I carried the basket myself; you can see that I did. [H.: You can see the basket.]
+- New cravat. Hollis says no. The cravat says yes.
+- The duck pond. Research for my letter regarding its tone. They know what they did.
+- Dinner for one. A quiet evening. The napkin is mine.
+- First frost (IMG_1107). I went out to look at the stars and the telephone photographed my footprints. They are distinguished footprints.
+- Pumpkin (IMG_0931). Carved by me. It is a bat, not a face. Faces on pumpkins are vulgar.
+- Library ladder. Reaching for the 1500s. They were further up than I remembered.
+- Beech woods. The umbrella is for the sun. There was no sun. One cannot be too careful. Freckles.
+- The organ. One pipe whistles in an east wind. Tonight it whistled in tune.
+- From the north tower. The village at dusk. I counted the lights. Hollis says that is not a hobby. [H.: It is not a hobby.]
+
+Nine telephones. Nine. Every one of them photographs the room beautifully and me not at all.
+`;
+  var Pictures = D("Pictures", nov(15, "23:40"), [
+    D("selfies", nov(15, "23:40"), [
       IMG("selfie - great hall, new cape.webp", "2026-10-31T23:10:00", "selfie-great-hall.webp", "2400x1600", "4.4 MB"),
       IMG("selfie - library, reading.webp", "2026-10-20T01:45:00", "selfie-library.webp", "1600x2000", "3.6 MB"),
-      T("why are my selfies empty (H).txt", "2026-10-31T23:30:00", SELFIES_WHY)
+      IMG("selfie - battlements, moonrise.webp", "2026-10-26T17:40:00", "selfie-battlements-moonrise.webp", "1536x1024", "2.7 MB"),
+      IMG("selfie - with Ignatius.webp", "2026-09-30T03:10:00", "selfie-with-ignatius.webp", "1280x1280", "2.1 MB"),
+      IMG("selfie - the drawbridge, evening constitutional.webp", nov(7, "23:15"), "selfie-evening-constitutional.webp", "1024x1536", "2.9 MB"),
+      IMG("selfie - Lower Meadow, the harvest.webp", "2026-09-19T19:20:00", "selfie-lower-meadow-harvest.webp", "1536x1024", "3.1 MB"),
+      IMG("selfie - new cravat (Hollis says no).webp", nov(1, "22:40"), "selfie-new-cravat.webp", "1024x1536", "2.4 MB"),
+      IMG("selfie - the duck pond, re its tone.webp", nov(15, "17:05"), "selfie-duck-pond.webp", "1536x1024", "2.8 MB"),
+      IMG("selfie - dinner for one.webp", "2026-10-10T20:30:00", "selfie-dinner-for-one.webp", "1536x1024", "2.2 MB"),
+      IMG("IMG_1107.webp", nov(14, "23:50"), "selfie-first-frost.webp", "1536x1024", "3.0 MB"),
+      IMG("IMG_0931.webp", "2026-10-31T21:00:00", "selfie-pumpkin.webp", "1280x1280", "1.9 MB"),
+      IMG("selfie - library ladder.webp", "2026-10-24T01:20:00", "selfie-library-ladder.webp", "1024x1536", "2.5 MB"),
+      IMG("selfie - beech woods, with umbrella.webp", "2026-10-18T18:10:00", "selfie-beech-woods.webp", "1024x1536", "3.2 MB"),
+      IMG("selfie - the organ.webp", nov(8, "23:00"), "selfie-chapel-organ.webp", "1024x1536", "2.3 MB"),
+      IMG("selfie - from the north tower (panorama).webp", nov(1, "17:05"), "selfie-north-tower-panorama.webp", "1600x544", "1.8 MB"),
+      T("why are my selfies empty (H).txt", "2026-10-31T23:30:00", SELFIES_WHY),
+      T("captions (dictated).txt", nov(15, "23:40"), CAPTIONS)
     ])
   ]);
 

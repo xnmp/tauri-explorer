@@ -1030,7 +1030,42 @@ BIRD NEWS - Norfolk, November 2026 (exported from the app. Holkham muted since J
 16 Nov 09:30  Hoopoe 1 Kelling Heath, per D. Pike (heard only) - unconfirmed
 16 Nov 09:31  ...the app has asked whether you want to mute "D. Pike". You said yes.
 `;
+  /* ~/Phone backup/Camera: the year on the patch, 2026. Nothing here bears on a lock (no hoopoe, no shore lark,
+     no squirrel times, nothing from the Gap). It is the machine's photo folder, for Tiles and the preview. */
+  var CAMERA = D("Camera", "2026-11-15T08:10:00", [
+    IMG("IMG_20260120_093318.jpg", "2026-01-20T09:33:18", "phone-the-good-flask.webp", "1536x1152", "842 KB"),
+    IMG("the BAD flask (the new cup leaks too).jpg", "2026-01-03T10:15:00", "phone-the-bad-flask.webp", "1280x1280", "611 KB"),
+    IMG("IMG_20260502_052233.jpg", "2026-05-02T05:22:33", "phone-glandford-ford.webp", "1248x936", "733 KB"),
+    IMG("IMG_20260530_213009.jpg", "2026-05-30T21:30:09", "phone-kelling-heath-dusk.webp", "1536x1152", "905 KB"),
+    IMG("spoonbills, Cley. Asleep. Typical.jpg", "2026-06-14T19:20:00", "phone-spoonbills-asleep.webp", "1536x1152", "788 KB"),
+    IMG("IMG_20260822_203812.jpg", "2026-08-22T20:38:12", "phone-egrets-roosting.webp", "1536x1152", "861 KB"),
+    IMG("IMG_20261008_071540.jpg", "2026-10-08T07:15:40", "phone-pinkfeet-at-sunrise.webp", "1536x1152", "694 KB"),
+    IMG("flapjack for the AGM (one went before the vote).jpg", "2026-10-16T14:05:00", "phone-agm-flapjack.webp", "1280x1280", "702 KB"),
+    IMG("baffle 3. the internet says guaranteed.jpg", "2026-10-21T15:34:00", "phone-baffle-three.webp", "1020x1360", "655 KB"),
+    IMG("IMG_20261029_074406_PANO.jpg", "2026-10-29T07:44:06", "phone-marsh-panorama-first-frost.webp", "1600x544", "1.1 MB"),
+    IMG("seal pups, Blakeney Point.jpg", "2026-11-04T12:40:00", "phone-seal-pups.webp", "1536x1152", "820 KB"),
+    IMG("snow buntings, Salthouse (a man was feeding them).jpg", "2026-11-08T08:21:00", "phone-snow-buntings-shingle.webp", "1536x1152", "934 KB"),
+    IMG("IMG_20261111_070214.jpg", "2026-11-11T07:02:14", "phone-barn-owl-on-the-post.webp", "1536x1152", "877 KB"),
+    IMG("waxwings, Sheringham (through the bins).jpg", "2026-11-11T10:41:00", "phone-waxwings.webp", "1152x1536", "806 KB"),
+    IMG("the robin. on the spade. as usual.jpg", "2026-11-15T07:52:00", "phone-robin-on-the-spade.webp", "1152x1536", "759 KB"),
+    IMG("IMG_20261115_080311.jpg", "2026-11-15T08:03:11", "phone-woodpecker-on-the-suet.webp", "1152x1536", "812 KB"),
+    T("what these are.md", "2026-11-15T08:10:00", `
+# What's in Camera
+
+Freya set the phone to put its pictures here by itself. Some I've named. The rest are called IMG and a long number, which is how the phone likes it.
+
+- **The owl** is on the post by the bridge, 11 November, two minutes past seven. Same post. Same owl? Same post.
+- **The pinkfeet**, 8 October, from the lane. I was meant to be getting milk.
+- **The good flask** in the Island Hide, 20 January. Two thousand golden plover went up just after. I didn't take a picture of that. I watched it.
+- **The ford**, 2 May, while the dawn chorus recorded. I stood still for twenty minutes. So did the picture.
+- **Kelling Heath**, 30 May, waiting for the nightjars. Your nan was right about the moped.
+- **The egrets** going to roost: thirty-one, counted. When I started on the round there weren't any.
+- **The marsh from the East Bank**, first frost. A panorama: the phone makes you turn round slowly. I went too fast twice.
+- **The woodpecker** on the suet. Gerald was watching from the fence. He is not in it. He would like that noted.
+`)
+  ]);
   var phone = D("Phone backup", "2026-11-18T12:45:00", [
+    CAMERA,
     D("WhatsApp", "2026-11-18T12:45:00", [
       T("WhatsApp Chat with Freya (granddaughter).txt", "2026-11-18T12:45:00", CHAT),
       T("WhatsApp Chat with Dennis Pike.txt", "2026-10-15T08:02:00", DENNIS)

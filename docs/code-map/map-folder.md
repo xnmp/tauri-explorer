@@ -637,7 +637,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `config-reload.ts` — pure decision for whether an observed config-file change is an external edit or our own write echoing back (#599).
 - `settings-migration.ts` — versioned one-shot migrations for the persisted settings blob; `migrateSettings` + the append-only ledger (#506).
 - `layout-theme.ts` — layout-theme catalog (#1306): built-ins, leading-comment metadata, user-file validation, resolution/fallback reasons, row-height parsing.
-- `layout-theme-ids.ts` — eager built-in layout ids, `tabOwnsWindow` (which bases draw the tab seam: Floating Islands, Default, Compact) and the legacy Floating Islands → `layoutTheme` mapping used by settings migration.
+- `layout-theme-ids.ts` — eager built-in layout ids, `tabOwnsWindow` (which bases draw the tab seam: Floating Islands, Default, Compact, Hairline Ledger) and the legacy Floating Islands → `layoutTheme` mapping used by settings migration.
 - `vibrancy-opacity.ts` — Translucency Opacity slider (20-100%, default 55) to the six `--island-*coverage*` values and the `--material-window-coverage*` tint; default reproduces the fixed theme defaults exactly (#1735); `opacityForIslandAlpha` maps a pre-#1757 Windows Backdrop Opacity.
 - `translucency.ts` — one cross-platform Translucency setting (#1757): material names (vibrancy / acrylic / mica), the published-or-platform material, window effects per material, and the legacy-settings rule; kept in step with `src-tauri/src/translucency.rs` by `tests/domain/translucency.test.ts`.
 - `miller-placement.ts` — `millerHoistedToIsland`: whether Miller columns hoist to the left island (island layout, no sidebar, single-pane tab only); shared by `+page.svelte` and `ExplorerPane.svelte` (#434, #1699).
@@ -731,7 +731,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `floating-islands.css` — Floating Islands, bundled in startup CSS and scoped to `[data-layout-base="floating-islands"]`.
 - `default.css` — Default (#1856) and Compact (#1858), bundled in startup CSS and scoped to those two bases: one surface for tab, sidebar, toolbar and list; colours the shared tab seam layers (strip shade with the tab's hole, one outline, square corners, no shadow).
-- `hairline-ledger.css` — Hairline Ledger, lazy `?inline` sheet injected like a user layout.
+- `hairline-ledger.css` — Hairline Ledger, lazy `?inline` sheet injected like a user layout; colours the shared tab seam square, on its paper (#1871).
 - `compact.css` — Compact (#1548): Default surfaces, tight chrome, 22px Details rows; lazy `?inline` sheet.
 - `soft-cards.css` — Soft Cards (#1548): opaque bordered cards, no shadows, 6px gaps, flat arrangement; lazy `?inline` sheet.
 

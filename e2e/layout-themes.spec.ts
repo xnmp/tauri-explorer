@@ -466,6 +466,29 @@ test.describe("Layout themes (#1306)", () => {
     await expect(dialog.locator(".layout-theme-select")).toHaveValue("floating-islands");
   });
 
+  test("Hairline Ledger's sidebar markers take the folder colour, not the text's (#1871)", async ({ page }) => {
+    await seedSettings(page, { layoutTheme: "hairline-ledger", theme: "dark" });
+    // A visited folder is listed under Recent, whose icon has no colour of its own.
+    await page.addInitScript(() => localStorage.setItem("explorer-frecency", JSON.stringify([
+      { path: "/home/user/Documents/project", accesses: [Date.now() - 60_000, Date.now()] },
+    ])));
+    await page.goto(HOME_URL);
+    await waitForEntries(page);
+    const marker = page.locator('.recent-item [data-region="sidebar-icon"]').first();
+    await expect(marker).toBeVisible();
+    const [fill, text, folder] = await marker.evaluate(el => {
+      const probe = document.createElement("i");
+      probe.style.color = "var(--icon-folder)";
+      document.body.append(probe);
+      const folder = getComputedStyle(probe).color;
+      probe.remove();
+      const label = el.closest('[data-region="sidebar-item"]')!.querySelector('[data-region="sidebar-label"]')!;
+      return [getComputedStyle(el).backgroundColor, getComputedStyle(label).color, folder];
+    });
+    expect(rgb(fill)).toEqual(rgb(folder));
+    expect(rgb(fill)).not.toEqual(rgb(text));
+  });
+
   for (const variant of VIEW_VARIANTS) {
     test(`Hairline Ledger renders entries in ${variant.name} view`, async ({ page }) => {
       await seedSettings(page, { layoutTheme: "hairline-ledger", folderPeek: !variant.classic });
@@ -476,12 +499,24 @@ test.describe("Layout themes (#1306)", () => {
       const entry = page.locator(".entry-item:visible").first();
       await expect(entry).toBeVisible();
       await entry.click();
-      // Selection inverts ink and background in every view.
       const selected = page.locator('[data-region="row"][aria-selected="true"]:visible').first();
       await expect(selected).toBeVisible();
-      const [bg, fg] = await selected.evaluate(el => [getComputedStyle(el).backgroundColor, getComputedStyle(el).color]);
+      const [bg, fg, ring, ink] = await selected.evaluate(el => {
+        const style = getComputedStyle(el);
+        return [style.backgroundColor, style.color, style.boxShadow, getComputedStyle(document.documentElement).getPropertyValue("--text-primary")];
+      });
       expect(bg).not.toBe("rgba(0, 0, 0, 0)");
       expect(bg).not.toBe(fg);
+      if (variant.viewMode === "tiles") {
+        // A selected tile is ruled, not inverted: no block of ink (white in
+        // dark themes) round its picture (#1871).
+        expect(rgb(bg)).not.toEqual(rgb(await page.evaluate(c => { const el = document.createElement("i"); el.style.color = c; document.body.append(el); const out = getComputedStyle(el).color; el.remove(); return out; }, ink)));
+        expect(ring).toContain("inset");
+      } else {
+        // A selected row inverts ink and background.
+        expect(rgb(fg)).not.toEqual(rgb(bg));
+        expect(ring).not.toContain("inset 0px 0px 0px 1px");
+      }
       expect(parseFloat(await selected.evaluate(el => getComputedStyle(el).borderTopLeftRadius))).toBe(0);
       await expect(page.locator(`[data-region="file-list"][data-view="${variant.viewMode}"]:visible`)).toHaveCount(1);
     });

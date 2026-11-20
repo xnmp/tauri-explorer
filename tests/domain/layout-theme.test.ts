@@ -222,10 +222,10 @@ describe("legacy Floating Islands preference (#277, #434)", () => {
   });
 });
 
-describe("tabOwnsWindow (#1785, #1856, #1858)", () => {
-  it("draws the tab seam on Floating Islands, Default and Compact only", () => {
-    for (const base of ["floating-islands", "default", "compact"] as const) expect(tabOwnsWindow(base)).toBe(true);
-    for (const base of ["hairline-ledger", "soft-cards"] as const) expect(tabOwnsWindow(base)).toBe(false);
+describe("tabOwnsWindow (#1785, #1856, #1858, #1871)", () => {
+  it("draws the tab seam on every built-in base except Soft Cards", () => {
+    for (const base of ["floating-islands", "default", "compact", "hairline-ledger"] as const) expect(tabOwnsWindow(base)).toBe(true);
+    expect(tabOwnsWindow("soft-cards")).toBe(false);
   });
 });
 

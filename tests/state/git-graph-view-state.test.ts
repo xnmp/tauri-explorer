@@ -240,13 +240,15 @@ describe("PR confirmation dialog", () => {
     expect(dialog.dialog).not.toBeNull();
   });
 
-  it("does not open create without a checked-out branch or while busy", async () => {
+  it("opens create for the given branch, but not for an empty one or while busy", async () => {
     const idle = session();
     const dialog = createGitGraphPrDialog(idle.dialogSession);
-    await dialog.openCreate(null);
+    await dialog.openCreate("");
     expect(dialog.dialog).toBeNull();
     await dialog.openCreate("feat");
     expect(dialog.dialog).toMatchObject({ action: "create", headBranch: "feat" });
+    await dialog.openCreate("other-local");
+    expect(dialog.dialog).toMatchObject({ action: "create", headBranch: "other-local" });
 
     const busy = session({ busy: true });
     const blocked = createGitGraphPrDialog(busy.dialogSession);

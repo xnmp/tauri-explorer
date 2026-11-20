@@ -35,7 +35,13 @@ test("pending approval remains owned after the pane remounts and reports its out
   await expect(view).toHaveCount(0);
   await page.evaluate(async path => { const { windowTabsManager } = await import("/src/lib/state/window-tabs.svelte.ts"); windowTabsManager.toggleGitGraphInActivePane(path); }, repo);
   await expect(view.getByRole("status")).toHaveText("GitHub PR action in progress…");
-  await expect(view.getByRole("button", { name: "Create PR", exact: true })).toBeDisabled();
+  // Creation from a branch pill (#1847) is refused while the approval runs.
+  await view.locator(".ref-branch", { hasText: /^\s*release\b/ }).first().click({ button: "right" });
+  const createPr = page.getByTestId("git-graph-menu").getByRole("menuitem", { name: /Create pull request…/ });
+  await expect(createPr).toBeDisabled();
+  await expect(createPr).toContainText("A GitHub PR action is in progress");
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("git-graph-menu")).toHaveCount(0);
   await view.locator(".commit-row", { hasText: "Hotfix: crash on empty input" }).locator(".ref-pr").click();
   await expect(view.getByRole("button", { name: "Approve PR", exact: true })).toBeDisabled();
   await page.screenshot({ animations: "disabled", path: "evidence/ac-3-approval-remount-pending.png" });

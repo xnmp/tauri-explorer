@@ -18,6 +18,7 @@
   import EntryNameLabel from "./EntryNameLabel.svelte";
   import EntrySymlinkBadge from "./EntrySymlinkBadge.svelte";
   import GitStatusBadge from "./GitStatusBadge.svelte";
+  import { useEntryGitStatus } from "$lib/composables/use-entry-git-status.svelte";
 
   let { entry, selected, focused = false, size, onselect, onopen, onmenu,
     onfocus, onkeydown, column, videoUnavailable = false, onvideounavailable }: FileTileProps = $props();
@@ -26,6 +27,7 @@
   const explorer = $derived(paneId ? windowTabsManager.getExplorer(paneId) : undefined);
   const layout = $derived(tileLayout(isThumbnailSize(size) ? size : (paneSize?.() ?? settingsStore.thumbnailSize)));
   const appearance = useEntryAppearance(() => entry, () => parentDir(entry.path));
+  const git = useEntryGitStatus(() => entry.name, () => undefined);
   const renaming = $derived(!!explorer && dialogStore.renamingEntry?.path === entry.path);
   // Path identity keeps a failed video's fallback from leaking to another
   // entry when a plugin reuses this component for a different path.
@@ -48,7 +50,7 @@
       {#if explorer && renaming}
         <EntryName {entry} {explorer} variant="tiles" />
       {:else}
-        <EntryNameLabel name={entry.name} variant="tiles" />
+        <EntryNameLabel name={entry.name} variant="tiles" git={git.presentation} />
       {/if}
     {/snippet}
   </TileVisual>

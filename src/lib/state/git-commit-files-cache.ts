@@ -1,7 +1,7 @@
 /**
  * Changed files for immutable commit OIDs. Shared across graph remounts, with
  * the same 50-entry LRU bound as the former component-owned cache. Mutable
- * working-tree/comparison requests continue through their existing paths.
+ * working-tree requests continue through their existing path.
  */
 import { gitCommitFiles, type CommitFile } from "$lib/api/git-log";
 

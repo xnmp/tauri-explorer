@@ -4,7 +4,10 @@
  */
 
 import type { FileEntry } from "./file";
-import { expandTilde } from "./path";
+import { expandTilde, isUncPath } from "./path";
+
+/** A Windows drive path (`C:`, `C:\\…`, `C:/…`). */
+const WINDOWS_DRIVE_PATH = /^[A-Za-z]:/;
 
 /** Maximum suggestions shown in the dropdown. */
 export const MAX_SUGGESTIONS = 12;
@@ -17,6 +20,11 @@ export const MAX_SUGGESTIONS = 12;
  * `"/home/"`    → list `"/home/"`, filter by `""`
  * `"~/do"`      → tilde-expanded first
  * `"name"`      → list `"/"`, filter by `"name"`
+ * `"C:\\Users\\fo"` → list `"C:\\Users\\"`, filter by `"fo"`
+ * `"C:"`        → list `"C:/"`, filter by `""`
+ *
+ * A backslash separates segments only in Windows drive and UNC paths; in a
+ * POSIX path it is a legal file-name character and stays in the prefix.
  */
 export function parsePathInput(
   input: string,
@@ -24,8 +32,12 @@ export function parsePathInput(
 ): { parentDir: string; prefix: string } {
   const expanded = expandTilde(input, homeDir);
   if (!expanded || expanded === "/") return { parentDir: "/", prefix: "" };
-  if (expanded.endsWith("/")) return { parentDir: expanded, prefix: "" };
-  const lastSlash = expanded.lastIndexOf("/");
+  const windows = WINDOWS_DRIVE_PATH.test(expanded) || isUncPath(expanded);
+  if (windows && /^[A-Za-z]:$/.test(expanded)) return { parentDir: `${expanded}/`, prefix: "" };
+  const lastSlash = windows
+    ? Math.max(expanded.lastIndexOf("/"), expanded.lastIndexOf("\\"))
+    : expanded.lastIndexOf("/");
+  if (lastSlash === expanded.length - 1) return { parentDir: expanded, prefix: "" };
   if (lastSlash < 0) return { parentDir: "/", prefix: expanded };
   return {
     parentDir: expanded.substring(0, lastSlash + 1),

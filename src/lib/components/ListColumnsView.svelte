@@ -166,7 +166,7 @@
         }}></button>
     {/if}
     <span class="list-icon" class:thumbnail={thumbnails} data-drag-icon style:color={row.entry.kind !== "directory" ? getFileIconColor(row.entry) : undefined}>{#if thumbnails}<RowThumbnail entry={row.entry} />{:else}<FileIcon entry={row.entry} size="small" />{/if}</span>
-    <span data-drag-name><EntryName entry={row.entry} {explorer} variant="list" bold={row.expanded} /></span>
+    <span data-drag-name><EntryName entry={row.entry} {explorer} directory={row.parentPath} variant="list" bold={row.expanded} /></span>
     <GitStatusBadge directory={row.parentPath} entryName={row.entry.name} />
     {#if explorer.rowClickOwnsPeek(row.entry) && dialogStore.renamingEntry?.path !== row.entry.path}
       <PeekOpenButton entry={row.entry} {explorer} />

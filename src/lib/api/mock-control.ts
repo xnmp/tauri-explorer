@@ -200,7 +200,7 @@ export function getMockControl(): MockControl {
  * page reload without addInitScript re-seeding them (see module doc). Import
  * this object — never retype one of its values as a string literal. */
 export const MOCK_LOCAL_KEYS = {
-  /** "1" when set; consumed (removed) by the next `take_crash_report` read. */
+  /** "1" (a panic) or "unclean" (an unclean exit, #1686); consumed by the next `take_crash_report` read. */
   crashReport: "mockCrashReport",
   /** JSON `{ fileName, contents }`; consumed by the next `take_crash_report` read. */
   frontendCrash: "mockFrontendCrash",

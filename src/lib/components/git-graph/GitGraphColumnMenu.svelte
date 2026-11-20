@@ -6,6 +6,7 @@
 -->
 <script lang="ts">
   import type { GitGraphViewPrefs, GraphColumnId } from "$lib/state/git-graph-view-prefs.svelte";
+  import { windowOverlay } from "$lib/composables/window-overlay";
 
   interface Props {
     x: number;
@@ -23,6 +24,7 @@
 
 <button
   class="menu-backdrop"
+  use:windowOverlay
   aria-label="Close column menu"
   onclick={onClose}
   oncontextmenu={(e) => { e.preventDefault(); onClose(); }}

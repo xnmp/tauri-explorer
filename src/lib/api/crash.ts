@@ -9,11 +9,13 @@
  */
 
 import { invoke } from "./common";
-import { dedupeFrontendCrash, isBenignBrowserError } from "$lib/domain/crash-report";
+import { dedupeFrontendCrash, isBenignBrowserError, type CrashKind } from "$lib/domain/crash-report";
 
 export interface CrashReport {
   fileName: string;
   contents: string;
+  /** "unclean-exit": the session ended without an orderly exit or a recorded panic (#1686). */
+  kind?: CrashKind;
 }
 
 /** Fetch-and-consume the newest unseen crash report, if any. */

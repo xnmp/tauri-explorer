@@ -5,6 +5,7 @@
 -->
 <script lang="ts">
   import { displayName } from "$lib/domain/wire-name";
+  import { windowOverlay } from "$lib/composables/window-overlay";
   import { tick, type Snippet } from "svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { contextMenuStore } from "$lib/state/context-menu.svelte";
@@ -429,8 +430,7 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <div
-    class="context-menu-backdrop"
-    onclick={() => contextMenuStore.close()}
+    class="context-menu-backdrop" use:windowOverlay onclick={() => contextMenuStore.close()}
     oncontextmenu={(e) => {
       e.preventDefault();
       e.stopPropagation();

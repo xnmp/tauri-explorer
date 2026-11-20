@@ -26,10 +26,11 @@ export function createGitGraphPrDialog(session: PrDialogSession) {
     /** Whether submission is currently refused. */
     get blocked() { return session.actionBusy || (session.actionUncertain && !retryAcknowledged); },
 
-    async openCreate(headBranch: string | null): Promise<void> {
-      if (!headBranch || session.actionBusy) return;
+    /** Open the create confirmation for a local branch (#1847). */
+    async openCreate(branch: string): Promise<void> {
+      if (!branch || session.actionBusy) return;
       retryAcknowledged = false;
-      dialog = await session.prepareCreate(headBranch);
+      dialog = await session.prepareCreate(branch);
     },
     openAction(action: "merge" | "approve", pr: PrSnapshot): void {
       if (session.actionBusy) return;

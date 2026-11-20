@@ -92,6 +92,17 @@ test.describe("Large pane materialization", () => {
     test.setTimeout(45_000);
     await loadManager(page);
     const state = largeState();
+    // The tab seam (Floating Islands, Default) loads its marks lazily and
+    // measures the strip for a few frames after any change. Let it attach and
+    // go idle first, so the restore below queues exactly one seam frame.
+    if (await page.locator('[data-region="tab-edge"]').count()) {
+      await expect(page.locator('[data-region="tab-edge"] .surface-edge-stroke')).toHaveAttribute("d", /\S/);
+      await page.evaluate(() => new Promise<void>((resolve) => {
+        let left = 8;
+        const step = () => (--left ? requestAnimationFrame(step) : resolve());
+        requestAnimationFrame(step);
+      }));
+    }
 
     const initial = await page.evaluate(async (persisted) => {
       const queued = new Map<number, FrameRequestCallback>();
@@ -119,6 +130,9 @@ test.describe("Large pane materialization", () => {
         placeholders: document.querySelectorAll(".pane-restoring").length,
         splits: document.querySelectorAll(".pane-split").length,
         queuedFrames: queued.size,
+        // The idle tab seam re-measures the strip a frame after the tab
+        // change (composables/tab-seam-marks.ts).
+        seamFrames: document.querySelector('[data-region="tab-edge"]') ? 1 : 0,
       };
       const firstFrame = [...queued.values()];
       queued.clear();
@@ -128,13 +142,15 @@ test.describe("Large pane materialization", () => {
       return result;
     }, state);
 
-    expect(initial).toEqual({
+    // One frame for the deferred panes, besides the tab seam's own.
+    const { seamFrames, ...rest } = initial;
+    expect(rest).toEqual({
       ready: 1,
       focusedReady: true,
       explorers: 1,
       placeholders: 6,
       splits: 6,
-      queuedFrames: 1,
+      queuedFrames: 1 + seamFrames,
     });
     await expect(page.locator(".explorer-pane.active")).toBeVisible();
     await expect.poll(() => page.evaluate(async () => {

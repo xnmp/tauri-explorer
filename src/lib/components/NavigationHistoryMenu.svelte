@@ -6,6 +6,7 @@
 -->
 <script lang="ts">
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
+  import { windowOverlay } from "$lib/composables/window-overlay";
   import { basename, parentDir } from "$lib/domain/path";
   import { rectToFixed, getZoomFactor } from "$lib/domain/zoom";
   import FileIcon from "./FileIcon.svelte";
@@ -49,7 +50,7 @@
 <svelte:window onkeydown={(e) => { if (e.key === "Escape") { e.preventDefault(); onClose(); } }} />
 
 <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
-<div class="history-backdrop" onclick={(e) => { e.stopPropagation(); onClose(); }} oncontextmenu={(e) => { e.preventDefault(); e.stopPropagation(); onClose(); }}></div>
+<div class="history-backdrop" use:windowOverlay onclick={(e) => { e.stopPropagation(); onClose(); }} oncontextmenu={(e) => { e.preventDefault(); e.stopPropagation(); onClose(); }}></div>
 {#if items.length > 0}
   <div class="history-menu" style="left: {left}px; top: {top}px;" role="menu">
     <div class="history-label">History</div>

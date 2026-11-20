@@ -1,8 +1,7 @@
 <!--
   GitGraphCommitDetail — contents of the inline details block expanded
   below the selected commit row (VSCode Git Graph parity, #221): message,
-  optional metadata (#402), comparison controls (#512) and changed files
-  with inline diffs. On the uncommitted node the message area becomes the
+  optional metadata (#402) and changed files with inline diffs. On the uncommitted node the message area becomes the
   commit box and files are grouped by index section (#466). The parent owns
   the block's frame, position and measured height.
 -->
@@ -23,19 +22,14 @@
     commitPanel: CommitPanelStore;
     workingTree: GitGraphWorkingTree;
     formatDate: (unixSeconds: number) => string;
-    onBeginComparison: () => void;
-    onExitComparison: () => void;
     onClose: () => void;
   }
 
   const {
-    commit, synthetic, showMeta, detail, commitPanel, workingTree, formatDate,
-    onBeginComparison, onExitComparison, onClose,
+    commit, synthetic, showMeta, detail, commitPanel, workingTree, formatDate, onClose,
   }: Props = $props();
 
   const selectedFiles = $derived(detail.files);
-  const comparisonFirst = $derived(detail.comparisonFirst);
-  const comparison = $derived(detail.comparison);
   const openDiff = $derived(detail.openDiff);
   const diffLoading = $derived(detail.diffLoading);
   // Grouped file sections + commit-button enablement are pure derivations
@@ -71,21 +65,6 @@
         <div class="meta-line"><span class="meta-label">Date:</span> {formatDate(commit.author_time)}</div>
       {/if}
       <p class="detail-message">{commit.summary.trimStart()}</p>
-      {#if comparisonFirst}
-        <p class="compare-status">Select another commit to compare with {comparisonFirst.short_oid}.</p>
-        <button type="button" class="compare-action" onclick={onExitComparison}>
-          Cancel comparison
-        </button>
-      {:else if comparison}
-        <p class="compare-status">Comparing {comparison.older.short_oid} → {comparison.newer.short_oid}</p>
-        <button type="button" class="compare-action" onclick={onExitComparison}>
-          Exit comparison
-        </button>
-      {:else}
-        <button type="button" class="compare-action" onclick={onBeginComparison}>
-          Compare this commit
-        </button>
-      {/if}
     </div>
   {:else}
     <!-- Uncommitted node (#466): the message area becomes an
@@ -308,26 +287,6 @@
   .detail-files-col {
     flex: 1;
     min-width: 0;
-  }
-
-  .compare-status {
-    margin: 6px 0;
-    color: var(--text-secondary);
-    font-size: 12px;
-  }
-
-  .compare-action {
-    border: 1px solid var(--control-stroke);
-    border-radius: 4px;
-    background: var(--control-fill);
-    color: var(--text-primary);
-    cursor: pointer;
-    font-size: 12px;
-    padding: 3px 7px;
-  }
-
-  .compare-action:hover {
-    background: var(--control-fill-secondary);
   }
 
   /* A large commit must not make its inline detail panel taller than the

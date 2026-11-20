@@ -4,6 +4,7 @@
 -->
 <script lang="ts">
   import type { FileEntry } from "$lib/domain/file";
+  import { windowOverlay } from "$lib/composables/window-overlay";
   import { fetchDirectory } from "$lib/api/files";
 
   interface Props {
@@ -41,7 +42,7 @@
 <!-- Backdrop always renders while open so the picker can be dismissed even
      when the directory has no subdirectories. -->
 <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
-<div class="caret-picker-backdrop" onclick={(e) => { e.stopPropagation(); onClose(); }}></div>
+<div class="caret-picker-backdrop" use:windowOverlay onclick={(e) => { e.stopPropagation(); onClose(); }}></div>
 {#if dirs.length > 0}
   <div class="caret-picker" style="left: {left}px; top: {top}px;">
     {#each dirs as dir (dir.path)}

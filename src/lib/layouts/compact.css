@@ -7,8 +7,9 @@
  * and --layout-* variables. Loaded lazily and injected after all application
  * CSS, like a user layout, so its rules need no base-attribute scope.
  *
- * Nothing here sets a colour: Compact keeps Default's surfaces and only
- * shrinks the chrome, so it composes with every colour theme.
+ * Nothing here sets a colour: Compact keeps Default's surfaces (one surface,
+ * shaded tab strip, tab outline: layouts/default.css applies to both bases,
+ * #1858) and only shrinks the chrome, so it composes with every colour theme.
  */
 
 :root {

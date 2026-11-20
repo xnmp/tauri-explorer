@@ -367,6 +367,9 @@ body.rail-in .sheen i { animation: wb-sheen 1.1s cubic-bezier(.45, .05, .25, 1) 
 .mini[data-layout="hairline-ledger"], .mini[data-layout="hairline-ledger"] * { border-radius: 0 !important; }
 .mini[data-layout="hairline-ledger"] .mw { box-shadow: 0 0 0 .75px color-mix(in srgb, var(--i) 30%, transparent); }
 .mini[data-layout="hairline-ledger"] .mm-pane i { border-bottom: .5px solid var(--ln); height: 8%; }
+/* the active tab owns the window (Default, Compact, Ledger): only the strip is shaded; the sidebar is the tab's surface, ruled off */
+.mini:is([data-layout="default"], [data-layout="compact"], [data-layout="hairline-ledger"]) .mm-side { background: var(--w); border-right: .5px solid var(--ln); }
+.mini:is([data-layout="default"], [data-layout="compact"], [data-layout="hairline-ledger"]) .mm-tabs { box-shadow: inset 0 -.5px 0 var(--ln); }
 .mini.mono .mm-pane i s { background: repeating-linear-gradient(90deg, var(--tx) 0 3px, transparent 3px 4px); }
 
 /* ---------- the hint marker, when something lit is out of view ---------- */

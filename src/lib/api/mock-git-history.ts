@@ -1,6 +1,6 @@
 /**
- * Mock Git history commands: log, refs, branches/tags, checkout/merge/rebase/reset, undo,
- * commit comparisons and the GitHub PR/CI surfaces.
+ * Mock Git history commands: log, refs, branches/tags, checkout/merge/rebase/reset, undo
+ * and the GitHub PR/CI surfaces.
  * Split out of mock-invoke.ts (#1372); `mockInvoke` dispatches every family.
  */
 import { STALE_CURSOR_KIND, type OpenPr, type PrAction } from "./git-log";
@@ -47,10 +47,6 @@ export const gitHistoryCommands: Record<string, CommandHandler> = {
     }
     return [{ path: `src/file-${n}.ts`, status: n % 2 === 0 ? "M" : "A" }];
   },
-  git_compare_commit_files: () => [
-    { path: "src/compared.ts", status: "M" },
-    { path: "src/introduced-in-comparison.ts", status: "A" },
-  ],
   git_commit_file_diff: (args) => {
     // Deterministic tiny patch so E2E can assert the inline diff (#221).
     const filePath = args.filePath as string;
@@ -62,20 +58,6 @@ export const gitHistoryCommands: Record<string, CommandHandler> = {
       " unchanged line",
       "-old line",
       "+new line",
-      "",
-    ].join("\n");
-  },
-  git_compare_commit_file_diff: (args) => {
-    const filePath = args.filePath as string;
-    const baseOid = args.baseOid as string;
-    const targetOid = args.targetOid as string;
-    return [
-      `diff --git a/${filePath} b/${filePath}`,
-      `--- a/${filePath}`,
-      `+++ b/${filePath}`,
-      "@@ -1 +1 @@",
-      `-older ${baseOid.slice(0, 7)}`,
-      `+newer ${targetOid.slice(0, 7)}`,
       "",
     ].join("\n");
   },
@@ -415,11 +397,13 @@ export const gitHistoryCommands: Record<string, CommandHandler> = {
   // in e2e. #7 exercises a passing/approved/commented PR, #12 a failing draft
   // (draft styling wins over CI color), #15 the tokenless case (all status
   // fields null → plain purple badge, pending kept for label coverage).
-  git_pr_context: () => ({ repoSlug: "mock/project", headBranch: mockDetached ? null : (MOCK_GRAPH_REFS[mockHeadOid()] ?? []).find(ref => ref.kind === "LocalBranch")?.name ?? null }),
+  git_pr_context: () => ({ repoSlug: "mock/project" }),
 
   git_pr_action: (args: Record<string, unknown>) => {
     const request = args.request as PrAction;
     if (request.action === "create") {
+      // Like the backend (#1847): any existing local branch, not only HEAD's.
+      if (!mockIsLocalBranch(request.headBranch)) throw new Error(`Branch ${request.headBranch} no longer exists; refresh the graph`);
       mockCreatedPr = { number: 99, title: request.title, headRef: request.headBranch, baseRef: request.base, htmlUrl: "https://github.com/mock/project/pull/99", draft: false, ciStatus: null, reviewDecision: null, commentCount: 0, body: request.body };
       return mockCreatedPr.htmlUrl;
     }

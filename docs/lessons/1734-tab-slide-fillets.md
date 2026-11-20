@@ -169,7 +169,8 @@ judge frame-exact claims from Chromium sheets.
   loop stops with the paused animations. The matrix spec pauses, takes that
   screenshot, then dispatches `resize` so the marks follow before measuring.
 
-Tests: `e2e/tab-outline-matrix.spec.ts` runs layout (islands, default) ×
+Tests: `e2e/tab-outline-matrix.ts`, run per layout by
+`e2e/tab-outline-matrix-{islands,default,compact}.spec.ts` (#1866), covers layout (islands, default, compact) ×
 platform (macOS with material, macOS without, Linux/Windows) × theme at rest
 (1, 3 and 12 tabs), on hover and on stepped frames of opening and closing, at
 100%/1x, plus every islands cell at 125%/2x. Each check compares the frame

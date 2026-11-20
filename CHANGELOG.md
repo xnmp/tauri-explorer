@@ -2,6 +2,105 @@
 
 All notable changes to Tauri Explorer.
 
+## v0.30.1 — 2026-11-20
+
+### Changed
+
+- Hairline Ledger layout: the active tab now owns the window, as in Default
+  and Compact. The active tab is a hole in the paper strip, one square
+  hairline runs round it and along the strip's base, and the tab, sidebar,
+  toolbar and file list share one surface (#1871).
+
+### Fixed
+
+- Hairline Ledger: sidebar markers for Recent and named folders take the
+  folder colour instead of the text colour, and a selected tile is ruled
+  with the accent instead of being inverted into a solid block (#1871).
+
+## v0.30.0 — 2026-11-20
+
+### Added
+
+- Git status: a changed file's name now takes its status colour (modified
+  amber, added or untracked green, deleted or conflicted red, renamed blue),
+  and the status letter sits in a small tinted chip. Ignored files are
+  dimmed. This applies in every view mode, and themes can override the
+  colours (#1852).
+- Git graph: right-click a local branch pill and choose "Create pull
+  request…" to open a PR for any local branch, not only the checked-out
+  one (#1847).
+
+### Changed
+
+- Default and Compact layouts: the active tab now owns the window. The tab,
+  sidebar, toolbar and file list share one surface colour, only the strip
+  round the tabs is shaded, and one outline runs round the active tab
+  through its curved feet and along the strip's base (#1856, #1858).
+- Soft Cards layout: even 6px spacing round the cards, an inset rounded
+  selection in every view mode, a lighter backdrop in light themes, thin
+  scrollbars, and the terminal and source-control panel drawn as cards
+  (#1848, #1854).
+- Git graph: the toolbar's Create PR button moved to the branch pill's
+  context menu, and the two-commit comparison was removed (#1846, #1847).
+
+### Fixed
+
+- Dialogs and menus opened from a pane, the sidebar or the toolbar now cover
+  the title bar and status bar. In Floating Islands the title bar stayed
+  sharp over a dialog's dimmed backdrop, and clicking a tab went through it
+  and switched tabs; in Default the active tab did the same. A click there
+  now only closes the dialog or menu (#1859).
+
+## v0.29.2 — 2026-11-19
+
+### Fixed
+
+- Address bar on Windows: typing a path with backslashes, such as
+  `C:\Users\fo`, now shows folder suggestions. A bare drive letter such as
+  `D:` suggests that drive's top-level folders (#1597).
+- Git graph: the setting that dims merges which only bring a pull request
+  up to date with its base branch no longer picks a remote branch that only
+  ends with the base's name, such as `origin/release/main` for `main`. It
+  could dim the wrong merge (#1597).
+
+## v0.29.1 — 2026-11-19
+
+### Added
+
+- Reports: a bug report can include two opt-in sections, both unticked by
+  default and shown in full before sending. "Recent errors" adds the warning
+  and error lines Tauri Explorer logged in this session and the previous one,
+  with your home folder shown as `~`. "Recent actions" adds the last commands,
+  view changes and navigation steps by name only, never folder paths, file
+  names or typed text. Crash reports include the recent actions too (#1685,
+  #1688).
+- Crashes that leave no crash report, such as the app being killed or
+  running out of memory, are now noticed on the next launch: the crash
+  notice says Tauri Explorer did not exit cleanly last time and offers a
+  report. Quitting, closing the last window, updates, logging out and
+  shutting down are never reported (#1686).
+- Details view on Linux: the Date opened column also shows when a file was
+  last opened in another app, from the desktop's recent-files list. Turn this
+  off in Settings with "Use OS Recent Files for Date Opened" (#1526).
+
+### Fixed
+
+- Removable drives on Linux: when mounting needs a password but no
+  authentication agent is running, the error now says so and how to fix it,
+  instead of showing the raw system error (#1660).
+- Source control: a failed stage or unstage now shows an error instead of
+  failing silently.
+- Context menu and settings: shortcut hints now follow your own key bindings,
+  and an unbound command shows no hint.
+- Quick Open no longer replaces its results with late events from a finished
+  search, and a failed search no longer leaves the spinner running.
+- The file picker no longer remembers a folder that failed to load as empty.
+- Update checks and GitHub requests now give up after a timeout instead of
+  waiting forever on a stalled connection (#1827).
+- Renaming a file with a non-UTF-8 name in a folder tracked by a provenance
+  plugin no longer reports a spurious warning, and on Linux and macOS a file
+  name containing a backslash now matches its Git status (#1827).
+
 ## v0.29.0 — 2026-11-18
 
 ### Added

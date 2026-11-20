@@ -33,6 +33,7 @@
 {#if actions.renamePrompt}
   <button
     class="menu-backdrop"
+    data-window-overlay
     aria-label="Cancel rename"
     onclick={() => (actions.renamePrompt = null)}
     oncontextmenu={(e) => { e.preventDefault(); actions.renamePrompt = null; }}
@@ -61,6 +62,7 @@
 {#if actions.prompt}
   <button
     class="menu-backdrop"
+    data-window-overlay
     aria-label="Cancel"
     onclick={() => (actions.prompt = null)}
     oncontextmenu={(e) => { e.preventDefault(); actions.prompt = null; }}
@@ -94,6 +96,7 @@
 {#if actions.pullOffer}
   <button
     class="menu-backdrop"
+    data-window-overlay
     aria-label="Dismiss pull offer"
     onclick={() => (actions.pullOffer = null)}
     oncontextmenu={(e) => { e.preventDefault(); actions.pullOffer = null; }}
@@ -114,6 +117,7 @@
   <!-- Suboption modal (#406): reset modes / delete-branch variants. -->
   <button
     class="menu-backdrop"
+    data-window-overlay
     aria-label="Cancel"
     onclick={() => (actions.actionModal = null)}
     oncontextmenu={(e) => { e.preventDefault(); actions.actionModal = null; }}

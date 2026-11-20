@@ -23,8 +23,9 @@ a later sibling at z-index 1.
 Each full-window overlay root mounted inside the window body carries
 `data-window-overlay`: `Modal.svelte`'s overlay (not a pane-scoped one), and
 the dismissing backdrops of the context menu, Details column menu, caret
-picker, sidebar section menu, navigation history menu and the git graph's
-menus. `+page.svelte` raises `.main-content:has([data-window-overlay])` to
+picker, sidebar section menu, navigation history menu, the git graph's
+menus and its action prompts (rename, create branch/tag, pull offer, reset and
+delete; `GitGraphDialogs.svelte`, which an independent review caught missing). `+page.svelte` raises `.main-content:has([data-window-overlay])` to
 z-index 3, as it already did for a fullscreen preview, so the overlay covers
 the title bar and status bar and stays below root dialogs.
 
@@ -37,5 +38,7 @@ under the islands (at most 4/255 per channel), only while the overlay shows.
 
 A new overlay mounted under `.main-content` that covers the window (a
 backdrop with `position: fixed; inset: 0`) must carry `data-window-overlay`.
-`e2e/overlay-stacking.spec.ts` hit-tests every tab and window control under
-four representative overlays in Floating Islands and Default.
+`e2e/overlay-stacking.spec.ts` hit-tests every tab, window control and the
+status bar under five representative overlays (delete dialog, column menu,
+context menu, sidebar section menu, git graph prompt) in Floating Islands and
+Default.

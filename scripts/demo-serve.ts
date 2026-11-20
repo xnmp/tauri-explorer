@@ -2,6 +2,7 @@
  * Serve the marketing-site mocks with the embedded app demo (`bun run demo:serve`).
  *
  *   /app/...  → build-demo/ (`bun run build:demo`; unknown routes fall back to its index.html)
+ *   /         → the Workshop (workshop.html); the list of mocks is /index.html
  *   /...      → screenshots/design/website-rehaul/overhaul/, then its parent
  *               (so fixtures' `../peel-mock/assets/` URLs resolve)
  *
@@ -40,7 +41,9 @@ const server = Bun.serve({
       const rest = pathname.slice("/app".length);
       path = fileUnder(appDir, rest) ?? (/\.[a-z0-9]+$/i.test(rest) ? null : fileUnder(appDir, "/index.html"));
     } else {
-      path = fileUnder(siteDir, pathname) ?? fileUnder(fallbackDir, pathname);
+      // The Workshop is the front page; the list of mocks stays at /index.html.
+      const page = pathname === "/" ? "/workshop.html" : pathname;
+      path = fileUnder(siteDir, page) ?? fileUnder(fallbackDir, page);
     }
     if (!path) return new Response("Not found", { status: 404 });
     return new Response(Bun.file(path), { headers: { "Cache-Control": "no-store" } });

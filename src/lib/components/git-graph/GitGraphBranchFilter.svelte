@@ -7,6 +7,7 @@
 -->
 <script lang="ts">
   import { remoteOnlyBranchNames } from "$lib/domain/git-graph";
+  import { windowOverlay } from "$lib/composables/window-overlay";
   import {
     authorOptions as authorOptionsOf,
     branchesByAuthor,
@@ -89,7 +90,7 @@
 {#if open}
   <button
     class="menu-backdrop"
-    data-window-overlay
+    use:windowOverlay
     aria-label="Close branch filter"
     onclick={() => (open = false)}
   ></button>

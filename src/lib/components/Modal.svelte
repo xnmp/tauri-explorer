@@ -16,6 +16,7 @@
 -->
 <script lang="ts">
   import "./modal.css";
+  import { windowOverlay } from "$lib/composables/window-overlay";
   import { modalOwnership } from "$lib/state/modal-ownership.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { getDialogPresentation } from "$lib/state/dialog-presentation-context";
@@ -187,7 +188,7 @@
   <div
     bind:this={overlayRef}
     class="modal-overlay {overlayClass}"
-    data-window-overlay={scope ? undefined : ""}
+    use:windowOverlay={!scope}
     class:top-aligned={align === "top"}
     class:suspended={!top}
     class:pane-scoped={!!scope}

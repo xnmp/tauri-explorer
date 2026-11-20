@@ -539,13 +539,13 @@
 
   /* Fullscreen is inside this stacking context. It must cover the later
      status bar (1) and terminal resize handle (2), below root dialogs (#970). */
-  /* Likewise every full-window overlay opened from inside it (a dialog, or a
-     menu's dismissing backdrop: [data-window-overlay]). Above it otherwise sit
-     the title bar (Floating Islands lifts it over the islands, and the active
-     tab is lifted over its neighbours) and the status bar, which would stay
-     sharp and take clicks through the overlay (#1859). */
+  /* Likewise while a full-window overlay opened from inside it is mounted (a
+     dialog, or a menu's dismissing backdrop: composables/window-overlay.ts).
+     Above it otherwise sit the title bar (Floating Islands lifts it over the
+     islands, and the active tab is lifted over its neighbours) and the status
+     bar, which would stay sharp and take clicks through the overlay (#1859). */
   :global([data-preview-fullscreen]) .main-content,
-  .main-content:has(:global([data-window-overlay])) {
+  :global([data-window-overlay-open]) .main-content {
     z-index: 3;
   }
 

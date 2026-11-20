@@ -20,14 +20,23 @@ a later sibling at z-index 1.
 
 ## Fix
 
-Each full-window overlay root mounted inside the window body carries
-`data-window-overlay`: `Modal.svelte`'s overlay (not a pane-scoped one), and
-the dismissing backdrops of the context menu, Details column menu, caret
-picker, sidebar section menu, navigation history menu, the git graph's
-menus and its action prompts (rename, create branch/tag, pull offer, reset and
-delete; `GitGraphDialogs.svelte`, which an independent review caught missing). `+page.svelte` raises `.main-content:has([data-window-overlay])` to
-z-index 3, as it already did for a fullscreen preview, so the overlay covers
-the title bar and status bar and stays below root dialogs.
+Each full-window overlay root mounted inside the window body takes the
+`windowOverlay` action (`composables/window-overlay.ts`): `Modal.svelte`'s
+overlay (not a pane-scoped one), and the dismissing backdrops of the context
+menu, Details column menu, caret picker, sidebar section menu, navigation
+history menu, the git graph's menus and its action prompts (rename, create
+branch/tag, pull offer, reset and delete; `GitGraphDialogs.svelte`, which an
+independent review caught missing). While any is mounted the document root
+carries `data-window-overlay-open`, and `+page.svelte` raises `.main-content`
+to z-index 3, as it already did for a fullscreen preview, so the overlay
+covers the title bar and status bar and stays below root dialogs.
+
+The first version tagged the overlays with an attribute and raised
+`.main-content:has([data-window-overlay])`. In WebKit that made tab switching
+and scrolling in a 5000-entry folder about 7% slower (interleaved runs,
+medians 10.65s vs 9.87s): WebKit re-evaluates `:has()` on every mutation
+inside the window body. Chromium showed no cost. Prefer explicit state to a
+`:has()` over a large, busy subtree.
 
 Raising main only while an overlay is open keeps the title bar's own
 dropdowns (tab search, tab menu) above the window body the rest of the time.
@@ -37,7 +46,7 @@ under the islands (at most 4/255 per channel), only while the overlay shows.
 ## Rule
 
 A new overlay mounted under `.main-content` that covers the window (a
-backdrop with `position: fixed; inset: 0`) must carry `data-window-overlay`.
+backdrop with `position: fixed; inset: 0`) must take `use:windowOverlay`.
 `e2e/overlay-stacking.spec.ts` hit-tests every tab, window control and the
 status bar under five representative overlays (delete dialog, column menu,
 context menu, sidebar section menu, git graph prompt) in Floating Islands and

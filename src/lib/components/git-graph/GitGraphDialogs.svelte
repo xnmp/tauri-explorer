@@ -7,6 +7,7 @@
 -->
 <script lang="ts">
   import { gitUndoDescription } from "$lib/domain/git-graph-undo";
+  import { windowOverlay } from "$lib/composables/window-overlay";
   import type { GitGraphActions } from "$lib/state/git-graph-actions.svelte";
   import type { GitGraphPrDialog } from "$lib/state/git-graph-pr-dialog.svelte";
   import type { GitPrSession } from "$lib/state/git-pr-session.svelte";
@@ -33,7 +34,7 @@
 {#if actions.renamePrompt}
   <button
     class="menu-backdrop"
-    data-window-overlay
+    use:windowOverlay
     aria-label="Cancel rename"
     onclick={() => (actions.renamePrompt = null)}
     oncontextmenu={(e) => { e.preventDefault(); actions.renamePrompt = null; }}
@@ -62,7 +63,7 @@
 {#if actions.prompt}
   <button
     class="menu-backdrop"
-    data-window-overlay
+    use:windowOverlay
     aria-label="Cancel"
     onclick={() => (actions.prompt = null)}
     oncontextmenu={(e) => { e.preventDefault(); actions.prompt = null; }}
@@ -96,7 +97,7 @@
 {#if actions.pullOffer}
   <button
     class="menu-backdrop"
-    data-window-overlay
+    use:windowOverlay
     aria-label="Dismiss pull offer"
     onclick={() => (actions.pullOffer = null)}
     oncontextmenu={(e) => { e.preventDefault(); actions.pullOffer = null; }}
@@ -117,7 +118,7 @@
   <!-- Suboption modal (#406): reset modes / delete-branch variants. -->
   <button
     class="menu-backdrop"
-    data-window-overlay
+    use:windowOverlay
     aria-label="Cancel"
     onclick={() => (actions.actionModal = null)}
     oncontextmenu={(e) => { e.preventDefault(); actions.actionModal = null; }}

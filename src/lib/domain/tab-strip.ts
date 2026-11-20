@@ -30,6 +30,17 @@ export function tabStripLayout(count: number, availableWidth: number, activeMini
 }
 
 /**
+ * Whether the strip offers its tab search (#1881). With few tabs every title
+ * is readable, so the caret would only add clutter; it appears once inactive
+ * tabs shrink to icons or the strip scrolls, when finding a tab by eye stops
+ * working. Pass the layout for the room the tabs have without the button:
+ * judged after it takes its share, it could hold itself shown.
+ */
+export function tabSearchShown(count: number, layout: { readonly iconOnly: boolean; readonly overflowing: boolean }): boolean {
+  return count > 1 && (layout.overflowing || layout.iconOnly);
+}
+
+/**
  * Where the tab strip starts, as its left padding (#1734).
  *
  * Floating Islands aligns the strip with the content islands (`aligned`, see

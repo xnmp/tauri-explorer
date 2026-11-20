@@ -117,15 +117,21 @@ export function createTitleFit() {
  * the box, so writing them never re-triggers that observer in the same frame,
  * which WebKit reports as a ResizeObserver loop. Without a spacer the group
  * has an explicit width, which is the room.
+ *
+ * The tab search button (`search`, shown only once the tabs crowd, #1881) is
+ * left out of the room and reported as `searchWidth`: deciding whether it
+ * shows from room it takes itself would have two consistent answers.
  */
-export function tabRoomAtFloor(tabArea: HTMLElement, group: HTMLElement): { room: number; box: HTMLElement | null } {
+export function tabRoomAtFloor(tabArea: HTMLElement, group: HTMLElement, search: HTMLElement | null = null): { room: number; box: HTMLElement | null; searchWidth: number | null } {
   const spacer = tabArea.parentElement?.querySelector<HTMLElement>(":scope > [data-tab-room]") ?? null;
   const box = spacer?.parentElement ?? null;
-  if (!spacer || !box) return { room: group.clientWidth, box: null };
+  const area = getComputedStyle(tabArea);
+  const searchWidth = search?.isConnected ? search.offsetWidth + (parseFloat(area.columnGap) || 0) : null;
+  if (!spacer || !box) return { room: group.clientWidth + (searchWidth ?? 0), box: null, searchWidth };
   const spacerMin = parseFloat(getComputedStyle(spacer).minWidth) || 0;
-  const padding = parseFloat(getComputedStyle(tabArea).paddingLeft) || 0;
-  const buttons = Math.max(0, tabArea.offsetWidth - padding - group.offsetWidth);
-  return { room: box.clientWidth - spacerMin - TAB_STRIP_PADDING - buttons, box };
+  const padding = parseFloat(area.paddingLeft) || 0;
+  const buttons = Math.max(0, tabArea.offsetWidth - padding - group.offsetWidth - (searchWidth ?? 0));
+  return { room: box.clientWidth - spacerMin - TAB_STRIP_PADDING - buttons, box, searchWidth };
 }
 
 /** The tab drag ghost (#1749): the tab's icon and title in a floating pill.

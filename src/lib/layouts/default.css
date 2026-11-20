@@ -128,3 +128,10 @@
 :root:is([data-layout-base="default"], [data-layout-base="compact"]) [data-region="toolbar"] {
   background: var(--layout-chrome-surface, transparent);
 }
+
+/* The sidebar and the file pane are one surface, so a rule keeps them apart,
+   a step darker than the tab's outline (#1879). It lies inside the sidebar's
+   edge: a rule outside it is painted over by the pane beside it. */
+:root:is([data-layout-base="default"], [data-layout-base="compact"]) [data-region="sidebar-body"] {
+  box-shadow: inset -1px 0 0 color-mix(in srgb, var(--text-primary) 18%, transparent);
+}

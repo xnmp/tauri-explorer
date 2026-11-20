@@ -498,6 +498,8 @@ test.describe("Layout themes (#1306)", () => {
       await expect(page.locator("html")).toHaveAttribute("data-layout", "hairline-ledger");
       const entry = page.locator(".entry-item:visible").first();
       await expect(entry).toBeVisible();
+      const nameColor = () => entry.locator('[data-region="entry-name"]').first().evaluate(el => getComputedStyle(el).color);
+      const unselectedName = await nameColor();
       await entry.click();
       const selected = page.locator('[data-region="row"][aria-selected="true"]:visible').first();
       await expect(selected).toBeVisible();
@@ -519,6 +521,49 @@ test.describe("Layout themes (#1306)", () => {
       }
       expect(parseFloat(await selected.evaluate(el => getComputedStyle(el).borderTopLeftRadius))).toBe(0);
       await expect(page.locator(`[data-region="file-list"][data-view="${variant.viewMode}"]:visible`)).toHaveCount(1);
+      // The chrome is the ledger's monospace; file names keep the theme's
+      // face, in every view (#1879).
+      const font = (selector: string) => css(page, selector, "font-family");
+      for (const chrome of ['[data-region="tab"]', '[data-region="status-bar"]', '[data-region="sidebar-label"]']) {
+        expect(await font(chrome), chrome).toMatch(/^"IBM Plex Mono"/);
+      }
+      const names = page.locator('[data-region="entry-name"]:visible');
+      expect(await names.first().evaluate(el => getComputedStyle(el).fontFamily)).toMatch(/^"Inter Variable"/);
+      if (variant.viewMode === "tiles") {
+        // A selected (and hovered) tile's name keeps its own colour, readable
+        // on the tint; inverted, it faded to the background's (#1879).
+        expect(rgb(await nameColor())).toEqual(rgb(unselectedName));
+      }
+    });
+  }
+
+  for (const layout of ["default", "hairline-ledger"]) {
+    test(`a rule separates the sidebar from the file pane in ${layout} (#1879)`, async ({ page }) => {
+      await page.setViewportSize({ width: 1100, height: 700 });
+      await seedSettings(page, { layoutTheme: layout });
+      await page.goto(HOME_URL);
+      await waitForEntries(page);
+      const sidebar = await rect(page, '[data-region="sidebar-body"]');
+      const y = Math.round(sidebar.bottom - 40);
+      // The sidebar's last column, the column inside it, and the pane beside it.
+      const pixel = async (x: number) => {
+        const png = (await page.screenshot({ clip: { x: Math.floor(x), y, width: 1, height: 1 } })).toString("base64");
+        return page.evaluate(async (data) => {
+          const image = new Image();
+          image.src = `data:image/png;base64,${data}`;
+          await image.decode();
+          const context = Object.assign(document.createElement("canvas"), { width: 1, height: 1 }).getContext("2d")!;
+          context.drawImage(image, 0, 0);
+          return [...context.getImageData(0, 0, 1, 1).data.slice(0, 3)];
+        }, png);
+      };
+      const edge = await pixel(sidebar.right - 0.5);
+      const inside = await pixel(sidebar.right - 3.5);
+      const pane = await pixel(sidebar.right + 3.5);
+      // Sidebar and pane are one surface (to rounding); the rule is darker.
+      inside.forEach((channel, i) => expect(Math.abs(channel - pane[i])).toBeLessThanOrEqual(2));
+      const luma = ([r, g, b]: number[]) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      expect(luma(inside) - luma(edge)).toBeGreaterThan(8);
     });
   }
 });

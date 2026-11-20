@@ -459,6 +459,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `use-lazy-dialog.svelte.ts` — binds one dialog open predicate to its loader and retires it with the host effect.
 - `use-preview-fullscreen.svelte.ts` — Preview fullscreen controller shared by file images and plugin targets: toggle/exit, zoom/pan state, wheel/pointer/click handlers and keys (`createPreviewFullscreen`, effect-free and unit-tested), plus the window key listener and `data-preview-fullscreen` attribute (`usePreviewFullscreen`) (#1033).
+- `window-overlay.ts` — `windowOverlay` action for full-window overlays mounted in the window body (dialogs, menus' dismissing backdrops): while any is mounted the root carries `data-window-overlay-open` and `+page.svelte` raises `.main-content` above the title bar and status bar (#1859).
 - `use-light-theme.svelte.ts` — reactive light/dark color-scheme flag (MutationObserver on `data-theme`) for picking the hljs palette.
 
 - `src/lib/composables/use-entry-git-status.svelte.ts` — one derived Git status presentation per entry (explicit directory or pane path, `showGitStatus` gate), shared by GitStatusBadge and EntryName/FileTile name tint (#1852).

@@ -8,6 +8,7 @@
 -->
 <script lang="ts">
   import type { GraphCommit as CommitInfo } from "$lib/state/git-graph-cache";
+  import { windowOverlay } from "$lib/composables/window-overlay";
   import type { RefChips, RemoteRefChip } from "$lib/domain/git-graph";
   import { createPrMenuItem } from "$lib/domain/git-graph-create-pr";
   import type { GraphMenu } from "$lib/composables/use-git-graph-menu.svelte";
@@ -54,6 +55,7 @@
 <!-- Backdrop closes the menu on any outside interaction. -->
 <button
   class="menu-backdrop"
+  use:windowOverlay
   aria-label="Close menu"
   onclick={actions.closeMenu}
   oncontextmenu={onBackdropContextMenu}

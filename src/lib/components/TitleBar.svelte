@@ -51,18 +51,19 @@
   let isMaximized = $state(false);
   let titlebarEl: HTMLDivElement | undefined = $state();
 
-  // Floating Islands: the active tab owns the window (#1734, #1785). Its hole
+  // The active tab owns the window (#1734, #1785; Default too, #1856). Its hole
   // in the strip shade, key shadow and the outline it shares with its surface
   // are the inline SVG layers below, kept in step by the lazily loaded marks.
   useTabSeam(() => titlebarEl, () => [windowTabsManager.tabs, windowTabsManager.activeTabId, tabStripVisible]);
 
-  // Floating Islands: the strip starts past the surface's rounded top-left
-  // corner where its tabs can afford it (WindowTabBar, `tabStripStart`), so
-  // the first tab keeps its whole curve (#1785). Keyed on a boolean so
-  // re-applying the same layout does not detach and re-measure the strip.
+  // The strip starts past the surface's top-left corner where its tabs can
+  // afford it (WindowTabBar, `tabStripStart`), so the first tab keeps its
+  // whole curve and foot (#1785; Default's square corner too, #1856). Keyed
+  // on a boolean so re-applying the same layout does not detach and
+  // re-measure the strip.
   let alignedStart = $state<number | null>(null);
   // The strip itself mounts only with an active tab: measure once it is there.
-  const alignStrip = $derived(Boolean(titlebarEl) && layoutStore.islands && tabStripVisible && Boolean(windowTabsManager.activeTab));
+  const alignStrip = $derived(Boolean(titlebarEl) && layoutStore.tabSeam && tabStripVisible && Boolean(windowTabsManager.activeTab));
   $effect(() => {
     const bar = titlebarEl;
     if (!alignStrip || !bar) return;
@@ -105,7 +106,7 @@
 {#if showTitleBar}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="titlebar" data-region="titlebar" bind:this={titlebarEl} class:integrated={isMac && settingsStore.integratedTitleBar} onmousedown={handleDragStart}>
-    {#if layoutStore.islands}
+    {#if layoutStore.tabSeam}
       <!-- Strip shade with the active tab's hole (the tab's surface, the
            window body, shows through it), then the tab's lift and key shadow
            (light from the top left), cut out under the tab itself. -->
@@ -134,19 +135,11 @@
         </g>
       </svg>
     {/if}
-    <!-- The tab strip grows into the spacer. Their box is the strip's room:
-         nothing the strip lays out inside it (its start, its tabs) changes
-         its size, so WindowTabBar can observe it without feeding back into
-         its own observation (#1734). -->
-    <div class="tab-room" data-tab-room-box>
-      {#if windowTabsManager.activeTab}
-        <WindowTabBar {alignedStart} />
-      {/if}
-      <div class="spacer" data-tab-room></div>
-    </div>
-    {#if layoutStore.islands}
+    {#if layoutStore.tabSeam}
       <!-- The one outline (#1785): the tab, its fillets and the surface's top
-           edge and rounded top corners, a single seamless stroke. -->
+           edge and rounded top corners, a single seamless stroke. Before the
+           tabs, so a layout that lowers it (Default, #1856) has the tabs, and
+           the active tab's accent, paint over it. -->
       <svg class="tab-seam-layer tab-edge-layer" data-region="tab-edge" aria-hidden="true">
         <defs>
           <!-- Complementary columns of the strip's viewport. One path per
@@ -165,6 +158,16 @@
         </g>
       </svg>
     {/if}
+    <!-- The tab strip grows into the spacer. Their box is the strip's room:
+         nothing the strip lays out inside it (its start, its tabs) changes
+         its size, so WindowTabBar can observe it without feeding back into
+         its own observation (#1734). -->
+    <div class="tab-room" data-tab-room-box>
+      {#if windowTabsManager.activeTab}
+        <WindowTabBar {alignedStart} />
+      {/if}
+      <div class="spacer" data-tab-room></div>
+    </div>
 
     {#if windowControls}
       <div class="window-controls">

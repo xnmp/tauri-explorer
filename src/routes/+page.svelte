@@ -13,6 +13,7 @@
   import { vibrancyCoverageVariables } from "$lib/domain/vibrancy-opacity";
   import { layoutStore } from "$lib/state/layout.svelte";
   import "$lib/layouts/floating-islands.css";
+  import "$lib/layouts/default.css";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { resolveLaunchHomePath } from "$lib/state/window-title.svelte";
   import { markStartup, reportStartupReady } from "$lib/state/startup-timing";

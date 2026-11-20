@@ -34,6 +34,18 @@ export function isBuiltinLayoutId(value: unknown): value is BuiltinLayoutId {
 }
 
 /**
+ * Whether the active tab owns the window below the strip on this base: the
+ * strip is shaded except for a hole the tab and its curved feet cut, and one
+ * outline runs round the tab and along the strip's base (#1785, #1856). The
+ * title bar's tab seam layers and marks (`composables/tab-seam-marks.ts`)
+ * draw it; the base's stylesheet colours them. Floating Islands rounds the
+ * surface's top corners and adds a shadow; Default is the flat case.
+ */
+export function tabOwnsWindow(base: BuiltinLayoutId): boolean {
+  return base === FLOATING_ISLANDS_LAYOUT_ID || base === DEFAULT_LAYOUT_ID;
+}
+
+/**
  * Layout id for a settings blob written before layout themes existed.
  *
  * The island layout used to be implied by any of three switches: the

@@ -14,7 +14,7 @@ Five layouts are built in:
 | Floating Islands | `floating-islands` | Rounded panels floating over the window backdrop (#277, #434). Ships in the startup CSS. |
 | Hairline Ledger | `hairline-ledger` | Square, dense panels ruled by 1px hairlines, monospaced metadata and an inverted selection. Loaded on demand. |
 | Compact | `compact` | Default's surfaces with tight chrome (30px title bar, 32px toolbar, 20px status bar) and 22px Details rows (#1548). Loaded on demand. |
-| Soft Cards | `soft-cards` | Opaque rounded cards with 1px borders and no shadows, 6px apart on a slightly darker backdrop; split panes become separate cards (#1548). Loaded on demand. |
+| Soft Cards | `soft-cards` | Opaque 8px-rounded cards with 1px borders and no shadows on a slightly darker backdrop (a cool light grey on light themes). Every gap is 6px, the tab included; split panes, the preview, terminal and source-control panel become separate cards, and selected rows sit inset inside them (#1548, #1854). Loaded on demand. |
 
 Choose one in **Settings → Appearance → Layout**, with **Switch Layout...** in the
 command palette (live preview while you move through the list), or with
@@ -80,6 +80,7 @@ variables keep the Default value shown.
 | `--layout-app-surface` | native-material tint | Window body (`[data-region="app"]`) under native material. Unset, the page paints the theme tint (on macOS, the theme base at 15% on light themes and 55% on dark ones). Floating Islands sets its own (see below). |
 | `--layout-hairline` | `var(--divider)` | Rule colour between chrome regions. |
 | `--layout-row-height` | `32px` | Details row height, in `px`, clamped to 20–64. Virtual scrolling and marquee selection follow it. |
+| `--layout-row-inset` | `0px` | Horizontal inset of every Details row inside the file list. The column header's text moves in by the same amount, so columns stay aligned; a selection or focus outline then never touches the panel edge. |
 
 Colour theme variables (`--text-primary`, `--background-card`, `--accent`,
 `--surface-stroke`, `--divider`, ...) are available for building colours, which
@@ -110,7 +111,8 @@ names are internal and change without notice; `data-region` names do not.
 | `miller` | Miller columns strip | |
 | `panes` | The pane area | `data-split` when it holds more than one pane |
 | `pane` | One explorer pane | `data-active` on the focused pane of a split |
-| `split-divider` | Divider between split panes | `aria-orientation` |
+| `split-divider` | Divider between split panes | `aria-orientation`; `data-dragging` while it is being dragged |
+| `split-grip` | The grip drawn on a split divider | |
 | `toolbar` | Pane navigation bar | |
 | `address-bar` | Breadcrumb / path field | |
 | `file-list` | File list of any view | `data-view="details\|list\|tiles"` |

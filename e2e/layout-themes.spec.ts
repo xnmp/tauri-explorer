@@ -49,6 +49,28 @@ async function openSettings(page: Page) {
 
 const css = (page: Page, selector: string, property: string) =>
   page.locator(selector).first().evaluate((el, prop) => getComputedStyle(el).getPropertyValue(prop), property);
+const pseudoCss = (page: Page, selector: string, pseudo: string, property: string) =>
+  page.locator(selector).first().evaluate((el, [p, prop]) => getComputedStyle(el, p).getPropertyValue(prop), [pseudo, property]);
+const rect = (page: Page, selector: string) =>
+  page.locator(selector).first().evaluate(el => {
+    const r = el.getBoundingClientRect();
+    return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height };
+  });
+/** Channels of a computed `rgb()`/`rgba()`/`color(srgb ...)` colour, 0-255. */
+const rgb = (color: string): number[] => {
+  const srgb = color.match(/^color\(srgb ([\d.]+) ([\d.]+) ([\d.]+)/);
+  if (srgb) return srgb.slice(1, 4).map(value => Number(value) * 255);
+  return color.match(/[\d.]+/g)!.slice(0, 3).map(Number);
+};
+/** Name cell's left edge relative to the Name header: the rows' 3px
+ *  selection edge, in Default and in any layout that insets its rows. */
+const DEFAULT_NAME_CELL_OFFSET = 3;
+const nameCellOffset = (page: Page) =>
+  page.evaluate(() => {
+    const header = document.querySelector(".details-view .name-column")!.getBoundingClientRect().left;
+    const cell = document.querySelector('.details-view [data-region="row"] [data-cell="name"]')!.getBoundingClientRect().left;
+    return cell - header;
+  });
 const firstRowHeight = (page: Page) =>
   page.locator(".details-view:visible .entry-item").first().evaluate(el => el.getBoundingClientRect().height);
 
@@ -115,19 +137,37 @@ test.describe("Layout themes (#1306)", () => {
     await page.screenshot({ path: "screenshots/feat/compact-soft-cards-layouts/compact-details.png" });
   });
 
-  test("Soft Cards paints opaque bordered cards without shadows (#1548)", async ({ page }) => {
+  test("Soft Cards spaces the tab and cards evenly, 6px apart (#1548, #1854)", async ({ page }) => {
     await page.setViewportSize({ width: 1100, height: 700 });
     await seedSettings(page, { layoutTheme: "soft-cards", theme: "dark" });
     await page.goto(HOME_URL);
     await waitForEntries(page);
     await expect(page.locator("html")).toHaveAttribute("data-layout", "soft-cards");
 
-    expect(await css(page, ".main-content", "gap")).toBe("6px");
+    const app = await rect(page, '[data-region="app"]');
+    const tab = await rect(page, '[data-region="tab"][aria-selected="true"]:visible');
+    const sidebar = await rect(page, ".sidebar-container");
+    const panes = await rect(page, '[data-region="panes"]:visible');
+    // The tab sits 6px from the window's top and left edges, so it lines up
+    // with the sidebar card, and the cards sit 6px below it, 6px apart and
+    // 6px from the window's right edge.
+    expect(tab.top - app.top).toBe(6);
+    expect(tab.left - app.left).toBe(6);
+    expect(sidebar.left - app.left).toBe(6);
+    for (const card of [sidebar, panes]) expect(card.top - tab.bottom).toBe(6);
+    expect(panes.left - sidebar.right).toBe(6);
+    expect(app.right - panes.right).toBe(6);
+    expect((await rect(page, '[data-region="status-bar"]')).top).toBeGreaterThanOrEqual(panes.bottom);
+
     for (const card of [".sidebar-container", '[data-region="panes"]']) {
-      expect(parseFloat(await css(page, card, "border-top-left-radius"))).toBe(6);
+      expect(parseFloat(await css(page, card, "border-top-left-radius"))).toBe(8);
       expect(await css(page, card, "border-top-width")).toBe("1px");
       expect(await css(page, card, "box-shadow")).toBe("none");
+      // Dark themes catch a faint highlight along each card's top edge.
+      expect(await pseudoCss(page, card, "::after", "box-shadow")).toMatch(/rgba\(255, 255, 255, 0\.05\) 0px 1px 0px 0px inset/);
     }
+    // The address bar is a small rounded field, not a pill.
+    expect(parseFloat(await css(page, '[data-region="address-bar"]:visible', "border-top-left-radius"))).toBeLessThanOrEqual(6);
     // Title and status bars sit on the backdrop; the sticky column header
     // stays opaque so scrolled rows never show through it.
     expect(await css(page, '[data-region="status-bar"]', "background-color")).toBe("rgba(0, 0, 0, 0)");
@@ -135,20 +175,82 @@ test.describe("Layout themes (#1306)", () => {
     expect(header).not.toBe("rgba(0, 0, 0, 0)");
     expect(header).not.toMatch(/rgba\(.*, 0\)$/);
     await expect(page.locator('[data-region="tab-fillet"]:visible')).toHaveCount(0);
-    // The cards sit a gap below the tab strip, not flush against it (#1848).
-    const tabBottom = await page.locator('[data-region="tab"][aria-selected="true"]:visible').evaluate(el => el.getBoundingClientRect().bottom);
-    for (const card of [".sidebar-container", '[data-region="panes"]:visible']) {
-      const top = await page.locator(card).first().evaluate(el => el.getBoundingClientRect().top);
-      expect(top - tabBottom).toBeGreaterThanOrEqual(6);
-    }
-    await page.screenshot({ path: "screenshots/feat/compact-soft-cards-layouts/soft-cards-details.png" });
-    await page.screenshot({ path: "screenshots/fix/soft-cards-top-gap/soft-cards-top-gap.png", clip: { x: 0, y: 0, width: 520, height: 140 } });
+    await page.locator(".entry-item:visible").nth(1).click();
+    await page.mouse.move(600, 650);
+    await page.screenshot({ path: "screenshots/feat/soft-cards-polish/soft-cards-dark.png" });
+  });
+
+  test("Soft Cards gives light themes a cool light backdrop and no top highlight (#1854)", async ({ page }) => {
+    await page.setViewportSize({ width: 1100, height: 700 });
+    await seedSettings(page, { layoutTheme: "soft-cards", theme: "light" });
+    await page.goto(HOME_URL);
+    await waitForEntries(page);
+    await expect(page.locator("html")).toHaveAttribute("data-layout", "soft-cards");
+    const backdrop = rgb(await css(page, '[data-region="app"]', "background-color"));
+    // The backdrop the light theme had before: its base mixed 14% toward black.
+    const base = rgb(await page.evaluate(() => {
+      const probe = document.createElement("div");
+      probe.style.color = "var(--background-solid)";
+      document.body.append(probe);
+      const color = getComputedStyle(probe).color;
+      probe.remove();
+      return color;
+    }));
+    const blackMix = base.map(channel => channel * 0.86);
+    backdrop.forEach((channel, i) => expect(channel).toBeGreaterThan(blackMix[i] + 10));
+    // Lighter than the black mix, a step below the card, and cool (blue-leaning).
+    expect(backdrop[2]).toBeGreaterThan(backdrop[0]);
+    expect(Math.max(...backdrop)).toBeLessThan(250);
+    expect(await pseudoCss(page, '[data-region="panes"]', "::after", "box-shadow")).toMatch(/^rgba\(0, 0, 0, 0\)/);
+    await page.locator(".entry-item:visible").nth(1).click();
+    await page.mouse.move(600, 650);
+    await page.screenshot({ path: "screenshots/feat/soft-cards-polish/soft-cards-light.png" });
+  });
+
+  for (const variant of VIEW_VARIANTS) {
+    test(`Soft Cards insets the selected row inside the pane card in ${variant.name} view (#1854)`, async ({ page }) => {
+      await page.setViewportSize({ width: 1100, height: 700 });
+      // Details columns that fit the card, so both row ends are in view.
+      await seedSettings(page, {
+        layoutTheme: "soft-cards", theme: "dark", folderPeek: !variant.classic,
+        columnVisibility: { prompt: false, date: true, type: true, size: true, length: false, resolution: false, opened: false },
+      });
+      await page.goto(HOME_URL);
+      await waitForEntries(page);
+      if (variant.viewMode !== "details") await switchViewMode(page, variant.viewMode);
+      await expect(page.locator("html")).toHaveAttribute("data-layout", "soft-cards");
+      await page.locator(".entry-item:visible").first().click();
+      const selected = page.locator('[data-region="row"][aria-selected="true"]:visible').first();
+      await expect(selected).toBeVisible();
+      // Keyboard focus draws its ring on the same, inset box.
+      await page.keyboard.press("ArrowDown");
+      await page.keyboard.press("ArrowUp");
+      const focused = page.locator('[data-region="row"][aria-selected="true"]:visible').first();
+      const card = await rect(page, '[data-region="panes"]:visible');
+      const row = await focused.evaluate(el => { const r = el.getBoundingClientRect(); return { left: r.left, right: r.right }; });
+      expect(row.left - card.left).toBeGreaterThanOrEqual(4);
+      expect(card.right - row.right).toBeGreaterThanOrEqual(4);
+      expect(parseFloat(await focused.evaluate(el => getComputedStyle(el).borderTopLeftRadius))).toBe(4);
+      // Selection is an accent wash with a thin accent ring, not a side bar.
+      expect(await focused.evaluate(el => getComputedStyle(el).boxShadow)).toMatch(/0px 0px 0px 1px inset/);
+      expect(await focused.evaluate(el => getComputedStyle(el).backgroundColor)).not.toBe("rgba(0, 0, 0, 0)");
+      if (variant.viewMode === "details") {
+        // The header text moves with the inset rows: columns keep Default's
+        // alignment.
+        expect(await nameCellOffset(page)).toBe(DEFAULT_NAME_CELL_OFFSET);
+      }
+    });
+  }
+
+  test("Soft Cards draws split panes, preview, terminal and source control as cards (#1548, #1854)", async ({ page }) => {
+    await page.setViewportSize({ width: 1400, height: 800 });
+    await seedSettings(page, { layoutTheme: "soft-cards", theme: "dark", showPreviewPane: true, showGitStatus: true, showScmPanel: false });
+    await page.goto(HOME_URL);
+    await waitForEntries(page);
+    await expect(page.locator("html")).toHaveAttribute("data-layout", "soft-cards");
 
     // A split turns each pane into its own card, separated by the gap.
-    await page.evaluate(async () => {
-      const { windowTabsManager } = await (new Function("return import('/src/lib/state/window-tabs.svelte.ts')"))();
-      windowTabsManager.splitPane("right");
-    });
+    await runPaletteCommand(page, "Split Pane Right");
     const panes = page.locator('.pane-tree:not(.retained) [data-region="pane"]');
     await expect(panes).toHaveCount(2);
     await expect(page.locator('[data-region="panes"][data-split]:visible')).toHaveCount(1);
@@ -158,12 +260,85 @@ test.describe("Layout themes (#1306)", () => {
       return { left: r.left, right: r.right, radius: parseFloat(getComputedStyle(el).borderTopLeftRadius), border: getComputedStyle(el).borderTopWidth };
     }));
     for (const box of boxes) {
-      expect(box.radius).toBe(6);
+      expect(box.radius).toBe(8);
       expect(box.border).toBe("1px");
     }
-    expect(boxes[1].left - boxes[0].right).toBeGreaterThanOrEqual(6);
+    expect(boxes[1].left - boxes[0].right).toBe(6);
+
+    // The preview is a card of the same kind, a gap beside the panes.
+    const preview = page.locator('[data-region="preview"]:visible');
+    await expect(preview).toHaveCount(1);
+    const previewBox = await rect(page, '[data-region="preview"]:visible');
+    expect(previewBox.left - boxes[1].right).toBe(6);
+    expect(parseFloat(await css(page, '[data-region="preview"]:visible', "border-top-left-radius"))).toBe(8);
+    expect(await css(page, '[data-region="preview"]:visible', "border-top-width")).toBe("1px");
+
+    // The split grip shows only while the pointer is over the divider.
+    const divider = page.locator('[data-region="split-divider"]:visible').first();
+    const grip = divider.locator('[data-region="split-grip"]');
+    await page.mouse.move(600, 650);
+    await expect.poll(() => grip.evaluate(el => getComputedStyle(el).opacity)).toBe("0");
+    await divider.hover();
+    await expect.poll(() => grip.evaluate(el => getComputedStyle(el).opacity)).toBe("1");
+    await page.mouse.move(600, 650);
+    await expect.poll(() => grip.evaluate(el => getComputedStyle(el).opacity)).toBe("0");
+    // Click near the name: a centred click would scroll the narrow pane sideways.
+    await page.locator('.pane-tree:not(.retained) .entry-item:visible').nth(1).click({ position: { x: 80, y: 10 } });
+    await page.mouse.move(600, 690);
     await page.waitForTimeout(300);
-    await page.screenshot({ path: "screenshots/feat/compact-soft-cards-layouts/soft-cards-split.png" });
+    await page.screenshot({ path: "screenshots/feat/soft-cards-polish/soft-cards-split.png" });
+
+    // The grip also stays shown while the split is dragged, wherever the pointer is.
+    const dividerBox = (await divider.boundingBox())!;
+    await page.mouse.move(dividerBox.x + dividerBox.width / 2, dividerBox.y + dividerBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(dividerBox.x - 20, dividerBox.y + dividerBox.height - 40, { steps: 4 });
+    await expect(divider).toHaveAttribute("data-dragging", /.*/);
+    await expect.poll(() => grip.evaluate(el => getComputedStyle(el).opacity)).toBe("1");
+    await page.mouse.up();
+    await expect(divider).not.toHaveAttribute("data-dragging", /.*/);
+    await page.mouse.move(600, 650);
+    await expect.poll(() => grip.evaluate(el => getComputedStyle(el).opacity)).toBe("0");
+
+    // The terminal docks under the panes as its own card, a gap below them.
+    await runPaletteCommand(page, "Toggle Terminal");
+    const terminal = page.locator('[data-region="terminal"]:visible');
+    await expect(terminal).toHaveCount(1);
+    const terminalBox = await rect(page, '[data-region="terminal"]:visible');
+    const main = await rect(page, '[data-region="main"]');
+    expect(terminalBox.top - main.bottom).toBe(6);
+    expect(terminalBox.left).toBe(6);
+    expect(parseFloat(await css(page, '[data-region="terminal"]:visible', "border-top-left-radius"))).toBe(8);
+    expect(await css(page, '[data-region="terminal"]:visible', "border-top-width")).toBe("1px");
+    await runPaletteCommand(page, "Toggle Terminal");
+
+    // Source control sits in the pane as an inset card.
+    await page.getByText("Documents", { exact: true }).first().dblclick();
+    await page.getByText("project", { exact: true }).first().dblclick();
+    await runPaletteCommand(page, "Toggle Source Control Panel");
+    const scm = page.locator('[data-region="scm"]:visible').first();
+    await expect(scm).toBeVisible();
+    const scmBox = await scm.evaluate(el => { const r = el.getBoundingClientRect(); return { left: r.left, top: r.top, radius: parseFloat(getComputedStyle(el).borderTopLeftRadius), border: getComputedStyle(el).borderTopWidth }; });
+    const scmPane = await scm.evaluate(el => el.closest('[data-region="pane"]')!.getBoundingClientRect().left);
+    expect(scmBox.radius).toBe(8);
+    expect(scmBox.border).toBe("1px");
+    expect(scmBox.left - scmPane).toBeGreaterThanOrEqual(6);
+  });
+
+  test("Default keeps square, edge-to-edge panels with the split grip always shown (#1854)", async ({ page }) => {
+    await page.setViewportSize({ width: 1100, height: 700 });
+    await page.goto(HOME_URL);
+    await waitForEntries(page);
+    await expect(page.locator("html")).toHaveAttribute("data-layout", "default");
+    expect((await rect(page, '[data-region="titlebar"]')).height).toBe(38);
+    const row = await rect(page, ".details-view:visible .entry-item");
+    const list = await rect(page, '[data-region="file-list"]:visible');
+    expect(row.left).toBe(list.left);
+    expect(await nameCellOffset(page)).toBe(DEFAULT_NAME_CELL_OFFSET);
+    await runPaletteCommand(page, "Split Pane Right");
+    const grip = page.locator('[data-region="split-divider"]:visible [data-region="split-grip"]').first();
+    await expect(grip).toBeVisible();
+    expect(Number(await grip.evaluate(el => getComputedStyle(el).opacity))).toBeGreaterThan(0);
   });
 
   test("layout and colour theme change independently", async ({ page }) => {

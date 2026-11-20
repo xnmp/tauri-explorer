@@ -270,7 +270,7 @@
       <!-- data-row-path/-kind: the row's identity for a drag's spring-loaded
            peek (#1242), whose hit test can land on this wrapper at a row's
            pixel-snapped edge; hover and drop resolve it like the row (spring-rows.ts). -->
-      <div role="row" aria-rowindex={index + 1} data-row-path={row.kind === "entry" ? row.entry.path : row.kind === "peek-state" ? row.parentPath : undefined}
+      <div role="row" class="details-row" aria-rowindex={index + 1} data-row-path={row.kind === "entry" ? row.entry.path : row.kind === "peek-state" ? row.parentPath : undefined}
         data-row-kind={row.kind === "entry" ? (row.entry.kind === "directory" ? "directory" : "file") : row.kind === "peek-state" ? "state" : undefined}
         aria-level={row.kind === "entry" && explorer.peekEnabled ? row.depth + 1 : undefined}
         aria-expanded={row.kind === "lineage-group" ? row.expanded : row.kind === "entry" && explorer.peekEnabled && explorer.canPeekEntry(row.entry) ? row.expanded : undefined}
@@ -302,6 +302,7 @@
 </div>
 
 <style>
+  .details-row { margin-inline: var(--layout-row-inset, 0px); }
   .peek-state { position: relative; height: var(--details-row-height, 32px); display: flex; align-items: center; color: var(--text-tertiary); font-size: 13px; box-sizing: border-box; }
   .details-view {
     display: flex;
@@ -321,7 +322,10 @@
   .column-headers {
     display: grid;
     gap: 0;
-    padding: 6px 16px;
+    /* A layout's row inset (--layout-row-inset, #1854) shifts every row in
+       from the list's edges; the header text shifts with it so the columns
+       stay aligned. Unset, rows run edge to edge. */
+    padding: 6px calc(16px + var(--layout-row-inset, 0px));
     background: var(--layout-chrome-surface, var(--background-solid));
     border-bottom: 1px solid var(--layout-hairline, var(--divider));
     position: sticky;

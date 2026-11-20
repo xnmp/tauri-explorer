@@ -92,4 +92,31 @@ describe("parsePathInput", () => {
     expect(parsePathInput("", null)).toEqual({ parentDir: "/", prefix: "" });
     expect(parsePathInput("/", null)).toEqual({ parentDir: "/", prefix: "" });
   });
+
+  // #1597: a Windows path typed with backslashes listed "/" and filtered by
+  // the whole input, so no suggestions ever appeared.
+  it("splits Windows drive paths on backslashes", () => {
+    expect(parsePathInput("C:\\Users\\fo", null)).toEqual({
+      parentDir: "C:\\Users\\",
+      prefix: "fo",
+    });
+    expect(parsePathInput("C:\\Users\\", null)).toEqual({ parentDir: "C:\\Users\\", prefix: "" });
+    expect(parsePathInput("C:\\Pro", null)).toEqual({ parentDir: "C:\\", prefix: "Pro" });
+    expect(parsePathInput("C:/Users/fo", null)).toEqual({ parentDir: "C:/Users/", prefix: "fo" });
+  });
+
+  it("lists the drive root for a bare drive letter", () => {
+    expect(parsePathInput("D:", null)).toEqual({ parentDir: "D:/", prefix: "" });
+  });
+
+  it("splits UNC paths on backslashes", () => {
+    expect(parsePathInput("\\\\server\\share\\Do", null)).toEqual({
+      parentDir: "\\\\server\\share\\",
+      prefix: "Do",
+    });
+  });
+
+  it("keeps a backslash in a POSIX name as part of the prefix", () => {
+    expect(parsePathInput("/home/a\\b", null)).toEqual({ parentDir: "/home/", prefix: "a\\b" });
+  });
 });

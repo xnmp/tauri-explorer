@@ -13,6 +13,7 @@
   import { vibrancyCoverageVariables } from "$lib/domain/vibrancy-opacity";
   import { layoutStore } from "$lib/state/layout.svelte";
   import "$lib/layouts/floating-islands.css";
+  import "$lib/layouts/default.css";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { resolveLaunchHomePath } from "$lib/state/window-title.svelte";
   import { markStartup, reportStartupReady } from "$lib/state/startup-timing";
@@ -465,8 +466,11 @@
      Each surface paints ONE colour: its opaque colour on Translucency off
      (its fill over the window base, composited) at that coverage. So every
      surface lets the same share of the material through and keeps its
-     opaque colour relationships to its neighbours: the title bar, tab and
-     pane one colour, the sidebar its own. Nothing is painted under it (the
+     opaque colour relationships to its neighbours: the title bar (the
+     active tab's hole in the strip shade), sidebar, toolbar and pane are
+     one surface (layouts/default.css, #1856), the preview and status bar
+     their own tones. The strip shade lies on the title bar's surface as on
+     an opaque window: shading is its design. Nothing is painted under it (the
      window body is transparent), so nothing compounds; and a surface's
      border sits on its own background, as on an opaque window, so no
      border is a slit of bare material.
@@ -482,7 +486,6 @@
     :global(:root[data-material]:is([data-layout-base="default"], [data-layout-base="compact"])) {
       --material-base-opaque: rgb(from color-mix(in srgb, rgb(from var(--background-mica, transparent) r g b / min(1, alpha / (999 * max(0.0001, 1 - alpha)))) 99.9%, var(--background-solid)) r g b / 1);
       --material-pane-opaque: rgb(from color-mix(in srgb, rgb(from var(--pane-fill) r g b / min(1, alpha / (999 * max(0.0001, 1 - alpha)))) 99.9%, var(--material-base-opaque)) r g b / 1);
-      --material-sidebar-opaque: rgb(from color-mix(in srgb, rgb(from var(--sidebar-fill) r g b / min(1, alpha / (999 * max(0.0001, 1 - alpha)))) 99.9%, var(--material-base-opaque)) r g b / 1);
       --material-statusbar-opaque: rgb(from color-mix(in srgb, rgb(from var(--statusbar-fill) r g b / min(1, alpha / (999 * max(0.0001, 1 - alpha)))) 99.9%, var(--material-base-opaque)) r g b / 1);
       --material-preview-opaque: rgb(from color-mix(in srgb, rgb(from var(--preview-fill) r g b / min(1, alpha / (999 * max(0.0001, 1 - alpha)))) 99.9%, var(--material-base-opaque)) r g b / 1);
       /* The pane's surface is its frame's: an inactive split pane dims its
@@ -490,8 +493,9 @@
          and let more of the material through. */
       --pane-frame-surface: rgb(from var(--material-pane-opaque) r g b / var(--material-surface-coverage, 0.82));
       --pane-surface: transparent;
-      --titlebar-surface: var(--pane-frame-surface);
-      --sidebar-surface: rgb(from var(--material-sidebar-opaque) r g b / var(--material-surface-coverage, 0.82));
+      /* The surface the active tab owns (layouts/default.css): the title
+         bar and sidebar paint it, the pane's frame colour at its coverage. */
+      --default-surface: var(--layout-surface, var(--pane-frame-surface));
       --statusbar-surface: rgb(from var(--material-statusbar-opaque) r g b / var(--material-surface-coverage, 0.82));
       --preview-surface: rgb(from var(--material-preview-opaque) r g b / var(--material-surface-coverage, 0.82));
       /* The gap between split panes is bare window. */
@@ -634,7 +638,13 @@
 
   /* Fullscreen is inside this stacking context. It must cover the later
      status bar (1) and terminal resize handle (2), below root dialogs (#970). */
-  :global([data-preview-fullscreen]) .main-content {
+  /* Likewise while a full-window overlay opened from inside it is mounted (a
+     dialog, or a menu's dismissing backdrop: composables/window-overlay.ts).
+     Above it otherwise sit the title bar (Floating Islands lifts it over the
+     islands, and the active tab is lifted over its neighbours) and the status
+     bar, which would stay sharp and take clicks through the overlay (#1859). */
+  :global([data-preview-fullscreen]) .main-content,
+  :global([data-window-overlay-open]) .main-content {
     z-index: 3;
   }
 

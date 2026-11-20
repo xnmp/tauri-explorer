@@ -38,6 +38,16 @@ Opacity slider seemed to do nothing in the site demo.
   stays v0.29's below 100%, and only 100% changed (now solid).
 - **The 100% end did not reach opaque** for light flat layouts (window tint
   max 0.4) or for the islands' body, so "most solid" still showed wallpaper.
+- **When dev made the active tab own the window in Default and Compact
+  (#1856, #1858), `layouts/default.css` painted the title bar and sidebar
+  with its own `--default-surface`** (the translucent pane fill), outranking
+  the components' material variables. Under a material that is a second
+  coverage again; the material rules now redefine `--default-surface` as the
+  pane frame's composited colour. The strip shade is an SVG layer over the
+  title bar's surface with the tab as a hole, so under a material the strip
+  hides a little more than the surface (0.89 vs 0.82 dark at 55%), as Floating
+  Islands' strip shade does; a probe in the title bar now lands on the strip,
+  not the surface.
 - **Site demo:** the page's frost behind the iframe was raw saturated
   wallpaper rather than an approximation of the OS material. (Host themes'
   opaque cards need no translucent stand-in once surfaces fade their opaque

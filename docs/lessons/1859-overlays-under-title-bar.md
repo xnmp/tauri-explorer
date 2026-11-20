@@ -1,0 +1,53 @@
+# Overlays inside the window body stayed under the title bar (#1859)
+
+## Symptom
+
+In Floating Islands, with a pane's delete confirmation (or any menu opened
+from a pane, the sidebar or the toolbar) showing, the title bar stayed sharp
+above the dialog's dimmed backdrop: tabs, the new-tab button and the window
+controls took clicks through it. In Default only the active tab did, and the
+status bar in both.
+
+## Cause
+
+`.main-content` is a stacking context (`position: relative; z-index: 1`,
+#970). Every overlay mounted inside it is confined to that level, whatever
+its own z-index (`--z-modal` is 1000). Floating Islands lifts the title bar
+to z-index 2 so its tab seam paints over the islands; the active tab carries
+z-index 2 in every layout (`window-tab-bar.css`) and, in Default's bar (no
+stacking context), competes with `.main-content` directly. The status bar is
+a later sibling at z-index 1.
+
+## Fix
+
+Each full-window overlay root mounted inside the window body takes the
+`windowOverlay` action (`composables/window-overlay.ts`): `Modal.svelte`'s
+overlay (not a pane-scoped one), and the dismissing backdrops of the context
+menu, Details column menu, caret picker, sidebar section menu, navigation
+history menu, the git graph's menus and its action prompts (rename, create
+branch/tag, pull offer, reset and delete; `GitGraphDialogs.svelte`, which an
+independent review caught missing). While any is mounted the document root
+carries `data-window-overlay-open`, and `+page.svelte` raises `.main-content`
+to z-index 3, as it already did for a fullscreen preview, so the overlay
+covers the title bar and status bar and stays below root dialogs.
+
+The first version tagged the overlays with an attribute and raised
+`.main-content:has([data-window-overlay])`. In WebKit that made tab switching
+and scrolling in a 5000-entry folder about 7% slower (interleaved runs,
+medians 10.65s vs 9.87s): WebKit re-evaluates `:has()` on every mutation
+inside the window body. Chromium showed no cost. Prefer explicit state to a
+`:has()` over a large, busy subtree.
+
+Raising main only while an overlay is open keeps the title bar's own
+dropdowns (tab search, tab menu) above the window body the rest of the time.
+In Floating Islands the tab's soft key shadow just below the bar then sits
+under the islands (at most 4/255 per channel), only while the overlay shows.
+
+## Rule
+
+A new overlay mounted under `.main-content` that covers the window (a
+backdrop with `position: fixed; inset: 0`) must take `use:windowOverlay`.
+`e2e/overlay-stacking.spec.ts` hit-tests every tab, window control and the
+status bar under five representative overlays (delete dialog, column menu,
+context menu, sidebar section menu, git graph prompt) in Floating Islands and
+Default.

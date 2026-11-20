@@ -103,31 +103,35 @@ test.describe("theme colours over the macOS material (#1733, #1789)", () => {
    * is screenshotted over a black and a white backdrop: over black it shows
    * colour x alpha, over white that plus (1 - alpha) x 255, which gives the
    * share of the material it hides (alpha) and its colour. Every surface must
-   * hide the same share and keep its opaque colour: the tab, title bar,
-   * navigation bar and column header are the pane's colour, the sidebar its own.
+   * hide the same share and keep its opaque colour: the tab (its hole in the
+   * strip shade), navigation bar, column header and sidebar are the pane's
+   * surface (#1856). The strip shade lies on that surface as on an opaque
+   * window, so the strip hides a little more and keeps its opaque shading.
    */
   const REGIONS = {
     tab: '[data-region="tab"][aria-selected="true"]',
-    titlebar: '[data-region="titlebar"]',
+    strip: '[data-region="titlebar"]',
     navbar: '[data-region="toolbar"]',
     header: ".column-headers",
     pane: '[data-region="pane"]',
     sidebar: '[data-region="sidebar-body"]',
   } as const;
   type Region = keyof typeof REGIONS;
+  /** Every region but the shaded strip: one surface, one share. */
+  const SURFACES = (Object.keys(REGIONS) as Region[]).filter((region) => region !== "strip");
 
   /** A point inside each region away from text and icons. */
   async function probePoints(page: Page): Promise<Record<Region, { x: number; y: number }>> {
     const box = async (selector: string) => (await page.locator(selector).first().boundingBox())!;
     const tab = await box(REGIONS.tab);
-    const titlebar = await box(REGIONS.titlebar);
+    const titlebar = await box(REGIONS.strip);
     const navbar = await box(REGIONS.navbar);
     const header = await box(REGIONS.header);
     const pane = await box(REGIONS.pane);
     const sidebar = await box(REGIONS.sidebar);
     return {
       tab: { x: tab.x + 6, y: tab.y + tab.height - 4 },
-      titlebar: { x: titlebar.x + titlebar.width * 0.45, y: titlebar.y + titlebar.height / 2 },
+      strip: { x: titlebar.x + titlebar.width * 0.45, y: titlebar.y + titlebar.height / 2 },
       navbar: { x: navbar.x + 3, y: navbar.y + navbar.height / 2 },
       header: { x: header.x + header.width - 6, y: header.y + 3 },
       pane: { x: pane.x + pane.width * 0.6, y: pane.y + pane.height - 20 },
@@ -158,18 +162,23 @@ test.describe("theme colours over the macOS material (#1733, #1789)", () => {
       await expect(page.locator("html")).toHaveAttribute("data-material", "vibrancy");
       const glass = await surfaces(page);
 
-      for (const region of Object.keys(REGIONS) as Region[]) {
+      for (const region of SURFACES) {
         // One share of the material everywhere: no surface compounds another.
         expect(glass[region].alpha, region).toBeGreaterThan(0.8);
         expect(glass[region].alpha, region).toBeLessThan(0.84);
       }
-      // The tab, title bar, navigation bar and column header ARE the pane.
-      for (const region of ["tab", "titlebar", "navbar", "header"] as const) {
+      // The tab, navigation bar, column header and sidebar ARE the pane.
+      for (const region of ["tab", "navbar", "header", "sidebar"] as const) {
         expect(near(glass[region].rgb, glass.pane.rgb), region).toBeLessThanOrEqual(3);
       }
-      // Each surface keeps its opaque colour (the sidebar its own tone).
+      // Each surface keeps its opaque colour.
       expect(near(glass.pane.rgb, opaque.pane.rgb)).toBeLessThanOrEqual(3);
       expect(near(glass.sidebar.rgb, opaque.sidebar.rgb)).toBeLessThanOrEqual(3);
+      // The strip is that surface shaded: a little more of the material hidden,
+      // still translucent, and close to its opaque shading.
+      expect(glass.strip.alpha).toBeGreaterThanOrEqual(glass.pane.alpha);
+      expect(glass.strip.alpha).toBeLessThan(0.95);
+      expect(near(glass.strip.rgb, opaque.strip.rgb)).toBeLessThanOrEqual(8);
     });
   }
 
@@ -179,12 +188,13 @@ test.describe("theme colours over the macOS material (#1733, #1789)", () => {
     await applySettingsAndReload(page, { translucencyOpacity: 100 });
     await waitForEntries(page);
     const solid = await surfaces(page);
-    for (const region of Object.keys(REGIONS) as Region[]) {
+    for (const region of SURFACES) {
       // Never less than the panes hid before #1789 (0.68 dark, 0.733 light).
       expect(glass[region].alpha, region).toBeGreaterThan(0.72);
       expect(glass[region].alpha, region).toBeLessThan(0.76);
-      expect(solid[region].alpha, region).toBeGreaterThan(0.98);
     }
+    expect(glass.strip.alpha).toBeGreaterThanOrEqual(glass.pane.alpha);
+    for (const region of Object.keys(REGIONS) as Region[]) expect(solid[region].alpha, region).toBeGreaterThan(0.98);
     // Translucency on does not paint the window body itself: the surfaces do.
     expect(await page.evaluate(() => getComputedStyle(document.querySelector(".explorer")!).backgroundColor)).toBe("rgba(0, 0, 0, 0)");
     // Reduced transparency makes the window solid, the body included

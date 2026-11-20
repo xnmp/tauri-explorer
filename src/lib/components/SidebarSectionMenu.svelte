@@ -5,6 +5,7 @@
 -->
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import { windowOverlay } from "$lib/composables/window-overlay";
 
   let { position, onclose, label, children }: {
     position: { x: number; y: number };
@@ -16,6 +17,7 @@
 
 <div
   class="section-menu-backdrop"
+  use:windowOverlay
   onclick={onclose}
   oncontextmenu={(e) => { e.preventDefault(); onclose(); }}
   onkeydown={(e) => { if (e.key === 'Escape') onclose(); }}

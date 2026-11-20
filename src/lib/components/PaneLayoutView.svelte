@@ -55,6 +55,7 @@
     <div
       class="pane-divider"
       data-region="split-divider"
+      data-dragging={dividers.activeId === node.id || undefined}
       data-pane-motion={`split:${node.id}`}
       onpointerdown={(event) => dividers.start(event, node)}
       onpointermove={dividers.move}
@@ -71,7 +72,7 @@
       aria-orientation={node.direction === "row" ? "vertical" : "horizontal"}
       aria-label="Resize panes"
     >
-      <div class="divider-handle"></div>
+      <div class="divider-handle" data-region="split-grip"></div>
     </div>
 
     <div class="split-child second" style:--split-min={`${item.secondMinimum}px`}></div>

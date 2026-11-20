@@ -1,6 +1,6 @@
 <!--
   GitGraphBanners — the strips above the graph header: the PR action
-  toolbar and status (#1082), the standing detached-HEAD banner (#524) and
+  status (#1082; creation lives in the branch pill menu, #1847), the standing detached-HEAD banner (#524) and
   the cancellable network-operation banner (#528, ADR 0006).
 -->
 <script lang="ts">
@@ -12,22 +12,22 @@
 
   interface Props {
     repoPath: string;
-    headBranch: string | null;
     prSession: GitPrSession;
     /** Whether the PR confirmation dialog is open (it shows errors itself). */
     prDialogOpen: boolean;
     detachedIndicator: DetachedHeadIndicator | null;
     networkOperation: GitNetworkOperation | null;
-    onCreatePr: () => void;
   }
 
   const {
-    repoPath, headBranch, prSession, prDialogOpen, detachedIndicator, networkOperation, onCreatePr,
+    repoPath, prSession, prDialogOpen, detachedIndicator, networkOperation,
   }: Props = $props();
 
   const prActionBusy = $derived(prSession.actionBusy);
   const prActionResult = $derived(prSession.actionResult);
   const prActionError = $derived(prSession.actionError);
+  const showResult = $derived(Boolean(prActionResult) && !prActionBusy);
+  const showError = $derived(Boolean(prActionError) && !prDialogOpen);
 
   async function cancelNetworkOperation(): Promise<void> {
     try {
@@ -38,18 +38,20 @@
   }
 </script>
 
-<div class="pr-actions-toolbar">
-  <button type="button" class="prompt-btn" disabled={!headBranch || prActionBusy || prSession.prsByBranch.has(headBranch)} onclick={onCreatePr} title={headBranch ? `Create a PR for ${headBranch}` : "Check out a branch to create a PR"}>Create PR</button>
-  {#if prActionBusy}<span role="status">GitHub PR action in progress…</span>{/if}
-  {#if prActionResult && !prActionBusy}
-    <span role="status" class="pr-actions-status">
-      {#if prActionResult.action === "create"}PR created: {prActionResult.output}
-      {:else if prActionResult.action === "merge"}Merge requested for PR #{prActionResult.prNumber}; GitHub may queue it.
-      {:else}PR #{prActionResult.prNumber} approved{/if}
-    </span>
-  {/if}
-  {#if prActionError && !prDialogOpen}<span role="alert" class="pr-detail-error">{prActionError}</span>{/if}
-</div>
+{#if prActionBusy || showResult || showError}
+  <!-- Status only: no strip at all when there is nothing to report. -->
+  <div class="pr-actions-toolbar" data-testid="git-graph-pr-status">
+    {#if prActionBusy}<span role="status">GitHub PR action in progress…</span>{/if}
+    {#if showResult && prActionResult}
+      <span role="status" class="pr-actions-status">
+        {#if prActionResult.action === "create"}PR created: {prActionResult.output}
+        {:else if prActionResult.action === "merge"}Merge requested for PR #{prActionResult.prNumber}; GitHub may queue it.
+        {:else}PR #{prActionResult.prNumber} approved{/if}
+      </span>
+    {/if}
+    {#if showError}<span role="alert" class="pr-detail-error">{prActionError}</span>{/if}
+  </div>
+{/if}
 {#if detachedIndicator}
   <!-- Standing detached-HEAD banner (#524): outside the header row so it
        never disturbs column layout, and outside every menu so it lasts as
@@ -159,14 +161,4 @@
   }
 
   .pr-detail-error { color: var(--system-critical-text, var(--system-critical)); }
-
-  .prompt-btn {
-    padding: 5px 12px;
-    background: var(--subtle-fill-secondary, transparent);
-    border: 1px solid var(--divider);
-    border-radius: 6px;
-    color: var(--text-primary);
-    font-size: var(--font-size-body);
-    cursor: pointer;
-  }
 </style>

@@ -69,9 +69,6 @@ Rules that bite:
   Keep both the base ref and selected GitHub remote in the PR IPC shape so a
   current remote-tracking base wins over a stale local base; a merge merely
   adjacent to a PR ref is not enough to classify it as housekeeping (#527).
-- Git-graph commit comparison is a tree-to-tree operation, not a first-parent
-  diff: normalize the chosen commits to older → newer before requesting both
-  the changed-file list and every per-file patch, including preview-pane routes.
 - Git-graph undo snapshots come from the Rust mutation command, stay session/repository-scoped in `state/git-graph-undo.ts`, and are re-verified by `git_undo` before the inverse. Merge/pull undo requires unchanged HEAD + a clean tree; tag deletion records the raw tag-object OID so annotated tags restore exactly (#513).
 - Git-graph tabs remount on activation once evicted from the retained-tab set; their snapshot cache must retain the supported 12-tab load fan-out so switching back can paint cached history instead of starting a new git-log request. External watcher changes evict the snapshot; valid cached remounts skip the redundant graph reload (#505).
 - Git-graph fetch, pull, and remote-branch push share one client-ID network-operation lifecycle in `git-graph-refresh.ts`. Per ADR 0006, fetch enumerates `fetch --all`-eligible remotes (respecting `skipFetchAll`/`skipDefaultUpdate`) and updates each one atomically; ordinary remote errors are aggregated after later remotes run, while cancellation stops immediately between remotes. Only the unbounded network phase is killable: pull receives a per-invocation IPC phase channel before starting, then must deliver the transition from atomic fetch to local fast-forward (or fail closed before moving HEAD) so the banner switches to “Finishing Git pull…” and removes the now-ineffective Cancel control while preserving completed-pull undo; remote-delete cancellation reports that the remote may already have applied it (#528).

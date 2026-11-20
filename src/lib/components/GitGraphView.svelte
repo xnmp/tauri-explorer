@@ -616,9 +616,8 @@
     <div class="graph-status error">{querySession.error}</div>
   {:else}
     <GitGraphBanners
-      {repoPath} {headBranch} {prSession} {detachedIndicator} {networkOperation}
+      {repoPath} {prSession} {detachedIndicator} {networkOperation}
       prDialogOpen={prDialog.dialog !== null}
-      onCreatePr={() => void prDialog.openCreate(headBranch)}
     />
     <GitGraphHeader
       {tableWidth} scrollLeft={headerScrollLeft} graphWidth={effectiveGraphWidth}
@@ -691,8 +690,6 @@
               <GitGraphCommitDetail
                 {commit} {synthetic} showMeta={prefs.showDetailMeta} detail={detailSession}
                 commitPanel={commitPanelStore} {workingTree} {formatDate}
-                onBeginComparison={() => { cancelNavigation(); detailSession.beginComparison(); }}
-                onExitComparison={() => { cancelNavigation(); void detailSession.exitComparison(); }}
                 onClose={closeDetails}
               />
             </div>
@@ -729,7 +726,8 @@
   {#if menu}
     <GitGraphCommitMenu
       {menu} bind:menuEl={graphMenu.menuEl} chips={chipsFor(menu.commit.oid)} {actions}
-      {prForHead} {prForRemote} onOpenMenu={graphMenu.openMenu} onTogglePr={togglePrDetail}
+      {prForHead} {prForRemote} prActionBusy={prSession.actionBusy} onCreatePr={(branch) => void prDialog.openCreate(branch)}
+      onOpenMenu={graphMenu.openMenu} onTogglePr={togglePrDetail}
       onBackdropContextMenu={graphMenu.backdropContextMenu}
     />
   {/if}

@@ -83,7 +83,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `RowThumbnail.svelte` — the 48px icon box of Details/List rows while the `rowThumbnails` setting is on (#1465): image/video thumbnails through ThumbnailImage (Tiles small preset's cache key), large icon scaled in for other entries.
 - `VideoIndicator.svelte` — passive, contrast-backed video type badge shared by Tiles and Preview Pane; remains present during loading and frame extraction failure (#823).
 - `FolderThumbnail.svelte` — Windows-style folder preview tile (up to 3 nested images, #146).
-- `GitStatusBadge.svelte` — per-entry git status letter/color decoration.
+- `GitStatusBadge.svelte` — per-entry Git status chip (tinted letter, #1852); the name tint is EntryNameLabel's `git` prop.
 - `ExplorerPane.svelte` — one pane: navigation bar + FileList + preview; owns pane-scoped context.
 - `PanelResizeHandle.svelte` — shared focusable Sidebar/SCM/Miller separator with pointer capture wiring and keyboard range semantics.
 - `PaneContainer.svelte` — owns the scrollable active workspace (CSS-filled canvas with a script minimum, #1061) and one divider input lifetime; keeps recently active tabs mounted as hidden, inert `.pane-tree.retained` layers (#1173).
@@ -100,16 +100,16 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `scm/ScmSection.svelte` — one SCM section (Merge/Staged/Changes/Untracked): collapsible header + flat list or folder tree rows with hover actions (history, stage/unstage, discard/remove, archive, Trash, .gitignore).
 - `scm/ScmCommitPanel.svelte` — branch line + flat/tree toggle, commit message (Enter commits, Ctrl/Cmd+Enter amends), Amend toggle, Commit button.
 - `ScmPanel.svelte` — standalone SCM panel (stage/unstage/commit lists).
-- `GitGraphView.svelte` — commit-graph pane content (#51/#58); the uncommitted-changes node opens an inline stage/unstage/commit panel (#466, logic in `domain/commit-panel.ts`), arbitrary commit comparison transitions live in `git-graph-comparison.ts` (#512), failed GitHub Actions checks can expose their failed `gh` log inline from an open-PR badge (#521), branch/tag delete, branch rename, merge, and pull record session undo snapshots with a confirmed Ctrl+Z inverse (#513), and `GitAuthorAvatar.svelte` renders opt-out round author images with deterministic local fallbacks (#514).
-- `git-graph/GitGraphBanners.svelte` — PR action toolbar/status, standing detached-HEAD banner (#524) and cancellable network-operation banner (#528).
+- `GitGraphView.svelte` — commit-graph pane content (#51/#58); the uncommitted-changes node opens an inline stage/unstage/commit panel (#466, logic in `domain/commit-panel.ts`), detail selection transitions live in `git-graph-selection.ts`, failed GitHub Actions checks can expose their failed `gh` log inline from an open-PR badge (#521), branch/tag delete, branch rename, merge, and pull record session undo snapshots with a confirmed Ctrl+Z inverse (#513), and `GitAuthorAvatar.svelte` renders opt-out round author images with deterministic local fallbacks (#514).
+- `git-graph/GitGraphBanners.svelte` — PR action status strip (only while there is status to show), standing detached-HEAD banner (#524) and cancellable network-operation banner (#528).
 - `git-graph/GitGraphHeader.svelte` — graph column header: graph/author/date resize separators (#341) and the branch-filter slot.
 - `git-graph/GitGraphBranchFilter.svelte` — branch-filter button + popover: fork-point jump (#1083), file-path filter (#529), local-only/remote-only toggles, author and branch checkboxes (semantics in `domain/git-graph-branch-filter.ts`).
 - `git-graph/GitGraphColumnMenu.svelte` — header right-click menu over `state/git-graph-view-prefs.svelte.ts` (columns, avatars/Gravatar, detail metadata, merge muting, branch tracing).
 - `git-graph/GitGraphLanes.svelte` — windowed lane SVG: branch lines, traced lineage overlay and vertices.
 - `git-graph/GitGraphCommitRow.svelte` — one windowed commit row: ref chips, PR and branch-status badges, avatar and metadata columns.
-- `git-graph/GitGraphCommitDetail.svelte` — inline commit details contents: message/metadata, comparison controls, changed files + inline diffs, uncommitted commit box (#466).
+- `git-graph/GitGraphCommitDetail.svelte` — inline commit details contents: message/metadata, changed files + inline diffs, uncommitted commit box (#466).
 - `git-graph/GitGraphPrDetail.svelte` — inline PR dropdown contents: actions, description/comments, failed CI checks + logs, review threads (#459, #521).
-- `git-graph/GitGraphCommitMenu.svelte` — commit context menu and references disclosure (anchor in `composables/use-git-graph-menu.svelte.ts`).
+- `git-graph/GitGraphCommitMenu.svelte` — commit context menu (incl. a local branch pill's "Create pull request…", entry state from `domain/git-graph-create-pr.ts`, #1847) and references disclosure (anchor in `composables/use-git-graph-menu.svelte.ts`).
 - `git-graph/GitGraphDialogs.svelte` — rename/name prompts, pull offer, reset/delete suboption modals, PR action and undo confirmations.
 - `icons/FilesIcon.svelte` — activity-bar SVG icon.
 - `CommandPalette.svelte` — Ctrl+Shift+P command palette UI.
@@ -140,7 +140,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `RenameDialog`? see `dialogs.svelte.ts`; dialogs present: `DeleteDialog.svelte`, `ConflictDialog.svelte` (paste conflict overwrite/skip), `WorkspaceDialog.svelte` (save/restore workspaces), `ProgressDialog.svelte` (copy/move/extract progress), `InlineNewFolder.svelte` (inline new-entry input — folder or file, per `explorer.newEntryKind`), `FilePicker.svelte` (portal file-picker window).
 - `PreviewFolderList.svelte` — folder/ZIP children list in the Preview pane, with the collapsed single-folder indicator; rows go through the shared VirtualList so huge folders render only a windowed slice (#1040).
 - `PreviewPane.svelte` — file preview (image/text/markdown/syntax/CSV table); CSV rows use the shared VirtualList with one shared column template and an outer horizontal scroll surface (#666). Image to image, the previous image stays (spinner over it when slow) until the next is decoded, so a selection change never blanks or re-lays out the pane (`e2e/preview-selection-stability.spec.ts`).
-- `PreviewDiffView.svelte` — the preview's SCM diff region: working-tree diff with Open File/Stage/Unstage/Discard, or a graph-routed commit/comparison diff (#366); loads through `state/preview-diff.svelte.ts`, renders lines with `PreviewDiffLines`.
+- `PreviewDiffView.svelte` — the preview's SCM diff region: working-tree diff with Open File/Stage/Unstage/Discard, or a graph-routed commit file diff (#366); loads through `state/preview-diff.svelte.ts`, renders lines with `PreviewDiffLines`.
 - `PreviewDiffLines.svelte` — rendered diff lines: gutters, sigils, highlighted content and per-hunk stage/unstage/discard actions.
 - `PreviewCsvTable.svelte` — CSV table preview: sticky header + VirtualList rows sharing `domain/csv-preview.ts` column template (#666).
 - `PreviewTextDocument.svelte` — markdown / highlighted code / plain text preview bodies with their typography (frontmatter properties panel, #1039 fullscreen text zoom targets).
@@ -181,7 +181,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `lazy-dialog.svelte.ts` — per-host pending import ownership, retained constructors and demand-aware failure publication.
 
 - `git-graph-query.svelte.ts` — mounted history/pagination owner, including merge-base target paging; shared reloader, captured query/walk, partial log paint, page-zero cache and invocation-scoped cleanup.
-- `src/lib/state/git-graph-detail.svelte.ts` — Selected commit/comparison files, mutation refresh and inline diff ownership; files and the diff are request slots (domain/request-slot.ts, #1642).
+- `src/lib/state/git-graph-detail.svelte.ts` — Selected commit files, mutation refresh and inline diff ownership; files and the diff are request slots (domain/request-slot.ts, #1642).
 - `git-pr-mutations.svelte.ts` — repository-scoped pending PR mutation ownership and retained outcomes across graph mounts; uncertain retries require acknowledgement.
 - `git-pr-session.svelte.ts` — mounted GitHub badge, PR detail and CI log requests; immutable snapshots, request-slot tokens (domain/request-slot.ts) and disposal.
 - `git-branch-status.svelte.ts` — newest-reload-only owner of the graph's trunk-aware branch-status badges (#1081); disposal and superseded reloads cannot publish.
@@ -225,7 +225,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/state/modal-focus.ts` — pane dialog focus restoration tracks actual focus ownership across DOM detachment and releases listeners on cleanup; shared modal focus eligibility.
 - `src/lib/state/pane-dialogs.svelte.ts` — host-private pane capture handles, transient scope retirement, identity-bound overlay slots, retained portal mounts and shared inert registration for pane-owned content.
 - `src/lib/state/preview-diff-actions.ts` — Preview diff-header/hunk stage, unstage, discard admitted against the owning pane (`isPaneBlocked`); a covered owner makes them no-ops (#1099).
-- `src/lib/state/preview-diff.svelte.ts` — preview diff loading (working-tree + commit/comparison): one request generation, in-flight dedupe for polled UNC repos (#396), no-blank re-check, commit diffs never claimed by the working-tree cache.
+- `src/lib/state/preview-diff.svelte.ts` — preview diff loading (working-tree + commit): one request generation, in-flight dedupe for polled UNC repos (#396), no-blank re-check, commit diffs never claimed by the working-tree cache.
 - `src/lib/state/dialog-presentation-context.ts` — private scope/visibility/focus context inherited by the shared SDK Modal.
 - `run-after-close.ts` — runs a command chosen from a modal launcher (the command palette) only after the launcher has released the top modal surface, so the dialog it opens is not closed as the caller.
 - `open-with.svelte.ts` — captured application-choice sessions, late-result rejection and single launch lifecycle.
@@ -434,7 +434,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `mock-preview.ts` — mock preview/media family: thumbnails, image/PDF/video previews, image crop, folder previews, media metadata.
 - `mock-git-state.ts` — shared mock Git repository state: working tree, hunks, commit graph, refs, synthetic load-test repos.
 - `mock-git.ts` — mock Git working-tree family: status, stage/discard, commit, diffs, aborts, watching, cancellable fetch/pull.
-- `mock-git-history.ts` — mock Git history family: log, refs, branches/tags, checkout/merge/rebase/reset, undo, comparisons, PR/CI.
+- `mock-git-history.ts` — mock Git history family: log, refs, branches/tags, checkout/merge/rebase/reset, undo, PR/CI.
 - `mock-clipboard.ts` — mock OS clipboard family: published file list, cut leases, report attachments.
 - `mock-search.ts` — mock search family: Quick Open, streaming name search, content search; like the native walkers, skips dot-named entries below the root.
 - `mock-ai.ts` — mock AI and plugin-job family: operations, connections, presentation, generation jobs.
@@ -476,8 +476,10 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `use-lazy-dialog.svelte.ts` — binds one dialog open predicate to its loader and retires it with the host effect.
 - `use-preview-fullscreen.svelte.ts` — Preview fullscreen controller shared by file images and plugin targets: toggle/exit, zoom/pan state, wheel/pointer/click handlers and keys (`createPreviewFullscreen`, effect-free and unit-tested), plus the window key listener and `data-preview-fullscreen` attribute (`usePreviewFullscreen`) (#1033).
+- `window-overlay.ts` — `windowOverlay` action for full-window overlays mounted in the window body (dialogs, menus' dismissing backdrops): while any is mounted the root carries `data-window-overlay-open` and `+page.svelte` raises `.main-content` above the title bar and status bar (#1859).
 - `use-light-theme.svelte.ts` — reactive light/dark color-scheme flag (MutationObserver on `data-theme`) for picking the hljs palette.
 
+- `src/lib/composables/use-entry-git-status.svelte.ts` — one derived Git status presentation per entry (explicit directory or pane path, `showGitStatus` gate), shared by GitStatusBadge and EntryName/FileTile name tint (#1852).
 - `src/lib/composables/use-entry-appearance.svelte.ts` — reactive clipboard, manually-hidden/dotfile and empty-folder appearance shared by EntryCell and FileTile.
 - `use-item-interactions.svelte.ts` — shared click/select/activate logic across views.
 - `use-inline-rename.svelte.ts` — inline rename edit lifecycle.
@@ -602,11 +604,13 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `shortcut-import.ts` — validate the prospective imported map, permitting swaps and rejecting final-state ambiguity.
 - `shortcut-recording.ts` — pure two-step recording transitions and shared chord deadline.
 - `git.ts` — git status letter/indicator conversion.
+- `git-status-presentation.ts` — Git status → tone, `--git-*` colour variable, chip letter, dimmed/emphasis (#1852).
 - `git-graph.ts` — commit-graph lane layout (#58/#179).
+- `git-graph-create-pr.ts` — state of a local branch pill menu's "Create pull request…" entry: offered only for a local branch, disabled with a reason while a PR action runs or the branch has an open PR (#1847).
 - `git-graph-view.ts` — git-graph table geometry: row offsets with an inline expansion, render window, lane windowing, table minimum width, menu clamp, synthetic uncommitted row and date cells.
 - `git-graph-branch-filter.ts` — branch-filter popover semantics (all/none/subset toggles, author batch toggles, remote-only exclusion).
 - `git-branch-status.ts` — branch-status badge presenter (merged / squashed / stale; `unknown` shows none) and status index (#1081).
-- `git-graph-comparison.ts` — pure normal-detail/comparison transitions, chronological pair ordering, and stale-request generation checks (#512).
+- `git-graph-selection.ts` — pure commit-detail selection transitions (select, reselect-to-close, close) and stale-request generation checks.
 - `git-graph-undo.ts` — immutable undo snapshot union, pure bounded per-repository ledger, confirmation labels, and structural action comparison (#513).
 - `git-network-operation.ts` — shared IPC channel payload for crossing a Git network operation from cancellable network work into a protected local mutation (#528).
 - `commit-panel.ts` — pure state machine + derivations for the git-graph uncommitted-node inline commit panel: stage-status grouping, commit-button enablement/label, ephemeral message-editor transitions (#466).
@@ -650,7 +654,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `config-reload.ts` — pure decision for whether an observed config-file change is an external edit or our own write echoing back (#599).
 - `settings-migration.ts` — versioned one-shot migrations for the persisted settings blob; `migrateSettings` + the append-only ledger (#506).
 - `layout-theme.ts` — layout-theme catalog (#1306): built-ins, leading-comment metadata, user-file validation, resolution/fallback reasons, row-height parsing.
-- `layout-theme-ids.ts` — eager built-in layout ids and the legacy Floating Islands → `layoutTheme` mapping used by settings migration.
+- `layout-theme-ids.ts` — eager built-in layout ids, `tabOwnsWindow` (which bases draw the tab seam: Floating Islands, Default, Compact, Hairline Ledger) and the legacy Floating Islands → `layoutTheme` mapping used by settings migration.
 - `vibrancy-opacity.ts` — Translucency Opacity slider (20-100%, default 55) to the six `--island-*coverage*` values and the `--material-window-coverage*` tint; default reproduces the fixed theme defaults exactly (#1735); `opacityForIslandAlpha` maps a pre-#1757 Windows Backdrop Opacity.
 - `translucency.ts` — one cross-platform Translucency setting (#1757): material names (vibrancy / acrylic / mica), the published-or-platform material, window effects per material, and the legacy-settings rule; kept in step with `src-tauri/src/translucency.rs` by `tests/domain/translucency.test.ts`.
 - `miller-placement.ts` — `millerHoistedToIsland`: whether Miller columns hoist to the left island (island layout, no sidebar, single-pane tab only); shared by `+page.svelte` and `ExplorerPane.svelte` (#434, #1699).
@@ -749,12 +753,13 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## src/lib/themes/ — CSS theme files. Edit for theming/colors.
 
-- `index.css` (aggregator), `syntax.css` (code highlight), and per-theme: `dark.css`, `light.css`, `aurora.css`, `catppuccin.css`, `desert.css`, `gruvbox.css`, `hacker.css`, `horizon.css`, `nord.css`, `ocean-blue.css`, `solarized-light.css`, `tahoe.css`.
+- `index.css` (aggregator), `syntax.css` (code highlight), `git-status.css` (`--git-*` light/dark defaults for file-list Git tints, #1852), and per-theme: `dark.css`, `light.css`, `aurora.css`, `catppuccin.css`, `desert.css`, `gruvbox.css`, `hacker.css`, `horizon.css`, `nord.css`, `ocean-blue.css`, `solarized-light.css`, `tahoe.css`.
 
 ## src/lib/layouts/ — built-in layout themes (#1306; contract in docs/layout-themes.md).
 
 - `floating-islands.css` — Floating Islands, bundled in startup CSS and scoped to `[data-layout-base="floating-islands"]`.
-- `hairline-ledger.css` — Hairline Ledger, lazy `?inline` sheet injected like a user layout.
+- `default.css` — Default (#1856) and Compact (#1858), bundled in startup CSS and scoped to those two bases: one surface for tab, sidebar, toolbar and list; colours the shared tab seam layers (strip shade with the tab's hole, one outline, square corners, no shadow).
+- `hairline-ledger.css` — Hairline Ledger, lazy `?inline` sheet injected like a user layout; colours the shared tab seam square, on its paper (#1871).
 - `compact.css` — Compact (#1548): Default surfaces, tight chrome, 22px Details rows; lazy `?inline` sheet.
 - `soft-cards.css` — Soft Cards (#1548): opaque bordered cards, no shadows, 6px gaps, flat arrangement; lazy `?inline` sheet.
 
@@ -811,7 +816,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `os_recent/xbel.rs` — Linux adapter: parses `$XDG_DATA_HOME/recently-used.xbel` (percent-decoded OsString bytes, newest of visited/modified), mtime+size-keyed parse cache, 8 MiB bound (#1526).
 - `portal.rs` — xdg-desktop-portal FileChooser backend (Linux); holds the process per request and executes the idle policy's timers, bus-name release and exit (#1427).
 - `portal/idle.rs` — pure idle-exit policy for the D-Bus-activated portal: request holds, generation-checked idle timers, open-window postponement, release-name-then-exit, replaced-executable fast exit (#1427).
-- `crash_report.rs` — local crash capture (#184).
+- `crash_report.rs` — local crash capture (#184); `take_crash_report` returns a `kind` (`crash` / `unclean-exit`) and waits (bounded) for the startup session review.
+- `session_marker.rs` — unclean-exit detection (#1686; release builds only unless `TAURI_EXPLORER_SESSION_MARKER=1`, never with `e2e-hooks`): each main process holds a locked `<log dir>/sessions/session-*.marker` for its lifetime, removed by `disarm` (`release_process_resources`) on every orderly exit; the next launch claims markers whose lock it can take and `classify`s them (other version, ended host session — boot/login/display —, covering crash file, else unclean → crash file). Tests: `src-tauri/test_support/session_marker_test.rs` (incl. a real SIGKILL/SIGTERM helper process).
+- `termination_signals.rs` — Unix SIGTERM/SIGINT/SIGHUP → disarm the session marker and exit through the app's orderly path, falling back to the signal's default action after 5 s or on a second signal (#1686).
 - `environment.rs` — environment summary (distro, webview engine/version, Linux renderer mode and session, install category) probed once off the startup path; feeds `get_app_info`/About, the user-report environment block (budgeted within the relay ceiling), crash-file headers and one `Environment:` log line (#1683). Tests: `src-tauri/test_support/environment_test.rs`.
 - `recent_errors.rs` — opt-in "Recent errors" report section (#1685): bounded WARN/ERROR ring fed by a `RingLog` log-plugin Dispatch target, previous session read from the log file before the session-start offset; redacts `$HOME`; `recent_errors` command. Tests: `src-tauri/test_support/recent_errors_test.rs`.
 - `report_redaction.rs` — pure home-directory `Redactor` for report text (#1685): displayed/canonical/Debug-escaped/forward-slash/percent-encoded forms, path-boundary matches, case-insensitive on Windows, `/run/media/<user>/` segment. Tests: `src-tauri/test_support/report_redaction_test.rs`.

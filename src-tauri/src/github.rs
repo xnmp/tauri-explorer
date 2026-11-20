@@ -1437,19 +1437,18 @@ fn execute_pr_action(
             body,
             base,
         } => {
+            // Any existing local branch may be proposed, not only HEAD's: the
+            // graph offers creation from every local branch pill (#1847).
+            // An unpushed branch is reported by `gh pr create --head` itself.
             let repo = open_repo_at(repo_root)?;
-            if repo.head_detached().map_err(to_app_err)?
-                || repo
-                    .head()
-                    .map_err(to_app_err)?
-                    .shorthand()
-                    .map_err(to_app_err)?
-                    != head_branch
-            {
-                return Err(AppError::Other(
-                    "Current branch changed or HEAD is detached; reopen the create PR dialog"
-                        .into(),
-                ));
+            match repo.find_branch(&head_branch, git2::BranchType::Local) {
+                Ok(_) => {}
+                Err(error) if error.code() == git2::ErrorCode::NotFound => {
+                    return Err(AppError::Other(format!(
+                        "Branch {head_branch} no longer exists; refresh the graph"
+                    )));
+                }
+                Err(error) => return Err(to_app_err(error)),
             }
             if title.trim().is_empty() || base.trim().is_empty() {
                 return Err(AppError::Other(
@@ -1542,26 +1541,16 @@ pub async fn git_pr_action(repo_root: String, request: PrAction) -> Result<Strin
         .map_err(uncertain_pr_mutation)?
 }
 
+/// Repository identity the create dialog displays and the backend rechecks.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PrContext {
     repo_slug: String,
-    head_branch: Option<String>,
 }
 
 fn pr_context(repo_root: &str) -> Result<PrContext, AppError> {
-    let repo_slug = github_repo_slug(repo_root)?;
-    let repo = open_repo_at(repo_root)?;
-    let head_branch = if repo.head_detached().map_err(to_app_err)? {
-        None
-    } else {
-        repo.head()
-            .ok()
-            .and_then(|head| head.shorthand().ok().map(str::to_string))
-    };
     Ok(PrContext {
-        repo_slug,
-        head_branch,
+        repo_slug: github_repo_slug(repo_root)?,
     })
 }
 

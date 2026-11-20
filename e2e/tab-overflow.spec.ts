@@ -120,6 +120,9 @@ test('edge dragging reaches distant tabs and releases all scrolling on drop or E
   const before = await ids();
   const dragToEdge = async (inset = 2, travel = 120) => {
     await scroller.evaluate(el => { el.scrollLeft = 0; });
+    // The strip follows its scroll a frame later: until then the start
+    // scroll button still covers the first tab and takes the press.
+    await expect(page.locator('.tab-scroll-btn.start')).toBeDisabled();
     const source = (await page.locator('.tab').first().boundingBox())!;
     const view = (await scroller.boundingBox())!;
     const point = { x: view.x + view.width - inset, y: source.y + source.height / 2 };

@@ -1,5 +1,29 @@
 import { describe, expect, it } from "vitest";
-import { createCrashReportStore } from "$lib/state/crash-report.svelte";
+import { claimLaunchCrash, createCrashReportStore } from "$lib/state/crash-report.svelte";
+
+describe("claimLaunchCrash (#1686)", () => {
+  const unclean = { fileName: "crash-1700000500.txt", contents: "panic: x", kind: "unclean-exit" as const };
+
+  it("a parked warm window never takes (and so never consumes) the report", async () => {
+    const store = createCrashReportStore();
+    let taken = 0;
+    await claimLaunchCrash(store, async () => (taken++, unclean), false);
+    expect(taken).toBe(0);
+    expect(store.offered).toBeNull();
+  });
+
+  it("a foreground window takes the report and offers it", async () => {
+    const store = createCrashReportStore();
+    await claimLaunchCrash(store, async () => unclean, true);
+    expect(store.offered).toEqual(unclean);
+  });
+
+  it("a foreground window with nothing to report offers nothing", async () => {
+    const store = createCrashReportStore();
+    await claimLaunchCrash(store, async () => null, true);
+    expect(store.offered).toBeNull();
+  });
+});
 
 const report = { fileName: "crash-1700000000.txt", contents: "panic: boom" };
 

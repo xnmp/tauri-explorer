@@ -208,7 +208,7 @@
                 <span class="col-icon" data-drag-icon>
                   <FileIcon {entry} size="small" />
                 </span>
-                <span class="col-name" data-drag-name><EntryName {entry} {explorer} variant="list" /></span>
+                <span class="col-name" data-drag-name><EntryName {entry} {explorer} variant="list" gitTint={false} /></span>
                 <svg class="col-chevron" width="7" height="7" viewBox="0 0 7 7" fill="none">
                   <path d="M2 1L5 3.5L2 6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>

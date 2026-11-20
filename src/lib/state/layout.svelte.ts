@@ -24,6 +24,7 @@ import {
   DEFAULT_LAYOUT_ID,
   FLOATING_ISLANDS_LAYOUT_ID,
   isBuiltinLayoutId,
+  tabOwnsWindow,
   type BuiltinLayoutId,
 } from "$lib/domain/layout-theme-ids";
 import { paneDividerSize } from "$lib/domain/pane-viewport";
@@ -106,6 +107,10 @@ function createLayoutStore() {
      *  when the sidebar is hidden, and split dividers widen into gaps. */
     get islands() {
       return applied.base === FLOATING_ISLANDS_LAYOUT_ID;
+    },
+    /** The active tab owns the window: the title bar draws its tab seam (`tabOwnsWindow`). */
+    get tabSeam() {
+      return tabOwnsWindow(applied.base);
     },
     /** Split-pane divider thickness for this arrangement, in CSS px. */
     get paneDividerSize() {

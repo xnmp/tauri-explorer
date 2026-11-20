@@ -41,13 +41,8 @@ function fixture() {
     commits.push(reply);
     return reply.promise;
   });
-  const compareCommitFileDiff = vi.fn(() => {
-    const reply = deferred<string>();
-    commits.push(reply);
-    return reply.promise;
-  });
-  const diff = createPreviewDiff({ current: () => store, workingDiff, commitFileDiff, compareCommitFileDiff });
-  return { store, diff, working, commits, workingDiff, commitFileDiff, compareCommitFileDiff };
+  const diff = createPreviewDiff({ current: () => store, workingDiff, commitFileDiff });
+  return { store, diff, working, commits, workingDiff, commitFileDiff };
 }
 
 describe("working-tree diff", () => {
@@ -172,12 +167,13 @@ describe("working-tree diff", () => {
 });
 
 describe("commit diff", () => {
-  it("uses the comparison endpoint when a base commit is given", async () => {
+  it("loads the routed commit's file diff", async () => {
     const f = fixture();
-    const target = { repoPath: "/repo", oid: "b", baseOid: "a", path: "a.ts" };
+    const target = { repoPath: "/repo", oid: "b", path: "a.ts" };
     f.store.commitDiff = target;
     const pending = f.diff.loadCommit(target);
-    expect(f.compareCommitFileDiff).toHaveBeenCalledWith("/repo", "a", "b", "a.ts");
+    expect(f.diff.loading).toBe(true);
+    expect(f.commitFileDiff).toHaveBeenCalledWith("/repo", "b", "a.ts");
     f.commits[0].resolve(PATCH);
     await pending;
     expect(f.diff.parsed).not.toBeNull();

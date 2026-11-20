@@ -411,11 +411,20 @@
           <input type="checkbox" bind:checked={includeCrash} disabled={submitting} />
           <span>Include the crash report</span>
         </label>
-        <p class="attachment-hint">
-          Saved on this computer when Tauri Explorer crashed (<code>{attachedCrash.fileName}</code>):
-          the error, where in the code it happened, the app version and your system details. It can
-          contain folder paths, which will be public in the issue.
-        </p>
+        {#if attachedCrash.kind === "unclean-exit"}
+          <p class="attachment-hint">
+            Saved on this computer when Tauri Explorer did not exit cleanly
+            (<code>{attachedCrash.fileName}</code>): when it happened, the app version and your system
+            details. No error was recorded; the previous session's warnings and errors are under
+            "Include recent errors".
+          </p>
+        {:else}
+          <p class="attachment-hint">
+            Saved on this computer when Tauri Explorer crashed (<code>{attachedCrash.fileName}</code>):
+            the error, where in the code it happened, the app version and your system details. It can
+            contain folder paths, which will be public in the issue.
+          </p>
+        {/if}
         <details>
           <summary>Show what will be sent</summary>
           <pre class="diagnostics-preview">{crashText}</pre>

@@ -10,11 +10,11 @@ Five layouts are built in:
 
 | Layout | Id | What it does |
 | --- | --- | --- |
-| Default | `default` | The flat, edge-to-edge layout. |
+| Default | `default` | The flat, edge-to-edge layout. The active tab owns the window: tab, sidebar, toolbar, list and status bar are one surface, only the strip round the tabs is shaded, and one outline runs round the tab and along the strip's base (#1856). Ships in the startup CSS. |
 | Floating Islands | `floating-islands` | Rounded panels floating over the window backdrop (#277, #434). Ships in the startup CSS. |
-| Hairline Ledger | `hairline-ledger` | Square, dense panels ruled by 1px hairlines, monospaced metadata and an inverted selection. Loaded on demand. |
-| Compact | `compact` | Default's surfaces with tight chrome (30px title bar, 32px toolbar, 20px status bar) and 22px Details rows (#1548). Loaded on demand. |
-| Soft Cards | `soft-cards` | Opaque rounded cards with 1px borders and no shadows, 6px apart on a slightly darker backdrop; split panes become separate cards (#1548). Loaded on demand. |
+| Hairline Ledger | `hairline-ledger` | Square, dense panels ruled by 1px hairlines, monospaced metadata and an inverted row selection (tiles are ruled instead). The active tab owns the window as in Default, square and without feet: tab, sidebar, toolbar and list share the content surface, the tab strip is paper, and one hairline runs round the tab and along the strip's base (#1871). Loaded on demand. |
+| Compact | `compact` | Default's surfaces (one surface, shaded tab strip, tab outline; #1858) with tight chrome (30px title bar, 32px toolbar, 20px status bar) and 22px Details rows (#1548). Loaded on demand. |
+| Soft Cards | `soft-cards` | Opaque 8px-rounded cards with 1px borders and no shadows on a slightly darker backdrop (a cool light grey on light themes). Every gap is 6px, the tab included; split panes, the preview, terminal and source-control panel become separate cards, and selected rows sit inset inside them (#1548, #1854). Loaded on demand. |
 
 Choose one in **Settings → Appearance → Layout**, with **Switch Layout...** in the
 command palette (live preview while you move through the list), or with
@@ -80,6 +80,7 @@ variables keep the Default value shown.
 | `--layout-app-surface` | native-material tint | Window body (`[data-region="app"]`) under native material. Unset, Default and Compact paint nothing there (their surfaces fade themselves, see Flat layouts below) and other layouts get the theme tint (the theme base at `--material-window-coverage`). Floating Islands sets its own (see below). |
 | `--layout-hairline` | `var(--divider)` | Rule colour between chrome regions. |
 | `--layout-row-height` | `32px` | Details row height, in `px`, clamped to 20–64. Virtual scrolling and marquee selection follow it. |
+| `--layout-row-inset` | `0px` | Horizontal inset of every Details row inside the file list. The column header's text moves in by the same amount, so columns stay aligned; a selection or focus outline then never touches the panel edge. |
 
 Colour theme variables (`--text-primary`, `--background-card`, `--accent`,
 `--surface-stroke`, `--divider`, ...) are available for building colours, which
@@ -98,8 +99,8 @@ names are internal and change without notice; `data-region` names do not.
 | `tab-strip` | Window tab strip | |
 | `tab` | One window tab | `aria-selected="true"` on the active tab |
 | `tab-fillet` | Curves joining the active tab to the content | `data-side="left\|right"` |
-| `tab-key-shadow` | Floating Islands: inline SVG under the tab strip holding the strip shade (with the active tab's hole and the shade pockets outside the surface's rounded top corners) and the tab's key shadow | |
-| `tab-edge` | Floating Islands: inline SVG outline, the active tab plus the top edge and corners of its surface (#1785) | |
+| `tab-key-shadow` | Layouts whose active tab owns the window (Floating Islands, Default, Compact, Hairline Ledger): inline SVG under the tab strip holding the strip shade (with the active tab's hole and the shade pockets outside the surface's rounded top corners) and the tab's key shadow | |
+| `tab-edge` | Same layouts: inline SVG outline, the active tab plus the top edge and corners of its surface (#1785) | |
 | `main` | Area below the title bar | |
 | `sidebar` | Sidebar container (outer box) | |
 | `sidebar-body` | Sidebar painted body | |
@@ -110,7 +111,8 @@ names are internal and change without notice; `data-region` names do not.
 | `miller` | Miller columns strip | |
 | `panes` | The pane area | `data-split` when it holds more than one pane |
 | `pane` | One explorer pane | `data-active` on the focused pane of a split |
-| `split-divider` | Divider between split panes | `aria-orientation` |
+| `split-divider` | Divider between split panes | `aria-orientation`; `data-dragging` while it is being dragged |
+| `split-grip` | The grip drawn on a split divider | |
 | `toolbar` | Pane navigation bar | |
 | `address-bar` | Breadcrumb / path field | |
 | `file-list` | File list of any view | `data-view="details\|list\|tiles"` |
@@ -191,6 +193,26 @@ Islands carry no `backdrop-filter`: it made each island the containing block
 of fixed overlays, so menus opened offset, and the webview cannot sample the
 native material anyway. Context menus and modal cards are opaque.
 
+### Default surfaces
+
+Default (#1856), Compact (#1858) and Hairline Ledger (#1871) draw the same tab seam as Floating Islands, flat: square
+surface corners, no tab shadow, and the strip shaded over the surface
+colour. The title bar, sidebar and toolbar take `--layout-chrome-surface`
+when a layout sets it, else the content pane's own surface; the column
+header and status bar keep their opaque chrome tones (rows scroll under the
+header, and the status bar's warning text is tuned against its tone). The
+title bar's bottom row lies below the strip's base and carries the
+outline's base, so the whole outline stays inside the bar and the bar never
+stacks over menus and dialogs in the window. A layout that extends Default and rounds its panels with
+`--layout-radius` keeps the tab's surface square unless it also sets
+`--islands-surface-radius`.
+
+Hairline Ledger colours the seam in its own stylesheet: the strip is its
+paper (`--layout-chrome-surface`), the title bar, sidebar and toolbar take
+its content surface (`--layout-surface`), the outline is `--layout-hairline`,
+and the tab has no feet (its `tab-fillet` is not displayed, so the marks
+read a zero fillet and draw square corners).
+
 ### Flat layouts (Default, Compact) under a material
 
 Default and Compact fade the opaque window uniformly (#1789): every surface
@@ -202,7 +224,11 @@ fill over the window base, composited into one opaque colour with CSS
 relative colour syntax (`routes/+page.svelte`), at that coverage. The window
 body paints nothing, and a surface's border sits on its own background, so no
 border is a slit of bare material. The pane's surface is on its frame, so an
-inactive split pane's dimming fades only its content. Chrome stacked on a
+inactive split pane's dimming fades only its content. The title bar and
+sidebar are the surface the active tab owns (see Default surfaces above), so
+they are the pane's colour at the same coverage, and the tab's hole in the
+strip shade shows exactly that; the strip shade lies on it as on an opaque
+window. Chrome stacked on a
 surface (active tab, navigation bar, Details column header, Miller columns,
 the source control panel) paints nothing under a material: a translucent
 layer on a translucent layer compounds, hiding more of the material and
@@ -227,7 +253,7 @@ is created, so the setting reaches new windows and the next launch.
 ## Precedence
 
 1. Application styles (component CSS, colour theme).
-2. Floating Islands rules, scoped to `:root[data-layout-base="floating-islands"]`.
+2. Floating Islands and Default rules, scoped to `:root[data-layout-base="floating-islands"]` and `:root[data-layout-base="default"]`.
 3. The base stylesheet of a lazily loaded built-in (Hairline Ledger, Compact, Soft Cards).
 4. Your layout file.
 

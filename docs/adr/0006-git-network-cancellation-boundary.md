@@ -96,7 +96,8 @@ crash-point tests before joining this lifecycle.
 
 Create, merge and approve are remote GitHub mutations, not local Git changes.
 They run `gh` with `--repo github.com/owner/name`, bound to the confirmed badge
-repository or current branch context. The default CLI hostname cannot retarget
+repository or the create dialog's repository context (any existing local
+branch, #1847). The default CLI hostname cannot retarget
 that confirmation. No local branch deletion or undo is implied; a successful
 merge command may have queued a merge rather than completed it.
 

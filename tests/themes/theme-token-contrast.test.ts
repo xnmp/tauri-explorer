@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 
 const THEMES_DIR = new URL("../../src/lib/themes/", import.meta.url);
 const SOURCE_DIR = new URL("../../src/", import.meta.url);
-const NON_THEME_FILES = new Set(["index.css", "syntax.css"]);
+const NON_THEME_FILES = new Set(["index.css", "syntax.css", "git-status.css"]);
 const AA_TEXT = 4.5;
 /** WCAG 1.4.11 non-text contrast, which a focus indicator must meet. */
 const NON_TEXT = 3;
@@ -91,6 +91,34 @@ describe("built-in theme text tokens", () => {
       const ratio = (token: string) => contrastRatio(color(tokens, token), surface());
       expect(ratio("text-primary")).toBeGreaterThan(ratio("text-secondary"));
       expect(ratio("text-secondary")).toBeGreaterThan(ratio("text-tertiary"));
+    });
+  });
+});
+
+// File-list Git status tints (#1852): `git-status.css` holds light-dark()
+// defaults; a theme may override any `--git-*` in its own block.
+const GIT_DEFAULTS = new Map(
+  [...readFileSync(new URL("git-status.css", THEMES_DIR), "utf8")
+    .matchAll(/--(git-[a-z]+):\s*light-dark\((#[0-9a-f]{6}),\s*(#[0-9a-f]{6})\)/g)]
+    .map((m) => [m[1], { light: m[2], dark: m[3] }]),
+);
+
+describe("Git status name tints (#1852)", () => {
+  it("has light and dark defaults for every tinted status", () => {
+    expect([...GIT_DEFAULTS.keys()].sort()).toEqual(
+      ["git-added", "git-conflicted", "git-deleted", "git-modified", "git-renamed", "git-typechange", "git-untracked"],
+    );
+  });
+
+  describe.each(themes)("$id", ({ id, tokens }) => {
+    const css = readFileSync(new URL(`${id}.css`, THEMES_DIR), "utf8");
+    const light = /color-scheme:\s*light\b/.test(css);
+    it.each([...GIT_DEFAULTS.keys()])("--%s meets AA against the window surface", (token) => {
+      const fallback = GIT_DEFAULTS.get(token)!;
+      const value = tokens.get(token) ?? (light ? fallback.light : fallback.dark);
+      const rgb = parseHex(value);
+      expect(rgb, `--${token} = ${value}`).not.toBeNull();
+      expect(contrastRatio(rgb!, color(tokens, "background-solid"))).toBeGreaterThanOrEqual(AA_TEXT);
     });
   });
 });

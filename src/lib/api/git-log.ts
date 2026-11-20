@@ -144,15 +144,6 @@ export async function gitCommitFiles(repoPath: string, oid: string): Promise<Com
   return invoke<CommitFile[]>("git_commit_files", { repoPath, oid });
 }
 
-/** Files changed from `baseOid` to `targetOid`, whether or not they share a parent. */
-export async function gitCompareCommitFiles(
-  repoPath: string,
-  baseOid: string,
-  targetOid: string,
-): Promise<CommitFile[]> {
-  return invoke<CommitFile[]>("git_compare_commit_files", { repoPath, baseOid, targetOid });
-}
-
 /** Unified diff of one file in `oid` relative to its first parent (#221). */
 export async function gitCommitFileDiff(
   repoPath: string,
@@ -160,16 +151,6 @@ export async function gitCommitFileDiff(
   filePath: string,
 ): Promise<string> {
   return invoke<string>("git_commit_file_diff", { repoPath, oid, filePath });
-}
-
-/** Unified file diff from `baseOid` to `targetOid`. */
-export async function gitCompareCommitFileDiff(
-  repoPath: string,
-  baseOid: string,
-  targetOid: string,
-  filePath: string,
-): Promise<string> {
-  return invoke<string>("git_compare_commit_file_diff", { repoPath, baseOid, targetOid, filePath });
 }
 
 // ----- Mutating actions: VSCode "Git Graph"-parity commit context menu -----
@@ -448,9 +429,10 @@ export async function gitPrAction(repoPath: string, request: PrAction): Promise<
   return invoke<string>("git_pr_action", { repoRoot: repoPath, request });
 }
 
-export interface PrContext { repoSlug: string; headBranch: string | null }
+export interface PrContext { repoSlug: string }
 
-/** Capture repository and branch identity before asking for confirmation. */
+/** Capture the repository identity before asking for confirmation; the
+ *  backend rechecks it, and that the branch still exists, on submit. */
 export async function gitPrContext(repoPath: string): Promise<PrContext> {
   return invoke<PrContext>("git_pr_context", { repoRoot: repoPath });
 }

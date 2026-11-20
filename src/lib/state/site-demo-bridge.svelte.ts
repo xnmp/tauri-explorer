@@ -128,7 +128,7 @@ async function setPanel(id: unknown, visible: unknown): Promise<boolean> {
       break;
     case "miller": {
       const explorer = windowTabsManager.getActiveExplorer();
-      explorer?.setMillerLayers(visible ? Math.max(settingsStore.millerLayers, 2) : 0);
+      explorer?.setMillerLayers(visible ? Math.max(settingsStore.millerLayers, 1) : 0);
       break;
     }
     case "scm":

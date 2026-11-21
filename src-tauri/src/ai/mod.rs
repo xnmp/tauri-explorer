@@ -189,18 +189,25 @@ impl Service {
         // Revisions only move forward: a watcher that read an older revision
         // and reports it after a save announced a newer one must not move the
         // observed revision back, or every new job would be cancelled.
-        let advance = |current: u64| {
-            Some(if current == UNPINNED {
+        // A compare-exchange loop: `fetch_update` is deprecated on newer
+        // stable toolchains (CI) and not yet on older ones.
+        let mut current = self.observed_revision.load(Ordering::SeqCst);
+        let latest = loop {
+            let next = if current == UNPINNED {
                 revision
             } else {
                 current.max(revision)
-            })
+            };
+            match self.observed_revision.compare_exchange_weak(
+                current,
+                next,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => break next,
+                Err(actual) => current = actual,
+            }
         };
-        let previous = self
-            .observed_revision
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, advance)
-            .unwrap_or_else(|current| current);
-        let latest = advance(previous).unwrap_or(revision);
         for control in self.live.lock().unwrap().live.values() {
             control.supersede_unless(latest);
         }

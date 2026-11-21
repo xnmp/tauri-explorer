@@ -1,14 +1,15 @@
 /**
  * Layout themes (#1306): built-in Default / Floating Islands / Hairline
- * Ledger / Compact / Soft Cards (#1548), user CSS layouts from `<config>/layouts/`, independence from the
- * colour theme, persistence, live reload and fallback to Default.
+ * Ledger / Soft Cards (#1548), user CSS layouts from `<config>/layouts/`, independence from the
+ * colour theme, persistence, live reload and fallback to Default; and the
+ * compact density setting on every layout (#1878).
  *
  * Assertions measure rendered geometry and computed styles, not just the
  * root attributes: a layout that sets its attribute but paints nothing is a
  * failure.
  */
 import { test, expect, type Page } from "./fixtures";
-import { HOME_URL, VIEW_VARIANTS, applySettingsAndReload, pressShortcut, runPaletteCommand, seedSettings, switchViewMode, waitForEntries } from "./helpers";
+import { HOME_URL, MULTI_SELECT_MODIFIER, VIEW_VARIANTS, applySettingsAndReload, pressShortcut, runPaletteCommand, seedSettings, switchViewMode, waitForEntries } from "./helpers";
 
 const SEED_KEY = "mock-config-files";
 
@@ -85,7 +86,7 @@ test.describe("Layout themes (#1306)", () => {
 
     const dialog = await openSettings(page);
     const select = dialog.locator(".layout-theme-select");
-    await expect(select.locator("option")).toHaveText(["Default", "Floating Islands", "Hairline Ledger", "Compact", "Soft Cards"]);
+    await expect(select.locator("option")).toHaveText(["Default", "Floating Islands", "Hairline Ledger", "Soft Cards"]);
 
     await select.selectOption("floating-islands");
     await expect(html).toHaveAttribute("data-layout-base", "floating-islands");
@@ -106,35 +107,139 @@ test.describe("Layout themes (#1306)", () => {
     expect(await firstRowHeight(page)).toBe(28);
   });
 
-  test("Compact tightens the chrome and fits more Details rows (#1548)", async ({ page }) => {
+  // Compact density (#1878): one setting that tightens whichever layout is
+  // applied. Rows at rest per layout, before compact.
+  const RESTING_ROW: Record<string, number> = {
+    default: 32, "floating-islands": 32, "hairline-ledger": 28, "soft-cards": 32,
+  };
+  const chromeSizes = (page: Page) => page.evaluate(() => {
+    const visible = (selector: string) =>
+      [...document.querySelectorAll<HTMLElement>(selector)].find(el => el.getClientRects().length > 0)!;
+    const height = (selector: string) => visible(selector).getBoundingClientRect().height;
+    return {
+      titlebar: height('[data-region="titlebar"]'),
+      tab: height('[data-region="tab"][aria-selected="true"]'),
+      toolbar: height('[data-region="toolbar"]'),
+      status: height('[data-region="status-bar"]'),
+      row: height('.details-view [data-region="row"]'),
+      list: visible(".details-view").clientHeight,
+    };
+  });
+  const toggleCompact = (page: Page) => runPaletteCommand(page, "Toggle Compact Mode");
+  /** Issue evidence, written only under CAPTURE_EVIDENCE=1 (e2e/evidence-shots.ts). */
+  const shotIfCapturing = (page: Page, name: string) =>
+    page.screenshot({ path: `screenshots/feat/compact-mode-toggle/${name}`, animations: "disabled" });
+
+  for (const layout of Object.keys(RESTING_ROW)) {
+    test(`Compact tightens ${layout}'s chrome and rows, persists, and turns off cleanly (#1878)`, async ({ page }) => {
+      await page.setViewportSize({ width: 1100, height: 700 });
+      await seedSettings(page, { layoutTheme: layout, showWindowControls: true });
+      await page.goto(HOME_URL);
+      await waitForEntries(page);
+      const html = page.locator("html");
+      await expect(html).toHaveAttribute("data-layout", layout);
+      await expect(html).not.toHaveAttribute("data-density");
+      await expect.poll(() => firstRowHeight(page)).toBe(RESTING_ROW[layout]);
+      const regular = await chromeSizes(page);
+
+      await toggleCompact(page);
+      await expect(html).toHaveAttribute("data-density", "compact");
+      await expect(html).toHaveAttribute("data-layout", layout);
+      await expect.poll(() => firstRowHeight(page)).toBe(22);
+      const compact = await chromeSizes(page);
+      for (const part of ["titlebar", "tab", "toolbar", "status", "row"] as const) {
+        expect(compact[part], `${part} tightens`).toBeLessThan(regular[part]);
+      }
+      if (layout === "default") {
+        // The retired Compact layout's sizes (#1548).
+        expect(compact).toMatchObject({ titlebar: 30, tab: 26, toolbar: 32, status: 20, row: 22 });
+      }
+      // The same window shows more rows.
+      const rowsThatFit = (sizes: typeof regular) => Math.floor(sizes.list / sizes.row);
+      expect(rowsThatFit(compact)).toBeGreaterThan(rowsThatFit(regular) + 3);
+      await shotIfCapturing(page, `${layout}-compact-on.png`);
+
+      await page.reload();
+      await waitForEntries(page);
+      await expect(html).toHaveAttribute("data-density", "compact");
+      await expect.poll(() => chromeSizes(page)).toEqual(compact);
+
+      await toggleCompact(page);
+      await expect(html).not.toHaveAttribute("data-density");
+      await expect.poll(() => chromeSizes(page)).toEqual(regular);
+    });
+  }
+
+  test("Compact is an Appearance setting, and gives List rows a shorter slot (#1878)", async ({ page }) => {
     await page.setViewportSize({ width: 1100, height: 700 });
     await page.goto(HOME_URL);
     await waitForEntries(page);
-    const height = (selector: string) =>
-      page.locator(selector).first().evaluate(el => el.getBoundingClientRect().height);
-    const listHeight = () => page.locator(".details-view:visible").first().evaluate(el => el.clientHeight);
-    const defaults = {
-      row: await firstRowHeight(page),
-      titlebar: await height('[data-region="titlebar"]'),
-      toolbar: await height('[data-region="toolbar"]:visible'),
-      status: await height('[data-region="status-bar"]'),
-      list: await listHeight(),
-    };
-
-    await applySettingsAndReload(page, { layoutTheme: "compact" });
-    await waitForEntries(page);
-    await expect(page.locator("html")).toHaveAttribute("data-layout", "compact");
+    const html = page.locator("html");
+    await shotIfCapturing(page, "default-compact-off.png");
+    const dialog = await openSettings(page);
+    const row = dialog.locator(".setting-row").filter({ has: page.locator(".setting-label", { hasText: /^Compact$/ }) });
+    await expect(row).toBeVisible();
+    await expect(row.locator("input")).not.toBeChecked();
+    await row.locator(".toggle").click();
+    await expect(row.locator("input")).toBeChecked();
+    await expect(html).toHaveAttribute("data-density", "compact");
+    await row.scrollIntoViewIfNeeded();
+    await shotIfCapturing(page, "settings-compact-row.png");
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
     await expect.poll(() => firstRowHeight(page)).toBe(22);
-    expect(await height('[data-region="titlebar"]')).toBe(30);
-    expect(await height('[data-region="toolbar"]:visible')).toBe(32);
-    expect(await height('[data-region="status-bar"]')).toBe(20);
-    // Every chrome strip shrinks, so the same window shows more rows.
-    expect(await height('[data-region="titlebar"]')).toBeLessThan(defaults.titlebar);
-    expect(await height('[data-region="toolbar"]:visible')).toBeLessThan(defaults.toolbar);
-    expect(await height('[data-region="status-bar"]')).toBeLessThan(defaults.status);
-    const rowsThatFit = (list: number, row: number) => Math.floor(list / row);
-    expect(rowsThatFit(await listHeight(), 22)).toBeGreaterThan(rowsThatFit(defaults.list, defaults.row) + 5);
-    await page.screenshot({ path: "screenshots/feat/compact-soft-cards-layouts/compact-details.png" });
+
+    // List rows, in the column flow (Folder Peek) and the classic grid.
+    const pitch = () => page.locator('[data-region="file-list"][data-view="list"] [data-region="row"]:visible').evaluateAll(rows => {
+      // Distinct row tops: the classic grid holds several entries per row.
+      const tops = [...new Set(rows.map(row => Math.round(row.getBoundingClientRect().top)))].sort((a, b) => a - b);
+      return tops.length < 2 ? null : tops[1] - tops[0];
+    });
+    await switchViewMode(page, "list");
+    await expect.poll(pitch).toBe(26);
+    await toggleCompact(page);
+    await expect.poll(pitch).toBe(30);
+    await applySettingsAndReload(page, { folderPeek: false, compact: true });
+    await waitForEntries(page);
+    await switchViewMode(page, "list");
+    await expect.poll(pitch).toBe(26);
+    await toggleCompact(page);
+    await expect.poll(pitch).toBe(30);
+  });
+
+  test("Compact tightens Tiles spacing but keeps the tile and icon size (#1878)", async ({ page }) => {
+    await page.setViewportSize({ width: 1100, height: 700 });
+    await seedSettings(page, { thumbnailSize: "medium" });
+    await page.goto(HOME_URL);
+    await waitForEntries(page);
+    await switchViewMode(page, "tiles");
+    const tiles = () => page.locator('[data-region="file-list"][data-view="tiles"] [data-region="row"]:visible').evaluateAll(cells => {
+      const [first, second] = cells.slice(0, 2).map(cell => cell.getBoundingClientRect());
+      const icon = cells[0].querySelector(".tile-icon")!.getBoundingClientRect();
+      const nextRow = cells.find(cell => cell.getBoundingClientRect().top > first.bottom);
+      return {
+        gap: Math.round(second.left - first.right),
+        padding: Math.round(icon.top - first.top),
+        icon: { width: icon.width, height: icon.height },
+        rowPitch: nextRow ? Math.round(nextRow.getBoundingClientRect().top - first.top) : null,
+      };
+    });
+    await expect.poll(async () => (await tiles()).gap).toBe(6);
+    const regular = await tiles();
+    await shotIfCapturing(page, "tiles-compact-off.png");
+
+    await toggleCompact(page);
+    await expect.poll(async () => (await tiles()).gap).toBeLessThan(regular.gap);
+    const compact = await tiles();
+    expect(compact.icon).toEqual(regular.icon);
+    expect(compact.padding).toBeLessThan(regular.padding);
+    // About a quarter less spacing, not a different tile.
+    expect(compact.gap).toBeGreaterThanOrEqual(regular.gap * 0.66);
+    expect(compact.padding).toBeGreaterThanOrEqual(regular.padding * 0.66);
+    await shotIfCapturing(page, "tiles-compact-on.png");
+
+    await toggleCompact(page);
+    await expect.poll(tiles).toEqual(regular);
   });
 
   test("Soft Cards spaces the tab and cards evenly, 6px apart (#1548, #1854)", async ({ page }) => {
@@ -498,6 +603,8 @@ test.describe("Layout themes (#1306)", () => {
       await expect(page.locator("html")).toHaveAttribute("data-layout", "hairline-ledger");
       const entry = page.locator(".entry-item:visible").first();
       await expect(entry).toBeVisible();
+      const nameColor = () => entry.locator('[data-region="entry-name"]').first().evaluate(el => getComputedStyle(el).color);
+      const unselectedName = await nameColor();
       await entry.click();
       const selected = page.locator('[data-region="row"][aria-selected="true"]:visible').first();
       await expect(selected).toBeVisible();
@@ -507,18 +614,95 @@ test.describe("Layout themes (#1306)", () => {
       });
       expect(bg).not.toBe("rgba(0, 0, 0, 0)");
       expect(bg).not.toBe(fg);
-      if (variant.viewMode === "tiles") {
-        // A selected tile is ruled, not inverted: no block of ink (white in
-        // dark themes) round its picture (#1871).
+      if (variant.viewMode !== "details") {
+        // A selected tile or List entry is ruled, not inverted: no block of
+        // ink (white in dark themes) round its picture (#1871), nor a column
+        // of separate blocks down a List (#1789).
         expect(rgb(bg)).not.toEqual(rgb(await page.evaluate(c => { const el = document.createElement("i"); el.style.color = c; document.body.append(el); const out = getComputedStyle(el).color; el.remove(); return out; }, ink)));
         expect(ring).toContain("inset");
       } else {
-        // A selected row inverts ink and background.
+        // A selected Details row inverts ink and background.
         expect(rgb(fg)).not.toEqual(rgb(bg));
         expect(ring).not.toContain("inset 0px 0px 0px 1px");
       }
       expect(parseFloat(await selected.evaluate(el => getComputedStyle(el).borderTopLeftRadius))).toBe(0);
       await expect(page.locator(`[data-region="file-list"][data-view="${variant.viewMode}"]:visible`)).toHaveCount(1);
+      // The chrome is the ledger's monospace; file names keep the theme's
+      // face, in every view (#1879).
+      const font = (selector: string) => css(page, selector, "font-family");
+      for (const chrome of ['[data-region="tab"]', '[data-region="status-bar"]', '[data-region="sidebar-label"]']) {
+        expect(await font(chrome), chrome).toMatch(/^"IBM Plex Mono"/);
+      }
+      const names = page.locator('[data-region="entry-name"]:visible');
+      expect(await names.first().evaluate(el => getComputedStyle(el).fontFamily)).toMatch(/^"Inter Variable"/);
+      if (variant.viewMode !== "details") {
+        // A selected (and hovered) tile's name keeps its own colour, readable
+        // on the tint; inverted, it faded to the background's (#1879).
+        expect(rgb(await nameColor())).toEqual(rgb(unselectedName));
+      }
+    });
+  }
+
+  // #1789: List entries are separate cells with gaps between them, and a peek
+  // card's rows too; inverted like a Details row, a selection read as a column
+  // of black blocks (white in dark themes). They are ruled, as tiles are.
+  for (const theme of ["light", "dark"]) {
+    test(`Hairline Ledger rules a List selection, peek card included, not inverts it (${theme})`, async ({ page }) => {
+      await seedSettings(page, { layoutTheme: "hairline-ledger", theme, viewMode: "list", folderPeek: true });
+      await page.goto(HOME_URL);
+      await waitForEntries(page);
+      const shown = ".pane-tree:not(.retained)";
+      await expect(page.locator(`${shown} [data-region="file-list"][data-view="list"]`)).toHaveCount(1);
+      const folder = page.locator(`${shown} .entry-item[data-path="/home/user/Documents"]`);
+      await folder.locator(":scope > .peek-caret").click();
+      await expect(folder).toHaveAttribute("aria-expanded", "true");
+      const child = page.locator(`${shown} [data-card-scroll] .entry-item`).first();
+      await expect(child).toBeVisible();
+      const name = child.locator('[data-region="entry-name"]').first();
+      const unselectedName = await name.evaluate(el => getComputedStyle(el).color);
+      const top = page.locator(`${shown} .entry-item[data-path="/home/user/Downloads"]`);
+      await top.click();
+      await child.click({ modifiers: [MULTI_SELECT_MODIFIER] });
+      const ink = await page.evaluate(() => { const el = document.createElement("i"); el.style.color = "var(--text-primary)"; document.body.append(el); const out = getComputedStyle(el).color; el.remove(); return out; });
+      for (const row of [top, child]) {
+        await expect(row).toHaveAttribute("aria-selected", "true");
+        const [bg, ring] = await row.evaluate(el => [getComputedStyle(el).backgroundColor, getComputedStyle(el).boxShadow]);
+        expect(bg).not.toBe("rgba(0, 0, 0, 0)");
+        expect(rgb(bg), "no block of ink behind a selected List entry").not.toEqual(rgb(ink));
+        expect(ring).toMatch(/0px 0px 0px 1px inset/);
+      }
+      // The name keeps its own colour, readable on the tint.
+      expect(rgb(await name.evaluate(el => getComputedStyle(el).color))).toEqual(rgb(unselectedName));
+    });
+  }
+
+  for (const layout of ["default", "hairline-ledger"]) {
+    test(`a rule separates the sidebar from the file pane in ${layout} (#1879)`, async ({ page }) => {
+      await page.setViewportSize({ width: 1100, height: 700 });
+      await seedSettings(page, { layoutTheme: layout });
+      await page.goto(HOME_URL);
+      await waitForEntries(page);
+      const sidebar = await rect(page, '[data-region="sidebar-body"]');
+      const y = Math.round(sidebar.bottom - 40);
+      // The sidebar's last column, the column inside it, and the pane beside it.
+      const pixel = async (x: number) => {
+        const png = (await page.screenshot({ clip: { x: Math.floor(x), y, width: 1, height: 1 } })).toString("base64");
+        return page.evaluate(async (data) => {
+          const image = new Image();
+          image.src = `data:image/png;base64,${data}`;
+          await image.decode();
+          const context = Object.assign(document.createElement("canvas"), { width: 1, height: 1 }).getContext("2d")!;
+          context.drawImage(image, 0, 0);
+          return [...context.getImageData(0, 0, 1, 1).data.slice(0, 3)];
+        }, png);
+      };
+      const edge = await pixel(sidebar.right - 0.5);
+      const inside = await pixel(sidebar.right - 3.5);
+      const pane = await pixel(sidebar.right + 3.5);
+      // Sidebar and pane are one surface (to rounding); the rule is darker.
+      inside.forEach((channel, i) => expect(Math.abs(channel - pane[i])).toBeLessThanOrEqual(2));
+      const luma = ([r, g, b]: number[]) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      expect(luma(inside) - luma(edge)).toBeGreaterThan(8);
     });
   }
 });

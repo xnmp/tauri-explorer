@@ -17,6 +17,7 @@ export const SETTINGS_ROWS = {
   integratedTitleBar: ["Integrated Title Bar", "Show tabs in the title bar alongside window controls (requires restart)"],
   translucency: ["Translucency", "Frosted-glass window material: macOS vibrancy, Windows acrylic or Mica (applies to new windows)", "vibrancy", "blur", "acrylic", "mica", "backdrop", "transparency", "frosted glass"],
   layoutTheme: ["Layout", "Panel spacing, borders, rounding and density. Add your own CSS layouts to the layouts folder", "floating islands", "hairline ledger", "island", "css", "custom"],
+  compact: ["Compact", "Tighter title bar, toolbar, status bar and rows, and closer tiles, in any layout", "density", "dense", "small", "row height", "spacing"],
   premiumTheme: ["Premium Theme Effects", "Aurora-style surface treatment: accent-tinted hairlines, soft glow shadows, breadcrumb pills, translucent panels and a subtle depth backdrop. Off = flatter, higher-contrast look", "aurora", "glow", "gradient", "glass"],
   translucencyOpacity: ["Translucency Opacity", "How much of the frosted-glass material the panels hide (lower = more see-through)", "vibrancy", "transparency", "blur", "acrylic", "mica", "backdrop"],
   addressBar: ["Show Address Bar", "Display the breadcrumb/path bar above the file list"],
@@ -78,7 +79,7 @@ export interface SettingsPlatform {
 export function settingsSectionRows(platform: SettingsPlatform): SettingsSectionRows {
   const r = SETTINGS_ROWS;
   const appearance = [
-    r.theme, r.layoutTheme, r.iconTheme, r.thumbnailSize, r.rowThumbnails, r.showSidebar,
+    r.theme, r.layoutTheme, r.compact, r.iconTheme, r.thumbnailSize, r.rowThumbnails, r.showSidebar,
     ...(platform.isMac ? [] : [r.windowControls]),
     ...(platform.isMac ? [r.integratedTitleBar] : []),
     ...(platform.translucencyAvailable ? [r.translucency] : []),

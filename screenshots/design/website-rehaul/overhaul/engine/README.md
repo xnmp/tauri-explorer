@@ -36,11 +36,13 @@ The container needs a size; the app fills it (100% × 100%) and re-lays out in C
 - `handoff` – `true`: opening a file (double-click, Enter, Open in the menu) only selects it and emits
   `open {how: "open", handoff: true}`; the host plays the system's default app. No preview, film viewer or toast.
 
-## Setup `{ parts, theme, layout, icons, view, path, keys?, hidden? }`
+## Setup `{ parts, theme, layout, icons, view, path, compact?, keys?, hidden? }`
 - `parts`: ids from `TX.parts`. Panels: `tabs address sidebar miller preview split terminal status`.
   Features: `views peek search git plugin palette themes hotkeys`. Unknown ids are ignored.
 - `theme`: id from `TX.themes`, or a custom `{ name, dark, v: [paper, panel, ink, ink2, accent, folder] }`.
-- `layout`: `default floating-islands soft-cards compact hairline-ledger`. `icons`: `material classic minimal catppuccin default`.
+- `layout`: `default floating-islands soft-cards hairline-ledger`. `icons`: `material classic minimal catppuccin default`.
+- `compact`: `true` for the app's Compact density (#1878): shorter bars and rows on any layout. The retired
+  `layout: "compact"` loads as `default` with `compact: true`. A complete setup without it turns it off.
 - `view`: `details list tiles`. `path`: absolute or `~/…`; a file path selects that file.
 - `keys`: `{ commandId: "Ctrl+K" | "Alt+M B" (chord) | null (unbound) }` – only overrides are stored.
 - A setup containing `parts` is complete: missing parts turn off, keys and hidden reset to defaults.

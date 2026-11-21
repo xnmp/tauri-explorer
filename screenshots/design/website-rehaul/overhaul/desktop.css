@@ -221,6 +221,9 @@ body.desk-away .rail-body, body.desk-away .rail-tab { opacity: .07; filter: satu
 .mat .rng[data-off] { opacity: .45; }
 .mat .rng .cap { flex: none; font: 600 11px/1 var(--wb-font); letter-spacing: .02em; color: var(--h-text-2); }
 .mat output { min-width: 3.4ch; text-align: right; font: 600 12.5px/1 var(--wb-font); font-variant-numeric: tabular-nums; color: var(--h-text-2); }
+/* Compact density (#1878): the same plate under the layouts, its switch beside a plain note */
+.mat.density { margin-top: var(--s2); }
+.mat .note { grid-column: 2 / -1; min-width: 0; font: 500 12px/1.3 var(--wb-font); color: var(--h-text-2); text-wrap: balance; }
 .range { -webkit-appearance: none; appearance: none; flex: 1; min-width: 60px; height: 22px; margin: 0; background: none; cursor: pointer; --p: 55%; }
 .range::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: linear-gradient(90deg, var(--h-acc) var(--p), var(--m-well) var(--p)); box-shadow: inset 0 1px 2px var(--m-shade-2), inset 0 0 0 1px var(--m-line-2); }
 .range::-moz-range-track { height: 6px; border-radius: 3px; background: linear-gradient(90deg, var(--h-acc) var(--p), var(--m-well) var(--p)); box-shadow: inset 0 1px 2px var(--m-shade-2), inset 0 0 0 1px var(--m-line-2); }

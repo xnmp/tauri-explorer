@@ -198,6 +198,7 @@
         autocapitalize="none"
         spellcheck="false"
         class="rename-input tile-rename"
+        data-region="entry-name"
         class:error={!!rename.renameError}
         bind:value={rename.editedName}
         bind:this={rename.renameInputRef}
@@ -237,6 +238,7 @@
         spellcheck="false"
         type="text"
         class="rename-input rename-row"
+        data-region="entry-name"
         class:error={!!rename.renameError}
         bind:value={rename.editedName}
         bind:this={rename.renameInputRef}

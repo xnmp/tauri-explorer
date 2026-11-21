@@ -16,12 +16,11 @@ import {
   resolveLayoutTheme,
   withLayoutFailure,
 } from "$lib/domain/layout-theme";
-import { isBuiltinLayoutId, legacyLayoutThemeId, tabOwnsWindow, withLegacyLayoutMirror } from "$lib/domain/layout-theme-ids";
+import { foldLegacyCompactLayout, isBuiltinLayoutId, legacyLayoutThemeId, tabOwnsWindow, withLegacyLayoutMirror } from "$lib/domain/layout-theme-ids";
 import { readFileSync } from "node:fs";
 
 // Vitest stubs CSS imports, so the shipped stylesheets are read from disk.
 const layoutSheet = (name: string) => readFileSync(new URL(`../../src/lib/layouts/${name}`, import.meta.url), "utf8");
-const compactCss = layoutSheet("compact.css");
 const softCardsCss = layoutSheet("soft-cards.css");
 import { migrateSettings, CURRENT_SETTINGS_VERSION } from "$lib/domain/settings-migration";
 
@@ -117,7 +116,7 @@ describe("buildLayoutCatalog", () => {
       { css: "no filename" },
     ]);
     expect(catalog.themes.map((theme) => theme.id)).toEqual([
-      "default", "floating-islands", "hairline-ledger", "compact", "soft-cards", "zeta.css", "beta.css",
+      "default", "floating-islands", "hairline-ledger", "soft-cards", "zeta.css", "beta.css",
     ]);
     expect(catalog.userCss.get("beta.css")).toBe("b{}");
     expect(Object.fromEntries(catalog.failures)).toEqual({ "empty.css": "empty", "big.css": "too-large" });
@@ -125,7 +124,7 @@ describe("buildLayoutCatalog", () => {
 
   it("degrades a malformed listing to the built-ins", () => {
     expect(buildLayoutCatalog({ not: "an array" })).toBe(BUILTIN_LAYOUT_CATALOG);
-    expect(buildLayoutCatalog(undefined).themes).toHaveLength(5);
+    expect(buildLayoutCatalog(undefined).themes).toHaveLength(4);
   });
 });
 
@@ -140,12 +139,16 @@ describe("resolveLayoutTheme", () => {
     expect(resolveLayoutTheme(catalog, "compact.css")).toMatchObject({ theme: { id: "compact.css" }, fallback: null });
   });
 
-  it("keeps the Compact built-in distinct from a user file named compact.css (#1548)", () => {
-    expect(resolveLayoutTheme(catalog, "compact")).toMatchObject({
-      theme: { id: "compact", source: "builtin", base: "compact" },
-      fallback: null,
-    });
+  it("no longer has a Compact built-in: compact is a density setting (#1878)", () => {
+    expect(isBuiltinLayoutId("compact")).toBe(false);
+    expect(BUILTIN_LAYOUT_CATALOG.themes.map((theme) => theme.name)).not.toContain("Compact");
+    // A user file named compact.css is still an ordinary user layout.
     expect(resolveLayoutTheme(catalog, "compact.css").theme).toMatchObject({ source: "user", base: "floating-islands" });
+  });
+
+  it("resolves a user layout that extends the retired Compact layout as Default (#1878)", () => {
+    const parsed = parseUserLayout("tight.css", "/* @extends compact */ :root { --layout-gap: 1px; }");
+    expect(parsed).toMatchObject({ ok: true, theme: { base: "default", arrangement: "flat" } });
   });
 
   it("falls back to Default, explaining why, without rewriting the request", () => {
@@ -224,7 +227,7 @@ describe("legacy Floating Islands preference (#277, #434)", () => {
 
 describe("tabOwnsWindow (#1785, #1856, #1858, #1871)", () => {
   it("draws the tab seam on every built-in base except Soft Cards", () => {
-    for (const base of ["floating-islands", "default", "compact", "hairline-ledger"] as const) expect(tabOwnsWindow(base)).toBe(true);
+    for (const base of ["floating-islands", "default", "hairline-ledger"] as const) expect(tabOwnsWindow(base)).toBe(true);
     expect(tabOwnsWindow("soft-cards")).toBe(false);
   });
 });
@@ -257,26 +260,44 @@ describe("layoutNameFromFilename", () => {
   });
 });
 
-describe("Compact and Soft Cards built-ins (#1548)", () => {
-  it("are their own flat bases, so user layouts can extend them", () => {
-    for (const id of ["compact", "soft-cards"]) {
-      expect(isBuiltinLayoutId(id)).toBe(true);
-      expect(resolveLayoutTheme(BUILTIN_LAYOUT_CATALOG, id)).toMatchObject({
-        theme: { id, base: id, arrangement: "flat", source: "builtin" },
-        fallback: null,
-      });
-      const parsed = parseUserLayout("mine.css", `/* @extends ${id} */ :root { --layout-gap: 1px; }`);
-      expect(parsed).toMatchObject({ ok: true, theme: { base: id, arrangement: "flat" } });
-    }
+describe("Soft Cards built-in (#1548)", () => {
+  it("is its own flat base, so user layouts can extend it", () => {
+    expect(isBuiltinLayoutId("soft-cards")).toBe(true);
+    expect(resolveLayoutTheme(BUILTIN_LAYOUT_CATALOG, "soft-cards")).toMatchObject({
+      theme: { id: "soft-cards", base: "soft-cards", arrangement: "flat", source: "builtin" },
+      fallback: null,
+    });
+    const parsed = parseUserLayout("mine.css", "/* @extends soft-cards */ :root { --layout-gap: 1px; }");
+    expect(parsed).toMatchObject({ ok: true, theme: { base: "soft-cards", arrangement: "flat" } });
   });
 
-  it("ship stylesheets whose metadata matches the catalog and whose row height is honoured", () => {
-    const sheets: Record<string, string> = { compact: compactCss, "soft-cards": softCardsCss };
-    for (const [id, css] of Object.entries(sheets)) {
-      const entry = BUILTIN_LAYOUT_CATALOG.themes.find((theme) => theme.id === id)!;
-      expect(parseLayoutMetadata(css)).toMatchObject({ name: entry.name, description: entry.description });
-    }
-    const rowHeight = /--layout-row-height:\s*([^;]+);/.exec(compactCss)?.[1];
-    expect(parseLayoutRowHeight(rowHeight)).toBe(22);
+  it("ships a stylesheet whose metadata matches the catalog", () => {
+    const entry = BUILTIN_LAYOUT_CATALOG.themes.find((theme) => theme.id === "soft-cards")!;
+    expect(parseLayoutMetadata(softCardsCss)).toMatchObject({ name: entry.name, description: entry.description });
+  });
+});
+
+describe("foldLegacyCompactLayout (#1878)", () => {
+  it("turns the retired Compact layout into Default at compact density", () => {
+    expect(foldLegacyCompactLayout({ layoutTheme: "compact", theme: "dark" })).toEqual({
+      layoutTheme: "default",
+      compact: true,
+      theme: "dark",
+    });
+    // An explicit compact: false loses to the layout that implied it.
+    expect(foldLegacyCompactLayout({ layoutTheme: "compact", compact: false })).toEqual({ layoutTheme: "default", compact: true });
+  });
+
+  it("returns every other blob unchanged, as the same object", () => {
+    const blobs = [
+      { layoutTheme: "default" },
+      { layoutTheme: "hairline-ledger", compact: true },
+      { layoutTheme: "compact.css" },
+      { layoutTheme: "Compact" },
+      { layoutTheme: 42 },
+      { layoutTheme: null },
+      {},
+    ];
+    for (const blob of blobs) expect(foldLegacyCompactLayout(blob)).toBe(blob);
   });
 });

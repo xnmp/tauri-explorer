@@ -79,7 +79,6 @@
 :root[data-on-acc="dark"] { --h-on-acc: #111; }
 :root[data-layout="floating-islands"] { --wb-r: 16px; }
 :root[data-layout="soft-cards"] { --wb-r: 14px; }
-:root[data-layout="compact"] { --wb-r: 7px; --wb-gut: 12px; }
 :root[data-layout="hairline-ledger"] { --wb-r: 0px; }
 :root[data-mono] { --wb-font: var(--wb-mono); --wb-display: var(--wb-mono); }
 :root[data-mono] .strip .line { font-size: 11.5px; letter-spacing: -.02em; max-width: 66ch; }
@@ -367,10 +366,14 @@ body.enter .sheen i { animation: wb-sheen 1.25s cubic-bezier(.45, .05, .25, 1) .
 .mini[data-layout="floating-islands"] :is(.mm-tabs, .mm-addr, .mm-side, .mm-mill, .mm-pane, .mm-prev, .mm-term, .mm-stat) { box-shadow: 0 2px 5px -1px rgba(0,0,0,.3); }
 .mini[data-layout="soft-cards"] :is(.mm-side, .mm-tabs, .mm-stat) { background: var(--s); }
 .mini[data-layout="floating-islands"] .mm-term, .mini[data-layout="soft-cards"] .mm-term { background: color-mix(in srgb, var(--p) 50%, var(--s)); }
-.mini[data-layout="compact"] :is(.mm-tabs, .mm-addr) { height: 8%; } .mini[data-layout="compact"] .mm-pane { gap: 4%; } .mini[data-layout="compact"] .mm-pane i { height: 5.5%; }
 .mini[data-layout="hairline-ledger"], .mini[data-layout="hairline-ledger"] * { border-radius: 0 !important; }
 .mini[data-layout="hairline-ledger"] .mw { box-shadow: 0 0 0 .75px color-mix(in srgb, var(--i) 30%, transparent); }
 .mini[data-layout="hairline-ledger"] .mm-pane i { border-bottom: .5px solid var(--ln); height: 8%; }
+/* Compact density (#1878): shorter bars and rows on whichever layout; after the layouts, so it wins on order */
+.mini[data-density="compact"] :is(.mm-tabs, .mm-addr) { height: 8%; } .mini[data-density="compact"] .mm-stat { height: 5%; }
+.mini[data-density="compact"] .mm-pane.v-details { gap: 4%; } .mini[data-density="compact"] .mm-pane.v-details i { height: 5.5%; }
+.mini[data-density="compact"] .mm-pane.v-list { grid-auto-rows: 7.5%; row-gap: 4%; }
+.switches.density { grid-template-columns: 1fr; margin-top: var(--s2); }
 .mini.mono .mm-pane i s { background: repeating-linear-gradient(90deg, var(--tx) 0 3px, transparent 3px 4px); }
 
 /* ---------- the hint marker, when something lit is out of view ---------- */
@@ -595,6 +598,7 @@ kbd { height: 23px; border-radius: 6px; background: linear-gradient(180deg, colo
           <div class="chips" id="chips" role="group" aria-labelledby="lbl-colours"></div>
           <div class="look-h" id="lbl-layout">Layout</div>
           <div class="seg" id="seg-layout" role="group" aria-labelledby="lbl-layout"></div>
+          <ul class="switches density" aria-label="Density"><li><button class="sw" type="button" role="switch" aria-checked="false" data-compact title="Shorter bars and rows on whichever layout you pick: more files on screen."><svg class="g" viewBox="0 0 24 18" aria-hidden="true"><rect class="frame" x=".6" y=".6" width="22.8" height="16.8" rx="2.6"/><path class="l" d="M5 5h14M5 8h14M5 11h14M5 14h14"/></svg><span class="nm">Compact</span><span class="tog" aria-hidden="true"></span></button></li></ul>
           <div class="look-h" id="lbl-icons">Icons</div>
           <div class="seg" id="seg-icons" role="group" aria-labelledby="lbl-icons"></div>
           <div class="look-h" id="lbl-view">View</div>
@@ -780,7 +784,7 @@ const FEATURE_IDS = CAT.parts.filter(p => p.kind === "feature").map(p => p.id);
 const THEME = Object.fromEntries(CAT.themes.map(t => [t.id, t]));
 const VIEWS = ["details", "list", "tiles"];
 
-const shape = s => JSON.stringify({ parts: [...(s.parts || [])].filter(p => PANEL_IDS.includes(p)).sort(), theme: s.theme, layout: s.layout || "default", icons: s.icons || "material", view: s.view || "details", keys: s.keys || {} });
+const shape = s => JSON.stringify({ parts: [...(s.parts || [])].filter(p => PANEL_IDS.includes(p)).sort(), theme: s.theme, layout: s.layout === "compact" ? "default" : s.layout || "default", compact: !!s.compact || s.layout === "compact", icons: s.icons || "material", view: s.view || "details", keys: s.keys || {} });
 const isThemeObj = t => !!t && typeof t === "object" && Array.isArray(t.v) && t.v.length >= 6 && t.v.slice(0, 6).every(c => /^#[0-9a-f]{6}$/i.test(String(c)));
 const swatchOf = theme => isThemeObj(theme) ? { v: theme.v.slice(0, 6), dark: !!theme.dark, mono: false } : { v: (THEME[theme] || THEME["ink-wash"] || CAT.themes[0]).swatch, dark: !!(THEME[theme] || {}).dark, mono: theme === "hacker" };
 const themeName = t => isThemeObj(t) ? (t.name || "a custom theme") : (THEME[t] || {}).name || String(t);
@@ -805,6 +809,7 @@ function dress(s) {
   ROOT.dataset.scheme = sw.dark ? "dark" : "light";
   ROOT.dataset.onAcc = (lum(acc) + .05) / .05 > 1.05 / (lum(acc) + .05) ? "dark" : "light";   // whichever of black or white reads better on the accent
   ROOT.dataset.layout = s.layout || "default";
+  if (s.compact) ROOT.dataset.density = "compact"; else delete ROOT.dataset.density;
   if (sw.mono) ROOT.dataset.mono = ""; else delete ROOT.dataset.mono;
 }
 
@@ -817,7 +822,7 @@ const SHELF = [
   { id: "contact", name: "Contact sheet", line: "Big tiles and a preview, floating over the dark.",
     setup: { parts: ["tabs", "address", "preview"], theme: "dark", layout: "floating-islands", icons: "catppuccin", view: "tiles" } },
   { id: "phosphor", name: "Phosphor", line: "Green on black, monospace throughout, the command palette on Alt+X.",
-    setup: { parts: ["address", "terminal", "status"], theme: "hacker", layout: "compact", icons: "default", view: "list", keys: { palette: "Alt+X" } } },
+    setup: { parts: ["address", "terminal", "status"], theme: "hacker", layout: "default", compact: true, icons: "default", view: "list", keys: { palette: "Alt+X" } } },
   { id: "slow", name: "Slow water", line: "Miller columns, so the way back is always on screen. Pale and unhurried.",
     setup: { parts: ["address", "miller", "preview", "status"], theme: "tahoe", layout: "soft-cards", icons: "classic", view: "list" } },
   { id: "tree", name: "Working tree", line: "Tabs, a sidebar of places and a shell, with the commit graph on Alt+G.",
@@ -854,7 +859,7 @@ function describe(s) {   // plain, from the data
   const list = names.length ? names.length === 1 ? names[0] : names.slice(0, -1).join(", ") + " and " + names.at(-1) : "no panels";
   const lay = (CAT.layouts.find(l => l.id === s.layout) || {}).name || "Default";
   const v = s.view || "details";
-  return `${v[0].toUpperCase() + v.slice(1)} view with ${list}. ${themeName(s.theme)}, ${lay}.`;
+  return `${v[0].toUpperCase() + v.slice(1)} view with ${list}. ${themeName(s.theme)}, ${lay}${s.compact ? ", compact" : ""}.`;
 }
 
 /* ======================= domain: found files ======================= */
@@ -945,7 +950,7 @@ function context(snap, idx, visits, binStart) {   // pure: a snapshot plus what 
 }
 
 /* ======================= the setup as text ======================= */
-const ORDER = ["parts", "theme", "layout", "icons", "view", "path", "keys", "hidden"];
+const ORDER = ["parts", "theme", "layout", "compact", "icons", "view", "path", "keys", "hidden"];
 function pretty(s) {   // short arrays stay on one line, long ones wrap
   const ordered = {}; for (const k of ORDER) if (k in s) ordered[k] = s[k]; for (const k in s) if (!(k in ordered)) ordered[k] = s[k];
   const inl = (arr, ind) => { const parts = arr.map(x => JSON.stringify(x)); const lines = []; let cur = ""; for (const p of parts) { if (cur && (cur + ", " + p).length > 34) { lines.push(cur + ","); cur = p; } else cur = cur ? cur + ", " + p : p; } if (cur) lines.push(cur); return lines.length <= 1 ? `[${lines[0] || ""}]` : `[\n${lines.map(l => ind + "  " + l).join("\n")}\n${ind}]`; };
@@ -980,7 +985,9 @@ function checkSetup(o, commandIds) {
     if (bad.length) notes.push(`Not a panel, ignored: ${bad.map(b => JSON.stringify(b)).join(", ")}.`);
   } else if ("parts" in o) notes.push(`"parts" should be a list, like ["tabs", "sidebar"].`);
   if ("theme" in o && !isThemeObj(o.theme) && !THEME[o.theme]) notes.push(typeof o.theme === "object" ? `A theme needs six hex colours in "v", like "#1e1e2e".` : `No theme called ${JSON.stringify(o.theme)}; the colours stay as they were.`);
-  if ("layout" in o && !CAT.layouts.some(l => l.id === o.layout)) notes.push(`No layout called ${JSON.stringify(o.layout)}.`);
+  if (o.layout === "compact") notes.push(`Compact is a switch on any layout now: "layout": "default" with "compact": true.`);
+  else if ("layout" in o && !CAT.layouts.some(l => l.id === o.layout)) notes.push(`No layout called ${JSON.stringify(o.layout)}.`);
+  if ("compact" in o && typeof o.compact !== "boolean") notes.push(`"compact" is true or false.`);
   if ("icons" in o && !CAT.iconsets.some(l => l.id === o.icons)) notes.push(`No icon set called ${JSON.stringify(o.icons)}.`);
   if ("view" in o && !VIEWS.includes(o.view)) notes.push(`"view" is one of "details", "list" or "tiles".`);
   if (o.keys && typeof o.keys === "object") { const bad = Object.keys(o.keys).filter(k => !commandIds.includes(k)); if (bad.length) notes.push(`No command called ${bad.map(b => JSON.stringify(b)).join(", ")}; that key is ignored.`); }
@@ -1106,6 +1113,7 @@ RAIL.addEventListener("click", e => {
   else if (b.dataset.layout) stage.setSetup({ layout: b.dataset.layout });
   else if (b.dataset.icons) stage.setSetup({ icons: b.dataset.icons });
   else if (b.dataset.view) stage.setSetup({ view: b.dataset.view });
+  else if (b.hasAttribute("data-compact")) { b.classList.remove("tick"); void b.offsetWidth; b.classList.add("tick"); stage.setSetup({ compact: b.getAttribute("aria-checked") !== "true" }); }
 });
 $("#open-themes").addEventListener("click", () => stage.run("themes"));
 function paintLook(s) {
@@ -1115,6 +1123,7 @@ function paintLook(s) {
     c.setAttribute("aria-pressed", String(custom ? isThemeObj(t) && JSON.stringify(t.v) === JSON.stringify(custom.v) : t === s.theme));
   });
   for (const k of ["layout", "icons", "view"]) RAIL.querySelectorAll(`#seg-${k} button`).forEach(b => b.setAttribute("aria-pressed", String(b.dataset[k] === s[k])));
+  RAIL.querySelectorAll("[data-compact]").forEach(b => b.setAttribute("aria-checked", String(!!s.compact)));
 }
 
 /* ======================= view: shelf ======================= */
@@ -1128,7 +1137,7 @@ function mini(s) {
   const sw = swatchOf(s.theme), [p, side, ink, muted, acc, fold] = sw.v, on = id => (s.parts || []).includes(id), view = s.view || "details";
   const rows = n => Array.from({ length: n }, () => "<i><b></b><s></s><u></u></i>").join("");
   const pane = () => `<div class="mm-pane v-${view}">${view === "tiles" ? "<i></i>".repeat(6) : rows(view === "list" ? 10 : 7)}</div>`;
-  return `<div class="mini${sw.dark ? " dk" : ""}${sw.mono ? " mono" : ""}" data-layout="${esc(s.layout || "default")}" style="--p:${p};--s:${side};--i:${ink};--m:${muted};--a:${acc};--f:${fold}">
+  return `<div class="mini${sw.dark ? " dk" : ""}${sw.mono ? " mono" : ""}" data-layout="${esc(s.layout || "default")}"${s.compact ? ' data-density="compact"' : ""} style="--p:${p};--s:${side};--i:${ink};--m:${muted};--a:${acc};--f:${fold}">
     <div class="mw">${on("tabs") ? "<div class=mm-tabs><i></i><i></i><i></i></div>" : ""}${on("address") ? "<div class=mm-addr><i></i></div>" : ""}
       <div class="mb">${on("sidebar") ? "<div class=mm-side><i></i><i></i><i></i><i></i><i></i></div>" : ""}${on("miller") ? "<div class=mm-mill><i></i><i></i><i></i><i></i></div>" : ""}
         <div class="mm-panes${on("split") ? " split" : ""}">${pane()}${on("split") ? pane() : ""}</div>${on("preview") ? "<div class=mm-prev><b></b><i></i><i></i></div>" : ""}</div>

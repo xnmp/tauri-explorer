@@ -33,7 +33,6 @@ const LAYOUTS = [
   { id: "default", name: "Default", note: "flat, edge to edge" },
   { id: "floating-islands", name: "Floating Islands", note: "rounded panels over the backdrop" },
   { id: "soft-cards", name: "Soft Cards", note: "opaque cards, no shadow" },
-  { id: "compact", name: "Compact", note: "shorter bars and rows" },
   { id: "hairline-ledger", name: "Hairline Ledger", note: "square, dense, hairlines" },
 ];
 const ICONSETS = [   // names and descriptions as the app lists them
@@ -315,7 +314,8 @@ TX.mount = function mount(container, opts = {}) {
 
   /* ================= themes: colour, layout, icons ================= */
   const THEMEKINDS = { colour: ["Switch Theme", COLOURS], layout: ["Switch Layout", LAYOUTS], icons: ["Switch Icon Theme", ICONSETS] };
-  const theme = { colour: "ink-wash", layout: "default", icons: "material", custom: null };
+  // compact: the app's Compact density (#1878), shorter bars and rows on whichever layout
+  const theme = { colour: "ink-wash", layout: "default", icons: "material", custom: null, compact: false };
   let settled = false;
   const rgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
   const hex = c => "#" + c.map(v => Math.round(clamp(v, 0, 255)).toString(16).padStart(2, "0")).join("");
@@ -328,6 +328,7 @@ TX.mount = function mount(container, opts = {}) {
     THEMEVARS.forEach(k => R.style.removeProperty(k));
     R.dataset.txScheme = appEl.dataset.txScheme = c.dark ? "dark" : "light";
     appEl.dataset.layout = theme.layout;
+    if (theme.compact) appEl.dataset.density = "compact"; else delete appEl.dataset.density;
     appEl.dataset.icons = iconPack();
     const set = {};
     if (c.v) {
@@ -351,6 +352,7 @@ TX.mount = function mount(container, opts = {}) {
     if (kind !== "colour") renderAll();
     emitSetup();
   }
+  function setCompact(on) { theme.compact = !!on; paint(false); renderAll(); emitSetup(); }
   /* the picker previews each choice as you arrow through it; Enter keeps it, Esc puts things back */
   function openThemes(kind = "colour") {
     ensure("themes");
@@ -480,7 +482,7 @@ TX.mount = function mount(container, opts = {}) {
       let html;
       if (P.st.view === "list") {   // names only, flowing down each column and then across
         P.items = ordered(P.st.path).map(n => ({ p: join(P.st.path, n.n), n, depth: 0 }));
-        P.rows = Math.max(1, Math.floor((host.clientHeight - 12) / ((theme.layout === "compact" ? 22 : 27) + 1)));
+        P.rows = Math.max(1, Math.floor((host.clientHeight - 12) / ((theme.compact ? 22 : 27) + 1)));
         html = `<div class="tx-pv tx-listv"><div class="tx-scroll"><div class="tx-lgrid" style="--rows:${P.rows}">${P.items.map((e, i) => `<div class="tx-c-row${cls(e)}" data-row="${esc(e.p)}" data-i="${i}" draggable="true"><span class="tx-nm">${icon(e.n)}<span class="tx-fn">${esc(e.n.n)}</span></span></div>`).join("")}</div>${none}</div></div>`;
       } else if (P.st.view === "tiles") {
         const tw = 108;   // the app's medium tile: a 64px icon in a column at least 108px wide
@@ -1701,6 +1703,7 @@ TX.mount = function mount(container, opts = {}) {
     { id: "toggleTerminal", cat: "View", t: "Toggle Terminal", key: "Alt+M T", run: () => { if (togglePart("terminal")) setTimeout(() => term.inp.focus({ preventScroll: true })); }, state: () => state.on.has("terminal") },
     { id: "togglePeek", cat: "View", t: "Toggle Folder Peek", key: null, ...flip("peek") },
     { id: "toggleHidden", cat: "View", t: "Toggle Hidden Files", key: "Ctrl+H", run: () => toggleHidden(), state: () => state.hidden },
+    { id: "toggleCompact", cat: "View", t: "Toggle Compact Mode", key: null, run: () => setCompact(!theme.compact), state: () => theme.compact },
     { id: "themes", cat: "View", t: "Switch Theme...", key: null, run: () => openThemes("colour") },
     { id: "layouts", cat: "View", t: "Switch Layout...", key: null, run: () => openThemes("layout") },
     { id: "icons", cat: "View", t: "Switch Icon Theme...", key: null, run: () => openThemes("icons") },
@@ -2161,6 +2164,7 @@ TX.mount = function mount(container, opts = {}) {
   const ensure = id => { if (!state.on.has(id)) setPart(id, true); };
   function getSetup() {
     const s = { parts: PART_IDS.filter(id => state.on.has(id)), theme: theme.custom ? { name: theme.custom.name, dark: !!theme.custom.dark, v: theme.custom.v.slice() } : theme.colour, layout: theme.layout, icons: theme.icons, view: main.st.view, path: main.st.path };
+    if (theme.compact) s.compact = true;
     if (state.hidden) s.hidden = true;
     const keys = {};
     for (const c of CMDS) if ((keymap[c.id] ?? null) !== (c.key ?? null)) keys[c.id] = keymap[c.id] ?? null;
@@ -2178,7 +2182,11 @@ TX.mount = function mount(container, opts = {}) {
       if ((s.keys && typeof s.keys === "object") || whole) { for (const c of CMDS) keymap[c.id] = c.key ?? null; for (const [id, k] of Object.entries(s.keys || {})) if (id in keymap) keymap[id] = k || null; }
       if (s.theme && typeof s.theme === "object" && Array.isArray(s.theme.v) && s.theme.v.length >= 6) { theme.custom = { name: s.theme.name || "Custom", dark: !!s.theme.dark, v: s.theme.v.slice(0, 6) }; theme.colour = "custom"; }
       else if (COLOURS.some(c => c.id === s.theme)) { theme.colour = s.theme; theme.custom = null; }
-      if (LAYOUTS.some(l => l.id === s.layout)) theme.layout = s.layout;
+      // the retired Compact layout (#1878) loads as Default at compact density, as the app folds it
+      if (s.layout === "compact") { theme.layout = "default"; theme.compact = true; }
+      else if (LAYOUTS.some(l => l.id === s.layout)) theme.layout = s.layout;
+      if (typeof s.compact === "boolean") theme.compact = s.compact;
+      else if (whole && s.layout !== "compact") theme.compact = false;
       if (ICONSETS.some(i => i.id === s.icons)) theme.icons = s.icons;
       if (Array.isArray(s.parts)) state.on = new Set(s.parts.filter(id => PART_IDS.includes(id)));
       paint(fade);

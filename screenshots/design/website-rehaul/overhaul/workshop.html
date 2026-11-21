@@ -85,7 +85,6 @@
 :root[data-on-acc="dark"] { --h-on-acc: #111; }
 :root[data-layout="floating-islands"] { --wb-r: 16px; }
 :root[data-layout="soft-cards"] { --wb-r: 14px; }
-:root[data-layout="compact"] { --wb-r: 7px; --wb-gut: 12px; }
 :root[data-layout="hairline-ledger"] { --wb-r: 0px; }
 :root[data-mono] { --wb-font: var(--wb-mono); --wb-display: var(--wb-mono); }
 :root[data-mono] .strip .line { font-size: 11.5px; letter-spacing: -.02em; max-width: 66ch; }
@@ -272,6 +271,14 @@ body.rail-in .sheen i { animation: wb-sheen 1.1s cubic-bezier(.45, .05, .25, 1) 
 .chip[aria-pressed="true"] small { color: var(--h-text); }   /* same weight: the selected name never re-wraps */
 .chip:focus-visible { outline: none; } .chip:focus-visible .tile { outline: 2px solid var(--h-acc); outline-offset: 5px; }
 .chip.found .tile { box-shadow: inset 0 0 0 1px rgba(0,0,0,.16), 0 0 0 1.5px var(--m-plate), 0 0 0 3px color-mix(in srgb, var(--h-folder) 70%, var(--h-ink)); }
+/* Two rows of colours, then More (foldChips): the expander is the page's quiet text button, a chevron that turns */
+.chip.over { display: none; }
+.chips-more { margin-top: var(--s2); margin-left: -10px; gap: 5px; }
+.chips-more svg { width: 11px; height: 11px; transition: transform .2s var(--ease); }
+.chips-more[aria-expanded="true"] svg { transform: rotate(180deg); }
+.chip.unfold { animation: wb-unfold .32s var(--ease) both; animation-delay: calc(var(--k, 0) * 18ms); }
+@keyframes wb-unfold { from { opacity: 0; transform: translateY(-4px); } }
+@media (prefers-reduced-motion: reduce) { .chip.unfold { animation: none; } .chips-more svg { transition: none; } }
 .chip.found[aria-pressed="true"] .tile { box-shadow: 0 0 0 2px var(--m-plate), 0 0 0 4px var(--h-acc); }
 .chip.found small::before { content: ""; display: inline-block; width: 5px; height: 5px; margin-right: 4px; border-radius: 50%; background: color-mix(in srgb, var(--h-folder) 70%, var(--h-ink)); vertical-align: 1px; }
 
@@ -363,13 +370,16 @@ body.rail-in .sheen i { animation: wb-sheen 1.1s cubic-bezier(.45, .05, .25, 1) 
 .mini[data-layout="floating-islands"] :is(.mm-tabs, .mm-addr, .mm-side, .mm-mill, .mm-pane, .mm-prev, .mm-scm, .mm-term, .mm-stat) { box-shadow: 0 2px 5px -1px rgba(0,0,0,.3); }
 .mini[data-layout="soft-cards"] :is(.mm-side, .mm-tabs, .mm-stat) { background: var(--s); }
 .mini[data-layout="floating-islands"] .mm-term, .mini[data-layout="soft-cards"] .mm-term { background: color-mix(in srgb, var(--p) 50%, var(--s)); }
-.mini[data-layout="compact"] :is(.mm-tabs, .mm-addr) { height: 8%; } .mini[data-layout="compact"] .mm-pane { gap: 4%; } .mini[data-layout="compact"] .mm-pane i { height: 5.5%; }
 .mini[data-layout="hairline-ledger"], .mini[data-layout="hairline-ledger"] * { border-radius: 0 !important; }
 .mini[data-layout="hairline-ledger"] .mw { box-shadow: 0 0 0 .75px color-mix(in srgb, var(--i) 30%, transparent); }
 .mini[data-layout="hairline-ledger"] .mm-pane i { border-bottom: .5px solid var(--ln); height: 8%; }
-/* the active tab owns the window (Default, Compact, Ledger): only the strip is shaded; the sidebar is the tab's surface, ruled off */
-.mini:is([data-layout="default"], [data-layout="compact"], [data-layout="hairline-ledger"]) .mm-side { background: var(--w); border-right: .5px solid var(--ln); }
-.mini:is([data-layout="default"], [data-layout="compact"], [data-layout="hairline-ledger"]) .mm-tabs { box-shadow: inset 0 -.5px 0 var(--ln); }
+/* Compact density (#1878): shorter bars and rows on whichever layout; after the layouts, so it wins on order */
+.mini[data-density="compact"] :is(.mm-tabs, .mm-addr) { height: 8%; } .mini[data-density="compact"] .mm-stat { height: 5%; }
+.mini[data-density="compact"] .mm-pane.v-details { gap: 4%; } .mini[data-density="compact"] .mm-pane.v-details i { height: 5.5%; }
+.mini[data-density="compact"] .mm-pane.v-list { grid-auto-rows: 7.5%; row-gap: 4%; }
+/* the active tab owns the window (Default, Ledger): only the strip is shaded; the sidebar is the tab's surface, ruled off */
+.mini:is([data-layout="default"], [data-layout="hairline-ledger"]) .mm-side { background: var(--w); border-right: .5px solid var(--ln); }
+.mini:is([data-layout="default"], [data-layout="hairline-ledger"]) .mm-tabs { box-shadow: inset 0 -.5px 0 var(--ln); }
 .mini.mono .mm-pane i s { background: repeating-linear-gradient(90deg, var(--tx) 0 3px, transparent 3px 4px); }
 
 /* ---------- the hint marker, when something lit is out of view ---------- */
@@ -684,6 +694,7 @@ body.offline .rail, body.offline .sheen, body.offline .dock, body.offline .stage
             <div class="lede-row"><p class="lede">Colours, shape, icons and how files are laid out.</p><button class="btn small" type="button" id="open-themes" data-tip="The app's own theme picker, inside the window.">Theme picker</button></div>
             <div class="look-h" id="lbl-colours">Colours</div>
             <div class="chips" id="chips" role="group" aria-labelledby="lbl-colours"></div>
+            <button class="btn small ghost chips-more" type="button" aria-expanded="false" aria-controls="chips" hidden><span class="t">More</span><svg viewBox="0 0 12 12" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" d="m3 4.5 3 3 3-3"/></svg></button>
             <div class="look-h" id="lbl-mat">Window <small>Translucency opacity: how solid the panels are over the wallpaper</small></div>
             <div class="mat" role="group" aria-labelledby="lbl-mat">
               <button class="msw" type="button" role="switch" aria-checked="false" id="mat-on" data-tip="Lets the wallpaper show through the window, softly blurred. The slider sets how solid the panels are."><span class="tog" aria-hidden="true"></span><span class="nm">Translucent</span></button>
@@ -692,6 +703,7 @@ body.offline .rail, body.offline .sheen, body.offline .dock, body.offline .stage
             </div>
             <div class="look-h" id="lbl-layout">Layout</div>
             <div class="seg" id="seg-layout" role="group" aria-labelledby="lbl-layout"></div>
+            <div class="mat density" role="group" aria-label="Density"><button class="msw" type="button" role="switch" aria-checked="false" data-compact data-tip="Shorter bars and rows on whichever layout you pick: more files on screen."><span class="tog" aria-hidden="true"></span><span class="nm">Compact</span></button><span class="note">Shorter bars and rows, any layout</span></div>
             <div class="look-h" id="lbl-icons">Icons</div>
             <div class="seg" id="seg-icons" role="group" aria-labelledby="lbl-icons"></div>
             <div class="look-h" id="lbl-view">View</div>
@@ -910,12 +922,13 @@ document.querySelectorAll("[data-sect]").forEach(sect => {
 const setSummary = (id, text) => { const s = document.querySelector(`[data-sect="${id}"] .disc .sum`); if (s && s.textContent !== text) s.textContent = text; };
 
 /* ======================= the setup: a subset of the app's real settings, plus what the page controls ======================= */
-// theme, layoutTheme, iconTheme, viewMode, showSidebar, showAddressBar, showStatusBar, showPreviewPane, millerLayers,
+// theme, layoutTheme, compact, iconTheme, viewMode, showSidebar, showAddressBar, showStatusBar, showPreviewPane, millerLayers,
 // folderPeek, showHidden are the app's own Settings keys; terminal and split are runtime panels; keybindings are user overrides.
-const ORDER = ["theme", "layoutTheme", "iconTheme", "viewMode", "translucency", "showSidebar", "showAddressBar", "showStatusBar", "showPreviewPane", "showScmPanel", "millerLayers", "folderPeek", "showHidden", "terminal", "split", "keybindings"];
-const SETTING_KEYS = ["theme", "layoutTheme", "iconTheme", "translucency", "showSidebar", "showAddressBar", "showStatusBar", "showPreviewPane", "showScmPanel", "millerLayers", "folderPeek", "showHidden"];
-const BOOL_KEYS = ["translucency", "showSidebar", "showAddressBar", "showStatusBar", "showPreviewPane", "showScmPanel", "folderPeek", "showHidden", "terminal", "split"];
-const BASE = { theme: "light", layoutTheme: "default", iconTheme: "default", viewMode: "details", translucency: false, showSidebar: false, showAddressBar: false, showStatusBar: false, showPreviewPane: false, showScmPanel: false, millerLayers: 0, folderPeek: true, showHidden: false, terminal: false, split: false, keybindings: {} };
+// `compact` is a density on any layout (#1878), not a layout of its own.
+const ORDER = ["theme", "layoutTheme", "compact", "iconTheme", "viewMode", "translucency", "showSidebar", "showAddressBar", "showStatusBar", "showPreviewPane", "showScmPanel", "millerLayers", "folderPeek", "showHidden", "terminal", "split", "keybindings"];
+const SETTING_KEYS = ["theme", "layoutTheme", "compact", "iconTheme", "translucency", "showSidebar", "showAddressBar", "showStatusBar", "showPreviewPane", "showScmPanel", "millerLayers", "folderPeek", "showHidden"];
+const BOOL_KEYS = ["compact", "translucency", "showSidebar", "showAddressBar", "showStatusBar", "showPreviewPane", "showScmPanel", "folderPeek", "showHidden", "terminal", "split"];
+const BASE = { theme: "light", layoutTheme: "default", compact: false, iconTheme: "default", viewMode: "details", translucency: false, showSidebar: false, showAddressBar: false, showStatusBar: false, showPreviewPane: false, showScmPanel: false, millerLayers: 0, folderPeek: true, showHidden: false, terminal: false, split: false, keybindings: {} };
 // The window material. The setup says `translucency` (on/off); the app's own setting keys on this branch
 // (src/lib/state/settings.svelte.ts) are named here and only here: `translucency` (boolean) and `translucencyOpacity`
 // (20-100, how much of the material the window's surfaces hide). If they change, change MAT.
@@ -932,7 +945,11 @@ const HOUSE = [
   { id: "nord-snow", name: "Nord Snow", dark: false, v: ["#eceff4", "#e5e9f0", "#2e3440", "#4c566a", "#5e81ac", "#d08770"],
     wall: { src: "assets-desktop/nord-snow.webp", dark: false, avg: "#a5afc3", title: "Taiga river under snow, morning" } },
 ];
-const full = s => ({ ...BASE, ...s, keybindings: { ...(s.keybindings || {}) } });
+// The retired Compact layout (#1878) is Default at compact density: a setup shared before then still loads, as the app
+// itself folds a saved `layoutTheme: "compact"` (src/lib/domain/layout-theme-ids.ts).
+const LEGACY_COMPACT = "compact";
+const foldCompact = s => s.layoutTheme === LEGACY_COMPACT ? { ...s, layoutTheme: "default", compact: true } : s;
+const full = s => foldCompact({ ...BASE, ...s, keybindings: { ...(s.keybindings || {}) } });
 
 // The first screen: the bare single pane of the content, dressed to photograph well.
 // Horizon on Floating Islands: warm against the stage's light, and the coloured file icons read at a glance.
@@ -1218,6 +1235,7 @@ function dress(s) {
   ROOT.dataset.scheme = sw.dark ? "dark" : "light";
   ROOT.dataset.onAcc = (lum(acc) + .05) / .05 > 1.05 / (lum(acc) + .05) ? "dark" : "light";
   ROOT.dataset.layout = s.layoutTheme || "default";
+  if (s.compact) ROOT.dataset.density = "compact"; else delete ROOT.dataset.density;
   if (sw.mono) ROOT.dataset.mono = ""; else delete ROOT.dataset.mono;
   paintChromeSoon();
 }
@@ -1227,7 +1245,7 @@ function setupFrom(st) {
   const s = st.settings, p = st.panels, pane = st.panes.find(x => x.active) || st.panes[0];
   return {
     theme: customs.has(s.theme) ? { ...customs.get(s.theme) } : s.theme,
-    layoutTheme: s.layoutTheme, iconTheme: s.iconTheme, viewMode: (pane && pane.viewMode) || s.viewMode,
+    layoutTheme: s.layoutTheme, compact: !!s.compact, iconTheme: s.iconTheme, viewMode: (pane && pane.viewMode) || s.viewMode,
     showSidebar: !!p.sidebar, showAddressBar: !!p.address, showStatusBar: !!p.status, showPreviewPane: !!p.preview, showScmPanel: !!p.scm,
     millerLayers: p.miller ? (s.millerLayers || 1) : 0,
     translucency: !!s[MAT.on],
@@ -1275,6 +1293,7 @@ const GLYPH = {
   terminal: `<rect class="f" x="3.5" y="8.6" width="17" height="5.9" rx="1.4"/>`,
   peek: `<path class="l" d="M5 5.6h9M8.2 9h9M8.2 12.4h9"/>`,
   scm: `<rect class="f" x="3.5" y="3.5" width="6.3" height="11" rx="1.4"/><path class="l" d="M14 4.8v8.4M14 7.6c0 2.6 4.4 1.8 4.4 4.6"/>`,
+  compact: `<path class="l" d="M5 5.2h14M5 8.2h14M5 11.2h14M5 14.2h14"/>`,   // the Compact density switch (phone sheet)
 };
 const SWITCHES = [
   { id: "address", panel: "address", key: "showAddressBar", label: "Address bar" },
@@ -1490,7 +1509,6 @@ const PICTO = {
     default: P(`<rect x="2.5" y="2.5" width="23" height="15" rx="2.5"/><path d="M9.5 2.5v15M12.5 7h10M12.5 10.5h10M12.5 14h7"/>`),
     "floating-islands": P(`<rect x="2.5" y="3" width="6.5" height="14" rx="2.2"/><rect x="11" y="3" width="14.5" height="14" rx="2.2"/><path d="M14 7.5h8.5M14 11h8.5" opacity=".8"/>`),
     "soft-cards": P(`<rect x="2.5" y="2.5" width="23" height="15" rx="5" fill="currentColor" fill-opacity=".14"/><rect x="6" y="6" width="16" height="8" rx="3"/>`),
-    compact: P(`<rect x="2.5" y="2.5" width="23" height="15" rx="1.5"/><path d="M5.5 5.8h17M5.5 8.6h17M5.5 11.4h17M5.5 14.2h17"/>`),
     "hairline-ledger": P(`<path d="M2.5 2.5h23v15h-23z" stroke-width="1"/><path d="M2.5 7.5h23M2.5 12.5h23M19 2.5v15" stroke-width=".8"/>`),
   },
   icons: {
@@ -1518,16 +1536,45 @@ const chip = (key, name, v, note, cls = "", dark) => {
     + `</span></span><small>${esc(name.replace(/ \(.*\)$/, ""))}</small></button>`;
 };
 const SEG_TIP = {
-  layout: { default: "Classic: one flat window, sidebar and list side by side.", "floating-islands": "Each part floats as its own rounded card, with space between.", "soft-cards": "Rounded panels with soft edges on a tinted backdrop.", compact: "Tighter rows and smaller chrome: more files on screen.", "hairline-ledger": "Thin rules and square corners, like a printed ledger." },
+  layout: { default: "Classic: one flat window, sidebar and list side by side.", "floating-islands": "Each part floats as its own rounded card, with space between.", "soft-cards": "Rounded panels with soft edges on a tinted backdrop.", "hairline-ledger": "Thin rules and square corners, like a printed ledger." },
   view: { details: "One file per row, with its date and size.", list: "Names only, in columns, to see more at once.", tiles: "Big thumbnails: best for pictures." },
 };
 const segBtn = (kind, id, label, note) => `<button type="button" data-${kind}="${esc(id)}" ${(SEG_TIP[kind] || {})[id] ? `data-tip="${esc(SEG_TIP[kind][id])}"` : `title="${esc(note || label)}"`} aria-pressed="false">${(PICTO[kind] || {})[id] || PICTO[kind].default || ""}<span>${esc(label)}</span></button>`;
+// The colour tiles, best first: the first two rows are what most visitors see (More opens the rest), so they lead with
+// the most distinct looks, dark and light in turn, each with its own accent. Anything not named keeps its order after them.
+const FEATURED = ["horizon", "house:peach-alloy", "omarchy:tokyo-night", "solarized-light", "omarchy:sakura", "house:nord-snow", "gruvbox", "tahoe"];
+const featuredFirst = list => list.map((x, i) => [x, i]).sort(([a, i], [b, j]) => ((FEATURED.indexOf(a.key) + 1 || 99) - (FEATURED.indexOf(b.key) + 1 || 99)) || i - j).map(([x]) => x);
+// one list: the app's themes, Peach Alloy and every Omarchy theme loaded (each keeps its own wallpaper; the credit lives on the desktop caption)
+const colourChips = () => featuredFirst([...THEMES.map(t => ({ key: t.id, html: chip(t.id, t.name, t.swatch, t.note) })),
+  ...HOUSE.map(h => ({ key: "house:" + h.id, html: chip("house:" + h.id, h.name, h.v, "", "", h.dark) })),
+  ...OMARCHY.map(o => ({ key: "omarchy:" + o.id, html: chip("omarchy:" + o.id, o.name, o.v.slice(0, 6), "", "", !!o.dark) }))]).map(x => x.html).join("");
+// Folded, a grid shows two full rows at whatever columns it has now, and the theme being worn is always one of them: past
+// row two it takes the last place shown. More opens every tile; Less folds them again.
+function foldChips(box) {
+  const more = box && box.nextElementSibling;
+  if (!more || !more.classList.contains("chips-more")) return;
+  const chips = [...box.children], cols = getComputedStyle(box).gridTemplateColumns.split(" ").filter(Boolean).length || 1, keep = cols * 2;
+  const open = more.getAttribute("aria-expanded") === "true", worn = chips.findIndex(c => c.getAttribute("aria-pressed") === "true");
+  const shown = i => open || (worn >= keep ? i < keep - 1 || i === worn : i < keep);
+  chips.forEach((c, i) => c.classList.toggle("over", !shown(i)));
+  more.hidden = chips.length <= keep;
+  more.querySelector(".t").textContent = open ? "Less" : "More";
+  more.title = open ? "" : `${chips.length - keep} more colours`;
+}
+function toggleChips(more) {
+  const box = document.getElementById(more.getAttribute("aria-controls")), open = more.getAttribute("aria-expanded") !== "true";
+  const before = new Set([...box.children].filter(c => !c.classList.contains("over")));
+  more.setAttribute("aria-expanded", String(open));
+  foldChips(box);
+  let k = 0;
+  for (const c of box.children) { c.classList.remove("unfold"); if (open && !before.has(c)) { c.style.setProperty("--k", k++); void c.offsetWidth; c.classList.add("unfold"); } }
+}
+document.addEventListener("click", e => { const more = e.target.closest(".chips-more"); if (more) toggleChips(more); });
+const chipsFit = new ResizeObserver(entries => { for (const e of entries) foldChips(e.target); });
 function renderLook() {
-  // one list: the app's themes, Peach Alloy and every Omarchy theme loaded (each keeps its own wallpaper; the credit lives on the desktop caption)
-  $("#chips").innerHTML = THEMES.map(t => chip(t.id, t.name, t.swatch, t.note)).join("")
-    + HOUSE.map(h => chip("house:" + h.id, h.name, h.v, "", "", h.dark)).join("")
-    + OMARCHY.map(o => chip("omarchy:" + o.id, o.name, o.v.slice(0, 6), "", "", !!o.dark)).join("")
+  $("#chips").innerHTML = colourChips()
     + found.themes.map(f => chip("found:" + f.id, f.name, f.theme.v, f.by ? "by " + f.by : "", " found", f.theme.dark)).join("");
+  foldChips($("#chips")); chipsFit.observe($("#chips"));
   $("#seg-layout").innerHTML = LAYOUTS.map(l => segBtn("layout", l.id, SHORT[l.id] || l.name, `${l.name}: ${l.description || ""}`)).join("");
   $("#seg-icons").innerHTML = ICONS.map(l => segBtn("icons", l.id, l.id === "default" ? "Theme" : l.name, l.name)).join("");
   $("#seg-view").innerHTML = VIEWS.map(v => segBtn("view", v.id, cap1(v.id))).join("");
@@ -1537,7 +1584,7 @@ const foundTheme = key => key.startsWith("found:") ? (found.themes.find(x => x.i
   : key.startsWith("house:") ? (h => h ? { name: h.name, dark: h.dark, v: h.v.slice(0, 6) } : null)(HOUSE.find(x => x.id === key.slice(6)))
   : key.startsWith("omarchy:") ? (o => o ? { name: o.name, dark: !!o.dark, v: o.v.slice(0, 6) } : null)(OMARCHY.find(x => x.id === key.slice(8))) : null;
 RAIL.addEventListener("click", async e => {
-  const b = e.target.closest("button"); if (!b || !b.closest('[data-sect="look"], .found-sect') || b.closest(".disc, .mat") || b.id === "open-themes") return;
+  const b = e.target.closest("button"); if (!b || !b.closest('[data-sect="look"], .found-sect') || b.closest(".disc, .mat, .chips-more") || b.id === "open-themes") return;
   named = null;
   if (b.dataset.theme) { const t = foundTheme(b.dataset.theme); await apply({ theme: t || b.dataset.theme }); }
   else if (b.dataset.layout) await apply({ layoutTheme: b.dataset.layout });
@@ -1545,12 +1592,24 @@ RAIL.addEventListener("click", async e => {
   else if (b.dataset.view) await stage.setViewMode(b.dataset.view);   // the pane you are in, as the app's own view buttons do
 });
 $("#open-themes").addEventListener("click", async () => { await stage.run("view.switchTheme"); focusApp(); });
+// Compact (#1878): the app's density setting, a switch on whichever layout is worn. The bench sets it on a plate like the
+// window's material; the phone sheet as one of its switch rows, like its panels. Both land here.
+const DENSITY_TIP = $("#sb-look [data-compact]").dataset.tip;
+async function flipCompact(b) {
+  b.classList.remove("tick"); void b.offsetWidth; b.classList.add("tick");
+  const on = !setup.compact;
+  document.querySelectorAll("[data-compact]").forEach(x => x.setAttribute("aria-checked", String(on)));
+  named = null; await apply({ compact: on });
+}
+$("#sb-look [data-compact]").addEventListener("click", e => flipCompact(e.currentTarget));
 const sameTheme = (a, b) => (isThemeObj(a) || isThemeObj(b)) ? isThemeObj(a) && isThemeObj(b) && JSON.stringify(a.v) === JSON.stringify(b.v) : a === b;
 function paintLook(s) {
   document.querySelectorAll("#rail .chip, #ph-body .chip").forEach(c => { const t = foundTheme(c.dataset.theme) || c.dataset.theme; c.setAttribute("aria-pressed", String(sameTheme(t, s.theme))); });
+  foldChips($("#chips")); foldChips($("#ph-chips"));
   for (const [k, f] of [["layout", "layoutTheme"], ["icons", "iconTheme"], ["view", "viewMode"]]) document.querySelectorAll(`#seg-${k} button, #ph-seg-${k} button`).forEach(b => b.setAttribute("aria-pressed", String(b.dataset[k] === s[f])));
   const lay = LAYOUTS.find(l => l.id === s.layoutTheme);
-  setSummary("look", `${themeName(s.theme)} · ${lay ? lay.name : "Default"}`);
+  document.querySelectorAll("[data-compact]").forEach(b => b.setAttribute("aria-checked", String(!!s.compact)));
+  setSummary("look", `${themeName(s.theme)} · ${lay ? lay.name : "Default"}${s.compact ? ", compact" : ""}`);
 }
 
 /* ======================= shelf ======================= */
@@ -1572,7 +1631,7 @@ const SHELF = [
     setup: full({ theme: "dark", layoutTheme: "soft-cards", iconTheme: "catppuccin", viewMode: "tiles", showAddressBar: true, showPreviewPane: true }) },
   { id: "git", name: "Git bench", who: "For people who live in git", at: "repo",
     line: "Green on black, a shell open, source control beside the files and the commit graph on Alt+G.",
-    setup: full({ theme: "hacker", layoutTheme: "compact", iconTheme: "default", viewMode: "details", showAddressBar: true, showSidebar: true, showStatusBar: true, terminal: true, showScmPanel: true, keybindings: { "git.showGraph": "Alt+G" } }) },
+    setup: full({ theme: "hacker", layoutTheme: "default", compact: true, iconTheme: "default", viewMode: "details", showAddressBar: true, showSidebar: true, showStatusBar: true, terminal: true, showScmPanel: true, keybindings: { "git.showGraph": "Alt+G" } }) },
   { id: "peach", name: "Peach alloy", who: "For deep folder trees", opacity: 62, at: { expedition: "~/expedition/survey", count: "~/memoirs/drafts by century" },
     line: "Brushed aluminium with a copper edge, with a Miller column so the way back is always on screen.",
     setup: full({ theme: { name: HOUSE[0].name, dark: HOUSE[0].dark, v: HOUSE[0].v.slice(0, 6) }, layoutTheme: "floating-islands", iconTheme: "classic", viewMode: "list", translucency: true, showAddressBar: true, showStatusBar: true, millerLayers: 1 }) },
@@ -1588,7 +1647,7 @@ const SAFE_REBINDS = [{ "view.toggleTerminal": "Alt+T" }, { "general.openCommand
 function shuffleSetup(current) {
   for (let tries = 0; tries < 30; tries++) {
     const v = pick(VIEWS).id, theme = pick(THEMES).id;
-    const s = full({ theme, layoutTheme: pick(LAYOUTS).id, iconTheme: theme === "hacker" ? "default" : pick(ICONS.filter(i => i.id !== "default")).id, viewMode: v,
+    const s = full({ theme, layoutTheme: pick(LAYOUTS).id, compact: chance(.3), iconTheme: theme === "hacker" ? "default" : pick(ICONS.filter(i => i.id !== "default")).id, viewMode: v,
       showAddressBar: chance(.75), showSidebar: chance(.55), showStatusBar: chance(.55), showPreviewPane: chance(v === "tiles" ? .65 : .35), terminal: chance(.35) });
     const r = Math.random(); if (r < .25) s.millerLayers = 1; else if (r < .55) s.split = true;
     if (chance(.4)) s.keybindings = { ...pick(SAFE_REBINDS) };
@@ -1604,7 +1663,7 @@ function describe(s) {
   const names = SWITCHES.filter(w => w.id !== "peek" && isOn(s, w)).map(w => w.label.toLowerCase());
   const list = names.length ? names.length === 1 ? names[0] : names.slice(0, -1).join(", ") + " and " + names.at(-1) : "no panels";
   const lay = (LAYOUTS.find(l => l.id === s.layoutTheme) || {}).name || "Default";
-  return `${cap1(s.viewMode || "details")} view with ${list}. ${themeName(s.theme)}, ${lay}.`;
+  return `${cap1(s.viewMode || "details")} view with ${list}. ${themeName(s.theme)}, ${lay}${s.compact ? ", compact" : ""}.`;
 }
 let named = null;
 const allShelf = () => [...SHELF, ...found.setups.map(f => ({ ...f, found: true }))];
@@ -1625,7 +1684,7 @@ function mini(s) {
   const on = { address: s.showAddressBar, sidebar: s.showSidebar, miller: s.millerLayers > 0, preview: s.showPreviewPane, scm: s.showScmPanel, split: s.split, terminal: s.terminal, status: s.showStatusBar };
   const rows = n => Array.from({ length: n }, () => "<i><b></b><s></s><u></u></i>").join("");
   const pane = () => `<div class="mm-pane v-${view}">${view === "tiles" ? "<i></i>".repeat(6) : rows(view === "list" ? 10 : 7)}</div>`;
-  return `<div class="mini${sw.dark ? " dk" : ""}${sw.mono ? " mono" : ""}${s.translucency ? " glassy" : ""}" data-layout="${esc(s.layoutTheme || "default")}" style="--p:${p};--s:${side};--i:${ink};--m:${muted};--a:${acc};--f:${fold};background:${backdropOf(s.theme)}">
+  return `<div class="mini${sw.dark ? " dk" : ""}${sw.mono ? " mono" : ""}${s.translucency ? " glassy" : ""}" data-layout="${esc(s.layoutTheme || "default")}"${s.compact ? ' data-density="compact"' : ""} style="--p:${p};--s:${side};--i:${ink};--m:${muted};--a:${acc};--f:${fold};background:${backdropOf(s.theme)}">
     <div class="mw"><div class=mm-tabs><i></i><i></i></div>${on.address ? "<div class=mm-addr><i></i></div>" : ""}
       <div class="mb">${on.sidebar ? "<div class=mm-side><i></i><i></i><i></i><i></i><i></i></div>" : ""}${on.miller ? "<div class=mm-mill><i></i><i></i><i></i><i></i></div>" : ""}
         ${on.scm ? "<div class=mm-scm><i></i><i></i><i></i><i></i></div>" : ""}<div class="mm-panes${on.split ? " split" : ""}">${pane()}${on.split ? pane() : ""}</div>${on.preview ? "<div class=mm-prev><b></b><i></i><i></i></div>" : ""}</div>
@@ -1735,6 +1794,7 @@ function translate(o) {
   for (const [from, to] of Object.entries(MOCK.fields)) {
     if (!(from in o)) continue;
     if (to === "theme" && isThemeObj(o.theme)) { s.theme = foundThemeOf(o.theme); continue; }
+    if (to === "layoutTheme" && o[from] === LEGACY_COMPACT) { Object.assign(s, foldCompact({ layoutTheme: LEGACY_COMPACT })); continue; }
     const id = realId(to, o[from], lists[to]); if (id) s[to] = id;
   }
   for (const [k, v] of Object.entries(o.keys && typeof o.keys === "object" ? o.keys : {})) {
@@ -2002,7 +2062,11 @@ function checkSetup(o) {
     else if (THEME[o.theme] || customs.has(o.theme)) patch.theme = o.theme;
     else notes.push(typeof o.theme === "object" ? `A theme needs six hex colours in "v", like "#1e1e2e".` : `No theme called ${JSON.stringify(o.theme)}; the colours stay as they were.`);
   }
-  ids(LAYOUTS, "layoutTheme", "layout"); ids(ICONS, "iconTheme", "icon theme"); ids(VIEWS, "viewMode", "view");
+  if (o.layoutTheme === LEGACY_COMPACT) {   // the retired Compact layout (#1878): Default, compact unless the file says otherwise
+    patch.layoutTheme = "default"; if (!("compact" in o)) patch.compact = true;
+    notes.push(`Compact is a switch on any layout now: "layoutTheme": "default" with "compact": true.`);
+  } else ids(LAYOUTS, "layoutTheme", "layout");
+  ids(ICONS, "iconTheme", "icon theme"); ids(VIEWS, "viewMode", "view");
   for (const k of BOOL_KEYS) if (k in o) { if (typeof o[k] === "boolean") patch[k] = o[k]; else notes.push(`${JSON.stringify(k)} is true or false.`); }
   if ("millerLayers" in o) { const n = o.millerLayers; if (Number.isInteger(n) && n >= 0 && n <= 3) patch.millerLayers = n; else notes.push(`"millerLayers" is 0 (off) to 3.`); }
   if ("keybindings" in o) {
@@ -2667,8 +2731,8 @@ const PHONE_SWITCHES = ["address", "terminal"];   // the panels that fit a phone
 function fillSheet(body) {
   const seg = (kind, ids) => ids.map(id => segBtn(kind, id.id, id.label)).join("");
   body.innerHTML = `
-    <section class="ph-sec"><h3>Colours</h3><p>One tap dresses the whole window.</p><div class="chips" id="ph-chips" role="group" aria-label="Colours"></div></section>
-    <section class="ph-sec"><h3>Layout</h3><p>The shape of the window around your files.</p><div class="seg" id="ph-seg-layout" role="group" aria-label="Layout">${seg("layout", LAYOUTS.map(l => ({ id: l.id, label: SHORT[l.id] || l.name })))}</div></section>
+    <section class="ph-sec"><h3>Colours</h3><p>One tap dresses the whole window.</p><div class="chips" id="ph-chips" role="group" aria-label="Colours"></div><button class="btn small ghost chips-more" type="button" aria-expanded="false" aria-controls="ph-chips" hidden><span class="t">More</span><svg viewBox="0 0 12 12" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" d="m3 4.5 3 3 3-3"/></svg></button></section>
+    <section class="ph-sec"><h3>Layout</h3><p>The shape of the window around your files.</p><div class="seg" id="ph-seg-layout" role="group" aria-label="Layout">${seg("layout", LAYOUTS.map(l => ({ id: l.id, label: SHORT[l.id] || l.name })))}</div><ul class="switches density" aria-label="Density"><li><button class="sw" type="button" role="switch" aria-checked="false" data-compact data-tip="${esc(DENSITY_TIP)}">${glyph("compact")}<span class="nm">Compact</span><span class="tog" aria-hidden="true"></span></button></li></ul></section>
     <section class="ph-sec"><h3>View</h3><div class="seg" id="ph-seg-view" role="group" aria-label="View">${seg("view", VIEWS.filter(v => v.id !== "details").map(v => ({ id: v.id, label: cap1(v.id) })))}</div></section>
     <section class="ph-sec"><h3>Panels</h3><p>The ones that fit a phone. A computer has room for nine.</p><ul class="switches" id="ph-switches" aria-label="Panels">${SWITCHES.filter(w => PHONE_SWITCHES.includes(w.id)).map(w => `<li><button class="sw" type="button" role="switch" aria-checked="false" data-p="${w.id}" data-tip="${esc(SWITCH_TIP[w.id] || w.label)}">${glyph(w.id)}<span class="nm">${esc(w.label)}</span><span class="tog" aria-hidden="true"></span></button></li>`).join("")}</ul></section>
     <section class="ph-sec"><h3>Ready-made setups</h3><p>Whole windows, each made for someone. On a phone they keep to what fits.</p><ul class="shelf" id="ph-shelf" aria-label="Ready-made setups">${SHELF.filter(x => !x.wide).map(x => cardHTML({ ...x, setup: phoneSafe(x.setup) })).join("")}</ul></section>
@@ -2678,8 +2742,10 @@ function fillSheet(body) {
   body.addEventListener("click", async e => {
     const b = e.target.closest("button"); if (!b) return;
     if (b.hasAttribute("data-send")) return sendToComputer();
+    if (b.classList.contains("chips-more")) return;   // the document's handler opens it
     if (b.dataset.fs) { if (b.dataset.fs !== fsId) switchTo(b.dataset.fs); return; }
     if (b.matches(".sw[data-p]")) return flipSwitch(b);
+    if (b.hasAttribute("data-compact")) return flipCompact(b);
     if (b.matches(".card")) { const x = SHELF.find(c => c.id === b.dataset.id); if (x) fit(x); return; }
     named = null;
     if (b.dataset.theme) { const t = foundTheme(b.dataset.theme); await apply({ theme: t || b.dataset.theme }); }
@@ -2690,7 +2756,8 @@ function fillSheet(body) {
 // the app's themes and the page's own (Omarchy's too, which bring their own pictures on a computer)
 function paintSheetChips() {
   const box = $("#ph-chips"); if (!box) return;
-  box.innerHTML = THEMES.map(t => chip(t.id, t.name, t.swatch, t.note)).join("") + HOUSE.map(h => chip("house:" + h.id, h.name, h.v, "", "", h.dark)).join("") + OMARCHY.map(o => chip("omarchy:" + o.id, o.name, o.v.slice(0, 6), "", "", !!o.dark)).join("");
+  box.innerHTML = colourChips();
+  foldChips(box); chipsFit.observe(box);
 }
 // The machines' pictures load only once the visitor scrolls the sheet open to everything.
 function sheetPictures(at) {

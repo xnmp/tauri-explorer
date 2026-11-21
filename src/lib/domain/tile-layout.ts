@@ -106,20 +106,28 @@ export interface TileLayout extends ThumbnailSizeConfig {
   showFolderThumbnails: boolean;
 }
 
+/** Compact density (#1878) keeps three quarters of a tile's spacing (gap and
+ *  padding), in whole px; the icon, name and column widths keep their size. */
+const compactSpacing = (px: number): number => Math.round(px * 0.75);
+
 /** Layout for a tile size; an unknown size (e.g. a stale stored value) falls
- *  back to medium rather than breaking the grid. */
-export function tileLayout(size: ThumbnailSize): TileLayout {
+ *  back to medium rather than breaking the grid. `compact` tightens the
+ *  spacing round each tile, never the tile's icon or name. */
+export function tileLayout(size: ThumbnailSize, compact = false): TileLayout {
   const resolved: ThumbnailSize = isThumbnailSize(size) ? size : "medium";
   const config = THUMBNAIL_SIZE_CONFIG[resolved];
   const small = resolved === "small";
-  const gap = small ? 2 : 6;
-  const paddingY = small ? 12 : 22;
-  const paddingTop = small ? 6 : 12;
+  const space = compact ? compactSpacing : (px: number) => px;
+  const gap = space(small ? 2 : 6);
+  const paddingTop = space(small ? 6 : 12);
+  const paddingBottom = space(small ? 6 : 10);
+  const paddingX = space(small ? 4 : 8);
+  const paddingY = paddingTop + paddingBottom;
   return {
     ...config,
     size: resolved,
     gap,
-    padding: small ? `${paddingTop}px 4px 6px` : `${paddingTop}px 8px 10px`,
+    padding: `${paddingTop}px ${paddingX}px ${paddingBottom}px`,
     paddingTop,
     paddingY,
     nameHeight: TILE_NAME_HEIGHT,

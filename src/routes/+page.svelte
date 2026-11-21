@@ -461,7 +461,7 @@
     --active-tab-surface-base: transparent;
   }
 
-  /* Flat layouts (Default, Compact) under a material (#1789): the window is
+  /* The flat layout (Default) under a material (#1789): the window is
      its opaque self, faded uniformly to the Translucency Opacity coverage.
      Each surface paints ONE colour: its opaque colour on Translucency off
      (its fill over the window base, composited) at that coverage. So every
@@ -483,7 +483,7 @@
      Engines without relative colour keep the window as before #1789 (the
      theme base tinted under the surfaces). */
   @supports (color: rgb(from red r g b / calc(alpha * 0.5))) {
-    :global(:root[data-material]:is([data-layout-base="default"], [data-layout-base="compact"])) {
+    :global(:root[data-material][data-layout-base="default"]) {
       --material-base-opaque: rgb(from color-mix(in srgb, rgb(from var(--background-mica, transparent) r g b / min(1, alpha / (999 * max(0.0001, 1 - alpha)))) 99.9%, var(--background-solid)) r g b / 1);
       --material-pane-opaque: rgb(from color-mix(in srgb, rgb(from var(--pane-fill) r g b / min(1, alpha / (999 * max(0.0001, 1 - alpha)))) 99.9%, var(--material-base-opaque)) r g b / 1);
       --material-statusbar-opaque: rgb(from color-mix(in srgb, rgb(from var(--statusbar-fill) r g b / min(1, alpha / (999 * max(0.0001, 1 - alpha)))) 99.9%, var(--material-base-opaque)) r g b / 1);
@@ -508,7 +508,7 @@
     }
 
     /* Nothing under the surfaces. */
-    :global(:root[data-material]:is([data-layout-base="default"], [data-layout-base="compact"])) .explorer {
+    :global(:root[data-material][data-layout-base="default"]) .explorer {
       background: var(--layout-app-surface, transparent);
     }
   }
@@ -735,7 +735,7 @@
      selector, so it is listed too (#1789 review). */
   @media (prefers-reduced-transparency: reduce) {
     :global([data-material]) .explorer,
-    :global(:root[data-material]:is([data-layout-base="default"], [data-layout-base="compact"])) .explorer {
+    :global(:root[data-material][data-layout-base="default"]) .explorer {
       background: var(--background-solid);
     }
   }

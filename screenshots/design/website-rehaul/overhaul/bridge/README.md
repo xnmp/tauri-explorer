@@ -199,7 +199,7 @@ What the host does:
 ```js
 {
   themes:      [{ id, name, description, dark, colors: { background, panel, text, muted, accent, folder } }],
-  layouts:     [{ id, name, description, arrangement }],   // setSettings({ layoutTheme: id })
+  layouts:     [{ id, name, description, arrangement }],   // setSettings({ layoutTheme: id }); density: setSettings({ compact: true })
   iconThemes:  [{ id, name, description }],                // setSettings({ iconTheme: id })
   viewModes:   [{ id, command }],                          // setViewMode(id), run(command), or setSettings({ viewMode })
   commands:    [{ id, title, category, keybinding, defaultKeybinding, toggle, hidden }],
@@ -225,7 +225,9 @@ What the host does:
 | search | — | — | `general.openQuickOpen` (Ctrl+P), `general.openContentSearch` (Ctrl+Shift+F) | modal, not a panel; reported by `overlay` |
 | tabs | — | — | — | **no real toggle**: the tab bar is always shown |
 
-Every other real toggle (hidden files `showHidden` / `view.toggleHidden`, git badges, zoom, …) is a
+Every other real toggle (hidden files `showHidden` / `view.toggleHidden`, Compact density `compact` /
+`view.toggleCompact` on any layout (#1878; the old `layoutTheme: "compact"` loads as Default + `compact: true`),
+git badges, zoom, …) is a
 setting in `settings` and a command in the catalog.
 
 Real-app behaviour a host may notice:

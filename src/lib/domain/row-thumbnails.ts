@@ -23,6 +23,9 @@ export const DETAILS_THUMBNAIL_ROW_HEIGHT = ROW_THUMBNAIL_SIZE + 10;
  *  30px slot; a thumbnail item is 58px in a 62px slot. */
 export const LIST_ROW_HEIGHT = 30;
 export const LIST_THUMBNAIL_ROW_HEIGHT = ROW_THUMBNAIL_SIZE + 14;
+/** Compact density (#1878): the item loses 2px of padding above and below
+ *  (layouts/compact-density.css), so a 22px item sits in a 26px slot. */
+export const LIST_COMPACT_ROW_HEIGHT = 26;
 
 /** The Details row height: a layout theme's own height, raised to fit a
  *  thumbnail when row thumbnails are on (a taller layout row stays). */
@@ -30,9 +33,10 @@ export function detailsRowHeight(layoutRowHeight: number, thumbnails: boolean): 
   return thumbnails ? Math.max(layoutRowHeight, DETAILS_THUMBNAIL_ROW_HEIGHT) : layoutRowHeight;
 }
 
-/** The List row (slot) height. */
-export function listRowHeight(thumbnails: boolean): number {
-  return thumbnails ? LIST_THUMBNAIL_ROW_HEIGHT : LIST_ROW_HEIGHT;
+/** The List row (slot) height. Thumbnails set their own height, compact or not. */
+export function listRowHeight(thumbnails: boolean, compact = false): number {
+  if (thumbnails) return LIST_THUMBNAIL_ROW_HEIGHT;
+  return compact ? LIST_COMPACT_ROW_HEIGHT : LIST_ROW_HEIGHT;
 }
 
 export type RowThumbnailKind = "image" | "video";

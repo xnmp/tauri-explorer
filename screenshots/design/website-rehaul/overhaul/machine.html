@@ -230,8 +230,8 @@ html.in-session #foundpop { --p-bg: var(--tx-app); --p-ink: var(--tx-ink); --p-i
 .win[data-layout="hairline-ledger"] .w-side { border-right: 1px solid color-mix(in oklab, var(--i) 18%, transparent); }
 .win[data-layout="hairline-ledger"] .w-tabs i { border-radius: 0; }
 .win[data-layout="hairline-ledger"] .w-stat { border-top: 1px solid color-mix(in oklab, var(--i) 18%, transparent); }
-.win[data-layout="compact"] { --bar: 1.15em; }
-.win[data-layout="compact"] .w-pane { gap: .4em; }
+.win[data-density="compact"] { --bar: 1.15em; }
+.win[data-density="compact"] .w-pane { gap: .4em; }
 
 /* ---------- smaller screens ---------- */
 @media (max-width: 1500px) { .chip:not([aria-pressed="true"]) span { display: none; } .chip:not([aria-pressed="true"]) { padding: 0 4px; } }
@@ -427,7 +427,8 @@ function paneHTML(view, sel) {
 function thumb(setup) {
   const on = new Set(setup.parts || []), { v, dark } = swatch(setup.theme);
   const el = document.createElement("div");
-  el.className = "win"; el.dataset.layout = setup.layout || "default";
+  el.className = "win"; el.dataset.layout = setup.layout === "compact" ? "default" : setup.layout || "default";
+  if (setup.compact || setup.layout === "compact") el.dataset.density = "compact";   // Compact is a density since #1878
   el.setAttribute("aria-hidden", "true");
   const term = dark ? `color-mix(in oklab, ${v[0]} 60%, #000)` : `color-mix(in oklab, ${v[2]} 92%, ${v[0]})`;
   el.style.cssText = `--p:${v[0]};--s:${v[1]};--i:${v[2]};--i2:${v[3]};--a:${v[4]};--f:${v[5]};--t:${term}`;

@@ -15,6 +15,7 @@
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { autoFillColumns } from "$lib/domain/virtual-layout";
   import { tileLayout, TILE_GRID_PAD_X } from "$lib/domain/tile-layout";
+  import { layoutStore } from "$lib/state/layout.svelte";
   import { useTilesScrollJank, useUnavailableThumbs } from "$lib/composables/use-tile-view-support.svelte";
 
   import { folderTileSize } from "$lib/state/folder-tile-size";
@@ -45,7 +46,7 @@
 
   const effectiveThumbnailSize = $derived(folderTileSize(explorer.currentPath));
   // Sizes, spacing and the fixed row height shared with every tile grid.
-  const layout = $derived(tileLayout(effectiveThumbnailSize));
+  const layout = $derived(tileLayout(effectiveThumbnailSize, layoutStore.compact));
 
   // Column count matching CSS repeat(auto-fill, minmax(gridMinWidth, 1fr)),
   // less the viewport's horizontal padding.

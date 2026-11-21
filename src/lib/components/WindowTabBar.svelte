@@ -44,11 +44,9 @@
 
   let tabViewport: HTMLDivElement | undefined = $state();
   let tabScrollGroup: HTMLDivElement | undefined = $state();
-  /** The tabs' room with the strip at its window-edge start, before the tab
-   *  search button takes its share. */
+  /** The tabs' room at the strip's window-edge start, without the tab search. */
   let roomAtFloor = $state(0);
-  /** The search button's width with its gap, measured once it shows. */
-  let searchWidth = $state(31);
+  let searchWidth = $state(31); // the tab search button and its gap, once measured
   let tabViewportWidth = $state(0);
   let tabScrollLeft = $state(0);
   // The tabs the strip lays out, a frame late while a tab slides, and its
@@ -64,9 +62,8 @@
     return { start, space, layout: tabStripLayout(count, space, Math.min(activeMinimum, space || 120)) };
   }
   let pickerOpen = $state(false);
-  // Decided from the tabs' room without the button, so showing it can never
-  // un-crowd the tabs and hide it again (#1881). It stays while its list is
-  // open, so closing tabs never pulls the list from under the pointer.
+  // Judged on the room without the button, so showing it cannot un-crowd the
+  // tabs and hide it again (#1881); it stays while its list is open.
   const searchShown: boolean = $derived(pickerOpen || tabSearchShown(tabs.length, layoutFor(tabs.length, roomAtFloor).layout));
   const strip = $derived(layoutFor(motion.strip.count));
   const stripStart = $derived(strip.start);
@@ -112,9 +109,7 @@
     if (Math.abs(room - roomAtFloor) > 1) roomAtFloor = room;
   }
 
-  // The button's width follows the window (narrower below 500px).
-  $effect(() => { if (pickerButton) untrack(measureRoom); });
-
+  $effect(() => { if (pickerButton) untrack(measureRoom); }); // its width follows the window
   $effect(() => {
     const group = tabScrollGroup;
     if (!group || !tabArea) return;

@@ -704,7 +704,9 @@ test.describe("Active tab owns the window (#1734, #1785)", () => {
   // (`tabStripStart`): the first tab's foot then reaches into the surface's
   // top-left corner, which narrows to end where the foot begins (#1785).
   for (const theme of ["light", "dark"]) test(`a narrow window gives the band before the first tab back to its tabs (${theme})`, async ({ page }) => {
-    await openIslands(page, { theme, width: 560, count: 4, active: 0 });
+    // 530px: four tabs whose titles stay readable (so no tab search, #1881)
+    // but that lack their comfortable width.
+    await openIslands(page, { theme, width: 530, count: 4, active: 0 });
     await page.mouse.move(5, 500);
     const state = await stripState(page);
     expect(state.overflowing).toBe(false);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { filterOpenTabs, tabEdgeScrollSpeed, tabRevealDelta, tabRevealScroll, tabStripLayout, tabStripStart, TAB_ACTIVE_MIN_WIDTH, TAB_BLEED, TAB_COMFORT_WIDTH, TAB_GAP, TAB_ICON_ONLY_BELOW } from '$lib/domain/tab-strip';
+import { filterOpenTabs, tabEdgeScrollSpeed, tabRevealDelta, tabRevealScroll, tabSearchShown, tabStripLayout, tabStripStart, TAB_ACTIVE_MIN_WIDTH, TAB_BLEED, TAB_COMFORT_WIDTH, TAB_GAP, TAB_ICON_ONLY_BELOW } from '$lib/domain/tab-strip';
 
 describe('Chrome tab sizing', () => {
   it('caps comfortable tabs and gives crowded inactive tabs space back to the active label', () => {
@@ -204,5 +204,27 @@ describe('revealing the active tab from its layout (#1734)', () => {
     const target = tabRevealScroll(huge, 99_999, 0, view, room);
     expect(Number.isFinite(target)).toBe(true);
     expect(target).toBeLessThanOrEqual(huge.totalWidth + 2 * TAB_BLEED - view);
+  });
+});
+
+describe("tabSearchShown (#1881)", () => {
+  it("hides the search while every tab keeps a readable title", () => {
+    for (const count of [0, 1, 2, 3]) {
+      expect(tabSearchShown(count, tabStripLayout(count, 900))).toBe(false);
+    }
+  });
+
+  it("hides it for a lone tab even in a sliver of room", () => {
+    expect(tabSearchShown(1, tabStripLayout(1, 10))).toBe(false);
+  });
+
+  it("shows it once inactive tabs shrink to icons", () => {
+    const layout = tabStripLayout(14, 900);
+    expect(layout.iconOnly && !layout.overflowing).toBe(true);
+    expect(tabSearchShown(14, layout)).toBe(true);
+  });
+
+  it("shows it while the strip scrolls", () => {
+    expect(tabSearchShown(60, tabStripLayout(60, 900))).toBe(true);
   });
 });

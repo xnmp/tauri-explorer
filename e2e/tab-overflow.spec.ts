@@ -48,6 +48,29 @@ for (const mode of VIEW_MODES) test(`crowded tabs compress to icons with readabl
   await expect(page.locator('.tab.active .tab-cwd')).toBeVisible();
 });
 
+test('tab search appears only once tabs crowd (#1881)', async ({ page }) => {
+  await openTabs(page, 3);
+  const search = page.getByRole('button', { name: 'Search open tabs', exact: true });
+  await expect(page.locator('.tab.active .tab-title')).toBeVisible();
+  await expect(search).toHaveCount(0);
+  await page.screenshot({ path: 'screenshots/feat/tab-picker-overflow-only/few-tabs.png', animations: 'disabled' });
+  // Narrowing the window squeezes the same tabs to icons.
+  await page.setViewportSize({ width: 360, height: 720 });
+  await expect(search).toBeInViewport();
+  await page.setViewportSize({ width: 1000, height: 720 });
+  await expect(search).toHaveCount(0);
+  for (let i = 0; i < 15; i++) await page.getByRole('button', { name: 'New tab', exact: true }).click();
+  await expect(page.locator('.tab')).toHaveCount(18);
+  await expect(search).toBeInViewport();
+  await search.click();
+  await expect(page.getByRole('option')).toHaveCount(18);
+  await page.screenshot({ path: 'screenshots/feat/tab-picker-overflow-only/overflowing.png', animations: 'disabled' });
+  await page.getByRole('combobox', { name: 'Search open tabs' }).press('Escape');
+  for (let i = 0; i < 15; i++) await page.keyboard.press('Control+w');
+  await expect(page.locator('.tab')).toHaveCount(3);
+  await expect(search).toHaveCount(0);
+});
+
 test('extreme overflow reveals shortcut, new and surviving tabs after resize and zoom', async ({ page }) => {
   await openTabs(page, 100, 680);
   await expectActiveVisible(page);

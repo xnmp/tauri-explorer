@@ -667,6 +667,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `scroll-jank-monitor.ts` — pure rAF-gap sampler (rAF/cancel injected) reporting long-frame counts for scroll-jank diagnostics; wired into `TilesView.svelte` (#593).
 - `theme-from-palette.ts` — build theme from extracted image palette (#203); text tokens solved in OKLCH for WCAG AA on every composited surface (#791).
 - `ai-rename.ts` — pure AI-rename suggestion logic (#145).
+- `ai-column.ts` — AI-generated Details columns (#1886): column key/label/validation, the one-job-per-folder agent prompt (names as a JSON array, ≤400, within 48 KiB; read-only, read only needed files), tolerant name-keyed reply parsing, bounded per-column value cache keyed by path + size + mtime (folder drop for refresh).
 - `terminal-command.ts` — shell command construction/quoting for terminal.
 - `terminal-cwd-sync.ts` — "terminal follows explorer" cwd decision (#149).
 - `terminal-keys.ts` — terminal vs app key-ownership rules (#249/#260).
@@ -713,6 +714,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `demo/DemoFileView.svelte` + `demo/DemoPreviewInfo.svelte` — demo file view and Preview-info section exercising the SDK 2 seams.
 - `ai-organize/index.ts` + `AiOrganizeDialog.svelte` — AI organize plugin (#158).
 - `ai-rename/index.ts` + `AiRenameDialog.svelte` — AI rename plugin (#145).
+- `ai-columns/index.ts` — AI Columns plugin shell (#1886); `activate.ts` (lazily loaded with activation) registers header-menu Add/Refresh/Remove items, palette commands (remove ones disposed with their column), the `AiColumnDialog.svelte` describe dialog and one Details-column provider per column (`suppliesLength: false`); `column-loader.ts` (cache-first, one shared `ctx.agent` job at a time per folder, rendered rows first, follow-up jobs for paths no job asked, rewritten files wait for refresh, abort/dispose cancel, once-per-column reports) and `column-store.ts` (definitions + bounded value cache in plugin storage, debounced writes, folder drop, fresh id when another window stored the same id).
 - `nano-banana/index.ts` + `NanoBananaDialog.svelte` — Nano Banana image-edit plugin.
 - `theme-from-image/index.ts` — generate theme from an image (#203).
 - `upscale/index.ts` + `UpscaleDialog.svelte` — image upscale plugin (fal.ai SeedVR2): settings, context-menu item, command, dialog.

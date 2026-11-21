@@ -56,7 +56,9 @@ export async function activateAiColumns(ctx: PluginContext): Promise<() => Promi
   const agent = ctx.agent!;
   const registerColumns = ctx.registerDetailColumns!.bind(ctx);
   const registerMenuItem = ctx.registerDetailColumnMenuItem!.bind(ctx);
-  const store = createAiColumnStore(ctx.storage);
+  // Bound below, once `mount` exists: another window took this column's id.
+  let onRename = (_from: AiColumnDefinition, _to: AiColumnDefinition) => {};
+  const store = createAiColumnStore(ctx.storage, { onRename: (from, to) => onRename(from, to) });
   await store.load();
   const reportOnce = createOnceReporter((message) => ctx.toast.error(message));
   const mounted = new Map<string, Mounted>();
@@ -75,16 +77,18 @@ export async function activateAiColumns(ctx: PluginContext): Promise<() => Promi
     item.provider = registerProvider(item.column, item.loader);
   };
 
-  const remove = (id: string) => {
+  const unmount = (id: string): boolean => {
     const item = mounted.get(id);
-    if (!item) return;
+    if (!item) return false;
     mounted.delete(id);
     item.loader.dispose();
     item.provider();
     for (const dispose of item.removers) dispose();
     reportOnce.reset(id);
-    store.remove(id);
+    return true;
   };
+
+  const remove = (id: string) => { if (unmount(id)) store.remove(id); };
 
   const mount = (column: AiColumnDefinition) => {
     const loader = createColumnLoader(column, {
@@ -153,6 +157,8 @@ export async function activateAiColumns(ctx: PluginContext): Promise<() => Promi
     handler: refresh,
   });
   ctx.registerDialog({ id: DIALOG_ID, component: AiColumnDialog });
+
+  onRename = (from, to) => { if (unmount(from.id)) mount(to); };
 
   for (const column of store.columns) mount(column);
 

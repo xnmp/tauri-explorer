@@ -228,7 +228,7 @@ describe("AI Columns plugin wiring", () => {
       storage: { get: async () => structuredClone(saved), set: async (value: Record<string, unknown>) => { saved = structuredClone(value); } },
       workspace: { getCurrentDirectory: () => "/docs" },
     } as unknown as PluginContext;
-    return { ctx, menu, commands, providers, disposed, runs, dialogs, holdJobs: () => { hold = true; }, release: () => release?.(), saved: () => saved };
+    return { ctx, menu, commands, providers, disposed, runs, dialogs, holdJobs: () => { hold = true; }, release: () => release?.(), saved: () => saved, setSaved: (value: Record<string, unknown>) => { saved = structuredClone(value); } };
   }
 
   async function withColumn(f: ReturnType<typeof fakeCtx>) {
@@ -308,6 +308,22 @@ describe("AI Columns plugin wiring", () => {
     f.providers.clear();
     await aiColumnsPlugin.activate(f.ctx);
     expect(f.providers.has("ai-columns.invoice-date")).toBe(true);
+    aiColumnsPlugin.deactivate?.();
+  });
+
+  it("a column whose id another window stored meanwhile is remounted under a fresh id", async () => {
+    const f = fakeCtx();
+    await aiColumnsPlugin.activate(f.ctx);
+    // Window B stores "invoice-date" after this window loaded its storage.
+    f.setSaved({ version: 1, columns: [{ id: "invoice-date", label: "Invoice date?", description: "invoice date?" }], values: {} });
+    await f.commands.get("plugin.ai-columns.add")!.handler();
+    (f.dialogs.at(-1)!.props!.onSubmit as (description: string) => void)("invoice date");
+    await vi.waitFor(() => expect(f.providers.has("ai-columns.invoice-date-2")).toBe(true));
+    expect(f.providers.has("ai-columns.invoice-date")).toBe(false);
+    expect(f.commands.has("plugin.ai-columns.remove-invoice-date-2")).toBe(true);
+    expect(f.commands.has("plugin.ai-columns.remove-invoice-date")).toBe(false);
+    expect((f.saved().columns as { id: string; description: string }[]).map((column) => [column.id, column.description]))
+      .toEqual([["invoice-date", "invoice date?"], ["invoice-date-2", "invoice date"]]);
     aiColumnsPlugin.deactivate?.();
   });
 
@@ -436,6 +452,36 @@ describe("AI column store", () => {
     expect(store.lookup(id, inside)).toBeUndefined();
     expect(store.lookup(id, outside)).toBe("y");
     expect((storage.saved().values as Record<string, Record<string, string>>)[id]).toEqual({ [outside]: "y" });
+  });
+
+  it("gives a fresh id to a column whose id another window stored meanwhile, values included", async () => {
+    const storage = memoryStorage();
+    const onRename = vi.fn();
+    const windowA = createAiColumnStore(storage, { ...manualTimer(), onRename });
+    const windowB = createAiColumnStore(storage, manualTimer());
+    await windowA.load();
+    await windowB.load();
+    const theirs = windowB.add("invoice date?")!;
+    await windowB.flush();
+    const ours = windowA.add("Invoice date")!;
+    expect(ours.id).toBe(theirs.id);
+    windowA.store(ours.id, [["k", "2024-01-01"]]);
+    await windowA.flush();
+    const renamed = onRename.mock.calls[0]?.[1] as { id: string } | undefined;
+    expect(onRename).toHaveBeenCalledWith(ours, expect.objectContaining({ description: "Invoice date" }));
+    expect(renamed?.id).not.toBe(theirs.id);
+    expect(windowA.columns.map((column) => column.id)).toEqual([renamed!.id]);
+    expect(windowA.lookup(renamed!.id, "k")).toBe("2024-01-01");
+
+    const next = createAiColumnStore(storage);
+    await next.load();
+    expect(next.columns.map((column) => [column.id, column.description])).toEqual([[theirs.id, "invoice date?"], [renamed!.id, "Invoice date"]]);
+    expect(next.lookup(renamed!.id, "k")).toBe("2024-01-01");
+    expect(next.lookup(theirs.id, "k")).toBeUndefined();
+
+    // A later column with the same description never takes the moved-away id.
+    const again = windowA.add("invoice date")!;
+    expect([theirs.id, renamed!.id]).not.toContain(again.id);
   });
 
   it("ignores values for a column that no longer exists", async () => {

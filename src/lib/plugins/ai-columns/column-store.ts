@@ -11,7 +11,7 @@
  * write rather than overwrite the file with this window's guess.
  */
 import {
-  cacheDropColumn, cacheDropPaths, cacheLookup, cacheStore, createColumn, normalizeColumns, normalizeValueCache, valueKeyPath,
+  cacheDropColumn, cacheDropPaths, cacheLookup, cacheStore, columnKey, createColumn, normalizeColumns, normalizeValueCache, valueKeyPath,
   type AiColumnDefinition, type AiValueCache,
 } from "$lib/domain/ai-column";
 
@@ -25,7 +25,12 @@ export interface AiColumnStoreOptions {
   setTimer?: (run: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
   onWriteError?: (error: unknown) => void;
+  /** A column added here was given a fresh id because another window had
+   *  stored one with the same id meanwhile (#1886). */
+  onRename?: (from: AiColumnDefinition, to: AiColumnDefinition) => void;
 }
+
+const cacheLookupColumn = (cache: AiValueCache, id: string) => Object.hasOwn(cache, id) ? cache[id] : undefined;
 
 interface Persisted { columns: readonly AiColumnDefinition[]; values: AiValueCache }
 
@@ -44,6 +49,11 @@ export function createAiColumnStore(storage: AiColumnStorage, options: AiColumnS
   let unsaved = new Map<string, (readonly [string, string])[]>();
   let timer: unknown;
   let writing: Promise<void> = Promise.resolve();
+  /** Ids this window's columns were moved to on a collision; writes queued
+   *  before the move resolve through it, so they never touch the other
+   *  window's column. */
+  const renames = new Map<string, string>();
+  const finalId = (id: string) => renames.get(id) ?? id;
 
   /** Serialised read-modify-write of the stored file. */
   function write(change: (stored: Persisted) => Persisted): Promise<void> {
@@ -63,10 +73,26 @@ export function createAiColumnStore(storage: AiColumnStorage, options: AiColumnS
     if (pending.size === 0) return writing;
     return write((stored) => ({
       columns: stored.columns,
-      values: [...pending].reduce(
-        (values, [id, pairs]) => stored.columns.some((column) => column.id === id) ? cacheStore(values, id, pairs) : values,
-        stored.values),
+      values: [...pending].reduce((values, [queued, pairs]) => {
+        const id = finalId(queued);
+        return stored.columns.some((column) => column.id === id) ? cacheStore(values, id, pairs) : values;
+      }, stored.values),
     }));
+  }
+
+  /** Move a column (and its values) to a new id; tells the owner. */
+  function rename(from: AiColumnDefinition, to: AiColumnDefinition): void {
+    if (!state.columns.some((column) => column.id === from.id)) return;
+    const values = cacheLookupColumn(state.values, from.id);
+    state = {
+      columns: state.columns.map((column) => column.id === from.id ? to : column),
+      values: values ? { ...cacheDropColumn(state.values, from.id), [to.id]: values } : state.values,
+    };
+    const pending = unsaved.get(from.id);
+    unsaved.delete(from.id);
+    if (pending) unsaved.set(to.id, pending);
+    renames.set(from.id, to.id);
+    options.onRename?.(from, to);
   }
 
   return {
@@ -76,22 +102,32 @@ export function createAiColumnStore(storage: AiColumnStorage, options: AiColumnS
     get columns(): readonly AiColumnDefinition[] { return state.columns; },
     /** The new column, or null for an empty description or a full set. */
     add(description: string): AiColumnDefinition | null {
-      const column = createColumn(description, state.columns);
-      if (!column) return null;
+      const created = createColumn(description, state.columns);
+      if (!created) return null;
+      // Never reuse an id this window moved away from: queued writes map it on.
+      const column = renames.has(created.id)
+        ? { ...created, id: columnKey(created.description, [...state.columns.map((other) => other.id), ...renames.keys()]) }
+        : created;
       state = { ...state, columns: [...state.columns, column] };
-      void write((stored) => stored.columns.some((other) => other.id === column.id)
-        ? stored
-        : { ...stored, columns: [...stored.columns, column] });
+      void write((stored) => {
+        if (!stored.columns.some((other) => other.id === column.id)) return { ...stored, columns: [...stored.columns, column] };
+        // Another window stored a column with this id since we loaded: ours
+        // takes a fresh id rather than adopt that column and its values.
+        const taken = [...stored.columns, ...state.columns].map((other) => other.id);
+        const renamed = { ...column, id: columnKey(column.description, taken) };
+        rename(column, renamed);
+        return { ...stored, columns: [...stored.columns, renamed] };
+      });
       return column;
     },
     /** Forget a column and every value cached for it. */
     remove(id: string): boolean {
       if (!state.columns.some((column) => column.id === id)) return false;
-      const drop = (stored: Persisted): Persisted =>
-        ({ columns: stored.columns.filter((column) => column.id !== id), values: cacheDropColumn(stored.values, id) });
-      state = drop(state);
+      const drop = (stored: Persisted, target: string): Persisted =>
+        ({ columns: stored.columns.filter((column) => column.id !== target), values: cacheDropColumn(stored.values, target) });
+      state = drop(state, id);
       unsaved.delete(id);
-      void write(drop);
+      void write((stored) => drop(stored, finalId(id)));
       return true;
     },
     /** Forget the values of files whose path matches `drop` (a folder refresh). */
@@ -100,7 +136,7 @@ export function createAiColumnStore(storage: AiColumnStorage, options: AiColumnS
       state = { ...state, values: cacheDropPaths(state.values, id, drop) };
       const pending = unsaved.get(id)?.filter(([key]) => !drop(valueKeyPath(key)));
       if (pending) unsaved.set(id, pending);
-      void write((stored) => ({ ...stored, values: cacheDropPaths(stored.values, id, drop) }));
+      void write((stored) => ({ ...stored, values: cacheDropPaths(stored.values, finalId(id), drop) }));
     },
     lookup: (id: string, key: string): string | undefined => cacheLookup(state.values, id, key),
     store(id: string, pairs: readonly (readonly [string, string])[]): void {

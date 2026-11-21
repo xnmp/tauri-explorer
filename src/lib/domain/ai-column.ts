@@ -17,7 +17,7 @@ export interface AiColumnDefinition {
   readonly description: string;
 }
 
-/** Names asked about in one folder job; more are left for a later refresh. */
+/** Names asked about in one folder job; the rest are asked by a follow-up job when their rows are shown. */
 export const AI_COLUMN_MAX_FILES = 400;
 export const AI_COLUMN_MAX_COLUMNS = 12;
 export const AI_COLUMN_LABEL_MAX = 40;

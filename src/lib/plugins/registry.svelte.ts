@@ -17,6 +17,7 @@ import { demoPlugin } from "./demo";
 import { nanoBananaPlugin } from "./nano-banana";
 import { aiRenamePlugin } from "./ai-rename";
 import { aiOrganizePlugin } from "./ai-organize";
+import { aiColumnsPlugin } from "./ai-columns";
 import { themeFromImagePlugin } from "./theme-from-image";
 import { upscalePlugin } from "./upscale";
 import { refreshInstalledPackages, watchInstalledPackages } from "./installed";
@@ -24,7 +25,7 @@ import { pluginJobsController } from "$lib/state/plugin-jobs";
 import { fileViewRegistry } from "./file-view-registry.svelte";
 
 /** Statically-imported built-in plugins (explicit imports — no dynamic load). */
-const BUILT_IN_PLUGINS: Plugin[] = [demoPlugin, nanoBananaPlugin, aiRenamePlugin, aiOrganizePlugin, themeFromImagePlugin, upscalePlugin];
+const BUILT_IN_PLUGINS: Plugin[] = [demoPlugin, nanoBananaPlugin, aiRenamePlugin, aiOrganizePlugin, aiColumnsPlugin, themeFromImagePlugin, upscalePlugin];
 
 interface PluginInfo {
   id: string;

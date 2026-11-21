@@ -309,11 +309,11 @@
 .tx-app .tx-plug .tx-tg[aria-checked="false"] { background: var(--tx-ink-3); opacity: .55; }
 .tx-app .tx-plug .tx-tg[aria-checked="false"]::after { left: 2px; }
 .tx-app .tx-m-plugs .tx-seams { color: var(--tx-ink-3); font-size: 11px; line-height: 1.4; padding: 0 8px; }
-.tx-app[data-layout="compact"] .tx-c-row { height: 22px; font-size: 12px; }
-.tx-app[data-layout="compact"] .tx-lgrid { grid-template-rows: repeat(var(--rows, 8), 22px); }
-.tx-app[data-layout="compact"] .tx-m-tabs .tx-tb { height: 24px; }
-.tx-app[data-layout="compact"] .tx-m-addr .tx-crumbs, .tx-app[data-layout="compact"] .tx-m-addr .tx-find { height: 24px; }
-.tx-app[data-layout="compact"] .tx-m-side .tx-si { padding-block: 3px; }
+.tx-app[data-density="compact"] .tx-c-row { height: 22px; font-size: 12px; }
+.tx-app[data-density="compact"] .tx-lgrid { grid-template-rows: repeat(var(--rows, 8), 22px); }
+.tx-app[data-density="compact"] .tx-m-tabs .tx-tb { height: 24px; }
+.tx-app[data-density="compact"] .tx-m-addr .tx-crumbs, .tx-app[data-density="compact"] .tx-m-addr .tx-find { height: 24px; }
+.tx-app[data-density="compact"] .tx-m-side .tx-si { padding-block: 3px; }
 .tx-app[data-layout="hairline-ledger"] .tx-face { box-shadow: inset 0 0 0 .5px var(--tx-ink-3); }
 .tx-app[data-layout="hairline-ledger"] :is(.tx-c-row, .tx-tile, .tx-crow, .tx-m-side .tx-si, .tx-m-mill .tx-mr, .tx-m-addr .tx-crumbs, .tx-m-tabs .tx-tb) { border-radius: 0; }
 .tx-app[data-layout="hairline-ledger"] .tx-c-row { height: 28px; border-bottom: 1px solid var(--tx-app-line); }
@@ -415,7 +415,7 @@
 .tx-app[data-layout="floating-islands"] .tx-m-tabs .tx-tb.tx-on { box-shadow: 0 0 0 1px var(--tx-app-line); }
 .tx-app[data-layout="soft-cards"] { --tx-gap: 6px; --tx-r: 10px; background: rgba(var(--tx-ink-rgb), .12); box-shadow: 0 0 0 1px rgba(var(--tx-ink-rgb), .12); }
 .tx-app[data-layout="soft-cards"] .tx-slot > .tx-face { box-shadow: 0 0 0 1px var(--tx-app-line); }
-.tx-app[data-layout="compact"] { --s-tabs: 30px; --s-address: 34px; --s-status: 22px; }
+.tx-app[data-density="compact"] { --s-tabs: 30px; --s-address: 34px; --s-status: 22px; }
 .tx-app[data-layout="hairline-ledger"] { --tx-radius: 0px; }
 .tx-app[data-layout="hairline-ledger"] .tx-slot > .tx-face { box-shadow: inset 0 0 0 .5px var(--tx-ink-3); }
 

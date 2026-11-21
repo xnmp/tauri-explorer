@@ -116,6 +116,7 @@
 :root.phone .ph-sec .chip .tile { height: 64px; }
 :root.phone .ph-sec .chip small { font-size: 12.5px; }
 :root.phone .ph-sec .seg button { min-height: 60px; padding: 10px 2px 9px; font-size: 12px; }
+:root.phone .ph-sec .switches.density { grid-template-columns: 1fr; margin-top: 12px; }
 :root.phone .ph-sec .switches { grid-template-columns: 1fr 1fr; }
 :root.phone .ph-sec .sw { height: 52px; }
 :root.phone .ph-sec .shelf { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }

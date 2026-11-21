@@ -44,6 +44,77 @@ Codex CLI and Claude Code CLI text generation are enabled with enforced isolatio
 
 A profile is `unavailable` only when managed or organisation policy is detected, or when the installed CLI lacks a required isolation flag. Policy can force hooks or tools on above command-line flags. Details, evidence and limits: [CLI text isolation](shared-ai-cli-text-isolation.md).
 
+## Folder agent
+
+Purpose (#1884): answer a question about the files of one folder in one job,
+for example "for every file, find the invoice date; reply with JSON keyed by
+file name" for an AI Details column (#1886). A cheap model runs as a read-only
+agent in the folder and reads only the files it needs. No file content is
+pasted into the prompt. Code: `src-tauri/src/ai/` (`Service::run_agent`,
+`cli::run_agent`, `agent_folder.rs`; tests in `agent_tests.rs`); frontend
+`src/lib/api/ai-agent.ts`, `src/lib/domain/ai-agent.ts`; plugin SDK `ctx.agent`
+(capability `folderAgent`).
+
+**Commands** (window callers, `window:<label>`, shared with `ai_text_*`):
+
+- `ai_agent_describe` → `{version:1, enabled, available, configurationRevision, context?, models, defaultModel?, readScope?, isolation?, maxTimeoutMs, maxConcurrent, error?}`. It runs only the CLI's `--help` probe and is bounded to 5 s.
+- `ai_agent_run {requestId, folder, instructions, input, model?, maxOutputTokens, timeoutMs?, expectedConfigurationRevision?}` → `{text, model, usage?}`.
+- `ai_agent_cancel {requestId}` → `true`.
+
+Errors are the shared `{code, message}`. Agent-specific codes are
+`unsupported` (no CLI connection) and `not_found` (folder missing).
+
+**Connection.** Only the CLI transports (`claude-code-cli`, `codex-cli`) can
+run agents. The default profile is used when it is a CLI; otherwise the first
+CLI profile in the list is used. With only HTTP profiles, `describe` reports
+`available:false` and `error.code:"unsupported"`, and `run` refuses with the
+same code before anything starts. Executable resolution, the managed-policy
+refusal, the help probe, the cleared environment and the prompt on stdin are
+the text adapter's ([CLI text isolation](shared-ai-cli-text-isolation.md)).
+
+**Models.** `models` lists the IDs `run` accepts, cheapest first, and
+`defaultModel` is the cheapest:
+
+- Claude: `haiku`, `sonnet`, `opus`. These are the CLI's aliases (`claude --help`: "an alias for the latest model"); `haiku` ran as `claude-haiku-5-5` with 2.1.330.
+- Codex: `gpt-6-luna`, the host's default Codex model, which Codex's model catalog describes as its "fast and affordable" model.
+- The profile's own model is always accepted as well. Any other model is refused as `invalid_request`.
+
+**Folder.** It must be an absolute path to an existing local directory; it is
+canonicalized (symlinks resolved), and the canonical directory becomes the
+CLI's working directory. The folder path is not passed in argv. Refused:
+
+- relative paths;
+- virtual `<scheme>://` paths, `trash://` included;
+- missing paths (`not_found`) and anything that is not a directory;
+- trash storage: `$XDG_DATA_HOME/Trash`, `.Trash`, `.Trash-<uid>`, `$Recycle.Bin`;
+- the filesystem root, and the home folder itself, which holds credential dotfiles (subfolders are fine).
+
+**Isolation actually achieved.**
+
+| | Claude Code CLI | Codex CLI |
+| --- | --- | --- |
+| Tools | `--tools Read,Glob,Grep`; `--disallowedTools mcp__*,Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch`. Every other text isolation flag is kept: `--restricted`, `--safe-mode`, `--setting-sources ""`, `--strict-mcp-config`, `--permission-prompts none`, `--no-session-persistence`, `--disable-slash-commands`, `--no-chrome` and a fixed `--system-prompt`. | Codex has no file-read tool; it reads with its shell tool. Every other tool, hook, agent, plugin, connector and web-search feature stays disabled, `approval_policy=never`, and `project_doc_max_bytes=0` (the folder's AGENTS.md is not loaded). |
+| Reads | **Confined to the folder, enforced by the CLI** (`readScope:"folder"`). `--restricted` "confines the file tools to the working directories". Verified with Claude Code 2.1.330 on Linux: absolute paths, `../` paths, a symlinked file and a symlinked directory pointing outside, and Grep/Glob with an outside path were all refused ("… is outside …; --restricted confines the file tools to the working directory"). Recursive Grep/Glob inside the folder did not follow those symlinks. | **Requested through a permission profile** (`readScope:"folderRequested"`): `default_permissions=tauri_explorer_folder_agent` with filesystem `{':root'='deny', ':minimal'='read', ':workspace_roots'='read', '<codex install dir>'='read'}` and `network.enabled=false`. `--sandbox` is not passed, because it would select the legacy policy. The Codex install directory must be readable because the Linux sandbox re-executes Codex. Verified with codex-cli 0.169.0 on Linux (bubblewrap): files outside the folder and both symlinks were "No such file or directory", `~` listed empty, and inside reads worked. Permission profiles are a Codex **beta**, and a version without them ignores these keys. It then falls back to the read-only sandbox, which can **read the whole disk**; the host cannot detect that from `--help`. macOS (Seatbelt) and Windows enforce profiles with their own sandboxes. Codex documents that it refuses to run a command it cannot sandbox, but this host has not verified that on macOS or Windows. |
+| Writes, shell, network | No write, edit or shell tool exists in the session. Web tools are denied. | Commands run in the sandbox with no writable path and no network. `approval_policy=never` refuses any escalation. |
+| Output check | `permission_denials` are allowed (a refused outside read is confinement working). | `command_execution` items are allowed. Any other tool item (`file_change`, `mcp_tool_call`, `web_search`, …) fails the job as `invalid_response`. |
+
+`describe().isolation` states the same per connection.
+
+**Limits.**
+
+- Deadline: `timeoutMs` covers the whole job, queueing included. It defaults to 120 s and is capped at 300 s; larger values are clamped, and 0 is refused. The profile's 1–45 s text timeout does not apply.
+- Concurrency: at most 2 agent jobs run at once across all callers, in their own pool, so titles never wait behind agents. Others queue within their deadline.
+- Quota: admission is shared with text requests, so the per-caller limit (8 live), the queue bounds and the cancellation records cover both.
+- Sizes: instructions plus input are at most 64 KiB, and `maxOutputTokens` is 1–16384 (a prompt hint). The final text is at most 256 KiB, and CLI stdout is bounded to 32 MiB.
+- Cancellation (`ai_agent_cancel`, a closed window, the deadline, `cancel_all` at exit) kills the CLI's owned process tree, exactly like text requests. The agent slot is released only after the tree has ended.
+
+**Privacy.** The provider sees whatever files the agent reads, as well as the
+instructions and input. Anything readable in the folder (subfolders included)
+can be sent. A file in the folder can also carry instructions that steer the
+model, for example to read other files in the folder; it cannot reach past the
+confinement above. Consumers should tell users which folder a job reads, and
+should run jobs only on request or on a folder the user opted in.
+
 ## Owned processes (`host.process.run`)
 
 Reverse request from a plugin backend; the host runs the program as an owned process tree (SDK 3 on Unix: the parent-death-safe supervisor; Windows: a kill-on-close job). Implementation: `src-tauri/src/installed_plugins/process_run.rs`. Plugin side: Trace `crates/plugin-runtime/src/process.rs`, whose `ProcessRequest` has this exact shape.

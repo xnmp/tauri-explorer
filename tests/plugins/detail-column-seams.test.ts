@@ -1,12 +1,14 @@
 /**
  * Details-column SDK seams added for AI columns (#1884): the disposer returned
- * by `registerDetailColumns`, and plugin items in the column-header menu.
+ * by `registerDetailColumns`, plugin items in the column-header menu, and the
+ * disposer returned by `registerCommand` (per-column palette entries).
  */
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createPluginContext } from "$lib/plugins/api";
 import { detailColumnRegistry } from "$lib/plugins/detail-column-registry.svelte";
 import { detailColumnMenuItems } from "$lib/plugins/detail-column-menu-registry.svelte";
 import { toastStore } from "$lib/state/toast.svelte";
+import { getCommand } from "$lib/state/commands.svelte";
 import type { FileEntry } from "$lib/domain/file";
 
 const file = (name: string): FileEntry => ({ name, path: `/r/${name}`, kind: "file", size: 1, modified: "2026-01-01T00:00:00Z" });
@@ -168,5 +170,21 @@ describe("registerDetailColumnMenuItem", () => {
     expect(() => ctx.registerDetailColumnMenuItem!({ id: "alpha.x", label: "  ", run: () => {} })).toThrow(/label/);
     expect(() => ctx.registerDetailColumnMenuItem!({ id: "alpha.x", label: "X" } as never)).toThrow(/run/);
     expect(labels()).toEqual([]);
+  });
+});
+
+describe("registerCommand disposer", () => {
+  it("removes just that command, leaving the plugin's others until it deactivates", () => {
+    const { ctx, dispose } = plugin("alpha");
+    const command = (id: string) => ({ scope: "window" as const, id, label: id, category: "plugins" as const, handler: () => {} });
+    const removeOne = ctx.registerCommand(command("plugin.alpha.one"));
+    ctx.registerCommand(command("plugin.alpha.two"));
+    removeOne();
+    expect(getCommand("plugin.alpha.one")).toBeUndefined();
+    expect(getCommand("plugin.alpha.two")).toBeDefined();
+    removeOne();
+    expect(getCommand("plugin.alpha.two")).toBeDefined();
+    dispose();
+    expect(getCommand("plugin.alpha.two")).toBeUndefined();
   });
 });

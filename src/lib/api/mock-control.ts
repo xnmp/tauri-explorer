@@ -165,6 +165,12 @@ export interface MockControl {
   aiTextUnavailable?: boolean;
   /** AI filter (#1506): replaces the deterministic `ai_text_generate` reply. */
   aiTextReply?: (input: string) => string;
+  /** Folder agent (#1884): `ai_agent_describe` reports no CLI connection. */
+  aiAgentUnavailable?: boolean;
+  /** Folder agent (#1884): replaces the deterministic `ai_agent_run` reply. */
+  aiAgentReply?: (request: { folder: string; instructions: string; input: string; model: string }) => string;
+  /** Folder agent (#1884): each run waits this long, so specs can cancel it. */
+  aiAgentDelayMs?: number;
 }
 
 /** The mock's single window-global control object. mock-invoke.ts creates

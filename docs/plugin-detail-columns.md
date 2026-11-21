@@ -90,9 +90,45 @@ registerDetailColumnMenuItem?(item: {
 Items render in the Details column-header menu after the column toggles,
 behind a separator, in plugin order. A throwing `run` is reported under the
 plugin's name; a throwing `enabled` counts as disabled. Items are removed on
-deactivation or by the disposer. The built-in AI Columns plugin
-(`src/lib/plugins/ai-columns`) uses both seams: one provider per described
-column, plus Add/Remove items.
+deactivation or by the disposer.
+
+## Commands with their own lifetime (#1884)
+
+`registerCommand` returns a disposer too, so a plugin can add and remove
+palette entries per column (for example "Remove AI column: Invoice date")
+without deactivating. Like the others it is idempotent and safe after
+deactivation; callers that ignore it keep working.
+
+## Columns computed by a folder agent (#1884)
+
+A column whose values need a language model reading the files (the AI Columns
+plugin, #1886) uses capability `folderAgent`:
+
+```ts
+// PluginContext
+agent?: {
+  describe(): Promise<AgentDescription>;   // available, models, defaultModel, readScope, isolation, limits
+  run(request: {
+    folder: string;                         // absolute local directory
+    instructions: string;                   // e.g. "For every file, find the invoice date; reply with JSON keyed by file name"
+    input: string;                          // data, e.g. the file names, framed as JSON for the model
+    model?: string;                         // one of describe().models; default = the cheapest
+    maxOutputTokens: number;                // 1–16384
+    timeoutMs?: number;                     // default 120 s, capped at 300 s
+    expectedConfigurationRevision?: number;
+  }, signal?: AbortSignal): Promise<{ text: string; model: string; usage?: { inputTokens?: number; outputTokens?: number } }>;
+}
+```
+
+One job per folder: the host starts the configured Claude Code or Codex CLI in
+that folder with read-only file tools, and the model reads only the files it
+needs; no file content goes into the prompt. The host generates the request
+ID (scoped to the plugin), aborting `signal` cancels the job, deactivation
+cancels every job still running, and native errors (`{code, message}`, for
+example `unsupported` when only an HTTP connection is configured) reject
+unchanged. Pair it with `suppliesLength: false` so neither Length nor its sort
+starts a paid job. Isolation per CLI, limits and the privacy note:
+[shared AI services contract § Folder agent](shared-ai-services-contracts.md#folder-agent).
 
 ## Example
 

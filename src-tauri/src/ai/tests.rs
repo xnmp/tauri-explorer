@@ -8,7 +8,7 @@ use std::{
     net::TcpListener,
     sync::mpsc,
 };
-fn config_http(root: &str) -> Configuration {
+pub(super) fn config_http(root: &str) -> Configuration {
     Configuration {
         schema_version: 1,
         revision: 0,
@@ -27,10 +27,10 @@ fn config_http(root: &str) -> Configuration {
         }],
     }
 }
-fn request(id: &str) -> Value {
+pub(super) fn request(id: &str) -> Value {
     json!({"requestId":id,"instructions":"Summarize input","input":"An example prompt","maxOutputTokens":64,"timeoutMs":2000})
 }
-fn fixture_service(config: Configuration) -> (tempfile::TempDir, &'static Service) {
+pub(super) fn fixture_service(config: Configuration) -> (tempfile::TempDir, &'static Service) {
     let root = tempfile::tempdir().unwrap();
     let service = Box::leak(Box::new(Service::new(
         root.path().into(),
@@ -46,7 +46,7 @@ fn fixture_service(config: Configuration) -> (tempfile::TempDir, &'static Servic
 static LOCAL_SLOT_SATURATION: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 /// A loopback root whose connections close at once. Unlike a closed port,
 /// this fails immediately on Windows too, where refused connects are retried.
-fn closed_root() -> String {
+pub(super) fn closed_root() -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     std::thread::spawn(move || {

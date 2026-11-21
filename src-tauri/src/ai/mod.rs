@@ -1,6 +1,7 @@
 //! Host-owned short text service. Broker identities are supplied by native code;
 //! JSON request fields cannot claim another caller's work or credentials.
 mod adapters;
+mod agent_folder;
 mod cli;
 pub(crate) mod credentials;
 pub mod domain;
@@ -8,7 +9,7 @@ pub(crate) mod image_migration;
 mod storage;
 use credentials::{OsSecrets, SecretStore};
 use domain::*;
-pub use domain::{Describe, ServiceError, TextResult};
+pub use domain::{AgentDescribe, AgentResult, Describe, ServiceError, TextResult};
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
@@ -65,6 +66,9 @@ struct Service {
     secrets: Arc<dyn SecretStore>,
     live: Mutex<Registry>,
     slots: Arc<tokio::sync::Semaphore>,
+    /// Folder-agent jobs (#1884) run for minutes, so they have their own
+    /// small pool and never occupy the text slots titles wait for.
+    agent_slots: Arc<tokio::sync::Semaphore>,
 }
 struct Admission<'a> {
     service: &'a Service,
@@ -84,6 +88,7 @@ impl Service {
             secrets,
             live: Mutex::new(Registry::default()),
             slots: Arc::new(tokio::sync::Semaphore::new(4)),
+            agent_slots: Arc::new(tokio::sync::Semaphore::new(AGENT_MAX_CONCURRENT)),
         }
     }
     fn describe(&self) -> Result<Describe> {
@@ -118,20 +123,34 @@ impl Service {
         }
     }
     fn admit(&self, caller: String, request: &Request, owner: OwnerCheck) -> Result<Admission<'_>> {
+        self.admit_job(
+            caller,
+            &request.request_id,
+            Duration::from_millis(request.timeout_ms.unwrap_or(45_000)),
+            owner,
+        )
+    }
+    /// Admission shared by text and agent jobs: one registry, so the same
+    /// per-caller quota, queue bounds and cancellation records cover both.
+    fn admit_job(
+        &self,
+        caller: String,
+        request_id: &str,
+        timeout: Duration,
+        owner: OwnerCheck,
+    ) -> Result<Admission<'_>> {
         if caller.is_empty() || caller.len() > 512 {
             return Err(ServiceError::invalid("Invalid native caller"));
         }
         let control = Arc::new(Control {
             cancelled: AtomicBool::new(false),
             active: AtomicBool::new(false),
-            deadline: Mutex::new(
-                Instant::now() + Duration::from_millis(request.timeout_ms.unwrap_or(45_000)),
-            ),
+            deadline: Mutex::new(Instant::now() + timeout),
             started: Instant::now(),
             owner,
         });
         control.check()?;
-        let key = (caller, request.request_id.clone());
+        let key = (caller, request_id.to_owned());
         let mut live = self.live.lock().unwrap();
         let now = Instant::now();
         live.cancelled.retain(|_, until| *until > now);
@@ -239,6 +258,121 @@ impl Service {
             adapters::execute(profile, credential, request, context, control, permit).await;
         drop(admission);
         result
+    }
+    /// Whether a configured connection can run folder-agent jobs (#1884),
+    /// the models it offers and how far its reads are confined. Only the
+    /// CLI's `--help` probe ever runs here.
+    fn describe_agent(&self) -> Result<AgentDescribe> {
+        let config = self.store.read()?;
+        let selected = agent_profile(&config);
+        let profile = selected.as_ref().ok();
+        let error = match &selected {
+            Ok(profile) => self.check_profile(profile).err(),
+            Err(error) => Some(error.clone()),
+        };
+        let (models, default_model) = profile
+            .and_then(|p| agent_models(p))
+            .map_or((Vec::new(), None), |(models, default)| {
+                (models, Some(default))
+            });
+        let (read_scope, isolation) = match profile.map(|p| &p.connection) {
+            Some(Connection::Claude { .. }) => (
+                Some(ReadScope::Folder),
+                Some("Claude Code runs with only its Read, Glob and Grep tools. Its --restricted mode refuses any path outside the folder, including through symlinks. No shell, no writes, no web, no MCP."),
+            ),
+            Some(Connection::Codex { .. }) => (
+                Some(ReadScope::FolderRequested),
+                Some("Codex reads through sandboxed read-only shell commands under a permission profile that denies every path except the folder, the platform runtime and Codex itself, with network off. Permission profiles are a Codex beta: a Codex version without them falls back to its read-only sandbox, which can read the whole disk."),
+            ),
+            _ => (None, None),
+        };
+        Ok(AgentDescribe {
+            version: 1,
+            enabled: config.enabled,
+            available: error.is_none(),
+            configuration_revision: config.revision,
+            context: profile.map(|p| p.context(config.revision)),
+            models,
+            default_model,
+            read_scope,
+            isolation,
+            max_timeout_ms: AGENT_MAX_TIMEOUT_MS,
+            max_concurrent: AGENT_MAX_CONCURRENT,
+            error,
+        })
+    }
+    /// One folder-agent job (#1884). Shares admission, quota and cancellation
+    /// with text requests; its deadline is the request's (capped at
+    /// [`AGENT_MAX_TIMEOUT_MS`]) and is not shortened by the profile timeout.
+    async fn run_agent(
+        &'static self,
+        caller: String,
+        value: Value,
+        owner: OwnerCheck,
+    ) -> Result<AgentResult> {
+        let request: AgentRequest = serde_json::from_value(value)
+            .map_err(|_| ServiceError::invalid("Malformed agent request"))?;
+        validate_agent_request(&request)?;
+        let admission = self.admit_job(
+            caller,
+            &request.request_id,
+            Duration::from_millis(agent_deadline_ms(request.timeout_ms)),
+            owner,
+        )?;
+        let control = admission.control.clone();
+        let worker_control = control.clone();
+        let local_permit = tokio::select! {permit=local_slots().acquire_owned()=>permit.map_err(|_|ServiceError::new("unavailable","AI local worker queue stopped"))?,error=control.stopped()=>return Err(error)};
+        let folder = request.folder.clone();
+        let requested_model = request.model.clone();
+        let expected = request.expected_configuration_revision;
+        // Folder resolution can touch a slow mount; configuration reads take
+        // the store lock. Both stay off the async runtime.
+        let prepare = tokio::task::spawn_blocking(move || {
+            let _local_permit = local_permit;
+            worker_control.check()?;
+            let folder = agent_folder::resolve_local(&folder)?;
+            let _guard = self.store.lock()?;
+            let config = self.store.read_locked()?;
+            if let Some(expected) = expected {
+                storage::check_revision(&config, expected)?;
+            }
+            let profile = agent_profile(&config)?.clone();
+            let (models, default) = agent_models(&profile)
+                .ok_or_else(|| ServiceError::new("unsupported", "Not a CLI connection"))?;
+            let model = requested_model.unwrap_or(default);
+            if !models.contains(&model) {
+                return Err(ServiceError::invalid(
+                    "Model is not offered for agent jobs on this connection; use one that describe lists",
+                ));
+            }
+            worker_control.check()?;
+            Ok::<_, ServiceError>((folder, profile, model))
+        });
+        let (folder, profile, model) = tokio::select! {result=prepare=>result.map_err(|_|ServiceError::new("unavailable","Agent configuration worker failed"))??,error=control.stopped()=>return Err(error)};
+        let permit = tokio::select! {permit=self.agent_slots.clone().acquire_owned()=>permit.map_err(|_|ServiceError::new("unavailable","Agent service stopped"))?,error=control.stopped()=>return Err(error)};
+        control.check()?;
+        control.active.store(true, Ordering::Release);
+        // The CLI worker is awaited even after a stop, so the agent slot stays
+        // held until the owned process tree has been terminated.
+        let worker = control.clone();
+        let used = model.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            cli::run_agent(
+                &profile,
+                &request,
+                &folder,
+                &used,
+                &worker,
+                &cli::process_env,
+            )
+        })
+        .await
+        .map_err(|_| ServiceError::new("unavailable", "Agent CLI worker failed"))?;
+        control.check()?;
+        drop(admission);
+        let (text, usage) = result?;
+        Ok(AgentResult { text, model, usage })
     }
     fn cancel(&self, caller: &str, id: &str) -> bool {
         if !valid_id(id) || caller.is_empty() || caller.len() > 512 {
@@ -541,6 +675,72 @@ pub async fn ai_text_generate(
 pub async fn ai_text_cancel(window: tauri::Window, request_id: String) -> Result<bool> {
     Ok(cancel(&window_caller(window.label()), &request_id))
 }
+/// Bounded like [`describe_owned`]: the CLI help probe may stall, and a
+/// describe that never returns would leave a plugin waiting without feedback.
+pub async fn describe_agent_owned(is_cancelled: OwnerCheck) -> Result<AgentDescribe> {
+    let now = Instant::now();
+    let control = Arc::new(Control {
+        cancelled: AtomicBool::new(false),
+        active: AtomicBool::new(false),
+        deadline: Mutex::new(now + Duration::from_secs(5)),
+        started: now,
+        owner: is_cancelled,
+    });
+    control.check()?;
+    let worker = control.clone();
+    let read = blocking(move || {
+        worker.check()?;
+        let result = service()?.describe_agent();
+        worker.check()?;
+        result
+    });
+    tokio::select! {result=read=>result,error=control.stopped()=>Err(error)}
+}
+/// Whether a configured CLI connection can run folder-agent jobs, its models
+/// (the default is the cheapest) and how far its reads are confined.
+#[tauri::command]
+pub async fn ai_agent_describe(window: tauri::Window) -> Result<AgentDescribe> {
+    describe_agent_owned(window_owner(&window)).await
+}
+/// Run one folder-agent job: the CLI starts in `folder` with read-only file
+/// tools and answers `instructions` about the files it chooses to read.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn ai_agent_run(
+    window: tauri::Window,
+    request_id: String,
+    folder: String,
+    instructions: String,
+    input: String,
+    model: Option<String>,
+    max_output_tokens: u32,
+    timeout_ms: Option<u64>,
+    expected_configuration_revision: Option<u64>,
+) -> Result<AgentResult> {
+    let request = json!({
+        "requestId": request_id,
+        "folder": folder,
+        "instructions": instructions,
+        "input": input,
+        "model": model,
+        "maxOutputTokens": max_output_tokens,
+        "timeoutMs": timeout_ms,
+        "expectedConfigurationRevision": expected_configuration_revision,
+    });
+    service()?
+        .run_agent(
+            window_caller(window.label()),
+            request,
+            window_owner(&window),
+        )
+        .await
+}
+#[tauri::command]
+pub async fn ai_agent_cancel(window: tauri::Window, request_id: String) -> Result<bool> {
+    Ok(cancel(&window_caller(window.label()), &request_id))
+}
+#[cfg(test)]
+mod agent_tests;
 #[cfg(test)]
 mod cli_tests;
 #[cfg(test)]

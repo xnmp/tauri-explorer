@@ -15,8 +15,8 @@ use std::{
 
 const INSTRUCTIONS: &str = "Summarize input as a title";
 const INPUT: &str = "An example prompt about lighthouses";
-const CODEX_HELP: &str = "--ignore-user-config --ignore-rules --ephemeral --skip-git-repo-check -s, --sandbox <SANDBOX_MODE> --json -m, --model <MODEL> -c, --config <key=value>";
-const CLAUDE_HELP: &str = "-p, --print --output-format <format> --model <model> --tools <tools...> --disallowedTools, --disallowed-tools <tools...> --strict-mcp-config --setting-sources <sources> --safe-mode --restricted --no-session-persistence --disable-slash-commands --no-chrome --permission-prompts <target> --system-prompt <prompt>";
+pub(super) const CODEX_HELP: &str = "--ignore-user-config --ignore-rules --ephemeral --skip-git-repo-check -s, --sandbox <SANDBOX_MODE> --json -m, --model <MODEL> -c, --config <key=value>";
+pub(super) const CLAUDE_HELP: &str = "-p, --print --output-format <format> --model <model> --tools <tools...> --disallowedTools, --disallowed-tools <tools...> --strict-mcp-config --setting-sources <sources> --safe-mode --restricted --no-session-persistence --disable-slash-commands --no-chrome --permission-prompts <target> --system-prompt <prompt>";
 const SECRET_ENV: &[&str] = &[
     "OPENAI_API_KEY",
     "CODEX_API_KEY",
@@ -51,7 +51,7 @@ pub(super) fn profile(kind: &str, executable: &Path, model: &str) -> Profile {
 fn text_request() -> Request {
     serde_json::from_value(json!({"requestId":"x","instructions":INSTRUCTIONS,"input":INPUT,"maxOutputTokens":64,"timeoutMs":2000})).unwrap()
 }
-fn control(deadline: Duration) -> Arc<Control> {
+pub(super) fn control(deadline: Duration) -> Arc<Control> {
     let now = Instant::now();
     Arc::new(Control {
         cancelled: AtomicBool::new(false),
@@ -64,12 +64,12 @@ fn control(deadline: Duration) -> Arc<Control> {
 
 /// A fixture environment: a saved-login home plus every credential/routing
 /// variable a CLI profile must never forward.
-struct Fixture {
+pub(super) struct Fixture {
     _root: tempfile::TempDir,
     vars: HashMap<String, OsString>,
 }
 impl Fixture {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let root = tempfile::tempdir().unwrap();
         let mut vars: HashMap<String, OsString> = HashMap::new();
         for (key, dir) in [
@@ -103,10 +103,10 @@ impl Fixture {
         }
         Self { _root: root, vars }
     }
-    fn env(&self) -> impl Fn(&str) -> Option<OsString> + '_ {
+    pub(super) fn env(&self) -> impl Fn(&str) -> Option<OsString> + '_ {
         move |key| self.vars.get(key).cloned()
     }
-    fn var(&self, key: &str) -> PathBuf {
+    pub(super) fn var(&self, key: &str) -> PathBuf {
         PathBuf::from(&self.vars[key])
     }
     fn run(&self, kind: &str, executable: &Path, control: &Control) -> Result<String> {
@@ -126,7 +126,7 @@ impl Fixture {
 /// exec of a file still open for writing fails with ETXTBSY (see
 /// `files::git_status::tests::write_fake_git`, #764).
 #[cfg(unix)]
-fn write_executable(path: &Path, script: &str) {
+pub(super) fn write_executable(path: &Path, script: &str) {
     use std::os::unix::fs::PermissionsExt;
     fs::write(path, script).unwrap();
     fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
@@ -724,7 +724,7 @@ fn cli_failures_are_typed_and_never_return_partial_text() {
 /// A fake CLI that starts a child, which starts a grandchild, records all three
 /// PIDs and then blocks forever.
 #[cfg(unix)]
-fn tree_cli(dir: &Path, kind: &str, help: &str) -> (PathBuf, PathBuf) {
+pub(super) fn tree_cli(dir: &Path, kind: &str, help: &str) -> (PathBuf, PathBuf) {
     let pids = dir.join("pids");
     let executable = dir.join(kind);
     write_executable(
@@ -770,7 +770,7 @@ fn running(pid: i32) -> bool {
     }
 }
 #[cfg(unix)]
-fn assert_tree_reaped(pids: &Path) {
+pub(super) fn assert_tree_reaped(pids: &Path) {
     let owned: Vec<i32> = fs::read_to_string(pids)
         .expect("the CLI tree started before it was stopped")
         .split_whitespace()

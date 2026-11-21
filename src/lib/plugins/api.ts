@@ -48,6 +48,7 @@ import { scopePluginJobs, type PluginJobKind } from "$lib/state/plugin-jobs";
 import { observeActiveDirectory } from "$lib/composables/observe-active-directory.svelte";
 import { extractError, type ApiResult } from "$lib/api/common";
 import { logFrontendError } from "$lib/api/crash";
+import { createPluginAgent, type PluginAgent } from "./plugin-agent";
 import { subscribeToLocalFileChanges } from "$lib/state/file-events";
 import { fileDropTargets } from "$lib/state/file-drop-targets.svelte";
 import PluginContributionRoot from "$lib/components/PluginContributionRoot.svelte";
@@ -314,12 +315,16 @@ export interface PluginContext {
     subscribe(listener: (revision: number) => void): () => void;
     openSettings(): void;
   };
+  /** Capability "folderAgent" (#1884): read-only CLI jobs in a folder; see
+   *  `plugin-agent.ts` and docs/plugin-detail-columns.md. */
+  agent?: PluginAgent;
   backend?: {invoke<T>(method:string,params?:Record<string,unknown>):Promise<T>};
   saveSettings(patch:Record<string,unknown>):Promise<void>;
   /** Return the handler's work as a promise: a rejection is reported to the
    *  user under the plugin's name and written to the app log. Work started
-   *  with `void` and never returned is invisible to that reporting. */
-  registerCommand(cmd: Command): void;
+   *  with `void` and never returned is invisible to that reporting. Returns a
+   *  disposer that removes the command before deactivation (#1884). */
+  registerCommand(cmd: Command): () => void;
   registerContextMenuItem(item: ContextMenuItem): void;
   registerSettingsSection(section: SettingsSectionDescriptor): void;
   registerFsProvider(scheme: string, provider: FsProvider): void;
@@ -473,6 +478,8 @@ export function createPluginContext(
     if (id !== pluginId && (!name || name.includes("."))) throw new Error(`${kind} ${id} must be named ${pluginId}.<name>`);
     return id;
   };
+  const pluginAgent = createPluginAgent(pluginId, () => disposed, (error) => void log(error, "agent cancel"));
+  disposers.add(pluginAgent.cancelAll);
   const storage = createPluginStorage(pluginId);
   // Accepted jobs outlive the plugin, but their Retry runs its code: drop it.
   const pluginJobs = scopePluginJobs(pluginId);
@@ -543,7 +550,8 @@ export function createPluginContext(
       },
       openSettings: () => { if (!disposed) dialogStore.openSettings(); },
     },
-    registerCommand(cmd: Command): void {
+    agent: pluginAgent.agent,
+    registerCommand(cmd: Command): () => void {
       const handler = async () => {
         try {
           await cmd.handler();
@@ -552,7 +560,7 @@ export function createPluginContext(
           throw error;
         }
       };
-      track(registerCommandContribution({ ...cmd, handler }));
+      return track(registerCommandContribution({ ...cmd, handler }));
     },
     registerContextMenuItem(item: ContextMenuItem): void {
       const handler = async (entries: FileEntry[]) => {

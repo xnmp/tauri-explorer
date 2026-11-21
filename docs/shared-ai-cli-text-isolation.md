@@ -2,6 +2,8 @@
 
 Short-text requests (Trace prompt titles and other consumers of the host text service) can run through the **Codex CLI** (the default profile) or the **Claude Code CLI** using the CLI's saved login. A title request must never become an agent run. The code is `src-tauri/src/ai/cli.rs`, and its tests are in `src-tauri/src/ai/cli_tests.rs`.
 
+Folder-agent jobs (#1884) deliberately differ: they run in a chosen folder with read-only file tools. Their argv, confinement evidence and limits are in [shared AI services contract § Folder agent](shared-ai-services-contracts.md#folder-agent); everything below still applies to them except the empty working directory, `--tools ""` and Codex's disabled shell.
+
 Evidence was gathered on 2026-10-10 from the installed **codex-cli 0.162.0** (`codex exec --help`) and **Claude Code 2.1.296** (`claude --help`), from the official documentation linked below, and from the Codex `rust-v0.162.0` source. Only `--help` was run. No login, generation or provider request was made.
 
 ## How a request runs

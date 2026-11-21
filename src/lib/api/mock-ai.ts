@@ -7,6 +7,8 @@ import { createMockAiPresentation } from "./mock-ai-presentation";
 import { getMockControl } from "./mock-control";
 import { createMockTextConnections } from "./mock-text-connections";
 import type { CommandHandler } from "./mock-dispatch";
+import { mockFiles } from "./mock-fixtures";
+import type { AgentDescription } from "$lib/domain/ai-agent";
 
 const mockAiPresentation = () => getMockControl().nativeAiPresentation ??= createMockAiPresentation((name, value) => {
   if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(name, { detail: value }));
@@ -20,6 +22,56 @@ function mockTextDescription() {
   return { version: 1, enabled: configuration.enabled, available, configurationRevision: configuration.revision, ...(available ? {} : { error: { code: "disabled", message: "Text generation is disabled" } }) };
 }
 
+const MOCK_AGENT_MODELS = ["haiku", "sonnet", "opus"];
+
+/** Mirrors native `ai_agent_describe` for a Claude Code connection (#1884). */
+function mockAgentDescription(): AgentDescription {
+  const text = mockTextDescription();
+  const available = text.available && !getMockControl().aiAgentUnavailable;
+  return {
+    version: 1 as const, enabled: text.enabled, available, configurationRevision: text.configurationRevision,
+    models: available ? MOCK_AGENT_MODELS : [], maxTimeoutMs: 300_000, maxConcurrent: 2,
+    ...(available
+      ? { defaultModel: MOCK_AGENT_MODELS[0], readScope: "folder" as const, isolation: "Mock folder agent: reads only the folder." }
+      : { error: { code: "unsupported", message: "Folder agent jobs need a Claude Code CLI or Codex CLI connection; HTTP connections cannot read files" } }),
+  };
+}
+
+/** Pending mock agent jobs by request ID, so `ai_agent_cancel` can end them. */
+const mockAgentJobs = new Map<string, () => void>();
+
+/** Deterministic stand-in for a folder agent: a JSON object mapping each file
+ *  of the mock folder to its extension in capitals ("NONE" without one). */
+function mockAgentReply(folder: string): string {
+  const files = (mockFiles[folder] ?? []).filter((entry) => entry.kind === "file");
+  return JSON.stringify(Object.fromEntries(files.map((entry) => {
+    const dot = entry.name.lastIndexOf(".");
+    return [entry.name, dot > 0 ? entry.name.slice(dot + 1).toUpperCase() : "NONE"];
+  })));
+}
+
+async function mockAgentRun(args: Record<string, unknown>) {
+  const description = mockAgentDescription();
+  if (!description.available) throw description.error;
+  const folder = String(args.folder ?? "");
+  if (!folder.startsWith("/") || /^[a-z][a-z0-9+.-]+:\/\//i.test(folder)) {
+    throw { code: "invalid_request", message: "Agent folder must be an absolute path" };
+  }
+  const model = typeof args.model === "string" ? args.model : MOCK_AGENT_MODELS[0];
+  if (!MOCK_AGENT_MODELS.includes(model)) throw { code: "invalid_request", message: "Model is not offered for agent jobs on this connection; use one that describe lists" };
+  const control = getMockControl();
+  const requestId = String(args.requestId);
+  if (control.aiAgentDelayMs) {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => { mockAgentJobs.delete(requestId); resolve(); }, control.aiAgentDelayMs);
+      mockAgentJobs.set(requestId, () => { clearTimeout(timer); mockAgentJobs.delete(requestId); reject({ code: "cancelled", message: "Text request was cancelled" }); });
+    });
+  }
+  const request = { folder, instructions: String(args.instructions ?? ""), input: String(args.input ?? ""), model };
+  const text = control.aiAgentReply ? control.aiAgentReply(request) : mockAgentReply(folder);
+  return { text, model, usage: { inputTokens: request.instructions.length + request.input.length, outputTokens: text.length } };
+}
+
 const MOCK_FILTER_STOPWORDS = new Set(["the", "and", "all", "any", "from", "with", "that", "show", "only", "files", "file", "items", "folder", "folders", "last", "days"]);
 
 /** Deterministic stand-in for a model: names containing any query word. */
@@ -30,21 +82,6 @@ function mockAiFilterReply(input: string): string {
   const start = lines.findIndex(line => line.startsWith("Entries"));
   const names = lines.slice(start + 1).map(line => line.split("\t")[1]).filter((name): name is string => !!name);
   return JSON.stringify({ names: names.filter(name => words.some(word => name.toLowerCase().includes(word))) });
-}
-
-/** Deterministic stand-in for an AI column (#1884): answers each file of a
- *  `buildColumnPrompt` batch from its metadata. "...extension..." properties
- *  get the extension in capitals; anything else gets the kind. */
-function mockAiColumnReply(input: string): string {
-  const [property = "", , ...rows] = input.split("\n");
-  const byExtension = /extension/i.test(property);
-  return JSON.stringify(rows.flatMap((line) => {
-    try {
-      const file = JSON.parse(line) as { i: number; kind: string; extension: string };
-      const value = byExtension ? (file.kind === "folder" ? "FOLDER" : file.extension.toUpperCase() || "NONE") : file.kind;
-      return [{ i: file.i, value }];
-    } catch { return []; }
-  }));
 }
 
 export const aiCommands: Record<string, CommandHandler> = {
@@ -67,10 +104,12 @@ export const aiCommands: Record<string, CommandHandler> = {
     if (!mockTextDescription().available) throw { code: "disabled", message: "Text generation is disabled" };
     const text = String(input);
     const reply = getMockControl().aiTextReply;
-    const fallback = text.startsWith("Property: ") ? mockAiColumnReply(text) : mockAiFilterReply(text);
-    return { text: reply ? reply(text) : fallback, context: mockTextConnections.context() };
+    return { text: reply ? reply(text) : mockAiFilterReply(text), context: mockTextConnections.context() };
   },
   ai_text_cancel: () => true,
+  ai_agent_describe: () => mockAgentDescription(),
+  ai_agent_run: (args) => mockAgentRun(args),
+  ai_agent_cancel: ({ requestId }) => { const cancel = mockAgentJobs.get(String(requestId)); cancel?.(); return true; },
 
   start_nano_banana_job: () => 1,
 

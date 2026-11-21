@@ -113,7 +113,10 @@ the text adapter's ([CLI text isolation](shared-ai-cli-text-isolation.md)).
    Resolution runs in its own pool of 2 blocking workers with a 5 s timeout,
    separate from the settings and text workers. A hung mount therefore fails
    the job as `timed_out` and holds only a folder worker until the OS
-   returns. It never delays text requests or settings.
+   returns. It never delays text requests or settings. Two such hangs hold
+   both folder workers, so later agent jobs, even on healthy folders, fail
+   as `unavailable` (waiting behind folders that stopped responding) until
+   the OS returns those calls.
 
 **Isolation actually achieved.**
 

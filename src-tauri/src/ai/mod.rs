@@ -186,9 +186,23 @@ impl Service {
     /// cancels live and queued agent jobs pinned to another one: disabling AI
     /// or changing or removing the CLI profile must not leave them running.
     fn observe_revision(&self, revision: u64) {
-        self.observed_revision.store(revision, Ordering::SeqCst);
+        // Revisions only move forward: a watcher that read an older revision
+        // and reports it after a save announced a newer one must not move the
+        // observed revision back, or every new job would be cancelled.
+        let advance = |current: u64| {
+            Some(if current == UNPINNED {
+                revision
+            } else {
+                current.max(revision)
+            })
+        };
+        let previous = self
+            .observed_revision
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, advance)
+            .unwrap_or_else(|current| current);
+        let latest = advance(previous).unwrap_or(revision);
         for control in self.live.lock().unwrap().live.values() {
-            control.supersede_unless(revision);
+            control.supersede_unless(latest);
         }
     }
     /// Pins an agent job to the revision it snapshotted. Checked after the
@@ -489,11 +503,21 @@ impl Service {
         let slots = self.folders.slots.clone();
         let resolve = self.folders.resolve.clone();
         let folder = folder.to_owned();
+        // Waiting for a folder worker is reported apart from a folder that
+        // does not answer: once earlier folders hang, every worker stays with
+        // its blocked call, and a job on a healthy folder must say so rather
+        // than blame its own folder.
+        let permit = match tokio::time::timeout(timeout, slots.acquire_owned()).await {
+            Ok(permit) => permit
+                .map_err(|_| ServiceError::new("unavailable", "Agent folder worker stopped"))?,
+            Err(_) => {
+                return Err(ServiceError::new(
+                    "unavailable",
+                    "Agent jobs are waiting for earlier folders that stopped responding (a stalled network mount?); they resume once those folders answer",
+                ))
+            }
+        };
         let work = async move {
-            let permit = slots
-                .acquire_owned()
-                .await
-                .map_err(|_| ServiceError::new("unavailable", "Agent folder worker stopped"))?;
             tokio::task::spawn_blocking(move || {
                 let _permit = permit;
                 resolve(&folder)

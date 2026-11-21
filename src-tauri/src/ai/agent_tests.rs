@@ -962,11 +962,33 @@ async fn a_hung_folder_resolution_never_starves_text_or_settings() {
     .expect("text is not starved")
     .unwrap_err();
     assert_eq!(error.code, "provider_failed");
+    // The jobs that got a folder worker blame their folder; the rest say they
+    // are waiting behind folders that stopped responding.
+    let mut codes = Vec::new();
     for job in jobs {
         let error = job.await.unwrap().unwrap_err();
-        assert_eq!(error.code, "timed_out");
         assert!(error.message.contains("folder"), "{}", error.message);
+        codes.push(error.code.to_string());
     }
+    codes.sort();
+    let stuck = service.folders.slots.available_permits();
+    assert_eq!(stuck, 0);
+    assert_eq!(
+        codes
+            .iter()
+            .filter(|code| code.as_str() == "timed_out")
+            .count(),
+        2,
+        "{codes:?}"
+    );
+    assert_eq!(
+        codes
+            .iter()
+            .filter(|code| code.as_str() == "unavailable")
+            .count(),
+        3,
+        "{codes:?}"
+    );
     assert!(started.elapsed() < Duration::from_secs(5));
     assert_eq!(service.folders.slots.available_permits(), 0);
     drop(release);
@@ -1106,6 +1128,41 @@ async fn a_job_pinned_after_a_change_was_announced_is_cancelled() {
         .unwrap();
     service.observe_revision(8);
     assert!(unpinned.control.check().is_ok(), "text jobs are not pinned");
+}
+
+/// A watcher that reports an older revision after a newer one was announced
+/// must not move the observed revision back and cancel current jobs (#1884
+/// re-review).
+#[cfg(unix)]
+#[tokio::test]
+async fn a_stale_revision_report_never_cancels_current_jobs() {
+    let (_config_root, service) = agent_service(tests::config_http(&tests::closed_root()));
+    service.observe_revision(9);
+    service.observe_revision(8);
+    let admission = service
+        .admit_job(
+            agent_caller("main"),
+            "current",
+            Duration::from_secs(10),
+            owner(),
+            AGENT_PER_CALLER,
+        )
+        .unwrap();
+    service.pin(&admission.control, 9);
+    assert!(
+        admission.control.check().is_ok(),
+        "pinned to the latest revision"
+    );
+    service.observe_revision(8);
+    assert!(
+        admission.control.check().is_ok(),
+        "a stale report changes nothing"
+    );
+    service.observe_revision(10);
+    assert_eq!(
+        admission.control.check().unwrap_err().code,
+        "configuration_changed"
+    );
 }
 
 /// `--max-turns` is passed only when the installed Claude Code lists it:

@@ -796,6 +796,11 @@ describe("turbo.json", () => {
     "tests/test-cache.test.ts": "all",
     // `bun run demo:serve` serves the site mocks to a browser; no test runs it.
     "scripts/demo-serve.ts": ["screenshots/design/website-rehaul/overhaul"],
+    // The deploy assembler copies the site into a tree for Vercel; no test runs it.
+    "scripts/build-site.ts": [
+      "screenshots/design/website-rehaul/overhaul", "screenshots/design/website-rehaul/peel-mock/assets",
+      "website/favicon.png",
+    ],
     // The site mock's pure page scripts live beside the page while it is a
     // design mock under screenshots/ (docs to CI, so ci:unit cannot hash them).
     // A cached pass can therefore outlive an edit to these two scripts; move

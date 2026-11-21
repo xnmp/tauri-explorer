@@ -21,7 +21,7 @@
   import { showTabStrip, titleRowHeldOpen } from "$lib/domain/titlebar";
   import { isMac } from "$lib/domain/platform";
   import { stepTabDrag, TAB_DRAG_IDLE, type TabDrag, type TabDragEffect, type TabDragEvent } from "$lib/domain/tab-drag";
-  import { tabStripLayout, tabStripStart, tabEdgeScrollSpeed, tabRevealScroll, TAB_MAX_WIDTH, TAB_GAP, TAB_BLEED } from "$lib/domain/tab-strip";
+  import { tabStripLayout, tabSearchShown, tabStripStart, tabEdgeScrollSpeed, tabRevealScroll, TAB_MAX_WIDTH, TAB_GAP, TAB_BLEED } from "$lib/domain/tab-strip";
   import { TAB_STRIP_PADDING } from "$lib/domain/tab-seam";
   import { TAB_SLIDE_IN_MS, TAB_SLIDE_OUT_MS } from "$lib/domain/tab-slide";
   import { stripTabsOf, stripTabWidth } from "$lib/domain/tab-strip-motion";
@@ -44,8 +44,9 @@
 
   let tabViewport: HTMLDivElement | undefined = $state();
   let tabScrollGroup: HTMLDivElement | undefined = $state();
-  /** The tabs' room with the strip at its window-edge start. */
+  /** The tabs' room at the strip's window-edge start, without the tab search. */
   let roomAtFloor = $state(0);
+  let searchWidth = $state(31); // the tab search button and its gap, once measured
   let tabViewportWidth = $state(0);
   let tabScrollLeft = $state(0);
   // The tabs the strip lays out, a frame late while a tab slides, and its
@@ -55,11 +56,15 @@
   const activeMinimum = $derived(renamingTabId ? 180 : 120);
   // The aligned start applies only while the tabs fit there at a
   // comfortable width; a narrower window gives that room back to them (#1734).
-  function layoutFor(count: number) {
-    const start = alignedStart === null ? null : tabStripStart(alignedStart, TAB_STRIP_PADDING, roomAtFloor, count, activeMinimum);
-    const space = Math.max(0, roomAtFloor - (start === null ? 0 : start - TAB_STRIP_PADDING));
+  function layoutFor(count: number, room: number = roomAtFloor - (searchShown ? searchWidth : 0)) {
+    const start = alignedStart === null ? null : tabStripStart(alignedStart, TAB_STRIP_PADDING, room, count, activeMinimum);
+    const space = Math.max(0, room - (start === null ? 0 : start - TAB_STRIP_PADDING));
     return { start, space, layout: tabStripLayout(count, space, Math.min(activeMinimum, space || 120)) };
   }
+  let pickerOpen = $state(false);
+  // Judged on the room without the button, so showing it cannot un-crowd the
+  // tabs and hide it again (#1881); it stays while its list is open.
+  const searchShown: boolean = $derived(pickerOpen || tabSearchShown(tabs.length, layoutFor(tabs.length, roomAtFloor).layout));
   const strip = $derived(layoutFor(motion.strip.count));
   const stripStart = $derived(strip.start);
   const tabSpaceWidth = $derived(strip.space);
@@ -81,7 +86,6 @@
   const fadeStart = $derived(stripLayout.overflowing && tabScrollLeft >= 1);
   const fadeEnd = $derived(stripLayout.overflowing && tabScrollLeft + tabViewportWidth < stripLayout.totalWidth + 2 * TAB_BLEED - 1);
   let pickerButton: HTMLButtonElement | undefined = $state();
-  let pickerOpen = $state(false);
   const pickerItems = $derived(tabs.map(tab => ({
     id: tab.id, title: windowTabsManager.getTabTitle(tab), path: windowTabsManager.getTabTooltip(tab),
   })));
@@ -97,13 +101,15 @@
   let roomBox = $state<HTMLElement | null>(null);
   function measureRoom(): void {
     if (!tabScrollGroup || !tabArea) return;
-    const { room, box } = tabRoomAtFloor(tabArea, tabScrollGroup);
+    const { room, box, searchWidth: measured } = tabRoomAtFloor(tabArea, tabScrollGroup, pickerButton ?? null);
     roomBox = box;
+    if (measured !== null && Math.abs(measured - searchWidth) > 0.5) searchWidth = measured;
     // offsetWidths are rounded, so mid-slide the buttons' share wobbles by
     // 1px; a wobble must not re-lay out (and re-ease) every tab.
     if (Math.abs(room - roomAtFloor) > 1) roomAtFloor = room;
   }
 
+  $effect(() => { if (pickerButton) untrack(measureRoom); }); // its width follows the window
   $effect(() => {
     const group = tabScrollGroup;
     if (!group || !tabArea) return;
@@ -773,9 +779,11 @@
         />
       </svg>
     </button>
-    <button class="tab-picker-btn" bind:this={pickerButton} aria-label="Search open tabs" title="Search open tabs" aria-expanded={pickerOpen} aria-haspopup="listbox" onclick={() => { pickerOpen = !pickerOpen; }}>
-      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
-    </button>
+    {#if searchShown}
+      <button class="tab-picker-btn" bind:this={pickerButton} aria-label="Search open tabs" title="Search open tabs" aria-expanded={pickerOpen} aria-haspopup="listbox" onclick={() => { pickerOpen = !pickerOpen; }}>
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
+      </button>
+    {/if}
     {#if pickerOpen && pickerButton}
       <WindowTabPicker items={pickerItems} {activeTabId} anchorEl={pickerButton} onSelect={handleTabClick} onClose={closePicker} />
     {/if}

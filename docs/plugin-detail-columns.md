@@ -6,7 +6,7 @@ capability or the presence of `ctx.registerDetailColumns`.
 
 ```ts
 // PluginContext
-registerDetailColumns?(provider: DetailColumnProvider): void;
+registerDetailColumns?(provider: DetailColumnProvider): () => void;
 
 export interface DetailColumnProvider {
   /** `<pluginId>.<name>`. */
@@ -15,6 +15,10 @@ export interface DetailColumnProvider {
   columns: readonly { key: string; label: string; width?: number }[];
   /** Synchronous and cheap (an extension test); called per listed entry. */
   applies(entry: FileEntry): boolean;
+  /** False when it never supplies lengthSeconds (#1884): it then loads only
+   *  while one of its own columns is shown, never for Length or its sort.
+   *  Default true. Set it for providers whose loads cost money. */
+  suppliesLength?: boolean;
   /** One item per entry, in order; null for an unreadable file. */
   load(entries: readonly FileEntry[], signal: AbortSignal):
     Promise<readonly ({ columns?: Record<string, string>; lengthSeconds?: number } | null)[]>;
@@ -34,7 +38,9 @@ export interface DetailColumnProvider {
   mtime): an unchanged file is never reloaded, and a rewritten one is.
   A provider loads only for rows while one of its columns is shown, or while
   Length is shown (any provider may supply `lengthSeconds`), so hiding its
-  columns does not stop its loads while Length stays visible.
+  columns does not stop its loads while Length stays visible. A provider
+  declaring `suppliesLength: false` is exempt from both Length loads and the
+  folder-wide Length sort.
 - **Length.** `lengthSeconds` fills the built-in Length column for files the
   host cannot measure itself (host-probed video durations take precedence).
 - **Visibility and width.** Each column is shown until the user hides it from
@@ -57,6 +63,76 @@ export interface DetailColumnProvider {
   cached values and removes the columns. Registration validates lazily, so an
   invalid provider is reported rather than thrown (an id outside the plugin's
   namespace still throws).
+
+## Removing one provider (#1884)
+
+`registerDetailColumns` returns a disposer. Calling it removes that provider
+before the plugin deactivates: in-flight loads abort, its cached values are
+forgotten and its columns leave the header. It is idempotent, safe after
+deactivation, and frees the provider id for a new registration. Callers that
+ignore the return value keep working. (Hosts before #1884 returned
+`undefined`; check the capability below before relying on it.)
+
+## Column-header menu items (#1884)
+
+Capability `detailColumnMenu` adds:
+
+```ts
+// PluginContext
+registerDetailColumnMenuItem?(item: {
+  id: string;            // `<pluginId>.<name>`
+  label: string;         // trimmed, at most 80 characters
+  run(): void;           // called after the host closes the menu
+  enabled?(): boolean;   // read when the menu opens; false shows it disabled
+}): () => void;          // disposer
+```
+
+Items render in the Details column-header menu after the column toggles,
+behind a separator, in plugin order. A throwing `run` is reported under the
+plugin's name; a throwing `enabled` counts as disabled. Items are removed on
+deactivation or by the disposer.
+
+## Commands with their own lifetime (#1884)
+
+`registerCommand` returns a disposer too, so a plugin can add and remove
+palette entries per column (for example "Remove AI column: Invoice date")
+without deactivating. Like the others it is idempotent and safe after
+deactivation; callers that ignore it keep working.
+
+## Columns computed by a folder agent (#1884)
+
+A column whose values need a language model reading the files (the AI Columns
+plugin, #1886) uses capability `folderAgent`:
+
+```ts
+// PluginContext
+agent?: {
+  describe(): Promise<AgentDescription>;   // available, models, defaultModel, readScope, isolation, limits
+  run(request: {
+    folder: string;                         // a folder open in one of this window's panes
+    instructions: string;                   // e.g. "For every file, find the invoice date; reply with JSON keyed by file name"
+    input: string;                          // data, e.g. the file names, framed as JSON for the model
+    model?: string;                         // one of describe().models; default = the cheapest
+    maxOutputTokens: number;                // 1–16384
+    timeoutMs?: number;                     // default 120 s, capped at 300 s
+    maxTurns?: number;                      // 1–40 (default 40), on a CLI that lists a turn limit
+    expectedConfigurationRevision?: number;
+  }, signal?: AbortSignal): Promise<{ text: string; model: string; usage?: { inputTokens?: number; outputTokens?: number } }>;
+}
+```
+
+One job per folder: the host starts the configured Claude Code or Codex CLI in
+that folder with read-only file tools, and the model reads only the files it
+needs; no file content goes into the prompt. The host generates the request
+ID (scoped to the plugin), aborting `signal` cancels the job, deactivation
+cancels every job still running, and native errors (`{code, message}`, for
+example `unsupported` when only an HTTP connection is configured) reject
+unchanged. `run` refuses with `folder_not_open` a folder that no pane of this
+window shows. Native then refuses home, its ancestors, dot-folders inside home,
+system trees, trash and network shares, and cancels jobs with
+`configuration_changed` when the AI settings change. Pair it with `suppliesLength: false` so neither Length nor its sort
+starts a paid job. Isolation per CLI, limits and the privacy note:
+[shared AI services contract § Folder agent](shared-ai-services-contracts.md#folder-agent).
 
 ## Example
 

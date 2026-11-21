@@ -67,7 +67,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `FileItem.svelte` — single entry row/tile (icon, name, badges, selection state).
 - `EntryCell.svelte` — shared List option / Tiles gridcell with roving focus, selection semantics and drag-drop interactions.
 - `EntryName.svelte` — shared inline rename input/display across all views.
-- `EntryNameLabel.svelte` — explorer-free displayed name per view variant (and the tile rename placeholder); EntryName and FileTiles render names through it.
+- `EntryNameLabel.svelte` — explorer-free displayed name per view variant (and the tile rename placeholder); EntryName and FileTiles render names through it; carries the `entry-name` layout hook (#1879).
 - `FileIcon.svelte` — shared Material/Classic/Minimal/Catppuccin dispatch; optional pack override supplies stable picker previews across every file view.
 - `MaterialFileIcon.svelte`, `CatppuccinFileIcon.svelte` — pack-specific SVG artwork using the shared file identity/category descriptor and existing tint tokens; Catppuccin uses vendored CSS-variable SVGs and light/dark palettes.
 - `FolderIcon.svelte`, `FolderDecoration.svelte` — shared folder silhouettes and link/repository decoration, including outlined packs and photo-folder previews; repository folders are Git-tinted with a pack-styled branch glyph on the folder body (`repositoryFolderStyle` / `repositoryEmblem`), never in the bottom-right peek-caret corner (#1477, #1490).
@@ -372,8 +372,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `icon-theme.svelte.ts` — transient icon-pack preview and reactive resolution against saved settings and applied color-theme CSS revisions; previews never persist.
 - `window-size.svelte.ts` — reactive `window.innerWidth`/`innerHeight` tracker (`windowSizeStore`); `+page.svelte` syncs on mount/resize. Feeds preview-pane auto-dock (#467).
 - `theme.svelte.ts` — active theme state + CSS var application.
-- `layout.svelte.ts` — eager layout-theme half (#1306): `layoutStore` paints `data-layout`/`data-layout-base` and injected layout sheets from a localStorage cache before mount, exposes the island arrangement, pane divider size and Details row height; `start()` follows `settings.layoutTheme` through the lazy controller.
-- `layout-controller.svelte.ts` — lazy layout-theme half (#1306): lists `layouts/`, resolves/falls back with one notice, loads the lazy built-in sheets (Hairline Ledger, Compact, Soft Cards), detects rule-less user CSS, generation-guards concurrent applications; used by the settings UI and layout picker.
+- `layout.svelte.ts` — eager layout-theme half (#1306): `layoutStore` paints `data-layout`/`data-layout-base`/`data-density` and injected layout sheets from a localStorage cache before mount, exposes the island arrangement, pane divider size, Details/List row heights and the applied `compact` density (#1878); `start()` follows `settings.layoutTheme` and `settings.compact` through the lazy controller.
+- `layout-controller.svelte.ts` — lazy layout-theme half (#1306): lists `layouts/`, resolves/falls back with one notice, loads the lazy built-in sheets (Hairline Ledger, Soft Cards) and, when `compact` is on, the compact density sheet after them (#1878), detects rule-less user CSS, generation-guards concurrent applications; used by the settings UI and layout picker.
 - `config-watch.ts` — applies `config-file-changed` to the settings/theme stores; `handleConfigFileChanged` is the routing seam (#599).
 - `terminal.svelte.ts` — embedded terminal panel state (#139).
 - `jobs.svelte.ts` — background jobs store (Ctrl+J); `retryJob` runs a failed job's `retry` once, then drops the entry or keeps it with the new error; a retrying entry is active (`isJobActive`: not dismissable or cleared); `dropRetries(owner)` for retired plugins.
@@ -612,8 +612,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `list-motion.ts` — pure List open/close motion plan (FLIP, conveyor distance with empty slots, card growth, visible-column gating) and easing/clip helpers.
 - `drop-feedback.ts` — pure decision for whether a DOM dragend may retire drop-hover feedback (stale echo vs cancelled drag).
 - `virtual-layout.ts` — variable-height virtual list layout math (VirtualList).
-- `row-thumbnails.ts` — Details/List row thumbnails (#1465): 48px thumbnail size, setting-dependent `detailsRowHeight`/`listRowHeight` (published by `state/layout.svelte.ts`) and `rowThumbnailKind` (image, video/cover art, or icon).
-- `tile-layout.ts` — tile sizes (`THUMBNAIL_SIZE_CONFIG`, re-exported by settings), spacing/row-height `tileLayout()` and grid arrow-key `gridFocusStep()` shared by every tile grid; the SDK's `PaneTileSize`/`TileSizePreset` and `paneTileSize()`; `tileGridMetrics()` exposes minimum width, allocated cell height, gap and grid padding through `ui/file-tile`.
+- `row-thumbnails.ts` — Details/List row thumbnails (#1465): 48px thumbnail size, setting-dependent `detailsRowHeight`/`listRowHeight` (compact density's 26px List slot, #1878; published by `state/layout.svelte.ts`) and `rowThumbnailKind` (image, video/cover art, or icon).
+- `tile-layout.ts` — tile sizes (`THUMBNAIL_SIZE_CONFIG`, re-exported by settings), spacing/row-height `tileLayout()` (three quarters of the spacing at compact density, #1878) and grid arrow-key `gridFocusStep()` shared by every tile grid; the SDK's `PaneTileSize`/`TileSizePreset` and `paneTileSize()`; `tileGridMetrics()` exposes minimum width, allocated cell height, gap and grid padding through `ui/file-tile`.
 - `tile-panels.ts` — Tiles panels (#1241, spec §9): band feasibility/splits, below→above→stacked placement with kept sides, panel tile tracks (grid cell + gap) and height clamps, row/tab/segment x geometry, ribbon channels, `buildTilePanelModel` (groups, boxes, entry locations), fades and "+N more".
 - `tile-panel-outline.ts` — Tiles tab-and-page outline paths (flush snap, fillets), ribbon routing geometry and accent gradients per row group.
 - `tile-panel-navigation.ts` — Tiles spatial arrow navigation over grid tiles and visible panel items (enter/leave panels, in-panel grid steps, reading-order wrap) and panel reveal offsets.
@@ -637,7 +637,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `config-reload.ts` — pure decision for whether an observed config-file change is an external edit or our own write echoing back (#599).
 - `settings-migration.ts` — versioned one-shot migrations for the persisted settings blob; `migrateSettings` + the append-only ledger (#506).
 - `layout-theme.ts` — layout-theme catalog (#1306): built-ins, leading-comment metadata, user-file validation, resolution/fallback reasons, row-height parsing.
-- `layout-theme-ids.ts` — eager built-in layout ids, `tabOwnsWindow` (which bases draw the tab seam: Floating Islands, Default, Compact, Hairline Ledger) and the legacy Floating Islands → `layoutTheme` mapping used by settings migration.
+- `layout-theme-ids.ts` — eager built-in layout ids, `tabOwnsWindow` (which bases draw the tab seam: Floating Islands, Default, Hairline Ledger), the legacy Floating Islands → `layoutTheme` mapping used by settings migration, and `foldLegacyCompactLayout` (the retired Compact layout → Default + `compact: true`, applied on every settings load, #1878).
 - `vibrancy-opacity.ts` — Translucency Opacity slider (20-100%, default 55) to the six `--island-*coverage*` values and the `--material-window-coverage*` tint; default reproduces the fixed theme defaults exactly (#1735); `opacityForIslandAlpha` maps a pre-#1757 Windows Backdrop Opacity.
 - `translucency.ts` — one cross-platform Translucency setting (#1757): material names (vibrancy / acrylic / mica), the published-or-platform material, window effects per material, and the legacy-settings rule; kept in step with `src-tauri/src/translucency.rs` by `tests/domain/translucency.test.ts`.
 - `miller-placement.ts` — `millerHoistedToIsland`: whether Miller columns hoist to the left island (island layout, no sidebar, single-pane tab only); shared by `+page.svelte` and `ExplorerPane.svelte` (#434, #1699).
@@ -698,6 +698,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `entry-lineage-registry.svelte.ts` — `registerEntryLineage` contributions (capability `entryLineage`, #1431): owner-disposed, ordered, `available()` errors normalized to false; `showLineageLabel`.
 - `file-icon-registry.svelte.ts` — plugin file icons by extension (capability `fileIcons`, #1523): first registration in plugin order owns an extension; `forEntry` (files only) feeds `FileIcon` and the Details Type column.
 - `detail-column-registry.svelte.ts` — startup read side of plugin Details columns (capability `detailColumns`, #1523): `columnsFor` offered columns, per-row `request`, cell `text`, Length `lengthSeconds`; removal disposes the provider's resolver.
+- `detail-column-menu-registry.svelte.ts` — plugin items in the Details column-header menu (capability `detailColumnMenu`, #1884): ordered, disposer-returning; rendered by `DetailsView.svelte` after the column toggles.
+- `plugin-agent.ts` — `ctx.agent` (capability `folderAgent`, #1884): plugin- and incarnation-scoped request IDs, abort → `ai_agent_cancel`, `cancelAll` on deactivation; refuses folders no pane of the window shows (`folder_not_open`); native errors reject unchanged.
 - `register-contributions.ts` — lazily loaded with a plugin's first icon/column registration: validates (`domain/plugin-contribution-validation.ts`) and builds providers (failure-isolated `applies`/`load`, one report).
 - `file-view-registry.svelte.ts` — SDK 2 file view contributions (ordered, owner-disposed) and the pane handle type a view receives.
 - `preview-registry.svelte.ts` — SDK 2 Preview extension points: plugin preview targets (non-file subjects) and Preview-info sections.
@@ -730,9 +732,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 ## src/lib/layouts/ — built-in layout themes (#1306; contract in docs/layout-themes.md).
 
 - `floating-islands.css` — Floating Islands, bundled in startup CSS and scoped to `[data-layout-base="floating-islands"]`.
-- `default.css` — Default (#1856) and Compact (#1858), bundled in startup CSS and scoped to those two bases: one surface for tab, sidebar, toolbar and list; colours the shared tab seam layers (strip shade with the tab's hole, one outline, square corners, no shadow).
-- `hairline-ledger.css` — Hairline Ledger, lazy `?inline` sheet injected like a user layout; colours the shared tab seam square, on its paper (#1871).
-- `compact.css` — Compact (#1548): Default surfaces, tight chrome, 22px Details rows; lazy `?inline` sheet.
+- `default.css` — Default (#1856), bundled in startup CSS and scoped to its base: one surface for tab, sidebar, toolbar and list; colours the shared tab seam layers (strip shade with the tab's hole, one outline, square corners, no shadow); rules the sidebar off from the pane (#1879).
+- `hairline-ledger.css` — Hairline Ledger, lazy `?inline` sheet injected like a user layout; colours the shared tab seam square, on its paper (#1871); chrome in its monospace, names in the theme face (#1879).
+- `compact-density.css` — compact density (#1878, formerly the Compact layout #1548): `:root[data-density="compact"]` rules injected after every layout sheet; shorter title bar, tabs, toolbar, status bar, header, sidebar entries, 22px Details rows and tighter List entries, tunable per layout with `--layout-compact-*`; lazy `?inline` sheet.
 - `soft-cards.css` — Soft Cards (#1548): opaque bordered cards, no shadows, 6px gaps, flat arrangement; lazy `?inline` sheet.
 
 ## src/lib/types/
@@ -1120,6 +1122,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `scripts/ci-jobs.mjs` — `report`: ci.yml gate jobs print each upstream shard's result and the step a failed/cancelled one stopped at (Actions API, diagnostics only); `auto-rerun`: decides whether `.github/workflows/ci-auto-rerun.yml` re-runs a failed first attempt (only install/setup-step failures, once). Contracts in `tests/ci-jobs.test.ts` (#1367).
 - `scripts/update-channel.mjs` — release-side rules for the 1.28 → 0.28 version reset (#1783): `isReleasedAfter` (mirrors `release_order.rs`), `marksGitHubLatest` (only releases every 1.x install sees as newer become "Latest" and publish `latest.json`) and the no-downgrade check before `release.yml` replaces the `update-channel` release's `latest-alpha.json`. Contracts in `tests/update-channel.test.ts`.
 - `scripts/updater-manifest.mjs` — builds the signed self-update `latest-alpha.json` from the release assets and their `.sig` files (bundle-specific platform keys only; fails closed on any missing asset/signature or a signature that does not verify against `plugins.updater.pubkey`); run by `release.yml`, contracts in `tests/updater-manifest.test.ts` (#1679). `src-tauri/tauri.updater.conf.json` is the `--config` overlay release builds pass to enable `createUpdaterArtifacts`.
+- `scripts/homebrew-cask.mjs` — renders the Homebrew cask (`Casks/tauri-explorer.rb` in `<owner>/homebrew-tap`) for a release from its aarch64 DMG: version, SHA-256, `auto_updates true`, zap paths; rejects malformed versions/digests. Run by `release.yml`'s `homebrew` job, contracts in `tests/homebrew-cask.test.ts` (#1876).
 - `scripts/release-ci-gate.mjs` — run by `.github/workflows/release.yml` before tagging/building: requires a dev commit with the released tree to have a successful dev-push CI run and `smoke (ubuntu-latest)`, waiting for in-progress runs; contracts in `tests/release-ci-gate.test.ts` (#1367).
 - `scripts/perf-fixtures.mjs` — deterministic flat large-folder fixtures (1k/10k/100k/500k sparse files, mixed names/sizes/mtimes, `manifest.json`) in a temp root outside the repo; `create`/`remove` (#983, `docs/performance.md`).
 - `scripts/perf-real-app.mjs` — end-to-end folder-open and navigation timings (n/median/p95) against a real binary through tauri-driver under Xvfb with private XDG dirs; in-page MutationObserver + animation-frame marks, no app instrumentation (#983, `docs/performance.md`); `--scenarios memory` samples per-process RSS/PSS and anonymous memory by allocator, with retained/live-per-entry budget flags (#1416).
@@ -1224,6 +1227,8 @@ TraceExplorer's image UI, provider adapters and SQLite journal are maintained in
 - `src/lib/api/mock-text-connections.ts` — isolated browser fixture using the public validation/revision rules.
 - `src/lib/state/text-connections.ts` — dirty draft/CAS, stale result/cancellation and cross-window event reconciliation.
 - `src/lib/api/ai-text.ts` — default-profile describe/generate/cancel for core window features (`ai_text_*`, caller `window:<label>`).
+- `src/lib/api/ai-agent.ts` — folder-agent describe/run/cancel (`ai_agent_*`, #1884): a CLI connection run in a folder with read-only file tools; reached by plugins through `ctx.agent`.
+- `src/lib/domain/ai-agent.ts` — folder-agent request/result/description contracts and `agentRequestId` (plugin- and incarnation-scoped request IDs).
 - `src/lib/domain/ai-filter.ts` — AI filter (#1506): bounded compact listing prompt (2000 entries / 60 KiB), reply validation against sent names, request state machine and status text.
 - `src/lib/state/ai-filter.svelte.ts` — AI filter request owner per explorer (lazy with FilterBar): availability gate, staleness by request ID + captured path + installed predicate, cancellation.
 - `src/lib/components/FilterBar.svelte` — lazy Ctrl+F filter box (moved out of NavigationBar); Alt+Enter AI filter, AI chip, hint and status line.
@@ -1232,8 +1237,10 @@ TraceExplorer's image UI, provider adapters and SQLite journal are maintained in
 - `src-tauri/src/ai/storage.rs` — cross-process locking, synced config replacement/CAS and resumable copy-if-unset legacy preferences.
 - `src-tauri/src/ai/credentials.rs` — owner-scoped OS secrets and injectable test store; no secret reads in public settings output.
 - `src-tauri/src/ai/adapters.rs` — bounded cancellable text HTTP and dispatch to the CLI adapter.
-- `src-tauri/src/ai/cli.rs` — Codex/Claude Code CLI text adapter: isolation argv, allowlisted environment, managed-policy refusal, cached help probe, owned run and final-text parsing ([isolation notes](../shared-ai-cli-text-isolation.md)).
+- `src-tauri/src/ai/cli.rs` — Codex/Claude Code CLI text adapter: isolation argv, allowlisted environment, managed-policy refusal, cached help probe, owned run and final-text parsing ([isolation notes](../shared-ai-cli-text-isolation.md)); folder-agent argv (Claude `Read,Glob,Grep` under `--restricted`, Codex permission profile) and `run_agent` (#1884).
 - `src-tauri/src/ai/cli_tests.rs` — fake-CLI isolation, refusal, typed-failure and process-tree reaping tests.
+- `src-tauri/src/ai/agent_folder.rs` — folder-agent working directory (#1884): `FolderPolicy`, a pure table-tested rule set applied to the canonical path (refuses root, home and its ancestors, dot-folders in home, OS system trees, trash, UNC shares) plus `resolve`.
+- `src-tauri/src/ai/agent_tests.rs` — folder-agent folder policy table, argv/tool confinement, Codex runtime grant, `--max-turns` detection, output checks, HTTP-only refusal, separate agent quota, abort churn, hung folder resolution, configuration-change cancellation, two-slot queue, deadline and process-tree cancellation tests; opt-in real-CLI confinement probe (`AGENT_REAL_CLI`, `AGENT_REAL_CLI_PATH`).
 - `src-tauri/src/ai/tests.rs` — native local HTTP/fake CLI, cancellation, capacity, credential uncertainty, cross-process CAS and migration outcome tests.
 - `src-tauri/src/installed_plugins/text_service.rs` — active-only native reverse-text bridge with trusted incarnation identity and reserved cancellation capacity.
 - `src-tauri/src/installed_plugins/process_run.rs` — `host.process.run` validation, admission, owned execution with bounded stdin, and typed pre-spawn refusal codes.

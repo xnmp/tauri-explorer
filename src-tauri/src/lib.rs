@@ -400,6 +400,9 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             ai::ai_text_describe,
             ai::ai_text_generate,
             ai::ai_text_cancel,
+            ai::ai_agent_describe,
+            ai::ai_agent_run,
+            ai::ai_agent_cancel,
             // Launch info
             native_file_drag::start_file_drag,
             native_file_drag::end_html5_file_drag,

@@ -33,6 +33,16 @@
   --ledger-mono: "IBM Plex Mono", ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
 }
 
+/* Type: the ledger's monospace is the face of all its chrome; file names
+   and previewed documents keep the theme's own (#1879). */
+:root body {
+  font-family: var(--ledger-mono);
+}
+
+:root :is([data-region="entry-name"], [data-region="preview-body"]) {
+  font-family: var(--font-family);
+}
+
 /* Paper behind every panel; panels are flat and square. */
 :root [data-region="app"] {
   background: var(--layout-chrome-surface);
@@ -45,7 +55,7 @@
 }
 
 /* Tab strip: flat tabs separated by hairlines on paper. The active tab owns
-   the window (#1871), as in Default and Compact: it is a hole in the paper
+   the window (#1871), as in Default: it is a hole in the paper
    strip through which the title bar's own surface (the content's) shows, and
    one hairline runs round it and along the strip's base. The title bar draws
    that seam ([data-region="tab-key-shadow"] and [data-region="tab-edge"],
@@ -134,6 +144,9 @@
    icons. */
 :root [data-region="sidebar-body"] {
   background: var(--layout-surface);
+  /* Ruled off from the pane, inside its edge: a rule outside it is painted
+     over by the pane beside it (#1879). */
+  box-shadow: inset -1px 0 0 var(--layout-hairline);
 }
 
 :root [data-region="sidebar-section-header"] {

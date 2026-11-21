@@ -13,6 +13,7 @@ export const COMMAND_KEYWORDS: Readonly<Record<string, readonly string[]>> = {
   "plugins.openSettings": ["preferences", "options", "config"],
   "view.switchTheme": ["colors", "appearance", "color scheme", "skin"],
   "view.toggleTheme": ["dark mode", "light mode", "appearance", "colors"],
+  "view.toggleCompact": ["density", "dense", "row height", "spacing"],
   "general.openTerminal": ["console", "shell", "command line", "cli"],
   "view.toggleTerminal": ["console", "shell", "command line", "cli"],
   "file.delete": ["remove", "trash", "erase"],

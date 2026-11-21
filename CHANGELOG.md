@@ -2,6 +2,33 @@
 
 All notable changes to Tauri Explorer.
 
+## v0.31.0 — 2026-11-21
+
+### Added
+
+- Compact is now a density setting for every layout instead of a layout of
+  its own: Settings → Appearance, or "Toggle Compact Mode" in the palette,
+  tightens whichever layout is applied. A saved Compact layout migrates to
+  Default with Compact on (#1878).
+- Plugins can add items to the Details column-header menu
+  (`registerDetailColumnMenuItem`), remove the columns they registered
+  (`registerDetailColumns` and `registerCommand` return disposers), and run a
+  read-only folder agent through the configured Claude Code or Codex CLI
+  (`ctx.agent`) (#1884).
+- Homebrew: `brew install --cask xnmp/tap/tauri-explorer` installs the signed
+  release again, and every release updates the cask (#1876).
+
+### Changed
+
+- The tab-search caret beside the new-tab button appears only once the tabs
+  crowd: when inactive tabs shrink to icons or the strip scrolls (#1881).
+
+### Fixed
+
+- Hairline Ledger sets its chrome in its monospace while file names keep the
+  theme's face, and Default and Hairline Ledger draw a rule between the
+  sidebar and the file pane again (#1879).
+
 ## v0.30.1 — 2026-11-20
 
 ### Changed

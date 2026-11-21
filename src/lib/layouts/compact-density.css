@@ -1,0 +1,99 @@
+/*
+ * Compact density (#1878, formerly the Compact layout #1548): the `compact`
+ * setting tightens the chrome of whichever layout is applied, built-in or
+ * user. Loaded lazily and injected after every layout stylesheet, user CSS
+ * included, while the root carries data-density="compact"; every rule is
+ * scoped to that attribute, so it outranks a layout's `:root [...]` rule on
+ * specificity and a base-scoped `:root[data-layout-base] [...]` rule on
+ * order.
+ *
+ * Only the vertical dimension changes: heights, vertical padding and text
+ * size. Horizontal padding, radii and colours stay the layout's own, so the
+ * layout keeps its character at the smaller size. A layout tunes its compact
+ * sizes with the --layout-compact-* variables (docs/layout-themes.md); the
+ * fallbacks below are Default's compact sizes.
+ */
+
+:root[data-density="compact"] {
+  --layout-row-height: var(--layout-compact-row-height, 22px);
+}
+
+/* Title bar and tabs. */
+:root[data-density="compact"] [data-region="titlebar"] {
+  height: var(--layout-compact-titlebar-height, 30px);
+}
+
+:root[data-density="compact"] [data-region="tab"],
+:root[data-density="compact"] [data-region="titlebar"] button[aria-label="Minimize"],
+:root[data-density="compact"] [data-region="titlebar"] button[aria-label="Maximize"],
+:root[data-density="compact"] [data-region="titlebar"] button[aria-label="Restore"],
+:root[data-density="compact"] [data-region="titlebar"] button[aria-label="Close"] {
+  height: var(--layout-compact-tab-height, 26px);
+}
+
+/* Toolbar: 24px controls. */
+:root[data-density="compact"] [data-region="toolbar"] {
+  height: var(--layout-compact-toolbar-height, 32px);
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+
+:root[data-density="compact"] [data-region="toolbar"] > div:not([data-region]) > button {
+  width: 24px;
+  height: 24px;
+}
+
+:root[data-density="compact"] [data-region="address-bar"] {
+  height: 24px;
+}
+
+:root[data-density="compact"] [data-region="address-bar"] button {
+  font-size: 12px;
+}
+
+/* Sidebar: 22px entries. */
+:root[data-density="compact"] [data-region="sidebar-section-header"] {
+  padding-top: 8px;
+  padding-bottom: 2px;
+  font-size: 10.5px;
+}
+
+:root[data-density="compact"] [data-region="sidebar-item"] {
+  min-height: 22px;
+  padding-top: 0;
+  padding-bottom: 0;
+  font-size: 12px;
+}
+
+/* Details: a header of 22px buttons and 12px cell text; rows take
+   --layout-row-height. A List entry keeps its 13px text and loses 2px of
+   padding above and below to fit its smaller slot (layoutStore.listRowHeight);
+   one with a thumbnail keeps its slot, so it keeps its padding too. Tiles keep
+   their text; their spacing tightens in domain/tile-layout.ts. */
+:root[data-density="compact"] [data-region="column-header"] {
+  min-height: 22px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+:root[data-density="compact"] [data-region="column-header"] button {
+  padding-top: 2px;
+  padding-bottom: 2px;
+  font-size: 11px;
+}
+
+:root[data-density="compact"] [data-region="file-list"]:not([data-view="tiles"]),
+:root[data-density="compact"] [data-region="file-list"]:not([data-view="tiles"]) [data-region="row"] [data-cell] {
+  font-size: 12px;
+}
+
+:root[data-density="compact"] [data-region="file-list"][data-view="list"] [data-region="row"] {
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+
+/* Status bar. */
+:root[data-density="compact"] [data-region="status-bar"] {
+  height: var(--layout-compact-status-bar-height, 20px);
+  font-size: 11px;
+}

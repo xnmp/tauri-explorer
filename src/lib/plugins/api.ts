@@ -33,6 +33,8 @@ import type { FileIconContribution } from "$lib/domain/plugin-file-icon";
 export type { FileIconContribution } from "$lib/domain/plugin-file-icon";
 import type { DetailColumnProvider } from "$lib/domain/plugin-detail-columns";
 export type { DetailColumnProvider, DetailColumnSpec, DetailRowValues } from "$lib/domain/plugin-detail-columns";
+import { detailColumnMenuItems, DETAIL_COLUMN_MENU_LABEL_MAX, type DetailColumnMenuItem } from "./detail-column-menu-registry.svelte";
+export type { DetailColumnMenuItem } from "./detail-column-menu-registry.svelte";
 import { toastStore, type ToastType } from "$lib/state/toast.svelte";
 import { readConfigFile } from "$lib/api/config";
 import { writeConfigQueued } from "$lib/state/persisted";
@@ -46,6 +48,7 @@ import { scopePluginJobs, type PluginJobKind } from "$lib/state/plugin-jobs";
 import { observeActiveDirectory } from "$lib/composables/observe-active-directory.svelte";
 import { extractError, type ApiResult } from "$lib/api/common";
 import { logFrontendError } from "$lib/api/crash";
+import { createPluginAgent, type PluginAgent } from "./plugin-agent";
 import { subscribeToLocalFileChanges } from "$lib/state/file-events";
 import { fileDropTargets } from "$lib/state/file-drop-targets.svelte";
 import PluginContributionRoot from "$lib/components/PluginContributionRoot.svelte";
@@ -312,12 +315,16 @@ export interface PluginContext {
     subscribe(listener: (revision: number) => void): () => void;
     openSettings(): void;
   };
+  /** Capability "folderAgent" (#1884): read-only CLI jobs in a folder; see
+   *  `plugin-agent.ts` and docs/plugin-detail-columns.md. */
+  agent?: PluginAgent;
   backend?: {invoke<T>(method:string,params?:Record<string,unknown>):Promise<T>};
   saveSettings(patch:Record<string,unknown>):Promise<void>;
   /** Return the handler's work as a promise: a rejection is reported to the
    *  user under the plugin's name and written to the app log. Work started
-   *  with `void` and never returned is invisible to that reporting. */
-  registerCommand(cmd: Command): void;
+   *  with `void` and never returned is invisible to that reporting. Returns a
+   *  disposer that removes the command before deactivation (#1884). */
+  registerCommand(cmd: Command): () => void;
   registerContextMenuItem(item: ContextMenuItem): void;
   registerSettingsSection(section: SettingsSectionDescriptor): void;
   registerFsProvider(scheme: string, provider: FsProvider): void;
@@ -345,8 +352,12 @@ export interface PluginContext {
   registerFileIcon?(icon: FileIconContribution): void;
   /** Capability "detailColumns": Details columns whose values load lazily for
    *  rendered rows of files the provider applies to; offered only while the
-   *  listing has such files. Removed on deactivation (docs/plugin-detail-columns.md). */
-  registerDetailColumns?(provider: DetailColumnProvider): void;
+   *  listing has such files. Removed on deactivation, or earlier by calling
+   *  the returned disposer (docs/plugin-detail-columns.md). */
+  registerDetailColumns?(provider: DetailColumnProvider): () => void;
+  /** Capability "detailColumnMenu": an item in the Details column-header menu,
+   *  after the column toggles; returns a disposer (#1884). */
+  registerDetailColumnMenuItem?(item: DetailColumnMenuItem): () => void;
   /** Open a registered dialog, passing props to its component. `open` and an
    *  `onClose` (which closes the dialog) are injected by the renderer.
    *  `options` (capability "paneDialogs") scopes it to a captured pane. */
@@ -467,6 +478,8 @@ export function createPluginContext(
     if (id !== pluginId && (!name || name.includes("."))) throw new Error(`${kind} ${id} must be named ${pluginId}.<name>`);
     return id;
   };
+  const pluginAgent = createPluginAgent(pluginId, () => disposed, (error) => void log(error, "agent cancel"), () => windowTabsManager.getAllExplorers().map((explorer) => explorer.currentPath));
+  disposers.add(pluginAgent.cancelAll);
   const storage = createPluginStorage(pluginId);
   // Accepted jobs outlive the plugin, but their Retry runs its code: drop it.
   const pluginJobs = scopePluginJobs(pluginId);
@@ -490,10 +503,10 @@ export function createPluginContext(
   const trackValidated = (contribution: string, register: (registration: typeof import("./register-contributions")) => () => void) => {
     let dispose: (() => void) | undefined;
     let live = true;
-    track(() => { live = false; dispose?.(); });
     void import("./register-contributions")
       .then((registration) => { if (live) dispose = register(registration); })
       .catch((error) => { if (live) report(error, contribution); });
+    return track(() => { live = false; dispose?.(); });
   };
 
   const ctx: PluginContext = {
@@ -537,7 +550,8 @@ export function createPluginContext(
       },
       openSettings: () => { if (!disposed) dialogStore.openSettings(); },
     },
-    registerCommand(cmd: Command): void {
+    agent: pluginAgent.agent,
+    registerCommand(cmd: Command): () => void {
       const handler = async () => {
         try {
           await cmd.handler();
@@ -546,7 +560,7 @@ export function createPluginContext(
           throw error;
         }
       };
-      track(registerCommandContribution({ ...cmd, handler }));
+      return track(registerCommandContribution({ ...cmd, handler }));
     },
     registerContextMenuItem(item: ContextMenuItem): void {
       const handler = async (entries: FileEntry[]) => {
@@ -601,9 +615,17 @@ export function createPluginContext(
       const id = ownedId("File icon", icon?.id);
       trackValidated(`file icon ${id}`, (r) => r.registerFileIcon(id, icon, order));
     },
-    registerDetailColumns(provider: DetailColumnProvider): void {
+    registerDetailColumns(provider: DetailColumnProvider): () => void {
       const id = ownedId("Detail columns", provider?.id);
-      trackValidated(`detail columns ${id}`, (r) => r.registerDetailColumns(id, provider, (error) => void log(error, `detail columns ${id}`), order));
+      return trackValidated(`detail columns ${id}`, (r) => r.registerDetailColumns(id, provider, (error) => void log(error, `detail columns ${id}`), order));
+    },
+    registerDetailColumnMenuItem(item: DetailColumnMenuItem): () => void {
+      const id = ownedId("Detail column menu item", item?.id);
+      const label = typeof item.label === "string" ? [...item.label.replace(/\p{Cc}+/gu, " ").trim()].slice(0, DETAIL_COLUMN_MENU_LABEL_MAX).join("") : "";
+      if (!label || typeof item.run !== "function") throw new Error(`Detail column menu item ${id} needs a label and run()`);
+      const enabled = item.enabled && (() => { try { return item.enabled!() !== false; } catch (error) { log(error, `column menu item ${id}`); return false; } });
+      const run = () => { if (!disposed) void Promise.resolve().then(() => item.run()).catch((error) => report(error, `column menu item ${id}`)); };
+      return track(detailColumnMenuItems.register({ id, label, run, enabled }, order));
     },
     openDialog(id: string, props?: Record<string, unknown>, options?: PluginDialogOptions): void {
       try {

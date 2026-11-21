@@ -12,6 +12,7 @@
   import { settingsStore } from "$lib/state/settings.svelte";
   import { useColumnResize } from "$lib/composables/use-column-resize.svelte";
   import { detailColumnRegistry } from "$lib/plugins/detail-column-registry.svelte";
+  import { detailColumnMenuItems } from "$lib/plugins/detail-column-menu-registry.svelte";
   import type { PeekRow } from "$lib/domain/folder-peek";
   import { pluginColumnShown, togglePluginColumn } from "$lib/domain/plugin-detail-columns";
   import { fixedMenuPosition, getZoomFactor, probeSingleScaleFixedOffset } from "$lib/domain/zoom";
@@ -252,6 +253,16 @@
         {column.label}
       </button>
       {/each}
+      <!-- Plugin actions (#1884), after the column toggles. -->
+      {#if detailColumnMenuItems.items.length}
+      <div class="column-menu-separator" role="separator"></div>
+      {#each detailColumnMenuItems.items as item (item.id)}
+      <button class="column-menu-item" data-column-menu-item={item.id} disabled={item.enabled ? !item.enabled() : false} onclick={() => { closeColumnMenu(); item.run(); }}>
+        <span class="column-menu-check"></span>
+        {item.label}
+      </button>
+      {/each}
+      {/if}
     </div>
   {/if}
 
@@ -453,8 +464,19 @@
     text-align: left;
   }
 
-  .column-menu-item:hover {
+  .column-menu-item:hover:not(:disabled) {
     background: var(--subtle-fill-secondary);
+  }
+
+  .column-menu-item:disabled {
+    color: var(--text-disabled, var(--text-tertiary));
+    cursor: default;
+  }
+
+  .column-menu-separator {
+    height: 1px;
+    margin: 4px 6px;
+    background: var(--divider);
   }
 
   .column-menu-check {

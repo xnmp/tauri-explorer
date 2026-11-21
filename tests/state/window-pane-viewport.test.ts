@@ -1,7 +1,7 @@
 import { afterEach, expect, it } from "vitest";
 import { createWindowTabsManager } from "$lib/state/window-tabs.svelte";
 import { layoutStore } from "$lib/state/layout.svelte";
-const arrange = (base: "default" | "floating-islands") => layoutStore.commit({ id: base, base, sheets: [], rowHeight: 32 });
+const arrange = (base: "default" | "floating-islands") => layoutStore.commit({ id: base, base, sheets: [], rowHeight: 32, compact: false });
 const managers: ReturnType<typeof createWindowTabsManager>[] = [];
 afterEach(async () => {
   arrange("default");

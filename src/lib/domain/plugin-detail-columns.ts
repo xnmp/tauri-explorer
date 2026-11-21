@@ -28,6 +28,10 @@ export interface DetailColumnProvider {
   columns: readonly DetailColumnSpec[];
   /** Synchronous and cheap (e.g. an extension test); called per listed entry. */
   applies(entry: FileEntry): boolean;
+  /** False when the provider never supplies `lengthSeconds` (#1884): it then
+   *  loads only for rows while one of its own columns is shown, and never for
+   *  the folder-wide Length sort. Default true (#1523 behaviour). */
+  suppliesLength?: boolean;
   /** One item per entry, in order; `null` for an unreadable file. Called with
    *  at most 16 entries; `signal` aborts when the plugin deactivates. */
   load(entries: readonly FileEntry[], signal: AbortSignal): Promise<readonly (DetailRowValues | null)[]>;

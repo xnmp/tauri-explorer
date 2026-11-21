@@ -43,6 +43,11 @@ describe("row heights", () => {
     expect(listRowHeight(true)).toBe(62);
   });
 
+  it("List takes a shorter slot at compact density, unless thumbnails need the room (#1878)", () => {
+    expect(listRowHeight(false, true)).toBe(26);
+    expect(listRowHeight(true, true)).toBe(62);
+  });
+
   it("requests the Tiles small preset's backend size, so both views share cached thumbnails", () => {
     expect(ROW_THUMBNAIL_SIZE).toBe(THUMBNAIL_SIZE_CONFIG.small.displaySize);
     expect(ROW_THUMBNAIL_GEN_SIZE).toBe(THUMBNAIL_SIZE_CONFIG.small.genSize);

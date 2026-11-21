@@ -42,11 +42,13 @@ test.describe("macOS vibrancy", () => {
 
   test("native backdrop works under every layout, including Default", async ({ page }) => {
     await page.goto(HOME_URL);
-    for (const layoutTheme of ["default", "floating-islands", "hairline-ledger", "compact", "soft-cards"]) {
-      await applySettingsAndReload(page, { translucency: true, layoutTheme });
+    // Compact is a density on any layout (#1878), so it rides on Default here.
+    for (const [layoutTheme, compact] of [["default", false], ["floating-islands", false], ["hairline-ledger", false], ["soft-cards", false], ["default", true]] as const) {
+      await applySettingsAndReload(page, { translucency: true, layoutTheme, compact });
       await waitForEntries(page);
       const html = page.locator("html");
       await expect(html).toHaveAttribute("data-layout", layoutTheme);
+      if (compact) await expect(html).toHaveAttribute("data-density", "compact");
       await expect(html).toHaveAttribute("data-native-backdrop", "");
       // Transparency is the window's, not the layout's: the body stays clear.
       expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe("rgba(0, 0, 0, 0)");
@@ -56,7 +58,7 @@ test.describe("macOS vibrancy", () => {
 
 /**
  * #1733, #1789: under the macOS material the theme's own colours cover most
- * of the material, so the palette survives it. Default and Compact fade the
+ * of the material, so the palette survives it. Default fades the
  * opaque window uniformly; Floating Islands tints its window body and stacks
  * islands on it. The browser cannot show the native material, so the window
  * "behind" is an html background.
@@ -99,7 +101,7 @@ test.describe("theme colours over the macOS material (#1733, #1789)", () => {
   }
 
   /**
-   * #1789: Default and Compact fade the opaque window uniformly. Each surface
+   * #1789: Default fades the opaque window uniformly. Each surface
    * is screenshotted over a black and a white backdrop: over black it shows
    * colour x alpha, over white that plus (1 - alpha) x 255, which gives the
    * share of the material it hides (alpha) and its colour. Every surface must
@@ -260,7 +262,7 @@ test.describe("theme colours over the macOS material (#1733, #1789)", () => {
 });
 
 /**
- * #1789 review: in Default and Compact every point of the window hides the
+ * #1789 review: in Default (Compact density or not, #1878) every point of the window hides the
  * Translucency Opacity share of the material, borders and the gap between
  * split panes included (a 1px border over a transparent window was a slit of
  * bare material), and 100% is solid everywhere.
@@ -312,12 +314,13 @@ test.describe("flat layouts: one coverage across the whole window (#1789)", () =
     return { min, at: `(${minAt[0]}, ${minAt[1]}) ${owner}` };
   }
 
-  for (const layoutTheme of ["default", "compact"]) {
+  // Compact is a density on Default now (#1878), not a layout of its own.
+  for (const compact of [false, true]) {
     for (const split of ["row", "column"] as const) {
       for (const previewPanePosition of ["right", "bottom"]) {
-        test(`${layoutTheme}, ${split} split, preview ${previewPanePosition}: no slit at 20, 55 or 100`, async ({ page }) => {
+        test(`default${compact ? " compact" : ""}, ${split} split, preview ${previewPanePosition}: no slit at 20, 55 or 100`, async ({ page }) => {
           for (const [translucencyOpacity, share] of [[20, 0.74], [55, 0.82], [100, 1]] as const) {
-            await openFlat(page, { layoutTheme, theme: "dark", translucencyOpacity, showPreviewPane: true, previewPanePosition }, split);
+            await openFlat(page, { layoutTheme: "default", compact, theme: "dark", translucencyOpacity, showPreviewPane: true, previewPanePosition }, split);
             await expect(page.locator('[data-region="split-divider"]')).toHaveCount(1);
             await expect(page.locator('[data-region="preview-body"]')).toBeVisible();
             const { min, at } = await scan(page);

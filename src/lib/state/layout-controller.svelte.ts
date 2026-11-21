@@ -16,7 +16,6 @@
 import {
   BUILTIN_LAYOUT_CATALOG,
   buildLayoutCatalog,
-  COMPACT_LAYOUT_ID,
   describeLayoutFallback,
   HAIRLINE_LEDGER_LAYOUT_ID,
   isBuiltinLayoutId,
@@ -38,9 +37,12 @@ import { toastStore } from "./toast.svelte";
 /** Built-in bases outside the startup bundle. Floating Islands is bundled. */
 const LAZY_BASE_SHEETS: Partial<Record<BuiltinLayoutId, () => Promise<{ default: string }>>> = {
   [HAIRLINE_LEDGER_LAYOUT_ID]: () => import("$lib/layouts/hairline-ledger.css?inline"),
-  [COMPACT_LAYOUT_ID]: () => import("$lib/layouts/compact.css?inline"),
   [SOFT_CARDS_LAYOUT_ID]: () => import("$lib/layouts/soft-cards.css?inline"),
 };
+
+/** Compact density (#1878): injected after every layout sheet, so it applies
+ *  to built-in and user layouts alike. */
+const loadCompactSheet = () => import("$lib/layouts/compact-density.css?inline");
 
 let catalog = $state.raw<LayoutCatalog>(BUILTIN_LAYOUT_CATALOG);
 let listed: Promise<LayoutCatalog> | null = null;
@@ -70,11 +72,20 @@ function loadCatalog(): Promise<LayoutCatalog> {
   return pending;
 }
 
-async function stylesheetsFor(theme: LayoutThemeInfo, from: LayoutCatalog): Promise<string[]> {
+/** The layout's sheets in cascade order, and where its user sheet sits. */
+async function stylesheetsFor(
+  theme: LayoutThemeInfo,
+  from: LayoutCatalog,
+  compact: boolean,
+): Promise<{ sheets: string[]; userIndex: number }> {
   const base = LAZY_BASE_SHEETS[theme.base];
-  const sheets = base ? [(await base()).default] : [];
+  const [baseSheet, compactSheet] = await Promise.all([base?.(), compact ? loadCompactSheet() : undefined]);
   const user = from.userCss.get(theme.id);
-  return user === undefined ? sheets : [...sheets, user];
+  const layout = [baseSheet?.default, user].filter((sheet): sheet is string => sheet !== undefined);
+  return {
+    sheets: compactSheet ? [...layout, compactSheet.default] : layout,
+    userIndex: user === undefined ? -1 : layout.length - 1,
+  };
 }
 
 /** Details row height the applied sheets ask for (`--layout-row-height`). */
@@ -96,11 +107,12 @@ function reportFallback(next: LayoutFallback | null, requestedName: string): voi
 }
 
 /**
- * Apply `requested` (a built-in id or a user file name) to this window.
- * Persisting the choice is the caller's job (settings); previews call this
- * directly and restore by applying the saved id again.
+ * Apply `requested` (a built-in id or a user file name) to this window, at
+ * the compact density or not. Persisting the choice is the caller's job
+ * (settings); previews call this directly and restore by applying the saved
+ * id again.
  */
-export async function applyLayout(requested: string): Promise<void> {
+export async function applyLayout(requested: string, compact = settingsStore.compact === true): Promise<void> {
   const ticket = ++generation;
   lastRequested = requested;
   try {
@@ -108,17 +120,18 @@ export async function applyLayout(requested: string): Promise<void> {
     if (ticket !== generation) return;
     for (;;) {
       const resolution = resolveLayoutTheme(from, requested);
-      const sheets = await stylesheetsFor(resolution.theme, from);
+      const { sheets, userIndex } = await stylesheetsFor(resolution.theme, from, compact);
       if (ticket !== generation) return;
       const elements = layoutStore.commit({
         id: resolution.theme.id,
         base: resolution.theme.base,
         sheets,
         rowHeight: layoutStore.applied.rowHeight,
+        compact,
       });
       // CSS is forgiving: a binary file or prose saved as .css still parses,
-      // to nothing. The user sheet is always last; an empty one is a failure.
-      const user = resolution.theme.source === "user" ? elements.at(-1) : undefined;
+      // to nothing. An empty user sheet is a failure.
+      const user = resolution.theme.source === "user" ? elements[userIndex] : undefined;
       if (user?.sheet && user.sheet.cssRules.length === 0) {
         from = catalog = withLayoutFailure(from, resolution.theme.id, "no-rules");
         listed = Promise.resolve(from);
@@ -132,7 +145,8 @@ export async function applyLayout(requested: string): Promise<void> {
     // A failed lazy stylesheet import must not leave the window half-styled.
     console.error("Failed to apply layout theme:", error);
     if (ticket !== generation) return;
-    layoutStore.commit({ id: "default", base: "default", sheets: [], rowHeight: 32 });
+    // Without the density sheet the window is not compact either.
+    layoutStore.commit({ id: "default", base: "default", sheets: [], rowHeight: 32, compact: false });
     reportFallback({ requested, reason: "load-failed" }, requested);
   }
 }

@@ -37,7 +37,7 @@ import {
   resolveEffectivePreviewPanePosition,
 } from "$lib/domain/preview-pane-position";
 import { windowSizeStore } from "./window-size.svelte";
-import { DEFAULT_LAYOUT_ID, legacyLayoutThemeId, withLegacyLayoutMirror } from "$lib/domain/layout-theme-ids";
+import { DEFAULT_LAYOUT_ID, foldLegacyCompactLayout, legacyLayoutThemeId, withLegacyLayoutMirror } from "$lib/domain/layout-theme-ids";
 import { legacyTranslucency } from "$lib/domain/translucency";
 import {
   CURRENT_SETTINGS_VERSION,
@@ -114,7 +114,8 @@ export interface Settings {
   /** @deprecated Superseded by `layoutTheme` (#1306): read by the migration,
    *  mirrored from built-in layout choices for downgraded builds. */
   floatingIslands: boolean;
-  layoutTheme: string; // layout theme id: a built-in ("default", "floating-islands", "hairline-ledger", "compact", "soft-cards") or a `<config>/layouts/*.css` file name (#1306)
+  layoutTheme: string; // layout theme id: a built-in ("default", "floating-islands", "hairline-ledger", "soft-cards") or a `<config>/layouts/*.css` file name (#1306)
+  compact: boolean; // compact density on any layout: tighter title bar, toolbar, status bar, rows and tile spacing (#1878; was the Compact layout, #1548)
   translucencyOpacity: number; // how much of the window material surfaces hide, 20-100 (%), see domain/vibrancy-opacity
   yaziNavigation: boolean; // left/right arrows navigate up/into folders in Details view (and List when folderPeek is off)
   folderPeek: boolean; // folder peek (inline expansion, List column flow); off = classic views (#1238)
@@ -194,6 +195,7 @@ const DEFAULT_SETTINGS: Settings = {
   translucency: false,
   floatingIslands: false,
   layoutTheme: DEFAULT_LAYOUT_ID,
+  compact: false,
   translucencyOpacity: 55,
   yaziNavigation: true,
   folderPeek: true,
@@ -227,12 +229,12 @@ function createSettingsStore() {
   // A cache written before #1306 has no layoutTheme (nor, before #1757, a
   // translucency); derive them as the ledger will when settings.json loads,
   // so first paint already shows that layout and window material.
-  let settings = $state<Settings>({
+  let settings = $state<Settings>(foldLegacyCompactLayout({
     ...DEFAULT_SETTINGS,
     layoutTheme: legacyLayoutThemeId(initialPersisted),
     translucency: legacyTranslucency(initialPersisted),
     ...normalizeSettingsInput(initialPersisted),
-  });
+  }));
   let extras: Record<string, unknown> = persistedExtras(initialPersisted, DEFAULT_SETTINGS);
 
   function saveSettings(next: Settings): void {
@@ -255,7 +257,14 @@ function createSettingsStore() {
       if (!isRecord(parsed)) return null;
       const loaded = normalizeSettingsInput(parsed);
       const { settings: migrated, changed } = migrateSettings(loaded, DEFAULT_SETTINGS, undefined, parsed);
-      return { settings: migrated, extras: persistedExtras(parsed, DEFAULT_SETTINGS), migrationChanged: changed };
+      // The Compact layout became the compact setting (#1878). Not a ledger
+      // entry: a downgraded build can write the old id under a newer stamp.
+      const folded = foldLegacyCompactLayout(migrated);
+      return {
+        settings: folded,
+        extras: persistedExtras(parsed, DEFAULT_SETTINGS),
+        migrationChanged: changed || folded !== migrated,
+      };
     } catch {
       return null;
     }
@@ -587,6 +596,9 @@ function createSettingsStore() {
     },
     get layoutTheme() {
       return settings.layoutTheme;
+    },
+    get compact() {
+      return settings.compact;
     },
     get translucencyOpacity() {
       return settings.translucencyOpacity;

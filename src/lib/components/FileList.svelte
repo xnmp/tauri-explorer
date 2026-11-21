@@ -6,6 +6,7 @@
   import { loadView, loadedView, viewLoadFailed, viewRendererFor } from "./view-loaders.svelte";
   import { tick, onDestroy, untrack } from "svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import { layoutStore } from "$lib/state/layout.svelte";
   import { setFileListFocusReturn } from "$lib/state/file-list-focus-context";
   import { createDeferredFocusRequest, type DeferredFocusRequest } from "$lib/state/deferred-focus";
   import { rowFocusRing } from "$lib/state/row-focus-ring";
@@ -37,7 +38,6 @@
   import { toastStore } from "$lib/state/toast.svelte";
   import { getCommandShortcut } from "$lib/state/commands.svelte";
   import { clickSelectionEffect } from "$lib/domain/workspace-selection";
-
   import type { FileEntry } from "$lib/domain/file";
   import { isTrashPath } from "$lib/domain/virtual-path";
   import { explainTrashedOpen } from "$lib/state/trash-provider";
@@ -581,7 +581,7 @@
     {:else if explorer.viewMode === "list" && settingsStore.folderPeek}
       {@const ListColumnsView = loadedView("list-columns")}
       {#if ListColumnsView}
-        <!-- Row thumbnails change the slot height: remount (#1465). -->{#key settingsStore.state.rowThumbnails}<ListColumnsView
+        <!-- Row thumbnails and compact density change the slot height: remount (#1465, #1878). -->{#key layoutStore.listRowHeight}<ListColumnsView
           {explorer}
           bind:getNavigation={viewNavigation}
           onitemclick={handleClick}

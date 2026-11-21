@@ -14,6 +14,7 @@
   import type { FileEntry } from "$lib/domain/file";
   import { autoFillColumns } from "$lib/domain/virtual-layout";
   import { tileLayout, TILE_GRID_PAD_X } from "$lib/domain/tile-layout";
+  import { layoutStore } from "$lib/state/layout.svelte";
   import type { GroupGeometry, PanelBox, TileGroup } from "$lib/domain/tile-panels";
   import type { TileNavigationSnapshot } from "$lib/domain/tile-panel-navigation";
   import { useTilePanels } from "$lib/composables/use-tile-panels.svelte";
@@ -59,7 +60,7 @@
   const pointerDrag = usesPointerDrag ? usePointerDrag({ getExplorer: () => explorer, refreshPanes }) : null;
 
   const effectiveThumbnailSize = $derived(folderTileSize(explorer.currentPath));
-  const layout = $derived(tileLayout(effectiveThumbnailSize));
+  const layout = $derived(tileLayout(effectiveThumbnailSize, layoutStore.compact));
   // The classic view's column count (the pane's content width, not the
   // scrollport's), so turning Folder Peek on or opening a panel never reflows.
   const columns = $derived(autoFillColumns(contentWidth - TILE_GRID_PAD_X, layout.gridMinWidth, layout.gap));

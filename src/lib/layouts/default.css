@@ -1,8 +1,7 @@
 /*
  * Default layout: the flat, edge-to-edge arrangement, where the active tab
- * owns the window (#1856). Compact is Default's surfaces with tighter chrome
- * (its own lazily loaded compact.css only sizes things), so every rule here
- * applies to both bases (#1858).
+ * owns the window (#1856). Compact density (layouts/compact-density.css,
+ * #1878) only sizes the chrome, so it needs nothing here.
  *
  * Written against the layout contract (docs/layout-themes.md) and shipped in
  * the startup CSS, like Floating Islands, so every rule is scoped to its base
@@ -20,7 +19,7 @@
  * this file only colours them and squares the surface's corners.
  */
 
-:root:is([data-layout-base="default"], [data-layout-base="compact"]) {
+:root[data-layout-base="default"] {
   /* The surface the tab owns: the content pane's own fill. */
   --default-surface: var(
     --layout-surface,
@@ -48,33 +47,33 @@
    whole outline stays inside the bar and the bar never needs to stack over
    the window (menus and dialogs in the window still cover it). The outline
    replaces the bar's bottom rule. */
-:root:is([data-layout-base="default"], [data-layout-base="compact"]) [data-region="titlebar"] {
+:root[data-layout-base="default"] [data-region="titlebar"] {
   padding-bottom: 1px;
   background: var(--layout-chrome-surface, var(--default-surface));
   box-shadow: none;
 }
 
-:root:is([data-layout-base="default"], [data-layout-base="compact"]) [data-region="titlebar"]::before {
+:root[data-layout-base="default"] [data-region="titlebar"]::before {
   display: none;
 }
 
 /* No tab strip (a single tab without window controls): the bar is all strip. */
-:root:is([data-layout-base="default"], [data-layout-base="compact"]) [data-region="titlebar"]:not(:has([data-region="tab-strip"])) {
+:root[data-layout-base="default"] [data-region="titlebar"]:not(:has([data-region="tab-strip"])) {
   background:
     linear-gradient(var(--default-strip-shade), var(--default-strip-shade)),
     var(--layout-chrome-surface, var(--default-surface));
 }
 
-:root:is([data-layout-base="default"], [data-layout-base="compact"]) [data-region="tab-key-shadow"] :is(.strip-shade, .surface-pockets) {
+:root[data-layout-base="default"] [data-region="tab-key-shadow"] :is(.strip-shade, .surface-pockets) {
   fill: var(--default-strip-shade);
 }
 
 /* Flat: no lift or key shadow. */
-:root:is([data-layout-base="default"], [data-layout-base="compact"]) [data-region="tab-key-shadow"] .tab-shadows {
+:root[data-layout-base="default"] [data-region="tab-key-shadow"] .tab-shadows {
   display: none;
 }
 
-:root:is([data-layout-base="default"], [data-layout-base="compact"]) [data-region="tab-edge"] :is(.tab-edge-stroke, .surface-edge-stroke) {
+:root[data-layout-base="default"] [data-region="tab-edge"] :is(.tab-edge-stroke, .surface-edge-stroke) {
   /* The marks set its painted width. */
   stroke: var(--default-tab-edge);
 }
@@ -82,38 +81,38 @@
 /* The active tab's accent is its own top border, which lies on the outline's
    top row: the outline layer comes before the tabs, so at the same level the
    accent paints over that row and the outline carries on where it tapers. */
-:root:is([data-layout-base="default"], [data-layout-base="compact"]) [data-region="tab-edge"] {
+:root[data-layout-base="default"] [data-region="tab-edge"] {
   z-index: 0;
 }
 
 /* Inactive tabs sit on the strip with no fill of their own: the active tab's
    feet reach over their bottom corners. Their separators and hover pill stay. */
-:root:is([data-layout-base="default"], [data-layout-base="compact"]) [data-region="tab"]:not([aria-selected="true"]) {
+:root[data-layout-base="default"] [data-region="tab"]:not([aria-selected="true"]) {
   background: transparent;
   border-top-color: transparent;
 }
 
 /* No separator beside the active tab: its foot takes that corner. */
-:root:is([data-layout-base="default"], [data-layout-base="compact"]) [data-region="tab"]:has(+ [data-region="tab"][aria-selected="true"])::after {
+:root[data-layout-base="default"] [data-region="tab"]:has(+ [data-region="tab"][aria-selected="true"])::after {
   opacity: 0;
 }
 
 /* The active tab is a hole in the strip: it, its feet and the window are one
    surface. It keeps only its accent; it clips its own content, as the feet
    paint nothing. A drag over it still shows the tab bar's drop highlight. */
-:root:is([data-layout-base="default"], [data-layout-base="compact"]) [data-region="tab"][aria-selected="true"]:not(.drop-target, .file-drop-target) {
+:root[data-layout-base="default"] [data-region="tab"][aria-selected="true"]:not(.drop-target, .file-drop-target) {
   background: transparent;
   box-shadow: none;
   overflow: hidden;
 }
 
-:root:is([data-layout-base="default"], [data-layout-base="compact"]) [data-region="tab"][aria-selected="true"]::before {
+:root[data-layout-base="default"] [data-region="tab"][aria-selected="true"]::before {
   display: none;
 }
 
 /* The feet paint nothing (the shade's hole shapes their flare) but stay laid
    out: the marks read their width as the resolved --fillet. */
-:root:is([data-layout-base="default"], [data-layout-base="compact"]) [data-region="tab-fillet"] {
+:root[data-layout-base="default"] [data-region="tab-fillet"] {
   visibility: hidden;
 }
 
@@ -121,10 +120,17 @@
    status bar keep their own opaque, quieter tones: the header must hide the
    rows scrolling under it with one measurable colour, and the status bar's
    warning and error text is tuned against its tone (WCAG AA). */
-:root:is([data-layout-base="default"], [data-layout-base="compact"]) [data-region="sidebar-body"] {
+:root[data-layout-base="default"] [data-region="sidebar-body"] {
   background: var(--layout-chrome-surface, var(--default-surface));
 }
 
-:root:is([data-layout-base="default"], [data-layout-base="compact"]) [data-region="toolbar"] {
+:root[data-layout-base="default"] [data-region="toolbar"] {
   background: var(--layout-chrome-surface, transparent);
+}
+
+/* The sidebar and the file pane are one surface, so a rule keeps them apart,
+   a step darker than the tab's outline (#1879). It lies inside the sidebar's
+   edge: a rule outside it is painted over by the pane beside it. */
+:root[data-layout-base="default"] [data-region="sidebar-body"] {
+  box-shadow: inset -1px 0 0 color-mix(in srgb, var(--text-primary) 18%, transparent);
 }

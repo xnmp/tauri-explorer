@@ -363,3 +363,39 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload update-channel latest-alpha.json --clobber
+
+  # The Homebrew cask (#1876): `brew install --cask xnmp/tap/tauri-explorer`
+  # installs this release. A job of its own, after the release exists, so a
+  # tap failure leaves the release intact and "Re-run failed jobs" retries
+  # only this. HOMEBREW_TAP_TOKEN is a fine-grained token with Contents
+  # read/write on the tap repository alone; without it the job warns and
+  # skips, so the tap stays on the previous release (installs still work and
+  # then update themselves).
+  homebrew:
+    needs: [version-check, dev-ci-gate, release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Update the Homebrew cask
+        env:
+          VERSION: ${{ needs.version-check.outputs.version }}
+          TAP: ${{ github.repository_owner }}/homebrew-tap
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        shell: bash
+        run: |
+          if [[ -z $GH_TOKEN ]]; then
+            echo "::warning::HOMEBREW_TAP_TOKEN is not set; the Homebrew cask in $TAP was not updated to $VERSION"
+            exit 0
+          fi
+          version=${VERSION#v}
+          dmg="tauri-explorer_${version}_aarch64.dmg"
+          # Public release assets; the tap token only needs the tap.
+          curl --fail --silent --show-error --location --retry 3 -o "$dmg" \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${VERSION}/${dmg}"
+          node scripts/homebrew-cask.mjs "$version" "$dmg" > cask.rb
+          path=Casks/tauri-explorer.rb
+          sha=$(gh api "repos/$TAP/contents/$path" --jq .sha 2>/dev/null || true)
+          args=(-X PUT "repos/$TAP/contents/$path" -f message="tauri-explorer $version" -f content="$(base64 -w0 cask.rb)")
+          [[ -n $sha ]] && args+=(-f sha="$sha")
+          gh api "${args[@]}" --jq '.commit.html_url'

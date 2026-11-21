@@ -54,6 +54,29 @@ describe("tileLayout", () => {
       expect(tileLayout(bad as unknown as ThumbnailSize)).toEqual(tileLayout("medium"));
     }
   });
+
+  it("compact density (#1878) keeps about three quarters of the spacing, in whole px", () => {
+    expect(tileLayout("small", true)).toMatchObject({ gap: 2, padding: "5px 3px 5px", paddingTop: 5, paddingY: 10 });
+    expect(tileLayout("medium", true)).toMatchObject({ gap: 5, padding: "9px 6px 8px", paddingTop: 9, paddingY: 17 });
+    expect(tileLayout("medium", true).rowHeight).toBe(17 + 64 + 4 + 37 + 2 + 5);
+  });
+
+  it("compact density never changes a tile's icon, name or column width, and its rows only shrink", () => {
+    for (const size of Object.keys(THUMBNAIL_SIZE_CONFIG) as ThumbnailSize[]) {
+      const regular = tileLayout(size);
+      const compact = tileLayout(size, true);
+      expect(compact).toMatchObject({
+        displaySize: regular.displaySize,
+        gridMinWidth: regular.gridMinWidth,
+        iconScale: regular.iconScale,
+        nameHeight: regular.nameHeight,
+      });
+      expect(compact.gap).toBeLessThanOrEqual(regular.gap);
+      expect(compact.paddingY).toBeLessThan(regular.paddingY);
+      expect(compact.rowHeight).toBeLessThan(regular.rowHeight);
+    }
+    expect(tileLayout("bogus" as ThumbnailSize, true)).toEqual(tileLayout("medium", true));
+  });
 });
 
 describe("paneTileSize (plugin SDK FileViewPane.tileSize)", () => {

@@ -667,6 +667,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `scroll-jank-monitor.ts` — pure rAF-gap sampler (rAF/cancel injected) reporting long-frame counts for scroll-jank diagnostics; wired into `TilesView.svelte` (#593).
 - `theme-from-palette.ts` — build theme from extracted image palette (#203); text tokens solved in OKLCH for WCAG AA on every composited surface (#791).
 - `ai-rename.ts` — pure AI-rename suggestion logic (#145).
+- `ai-column.ts` — AI-generated Details columns (#1884): column key/label/validation, batch prompt (≤16 files, excerpts trimmed to fit 48 KiB), tolerant reply parsing, bounded per-column value cache keyed by path + size + mtime.
 - `terminal-command.ts` — shell command construction/quoting for terminal.
 - `terminal-cwd-sync.ts` — "terminal follows explorer" cwd decision (#149).
 - `terminal-keys.ts` — terminal vs app key-ownership rules (#249/#260).
@@ -698,6 +699,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `entry-lineage-registry.svelte.ts` — `registerEntryLineage` contributions (capability `entryLineage`, #1431): owner-disposed, ordered, `available()` errors normalized to false; `showLineageLabel`.
 - `file-icon-registry.svelte.ts` — plugin file icons by extension (capability `fileIcons`, #1523): first registration in plugin order owns an extension; `forEntry` (files only) feeds `FileIcon` and the Details Type column.
 - `detail-column-registry.svelte.ts` — startup read side of plugin Details columns (capability `detailColumns`, #1523): `columnsFor` offered columns, per-row `request`, cell `text`, Length `lengthSeconds`; removal disposes the provider's resolver.
+- `detail-column-menu-registry.svelte.ts` — plugin items in the Details column-header menu (capability `detailColumnMenu`, #1884): ordered, disposer-returning; rendered by `DetailsView.svelte` after the column toggles.
 - `register-contributions.ts` — lazily loaded with a plugin's first icon/column registration: validates (`domain/plugin-contribution-validation.ts`) and builds providers (failure-isolated `applies`/`load`, one report).
 - `file-view-registry.svelte.ts` — SDK 2 file view contributions (ordered, owner-disposed) and the pane handle type a view receives.
 - `preview-registry.svelte.ts` — SDK 2 Preview extension points: plugin preview targets (non-file subjects) and Preview-info sections.
@@ -711,6 +713,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `demo/DemoFileView.svelte` + `demo/DemoPreviewInfo.svelte` — demo file view and Preview-info section exercising the SDK 2 seams.
 - `ai-organize/index.ts` + `AiOrganizeDialog.svelte` — AI organize plugin (#158).
 - `ai-rename/index.ts` + `AiRenameDialog.svelte` — AI rename plugin (#145).
+- `ai-columns/index.ts` + `AiColumnDialog.svelte` — AI Columns plugin (#1884): header-menu Add/Remove items, one Details-column provider per described column; `column-loader.ts` (cache-first batch → `api/ai-text.ts`, abort/failure handling, once-per-column reports) and `column-store.ts` (definitions + bounded value cache in plugin storage, debounced writes).
 - `nano-banana/index.ts` + `NanoBananaDialog.svelte` — Nano Banana image-edit plugin.
 - `theme-from-image/index.ts` — generate theme from an image (#203).
 - `upscale/index.ts` + `UpscaleDialog.svelte` — image upscale plugin (fal.ai SeedVR2): settings, context-menu item, command, dialog.

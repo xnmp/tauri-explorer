@@ -33,6 +33,8 @@ import type { FileIconContribution } from "$lib/domain/plugin-file-icon";
 export type { FileIconContribution } from "$lib/domain/plugin-file-icon";
 import type { DetailColumnProvider } from "$lib/domain/plugin-detail-columns";
 export type { DetailColumnProvider, DetailColumnSpec, DetailRowValues } from "$lib/domain/plugin-detail-columns";
+import { detailColumnMenuItems, DETAIL_COLUMN_MENU_LABEL_MAX, type DetailColumnMenuItem } from "./detail-column-menu-registry.svelte";
+export type { DetailColumnMenuItem } from "./detail-column-menu-registry.svelte";
 import { toastStore, type ToastType } from "$lib/state/toast.svelte";
 import { readConfigFile } from "$lib/api/config";
 import { writeConfigQueued } from "$lib/state/persisted";
@@ -345,8 +347,12 @@ export interface PluginContext {
   registerFileIcon?(icon: FileIconContribution): void;
   /** Capability "detailColumns": Details columns whose values load lazily for
    *  rendered rows of files the provider applies to; offered only while the
-   *  listing has such files. Removed on deactivation (docs/plugin-detail-columns.md). */
-  registerDetailColumns?(provider: DetailColumnProvider): void;
+   *  listing has such files. Removed on deactivation, or earlier by calling
+   *  the returned disposer (docs/plugin-detail-columns.md). */
+  registerDetailColumns?(provider: DetailColumnProvider): () => void;
+  /** Capability "detailColumnMenu": an item in the Details column-header menu,
+   *  after the column toggles; returns a disposer (#1884). */
+  registerDetailColumnMenuItem?(item: DetailColumnMenuItem): () => void;
   /** Open a registered dialog, passing props to its component. `open` and an
    *  `onClose` (which closes the dialog) are injected by the renderer.
    *  `options` (capability "paneDialogs") scopes it to a captured pane. */
@@ -490,10 +496,10 @@ export function createPluginContext(
   const trackValidated = (contribution: string, register: (registration: typeof import("./register-contributions")) => () => void) => {
     let dispose: (() => void) | undefined;
     let live = true;
-    track(() => { live = false; dispose?.(); });
     void import("./register-contributions")
       .then((registration) => { if (live) dispose = register(registration); })
       .catch((error) => { if (live) report(error, contribution); });
+    return track(() => { live = false; dispose?.(); });
   };
 
   const ctx: PluginContext = {
@@ -601,9 +607,17 @@ export function createPluginContext(
       const id = ownedId("File icon", icon?.id);
       trackValidated(`file icon ${id}`, (r) => r.registerFileIcon(id, icon, order));
     },
-    registerDetailColumns(provider: DetailColumnProvider): void {
+    registerDetailColumns(provider: DetailColumnProvider): () => void {
       const id = ownedId("Detail columns", provider?.id);
-      trackValidated(`detail columns ${id}`, (r) => r.registerDetailColumns(id, provider, (error) => void log(error, `detail columns ${id}`), order));
+      return trackValidated(`detail columns ${id}`, (r) => r.registerDetailColumns(id, provider, (error) => void log(error, `detail columns ${id}`), order));
+    },
+    registerDetailColumnMenuItem(item: DetailColumnMenuItem): () => void {
+      const id = ownedId("Detail column menu item", item?.id);
+      const label = typeof item.label === "string" ? [...item.label.replace(/\p{Cc}+/gu, " ").trim()].slice(0, DETAIL_COLUMN_MENU_LABEL_MAX).join("") : "";
+      if (!label || typeof item.run !== "function") throw new Error(`Detail column menu item ${id} needs a label and run()`);
+      const enabled = item.enabled && (() => { try { return item.enabled!() !== false; } catch (error) { log(error, `column menu item ${id}`); return false; } });
+      const run = () => { if (!disposed) void Promise.resolve().then(() => item.run()).catch((error) => report(error, `column menu item ${id}`)); };
+      return track(detailColumnMenuItems.register({ id, label, run, enabled }, order));
     },
     openDialog(id: string, props?: Record<string, unknown>, options?: PluginDialogOptions): void {
       try {

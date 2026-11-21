@@ -32,6 +32,21 @@ function mockAiFilterReply(input: string): string {
   return JSON.stringify({ names: names.filter(name => words.some(word => name.toLowerCase().includes(word))) });
 }
 
+/** Deterministic stand-in for an AI column (#1884): answers each file of a
+ *  `buildColumnPrompt` batch from its metadata. "...extension..." properties
+ *  get the extension in capitals; anything else gets the kind. */
+function mockAiColumnReply(input: string): string {
+  const [property = "", , ...rows] = input.split("\n");
+  const byExtension = /extension/i.test(property);
+  return JSON.stringify(rows.flatMap((line) => {
+    try {
+      const file = JSON.parse(line) as { i: number; kind: string; extension: string };
+      const value = byExtension ? (file.kind === "folder" ? "FOLDER" : file.extension.toUpperCase() || "NONE") : file.kind;
+      return [{ i: file.i, value }];
+    } catch { return []; }
+  }));
+}
+
 export const aiCommands: Record<string, CommandHandler> = {
   plugin_jobs_snapshot: () => mockAiPresentation().snapshot(),
   plugin_job_reveal: (args) => mockAiPresentation().snapshot().jobs.find(job => job.jobKey === args.jobKey)?.reveal ?? null,
@@ -52,7 +67,8 @@ export const aiCommands: Record<string, CommandHandler> = {
     if (!mockTextDescription().available) throw { code: "disabled", message: "Text generation is disabled" };
     const text = String(input);
     const reply = getMockControl().aiTextReply;
-    return { text: reply ? reply(text) : mockAiFilterReply(text), context: mockTextConnections.context() };
+    const fallback = text.startsWith("Property: ") ? mockAiColumnReply(text) : mockAiFilterReply(text);
+    return { text: reply ? reply(text) : fallback, context: mockTextConnections.context() };
   },
   ai_text_cancel: () => true,
 

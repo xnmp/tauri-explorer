@@ -27,7 +27,9 @@ export function exposePluginSDK():void {
     // "entryLineage": registerEntryLineage (lineage peek: Details/List/Tiles group
     // a file's edits under it) and workspace.toggleEntryLineage/isEntryLineageShown.
     // "fileIcons" / "detailColumns": registerFileIcon and registerDetailColumns (#1523).
-    sdkVersion:1,apiVersion:3,capabilities:Object.freeze(["fileViews","previewInfo","previewTargets","blobWorkers","fileTiles","fileTile","tileSize","jobRetry","jobReveal","jobCost","fileViewReveal","textGeneration","pluginServices","serviceArtifacts","settingsActions","modalNavigation","combinedSelection","paneDialogs","fileDropTargets","selectionAnchor","fileViewEligibilityPending","entryLineage","fileIcons","detailColumns"]),svelteVersion:SVELTE_ABI,
+    // "detailColumnMenu": registerDetailColumnMenuItem; registerDetailColumns returns a disposer (#1884).
+    // "folderAgent": ctx.agent describe/run, read-only CLI jobs in a folder (#1884).
+    sdkVersion:1,apiVersion:3,capabilities:Object.freeze(["fileViews","previewInfo","previewTargets","blobWorkers","fileTiles","fileTile","tileSize","jobRetry","jobReveal","jobCost","fileViewReveal","textGeneration","pluginServices","serviceArtifacts","settingsActions","modalNavigation","combinedSelection","paneDialogs","fileDropTargets","selectionAnchor","fileViewEligibilityPending","entryLineage","fileIcons","detailColumns","detailColumnMenu","folderAgent"]),svelteVersion:SVELTE_ABI,
     modules:Object.freeze({"svelte":svelte,"svelte/internal/client":client,"ui/modal":{default:Modal},"ui/image-editor":{default:ImageEditor},
       // Built-in Tiles view tiles (FileTilesProps in api.ts); capability "fileTiles".
       // Capability "tileSize": FileViewPane.tileSize and file-tiles' `size` prop.

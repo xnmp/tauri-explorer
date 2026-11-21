@@ -42,7 +42,7 @@ function makeFakeCtx() {
   const events: string[] = [];
 
   const ctx: PluginContext = {
-    registerCommand: (c) => void commands.push(c),
+    registerCommand: (c) => { commands.push(c); return () => {}; },
     registerContextMenuItem: (i) => void contextMenu.push(i),
     registerSettingsSection: (s) => void settingsSections.push(s),
     registerFsProvider: () => {},

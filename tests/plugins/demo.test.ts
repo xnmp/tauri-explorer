@@ -31,7 +31,7 @@ function makeStubCtx() {
   const providers: string[] = [];
 
   const ctx: PluginContext = {
-    registerCommand: (c) => void commands.push(c),
+    registerCommand: (c) => { commands.push(c); return () => {}; },
     registerContextMenuItem: (i) => void contextMenu.push(i),
     registerSettingsSection: () => {},
     registerFsProvider: (scheme) => void providers.push(scheme),

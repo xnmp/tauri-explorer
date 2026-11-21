@@ -698,6 +698,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `entry-lineage-registry.svelte.ts` — `registerEntryLineage` contributions (capability `entryLineage`, #1431): owner-disposed, ordered, `available()` errors normalized to false; `showLineageLabel`.
 - `file-icon-registry.svelte.ts` — plugin file icons by extension (capability `fileIcons`, #1523): first registration in plugin order owns an extension; `forEntry` (files only) feeds `FileIcon` and the Details Type column.
 - `detail-column-registry.svelte.ts` — startup read side of plugin Details columns (capability `detailColumns`, #1523): `columnsFor` offered columns, per-row `request`, cell `text`, Length `lengthSeconds`; removal disposes the provider's resolver.
+- `detail-column-menu-registry.svelte.ts` — plugin items in the Details column-header menu (capability `detailColumnMenu`, #1884): ordered, disposer-returning; rendered by `DetailsView.svelte` after the column toggles.
+- `plugin-agent.ts` — `ctx.agent` (capability `folderAgent`, #1884): plugin- and incarnation-scoped request IDs, abort → `ai_agent_cancel`, `cancelAll` on deactivation; refuses folders no pane of the window shows (`folder_not_open`); native errors reject unchanged.
 - `register-contributions.ts` — lazily loaded with a plugin's first icon/column registration: validates (`domain/plugin-contribution-validation.ts`) and builds providers (failure-isolated `applies`/`load`, one report).
 - `file-view-registry.svelte.ts` — SDK 2 file view contributions (ordered, owner-disposed) and the pane handle type a view receives.
 - `preview-registry.svelte.ts` — SDK 2 Preview extension points: plugin preview targets (non-file subjects) and Preview-info sections.
@@ -1225,6 +1227,8 @@ TraceExplorer's image UI, provider adapters and SQLite journal are maintained in
 - `src/lib/api/mock-text-connections.ts` — isolated browser fixture using the public validation/revision rules.
 - `src/lib/state/text-connections.ts` — dirty draft/CAS, stale result/cancellation and cross-window event reconciliation.
 - `src/lib/api/ai-text.ts` — default-profile describe/generate/cancel for core window features (`ai_text_*`, caller `window:<label>`).
+- `src/lib/api/ai-agent.ts` — folder-agent describe/run/cancel (`ai_agent_*`, #1884): a CLI connection run in a folder with read-only file tools; reached by plugins through `ctx.agent`.
+- `src/lib/domain/ai-agent.ts` — folder-agent request/result/description contracts and `agentRequestId` (plugin- and incarnation-scoped request IDs).
 - `src/lib/domain/ai-filter.ts` — AI filter (#1506): bounded compact listing prompt (2000 entries / 60 KiB), reply validation against sent names, request state machine and status text.
 - `src/lib/state/ai-filter.svelte.ts` — AI filter request owner per explorer (lazy with FilterBar): availability gate, staleness by request ID + captured path + installed predicate, cancellation.
 - `src/lib/components/FilterBar.svelte` — lazy Ctrl+F filter box (moved out of NavigationBar); Alt+Enter AI filter, AI chip, hint and status line.
@@ -1233,8 +1237,10 @@ TraceExplorer's image UI, provider adapters and SQLite journal are maintained in
 - `src-tauri/src/ai/storage.rs` — cross-process locking, synced config replacement/CAS and resumable copy-if-unset legacy preferences.
 - `src-tauri/src/ai/credentials.rs` — owner-scoped OS secrets and injectable test store; no secret reads in public settings output.
 - `src-tauri/src/ai/adapters.rs` — bounded cancellable text HTTP and dispatch to the CLI adapter.
-- `src-tauri/src/ai/cli.rs` — Codex/Claude Code CLI text adapter: isolation argv, allowlisted environment, managed-policy refusal, cached help probe, owned run and final-text parsing ([isolation notes](../shared-ai-cli-text-isolation.md)).
+- `src-tauri/src/ai/cli.rs` — Codex/Claude Code CLI text adapter: isolation argv, allowlisted environment, managed-policy refusal, cached help probe, owned run and final-text parsing ([isolation notes](../shared-ai-cli-text-isolation.md)); folder-agent argv (Claude `Read,Glob,Grep` under `--restricted`, Codex permission profile) and `run_agent` (#1884).
 - `src-tauri/src/ai/cli_tests.rs` — fake-CLI isolation, refusal, typed-failure and process-tree reaping tests.
+- `src-tauri/src/ai/agent_folder.rs` — folder-agent working directory (#1884): `FolderPolicy`, a pure table-tested rule set applied to the canonical path (refuses root, home and its ancestors, dot-folders in home, OS system trees, trash, UNC shares) plus `resolve`.
+- `src-tauri/src/ai/agent_tests.rs` — folder-agent folder policy table, argv/tool confinement, Codex runtime grant, `--max-turns` detection, output checks, HTTP-only refusal, separate agent quota, abort churn, hung folder resolution, configuration-change cancellation, two-slot queue, deadline and process-tree cancellation tests; opt-in real-CLI confinement probe (`AGENT_REAL_CLI`, `AGENT_REAL_CLI_PATH`).
 - `src-tauri/src/ai/tests.rs` — native local HTTP/fake CLI, cancellation, capacity, credential uncertainty, cross-process CAS and migration outcome tests.
 - `src-tauri/src/installed_plugins/text_service.rs` — active-only native reverse-text bridge with trusted incarnation identity and reserved cancellation capacity.
 - `src-tauri/src/installed_plugins/process_run.rs` — `host.process.run` validation, admission, owned execution with bounded stdin, and typed pre-spawn refusal codes.

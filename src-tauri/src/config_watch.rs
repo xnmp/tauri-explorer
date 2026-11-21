@@ -603,6 +603,8 @@ fn spawn_flush_thread(app: AppHandle) {
                 // File CAS coordinates separate host processes. Relay only a
                 // readable committed revision; this never probes a provider/CLI.
                 if let Ok(revision) = crate::ai::configuration_revision() {
+                    // Agent jobs pinned to an older revision stop (#1884).
+                    crate::ai::observe_configuration_revision(revision);
                     let _ = app.emit(
                         "ai:text-configuration-changed",
                         serde_json::json!({"revision":revision}),

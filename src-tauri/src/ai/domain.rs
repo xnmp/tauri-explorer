@@ -388,3 +388,190 @@ pub fn parse_configuration(value: serde_json::Value) -> Result<Configuration> {
     }
     serde_json::from_value(value).map_err(|_| ServiceError::invalid("Malformed AI configuration"))
 }
+
+// ---------------------------------------------------------------------------
+// Folder agent (#1884): one CLI run in a folder with read-only file tools.
+// ---------------------------------------------------------------------------
+
+/// Upper bound for one agent job, queueing included. Requests may ask for less.
+pub const AGENT_MAX_TIMEOUT_MS: u64 = 300_000;
+/// Deadline when a request names none.
+pub const AGENT_DEFAULT_TIMEOUT_MS: u64 = 120_000;
+/// Agent jobs that may run at once across every caller; more wait in the queue.
+pub const AGENT_MAX_CONCURRENT: usize = 2;
+pub const AGENT_MAX_OUTPUT_TOKENS: u32 = 16_384;
+/// Turn limit passed to a CLI that lists one (Claude Code `--max-turns`);
+/// requests may ask for fewer. Codex has no turn limit: its bound is the
+/// deadline.
+pub const AGENT_MAX_TURNS: u32 = 40;
+/// Final answer limit. A JSON object keyed by file name for a large folder is
+/// longer than a title, so this exceeds the text service's 64 KiB.
+pub const AGENT_MAX_TEXT: usize = 256 * 1024;
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentRequest {
+    pub request_id: String,
+    pub folder: String,
+    pub instructions: String,
+    #[serde(default)]
+    pub input: String,
+    pub model: Option<String>,
+    pub max_output_tokens: u32,
+    pub timeout_ms: Option<u64>,
+    /// Lowers [`AGENT_MAX_TURNS`]; honoured only by a CLI that lists a turn
+    /// limit.
+    #[serde(default)]
+    pub max_turns: Option<u32>,
+    pub expected_configuration_revision: Option<u64>,
+}
+#[derive(Debug, Serialize)]
+pub struct AgentResult {
+    pub text: String,
+    pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<Usage>,
+}
+/// How far the CLI's file tools are kept inside the job's folder.
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ReadScope {
+    /// The CLI itself refuses paths outside the folder (Claude `--restricted`).
+    Folder,
+    /// Requested through configuration the installed CLI version may not
+    /// honour (Codex permission profile, beta); see the contract doc.
+    FolderRequested,
+}
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentDescribe {
+    pub version: u8,
+    pub enabled: bool,
+    /// A CLI connection is selected and passes its local checks.
+    pub available: bool,
+    pub configuration_revision: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<Context>,
+    /// Model IDs `run` accepts for this connection; empty when unavailable.
+    pub models: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read_scope: Option<ReadScope>,
+    /// Plain-language isolation summary for this connection.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub isolation: Option<&'static str>,
+    pub max_timeout_ms: u64,
+    pub max_concurrent: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<ServiceError>,
+}
+
+pub fn validate_agent_request(request: &AgentRequest) -> Result<()> {
+    if !valid_id(&request.request_id) {
+        return Err(ServiceError::invalid(
+            "Request ID must contain 1–128 letters, digits, dots, underscores or hyphens",
+        ));
+    }
+    if request.instructions.trim().is_empty()
+        || request
+            .instructions
+            .len()
+            .saturating_add(request.input.len())
+            > 64 * 1024
+    {
+        return Err(ServiceError::invalid(
+            "Agent instructions must be nonempty and combined input must fit 64 KiB",
+        ));
+    }
+    if request.folder.is_empty() || request.folder.len() > 4096 || request.folder.contains('\0') {
+        return Err(ServiceError::invalid("Invalid agent folder"));
+    }
+    if !(1..=AGENT_MAX_OUTPUT_TOKENS).contains(&request.max_output_tokens)
+        || request.timeout_ms == Some(0)
+    {
+        return Err(ServiceError::invalid(
+            "Output tokens must be 1–16384 and a deadline must be positive",
+        ));
+    }
+    if request
+        .max_turns
+        .is_some_and(|turns| !(1..=AGENT_MAX_TURNS).contains(&turns))
+    {
+        return Err(ServiceError::invalid("Agent turns must be 1–40"));
+    }
+    Ok(())
+}
+/// The turn limit for a CLI that supports one: the request's, else the cap.
+pub fn agent_turns(request: &AgentRequest) -> u32 {
+    request
+        .max_turns
+        .unwrap_or(AGENT_MAX_TURNS)
+        .min(AGENT_MAX_TURNS)
+}
+/// The job's whole deadline: the request's, else the default, never above the
+/// cap. Profile timeouts (≤45 s, sized for titles) do not apply to agent jobs.
+pub fn agent_deadline_ms(requested: Option<u64>) -> u64 {
+    requested
+        .unwrap_or(AGENT_DEFAULT_TIMEOUT_MS)
+        .min(AGENT_MAX_TIMEOUT_MS)
+}
+/// The connection agent jobs use: the default profile when it is a CLI, else
+/// the first CLI profile in the list. HTTP transports cannot read files.
+pub fn agent_profile(config: &Configuration) -> Result<&Profile> {
+    if !config.enabled {
+        return Err(ServiceError::new("disabled", "Text generation is disabled"));
+    }
+    let is_cli = |p: &&Profile| {
+        matches!(
+            p.connection,
+            Connection::Codex { .. } | Connection::Claude { .. }
+        )
+    };
+    config
+        .profiles
+        .iter()
+        .find(|p| Some(&p.id) == config.default_profile_id.as_ref())
+        .filter(is_cli)
+        .or_else(|| config.profiles.iter().find(is_cli))
+        .ok_or_else(|| {
+            ServiceError::new(
+                "unsupported",
+                "Folder agent jobs need a Claude Code CLI or Codex CLI connection; HTTP connections cannot read files",
+            )
+        })
+}
+/// Models offered for agent work, cheapest first, and the default (the
+/// cheapest). Claude takes its own aliases (`claude --help`: "an alias for the
+/// latest model"); `haiku` is its smallest. For Codex, `gpt-6-luna` is the
+/// host's default profile model and Codex's "fast and affordable" model. The
+/// profile's own model is always accepted too.
+pub fn agent_models(profile: &Profile) -> Option<(Vec<String>, String)> {
+    let base: &[&str] = match profile.connection {
+        Connection::Claude { .. } => &["haiku", "sonnet", "opus"],
+        Connection::Codex { .. } => &["gpt-6-luna"],
+        _ => return None,
+    };
+    let mut models: Vec<String> = base.iter().map(|m| (*m).to_owned()).collect();
+    if !models.contains(&profile.model) {
+        models.push(profile.model.clone());
+    }
+    Some((models, base[0].to_owned()))
+}
+/// Folder agents never return more than [`AGENT_MAX_TEXT`] bytes of text.
+pub fn agent_text(s: &str) -> Result<String> {
+    let text = s.trim();
+    if text.is_empty()
+        || text.len() > AGENT_MAX_TEXT
+        || text
+            .chars()
+            .any(|c| c.is_control() && c != '\n' && c != '\t' && c != '\r')
+    {
+        Err(ServiceError::new(
+            "invalid_response",
+            "Agent returned invalid or oversized text",
+        ))
+    } else {
+        Ok(text.to_owned())
+    }
+}

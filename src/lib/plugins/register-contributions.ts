@@ -33,5 +33,5 @@ export function registerDetailColumns(id: string, provider: DetailColumnProvider
     failure: null,
     eligible: applies,
   });
-  return detailColumnRegistry.add(id, { columns, applies, resolver }, order);
+  return detailColumnRegistry.add(id, { columns, applies, resolver, suppliesLength: provider.suppliesLength !== false }, order);
 }

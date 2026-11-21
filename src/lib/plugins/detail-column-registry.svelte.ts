@@ -16,6 +16,8 @@ interface RegisteredDetailProvider {
   /** Never throws. */
   readonly applies: (entry: FileEntry) => boolean;
   readonly resolver: BatchedEntryResolver<DetailRowValues | null>;
+  /** False: never loads on the Length column's behalf (#1884). */
+  readonly suppliesLength: boolean;
 }
 
 const NONE: readonly PluginDetailColumn[] = [];
@@ -54,11 +56,11 @@ function createDetailColumnRegistry() {
       return last.columns;
     },
     /** Load a rendered row's values from the providers it needs: those with a
-     *  shown column, plus every provider while Length is shown (any of them
-     *  may supply `lengthSeconds`). */
+     *  shown column, plus, while Length is shown, every provider that may
+     *  supply `lengthSeconds`. */
     request(entry: FileEntry, shown: readonly PluginDetailColumn[], length: boolean): void {
       for (const provider of providers) {
-        if (length || shown.some((column) => owners.get(column.id) === provider)) provider.resolver.request(entry);
+        if ((length && provider.suppliesLength) || shown.some((column) => owners.get(column.id) === provider)) provider.resolver.request(entry);
       }
     },
     /** Reactive display text, or undefined while loading / when absent. */
@@ -73,9 +75,9 @@ function createDetailColumnRegistry() {
       }
       return undefined;
     },
-    /** Reactive: every provider's resolver, for the folder-wide Length sort
-     *  (#1531, `length-sort-requests.svelte.ts`); any may supply `lengthSeconds`. */
-    resolvers: () => providers.map((provider) => provider.resolver),
+    /** Reactive: the resolvers of providers that may supply `lengthSeconds`,
+     *  for the folder-wide Length sort (#1531, `length-sort-requests.svelte.ts`). */
+    resolvers: () => providers.filter((provider) => provider.suppliesLength).map((provider) => provider.resolver),
   };
 }
 

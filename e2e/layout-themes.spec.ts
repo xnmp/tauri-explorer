@@ -9,7 +9,7 @@
  * failure.
  */
 import { test, expect, type Page } from "./fixtures";
-import { HOME_URL, VIEW_VARIANTS, applySettingsAndReload, pressShortcut, runPaletteCommand, seedSettings, switchViewMode, waitForEntries } from "./helpers";
+import { HOME_URL, MULTI_SELECT_MODIFIER, VIEW_VARIANTS, applySettingsAndReload, pressShortcut, runPaletteCommand, seedSettings, switchViewMode, waitForEntries } from "./helpers";
 
 const SEED_KEY = "mock-config-files";
 
@@ -614,13 +614,14 @@ test.describe("Layout themes (#1306)", () => {
       });
       expect(bg).not.toBe("rgba(0, 0, 0, 0)");
       expect(bg).not.toBe(fg);
-      if (variant.viewMode === "tiles") {
-        // A selected tile is ruled, not inverted: no block of ink (white in
-        // dark themes) round its picture (#1871).
+      if (variant.viewMode !== "details") {
+        // A selected tile or List entry is ruled, not inverted: no block of
+        // ink (white in dark themes) round its picture (#1871), nor a column
+        // of separate blocks down a List (#1789).
         expect(rgb(bg)).not.toEqual(rgb(await page.evaluate(c => { const el = document.createElement("i"); el.style.color = c; document.body.append(el); const out = getComputedStyle(el).color; el.remove(); return out; }, ink)));
         expect(ring).toContain("inset");
       } else {
-        // A selected row inverts ink and background.
+        // A selected Details row inverts ink and background.
         expect(rgb(fg)).not.toEqual(rgb(bg));
         expect(ring).not.toContain("inset 0px 0px 0px 1px");
       }
@@ -634,11 +635,44 @@ test.describe("Layout themes (#1306)", () => {
       }
       const names = page.locator('[data-region="entry-name"]:visible');
       expect(await names.first().evaluate(el => getComputedStyle(el).fontFamily)).toMatch(/^"Inter Variable"/);
-      if (variant.viewMode === "tiles") {
+      if (variant.viewMode !== "details") {
         // A selected (and hovered) tile's name keeps its own colour, readable
         // on the tint; inverted, it faded to the background's (#1879).
         expect(rgb(await nameColor())).toEqual(rgb(unselectedName));
       }
+    });
+  }
+
+  // #1789: List entries are separate cells with gaps between them, and a peek
+  // card's rows too; inverted like a Details row, a selection read as a column
+  // of black blocks (white in dark themes). They are ruled, as tiles are.
+  for (const theme of ["light", "dark"]) {
+    test(`Hairline Ledger rules a List selection, peek card included, not inverts it (${theme})`, async ({ page }) => {
+      await seedSettings(page, { layoutTheme: "hairline-ledger", theme, viewMode: "list", folderPeek: true });
+      await page.goto(HOME_URL);
+      await waitForEntries(page);
+      const shown = ".pane-tree:not(.retained)";
+      await expect(page.locator(`${shown} [data-region="file-list"][data-view="list"]`)).toHaveCount(1);
+      const folder = page.locator(`${shown} .entry-item[data-path="/home/user/Documents"]`);
+      await folder.locator(":scope > .peek-caret").click();
+      await expect(folder).toHaveAttribute("aria-expanded", "true");
+      const child = page.locator(`${shown} [data-card-scroll] .entry-item`).first();
+      await expect(child).toBeVisible();
+      const name = child.locator('[data-region="entry-name"]').first();
+      const unselectedName = await name.evaluate(el => getComputedStyle(el).color);
+      const top = page.locator(`${shown} .entry-item[data-path="/home/user/Downloads"]`);
+      await top.click();
+      await child.click({ modifiers: [MULTI_SELECT_MODIFIER] });
+      const ink = await page.evaluate(() => { const el = document.createElement("i"); el.style.color = "var(--text-primary)"; document.body.append(el); const out = getComputedStyle(el).color; el.remove(); return out; });
+      for (const row of [top, child]) {
+        await expect(row).toHaveAttribute("aria-selected", "true");
+        const [bg, ring] = await row.evaluate(el => [getComputedStyle(el).backgroundColor, getComputedStyle(el).boxShadow]);
+        expect(bg).not.toBe("rgba(0, 0, 0, 0)");
+        expect(rgb(bg), "no block of ink behind a selected List entry").not.toEqual(rgb(ink));
+        expect(ring).toMatch(/0px 0px 0px 1px inset/);
+      }
+      // The name keeps its own colour, readable on the tint.
+      expect(rgb(await name.evaluate(el => getComputedStyle(el).color))).toEqual(rgb(unselectedName));
     });
   }
 

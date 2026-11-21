@@ -10,7 +10,8 @@
  * Colours derive from the active colour theme, so the ledger composes with
  * every palette: hairlines are the theme's ink at 16% (rows 6%), chrome is
  * the theme's background warmed toward paper, the content surface is the
- * theme's card, and a selected row inverts ink and background. With the Light
+ * theme's card, and a selected Details row inverts ink and background (List
+ * entries and tiles are ruled instead). With the Light
  * theme this gives the spec's rgba(28,25,23,.16) rules on #F7F5F0 paper.
  *
  * The active tab owns the window (#1871): the tab, sidebar, toolbar and list
@@ -258,22 +259,26 @@
   font-size: 12px;
 }
 
-:root [data-region="file-list"]:not([data-view="tiles"]) [data-region="row"][aria-selected="true"],
-:root [data-region="file-list"]:not([data-view="tiles"]) [data-region="row"][aria-selected="true"]:hover {
+/* A selected Details row inverts ink and background: consecutive rows join
+   into one band, like a line struck through in the ledger. */
+:root [data-region="file-list"][data-view="details"] [data-region="row"][aria-selected="true"],
+:root [data-region="file-list"][data-view="details"] [data-region="row"][aria-selected="true"]:hover {
   background: var(--text-primary);
   border-color: transparent;
   border-radius: 0;
   color: var(--background-solid);
 }
 
-:root [data-region="file-list"]:not([data-view="tiles"]) [data-region="row"][aria-selected="true"] [data-cell] {
+:root [data-region="file-list"][data-view="details"] [data-region="row"][aria-selected="true"] [data-cell] {
   color: inherit;
 }
 
-/* A selected tile is ruled, not inverted: an inverted tile is a block of the
-   theme's ink (white in dark themes) round its picture. */
-:root [data-region="file-list"][data-view="tiles"] [data-region="row"][aria-selected="true"],
-:root [data-region="file-list"][data-view="tiles"] [data-region="row"][aria-selected="true"]:hover {
+/* A selected tile or List entry is ruled, not inverted: an inverted tile is a
+   block of the theme's ink (white in dark themes) round its picture, and List
+   entries (a peek card's too) are separate cells with gaps between them, so
+   inverted they read as a column of black blocks, never one band (#1789). */
+:root [data-region="file-list"]:not([data-view="details"]) [data-region="row"][aria-selected="true"],
+:root [data-region="file-list"]:not([data-view="details"]) [data-region="row"][aria-selected="true"]:hover {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   border-color: transparent;
   border-radius: 0;

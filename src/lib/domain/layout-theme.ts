@@ -3,8 +3,8 @@
  *
  * A layout theme is a stylesheet that restyles the application's panel
  * chrome — spacing, panel surfaces, borders, rounding, row density —
- * independently of the colour theme. Five are built in (Default, Floating
- * Islands, Hairline Ledger, Compact, Soft Cards); users add more as `.css` files in
+ * independently of the colour theme. Four are built in (Default, Floating
+ * Islands, Hairline Ledger, Soft Cards); users add more as `.css` files in
  * `<config>/layouts/`. The stylesheet contract (region hooks, variables,
  * precedence) is documented in `docs/layout-themes.md`.
  *
@@ -28,7 +28,6 @@
  */
 
 import {
-  COMPACT_LAYOUT_ID,
   DEFAULT_LAYOUT_ID,
   FLOATING_ISLANDS_LAYOUT_ID,
   HAIRLINE_LEDGER_LAYOUT_ID,
@@ -38,7 +37,6 @@ import {
 } from "./layout-theme-ids";
 
 export {
-  COMPACT_LAYOUT_ID,
   DEFAULT_LAYOUT_ID,
   FLOATING_ISLANDS_LAYOUT_ID,
   HAIRLINE_LEDGER_LAYOUT_ID,
@@ -51,7 +49,7 @@ export type { BuiltinLayoutId };
 type LayoutArrangement = "flat" | "islands";
 
 export interface LayoutThemeInfo {
-  /** Built-in id, or the user file name (`compact.css`). */
+  /** Built-in id, or the user file name (`dense-grid.css`). */
   readonly id: string;
   readonly name: string;
   readonly description: string;
@@ -104,14 +102,6 @@ const BUILTIN_LAYOUT_THEMES: readonly LayoutThemeInfo[] = [
     description: "Square, dense panels ruled by 1px hairlines, with monospaced metadata.",
     source: "builtin",
     base: HAIRLINE_LEDGER_LAYOUT_ID,
-    arrangement: "flat",
-  },
-  {
-    id: COMPACT_LAYOUT_ID,
-    name: "Compact",
-    description: "Default's flat panels with tight chrome and 22px rows, for large folders.",
-    source: "builtin",
-    base: COMPACT_LAYOUT_ID,
     arrangement: "flat",
   },
   {

@@ -37,6 +37,7 @@ export const TOGGLE_SETTINGS: ToggleSettingMeta[] = [
   { key: "showStatusBar", id: "view.toggleStatusBar", label: "Toggle Status Bar", shortcut: "Alt+M U" },
   { key: "showGitStatus", id: "view.toggleGitStatus", label: "Toggle Git Status Indicators" },
   { key: "rowThumbnails", label: "Toggle Thumbnails in Details and List" },
+  { key: "compact", id: "view.toggleCompact", label: "Toggle Compact Mode" },
   { key: "millerHideEmpty", id: "view.toggleMillerHideEmpty", label: "Miller Columns: Toggle Hide Empty Folders" },
   { key: "showManuallyHidden", id: "view.toggleManuallyHidden", label: "Toggle Manually Hidden Files" },
   // SCM panel visibility is per-pane (#434); its toggle command lives in

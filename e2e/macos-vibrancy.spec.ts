@@ -41,11 +41,13 @@ test.describe("macOS vibrancy", () => {
 
   test("native backdrop works under every layout, including Default", async ({ page }) => {
     await page.goto(HOME_URL);
-    for (const layoutTheme of ["default", "floating-islands", "hairline-ledger", "compact", "soft-cards"]) {
-      await applySettingsAndReload(page, { translucency: true, layoutTheme });
+    // Compact is a density on any layout (#1878), so it rides on Default here.
+    for (const [layoutTheme, compact] of [["default", false], ["floating-islands", false], ["hairline-ledger", false], ["soft-cards", false], ["default", true]] as const) {
+      await applySettingsAndReload(page, { translucency: true, layoutTheme, compact });
       await waitForEntries(page);
       const html = page.locator("html");
       await expect(html).toHaveAttribute("data-layout", layoutTheme);
+      if (compact) await expect(html).toHaveAttribute("data-density", "compact");
       await expect(html).toHaveAttribute("data-native-backdrop", "");
       // Transparency is the window's, not the layout's: the body stays clear.
       expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe("rgba(0, 0, 0, 0)");

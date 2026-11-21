@@ -38,6 +38,8 @@
   /* The islands sit on the tab's surface, a gap below its top edge. */
   --layout-inset: var(--layout-gap) 6px 6px 6px;
   --layout-radius: 14px;
+  /* Compact (#1878): its 18px status bar loses 2px, not the default 8. */
+  --layout-compact-status-bar-height: 16px;
   /* The surface's top corners (#1785): the layout radius, resolved to px
      for the tab marks whatever unit a layout gives it. */
   --islands-surface-radius: var(--layout-radius);

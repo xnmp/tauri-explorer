@@ -1,8 +1,9 @@
 /**
  * The active tab's outline, shadow and strip shade across the visual matrix
  * (#1734, #1785, #1856, #1858, #1871): layout (Floating Islands, Default;
- * Compact and Hairline Ledger on Linux/Windows only) x macOS material (on,
- * off) x theme (light, dark), at rest with 1, 3 and 12 tabs, on hover, and
+ * Hairline Ledger on Linux/Windows only) x macOS material (on, off) x theme
+ * (light, dark), plus each of those layouts at compact density (#1878), at
+ * rest with 1, 3 and 12 tabs, on hover, and
  * on frozen frames of a tab opening and closing, at 100% zoom on a 1x
  * display and 125% on a 2x one. Every check is a pixel comparison against
  * the same frame with one layer changed, so it holds for any theme or
@@ -55,23 +56,28 @@ const SURFACE_ONLY = `[data-region="toolbar"] > *, [data-region="sidebar-body"] 
 const NO_TAB_LAYERS = '[data-region="tab-edge"], [data-region="tab-key-shadow"] { visibility: hidden !important; }';
 const PATHS = ["/home/user", "/home/user/Downloads", "/home/user/Documents"];
 
-export type Layout = "floating-islands" | "default" | "compact" | "hairline-ledger";
+export type Layout = "floating-islands" | "default" | "hairline-ledger";
 /** macOS with the material, macOS without it, and Linux/Windows (never any). */
 type Platform = "mac-material" | "mac-opaque" | "opaque";
-export interface Cell { layout: Layout; platform: Platform; theme: "light" | "dark"; material: boolean }
+export interface Cell { layout: Layout; platform: Platform; theme: "light" | "dark"; material: boolean; compact: boolean }
 
 const CELLS: Cell[] = [
   ...(["floating-islands", "default"] as const).flatMap((layout) =>
     (["mac-material", "mac-opaque", "opaque"] as const).flatMap((platform) =>
-      (["light", "dark"] as const).map((theme) => ({ layout, platform, theme, material: platform === "mac-material" })))),
-  // Compact is Default's surfaces in tighter chrome (#1858): its own sizes,
-  // the platform paths are Default's.
-  ...(["light", "dark"] as const).map((theme): Cell => ({ layout: "compact", platform: "opaque", theme, material: false })),
+      (["light", "dark"] as const).map((theme) => ({ layout, platform, theme, material: platform === "mac-material", compact: false })))),
   // Hairline Ledger draws the same seam square, on its own paper (#1871).
-  ...(["light", "dark"] as const).map((theme): Cell => ({ layout: "hairline-ledger", platform: "opaque", theme, material: false })),
+  ...(["light", "dark"] as const).map((theme): Cell => ({ layout: "hairline-ledger", platform: "opaque", theme, material: false, compact: false })),
+  // Compact density (#1878) shrinks the title bar and tab of every layout:
+  // the seam follows the smaller tab. Default in both themes (the cells of
+  // the retired Compact layout, #1858), and the rounded and the square seam
+  // once each; the platform paths are those layouts' own.
+  ...(["light", "dark"] as const).map((theme): Cell => ({ layout: "default", platform: "opaque", theme, material: false, compact: true })),
+  { layout: "floating-islands", platform: "opaque", theme: "light", material: false, compact: true },
+  { layout: "hairline-ledger", platform: "opaque", theme: "dark", material: false, compact: true },
 ];
 const SHORT: Partial<Record<Layout, string>> = { "floating-islands": "islands", "hairline-ledger": "ledger" };
-const label = ({ layout, platform, theme }: Cell) => `${SHORT[layout] ?? layout}, ${platform}, ${theme}`;
+const label = ({ layout, platform, theme, compact }: Cell) =>
+  `${SHORT[layout] ?? layout}${compact ? " compact" : ""}, ${platform}, ${theme}`;
 
 async function openCell(page: Page, cell: Cell, { count = 3, active = Math.min(count - 1, 1), zoom = 100 } = {}): Promise<void> {
   await page.setViewportSize({ width: 1100, height: 600 });
@@ -80,6 +86,7 @@ async function openCell(page: Page, cell: Cell, { count = 3, active = Math.min(c
   }
   await seedSettings(page, {
     layoutTheme: cell.layout,
+    compact: cell.compact,
     theme: cell.theme,
     showWindowControls: true,
     // As on the real Mac capture: the integrated row holds the lone tab, since
@@ -103,6 +110,12 @@ async function openCell(page: Page, cell: Cell, { count = 3, active = Math.min(c
     await page.addStyleTag({ content: SIMULATED_MATERIAL });
   } else {
     await expect(page.locator("html")).not.toHaveAttribute("data-material");
+  }
+  if (cell.compact) {
+    // The lazily loaded density sheet has sized the bar (#1878): 30px, zoomed.
+    await expect(page.locator("html")).toHaveAttribute("data-density", "compact");
+    await expect.poll(() => page.locator('[data-region="titlebar"]').evaluate((bar) =>
+      Math.round(bar.getBoundingClientRect().height / ((parseFloat(document.documentElement.style.zoom) || 100) / 100)))).toBe(30);
   }
   // The lazily loaded marks have drawn the outline.
   await expect(page.locator('[data-region="tab-edge"] .tab-edge-stroke')).toHaveAttribute("d", /\S/);
@@ -553,10 +566,11 @@ async function framesOf(page: Page, cell: Cell, what: string, action: () => Prom
 const openTab = (page: Page) => () => pressShortcut(page, "t", { ctrlKey: true });
 const closeTab = (page: Page) => () => page.locator('.tab-viewport .tab.active .tab-close').click();
 
-/** The matrix's cells for one layout (one spec file each, #1866). */
-export function cellsFor(layout: Layout): Cell[] {
-  const cells = CELLS.filter((cell) => cell.layout === layout);
-  if (cells.length === 0) throw new Error(`no tab outline matrix cells for ${layout}`);
+/** The matrix's cells for one layout, or every layout at compact density
+ *  (one spec file each, #1866). */
+export function cellsFor(group: Layout | "compact"): Cell[] {
+  const cells = CELLS.filter((cell) => (group === "compact" ? cell.compact : !cell.compact && cell.layout === group));
+  if (cells.length === 0) throw new Error(`no tab outline matrix cells for ${group}`);
   return cells;
 }
 

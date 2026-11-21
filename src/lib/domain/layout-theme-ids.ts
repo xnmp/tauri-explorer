@@ -11,21 +11,18 @@
 export const DEFAULT_LAYOUT_ID = "default";
 export const FLOATING_ISLANDS_LAYOUT_ID = "floating-islands";
 export const HAIRLINE_LEDGER_LAYOUT_ID = "hairline-ledger";
-export const COMPACT_LAYOUT_ID = "compact";
 export const SOFT_CARDS_LAYOUT_ID = "soft-cards";
 
 export type BuiltinLayoutId =
   | typeof DEFAULT_LAYOUT_ID
   | typeof FLOATING_ISLANDS_LAYOUT_ID
   | typeof HAIRLINE_LEDGER_LAYOUT_ID
-  | typeof COMPACT_LAYOUT_ID
   | typeof SOFT_CARDS_LAYOUT_ID;
 
 const BUILTIN_IDS: readonly string[] = [
   DEFAULT_LAYOUT_ID,
   FLOATING_ISLANDS_LAYOUT_ID,
   HAIRLINE_LEDGER_LAYOUT_ID,
-  COMPACT_LAYOUT_ID,
   SOFT_CARDS_LAYOUT_ID,
 ];
 
@@ -40,14 +37,13 @@ export function isBuiltinLayoutId(value: unknown): value is BuiltinLayoutId {
  * #1871). The
  * title bar's tab seam layers and marks (`composables/tab-seam-marks.ts`)
  * draw it; the base's stylesheet colours them. Floating Islands rounds the
- * surface's top corners and adds a shadow; Default and Compact (Default's
- * surfaces, tighter chrome) are the flat case; Hairline Ledger is flat and
- * square, with no feet.
+ * surface's top corners and adds a shadow; Default is the flat case;
+ * Hairline Ledger is flat and square, with no feet. Compact density (#1878)
+ * only resizes the chrome, and the marks follow it.
  */
 const TAB_OWNS_WINDOW: ReadonlySet<BuiltinLayoutId> = new Set([
   FLOATING_ISLANDS_LAYOUT_ID,
   DEFAULT_LAYOUT_ID,
-  COMPACT_LAYOUT_ID,
   HAIRLINE_LEDGER_LAYOUT_ID,
 ]);
 
@@ -71,6 +67,23 @@ export function legacyLayoutThemeId(persisted: unknown): BuiltinLayoutId {
     blob.macOsVibrancy === true ||
     (typeof blob.windowsBackdrop === "string" && blob.windowsBackdrop !== "off");
   return islands ? FLOATING_ISLANDS_LAYOUT_ID : DEFAULT_LAYOUT_ID;
+}
+
+/** The retired Compact layout's id (#1548). Never a user layout: those ids
+ *  always end in `.css`. */
+const LEGACY_COMPACT_LAYOUT_ID = "compact";
+
+/**
+ * Fold the retired Compact layout into the `compact` density setting (#1878):
+ * `layoutTheme: "compact"` becomes Default with `compact: true`, which keeps
+ * its heights (Default's own horizontal spacing and 13px tab text replace
+ * the old layout's tighter ones). Applies to any blob, whatever its migration stamp, because a
+ * downgraded build can write the old id again. Returns the input itself when
+ * there is nothing to fold, so callers can tell whether it changed.
+ */
+export function foldLegacyCompactLayout<T extends { layoutTheme?: unknown; compact?: unknown }>(settings: T): T {
+  if (settings.layoutTheme !== LEGACY_COMPACT_LAYOUT_ID) return settings;
+  return { ...settings, layoutTheme: DEFAULT_LAYOUT_ID, compact: true };
 }
 
 /**

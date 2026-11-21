@@ -1,10 +1,11 @@
 /**
  * Layout theme application, eager half (#1306).
  *
- * Owns what first paint needs: the `data-layout` / `data-layout-base` root
- * attributes, the injected layout stylesheets, the structural arrangement
- * (Floating Islands hoists Miller columns and widens split dividers) and the
- * Details row height a layout asks for. Everything else — reading the
+ * Owns what first paint needs: the `data-layout` / `data-layout-base` /
+ * `data-density` root attributes, the injected layout stylesheets (the
+ * compact density sheet last, #1878), the structural arrangement (Floating
+ * Islands hoists Miller columns and widens split dividers) and the Details
+ * row height a layout asks for. Everything else — reading the
  * `layouts/` folder, metadata, resolution, fallback notices — lives in the
  * lazily loaded `layout-controller.svelte.ts`, which calls `commit` here.
  *
@@ -36,8 +37,11 @@ interface AppliedLayout {
   /** Applied layout id (Default after a fallback). */
   readonly id: string;
   readonly base: BuiltinLayoutId;
-  /** Stylesheets in cascade order: lazy built-in base, then user CSS. */
+  /** Stylesheets in cascade order: lazy built-in base, user CSS, then the
+   *  compact density sheet when `compact`. */
   readonly sheets: readonly string[];
+  /** Compact density (#1878): the root carries `data-density="compact"`. */
+  readonly compact: boolean;
   /** Details row height in CSS px. */
   readonly rowHeight: number;
 }
@@ -51,10 +55,11 @@ const SHEET_ATTR = "data-layout-sheet";
 function readCache(): AppliedLayout | null {
   const raw = loadPersisted<unknown>(CACHE_KEY, null, MAX_CACHED_SHEET_CHARS * 2);
   if (typeof raw !== "object" || raw === null) return null;
-  const { id, base, sheets, rowHeight } = raw as Record<string, unknown>;
+  const { id, base, sheets, rowHeight, compact } = raw as Record<string, unknown>;
   if (typeof id !== "string" || !isBuiltinLayoutId(base) || typeof rowHeight !== "number") return null;
   if (!Array.isArray(sheets) || !sheets.every((sheet) => typeof sheet === "string")) return null;
-  return { id, base, sheets, rowHeight };
+  // A cache written before #1878 has no density: it was never compact.
+  return { id, base, sheets, rowHeight, compact: compact === true };
 }
 
 function writeCache(layout: AppliedLayout): void {
@@ -69,6 +74,8 @@ function paint(layout: AppliedLayout): HTMLStyleElement[] {
   const root = document.documentElement;
   root.setAttribute("data-layout", layout.id);
   root.setAttribute("data-layout-base", layout.base);
+  if (layout.compact) root.setAttribute("data-density", "compact");
+  else root.removeAttribute("data-density");
   const previous = document.querySelectorAll(`style[${SHEET_ATTR}]`);
   const next = layout.sheets.map((css) => {
     const style = document.createElement("style");
@@ -87,15 +94,17 @@ const loadController = () => (controller ??= import("./layout-controller.svelte"
 
 function createLayoutStore() {
   const requested = settingsStore.layoutTheme;
+  const compact = settingsStore.compact === true;
   const cached = readCache();
   const initial: AppliedLayout =
-    cached?.id === requested
+    cached?.id === requested && cached?.compact === compact
       ? cached
       : {
           id: requested,
           base: isBuiltinLayoutId(requested) ? requested : DEFAULT_LAYOUT_ID,
           sheets: [],
           rowHeight: 32,
+          compact,
         };
   let applied = $state.raw(initial);
 
@@ -107,6 +116,10 @@ function createLayoutStore() {
      *  when the sidebar is hidden, and split dividers widen into gaps. */
     get islands() {
       return applied.base === FLOATING_ISLANDS_LAYOUT_ID;
+    },
+    /** Compact density is painted (#1878): tighter chrome, rows and tiles. */
+    get compact() {
+      return applied.compact;
     },
     /** The active tab owns the window: the title bar draws its tab seam (`tabOwnsWindow`). */
     get tabSeam() {
@@ -122,7 +135,7 @@ function createLayoutStore() {
     },
     /** List row (slot) height, for classic and column-flow List (#1465). */
     get listRowHeight() {
-      return listRowHeight(settingsStore.state.rowThumbnails);
+      return listRowHeight(settingsStore.state.rowThumbnails, applied.compact);
     },
     /** Apply a resolved layout. Returns the injected style elements. */
     commit(layout: AppliedLayout): HTMLStyleElement[] {
@@ -144,7 +157,8 @@ function createLayoutStore() {
       return $effect.root(() => {
         $effect(() => {
           const id = settingsStore.layoutTheme;
-          void loadController().then((c) => c.applyLayout(id));
+          const compact = settingsStore.compact === true;
+          void loadController().then((c) => c.applyLayout(id, compact));
         });
       });
     },

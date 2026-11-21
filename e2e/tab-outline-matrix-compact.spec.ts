@@ -1,5 +1,7 @@
 /**
- * The tab outline matrix (`./tab-outline-matrix.ts`) for the compact layout.
+ * The tab outline matrix (`./tab-outline-matrix.ts`) at compact density
+ * (#1878): Default, Floating Islands and Hairline Ledger with the compact
+ * setting on.
  * One spec file per layout, so CI shards can place them apart; the tests are
  * registered here because Playwright selects a test by the file that calls
  * `test()` (#1866).

@@ -10,6 +10,7 @@ const native = vi.hoisted(() => ({
 vi.mock("$lib/api/ai-agent", () => native);
 
 import { createPluginContext } from "$lib/plugins/api";
+import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 import type { AgentRequest } from "$lib/domain/ai-agent";
 
 /** A native job that settles only when the test says so. */
@@ -30,12 +31,21 @@ function plugin(id = "acme.columns") {
   disposers.push(handle.dispose);
   return handle;
 }
+/** The panes open in this window's tabs. */
+let openPanes: string[] = [];
 beforeEach(() => {
+  openPanes = ["/home/u/elsewhere", "/home/u/invoices/"];
+  vi.spyOn(windowTabsManager, "getAllExplorers").mockImplementation(
+    () => openPanes.map((currentPath) => ({ currentPath })) as unknown as ReturnType<typeof windowTabsManager.getAllExplorers>,
+  );
   native.cancelAgent.mockReset().mockResolvedValue(true);
   native.runAgent.mockReset();
   native.describeAgent.mockReset();
 });
-afterEach(() => { for (const dispose of disposers.splice(0)) dispose(); });
+afterEach(() => {
+  for (const dispose of disposers.splice(0)) dispose();
+  vi.restoreAllMocks();
+});
 
 describe("ctx.agent", () => {
   it("passes the request through unchanged with a host-generated, plugin-scoped ID", async () => {
@@ -72,6 +82,20 @@ describe("ctx.agent", () => {
     const cancelled = { code: "cancelled", message: "Text request was cancelled" };
     job.reject(cancelled);
     await expect(run).rejects.toBe(cancelled);
+  });
+
+  it("runs only in a folder open in one of this window's panes", async () => {
+    native.runAgent.mockResolvedValue({ text: "{}", model: "haiku" });
+    const { ctx } = plugin();
+    for (const folder of ["/home/u/.ssh", "/home/u", "/home/u/invoices/2026", "/"]) {
+      await expect(ctx.agent!.run({ ...request, folder })).rejects.toMatchObject({ code: "folder_not_open" });
+    }
+    expect(native.runAgent).not.toHaveBeenCalled();
+    // Trailing separators do not matter; the pane list is read at run time.
+    await expect(ctx.agent!.run(request)).resolves.toMatchObject({ text: "{}" });
+    openPanes = ["/home/u/elsewhere"];
+    await expect(ctx.agent!.run(request)).rejects.toMatchObject({ code: "folder_not_open" });
+    expect(native.runAgent).toHaveBeenCalledTimes(1);
   });
 
   it("never starts a job for an already-aborted signal", async () => {

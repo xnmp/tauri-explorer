@@ -55,14 +55,18 @@ pasted into the prompt. Code: `src-tauri/src/ai/` (`Service::run_agent`,
 `src/lib/api/ai-agent.ts`, `src/lib/domain/ai-agent.ts`; plugin SDK `ctx.agent`
 (capability `folderAgent`).
 
-**Commands** (window callers, `window:<label>`, shared with `ai_text_*`):
+**Commands** (per-window agent callers, `agent:window:<label>`, separate from
+the `window:<label>` caller of `ai_text_*`):
 
 - `ai_agent_describe` → `{version:1, enabled, available, configurationRevision, context?, models, defaultModel?, readScope?, isolation?, maxTimeoutMs, maxConcurrent, error?}`. It runs only the CLI's `--help` probe and is bounded to 5 s.
-- `ai_agent_run {requestId, folder, instructions, input, model?, maxOutputTokens, timeoutMs?, expectedConfigurationRevision?}` → `{text, model, usage?}`.
+- `ai_agent_run {requestId, folder, instructions, input, model?, maxOutputTokens, timeoutMs?, maxTurns?, expectedConfigurationRevision?}` → `{text, model, usage?}`.
 - `ai_agent_cancel {requestId}` → `true`.
 
 Errors are the shared `{code, message}`. Agent-specific codes are
-`unsupported` (no CLI connection) and `not_found` (folder missing).
+`unsupported` (no CLI connection), `not_found` (folder missing),
+`configuration_changed` (see Limits), `timed_out` with a folder message (folder
+resolution did not return in time) and, from the plugin SDK only,
+`folder_not_open`.
 
 **Connection.** Only the CLI transports (`claude-code-cli`, `codex-cli`) can
 run agents. The default profile is used when it is a CLI; otherwise the first
@@ -79,22 +83,44 @@ the text adapter's ([CLI text isolation](shared-ai-cli-text-isolation.md)).
 - Codex: `gpt-6-luna`, the host's default Codex model, which Codex's model catalog describes as its "fast and affordable" model.
 - The profile's own model is always accepted as well. Any other model is refused as `invalid_request`.
 
-**Folder.** It must be an absolute path to an existing local directory; it is
-canonicalized (symlinks resolved), and the canonical directory becomes the
-CLI's working directory. The folder path is not passed in argv. Refused:
+**Folder.** Two layers decide where a job may run.
 
-- relative paths;
-- virtual `<scheme>://` paths, `trash://` included;
-- missing paths (`not_found`) and anything that is not a directory;
-- trash storage: `$XDG_DATA_HOME/Trash`, `.Trash`, `.Trash-<uid>`, `$Recycle.Bin`;
-- the filesystem root, and the home folder itself, which holds credential dotfiles (subfolders are fine).
+1. *Plugin SDK* (`src/lib/plugins/plugin-agent.ts`): `ctx.agent.run` refuses
+   (`folder_not_open`) a folder that is not the path of a pane open in one of
+   this window's tabs (`windowTabsManager.getAllExplorers()`, compared with
+   `sameDirectory`). It is checked once, when the job starts; navigating away
+   later does not cancel it (the plugin's abort signal does). It is a
+   frontend check that stops a plugin from aiming the agent at a folder the
+   user is not looking at. It is not a security boundary against code
+   calling `ai_agent_run` directly, since any code in the window can invoke
+   the command.
+2. *Native policy* (`agent_folder.rs`, `FolderPolicy`). It binds every
+   caller and is the boundary. The folder must be an absolute path to an
+   existing directory. It is canonicalized (symlinks resolved), the rules
+   below are applied to the canonical path, and the canonical directory
+   becomes the CLI's working directory; it is not passed in argv. Refused:
+   - relative paths;
+   - virtual `<scheme>://` paths, `trash://` included;
+   - missing paths (`not_found`) and anything that is not a directory;
+   - trash storage: `$XDG_DATA_HOME/Trash`, `.Trash`, `.Trash-<uid>`, `$Recycle.Bin`;
+   - the filesystem root, the home folder, and every ancestor of home (`/home`, `/Users`, `C:\Users`);
+   - any folder inside home with a path component starting with `.` (`~/.ssh`, `~/.config/…`, `~/src/.git`);
+   - OS system trees, with everything beneath them. On Unix: `/proc`, `/sys`, `/dev`, `/etc`, `/run`, `/boot`, `/usr`, `/bin`, `/sbin`, `/lib*`, `/var`, `/opt`, `/snap`, `/nix`. On macOS, also `/System`, `/Library`, `/private`, `/Applications`. On Windows: `%SystemRoot%`, both Program Files, `ProgramData`, `%APPDATA%` and `%LOCALAPPDATA%`. A tree that contains home (Fedora Atomic's `/var/home`) does not refuse folders inside home;
+   - Windows network shares (`\\server\share`, `\\?\UNC\…`).
+
+   The rules are a pure, table-tested function (`FolderPolicy::refusal`).
+   Unix network mounts (NFS, SMB, sshfs) are not detected and are allowed.
+   Resolution runs in its own pool of 2 blocking workers with a 5 s timeout,
+   separate from the settings and text workers. A hung mount therefore fails
+   the job as `timed_out` and holds only a folder worker until the OS
+   returns. It never delays text requests or settings.
 
 **Isolation actually achieved.**
 
 | | Claude Code CLI | Codex CLI |
 | --- | --- | --- |
 | Tools | `--tools Read,Glob,Grep`; `--disallowedTools mcp__*,Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch`. Every other text isolation flag is kept: `--restricted`, `--safe-mode`, `--setting-sources ""`, `--strict-mcp-config`, `--permission-prompts none`, `--no-session-persistence`, `--disable-slash-commands`, `--no-chrome` and a fixed `--system-prompt`. | Codex has no file-read tool; it reads with its shell tool. Every other tool, hook, agent, plugin, connector and web-search feature stays disabled, `approval_policy=never`, and `project_doc_max_bytes=0` (the folder's AGENTS.md is not loaded). |
-| Reads | **Confined to the folder, enforced by the CLI** (`readScope:"folder"`). `--restricted` "confines the file tools to the working directories". Verified with Claude Code 2.1.330 on Linux: absolute paths, `../` paths, a symlinked file and a symlinked directory pointing outside, and Grep/Glob with an outside path were all refused ("… is outside …; --restricted confines the file tools to the working directory"). Recursive Grep/Glob inside the folder did not follow those symlinks. | **Requested through a permission profile** (`readScope:"folderRequested"`): `default_permissions=tauri_explorer_folder_agent` with filesystem `{':root'='deny', ':minimal'='read', ':workspace_roots'='read', '<codex install dir>'='read'}` and `network.enabled=false`. `--sandbox` is not passed, because it would select the legacy policy. The Codex install directory must be readable because the Linux sandbox re-executes Codex. Verified with codex-cli 0.169.0 on Linux (bubblewrap): files outside the folder and both symlinks were "No such file or directory", `~` listed empty, and inside reads worked. Permission profiles are a Codex **beta**, and a version without them ignores these keys. It then falls back to the read-only sandbox, which can **read the whole disk**; the host cannot detect that from `--help`. macOS (Seatbelt) and Windows enforce profiles with their own sandboxes. Codex documents that it refuses to run a command it cannot sandbox, but this host has not verified that on macOS or Windows. |
+| Reads | **Confined to the folder, enforced by the CLI** (`readScope:"folder"`). `--restricted` "confines the file tools to the working directories". Verified with Claude Code 2.1.330 on Linux: absolute paths, `../` paths, a symlinked file and a symlinked directory pointing outside, and Grep/Glob with an outside path were all refused ("… is outside …; --restricted confines the file tools to the working directory"). Recursive Grep/Glob inside the folder did not follow those symlinks. | **Requested through a permission profile** (`readScope:"folderRequested"`): `default_permissions=tauri_explorer_folder_agent` with filesystem `{':root'='deny', ':minimal'='read', ':workspace_roots'='read', '<codex install dir>'='read'}` and `network.enabled=false`. `--sandbox` is not passed, because it would select the legacy policy. Codex's own files must be readable because the Linux sandbox re-executes Codex. The grant is the narrowest the install allows: the native executable file itself; the `@openai/codex` package directory for an npm `codex.js` launcher; `node_modules/@openai/codex` beside a Windows npm shim. Any other launcher, a grant that is the root, home or an ancestor of home, and a path with quotes or cmd.exe metacharacters make `describe` report agents unavailable with the reason. The folder rules about dot-folders and system trees do not apply to this grant: an install under `~/.nvm` or `/usr/local` is ordinary, and only its own files are granted. Verified with 0.169.0 on Linux for both the vendored native binary and the npm launcher. Verified with codex-cli 0.169.0 on Linux (bubblewrap): files outside the folder and both symlinks were "No such file or directory", `~` listed empty, and inside reads worked. Permission profiles are a Codex **beta**, and a version without them ignores these keys. It then falls back to the read-only sandbox, which can **read the whole disk**; the host cannot detect that from `--help`. macOS (Seatbelt) and Windows enforce profiles with their own sandboxes. Codex documents that it refuses to run a command it cannot sandbox, but this host has not verified that on macOS or Windows. |
 | Writes, shell, network | No write, edit or shell tool exists in the session. Web tools are denied. | Commands run in the sandbox with no writable path and no network. `approval_policy=never` refuses any escalation. |
 | Output check | `permission_denials` are allowed (a refused outside read is confinement working). | `command_execution` items are allowed. Any other tool item (`file_change`, `mcp_tool_call`, `web_search`, …) fails the job as `invalid_response`. |
 
@@ -103,10 +129,14 @@ CLI's working directory. The folder path is not passed in argv. Refused:
 **Limits.**
 
 - Deadline: `timeoutMs` covers the whole job, queueing included. It defaults to 120 s and is capped at 300 s; larger values are clamped, and 0 is refused. The profile's 1–45 s text timeout does not apply.
-- Concurrency: at most 2 agent jobs run at once across all callers, in their own pool, so titles never wait behind agents. Others queue within their deadline.
-- Quota: admission is shared with text requests, so the per-caller limit (8 live), the queue bounds and the cancellation records cover both.
+- Concurrency: at most 2 agent jobs run at once across all callers, in their own pool; others queue within their deadline. A running agent job never holds a text slot. Agent jobs do still briefly take a shared settings worker to read the configuration snapshot, and the global admission bounds (36 live, 32 queued) are shared, so text and agents are not fully independent.
+- Quota: agent jobs have their own caller identity per window (`agent:window:<label>`) and their own per-caller limit of 6 (2 running + 4 queued). They never use a window's text quota of 8.
+- Turns: Claude Code gets `--max-turns` only when its `--help` lists the flag (2.1.330 does not). The limit is the request's `maxTurns` (1–40), else 40. Codex has no turn or budget flag. For a CLI without one, the only bound is the deadline (≤ 300 s).
+- Configuration changes: saving the AI settings (enable/disable, profile edits, credentials) or another process's write seen by the config watcher announces a new configuration revision. Live and queued agent jobs pinned to an older revision are cancelled with `configuration_changed`, and their process trees are killed.
+- Cancellation records: cancelling a live job stops it, and cancelling a recently finished one does nothing; neither leaves a record. Only a cancel for a request ID not yet seen is recorded (120 s), so that a cancel that overtakes its own `run` still refuses that run, and the refusal consumes the record. Cancelling on every navigation therefore cannot fill a caller's records (64 per caller).
 - Sizes: instructions plus input are at most 64 KiB, and `maxOutputTokens` is 1–16384 (a prompt hint). The final text is at most 256 KiB, and CLI stdout is bounded to 32 MiB.
-- Cancellation (`ai_agent_cancel`, a closed window, the deadline, `cancel_all` at exit) kills the CLI's owned process tree, exactly like text requests. The agent slot is released only after the tree has ended.
+- Cancellation (`ai_agent_cancel`, a closed window, the deadline, a configuration change, `cancel_all` at exit) kills the CLI's owned process tree, exactly like text requests: on Unix, a SIGKILL to the process group; on Windows, the job object. The agent slot is released only after that kill.
+- Residual risk: on Unix, a descendant that leaves the process group (`setsid`/`setpgid`) escapes the group kill. On Linux, Codex's bubblewrap sandbox runs with `--die-with-parent` and does not start a new session (from the 0.169.0 binary's strings). Host tests cover a CLI child and grandchild, not a real sandboxed Codex grandchild. On macOS, whether Seatbelt-sandboxed Codex commands stay in the group has not been checked.
 
 **Privacy.** The provider sees whatever files the agent reads, as well as the
 instructions and input. Anything readable in the folder (subfolders included)

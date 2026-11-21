@@ -109,12 +109,13 @@ plugin, #1886) uses capability `folderAgent`:
 agent?: {
   describe(): Promise<AgentDescription>;   // available, models, defaultModel, readScope, isolation, limits
   run(request: {
-    folder: string;                         // absolute local directory
+    folder: string;                         // a folder open in one of this window's panes
     instructions: string;                   // e.g. "For every file, find the invoice date; reply with JSON keyed by file name"
     input: string;                          // data, e.g. the file names, framed as JSON for the model
     model?: string;                         // one of describe().models; default = the cheapest
     maxOutputTokens: number;                // 1–16384
     timeoutMs?: number;                     // default 120 s, capped at 300 s
+    maxTurns?: number;                      // 1–40 (default 40), on a CLI that lists a turn limit
     expectedConfigurationRevision?: number;
   }, signal?: AbortSignal): Promise<{ text: string; model: string; usage?: { inputTokens?: number; outputTokens?: number } }>;
 }
@@ -126,7 +127,10 @@ needs; no file content goes into the prompt. The host generates the request
 ID (scoped to the plugin), aborting `signal` cancels the job, deactivation
 cancels every job still running, and native errors (`{code, message}`, for
 example `unsupported` when only an HTTP connection is configured) reject
-unchanged. Pair it with `suppliesLength: false` so neither Length nor its sort
+unchanged. `run` refuses with `folder_not_open` a folder that no pane of this
+window shows. Native then refuses home, its ancestors, dot-folders inside home,
+system trees, trash and network shares, and cancels jobs with
+`configuration_changed` when the AI settings change. Pair it with `suppliesLength: false` so neither Length nor its sort
 starts a paid job. Isolation per CLI, limits and the privacy note:
 [shared AI services contract § Folder agent](shared-ai-services-contracts.md#folder-agent).
 

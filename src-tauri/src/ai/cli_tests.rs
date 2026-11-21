@@ -9,7 +9,7 @@ use std::{
     ffi::OsString,
     fs,
     path::{Path, PathBuf},
-    sync::{atomic::AtomicBool, Arc, Mutex},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -52,14 +52,7 @@ fn text_request() -> Request {
     serde_json::from_value(json!({"requestId":"x","instructions":INSTRUCTIONS,"input":INPUT,"maxOutputTokens":64,"timeoutMs":2000})).unwrap()
 }
 pub(super) fn control(deadline: Duration) -> Arc<Control> {
-    let now = Instant::now();
-    Arc::new(Control {
-        cancelled: AtomicBool::new(false),
-        active: AtomicBool::new(false),
-        deadline: Mutex::new(now + deadline),
-        started: now,
-        owner: Arc::new(|| false),
-    })
+    Control::new(deadline, Arc::new(|| false))
 }
 
 /// A fixture environment: a saved-login home plus every credential/routing

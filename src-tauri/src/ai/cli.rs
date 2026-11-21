@@ -285,8 +285,15 @@ impl Cli {
     /// The complete argv for a folder-agent job (#1884). Like
     /// [`Self::isolation_args`] it holds no request text, and no folder path:
     /// the folder is the working directory. `codex_runtime` is the Codex
-    /// installation directory granted read access in the profile.
-    pub(super) fn agent_args(self, model: &str, codex_runtime: &str) -> Vec<String> {
+    /// installation path granted read access in the profile. `max_turns` is
+    /// passed only when the installed CLI lists a turn limit
+    /// ([`CliOptions::max_turns`]); Codex has none.
+    pub(super) fn agent_args(
+        self,
+        model: &str,
+        codex_runtime: &str,
+        max_turns: Option<u32>,
+    ) -> Vec<String> {
         match self {
             Self::Claude => {
                 let mut args = self.isolation_args(model);
@@ -297,6 +304,9 @@ impl Cli {
                 set(&mut args, "--tools", CLAUDE_AGENT_TOOLS);
                 set(&mut args, "--disallowedTools", CLAUDE_AGENT_DENIED);
                 set(&mut args, "--system-prompt", CLAUDE_AGENT_SYSTEM_PROMPT);
+                if let Some(turns) = max_turns {
+                    args.extend(["--max-turns".into(), turns.to_string()]);
+                }
                 args
             }
             Self::Codex => {
@@ -395,24 +405,54 @@ pub(super) fn compose_agent_prompt(cli: Cli, request: &AgentRequest) -> String {
     )
 }
 
-/// The Codex installation directory its Linux sandbox must be able to read:
-/// the npm package root for a `codex.js` launcher, else the executable's own
-/// directory. Refused when the path cannot travel safely in a TOML literal
-/// string through cmd.exe.
-pub(super) fn codex_runtime_dir(executable: &Path) -> Result<String> {
+/// The part of the Codex installation its Linux sandbox must be able to read
+/// (it re-executes Codex inside the sandbox), as narrow as the install
+/// allows: the native executable file itself; for an npm `codex.js`
+/// launcher, its `@openai/codex` package directory (the launcher starts a
+/// vendored binary inside it); for a Windows npm shim, the
+/// `node_modules/@openai/codex` package beside it. Never the filesystem root,
+/// `home` or a folder containing it, and never a path that cannot travel
+/// safely in a TOML literal string through cmd.exe. The folder policy's
+/// dot-folder and system-tree rules do not apply: a CLI under `~/.nvm` or
+/// `/usr/local` is an ordinary install, and the grant is its own files only.
+pub(super) fn codex_runtime_grant(executable: &Path, home: Option<&Path>) -> Result<String> {
     let resolved = dunce::canonicalize(executable)
         .map_err(|_| unavailable("Codex CLI executable cannot be resolved"))?;
-    let is_script = resolved
+    let extension = resolved
         .extension()
         .and_then(|e| e.to_str())
-        .is_some_and(|e| matches!(e, "js" | "cjs" | "mjs"));
-    let dir = if is_script {
-        resolved.parent().and_then(Path::parent)
-    } else {
-        resolved.parent()
+        .map(str::to_ascii_lowercase);
+    let is_package = |dir: &Path| {
+        let mut names = dir.components().rev().filter_map(|c| match c {
+            std::path::Component::Normal(name) => name.to_str(),
+            _ => None,
+        });
+        names.next() == Some("codex") && names.next() == Some("@openai")
+    };
+    let grant = match extension.as_deref() {
+        Some("js" | "cjs" | "mjs") => resolved
+            .parent()
+            .and_then(Path::parent)
+            .filter(|root| is_package(root))
+            .map(Path::to_path_buf)
+            .ok_or_else(|| {
+                unavailable("Codex CLI launcher is not inside an @openai/codex package, so its runtime cannot be granted to the agent sandbox")
+            })?,
+        Some("cmd" | "bat" | "ps1") => resolved
+            .parent()
+            .map(|dir| dir.join("node_modules").join("@openai").join("codex"))
+            .filter(|root| root.is_dir())
+            .ok_or_else(|| {
+                unavailable("Codex CLI shim has no node_modules/@openai/codex package beside it, so its runtime cannot be granted to the agent sandbox")
+            })?,
+        _ => resolved,
+    };
+    if grant.parent().is_none() || home.is_some_and(|home| home.starts_with(&grant)) {
+        return Err(unavailable(
+            "Codex CLI resolves to the filesystem root or the home folder, which cannot be granted to the agent sandbox; reinstall it",
+        ));
     }
-    .ok_or_else(|| unavailable("Codex CLI installation directory cannot be resolved"))?;
-    let text = dir
+    let text = grant
         .to_str()
         .filter(|t| !t.chars().any(|c| "'\"%!^&|<>\r\n".contains(c) || c.is_control()))
         .ok_or_else(|| {
@@ -444,6 +484,9 @@ fn home(env: Env) -> Option<PathBuf> {
         .or_else(|| env("USERPROFILE"))
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
+}
+fn canonical_home(env: Env) -> Option<PathBuf> {
+    home(env).map(|h| dunce::canonicalize(&h).unwrap_or(h))
 }
 
 /// Locations where an administrator or organisation delivers policy that the
@@ -717,7 +760,20 @@ type ProbeKey = (Cli, PathBuf, u64, Option<SystemTime>);
 /// A desktop has a handful of CLI installs; the bound only stops unbounded
 /// growth from repeated upgrades. The oldest probe is evicted first.
 const PROBE_CACHE_LIMIT: usize = 64;
-type Probes = HashMap<ProbeKey, (Instant, Result<()>)>;
+type Probes = HashMap<ProbeKey, (Instant, Result<CliOptions>)>;
+/// Optional limits the installed CLI lists in its `--help`. Each is passed
+/// only when listed; an unlisted flag would make the CLI refuse the run.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct CliOptions {
+    /// Claude Code `--max-turns` (some versions do not list it).
+    pub max_turns: bool,
+}
+pub(super) fn optional_flags(cli: Cli, help: &str) -> CliOptions {
+    let listed = help_flags(help);
+    CliOptions {
+        max_turns: cli == Cli::Claude && listed.contains("--max-turns"),
+    }
+}
 static PROBES: OnceLock<Mutex<Probes>> = OnceLock::new();
 
 /// The installed CLI's identity: its resolved file, size and modification time.
@@ -731,7 +787,7 @@ fn identity(cli: Cli, executable: &Path) -> Option<ProbeKey> {
 /// Runs `--help` once per executable identity and refuses a CLI that lacks a
 /// required isolation flag. Only a completed listing is cached; spawn
 /// failures, timeouts and failed listings are retried next time.
-fn probe(cli: Cli, executable: &Path, env: Env, stop: &dyn Fn() -> bool) -> Result<()> {
+fn probe(cli: Cli, executable: &Path, env: Env, stop: &dyn Fn() -> bool) -> Result<CliOptions> {
     let key = identity(cli, executable);
     let cache = PROBES.get_or_init(Default::default);
     if let Some((_, found)) = key
@@ -782,7 +838,7 @@ fn probe(cli: Cli, executable: &Path, env: Env, stop: &dyn Fn() -> bool) -> Resu
         String::from_utf8_lossy(&output.stderr)
     );
     let outcome = match missing_flags(cli, &help) {
-        missing if missing.is_empty() => Ok(()),
+        missing if missing.is_empty() => Ok(optional_flags(cli, &help)),
         missing => Err(unavailable(&format!(
             "{} lacks the options needed to run text requests without tools, hooks or user configuration: {}. Update the CLI or use an HTTP language-model profile.",
             cli.label(),
@@ -808,6 +864,14 @@ fn probe(cli: Cli, executable: &Path, env: Env, stop: &dyn Fn() -> bool) -> Resu
 /// Availability without generation: model, managed policy, executable and the
 /// help probe. Only `--help` is ever started here.
 pub(super) fn check(profile: &Profile, env: Env, stop: &dyn Fn() -> bool) -> Result<PathBuf> {
+    check_options(profile, env, stop).map(|(executable, _)| executable)
+}
+/// [`check`] plus the optional limits the installed CLI lists.
+fn check_options(
+    profile: &Profile,
+    env: Env,
+    stop: &dyn Fn() -> bool,
+) -> Result<(PathBuf, CliOptions)> {
     let (cli, configured) = Cli::of(&profile.connection)?;
     validate_cli_model(&profile.model)?;
     if let Some(source) = managed_policy(cli, env) {
@@ -817,8 +881,17 @@ pub(super) fn check(profile: &Profile, env: Env, stop: &dyn Fn() -> bool) -> Res
         )));
     }
     let executable = executable(cli, configured)?;
-    probe(cli, &executable, env, stop)?;
-    Ok(executable)
+    let options = probe(cli, &executable, env, stop)?;
+    Ok((executable, options))
+}
+/// Agent availability (#1884): [`check`], plus for Codex the runtime grant
+/// its sandbox needs. Only `--help` is ever started here.
+pub(super) fn check_agent(profile: &Profile, env: Env, stop: &dyn Fn() -> bool) -> Result<()> {
+    let executable = check(profile, env, stop)?;
+    if matches!(profile.connection, Connection::Codex { .. }) {
+        codex_runtime_grant(&executable, canonical_home(env).as_deref())?;
+    }
+    Ok(())
 }
 
 /// One isolated, owned CLI run. Returns validated final text only.
@@ -828,7 +901,7 @@ pub(super) fn run(
     control: &Control,
     env: Env,
 ) -> Result<(String, Option<String>, Option<Usage>)> {
-    let (cli, executable) = checked(profile, control, env)?;
+    let (cli, executable, _) = checked(profile, control, env)?;
     // `work` is the child's empty working directory; the prompt file lives
     // beside it, never inside it.
     let root = tempfile::Builder::new()
@@ -870,11 +943,12 @@ pub(super) fn run_agent(
     env: Env,
 ) -> Result<(String, Option<Usage>)> {
     validate_cli_model(model)?;
-    let (cli, executable) = checked(profile, control, env)?;
+    let (cli, executable, options) = checked(profile, control, env)?;
     let runtime = match cli {
-        Cli::Codex => codex_runtime_dir(&executable)?,
+        Cli::Codex => codex_runtime_grant(&executable, canonical_home(env).as_deref())?,
         Cli::Claude => String::new(),
     };
+    let max_turns = options.max_turns.then(|| agent_turns(request));
     // The prompt file lives outside the folder, which the CLI can read.
     let root = tempfile::Builder::new()
         .prefix("tauri-explorer-cli-agent-")
@@ -883,7 +957,7 @@ pub(super) fn run_agent(
     let output = owned_run(
         cli,
         &executable,
-        cli.agent_args(model, &runtime),
+        cli.agent_args(model, &runtime, max_turns),
         folder,
         (root.path(), &compose_agent_prompt(cli, request)),
         (MAX_AGENT_STDOUT, "Agent CLI stopped"),
@@ -899,13 +973,13 @@ pub(super) fn run_agent(
 
 /// Availability, policy and the help probe. A probe interrupted by
 /// cancellation or the deadline reports that, not a start failure.
-fn checked(profile: &Profile, control: &Control, env: Env) -> Result<(Cli, PathBuf)> {
+fn checked(profile: &Profile, control: &Control, env: Env) -> Result<(Cli, PathBuf, CliOptions)> {
     control.check()?;
     let (cli, _) = Cli::of(&profile.connection)?;
-    let executable = check(profile, env, &|| control.check().is_err())
+    let (executable, options) = check_options(profile, env, &|| control.check().is_err())
         .map_err(|error| control.check().err().unwrap_or(error))?;
     control.check()?;
-    Ok((cli, executable))
+    Ok((cli, executable, options))
 }
 
 /// Starts the CLI under owned supervision with the prompt on stdin (from a

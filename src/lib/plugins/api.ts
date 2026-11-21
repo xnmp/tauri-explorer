@@ -478,7 +478,7 @@ export function createPluginContext(
     if (id !== pluginId && (!name || name.includes("."))) throw new Error(`${kind} ${id} must be named ${pluginId}.<name>`);
     return id;
   };
-  const pluginAgent = createPluginAgent(pluginId, () => disposed, (error) => void log(error, "agent cancel"));
+  const pluginAgent = createPluginAgent(pluginId, () => disposed, (error) => void log(error, "agent cancel"), () => windowTabsManager.getAllExplorers().map((explorer) => explorer.currentPath));
   disposers.add(pluginAgent.cancelAll);
   const storage = createPluginStorage(pluginId);
   // Accepted jobs outlive the plugin, but their Retry runs its code: drop it.

@@ -11,10 +11,11 @@ use credentials::{OsSecrets, SecretStore};
 use domain::*;
 pub use domain::{AgentDescribe, AgentResult, Describe, ServiceError, TextResult};
 use serde_json::{json, Value};
+use std::path::PathBuf;
 use std::{
     collections::HashMap,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex, OnceLock,
     },
     time::{Duration, Instant},
@@ -23,15 +24,39 @@ pub(crate) use storage::{migrate_summary, write_trace_config};
 use tauri::Emitter;
 
 type OwnerCheck = Arc<dyn Fn() -> bool + Send + Sync>;
+/// No configuration revision: text jobs, and agent jobs before their snapshot.
+const UNPINNED: u64 = u64::MAX;
 pub(super) struct Control {
     cancelled: AtomicBool,
+    /// Set when the configuration an agent job was pinned to changed (#1884).
+    superseded: AtomicBool,
+    /// The configuration revision an agent job snapshotted, or [`UNPINNED`].
+    pinned: AtomicU64,
     active: AtomicBool,
     deadline: Mutex<Instant>,
     started: Instant,
     owner: OwnerCheck,
 }
 impl Control {
+    pub(super) fn new(timeout: Duration, owner: OwnerCheck) -> Arc<Self> {
+        let now = Instant::now();
+        Arc::new(Self {
+            cancelled: AtomicBool::new(false),
+            superseded: AtomicBool::new(false),
+            pinned: AtomicU64::new(UNPINNED),
+            active: AtomicBool::new(false),
+            deadline: Mutex::new(now + timeout),
+            started: now,
+            owner,
+        })
+    }
     fn check(&self) -> Result<()> {
+        if self.superseded.load(Ordering::Acquire) {
+            return Err(ServiceError::new(
+                "configuration_changed",
+                "AI settings changed while the agent job was queued or running; it was cancelled",
+            ));
+        }
         if self.cancelled.load(Ordering::Acquire) || (self.owner)() {
             return Err(ServiceError::new("cancelled", "Text request was cancelled"));
         }
@@ -54,13 +79,60 @@ impl Control {
     fn cancel(&self) {
         self.cancelled.store(true, Ordering::Release);
     }
+    /// Cancels the job when it is pinned to a revision other than `observed`.
+    fn supersede_unless(&self, observed: u64) {
+        let pinned = self.pinned.load(Ordering::SeqCst);
+        if pinned != UNPINNED && observed != UNPINNED && pinned != observed {
+            self.superseded.store(true, Ordering::Release);
+        }
+    }
 }
+type JobKey = (String, String);
+/// How long a cancellation (or a finished job) is remembered.
+const RECORD_TTL: Duration = Duration::from_secs(120);
+/// Bound on remembered finished jobs; past it, a late cancel is treated as
+/// one for an unknown job.
+const FINISHED_LIMIT: usize = 4096;
 #[derive(Default)]
 struct Registry {
-    live: HashMap<(String, String), Arc<Control>>,
-    cancelled: HashMap<(String, String), Instant>,
+    live: HashMap<JobKey, Arc<Control>>,
+    /// Cancellations that arrived before their job was admitted. Only
+    /// request IDs never seen are recorded: cancelling a live job stops its
+    /// control, and a finished one needs nothing, so abort churn leaves no
+    /// records behind. A record is consumed by the admission it refuses.
+    cancelled: HashMap<JobKey, Instant>,
+    /// Recently admitted-and-ended jobs, so their late cancels write no record.
+    finished: HashMap<JobKey, Instant>,
     blocked_until: Option<Instant>,
 }
+impl Registry {
+    fn finish(&mut self, key: JobKey) {
+        let now = Instant::now();
+        if self.finished.len() >= FINISHED_LIMIT {
+            self.finished.retain(|_, until| *until > now);
+        }
+        if self.finished.len() < FINISHED_LIMIT {
+            self.finished.insert(key, now + RECORD_TTL);
+        }
+    }
+}
+/// Folder resolution for agent jobs (#1884). It can touch a hung network
+/// mount, so it runs in its own small blocking pool under its own timeout,
+/// never holding a slot text requests or settings wait for.
+pub(super) type FolderResolver = Arc<dyn Fn(&str) -> Result<PathBuf> + Send + Sync>;
+struct Folders {
+    resolve: FolderResolver,
+    slots: Arc<tokio::sync::Semaphore>,
+    timeout: Duration,
+}
+/// Folder resolutions in flight at once; a resolution stuck on a dead mount
+/// keeps its slot until the OS returns.
+const FOLDER_RESOLUTIONS: usize = 2;
+const FOLDER_TIMEOUT: Duration = Duration::from_secs(5);
+/// Per-caller limits: text requests, and agent jobs (2 running + 4 queued),
+/// which have their own caller identity so they never consume text quota.
+const TEXT_PER_CALLER: usize = 8;
+const AGENT_PER_CALLER: usize = AGENT_MAX_CONCURRENT + 4;
 struct Service {
     store: storage::Store,
     secrets: Arc<dyn SecretStore>,
@@ -69,6 +141,11 @@ struct Service {
     /// Folder-agent jobs (#1884) run for minutes, so they have their own
     /// small pool and never occupy the text slots titles wait for.
     agent_slots: Arc<tokio::sync::Semaphore>,
+    folders: Folders,
+    /// The latest configuration revision the host has announced, or
+    /// [`UNPINNED`] before the first; agent jobs pinned to another revision
+    /// are cancelled.
+    observed_revision: AtomicU64,
 }
 struct Admission<'a> {
     service: &'a Service,
@@ -78,7 +155,9 @@ struct Admission<'a> {
 impl Drop for Admission<'_> {
     fn drop(&mut self) {
         self.control.cancel();
-        self.service.live.lock().unwrap().live.remove(&self.key);
+        let mut registry = self.service.live.lock().unwrap();
+        registry.live.remove(&self.key);
+        registry.finish(self.key.clone());
     }
 }
 impl Service {
@@ -89,7 +168,34 @@ impl Service {
             live: Mutex::new(Registry::default()),
             slots: Arc::new(tokio::sync::Semaphore::new(4)),
             agent_slots: Arc::new(tokio::sync::Semaphore::new(AGENT_MAX_CONCURRENT)),
+            folders: Folders {
+                resolve: Arc::new(|folder| agent_folder::FolderPolicy::local().resolve(folder)),
+                slots: Arc::new(tokio::sync::Semaphore::new(FOLDER_RESOLUTIONS)),
+                timeout: FOLDER_TIMEOUT,
+            },
+            observed_revision: AtomicU64::new(UNPINNED),
         }
+    }
+    #[cfg(test)]
+    fn with_folders(mut self, resolve: FolderResolver, timeout: Duration) -> Self {
+        self.folders.resolve = resolve;
+        self.folders.timeout = timeout;
+        self
+    }
+    /// Records the configuration revision the host just announced and
+    /// cancels live and queued agent jobs pinned to another one: disabling AI
+    /// or changing or removing the CLI profile must not leave them running.
+    fn observe_revision(&self, revision: u64) {
+        self.observed_revision.store(revision, Ordering::SeqCst);
+        for control in self.live.lock().unwrap().live.values() {
+            control.supersede_unless(revision);
+        }
+    }
+    /// Pins an agent job to the revision it snapshotted. Checked after the
+    /// store so a change announced in between is never missed.
+    fn pin(&self, control: &Control, revision: u64) {
+        control.pinned.store(revision, Ordering::SeqCst);
+        control.supersede_unless(self.observed_revision.load(Ordering::SeqCst));
     }
     fn describe(&self) -> Result<Describe> {
         let config = self.store.read()?;
@@ -128,33 +234,33 @@ impl Service {
             &request.request_id,
             Duration::from_millis(request.timeout_ms.unwrap_or(45_000)),
             owner,
+            TEXT_PER_CALLER,
         )
     }
     /// Admission shared by text and agent jobs: one registry, so the same
-    /// per-caller quota, queue bounds and cancellation records cover both.
+    /// queue bounds and cancellation records cover both. Agent jobs use their
+    /// own caller identity and `per_caller` limit, so they never take text
+    /// quota.
     fn admit_job(
         &self,
         caller: String,
         request_id: &str,
         timeout: Duration,
         owner: OwnerCheck,
+        per_caller: usize,
     ) -> Result<Admission<'_>> {
         if caller.is_empty() || caller.len() > 512 {
             return Err(ServiceError::invalid("Invalid native caller"));
         }
-        let control = Arc::new(Control {
-            cancelled: AtomicBool::new(false),
-            active: AtomicBool::new(false),
-            deadline: Mutex::new(Instant::now() + timeout),
-            started: Instant::now(),
-            owner,
-        });
+        let control = Control::new(timeout, owner);
         control.check()?;
         let key = (caller, request_id.to_owned());
         let mut live = self.live.lock().unwrap();
         let now = Instant::now();
         live.cancelled.retain(|_, until| *until > now);
-        if live.cancelled.contains_key(&key) {
+        live.finished.retain(|_, until| *until > now);
+        if live.cancelled.remove(&key).is_some() {
+            live.finish(key);
             return Err(ServiceError::new(
                 "cancelled",
                 "Text request was cancelled before admission",
@@ -189,7 +295,7 @@ impl Service {
                 .keys()
                 .filter(|(caller, _)| caller == &key.0)
                 .count()
-                >= 8
+                >= per_caller
         {
             return Err(ServiceError::new(
                 "capacity_reached",
@@ -267,7 +373,7 @@ impl Service {
         let selected = agent_profile(&config);
         let profile = selected.as_ref().ok();
         let error = match &selected {
-            Ok(profile) => self.check_profile(profile).err(),
+            Ok(profile) => cli::check_agent(profile, &cli::process_env, &|| false).err(),
             Err(error) => Some(error.clone()),
         };
         let (models, default_model) = profile
@@ -301,9 +407,10 @@ impl Service {
             error,
         })
     }
-    /// One folder-agent job (#1884). Shares admission, quota and cancellation
-    /// with text requests; its deadline is the request's (capped at
-    /// [`AGENT_MAX_TIMEOUT_MS`]) and is not shortened by the profile timeout.
+    /// One folder-agent job (#1884). Shares admission and cancellation with
+    /// text requests but not their quota (callers pass an agent identity);
+    /// its deadline is the request's (capped at [`AGENT_MAX_TIMEOUT_MS`]) and
+    /// is not shortened by the profile timeout.
     async fn run_agent(
         &'static self,
         caller: String,
@@ -318,19 +425,18 @@ impl Service {
             &request.request_id,
             Duration::from_millis(agent_deadline_ms(request.timeout_ms)),
             owner,
+            AGENT_PER_CALLER,
         )?;
         let control = admission.control.clone();
+        let folder = tokio::select! {result=self.resolve_folder(&request.folder)=>result?,error=control.stopped()=>return Err(error)};
+        // Configuration reads take the store lock; no folder IO happens here.
         let worker_control = control.clone();
         let local_permit = tokio::select! {permit=local_slots().acquire_owned()=>permit.map_err(|_|ServiceError::new("unavailable","AI local worker queue stopped"))?,error=control.stopped()=>return Err(error)};
-        let folder = request.folder.clone();
         let requested_model = request.model.clone();
         let expected = request.expected_configuration_revision;
-        // Folder resolution can touch a slow mount; configuration reads take
-        // the store lock. Both stay off the async runtime.
         let prepare = tokio::task::spawn_blocking(move || {
             let _local_permit = local_permit;
             worker_control.check()?;
-            let folder = agent_folder::resolve_local(&folder)?;
             let _guard = self.store.lock()?;
             let config = self.store.read_locked()?;
             if let Some(expected) = expected {
@@ -346,9 +452,10 @@ impl Service {
                 ));
             }
             worker_control.check()?;
-            Ok::<_, ServiceError>((folder, profile, model))
+            Ok::<_, ServiceError>((profile, model, config.revision))
         });
-        let (folder, profile, model) = tokio::select! {result=prepare=>result.map_err(|_|ServiceError::new("unavailable","Agent configuration worker failed"))??,error=control.stopped()=>return Err(error)};
+        let (profile, model, revision) = tokio::select! {result=prepare=>result.map_err(|_|ServiceError::new("unavailable","Agent configuration worker failed"))??,error=control.stopped()=>return Err(error)};
+        self.pin(&control, revision);
         let permit = tokio::select! {permit=self.agent_slots.clone().acquire_owned()=>permit.map_err(|_|ServiceError::new("unavailable","Agent service stopped"))?,error=control.stopped()=>return Err(error)};
         control.check()?;
         control.active.store(true, Ordering::Release);
@@ -374,6 +481,40 @@ impl Service {
         let (text, usage) = result?;
         Ok(AgentResult { text, model, usage })
     }
+    /// Resolves and checks an agent folder in the folder pool, within the
+    /// folder timeout. A resolution the OS never returns from (a dead network
+    /// mount) keeps only its folder slot; the job fails with `timed_out`.
+    async fn resolve_folder(&self, folder: &str) -> Result<PathBuf> {
+        let timeout = self.folders.timeout;
+        let slots = self.folders.slots.clone();
+        let resolve = self.folders.resolve.clone();
+        let folder = folder.to_owned();
+        let work = async move {
+            let permit = slots
+                .acquire_owned()
+                .await
+                .map_err(|_| ServiceError::new("unavailable", "Agent folder worker stopped"))?;
+            tokio::task::spawn_blocking(move || {
+                let _permit = permit;
+                resolve(&folder)
+            })
+            .await
+            .map_err(|_| ServiceError::new("unavailable", "Agent folder worker failed"))?
+        };
+        tokio::time::timeout(timeout, work).await.unwrap_or_else(|_| {
+            Err(ServiceError::new(
+                "timed_out",
+                &format!(
+                    "Agent folder did not respond within {} seconds; it may be on a stalled network mount",
+                    timeout.as_secs_f32()
+                ),
+            ))
+        })
+    }
+    /// Cancels a job. A live job is stopped and a recently finished one
+    /// needs nothing; neither leaves a record, so cancelling on every
+    /// navigation cannot fill the caller's records. Only a request ID not yet
+    /// seen is recorded, for the cancel that overtakes its own `run`.
     fn cancel(&self, caller: &str, id: &str) -> bool {
         if !valid_id(id) || caller.is_empty() || caller.len() > 512 {
             return false;
@@ -382,10 +523,15 @@ impl Service {
         let mut registry = self.live.lock().unwrap();
         if let Some(control) = registry.live.get(&key) {
             control.cancel();
+            return true;
         }
         let now = Instant::now();
+        registry.finished.retain(|_, until| *until > now);
+        if registry.finished.contains_key(&key) {
+            return true;
+        }
         registry.cancelled.retain(|_, until| *until > now);
-        let until = now + Duration::from_secs(120);
+        let until = now + RECORD_TTL;
         // One incarnation cannot occupy every cancellation record. The empty
         // request ID is an internal sentinel; public IDs are always nonempty.
         if !registry.cancelled.contains_key(&key)
@@ -438,14 +584,7 @@ pub fn describe() -> Result<Describe> {
     service()?.describe()
 }
 pub async fn describe_owned(is_cancelled: OwnerCheck) -> Result<Describe> {
-    let now = Instant::now();
-    let control = Arc::new(Control {
-        cancelled: AtomicBool::new(false),
-        active: AtomicBool::new(false),
-        deadline: Mutex::new(now + Duration::from_secs(5)),
-        started: now,
-        owner: is_cancelled,
-    });
+    let control = Control::new(Duration::from_secs(5), is_cancelled);
     control.check()?;
     let worker = control.clone();
     let read = blocking(move || {
@@ -471,6 +610,14 @@ pub fn cancel(caller: &str, request_id: &str) -> bool {
 pub fn cancel_caller(caller: &str) {
     if let Ok(s) = service() {
         s.cancel_caller(caller);
+    }
+}
+/// The host announced a committed configuration revision (a save here, or
+/// another process's write seen by the config watcher). Agent jobs pinned to
+/// another revision are cancelled.
+pub fn observe_configuration_revision(revision: u64) {
+    if let Ok(s) = service() {
+        s.observe_revision(revision);
     }
 }
 pub fn cancel_all() {
@@ -509,6 +656,7 @@ async fn sanitized(config: Configuration) -> Result<Value> {
     .await
 }
 fn notify(app: &tauri::AppHandle, config: &Configuration) {
+    observe_configuration_revision(config.revision);
     let _ = app.emit(
         "ai:text-configuration-changed",
         json!({"revision":config.revision}),
@@ -629,6 +777,11 @@ pub async fn ai_connection_cancel_test(window: tauri::Window, request_id: String
 fn window_caller(label: &str) -> String {
     format!("window:{label}")
 }
+/// Agent jobs have their own caller identity per window, with its own quota
+/// and cancellation records, so they never take a window's text quota.
+fn agent_caller(label: &str) -> String {
+    format!("agent:window:{label}")
+}
 fn window_owner(window: &tauri::Window) -> OwnerCheck {
     use tauri::Manager;
     let app = window.app_handle().clone();
@@ -678,14 +831,7 @@ pub async fn ai_text_cancel(window: tauri::Window, request_id: String) -> Result
 /// Bounded like [`describe_owned`]: the CLI help probe may stall, and a
 /// describe that never returns would leave a plugin waiting without feedback.
 pub async fn describe_agent_owned(is_cancelled: OwnerCheck) -> Result<AgentDescribe> {
-    let now = Instant::now();
-    let control = Arc::new(Control {
-        cancelled: AtomicBool::new(false),
-        active: AtomicBool::new(false),
-        deadline: Mutex::new(now + Duration::from_secs(5)),
-        started: now,
-        owner: is_cancelled,
-    });
+    let control = Control::new(Duration::from_secs(5), is_cancelled);
     control.check()?;
     let worker = control.clone();
     let read = blocking(move || {
@@ -715,6 +861,7 @@ pub async fn ai_agent_run(
     model: Option<String>,
     max_output_tokens: u32,
     timeout_ms: Option<u64>,
+    max_turns: Option<u32>,
     expected_configuration_revision: Option<u64>,
 ) -> Result<AgentResult> {
     let request = json!({
@@ -725,19 +872,16 @@ pub async fn ai_agent_run(
         "model": model,
         "maxOutputTokens": max_output_tokens,
         "timeoutMs": timeout_ms,
+        "maxTurns": max_turns,
         "expectedConfigurationRevision": expected_configuration_revision,
     });
     service()?
-        .run_agent(
-            window_caller(window.label()),
-            request,
-            window_owner(&window),
-        )
+        .run_agent(agent_caller(window.label()), request, window_owner(&window))
         .await
 }
 #[tauri::command]
 pub async fn ai_agent_cancel(window: tauri::Window, request_id: String) -> Result<bool> {
-    Ok(cancel(&window_caller(window.label()), &request_id))
+    Ok(cancel(&agent_caller(window.label()), &request_id))
 }
 #[cfg(test)]
 mod agent_tests;

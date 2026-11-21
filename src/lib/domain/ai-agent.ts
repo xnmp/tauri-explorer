@@ -30,8 +30,10 @@ export interface AgentDescription {
 }
 
 export interface AgentRequest {
-  /** Absolute path of an existing local directory; it becomes the CLI's
-   *  working directory and the only place it may read. */
+  /** Absolute path of an existing directory open in a pane of this window;
+   *  it becomes the CLI's working directory and the only place it may read.
+   *  Native refuses home, its ancestors, dot-folders inside home, system
+   *  trees, trash and network shares. */
   folder: string;
   instructions: string;
   /** Data for the instructions (for example file names), framed as JSON. */
@@ -41,6 +43,9 @@ export interface AgentRequest {
   maxOutputTokens: number;
   /** Whole-job deadline including queueing; default 120 s, capped at `maxTimeoutMs`. */
   timeoutMs?: number;
+  /** Lowers the turn limit (1–40, default 40) on a CLI that lists one
+   *  (Claude Code `--max-turns`); otherwise the deadline is the only bound. */
+  maxTurns?: number;
   expectedConfigurationRevision?: number;
 }
 

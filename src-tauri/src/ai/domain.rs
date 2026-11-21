@@ -400,6 +400,10 @@ pub const AGENT_DEFAULT_TIMEOUT_MS: u64 = 120_000;
 /// Agent jobs that may run at once across every caller; more wait in the queue.
 pub const AGENT_MAX_CONCURRENT: usize = 2;
 pub const AGENT_MAX_OUTPUT_TOKENS: u32 = 16_384;
+/// Turn limit passed to a CLI that lists one (Claude Code `--max-turns`);
+/// requests may ask for fewer. Codex has no turn limit: its bound is the
+/// deadline.
+pub const AGENT_MAX_TURNS: u32 = 40;
 /// Final answer limit. A JSON object keyed by file name for a large folder is
 /// longer than a title, so this exceeds the text service's 64 KiB.
 pub const AGENT_MAX_TEXT: usize = 256 * 1024;
@@ -415,6 +419,10 @@ pub struct AgentRequest {
     pub model: Option<String>,
     pub max_output_tokens: u32,
     pub timeout_ms: Option<u64>,
+    /// Lowers [`AGENT_MAX_TURNS`]; honoured only by a CLI that lists a turn
+    /// limit.
+    #[serde(default)]
+    pub max_turns: Option<u32>,
     pub expected_configuration_revision: Option<u64>,
 }
 #[derive(Debug, Serialize)]
@@ -486,7 +494,20 @@ pub fn validate_agent_request(request: &AgentRequest) -> Result<()> {
             "Output tokens must be 1–16384 and a deadline must be positive",
         ));
     }
+    if request
+        .max_turns
+        .is_some_and(|turns| !(1..=AGENT_MAX_TURNS).contains(&turns))
+    {
+        return Err(ServiceError::invalid("Agent turns must be 1–40"));
+    }
     Ok(())
+}
+/// The turn limit for a CLI that supports one: the request's, else the cap.
+pub fn agent_turns(request: &AgentRequest) -> u32 {
+    request
+        .max_turns
+        .unwrap_or(AGENT_MAX_TURNS)
+        .min(AGENT_MAX_TURNS)
 }
 /// The job's whole deadline: the request's, else the default, never above the
 /// cap. Profile timeouts (≤45 s, sized for titles) do not apply to agent jobs.

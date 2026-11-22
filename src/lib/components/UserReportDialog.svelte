@@ -286,6 +286,8 @@
       <button type="button" class="close" aria-label="Close" onclick={onClose}>×</button>
     </header>
 
+    <!-- Only the body scrolls: header and actions stay in view in small or zoomed windows (#1892). -->
+    <div class="report-body">
     <div class="kind-toggle" role="group" aria-label="Report type">
       <button
         type="button"
@@ -477,6 +479,7 @@
       app and OS version, and any images and videos will be public. Attachments are uploaded to public hosting.
       Local logs are not attached automatically{includesDiagnostics ? "; the diagnostics you included above are" : ""}.
     </p>
+    </div>
 
     <footer>
       <span class="hint">Ctrl+Enter to submit</span>
@@ -489,10 +492,24 @@
 </Modal>
 
 <style>
+  /* The root CSS zoom (settings.zoomLevel) scales vw/vh too, so divide by
+     --app-zoom like the other bounded dialogs; the shared .modal-card
+     min-width would otherwise widen it past a narrow window (#1892). */
   .user-report-dialog {
-    width: min(560px, calc(100vw - 32px));
-    max-height: calc(100vh - 32px);
+    width: min(560px, calc(100vw / var(--app-zoom, 1) - 32px));
+    min-width: 0;
+    max-height: calc(100vh / var(--app-zoom, 1) - 32px);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  header, footer { flex: none; }
+  .report-body {
+    flex: 1 1 auto;
+    min-height: 0;
     overflow-y: auto;
+    overscroll-behavior: contain;
     display: flex;
     flex-direction: column;
     gap: 16px;
@@ -648,6 +665,6 @@
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
-  footer { gap: 8px; }
+  footer { gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
   .hint { margin-right: auto; color: var(--text-secondary); font-size: 12px; }
 </style>

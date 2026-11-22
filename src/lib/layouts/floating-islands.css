@@ -227,6 +227,13 @@
   stroke: var(--surface-stroke);
 }
 
+/* The active tab's accent lies on the outline's top row: the outline layer
+   comes before the tabs, so at the same level the accent paints over that
+   row and the outline carries on where it tapers (as in Default, #1891). */
+:root[data-layout-base="floating-islands"] [data-region="tab-edge"] {
+  z-index: 0;
+}
+
 /* A tab's corner radius never exceeds half its (sliding) width. */
 :root[data-layout-base="floating-islands"] [data-region="tab"] {
   --rt: min(var(--layout-radius), calc(var(--tab-grown, 220px) / 2));
@@ -264,11 +271,14 @@
 }
 
 /* The active tab is a hole in the strip: it, its fillets and the window body
-   are one surface (#1785). Nothing paints over it; its outline is the edge layer.
-   It clips its own content, as the fillets paint nothing. */
+   are one surface (#1785). Nothing fills it; its outline is the edge layer.
+   It keeps only its accent, the tab bar's top border, as Default does: #1734
+   dropped it with the fill, leaving no selected-tab marker (#1891). It clips
+   its own content, as the fillets paint nothing. */
 :root[data-layout-base="floating-islands"] [data-region="tab"][aria-selected="true"] {
   background: transparent;
   border: none;
+  border-top: 2px solid var(--accent);
   box-shadow: none;
   transform: none;
   overflow: hidden;

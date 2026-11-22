@@ -20,6 +20,7 @@
   import { settingsStore } from "$lib/state/settings.svelte";
   import { basename, directoryKey } from "$lib/domain/path";
   import { buildQuickAccessFolders } from "$lib/domain/quick-access";
+  import { isRecentLocationListed } from "$lib/domain/recent-locations";
   import { loadPersisted, savePersisted } from "$lib/state/persisted";
   import { useSidebarDrag } from "$lib/composables/use-sidebar-drag.svelte";
   import { usesPointerDrag, usesHtml5Drag } from "$lib/domain/platform";
@@ -226,47 +227,20 @@
   let drivesExpanded = $state(true);
   let cloudExpanded = $state(true);
 
-  // A recent path that lives on a removable/mounted drive must disappear when
-  // that drive is ejected. We detect a "removable root" for a path (a Windows
-  // drive letter, or a Linux/macOS mount base) and hide the path when that root
-  // isn't in the currently-mounted set. Fixed locations (no removable root) are
-  // never hidden by this rule. Recomputes when drivesStore refreshes.
-  function ejectedDriveHidesPath(path: string, mounted: Set<string>): boolean {
-    // Windows drive letter (e.g. "E:\\foo" or "E:/foo").
-    const win = path.match(/^([a-zA-Z]):[\\/]/);
-    if (win) {
-      const root = `${win[1].toLowerCase()}:`;
-      // C: is the system drive and always mounted; only guard other letters.
-      if (root === "c:") return false;
-      return !mounted.has(root);
-    }
-    // WSL / UNC roots (\\wsl$\Distro\... or \\server\share\...).
-    const unc = path.match(/^\\\\[^\\]+\\[^\\]+/);
-    if (unc) {
-      return !mounted.has(unc[0].toLowerCase());
-    }
-    // Linux/macOS removable mount bases.
-    const mountBase = path.match(/^(\/(?:run\/)?media\/[^/]+\/[^/]+|\/Volumes\/[^/]+)/);
-    if (mountBase) {
-      return !mounted.has(mountBase[1].toLowerCase());
-    }
-    return false;
-  }
-
   const recentLocations = $derived.by(() => {
     // Normalise with directoryKey so a bookmarked/system folder is excluded
     // regardless of trailing-slash or case differences (Windows) between how it
-    // was bookmarked and how it was recorded in frecency.
-    const bookmarkedPaths = new Set(bookmarksStore.list.map((b) => directoryKey(b.path)));
-    const systemPaths = new Set(
-      quickAccessFolders.flatMap((f) => (f.path === null ? [] : [directoryKey(f.path)])),
-    );
+    // was bookmarked and how it was recorded in frecency. Trash, home, roots and
+    // ejected-drive paths are excluded by isRecentLocationListed (#1893).
+    const shownElsewhere = new Set([
+      ...bookmarksStore.list.map((b) => directoryKey(b.path)),
+      ...quickAccessFolders.flatMap((f) => (f.path === null ? [] : [directoryKey(f.path)])),
+    ]);
     const scoreMap = frecencyStore.getScoreMap();
     const mounted = drivesStore.mountedRoots;
 
     return frecencyStore.recentEntries
-      .filter((e) => e.path !== homeDir && e.path !== "/home" && e.path !== "/" && !bookmarkedPaths.has(directoryKey(e.path)) && !systemPaths.has(directoryKey(e.path)))
-      .filter((e) => !ejectedDriveHidesPath(e.path, mounted))
+      .filter((e) => isRecentLocationListed(e.path, homeDir, shownElsewhere, mounted))
       .map((e) => ({ path: e.path, name: basename(e.path), score: scoreMap.get(directoryKey(e.path)) ?? 0 }))
       .sort((a, b) => b.score - a.score)
       .slice(0, settingsStore.recentItemsCount);

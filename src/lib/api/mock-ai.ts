@@ -40,14 +40,25 @@ function mockAgentDescription(): AgentDescription {
 /** Pending mock agent jobs by request ID, so `ai_agent_cancel` can end them. */
 const mockAgentJobs = new Map<string, () => void>();
 
+const extensionCaps = (name: string) => {
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? name.slice(dot + 1).toUpperCase() : "NONE";
+};
+
 /** Deterministic stand-in for a folder agent: a JSON object mapping each file
- *  of the mock folder to its extension in capitals ("NONE" without one). */
-function mockAgentReply(folder: string): string {
+ *  to its extension in capitals ("NONE" without one). An AI column prompt
+ *  (#1886, `buildFolderPrompt`: "Property: …", then a JSON array of names)
+ *  is answered for exactly the names it lists; anything else for the files of
+ *  the mock folder. */
+function mockAgentReply(folder: string, input: string): string {
+  if (input.startsWith("Property: ")) {
+    try {
+      const names = JSON.parse(input.slice(input.lastIndexOf("\n") + 1)) as unknown;
+      if (Array.isArray(names)) return JSON.stringify(Object.fromEntries(names.filter((name): name is string => typeof name === "string").map((name) => [name, extensionCaps(name)])));
+    } catch { /* fall through to the folder answer */ }
+  }
   const files = (mockFiles[folder] ?? []).filter((entry) => entry.kind === "file");
-  return JSON.stringify(Object.fromEntries(files.map((entry) => {
-    const dot = entry.name.lastIndexOf(".");
-    return [entry.name, dot > 0 ? entry.name.slice(dot + 1).toUpperCase() : "NONE"];
-  })));
+  return JSON.stringify(Object.fromEntries(files.map((entry) => [entry.name, extensionCaps(entry.name)])));
 }
 
 async function mockAgentRun(args: Record<string, unknown>) {
@@ -68,7 +79,7 @@ async function mockAgentRun(args: Record<string, unknown>) {
     });
   }
   const request = { folder, instructions: String(args.instructions ?? ""), input: String(args.input ?? ""), model };
-  const text = control.aiAgentReply ? control.aiAgentReply(request) : mockAgentReply(folder);
+  const text = control.aiAgentReply ? control.aiAgentReply(request) : mockAgentReply(folder, request.input);
   return { text, model, usage: { inputTokens: request.instructions.length + request.input.length, outputTokens: text.length } };
 }
 

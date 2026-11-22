@@ -642,6 +642,45 @@ test.describe("Layout themes (#1306)", () => {
     });
   }
 
+  // #1891: Floating Islands (what a Windows Mica/Acrylic install migrated to)
+  // had lost the selected tab's accent when its fill went (#1734).
+  for (const layout of ["default", "floating-islands"]) {
+    for (const theme of ["dark", "light"]) {
+      test(`the selected tab carries the accent in ${layout}, ${theme} (#1891)`, async ({ page }) => {
+        await page.setViewportSize({ width: 1100, height: 700 });
+        await seedSettings(page, { layoutTheme: layout, theme });
+        await page.goto(HOME_URL);
+        await waitForEntries(page);
+        await expect(page.locator("html")).toHaveAttribute("data-layout", layout);
+        const tab = '[data-region="tab"][aria-selected="true"]';
+        await expect(page.locator(tab)).toHaveCount(1);
+        const accent = await page.evaluate(() => {
+          const probe = Object.assign(document.createElement("span"), { style: "color: var(--accent)" });
+          document.body.appendChild(probe);
+          const color = getComputedStyle(probe).color;
+          probe.remove();
+          return color;
+        });
+        expect(await css(page, tab, "border-top-style")).toBe("solid");
+        expect(await css(page, tab, "border-top-width")).toBe("2px");
+        expect(rgb(await css(page, tab, "border-top-color"))).toEqual(rgb(accent));
+        // Painted, not just computed: the accent's inner row at the tab's
+        // middle (its outer row may share the outline's top row).
+        const box = await rect(page, tab);
+        const png = (await page.screenshot({ clip: { x: Math.floor(box.left + box.width / 2), y: Math.floor(box.top + 1), width: 1, height: 1 } })).toString("base64");
+        const pixel = await page.evaluate(async (data) => {
+          const image = new Image();
+          image.src = `data:image/png;base64,${data}`;
+          await image.decode();
+          const context = Object.assign(document.createElement("canvas"), { width: 1, height: 1 }).getContext("2d")!;
+          context.drawImage(image, 0, 0);
+          return [...context.getImageData(0, 0, 1, 1).data.slice(0, 3)];
+        }, png);
+        rgb(accent).forEach((channel, i) => expect(Math.abs(channel - pixel[i]), `pixel ${pixel} vs accent ${accent}`).toBeLessThanOrEqual(12));
+      });
+    }
+  }
+
   for (const layout of ["default", "hairline-ledger"]) {
     test(`a rule separates the sidebar from the file pane in ${layout} (#1879)`, async ({ page }) => {
       await page.setViewportSize({ width: 1100, height: 700 });

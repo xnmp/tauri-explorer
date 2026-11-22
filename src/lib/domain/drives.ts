@@ -6,10 +6,20 @@
  * forward-slash containment check covers every separator/case variant.
  */
 
-/** Sidebar discovery omits the unwanted Google Drive shortcut while retaining
- * other cloud locations. Discovery and navigable mount roots stay untouched. */
-export function sidebarCloudDrives<T extends { kind: string; provider?: string }>(drives: readonly T[]): T[] {
-  return drives.filter((drive) => drive.kind === "cloud" && drive.provider !== "googledrive");
+/** Cloud / remote rows for the sidebar's Cloud & Remote section.
+ *
+ * On Linux the GVfs/rclone Google Drive shortcut is omitted (#731) while its
+ * discovery and navigable mount root stay untouched. On Windows the Google
+ * Drive for desktop letter (e.g. `G:`) is the user's real drive, reported only
+ * through this section: omitting it there removed Google Drive from the
+ * sidebar entirely (#1894). */
+export function sidebarCloudDrives<T extends { kind: string; provider?: string }>(
+  drives: readonly T[],
+  windowsHost: boolean,
+): T[] {
+  return drives.filter(
+    (drive) => drive.kind === "cloud" && (windowsHost || drive.provider !== "googledrive"),
+  );
 }
 
 /** True when `path` is `root` or lies underneath it. */

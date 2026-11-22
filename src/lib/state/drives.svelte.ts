@@ -5,6 +5,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { createDirectoryWatch } from "./directory-watch";
 import { directoryKey } from "$lib/domain/path";
 import { driveKindFor, sidebarCloudDrives } from "$lib/domain/drives";
+import { isWindows } from "$lib/domain/platform";
 import { loadWatchdog } from "./load-watchdog";
 import { pageForeground, type ForegroundGate } from "./page-foreground";
 
@@ -189,7 +190,7 @@ export function createDrivesStore(foreground: ForegroundGate) {
     },
     /** Cloud / remote shortcuts eligible for the dedicated sidebar section. */
     get cloud() {
-      return sidebarCloudDrives(drives);
+      return sidebarCloudDrives(drives, isWindows);
     },
     /**
      * Normalised mount roots of currently-mounted removable drives (same

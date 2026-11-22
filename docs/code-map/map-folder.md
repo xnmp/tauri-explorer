@@ -567,6 +567,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `drives.ts` — pure removable-drive tracking (isUnderRoot).
 - `load-diagnostics.ts` — pure slow directory-load traces (#1022): phase spans, 5 s threshold, frontend record, culprit diagnosis, bounded report text and chronological trace IDs. Contracts in `tests/domain/load-diagnostics.test.ts`.
 - `bookmark-drop-feedback.ts` — bookmark drop action feedback and effective local/cross-window drag-kind resolution (#675).
+- `recent-locations.ts` — which frecency entries the sidebar Recent section lists: never the Recycle Bin (`trash://`, recorded for Quick Open), home, roots, bookmarked/Quick Access folders, or paths on ejected drives (#1893).
 - `quick-access.ts` — default sidebar system-folder rows under the resolved home directory; an unknown home yields none, so no row can navigate to a fabricated path while `get_home_directory` is in flight (#702).
 - `fuzzy-score.ts` — fuzzy match scorer for QuickOpen.
 - `command-keywords.ts` — hidden palette search synonyms per command ID (#1247).

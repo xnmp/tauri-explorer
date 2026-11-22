@@ -2,6 +2,25 @@
 
 All notable changes to Tauri Explorer.
 
+## v0.32.0 — 2026-11-22
+
+### Added
+
+- AI Columns: right-click a Details column header, choose "Add AI column…"
+  and describe a property ("invoice date"). A read-only folder agent answers
+  it for every file in the folder in one job; answers are cached per file and
+  can be refreshed or removed from the header menu or the palette (#1886).
+
+### Fixed
+
+- The selected tab carries the accent again in the Floating Islands layout
+  (#1891).
+- The Report Issue dialog fits small and zoomed windows: its header and
+  Submit/Cancel stay on screen and only the form scrolls (#1892).
+- Opening the Recycle Bin no longer adds it to the sidebar's Recent section
+  (#1893).
+- Google Drive for desktop shows in the Windows sidebar again (#1894).
+
 ## v0.31.0 — 2026-11-21
 
 ### Added

@@ -52,12 +52,12 @@ drag = { version = "2.1.1", features = ["serde"] }
 clipboard-rs = "0.3.5"
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
-rusqlite = { version = "0.40.2", features = ["bundled", "limits"] }
+rusqlite = { version = "0.43.0", features = ["bundled", "limits"] }
 trash = "5"
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "7"
 dunce = "1"
-opener = "0.8"
+opener = "0.9"
 nucleo-matcher = "0.3"
 jwalk = "0.9"
 rayon = "1"
@@ -76,7 +76,7 @@ percent-encoding = "2.3"
 gif = "0.14"
 png = "0.18"
 turbojpeg = { version = "1", features = ["image"] }
-lru = "0.18"
+lru = "0.19"
 sha2 = "0.11"
 base64 = "0.23"
 hex = "0.4"
@@ -161,9 +161,9 @@ wayland-protocols-wlr = { version = "0.3", features = ["server"] }
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = {version="0.61",features= ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Registry", "Win32_System_Pipes", "Win32_System_Console", "Win32_System_SystemInformation"] }
 webview2-com = "0.39"
-windows-core = "0.62.2"
+windows-core = "0.100.0"
 # OS build for the translucency material (#1757); already in the tree via window-vibrancy.
-windows-version = "0.1"
+windows-version = "0.100"
 # Win32_System_DataExchange/Memory: the clipboard sequence number and the
 # Cut token read-back (clipboard/windows.rs, #877).
 # EnhancedStorage: PKEY_FileName for exact Recycle Bin names (#1208).
@@ -172,7 +172,7 @@ windows = { version = "0.62.2", features = ["Wdk_Foundation", "Wdk_Storage_FileS
 # NSPasteboard change count and a private token type prove Cut ownership
 # (clipboard/macos.rs, #877). clipboard-rs already builds these versions.
 [target.'cfg(target_os = "macos")'.dependencies]
-security-framework = "2.11"
+security-framework = "3.7"
 objc2 = "0.6"
 # NSScreen/NSWorkspace/NSError/NSDictionary: the per-display desktop image
 # for Set as Wallpaper (wallpaper/macos.rs, #1731).

@@ -21,6 +21,7 @@ import { toastStore } from "../toast.svelte";
 import { readFocusedWindowState } from "../focused-window";
 import { getActiveExplorer, openNewWindow } from "./shared";
 import { getLogDir } from "$lib/api/environment";
+import { updateRequest } from "../update-request.svelte";
 
 /** Window commands */
 export const windowCommands: Command[] = [
@@ -380,6 +381,14 @@ export const generalDialogCommands: Command[] = [
     label: "About",
     category: "general",
     handler: () => dialogStore.openAbout(),
+  },
+  {
+    // #1901: run the update check now instead of waiting for the daily one.
+    id: "help.checkForUpdates",
+    scope: "window",
+    label: "Check for Updates",
+    category: "general",
+    handler: () => updateRequest.request(),
   },
   {
     id: "general.openSettings",

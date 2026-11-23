@@ -59,6 +59,8 @@ export const TOGGLE_SETTINGS: ToggleSettingMeta[] = [
   { key: "premiumTheme", label: "Toggle Premium Theme Effects" },
   { key: "terminalFollowsExplorer", label: "Toggle Terminal Follows Explorer" },
   { key: "explorerFollowsTerminal", label: "Toggle Explorer Follows Terminal" },
+  // #1901: the palette counterpart of Settings → Install Updates Automatically.
+  { key: "autoUpdate", label: "Toggle Install Updates Automatically", category: "general" },
 ];
 
 export function generateToggleCommands(): Command[] {

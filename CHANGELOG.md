@@ -2,6 +2,15 @@
 
 All notable changes to Tauri Explorer.
 
+## v0.33.0 — 2026-11-23
+
+### Added
+
+- "Check for Updates" in the command palette runs the update check on demand,
+  without waiting for the daily check, and reports when the app is already up
+  to date or why the check failed. "Toggle Install Updates Automatically"
+  switches automatic updates from the palette (#1901).
+
 ## v0.32.0 — 2026-11-22
 
 ### Added

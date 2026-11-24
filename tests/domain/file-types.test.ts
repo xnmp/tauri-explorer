@@ -160,3 +160,23 @@ describe("AutoHotkey (.ahk) and shortcut (.lnk) file types", () => {
     expect(isTextFile(entry("game.lnk"))).toBe(false);
   });
 });
+
+describe("media extensions agree across tables (#1597)", () => {
+  const file = (name: string): FileEntry => entry(name);
+  it("labels every media-thumbnail extension as media", () => {
+    for (const name of ["clip.webm", "clip.m4v", "clip.flv", "clip.mpg", "song.m4a", "song.opus", "song.aac", "book.m4b"]) {
+      const e = file(name);
+      expect(isVideoFile(e), name).toBe(true);
+      expect(getFileIconCategory(e), name).toBe("media");
+      expect(getFileIconColor(e), name).not.toBe("#6d6d6d");
+    }
+  });
+  it("names video and audio types instead of a generic File", () => {
+    expect(getFileType(file("clip.webm"))).toBe("WEBM Video");
+    expect(getFileType(file("song.m4a"))).toBe("M4A Audio File");
+    expect(getFileIconColor(file("clip.webm"))).toBe(getFileIconColor(file("clip.mp4")));
+    expect(getFileIconColor(file("song.opus"))).toBe(getFileIconColor(file("song.mp3")));
+    expect(getFileType(file("clip.mp4"))).toBe("MP4 Video");
+    expect(getFileType(file("notes.xyz"))).toBe("XYZ File");
+  });
+});

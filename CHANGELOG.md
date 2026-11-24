@@ -2,6 +2,14 @@
 
 All notable changes to Tauri Explorer.
 
+## v0.33.1 — 2026-11-24
+
+### Fixed
+
+- WebM, M4V, FLV, MPEG, M4A, Opus, AAC, M4B and other media files that get a
+  thumbnail now also show the media icon, colour and a "Video" or "Audio File"
+  type label, not the generic grey icon and "File" label (#1597).
+
 ## v0.33.0 — 2026-11-23
 
 ### Added

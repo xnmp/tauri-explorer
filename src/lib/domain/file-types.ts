@@ -238,6 +238,18 @@ export function getExtension(name: string): string {
   return name.slice(dotIndex + 1).toLowerCase();
 }
 
+// Media extensions are also the fallback for the type, colour and icon
+// tables, so every file that gets a media thumbnail is labelled as media.
+/** Video extensions that support frame-extraction thumbnails (requires ffmpeg) */
+const VIDEO_THUMBNAIL_EXTENSIONS = new Set([
+  "mp4", "mov", "mkv", "webm", "avi", "wmv", "flv", "m4v", "mpg", "mpeg",
+]);
+
+/** Audio extensions that may carry embedded cover art (thumbnail via ffmpeg) */
+const AUDIO_THUMBNAIL_EXTENSIONS = new Set([
+  "m4a", "mp3", "flac", "ogg", "opus", "aac", "wma", "m4b", "aiff", "alac",
+]);
+
 /** Get descriptive file type from entry - Windows 11 style */
 export function getFileType(entry: FileEntry): string {
   if (entry.kind === "directory") {
@@ -245,7 +257,10 @@ export function getFileType(entry: FileEntry): string {
   }
 
   const ext = getExtension(entry.name);
-  return FILE_TYPE_MAP[ext] || (ext ? `${ext.toUpperCase()} File` : "File");
+  if (FILE_TYPE_MAP[ext]) return FILE_TYPE_MAP[ext];
+  if (VIDEO_THUMBNAIL_EXTENSIONS.has(ext)) return `${ext.toUpperCase()} Video`;
+  if (AUDIO_THUMBNAIL_EXTENSIONS.has(ext)) return `${ext.toUpperCase()} Audio File`;
+  return ext ? `${ext.toUpperCase()} File` : "File";
 }
 
 /** Get icon color based on file extension - Windows 11 style colors */
@@ -255,7 +270,10 @@ export function getFileIconColor(entry: FileEntry): string {
   }
 
   const ext = getExtension(entry.name);
-  return FILE_COLOR_MAP[ext] || "#6d6d6d"; // Default gray
+  return FILE_COLOR_MAP[ext]
+    || (VIDEO_THUMBNAIL_EXTENSIONS.has(ext) ? FILE_COLOR_MAP.mp4
+      : AUDIO_THUMBNAIL_EXTENSIONS.has(ext) ? FILE_COLOR_MAP.mp3
+      : "#6d6d6d"); // Default gray
 }
 
 /** Get file icon category for different SVG paths */
@@ -263,7 +281,8 @@ export function getFileIconCategory(entry: FileEntry): IconCategory {
   if (entry.kind === "directory") return "default";
 
   const ext = getExtension(entry.name);
-  return ICON_CATEGORY_MAP[ext] || "default";
+  if (ICON_CATEGORY_MAP[ext]) return ICON_CATEGORY_MAP[ext];
+  return VIDEO_THUMBNAIL_EXTENSIONS.has(ext) || AUDIO_THUMBNAIL_EXTENSIONS.has(ext) ? "media" : "default";
 }
 
 /** Image extensions that support thumbnail generation */
@@ -304,16 +323,6 @@ export function isSvgFile(entry: FileEntry): boolean {
   if (entry.kind === "directory") return false;
   return getExtension(entry.name) === "svg";
 }
-
-/** Video extensions that support frame-extraction thumbnails (requires ffmpeg) */
-const VIDEO_THUMBNAIL_EXTENSIONS = new Set([
-  "mp4", "mov", "mkv", "webm", "avi", "wmv", "flv", "m4v", "mpg", "mpeg",
-]);
-
-/** Audio extensions that may carry embedded cover art (thumbnail via ffmpeg) */
-const AUDIO_THUMBNAIL_EXTENSIONS = new Set([
-  "m4a", "mp3", "flac", "ogg", "opus", "aac", "wma", "m4b", "aiff", "alac",
-]);
 
 /**
  * Check if a file gets a media thumbnail via ffmpeg — a video frame, or the

@@ -2,6 +2,15 @@
 
 All notable changes to Tauri Explorer.
 
+## v0.33.2 — 2026-11-25
+
+### Fixed
+
+- The embedded terminal now passes paths to PowerShell verbatim. Folder sync
+  uses `cd -LiteralPath`, and dropped or Alt+T paths are single-quoted, so
+  names containing `$`, backticks, `[ ]` or quotes (such as `$Recycle.Bin` or
+  `Photos [2024]`) no longer expand or match as wildcards (#1597).
+
 ## v0.33.1 — 2026-11-24
 
 ### Fixed

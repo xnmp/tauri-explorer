@@ -4,13 +4,31 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { buildCdCommand, buildCdSyncSequence, buildPathsInsertion, shellSingleQuote } from "$lib/domain/terminal-command";
+import {
+  buildCdCommand,
+  buildCdSyncSequence,
+  buildPathsInsertion,
+  powerShellSingleQuote,
+  shellSingleQuote,
+} from "$lib/domain/terminal-command";
 import type { ShellProfile } from "$lib/domain/terminal-shell";
 
 const POSIX: ShellProfile = { kind: "posix", wslDistro: null };
 const CMD: ShellProfile = { kind: "cmd", wslDistro: null };
 const POWERSHELL: ShellProfile = { kind: "powershell", wslDistro: null };
 const WSL: ShellProfile = { kind: "posix", wslDistro: "Ubuntu" };
+
+describe("powerShellSingleQuote (#1597)", () => {
+  it("leaves expansion syntax literal", () => {
+    expect(powerShellSingleQuote("$env:USERPROFILE `n $(x)")).toBe("'$env:USERPROFILE `n $(x)'");
+  });
+
+  it("doubles ASCII and typographic single quotes, which all end a PowerShell string", () => {
+    expect(powerShellSingleQuote("a'b\u2018c\u2019d\u201Ae\u201Bf")).toBe(
+      "'a''b\u2018\u2018c\u2019\u2019d\u201A\u201Ae\u201B\u201Bf'",
+    );
+  });
+});
 
 describe("shellSingleQuote", () => {
   it("wraps plain paths", () => {
@@ -45,7 +63,21 @@ describe("buildCdCommand", () => {
 
   it("builds a PowerShell cd without the cmd-only /d switch", () => {
     expect(buildCdCommand("D:\\Media\\New Folder", POWERSHELL)).toBe(
-      'cd "D:\\Media\\New Folder"\r'
+      "cd -LiteralPath 'D:\\Media\\New Folder'\r"
+    );
+  });
+
+  // #1597: PowerShell expands `$name` inside double quotes and Set-Location
+  // -Path treats [ ] as wildcards, so `cd "C:\$Recycle.Bin"` went to `C:\.Bin`.
+  it("passes PowerShell paths verbatim: no $ expansion, no wildcards, quotes doubled", () => {
+    expect(buildCdCommand("C:\\$Recycle.Bin", POWERSHELL)).toBe(
+      "cd -LiteralPath 'C:\\$Recycle.Bin'\r",
+    );
+    expect(buildCdCommand("D:\\Photos [2024]", POWERSHELL)).toBe(
+      "cd -LiteralPath 'D:\\Photos [2024]'\r",
+    );
+    expect(buildCdCommand("D:\\it's `here` $(calc)", POWERSHELL)).toBe(
+      "cd -LiteralPath 'D:\\it''s `here` $(calc)'\r",
     );
   });
 
@@ -91,7 +123,7 @@ describe("buildCdSyncSequence", () => {
   it("prefixes ESC (console clear-line) for cmd/PowerShell — they don't grok Ctrl+U (#150)", () => {
     expect(buildCdSyncSequence("D:\\Media", CMD)).toBe('\x1bcd /d "D:\\Media"\r');
     expect(buildCdSyncSequence("D:\\Media", CMD)).not.toContain("\x15");
-    expect(buildCdSyncSequence("D:\\Media", POWERSHELL)).toBe('\x1bcd "D:\\Media"\r');
+    expect(buildCdSyncSequence("D:\\Media", POWERSHELL)).toBe("\x1bcd -LiteralPath 'D:\\Media'\r");
   });
 
   it("never sends ESC to a WSL shell — it's the meta prefix and eats the next char (#409)", () => {
@@ -116,6 +148,12 @@ describe("buildPathsInsertion (#265)", () => {
   it("double-quotes on Windows", () => {
     expect(buildPathsInsertion(["C:\\My Files\\a.txt", "D:\\b"], CMD)).toBe(
       '"C:\\My Files\\a.txt" "D:\\b" ',
+    );
+  });
+
+  it("single-quotes PowerShell paths so $ and backticks stay literal (#1597)", () => {
+    expect(buildPathsInsertion(["C:\\$x\\a b.txt", "D:\\it's"], POWERSHELL)).toBe(
+      "'C:\\$x\\a b.txt' 'D:\\it''s' ",
     );
   });
 
@@ -145,7 +183,7 @@ describe("wire paths typed into the shell", () => {
 
   it("cds with the exact text of every escaped name that is text", () => {
     expect(buildCdSyncSequence(ACCENTED, POSIX)).toBe("\x15cd '/tmp/café'\r");
-    expect(buildCdSyncSequence(RESERVED, POWERSHELL)).toBe('\x1bcd "/tmp/"\r');
+    expect(buildCdSyncSequence(RESERVED, POWERSHELL)).toBe("\x1bcd -LiteralPath '/tmp/'\r");
   });
 
   it("keeps a genuine U+FFFD name that has no escapes", () => {

@@ -14,6 +14,15 @@ export function shellSingleQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
+/** PowerShell verbatim single-quote. Inside '…' nothing expands (`$var`,
+ *  `$(…)`, backtick escapes all stay literal); a quote is doubled. PowerShell
+ *  also ends single-quoted strings on the typographic quotes U+2018–U+201B,
+ *  which are legal in Windows file names, so those are doubled too (the
+ *  tokenizer keeps the second of any two adjacent single-quote characters). */
+export function powerShellSingleQuote(value: string): string {
+  return `'${value.replace(/['\u2018\u2019\u201A\u201B]/g, "$&$&")}'`;
+}
+
 /**
  * The line written to the PTY to change the shell's directory to `path`
  * (including the terminating carriage return xterm sends for Enter).
@@ -42,8 +51,10 @@ export function buildCdCommand(path: string, profile: ShellProfile): string {
       return `cd /d "${path}"\r`;
     case "powershell":
       // `/d` is a cmd.exe-ism; PowerShell's cd (Set-Location) changes drive
-      // on its own and takes a double-quoted literal.
-      return `cd "${path}"\r`;
+      // on its own. A double-quoted path would expand `$name` (`$Recycle.Bin`
+      // → `.Bin`) and `-Path` treats `[ ]` as wildcards, so pass the path
+      // verbatim to `-LiteralPath` (#1597).
+      return `cd -LiteralPath ${powerShellSingleQuote(path)}\r`;
     case "posix":
       return `cd ${shellSingleQuote(toShellPath(path, profile))}\r`;
   }
@@ -76,10 +87,16 @@ export function buildCdSyncSequence(path: string, profile: ShellProfile): string
  */
 export function buildPathsInsertion(paths: string[], profile: ShellProfile): string {
   // Display text: shown at the prompt, never run without Enter.
-  const quoted = paths.map((p) =>
-    profile.kind === "posix"
-      ? shellSingleQuote(toShellPath(displayName(p), profile))
-      : `"${displayName(p)}"`,
-  );
+  const quoted = paths.map((p) => {
+    const text = displayName(p);
+    switch (profile.kind) {
+      case "posix":
+        return shellSingleQuote(toShellPath(text, profile));
+      case "powershell":
+        return powerShellSingleQuote(text);
+      case "cmd":
+        return `"${text}"`;
+    }
+  });
   return quoted.join(" ") + " ";
 }

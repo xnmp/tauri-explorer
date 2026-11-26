@@ -1,4 +1,8 @@
 import { readFile } from "node:fs/promises";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 
@@ -37,6 +41,57 @@ function stepNamed(steps: WorkflowStep[], name: string): WorkflowStep {
 }
 
 describe("native qualification workflow cache and diagnostics (#694)", () => {
+  it("isolates target caches across runner image and Rust compiler updates (#1862)", async () => {
+    const steps = await qualificationSteps();
+    const identity = stepNamed(steps, "Record Rust cache identity");
+    const root = mkdtempSync(join(tmpdir(), "native-cache-identity-"));
+    try {
+      function record(overrides: Record<string, string> = {}) {
+        const output = join(root, "output");
+        rmSync(output, { force: true });
+        const result = spawnSync("bash", ["-e", "-o", "pipefail", "-c", `
+          rustc() { printf '%s\\n' "$TEST_RUST_IDENTITY"; }
+          cargo() { printf 'cargo test-fixture\\n'; }
+          ${identity.run}
+        `], {
+          cwd: root,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            GITHUB_OUTPUT: output,
+            GITHUB_SHA: "test-revision",
+            RUNNER_OS: "Windows",
+            RUNNER_ARCH: "X64",
+            ImageOS: "win25",
+            ImageVersion: "20261103.298.1",
+            TEST_RUST_IDENTITY: "rustc test-compiler",
+            ...overrides,
+          },
+        });
+        expect(result.status, result.stderr).toBe(0);
+        const key = readFileSync(output, "utf8").match(/^cache-key=(.+)$/m)?.[1];
+        expect(key).toMatch(/^[a-f0-9]{16}$/);
+        return key;
+      }
+      const original = record();
+      expect(record()).toBe(original);
+      expect(record({ ImageVersion: "20261116.315.1" })).not.toBe(original);
+      expect(record({ ImageOS: "win-next" })).not.toBe(original);
+      expect(record({ TEST_RUST_IDENTITY: "rustc next-compiler" })).not.toBe(original);
+
+      // The executed output must feed both cache actions, with no prefix fallback.
+      const restore = stepNamed(steps, "Restore Rust target cache") as WorkflowStep & {
+        with: { key: string; "restore-keys"?: string };
+      };
+      const save = stepNamed(steps, "Save Rust target cache after native outcome") as typeof restore;
+      expect(restore.with.key).toContain(`steps.${identity.id}.outputs.cache-key`);
+      expect(save.with.key).toBe(restore.with.key);
+      expect(restore.with["restore-keys"]).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("publishes contract diagnostics before GUI qualification", async () => {
     const workflow = await readFile(workflowPath, "utf8");
     const steps = await qualificationSteps();

@@ -425,7 +425,11 @@ secret list: `docs/macos-signing.md`.
 # Native E2E target cache (ADR 0022)
 
 Per ADR 0022, the native E2E target cache (`e2e-tauri.yml`) is keyed by the
-exact Rust compiler identity as well as target inputs. Keep its restore and
+exact Rust compiler identity, runner image OS/version, and target inputs.
+CMake persists absolute native tool paths: a Windows image update removed the
+cached MSVC librarian while rustc stayed unchanged (#1862). Keep image identity
+in the digest and its raw values in the diagnostics; Rust identity alone does
+not establish target compatibility. Keep its restore and
 save actions separate: save only after the native contracts and embedded build
 succeed, but allow a later GUI failure to retain those safe build products.
 Contract/provenance diagnostics upload before GUI execution so a failed

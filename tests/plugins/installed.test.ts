@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("$lib/api/common", () => ({ invoke, extractError: String, isTauri: () => false }));
-import { installPackage, refreshInstalledPackages, type InstalledPackage } from "$lib/plugins/installed";
+import { installPackage, packageFailure, refreshInstalledPackages, type InstalledPackage } from "$lib/plugins/installed";
 
 import { fileViewRegistry } from "$lib/plugins/file-view-registry.svelte";
 
@@ -58,5 +58,23 @@ describe("package installation", () => {
     invoke.mockImplementation(async (command: string) => command === "pick_file" ? "/downloads/Fixture.teplugin" : command === "list_installed_plugins" ? [incompatible] : incompatible);
     await expect(installPackage(registry)).rejects.toThrow("Fixture was installed but could not start");
     expect(invoke).toHaveBeenCalledWith("install_plugin", { path: "/downloads/Fixture.teplugin" });
+  });
+
+  it("clears a start failure once the package is disabled or uninstalled", async () => {
+    const broken = { ...entry, enabled: true, manifest: { ...entry.manifest, id: "stale", sdkVersion: 4 } };
+    invoke.mockResolvedValue([broken]);
+    await refreshInstalledPackages(registry);
+    expect(packageFailure("stale")).toContain("requires a different plugin host");
+
+    invoke.mockResolvedValue([{ ...broken, enabled: false }]);
+    await refreshInstalledPackages(registry);
+    expect(packageFailure("stale")).toBeUndefined();
+
+    invoke.mockResolvedValue([broken]);
+    await refreshInstalledPackages(registry);
+    expect(packageFailure("stale")).toBeDefined();
+    invoke.mockResolvedValue([]);
+    await refreshInstalledPackages(registry);
+    expect(packageFailure("stale")).toBeUndefined();
   });
 });

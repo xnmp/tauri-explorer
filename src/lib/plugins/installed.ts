@@ -49,6 +49,8 @@ export async function refreshInstalledPackages(registry:PackageRegistry,discover
     try {
       const next=await invoke<InstalledPackage[]>("list_installed_plugins");
       fileViewRegistry.discoverOwners(next.flatMap(entry=>entry.manifest.contributions));
+      // A start failure describes an enabled install; drop it once that package is disabled or gone.
+      for(const id of failures.keys())if(!next.some(entry=>entry.enabled&&entry.manifest.id===id))failures.delete(id);
       for(const entry of next)if(entry.enabled&&loaded.get(entry.manifest.id)?.digest!==entry.digest)
         pending.set(entry,fileViewRegistry.beginLoading(entry.manifest.contributions));
       discoveryComplete();

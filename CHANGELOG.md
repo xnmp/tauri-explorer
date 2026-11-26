@@ -2,6 +2,13 @@
 
 All notable changes to Tauri Explorer.
 
+## v0.33.3 — 2026-11-26
+
+### Fixed
+
+- Settings → Plugins no longer keeps showing "could not start" for a plugin
+  package after you disable or uninstall it (#1597).
+
 ## v0.33.2 — 2026-11-25
 
 ### Fixed

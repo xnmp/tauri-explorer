@@ -53,7 +53,9 @@ function findScrollbarViolations(src: string, { owner = false } = {}): Violation
   if (!owner) {
     for (const m of text.matchAll(THUMB)) out.push({ line: lineOf(m.index), rule: "thumb-rule" });
     for (const m of text.matchAll(BAR_BLOCK)) {
-      if (/(?:^|[\s;])(?:width|height)\s*:/.test(m[1])) out.push({ line: lineOf(m.index), rule: "bar-size" });
+      // Resizing breaks the thumb's inset; zero (hiding the bar) is fine.
+      const sizes = [...m[1].matchAll(/(?:^|[\s;])(?:width|height|inline-size|block-size)\s*:\s*([^;}]+)/g)];
+      if (sizes.some((d) => !/^0(?:px)?\s*(?:!important)?\s*$/.test(d[1].trim()))) out.push({ line: lineOf(m.index), rule: "bar-size" });
     }
   }
   return out.sort((a, b) => a.line - b.line);
@@ -88,6 +90,8 @@ describe("findScrollbarViolations", () => {
   it("flags thumb rules and bar resizing outside the global owner", () => {
     expect(findScrollbarViolations(":root ::-webkit-scrollbar-thumb { background: red; }")).toEqual([{ line: 1, rule: "thumb-rule" }]);
     expect(findScrollbarViolations(".a::-webkit-scrollbar { width: 4px; }")).toEqual([{ line: 1, rule: "bar-size" }]);
+    expect(findScrollbarViolations(".a::-webkit-scrollbar { inline-size: 4px; }")).toHaveLength(1);
+    expect(findScrollbarViolations(".a::-webkit-scrollbar { width: 0; height: 0 }")).toEqual([]);
     expect(findScrollbarViolations(":global(::-webkit-scrollbar-thumb) {}", { owner: true })).toEqual([]);
     expect(findScrollbarViolations(":global(::-webkit-scrollbar) { width: 8px; }", { owner: true })).toEqual([]);
   });

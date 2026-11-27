@@ -151,6 +151,11 @@ test.describe("themed scrollbars", () => {
       .filter((e) => e.name === "UpdateLayoutTree")
       .reduce((sum, e) => sum + (e.args?.elementCount ?? 0), 0);
     expect(restyled / moves, "elements restyled per pointer move").toBeLessThan(80);
+    // The app's own hover UI lays out on about every second move here (20 of
+    // 40, with or without the hook). A hook property that forces layout
+    // (shape-margin did) adds one on every move: 40 of 40.
+    const layouts = events.filter((e) => e.name === "Layout").length;
+    expect(layouts, "layouts during pure pointer moves").toBeLessThan(moves * 0.75);
   });
 
   test("evidence: themed scrollbar states", async ({ page }) => {

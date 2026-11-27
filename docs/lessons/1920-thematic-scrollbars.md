@@ -27,12 +27,16 @@
   `:hover`: `:hover::-webkit-scrollbar-thumb` showed only after an unrelated
   restyle of the element (reproduced in Playwright Chromium with classic
   scrollbars). Changing a computed value on the scroller's own `:hover` fixes
-  it; `+page.svelte` uses `shape-margin`, inert without `shape-outside`.
-  Don't use a custom property for this hook: Chromium restyles the whole
-  subtree for a custom-property change, registered `inherits: false` or not.
-  A `:hover { --x: 1 }` hook restyled ~500-680 elements per pointer move
-  between window, sidebar and pane, against ~17 for `shape-margin` and ~2.5
-  with no hook (sum of `UpdateLayoutTree` `elementCount` in a CDP trace).
+  it; `+page.svelte` uses `shape-image-threshold`, inert without
+  `shape-outside`. Two wrong turns, both measured:
+  - A custom property (`:hover { --x: 1 }`): Chromium restyles the whole
+    subtree for a custom-property change, registered `inherits: false` or
+    not, ~500-680 elements per pointer move between window, sidebar and
+    pane (sum of `UpdateLayoutTree` `elementCount` in a CDP trace).
+  - `shape-margin`: visually inert, but both Chromium and WebKit
+    (`RenderStyle::rareDataChangeRequiresLayout`) run a layout whenever it
+    changes, so every hover cost a layout plus paint (~1 ms per row hover).
+  The E2E guards restyled elements and layouts per pointer move.
   `e2e/themed-scrollbars.spec.ts` fails without the hook.
 - WebKit was not checked locally (Playwright WebKit needs system libraries
   this host lacks). If WebKit also misses the repaint, scrollbars fall back

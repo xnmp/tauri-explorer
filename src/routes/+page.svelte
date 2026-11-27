@@ -511,14 +511,15 @@
      Chromium doesn't restyle a scrollbar when its scroller gains or loses
      :hover, so the thumb rule alone shows only after some unrelated restyle
      (#1920). Changing any computed value on the scroller's own :hover forces
-     the restyle. shape-margin is inert without shape-outside, which nothing
-     here uses, and being a standard non-inherited property it restyles only
-     the element itself. A custom property must not be used here: Chromium
-     restyles the element's whole subtree for it, even registered
-     non-inheriting, which cost ~500 elements per pointer move between
-     regions (measured with UpdateLayoutTree trace events). */
+     the restyle. shape-image-threshold is inert without shape-outside (which
+     nothing here uses) and, unlike shape-margin, triggers no layout in
+     Chromium or WebKit. Being a standard non-inherited property it restyles
+     only the element itself; a custom property must not be used here, since
+     Chromium restyles the element's whole subtree for it (even registered
+     non-inheriting): ~500 elements per pointer move between regions. Both
+     costs are guarded in e2e/themed-scrollbars.spec.ts. */
   :global(:hover) {
-    shape-margin: 0.01px;
+    shape-image-threshold: 0.01;
   }
 
   :global(:hover::-webkit-scrollbar-thumb) {

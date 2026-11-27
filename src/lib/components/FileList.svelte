@@ -5,7 +5,6 @@
 <script lang="ts">
   import { loadView, loadedView, viewLoadFailed, viewRendererFor } from "./view-loaders.svelte";
   import { tick, onDestroy, untrack } from "svelte";
-  import { trashText } from "$lib/domain/trash-label";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { layoutStore } from "$lib/state/layout.svelte";
   import { setFileListFocusReturn } from "$lib/state/file-list-focus-context";
@@ -40,7 +39,7 @@
   import { getCommandShortcut } from "$lib/state/commands.svelte";
   import { clickSelectionEffect } from "$lib/domain/workspace-selection";
   import type { FileEntry } from "$lib/domain/file";
-  import { isTrashPath } from "$lib/domain/virtual-path";
+  import { isTrashPath, trashText } from "$lib/domain/trash-label";
   import { explainTrashedOpen } from "$lib/state/trash-provider";
 
   import type { ListNavigationSnapshot } from "$lib/domain/list-column-flow";

@@ -4,6 +4,9 @@
  */
 import { isWindows } from "./platform";
 
+/** Re-exported so a view can name the location and its label from one import. */
+export { isTrashPath } from "./virtual-path";
+
 /** The location's name: "Recycle Bin" on Windows, "Trash" otherwise. */
 export function trashName(windows: boolean = isWindows): string {
   return windows ? "Recycle Bin" : "Trash";

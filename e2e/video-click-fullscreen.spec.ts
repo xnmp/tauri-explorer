@@ -26,7 +26,7 @@ async function playUntilTimeAdvances(player: Locator) {
   await expect(player.getByRole("button", { name: "Pause video", exact: true })).toBeVisible();
 }
 
-test("clicking the video enters fullscreen without starting playback, and a second click exits", async ({ page }) => {
+test("clicking the video enters fullscreen without starting playback, and a second click plays without exiting (#1926)", async ({ page }) => {
   const player = await openVideo(page);
   await expect(player.getByRole("button", { name: "Play video", exact: true })).toBeEnabled();
   const video = player.locator("video");
@@ -37,9 +37,23 @@ test("clicking the video enters fullscreen without starting playback, and a seco
   expect(await video.evaluate(v => (v as HTMLVideoElement).paused)).toBe(true);
   await page.screenshot({ path: "evidence/ac-1-video-click-fullscreen.png" });
   await video.click();
-  await expect(pane).not.toHaveClass(/fullscreen/);
-  await expect(player).toBeVisible();
-  await page.screenshot({ path: "evidence/ac-2-video-click-exits-fullscreen.png" });
+  await expect(player.getByRole("button", { name: "Pause video", exact: true })).toBeVisible();
+  await expect(pane).toHaveClass(/fullscreen/);
+  await page.screenshot({ path: "evidence/ac-2-video-click-plays-in-fullscreen.png" });
+});
+
+test("a video click while playing in fullscreen pauses and stays fullscreen (#1926)", async ({ page }) => {
+  const player = await openVideo(page);
+  await expect(player.getByRole("button", { name: "Play video", exact: true })).toBeEnabled();
+  const video = player.locator("video");
+  const pane = page.locator(".preview-pane");
+  await video.click();
+  await expect(pane).toHaveClass(/fullscreen/);
+  await playUntilTimeAdvances(player);
+  await video.click();
+  await expect(player.getByRole("button", { name: "Play video", exact: true })).toBeVisible();
+  expect(await video.evaluate(v => (v as HTMLVideoElement).paused)).toBe(true);
+  await expect(pane).toHaveClass(/fullscreen/);
 });
 
 test("Play starts playback in the docked pane", async ({ page }) => {

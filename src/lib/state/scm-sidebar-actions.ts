@@ -6,6 +6,7 @@
  * Extracted from ScmSidebarView.svelte (#1372).
  */
 
+import { trashText } from "$lib/domain/trash-label";
 import { gitAddToGitignore, gitArchiveUntracked, gitInit, gitTrashUntracked } from "$lib/api/git";
 import type { ScmStore } from "./scm.svelte";
 import { toastStore } from "./toast.svelte";
@@ -95,10 +96,10 @@ export function createScmSidebarActions(scm: () => ScmActionsStore) {
     const r = await gitTrashUntracked(store.repoRoot, paths);
     if (!r.ok) {
       await store.refresh();
-      toastStore.error(`Move to Trash failed: ${r.error}`);
+      toastStore.error(trashText(`Move to Trash failed: ${r.error}`));
       return;
     }
-    toastStore.success(`Moved ${itemCount(paths)} to Trash`);
+    toastStore.success(trashText(`Moved ${itemCount(paths)} to Trash`));
     await store.refresh();
   }
 

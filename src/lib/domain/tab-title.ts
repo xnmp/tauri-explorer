@@ -13,6 +13,7 @@
  * Issue: refactor/audit-tier4-splits (#212)
  */
 
+import { trashName } from "./trash-label";
 import { TRASH_PATH } from "./virtual-path";
 import { directoryKey, basename } from "./path";
 
@@ -120,7 +121,7 @@ export function gitTabDisplay(
 /** Folder name for a tab title: basename, with the original fallbacks —
  *  root stays "/", empty becomes "Explorer" (#278/#281). */
 export function extractFolderName(path: string): string {
-  if (path === TRASH_PATH) return "Trash";
+  if (path === TRASH_PATH) return trashName();
   const name = basename(path);
   return name && name !== "/" ? name : path || "Explorer";
 }

@@ -39,7 +39,7 @@
   import { getCommandShortcut } from "$lib/state/commands.svelte";
   import { clickSelectionEffect } from "$lib/domain/workspace-selection";
   import type { FileEntry } from "$lib/domain/file";
-  import { isTrashPath } from "$lib/domain/virtual-path";
+  import { isTrashPath, trashText } from "$lib/domain/trash-label";
   import { explainTrashedOpen } from "$lib/state/trash-provider";
 
   import type { ListNavigationSnapshot } from "$lib/domain/list-column-flow";
@@ -549,7 +549,7 @@
           <path d="M8 16C8 13.7909 9.79086 12 12 12H19.1716C19.702 12 20.2107 12.2107 20.5858 12.5858L23 15H36C38.2091 15 40 16.7909 40 19V34C40 36.2091 38.2091 38 36 38H12C9.79086 38 8 36.2091 8 34V16Z" stroke="currentColor" stroke-width="2" opacity="0.3"/>
           <path d="M20 27H28" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity="0.5"/>
         </svg>
-        <span>{inTrash ? "The Trash is empty" : "This folder is empty"}</span>
+        <span>{inTrash ? trashText("The Trash is empty") : "This folder is empty"}</span>
         <button class="go-up-button" onclick={() => explorer.goBack()}>
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
             <path d="M10 3L5 8L10 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>

@@ -565,6 +565,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `virtual-path.ts` — virtual (plugin-provided) path parsing, plus the eager `TRASH_PATH` / `isTrashPath` for the built-in Trash.
 - `trash.ts` — pure in-app Trash mapping (#863): `trash://` paths, trash wire entries → `FileEntry` with `trash` origin metadata, original-folder column text, source-issue and restore-outcome messages. Contracts in `tests/domain/trash.test.ts`.
 - `trash-drop.ts` — pure routing for dragging out of the Trash (#1554): Trash entry IDs from a drag source, and the drop target → restore-into-folder (or refusal) decision for pointer, DOM folder/listing and Bookmarks drops; lazy (imported only by `state/trash-location.ts`). Contracts in `tests/domain/trash-drop.test.ts`.
+- `trash-label.ts` — platform word for the system trash (#1919): `trashName()` / `trashText()` give "Recycle Bin" on Windows, "Trash" elsewhere.
 - `drives.ts` — pure removable-drive tracking (isUnderRoot).
 - `load-diagnostics.ts` — pure slow directory-load traces (#1022): phase spans, 5 s threshold, frontend record, culprit diagnosis, bounded report text and chronological trace IDs. Contracts in `tests/domain/load-diagnostics.test.ts`.
 - `bookmark-drop-feedback.ts` — bookmark drop action feedback and effective local/cross-window drag-kind resolution (#675).

@@ -129,7 +129,11 @@
     position: relative;
     height: calc(var(--card-visible-rows) * var(--list-slot-height, 30px));
     overflow-x: hidden;
-    overflow-y: auto;
+    /* Always reserve the 8px scrollbar gutter (#1920): with auto, a card that
+       starts overflowing (a folder springing open inside it) gains the bar
+       and every row shifts 4px under the pointer. scrollbar-gutter: stable
+       does not reserve the custom bar in WebKit (#680). */
+    overflow-y: scroll;
     overflow-anchor: none;
     border-radius: 0 0 8px 8px;
     mask-image: linear-gradient(to bottom, transparent, #000 var(--fade-top), #000 calc(100% - var(--fade-bottom)), transparent);

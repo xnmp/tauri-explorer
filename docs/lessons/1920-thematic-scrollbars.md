@@ -42,3 +42,9 @@
   this host lacks). If WebKit also misses the repaint, scrollbars fall back
   to idle and thumb-hover there.
 - `:hover` matches every ancestor, so nested scrollers light up together.
+- Dropping `scrollbar-width: thin` changed WebKit's list-card bar from a
+  zero-width overlay to the 8px classic gutter, so a card that started
+  overflowing (spring-open) shifted its rows 4px and broke the "card keeps
+  the hovered row in place" spec (`folder-peek-spring-load`, R=7) on WebKit
+  only; headless Chromium hides scrollbars. List cards now reserve the gutter
+  with `overflow-y: scroll`, as Tiles panels already budget it.

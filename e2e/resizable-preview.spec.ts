@@ -23,7 +23,7 @@ test.describe("Resizable Preview Pane", () => {
 
   test("preview pane has a visible resize handle", async ({ page }) => {
     const previewPane = page.locator(".preview-pane");
-    const handle = previewPane.locator(".resize-handle");
+    const handle = page.locator(".preview-dock > .resize-handle");
     await expect(handle).toBeAttached();
 
     // Handle should have col-resize cursor
@@ -33,7 +33,7 @@ test.describe("Resizable Preview Pane", () => {
 
   test("dragging resize handle changes preview pane width", async ({ page }) => {
     const previewPane = page.locator(".preview-pane");
-    const handle = previewPane.locator(".resize-handle");
+    const handle = page.locator(".preview-dock > .resize-handle");
 
     const initialBox = await previewPane.boundingBox();
     expect(initialBox).not.toBeNull();
@@ -59,7 +59,7 @@ test.describe("Resizable Preview Pane", () => {
 
   test("resize width is persisted in settings", async ({ page }) => {
     const previewPane = page.locator(".preview-pane");
-    const handle = previewPane.locator(".resize-handle");
+    const handle = page.locator(".preview-dock > .resize-handle");
     const handleBox = await handle.boundingBox();
     expect(handleBox).not.toBeNull();
 
@@ -83,7 +83,7 @@ test.describe("Resizable Preview Pane", () => {
 
   test("resize respects minimum width", async ({ page }) => {
     const previewPane = page.locator(".preview-pane");
-    const handle = previewPane.locator(".resize-handle");
+    const handle = page.locator(".preview-dock > .resize-handle");
     const handleBox = await handle.boundingBox();
     expect(handleBox).not.toBeNull();
 
@@ -104,7 +104,7 @@ test.describe("Resizable Preview Pane", () => {
 
   test("resize respects maximum width", async ({ page }) => {
     const previewPane = page.locator(".preview-pane");
-    const handle = previewPane.locator(".resize-handle");
+    const handle = page.locator(".preview-dock > .resize-handle");
     const handleBox = await handle.boundingBox();
     expect(handleBox).not.toBeNull();
 

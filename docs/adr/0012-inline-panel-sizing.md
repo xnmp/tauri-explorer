@@ -4,7 +4,7 @@ Status: Accepted
 
 Governs: `domain/resize-size.ts`, `state/scalar-resize.ts`, `state/panel-resize.ts`,
 `composables/use-resize-owner.svelte.ts`, `composables/use-controlled-size.svelte.ts`,
-`composables/use-panel-resize.svelte.ts`, `components/PanelResizeHandle.svelte`,
+`composables/use-panel-resize.svelte.ts`, `components/ResizeHandle.svelte`,
 `state/pane-viewport.svelte.ts`, `composables/use-inline-panel-width.svelte.ts`,
 `state/resize-activity.svelte.ts`, `domain/detail-columns.ts`,
 `composables/use-column-resize.svelte.ts`, `domain/preview-size.ts`,

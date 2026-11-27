@@ -1,7 +1,7 @@
 import { onDestroy } from "svelte";
 import { splitRatioFromKey, type PaneGeometry } from "$lib/domain/pane-viewport";
 import type { PaneSplit } from "$lib/domain/pane-layout";
-import { createPaneResize } from "$lib/state/pane-resize";
+import { createPaneResize, dragOrigin } from "$lib/state/pane-resize";
 
 /** One captured gesture per viewport, regardless of the split-tree depth. */
 export function usePaneDividers(deps: {
@@ -49,7 +49,13 @@ export function usePaneDividers(deps: {
     };
     resize.start({
       direction: node.direction,
-      start: (horizontal ? rect.left : rect.top) + gap / 2,
+      // Keep the grab point under the pointer: the hit area is wider than the
+      // divider (#1925), so a press off its centre must not snap it there.
+      start: dragOrigin(
+        { start: horizontal ? rect.left : rect.top },
+        { start: horizontal ? dividerRect.left : dividerRect.top, size: gap },
+        horizontal ? event.clientX : event.clientY,
+      ),
       extent: (horizontal ? rect.width : rect.height) - gap,
       commit: ratio => unchanged() && commit(Math.max(geometry.min, Math.min(geometry.max, ratio))),
     });

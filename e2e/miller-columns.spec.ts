@@ -47,10 +47,11 @@ test.describe("Miller columns panel", () => {
     const header = page.locator(".col-header").first();
     await expect(header).toBeVisible();
 
-    const borderBottom = await header.evaluate(
-      (el) => getComputedStyle(el).borderBottomStyle,
-    );
-    expect(borderBottom).toBe("none");
+    // Poll: the navigation re-renders the columns, so the header first found
+    // can be detached (computed style "") by the time it is read.
+    await expect
+      .poll(() => header.evaluate((el) => getComputedStyle(el).borderBottomStyle))
+      .toBe("none");
   });
 
   test("miller column has ondrop handler for background drops", async ({ page }) => {

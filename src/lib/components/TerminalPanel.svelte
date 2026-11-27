@@ -22,6 +22,7 @@
   import { listen } from "@tauri-apps/api/event";
   import { onMount, untrack } from "svelte";
   import { useControlledSize } from "$lib/composables/use-controlled-size.svelte";
+  import ResizeHandle from "./ResizeHandle.svelte";
   import { NUMERIC_SETTINGS } from "$lib/domain/settings-numbers";
   import { terminalSpawn, terminalReserveId, terminalWrite, terminalResize, terminalKill, terminalStatus } from "$lib/api/terminal";
   import { buildTerminalTheme } from "$lib/domain/terminal-theme";
@@ -404,18 +405,7 @@
   class:resizing={resize.isResizing}
   bind:this={panelEl}
 >
-  <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -- WAI movable separator -->
-  <div
-    class="resize-handle"
-    role="separator"
-    aria-orientation="horizontal"
-    aria-label="Resize terminal"
-    tabindex="0" aria-controls={resizeRegionId}
-    aria-valuemin={resize.min} aria-valuemax={resize.max} aria-valuenow={resize.value}
-    onpointerdown={resize.startResize} onpointermove={resize.move} onpointerup={resize.finish}
-    onpointercancel={resize.cancelPointer} onlostpointercapture={resize.cancelPointer}
-    onkeydown={resize.keydown}
-  ></div>
+  <ResizeHandle {resize} label="Resize terminal" controls={resizeRegionId} edge="top" />
   <div class="terminal-header">
     <span class="terminal-title" role="img" aria-label="Terminal" title="Terminal">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -454,6 +444,10 @@
     flex-shrink: 0;
     background: var(--background-solid);
     border-top: 1px solid var(--divider);
+    /* The panel is counter-zoomed (#419): scale the handle back to app size.
+       Its strip stays under a fullscreen preview, which covers z-index 2. */
+    --resize-scale: var(--app-zoom, 1);
+    --resize-z: 2;
   }
 
   .terminal-panel.hidden {
@@ -464,23 +458,6 @@
   .terminal-panel:global(.drop-target) {
     box-shadow: inset 0 0 0 1px var(--accent);
     background: color-mix(in srgb, var(--accent) 8%, var(--background-solid));
-  }
-
-  .resize-handle {
-    position: absolute;
-    top: -3px;
-    left: 0;
-    right: 0;
-    height: 6px;
-    cursor: ns-resize;
-    touch-action: none;
-    z-index: 2;
-  }
-
-  .resize-handle:focus-visible { outline: 2px solid var(--focus-stroke-outer); outline-offset: -2px; }
-
-  .resize-handle:hover, .resizing .resize-handle {
-    background: color-mix(in srgb, var(--accent) 40%, transparent);
   }
 
   .terminal-header {
@@ -530,6 +507,10 @@
     min-height: 0;
     padding: 4px 8px 0;
     overflow: hidden;
+    /* Round xterm's opaque paint with a rounded panel: the panel itself does
+       not clip, so its resize handle can reach into the gutter (#1925). */
+    border-bottom-left-radius: inherit;
+    border-bottom-right-radius: inherit;
   }
 
   /* xterm fills the host */
@@ -543,6 +524,8 @@
     position: absolute;
     inset: 0;
     top: 27px; /* keep the header interactive */
+    border-bottom-left-radius: inherit;
+    border-bottom-right-radius: inherit;
     display: flex;
     align-items: center;
     justify-content: center;

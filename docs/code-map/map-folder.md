@@ -83,7 +83,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `FolderThumbnail.svelte` — Windows-style folder preview tile (up to 3 nested images, #146).
 - `GitStatusBadge.svelte` — per-entry Git status chip (tinted letter, #1852); the name tint is EntryNameLabel's `git` prop.
 - `ExplorerPane.svelte` — one pane: navigation bar + FileList + preview; owns pane-scoped context.
-- `PanelResizeHandle.svelte` — shared focusable Sidebar/SCM/Miller separator with pointer capture wiring and keyboard range semantics.
+- `ResizeHandle.svelte` — the one focusable panel resize separator (Sidebar/SCM/Miller/Preview/Terminal/Inspector, #1925): pointer capture wiring, keyboard range semantics, edge-placed hit area and `--resize-*` line tokens.
 - `PaneContainer.svelte` — owns the scrollable active workspace (CSS-filled canvas with a script minimum, #1061) and one divider input lifetime; keeps recently active tabs mounted as hidden, inert `.pane-tree.retained` layers (#1173).
 - `PaneLayoutView.svelte` — flat pane hosts keyed independently of split ancestry, bounded restoration placeholders, and focusable split dividers; anchored creation reveals (#1703).
 - `NavigationBar.svelte` — per-pane back/fwd/up + breadcrumb strip + address bar.
@@ -625,6 +625,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `detail-columns.ts` — Details column defaults, finite bounds, malformed-width normalization and visible grid projection.
 - `open-history.ts` — bounded (10k, oldest evicted) path → last-opened map: open/move/forget ops, max-wins merge, tolerant (de)serialization (#1525).
 - `media-duration.ts` — Length-cell formatting (m:ss / h:mm:ss via `mediaTime`, empty when unknown) and the size+mtime cache revision (#995).
+- `resize-edge.ts` — resize-handle panel edge and its ARIA orientation (#1925).
 - `resize-size.ts` — bounded scalar normalization, visual/model delta conversion and axis-aware keyboard sizing.
 - `scroll-moves-handle.ts` — which scrolls end a panel drag: the document's, an ancestor's or a synced scroller's, never an unrelated list's.
 - `pane-viewport.ts` — pure descendant minima (`paneMinima` sizes the rendered canvas and split children without measurement), canvas placement, active-pane reveal and keyboard divider policy.

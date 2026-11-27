@@ -167,17 +167,15 @@
   border-color: color-mix(in srgb, var(--accent) 60%, transparent);
 }
 
-/* The divider is the gap between cards, not a drawn line or a tinted strip,
-   even while hovered or dragged; the base rules key both on the split
-   direction and drag state, so only !important outranks them here. Its grip
-   shows only while the pointer is over the gap or the split is being
-   dragged (#1854). */
-:root [data-region="split-divider"] {
-  border-color: transparent !important;
-  background: transparent !important;
+/* The divider is the gap between cards, not a drawn line (its ::before,
+   #1925), even while hovered or dragged. Its grip shows only while the
+   pointer is over the gap or the split is being dragged (#1854). */
+:root [data-region="split-divider"]::before {
+  display: none;
 }
 
 :root [data-region="split-grip"] {
+  display: block;
   opacity: 0;
 }
 

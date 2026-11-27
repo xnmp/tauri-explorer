@@ -7,6 +7,14 @@ interface ResizeTarget {
   commit(ratio: number): boolean;
 }
 
+/** The client coordinate where a drag's ratio is 0 (#1925). The pointer's
+ * offset from the divider's centre at the press is kept: a press anywhere on
+ * the hit area, which is wider than the divider, leaves the divider in place
+ * until the pointer moves. */
+export function dragOrigin(container: { start: number }, divider: { start: number; size: number }, pointer: number): number {
+  return container.start + divider.size / 2 + (pointer - (divider.start + divider.size / 2));
+}
+
 /** Owns one pointer drag and its coalesced frame, independently of live props. */
 export function createPaneResize(dependencies: {
   schedule(callback: () => void): () => void;

@@ -128,6 +128,31 @@ test.describe("themed scrollbars", () => {
     expect(hover[0] - hover[2], "gruvbox thumb is warm").toBeGreaterThan(120);
   });
 
+  test("the hover restyle hook stays cheap", async ({ page }) => {
+    // The hook must restyle only the hovered element. A custom-property hook
+    // restyled the hovered element's whole subtree: ~500 elements per move
+    // here, against ~17 for the shipped one and ~2.5 with no hook at all.
+    const g = await openThemed(page, "light");
+    const cdp = await page.context().newCDPSession(page);
+    const events: { name: string; args?: { elementCount?: number } }[] = [];
+    cdp.on("Tracing.dataCollected", (e) => events.push(...(e.value as typeof events)));
+    await cdp.send("Tracing.start", { categories: "devtools.timeline", transferMode: "ReportEvents" });
+    const moves = 40;
+    for (let i = 0; i < moves / 4; i++) {
+      for (const [x, y] of [[g.centreX, g.centreY], [100, g.centreY], [g.centreX, g.centreY], [-1, -1]]) {
+        await page.mouse.move(x, y);
+        await page.waitForTimeout(20);
+      }
+    }
+    const complete = new Promise((resolve) => cdp.once("Tracing.tracingComplete", resolve));
+    await cdp.send("Tracing.end");
+    await complete;
+    const restyled = events
+      .filter((e) => e.name === "UpdateLayoutTree")
+      .reduce((sum, e) => sum + (e.args?.elementCount ?? 0), 0);
+    expect(restyled / moves, "elements restyled per pointer move").toBeLessThan(80);
+  });
+
   test("evidence: themed scrollbar states", async ({ page }) => {
     test.skip(!captureEvidence, "evidence capture only");
     const themes = ["light", "catppuccin", "gruvbox", "hacker", "nord", "horizon", "tahoe", "solarized-light"];

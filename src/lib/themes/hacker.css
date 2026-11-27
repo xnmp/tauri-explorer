@@ -127,4 +127,5 @@
   --content-opacity: 1;
   --titlebar-opacity: 1;
   --statusbar-opacity: 1;
+  --scrollbar-thumb-shadow-hover: none; /* flat mode: no glow (#1920) */
 }

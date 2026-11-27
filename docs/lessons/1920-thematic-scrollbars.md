@@ -8,9 +8,9 @@
   theme.
 - `scrollbar-width` / `scrollbar-color` on a scroller make Chromium 121+
   (WebView2 on Windows) ignore every `::-webkit-scrollbar` rule for it, so it
-  falls back to the native bar. ListCard and TilePanel had `scrollbar-width: thin`
-  and therefore stayed unthemed on Windows only; the global 8px rule already
-  makes them thin. Only `scrollbar-width: none` (hiding a bar) is safe.
+  falls back to the native bar; recent WebKit (Safari 18.2+) may do the same.
+  ListCard and TilePanel had `scrollbar-width: thin` and so stayed unthemed at
+  least on Windows; the global 8px rule already makes them thin. Only `scrollbar-width: none` (hiding a bar) is safe.
 - The thumb grows by shrinking its transparent `border-width` inside a fixed
   8px gutter. Changing the gutter width moves every pane's content box and the
   measurements built on it (#975, #680 graph header, marquee bases).
@@ -26,9 +26,15 @@
 - Chromium does not restyle a scrollbar when its scroller gains or loses
   `:hover`: `:hover::-webkit-scrollbar-thumb` showed only after an unrelated
   restyle of the element (reproduced in Playwright Chromium with classic
-  scrollbars). A rule keyed on the element's own `:hover` fixes it; the one in
-  `+page.svelte` sets a registered, non-inheriting custom property so a hover
-  change restyles only that element. `e2e/themed-scrollbars.spec.ts` fails
-  without it. WebKit was not checked locally (Playwright WebKit needs system
-  libraries this host lacks); if WebKit also misses the repaint, the bar falls
-  back to idle and thumb-hover states only.
+  scrollbars). Changing a computed value on the scroller's own `:hover` fixes
+  it; `+page.svelte` uses `shape-margin`, inert without `shape-outside`.
+  Don't use a custom property for this hook: Chromium restyles the whole
+  subtree for a custom-property change, registered `inherits: false` or not.
+  A `:hover { --x: 1 }` hook restyled ~500-680 elements per pointer move
+  between window, sidebar and pane, against ~17 for `shape-margin` and ~2.5
+  with no hook (sum of `UpdateLayoutTree` `elementCount` in a CDP trace).
+  `e2e/themed-scrollbars.spec.ts` fails without the hook.
+- WebKit was not checked locally (Playwright WebKit needs system libraries
+  this host lacks). If WebKit also misses the repaint, scrollbars fall back
+  to idle and thumb-hover there.
+- `:hover` matches every ancestor, so nested scrollers light up together.

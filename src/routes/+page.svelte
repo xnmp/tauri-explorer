@@ -506,22 +506,21 @@
     box-shadow: var(--scrollbar-thumb-shadow, none);
   }
 
-  /* Chromium doesn't restyle a scrollbar when its scroller gains or loses
-     :hover, so the rule below would only show after some unrelated restyle
-     (observed in Playwright Chromium, #1920). Any declaration keyed on the
-     element's own :hover makes the engine recompute that element's style,
-     scrollbar included. The property is registered non-inheriting so the
-     hover change restyles only that element, not its whole subtree. */
-  @property --scrollbar-hover-restyle {
-    syntax: "*";
-    inherits: false;
-  }
-
+  /* Pointer over the scroller (any scroller: :hover matches every ancestor
+     of the pointer, so nested scrollers light up together).
+     Chromium doesn't restyle a scrollbar when its scroller gains or loses
+     :hover, so the thumb rule alone shows only after some unrelated restyle
+     (#1920). Changing any computed value on the scroller's own :hover forces
+     the restyle. shape-margin is inert without shape-outside, which nothing
+     here uses, and being a standard non-inherited property it restyles only
+     the element itself. A custom property must not be used here: Chromium
+     restyles the element's whole subtree for it, even registered
+     non-inheriting, which cost ~500 elements per pointer move between
+     regions (measured with UpdateLayoutTree trace events). */
   :global(:hover) {
-    --scrollbar-hover-restyle: 1;
+    shape-margin: 0.01px;
   }
 
-  /* The scroller under the pointer, not only its thumb. */
   :global(:hover::-webkit-scrollbar-thumb) {
     border-width: 2px;
     background: var(--scrollbar-thumb-active, color-mix(in srgb, var(--accent) 60%, transparent)) padding-box;
@@ -536,7 +535,7 @@
   }
 
   :global(::-webkit-scrollbar-corner) {
-    background: transparent;
+    background: var(--scrollbar-track, transparent);
   }
 
   /* Theme background layer: behind glassmorphism, targetable by themes */

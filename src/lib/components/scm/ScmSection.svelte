@@ -6,6 +6,7 @@
 <script lang="ts">
   import type { GitFileEntry } from "$lib/api/git";
   import { basename } from "$lib/domain/path";
+  import { trashText } from "$lib/domain/trash-label";
   import { buildTree, collectEntries, type ScmTreeNode } from "$lib/domain/scm-tree";
   import { canDiscardScmRow, discardableScmPaths, splitScmPath as splitPath, statusClass, statusLetter, type ScmSectionKind } from "$lib/domain/scm-sidebar";
   import type { ScmStore } from "$lib/state/scm.svelte";
@@ -109,7 +110,7 @@
     {#if kind === "untracked"}
       <button type="button" class="row-btn" title="Archive to .archive" aria-label="Archive {row.path} to .archive"
         onclick={(e) => { e.stopPropagation(); onArchive([row.path]); }}>{@render actionIcon("archive")}</button>
-      <button type="button" class="row-btn" title="Move to Trash" aria-label="Move {row.path} to Trash"
+      <button type="button" class="row-btn" title={trashText("Move to Trash")} aria-label={trashText(`Move ${row.path} to Trash`)}
         onclick={(e) => { e.stopPropagation(); onTrash([row.path]); }}>{@render actionIcon("trash")}</button>
       <button type="button" class="row-btn" title="Add to .gitignore" aria-label="Ignore {row.path}"
         onclick={(e) => { e.stopPropagation(); onIgnore(row.path); }}>{@render actionIcon("ignore")}</button>
@@ -188,7 +189,7 @@
             {#if kind === "untracked"}
               <button type="button" class="row-btn" title="Archive to .archive" aria-label="Archive {child.name} to .archive"
                 onclick={(e) => { e.stopPropagation(); onArchive(folderPaths); }}>{@render actionIcon("archive")}</button>
-              <button type="button" class="row-btn" title="Move to Trash" aria-label="Move {child.name} to Trash"
+              <button type="button" class="row-btn" title={trashText("Move to Trash")} aria-label={trashText(`Move ${child.name} to Trash`)}
                 onclick={(e) => { e.stopPropagation(); onTrash(folderPaths); }}>{@render actionIcon("trash")}</button>
               <button type="button" class="row-btn" title="Add folder to .gitignore" aria-label="Ignore {child.name}"
                 onclick={(e) => { e.stopPropagation(); onIgnore(child.fullDir); }}>{@render actionIcon("ignore")}</button>

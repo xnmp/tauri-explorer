@@ -4,6 +4,7 @@
  * restores their opaque IDs into the destination folder (ADR 0019). Pure
  * routing only; the restore itself lives in the lazy `state/trash-location.ts`.
  */
+import { trashText } from "./trash-label";
 import { TRASH_PATH, isVirtualPath } from "./virtual-path";
 
 /** The opaque ID behind a Trash entry path (`trash://<id>`), else null. */
@@ -31,8 +32,8 @@ export type TrashDropRoute =
   /** Consumed without effect; `message` explains a deliberate refusal. */
   | { kind: "refuse"; message: string | null };
 
-const NO_PATH = "Items in the Trash have no file path until they are restored.";
-const DROP_ON_FOLDER = "Drop items from the Trash onto a folder or bookmark to restore them there.";
+const NO_PATH = trashText("Items in the Trash have no file path until they are restored.");
+const DROP_ON_FOLDER = trashText("Drop items from the Trash onto a folder or bookmark to restore them there.");
 
 /**
  * How a drop completes for a Trash drag, or null when `source` is not one.

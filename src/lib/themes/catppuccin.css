@@ -110,6 +110,11 @@
   --icon-media: #eba0ac;
   --icon-executable: #a6e3a1;
   --icon-document: #a6adc8;
+
+  /* Scrollbar signature (#1920; tokens documented in routes/+page.svelte) */
+  /* Mauve -> lavender -> blue, the flavour's own ramp */
+  --scrollbar-thumb-active: linear-gradient(color-mix(in srgb, var(--accent) 65%, transparent), color-mix(in srgb, var(--accent-light) 65%, transparent), color-mix(in srgb, var(--accent-dark) 65%, transparent));
+  --scrollbar-thumb-hover: linear-gradient(var(--accent), var(--accent-light), var(--accent-dark));
 }
 
 /* --- #437: non-premium (flat / high-contrast) fallback --- */

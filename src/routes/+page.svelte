@@ -476,31 +476,67 @@
     color: inherit;
   }
 
-  /* Scrollbar styling - Windows 11 style */
+  /* Scrollbars (#1920): a thin neutral line at rest that widens and takes
+     the accent as the pointer comes near. The 8px gutter never changes; the
+     thumb grows by shrinking its transparent border, so nothing reflows.
+     Colour themes and layouts restyle it through these tokens rather than
+     their own ::-webkit-scrollbar rules:
+       --scrollbar-thumb         idle thumb
+       --scrollbar-thumb-active  pointer anywhere over the scroller
+       --scrollbar-thumb-hover   pointer on the thumb, or dragging it
+       --scrollbar-radius        thumb corners
+       --scrollbar-thumb-shadow(-hover)  inset only: the bar clips outset
+       --scrollbar-track         track paint
+     Each thumb/track token is one background layer: a colour or a gradient.
+     Don't set scrollbar-color or scrollbar-width on a scroller: in
+     Chromium 121+ (WebView2) they replace these rules entirely. */
   :global(::-webkit-scrollbar) {
     width: 8px;
     height: 8px;
   }
 
   :global(::-webkit-scrollbar-track) {
-    background: transparent;
+    background: var(--scrollbar-track, transparent);
   }
 
   :global(::-webkit-scrollbar-thumb) {
-    background: var(--text-tertiary);
-    border: 2px solid transparent;
-    border-radius: var(--radius-pill);
-    background-clip: padding-box;
+    border: 3px solid transparent;
+    border-radius: var(--scrollbar-radius, var(--radius-pill));
+    background: var(--scrollbar-thumb, color-mix(in srgb, var(--text-tertiary) 55%, transparent)) padding-box;
+    box-shadow: var(--scrollbar-thumb-shadow, none);
   }
 
-  :global(::-webkit-scrollbar-thumb:hover) {
-    background: var(--text-secondary);
-    border: 2px solid transparent;
-    background-clip: padding-box;
+  /* Pointer over the scroller (any scroller: :hover matches every ancestor
+     of the pointer, so nested scrollers light up together).
+     Chromium doesn't restyle a scrollbar when its scroller gains or loses
+     :hover, so the thumb rule alone shows only after some unrelated restyle
+     (#1920). Changing any computed value on the scroller's own :hover forces
+     the restyle. shape-image-threshold is inert without shape-outside (which
+     nothing here uses) and, unlike shape-margin, triggers no layout in
+     Chromium or WebKit. Being a standard non-inherited property it restyles
+     only the element itself; a custom property must not be used here, since
+     Chromium restyles the element's whole subtree for it (even registered
+     non-inheriting): ~500 elements per pointer move between regions. Both
+     costs are guarded in e2e/themed-scrollbars.spec.ts. */
+  :global(:hover) {
+    shape-image-threshold: 0.01;
+  }
+
+  :global(:hover::-webkit-scrollbar-thumb) {
+    border-width: 2px;
+    background: var(--scrollbar-thumb-active, color-mix(in srgb, var(--accent) 60%, transparent)) padding-box;
+  }
+
+  /* After the scroller-hover rule: same specificity, so order decides. */
+  :global(::-webkit-scrollbar-thumb:hover),
+  :global(::-webkit-scrollbar-thumb:active) {
+    border-width: 1px;
+    background: var(--scrollbar-thumb-hover, var(--accent)) padding-box;
+    box-shadow: var(--scrollbar-thumb-shadow-hover, var(--scrollbar-thumb-shadow, none));
   }
 
   :global(::-webkit-scrollbar-corner) {
-    background: transparent;
+    background: var(--scrollbar-track, transparent);
   }
 
   /* Theme background layer: behind glassmorphism, targetable by themes */

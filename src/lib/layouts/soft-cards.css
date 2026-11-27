@@ -269,21 +269,9 @@
   box-shadow: none;
 }
 
-/* Thin scrollbars: a 4px thumb in an 8px gutter, so it sits a few pixels in
-   from the card edge, kept clear of the rounded corners and with no track. */
-:root ::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--text-primary) 22%, transparent);
-  border: 2px solid transparent;
-  border-radius: 4px;
-  background-clip: padding-box;
-}
-
-:root ::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in srgb, var(--text-primary) 38%, transparent);
-  border: 2px solid transparent;
-  background-clip: padding-box;
-}
-
+/* Scrollbars keep the app's thumb and its --scrollbar-* colour tokens
+   (#1920); the layout only insets the track so the thumb stays clear of the
+   cards' rounded corners. */
 :root ::-webkit-scrollbar-track:vertical {
   margin: var(--layout-gap) 0;
 }

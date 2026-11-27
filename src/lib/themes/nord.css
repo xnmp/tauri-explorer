@@ -113,6 +113,12 @@
   --icon-media: #bf616a;
   --icon-executable: #a3be8c;
   --icon-document: #d8dee9;
+
+  /* Scrollbar signature (#1920; tokens documented in routes/+page.svelte) */
+  /* Frost ramp (nord7 -> nord10) with a snowy top edge */
+  --scrollbar-thumb-active: linear-gradient(color-mix(in srgb, var(--accent-light) 60%, transparent), color-mix(in srgb, var(--accent-dark) 60%, transparent));
+  --scrollbar-thumb-hover: linear-gradient(var(--accent-light), var(--accent-dark));
+  --scrollbar-thumb-shadow: inset 0 1px 0 rgba(236, 239, 244, 0.35);
 }
 
 /* --- #437: non-premium (flat / high-contrast) fallback --- */

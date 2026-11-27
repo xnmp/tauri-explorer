@@ -12,6 +12,7 @@ import { runPaletteCommand, seedSettings, waitForEntries } from "./helpers";
 const SHOTS = "screenshots/feat/1925-unified-resize-handle";
 
 async function openAll(page: Page, layoutTheme: string) {
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await seedSettings(page, { layoutTheme, showPreviewPane: true, theme: "light" }, { replace: true });
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/?path=/home/user");
@@ -22,7 +23,14 @@ async function openAll(page: Page, layoutTheme: string) {
   await page.keyboard.press("Alt+m"); await page.keyboard.press("t");
   await expect(page.locator(".terminal-panel")).toBeVisible();
   await runPaletteCommand(page, "Split Pane Right");
-  await expect(page.locator(".pane-tree:not(.retained) .pane-divider")).toHaveCount(1);
+  const divider = page.locator(".pane-tree:not(.retained) .pane-divider");
+  await expect(divider).toHaveCount(1);
+  // Measure only once the new pane's entrance has settled: the divider must
+  // hold its place across two animation frames.
+  await expect.poll(() => divider.evaluate(el => new Promise<boolean>(resolve => {
+    const x = el.getBoundingClientRect().x;
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve(el.getBoundingClientRect().x === x)));
+  }))).toBe(true);
 }
 
 const before = (handle: Locator, property: string) =>

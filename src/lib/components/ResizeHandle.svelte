@@ -4,8 +4,8 @@
   line from the same tokens.
 
   The hit area is an absolutely positioned strip `--resize-hit` across,
-  centred on the panel edge (or inside it with `inset`, for a panel that clips
-  its overflow), so it never changes layout. The drawn line is its ::before:
+  reaching `--resize-outward` (3px) beyond the panel edge, or inside it with
+  `inset` for a panel that clips its overflow, so it never changes layout. The drawn line is its ::before:
   a `--resize-line-width` hairline on the edge's inner pixel at rest, growing
   to a `--resize-active-width` accent bar after `--resize-hover-delay` on
   hover or keyboard focus, and at once while dragging. Layouts restyle it
@@ -38,9 +38,10 @@
   .resize-handle {
     --s: var(--resize-scale, 1);
     --hit: calc(var(--resize-hit, 10px) * var(--s));
-    /* Offset of the hit area from the edge: centred on it, moved outward by
-       --resize-offset (Floating Islands centres it in the gutter). */
-    --shift: calc(var(--hit) / -2 - var(--resize-offset, 0px) * var(--s));
+    /* How far the hit area reaches beyond the panel edge. 3px keeps it off
+       the neighbour's content (a marquee started 5px into the file list is
+       the list's, #756); Floating Islands centres it in the gutter. */
+    --shift: calc(var(--resize-outward, 3px) * var(--s) * -1);
     --rest: calc(var(--resize-line-width, 1px) * var(--s));
     --w: var(--rest);
     --c: var(--resize-line, var(--layout-hairline, var(--divider)));
@@ -50,8 +51,8 @@
     position: absolute;
     z-index: var(--resize-z, 10);
     touch-action: none;
-    outline: none;
   }
+  .resize-handle:focus-visible { outline: 2px solid var(--focus-stroke-outer); outline-offset: -2px; }
   .resize-handle[data-inset] { --shift: 0px; }
   .resize-handle:is(:hover, :focus-visible), .resize-handle[data-dragging] {
     --w: calc(var(--resize-active-width, 3px) * var(--s));

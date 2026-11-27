@@ -175,7 +175,11 @@
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
-    outline: none;
+  }
+
+  .pane-divider:focus-visible {
+    outline: 2px solid var(--focus-stroke-outer);
+    outline-offset: -2px;
   }
 
   .pane-divider:is(:hover, :focus-visible), .pane-split.resizing > .pane-divider {

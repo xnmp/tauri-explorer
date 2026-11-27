@@ -81,8 +81,8 @@ shows the bar at once. Floating Islands draws no line: the gutter between
 islands is the handle, and a 3×24px capsule grip appears centred in it on
 hover or focus, stretching to 48px in `--resize-active` while dragging (Soft
 Cards shows its split grip the same way). A layout that wants the gutter
-style sets `--resize-offset` (how far beyond the panel edge the hit area is
-centred) and styles `[data-region="resize-handle"]::before` as
+style sets `--resize-outward` (how far the hit area reaches beyond the panel
+edge, default 3px so it stays off the neighbour's content) and styles `[data-region="resize-handle"]::before` as
 `src/lib/layouts/floating-islands.css` does. The terminal is counter-zoomed
 (#419); its handle scales the variables itself.
 

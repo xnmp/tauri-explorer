@@ -79,7 +79,8 @@ function focusedStop(page: Page): Promise<Stop | null> {
       if (node.closest(".sidebar-container")) return "sidebar";
       if (node.closest(".navigation-bar")) return "address-bar";
       if (node.closest(".file-list")) return "file-list";
-      if (node.closest(".preview-pane")) return "preview";
+      // The dock holds the pane and its resize handle (#1925).
+      if (node.closest(".preview-dock")) return "preview";
       if (node.closest(".status-bar")) return "status";
       if (node.matches(".explorer-pane")) return "pane";
       return "other";

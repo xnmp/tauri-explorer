@@ -104,8 +104,9 @@ test("a scroll that carries the handle ends the preview drag where it was", asyn
   const { x, y } = await begin(page);
   await page.mouse.move(x, y + 30);
   await expect.poll(async () => (await pane.boundingBox())!.height - initial).toBeCloseTo(30, 0);
-  // The preview pane is an ancestor of its handle.
-  await pane.evaluate(element => element.dispatchEvent(new Event("scroll")));
+  // The preview dock is an ancestor of its handle (#1925 moved the handle
+  // from the pane to the dock, outside the pane's clip).
+  await page.locator(".preview-dock").evaluate(element => element.dispatchEvent(new Event("scroll")));
   await expect.poll(async () => (await preferences(page)).height).toBeCloseTo(270, 1);
   await page.mouse.move(x, y + 60);
   await page.mouse.up();

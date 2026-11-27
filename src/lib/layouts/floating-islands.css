@@ -358,11 +358,24 @@
    A 3x24px capsule grip appears centred in the gap on hover or keyboard
    focus, after --resize-hover-delay, and stretches to 48px in the accent
    while dragging. Panel handles (sidebar, preview, terminal, inspector, SCM)
-   draw it as their ::before, centred --resize-offset beyond the panel edge;
+   draw it as their ::before, centred in the gap beyond the panel edge;
    split dividers already fill their gap and show their grip. A handle inset
    in a clipping panel keeps its strip inside the edge. */
 :root[data-layout-base="floating-islands"] [data-region="resize-handle"] {
-  --resize-offset: calc(var(--layout-gap) / 2);
+  /* Centred in the gap: half the hit area plus half the gap past the edge. */
+  --resize-outward: calc(var(--resize-hit, 10px) / 2 + var(--layout-gap) / 2);
+}
+
+/* The strip stops short of the islands' rounded corners, so no layer sits
+   over their anti-aliased arcs (the tab's seam tests compare those pixels). */
+:root[data-layout-base="floating-islands"] [data-region="resize-handle"]:is([data-edge="left"], [data-edge="right"]) {
+  top: calc(var(--layout-radius) * var(--s, 1));
+  bottom: calc(var(--layout-radius) * var(--s, 1));
+}
+
+:root[data-layout-base="floating-islands"] [data-region="resize-handle"]:is([data-edge="top"], [data-edge="bottom"]) {
+  left: calc(var(--layout-radius) * var(--s, 1));
+  right: calc(var(--layout-radius) * var(--s, 1));
 }
 
 :root[data-layout-base="floating-islands"] [data-region="resize-handle"]::before {

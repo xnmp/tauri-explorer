@@ -15,6 +15,7 @@ import {
   legacyTranslucency,
   materialEffects,
   platformMaterial,
+  WINDOW_MATERIAL_PARAM,
   withWindowMaterial,
 } from "$lib/domain/translucency";
 
@@ -139,5 +140,14 @@ describe("parity with the native side", () => {
     expect(prePaint).toContain("window.__WINDOW_MATERIAL__");
     expect(prePaint).toContain("get('material')");
     for (const name of ["vibrancy", "acrylic", "mica"]) expect(prePaint).toContain(`'${name}'`);
+  });
+
+  it("reads a JS-created window's material from the URL parameter the page writes (#1903)", () => {
+    const match = /const WINDOW_MATERIAL_PARAM: &str = "(\w+)";/.exec(source);
+    expect(match, "translucency.rs must declare WINDOW_MATERIAL_PARAM").not.toBeNull();
+    expect(match![1]).toBe(WINDOW_MATERIAL_PARAM);
+    // The URL a window is created with carries the material under that name.
+    const query = withWindowMaterial(new URLSearchParams({ path: "C:\\" }), "acrylic");
+    expect(query.get(match![1])).toBe("acrylic");
   });
 });

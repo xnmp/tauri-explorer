@@ -313,6 +313,21 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
     let builder = builder.plugin(
         tauri::plugin::Builder::<_, ()>::new("translucency")
             .js_init_script(translucency::init_script(translucency::platform_material()))
+            // A JS-created window names its material in its URL; keep a
+            // Windows backdrop drawn while it is inactive (#1903). The
+            // Rust-built main window does the same after it is built. Not
+            // `on_webview_ready`: WebView2 still reports `about:blank` then
+            // (tauri#9027), while a started page load carries the real URL.
+            // Reloads install again, which replaces the same subclass.
+            .on_page_load(|_webview, _payload| {
+                #[cfg(target_os = "windows")]
+                if _payload.event() == tauri::webview::PageLoadEvent::Started
+                    && translucency::url_material(_payload.url())
+                        .is_some_and(translucency::Material::is_windows_backdrop)
+                {
+                    translucency::keep_backdrop_while_inactive(&_webview.window());
+                }
+            })
             .build(),
     );
     // Every WebView sharing Windows' data directory must use the exact same
@@ -799,7 +814,11 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             builder =
                 builder.initialization_script(translucency::window_init_script(window_material));
 
-            builder.build()?;
+            let _main_window = builder.build()?;
+            #[cfg(target_os = "windows")]
+            if window_material.is_some_and(translucency::Material::is_windows_backdrop) {
+                translucency::keep_backdrop_while_inactive(&_main_window.as_ref().window());
+            }
             let t_window_built = std::time::Instant::now();
             #[cfg(all(target_os = "linux", feature = "e2e-renderer-recovery"))]
             renderer_recovery::start(app.handle())?;

@@ -110,4 +110,9 @@
 
   /* Background animation - starfield with constellation lines */
   --theme-bg-animation: 'starfield';
+
+  /* Scrollbar signature (#1920; tokens documented in routes/+page.svelte) */
+  --scrollbar-thumb-active: linear-gradient(color-mix(in srgb, var(--accent-light) 60%, transparent), color-mix(in srgb, var(--accent-dark) 60%, transparent));
+  --scrollbar-thumb-hover: linear-gradient(var(--accent-light), var(--accent-dark));
+  --scrollbar-thumb-shadow-hover: inset 0 0 2px var(--accent-light);
 }

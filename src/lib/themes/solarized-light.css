@@ -115,6 +115,12 @@
   --icon-folder: #b58900;
   --icon-git-badge: var(--accent);
   /* --icon-file-tint: unset; when set, overrides all file icon colors */
+
+  /* Scrollbar signature (#1920; tokens documented in routes/+page.svelte) */
+  /* Squared ink stroke, blue -> cyan */
+  --scrollbar-radius: 1px;
+  --scrollbar-thumb-active: linear-gradient(color-mix(in srgb, var(--accent) 65%, transparent), color-mix(in srgb, var(--accent-light) 65%, transparent));
+  --scrollbar-thumb-hover: linear-gradient(var(--accent), var(--accent-light));
 }
 /* --- #437: non-premium (flat / high-contrast) fallback --- */
 [data-theme="solarized-light"]:not([data-premium="true"]) {

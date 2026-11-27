@@ -112,6 +112,14 @@
   --icon-media: #fb4934;
   --icon-executable: #b8bb26;
   --icon-document: #bdae93;
+
+  /* Scrollbar signature (#1920; tokens documented in routes/+page.svelte) */
+  /* Square retro block with a burnt lip, on a hatched track */
+  --scrollbar-radius: 0;
+  --scrollbar-thumb-active: linear-gradient(color-mix(in srgb, var(--accent-light) 75%, transparent), color-mix(in srgb, var(--accent) 75%, transparent));
+  --scrollbar-thumb-hover: linear-gradient(var(--accent-light), var(--accent-dark));
+  --scrollbar-thumb-shadow: inset 0 -2px 0 rgba(175, 58, 3, 0.7);
+  --scrollbar-track: repeating-linear-gradient(45deg, transparent 0 3px, rgba(235, 219, 178, 0.05) 3px 4px);
 }
 
 /* --- #437: non-premium (flat / high-contrast) fallback --- */

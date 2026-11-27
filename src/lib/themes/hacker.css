@@ -109,6 +109,14 @@
   --breadcrumb-segment-bg-hover: rgba(0, 255, 65, 0.18);
   --breadcrumb-chevron-display: none;
   --breadcrumb-powerline-display: flex;
+
+  /* Scrollbar signature (#1920; tokens documented in routes/+page.svelte) */
+  /* Segmented block cursor; phosphor glow while held */
+  --scrollbar-radius: 0;
+  --scrollbar-thumb: repeating-linear-gradient(color-mix(in srgb, var(--accent) 45%, transparent) 0 4px, transparent 4px 6px);
+  --scrollbar-thumb-active: repeating-linear-gradient(color-mix(in srgb, var(--accent) 75%, transparent) 0 4px, transparent 4px 6px);
+  --scrollbar-thumb-hover: repeating-linear-gradient(var(--accent) 0 4px, color-mix(in srgb, var(--accent) 25%, transparent) 4px 6px);
+  --scrollbar-thumb-shadow-hover: inset 0 0 3px var(--accent-light);
 }
 
 /* --- #437: non-premium (flat / high-contrast) fallback --- */
@@ -119,4 +127,5 @@
   --content-opacity: 1;
   --titlebar-opacity: 1;
   --statusbar-opacity: 1;
+  --scrollbar-thumb-shadow-hover: none; /* flat mode: no glow (#1920) */
 }

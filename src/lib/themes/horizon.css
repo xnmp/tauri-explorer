@@ -108,6 +108,11 @@
      which is the same saturated red as --system-critical and made every
      repository read as an error. Distinct from the peach --icon-folder. */
   --icon-git-badge: #b877db;
+
+  /* Scrollbar signature (#1920; tokens documented in routes/+page.svelte) */
+  /* Sunset: yellow -> red -> magenta from the Horizon palette */
+  --scrollbar-thumb-active: linear-gradient(rgba(250, 183, 149, 0.6), color-mix(in srgb, var(--accent) 60%, transparent));
+  --scrollbar-thumb-hover: linear-gradient(#fab795, var(--accent), var(--accent-light));
 }
 
 /* --- #437: non-premium (flat / high-contrast) fallback --- */

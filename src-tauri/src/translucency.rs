@@ -7,6 +7,8 @@
 //!   accent-policy acrylic, which lags while a window is dragged or resized,
 //!   so they use Mica instead.
 //! - Windows 11 before that (build 22000+): Mica.
+//!   DWM drops either backdrop when its window deactivates, so translucent
+//!   Windows windows keep their frame active (`inactive_backdrop`, #1903).
 //! - Windows 10, Linux: no material; the setting is hidden.
 //!
 //! Every page learns the result from [`init_script`], and the frontend
@@ -16,6 +18,11 @@
 use serde_json::Value;
 use tauri::utils::config::WindowEffectsConfig;
 use tauri::utils::{WindowEffect, WindowEffectState};
+
+#[cfg(target_os = "windows")]
+mod inactive_backdrop;
+#[cfg(target_os = "windows")]
+pub use inactive_backdrop::keep_backdrop_while_inactive;
 
 /// A native window material, named as the frontend names it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -33,6 +40,33 @@ impl Material {
             Material::Mica => "mica",
         }
     }
+
+    fn from_name(name: &str) -> Option<Self> {
+        [Material::Vibrancy, Material::Acrylic, Material::Mica]
+            .into_iter()
+            .find(|material| material.name() == name)
+    }
+
+    /// Whether this is a Windows DWM system backdrop. Those go solid when the
+    /// window deactivates unless the window keeps its frame active (#1903).
+    /// macOS vibrancy stays lit through `WindowEffectState::Active` instead.
+    pub fn is_windows_backdrop(self) -> bool {
+        matches!(self, Material::Acrylic | Material::Mica)
+    }
+}
+
+/// The URL parameter a JS-created window's material travels in
+/// (`WINDOW_MATERIAL_PARAM` in `domain/translucency.ts`).
+const WINDOW_MATERIAL_PARAM: &str = "material";
+
+/// The material a JS-created window was built with, as its creator wrote it
+/// into the window's URL (`withWindowMaterial`). `None` for an opaque window
+/// (`material=none`) and for a URL that names no known material, such as the
+/// Rust-built main window's.
+pub fn url_material(url: &tauri::Url) -> Option<Material> {
+    url.query_pairs()
+        .find(|(key, _)| key == WINDOW_MATERIAL_PARAM)
+        .and_then(|(_, value)| Material::from_name(&value))
 }
 
 /// The macOS window material behind a translucent window (#1733). `Sidebar`,
@@ -213,5 +247,45 @@ mod tests {
             "Object.defineProperty(window, '__WINDOW_MATERIAL__', { value: \"vibrancy\" });"
         );
         assert!(window_init_script(None).contains("'__WINDOW_MATERIAL__', { value: null }"));
+    }
+
+    fn url(text: &str) -> tauri::Url {
+        tauri::Url::parse(text).unwrap()
+    }
+
+    #[test]
+    fn a_js_window_url_names_its_material() {
+        for (text, expected) in [
+            (
+                "http://tauri.localhost/?path=C%3A%5C&material=acrylic",
+                Some(Material::Acrylic),
+            ),
+            ("tauri://localhost/?material=mica&warm=1", Some(Material::Mica)),
+            ("tauri://localhost/?material=vibrancy", Some(Material::Vibrancy)),
+        ] {
+            assert_eq!(url_material(&url(text)), expected, "{text}");
+        }
+    }
+
+    #[test]
+    fn opaque_unknown_or_unmarked_urls_name_no_material() {
+        for text in [
+            "tauri://localhost/?material=none",
+            "tauri://localhost/index.html",
+            "tauri://localhost/?material=",
+            "tauri://localhost/?material=Acrylic",
+            "tauri://localhost/?materials=acrylic",
+            "tauri://localhost/#material=acrylic",
+            "tauri://localhost/?path=%2Fhome%2Fmaterial%3Dacrylic",
+        ] {
+            assert_eq!(url_material(&url(text)), None, "{text}");
+        }
+    }
+
+    #[test]
+    fn only_windows_system_backdrops_need_an_active_frame() {
+        assert!(Material::Acrylic.is_windows_backdrop());
+        assert!(Material::Mica.is_windows_backdrop());
+        assert!(!Material::Vibrancy.is_windows_backdrop());
     }
 }

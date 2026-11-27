@@ -4,6 +4,7 @@
  * of the startup bundle. Panes navigate, sort, select and switch views through
  * the ordinary explorer path; only listing and restore are special.
  */
+import { trashText } from "$lib/domain/trash-label";
 import { listTrash, restoreTrashItems, restoreTrashItemsTo, deleteTrashItems } from "$lib/api/trash";
 import type { ApiResult } from "$lib/api/common";
 import type { DirectoryListing, FileEntry } from "$lib/domain/file";
@@ -98,10 +99,10 @@ let reportedIssues: { message: string; at: number } | null = null;
 /** Provider listing: the Trash root only; trashed folders open after restore. */
 export async function listTrashLocation(path: string, ports: TrashPorts = defaultPorts): Promise<DirectoryListing> {
   if (!isTrashRoot(path)) {
-    throw new Error("Items in the Trash cannot be opened. Restore this folder to browse its contents.");
+    throw new Error(trashText("Items in the Trash cannot be opened. Restore this folder to browse its contents."));
   }
   const result = await ports.list();
-  if (!result.ok) throw new Error(`Could not read the Trash: ${result.error}`);
+  if (!result.ok) throw new Error(trashText(`Could not read the Trash: ${result.error}`));
   const issues = trashIssuesMessage(result.data.issues);
   const now = (ports.now ?? Date.now)();
   if (issues && (issues !== reportedIssues?.message || now - reportedIssues.at >= ISSUE_REPEAT_MS)) {
@@ -122,7 +123,7 @@ export async function restoreFromTrash(
   if (!items.length) return null;
   const result = await ports.restore(items.map((entry) => entry.trash!.id));
   if (!result.ok) {
-    const message = `Could not restore from the Trash: ${result.error}`;
+    const message = trashText(`Could not restore from the Trash: ${result.error}`);
     ports.error(message);
     return { restored: [], message, failed: true };
   }
@@ -156,7 +157,7 @@ export async function restoreDroppedTrash(
   if (!ids.length) return null;
   const result = await ports.restoreTo([...ids], destination);
   if (!result.ok) {
-    const message = `Could not restore from the Trash: ${result.error}`;
+    const message = trashText(`Could not restore from the Trash: ${result.error}`);
     ports.error(message);
     return { restored: [], message, failed: true };
   }
@@ -194,7 +195,7 @@ export function explainTrashedOpen(entry: FileEntry): void {
 
 /** Translate native opaque IDs back to the pane's stable entry paths. */
 export async function deleteFromTrash(entries: readonly FileEntry[]): Promise<ApiResult<FileBatchOutcome>> {
-  if (!entries.every(entry => entry.trash)) return { ok: false, error: "Select only items in the Trash." };
+  if (!entries.every(entry => entry.trash)) return { ok: false, error: trashText("Select only items in the Trash.") };
   const byId = new Map(entries.map(entry => [entry.trash!.id, entry.path]));
   const result = await deleteTrashItems([...byId.keys()]);
   if (!result.ok) return result;

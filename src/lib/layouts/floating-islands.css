@@ -360,14 +360,19 @@
    while dragging. Panel handles (sidebar, preview, terminal, inspector, SCM)
    draw it as their ::before, centred in the gap beyond the panel edge;
    split dividers already fill their gap and show their grip. A handle inset
-   in a clipping panel keeps its strip inside the edge. */
+   in a clipping panel keeps its strip inside the edge.
+   The strip reaches across the gap to the neighbouring island and no
+   further (the rest of --resize-hit lies over its own panel), so it never
+   lies over another island's edge: the tab's seam tests compare the
+   islands' anti-aliased edges with and without the tab drawn. */
 :root[data-layout-base="floating-islands"] [data-region="resize-handle"] {
-  /* Centred in the gap: half the hit area plus half the gap past the edge. */
-  --resize-outward: calc(var(--resize-hit, 10px) / 2 + var(--layout-gap) / 2);
+  --resize-outward: var(--layout-gap);
+  --girth: calc(3px * var(--s, 1));
+  /* The capsule's distance from the strip's outer side: the gap's middle. */
+  --grip-at: calc(var(--layout-gap) / 2 * var(--s, 1) - var(--girth) / 2);
 }
 
-/* The strip stops short of the islands' rounded corners, so no layer sits
-   over their anti-aliased arcs (the tab's seam tests compare those pixels). */
+/* It also stops short of the islands' rounded corners. */
 :root[data-layout-base="floating-islands"] [data-region="resize-handle"]:is([data-edge="left"], [data-edge="right"]) {
   top: calc(var(--layout-radius) * var(--s, 1));
   bottom: calc(var(--layout-radius) * var(--s, 1));
@@ -380,7 +385,6 @@
 
 :root[data-layout-base="floating-islands"] [data-region="resize-handle"]::before {
   --len: calc(24px * var(--s, 1));
-  --girth: calc(3px * var(--s, 1));
   border-radius: var(--girth);
   background: transparent;
 }
@@ -390,15 +394,25 @@
 }
 
 :root[data-layout-base="floating-islands"] [data-region="resize-handle"]:is([data-edge="left"], [data-edge="right"])::before {
-  inset: calc(50% - var(--len) / 2) auto auto calc(50% - var(--girth) / 2);
+  inset: calc(50% - var(--len) / 2) auto auto auto;
   width: var(--girth);
   height: var(--len);
 }
 
 :root[data-layout-base="floating-islands"] [data-region="resize-handle"]:is([data-edge="top"], [data-edge="bottom"])::before {
-  inset: calc(50% - var(--girth) / 2) auto auto calc(50% - var(--len) / 2);
+  inset: auto auto auto calc(50% - var(--len) / 2);
   width: var(--len);
   height: var(--girth);
+}
+
+:root[data-layout-base="floating-islands"] [data-region="resize-handle"][data-edge="left"]::before { left: var(--grip-at); }
+:root[data-layout-base="floating-islands"] [data-region="resize-handle"][data-edge="right"]::before { right: var(--grip-at); }
+:root[data-layout-base="floating-islands"] [data-region="resize-handle"][data-edge="top"]::before { top: var(--grip-at); }
+:root[data-layout-base="floating-islands"] [data-region="resize-handle"][data-edge="bottom"]::before { bottom: var(--grip-at); }
+
+/* Inset in a clipping panel, the strip is inside the edge: centre the grip on it. */
+:root[data-layout-base="floating-islands"] [data-region="resize-handle"][data-inset] {
+  --grip-at: calc(50% - var(--girth) / 2);
 }
 
 :root[data-layout-base="floating-islands"] [data-region="resize-handle"]:is(:hover, :focus-visible)::before {

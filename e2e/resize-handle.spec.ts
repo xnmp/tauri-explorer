@@ -73,7 +73,8 @@ for (const layout of ["default", "floating-islands"]) {
         await page.mouse.move(x + handle.dx, y + handle.dy, { steps: 4 });
         await expect(separator).toHaveAttribute("data-dragging", /.*/);
         await page.mouse.up();
-        await expect.poll(async () => (await handle.size(page)) - start).toBeCloseTo(handle.grows, -1);
+        // Within half a pixel: a press off the line moves nothing until the pointer does.
+        await expect.poll(async () => (await handle.size(page)) - start).toBeCloseTo(handle.grows, 0);
       });
     }
 
@@ -134,8 +135,11 @@ test("Floating Islands: no line; a capsule grip in the gutter after the delay, s
   const island = (await page.locator(".sidebar-container").boundingBox())!;
   const pane = (await page.locator('.pane-tree:not(.retained) [data-region="pane"]').first().boundingBox())!;
   const box = (await sidebar.boundingBox())!;
-  // Centred in the gutter between the sidebar and the panes, within a pixel.
-  expect(Math.abs((box.x + box.width / 2) - (island.x + island.width + pane.x) / 2)).toBeLessThanOrEqual(1);
+  // The strip spans the gutter without reaching over the panes island, and
+  // its grip is centred in the gutter, within a pixel.
+  expect(box.x + box.width).toBeLessThanOrEqual(pane.x);
+  const grip = box.x + parseFloat(await before(sidebar, "left")) + parseFloat(await before(sidebar, "width")) / 2;
+  expect(Math.abs(grip - (island.x + island.width + pane.x) / 2)).toBeLessThanOrEqual(1);
 
   await page.mouse.move(640, 300);
   expect(await before(sidebar, "background-color")).toBe("rgba(0, 0, 0, 0)");

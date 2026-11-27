@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import { createPaneResize } from "$lib/state/pane-resize";
+import { createPaneResize, dragOrigin } from "$lib/state/pane-resize";
 
 function fixture() {
   const frames: (() => void)[] = [];
@@ -75,4 +75,18 @@ it("ignores non-finite pointer coordinates and unusable geometry", () => {
   resize.move(Number.MAX_VALUE, 0);
   resize.finish();
   expect(commit).not.toHaveBeenCalled();
+});
+
+it("a press off the divider's centre does not move it; the drag keeps the grab offset (#1925)", () => {
+  // Container from 100, a 6px divider at ratio 0.5 over a 300px extent: 250..256.
+  const container = { start: 100 }, divider = { start: 250, size: 6 }, extent = 300;
+  for (const press of [248, 253, 258]) {
+    const { resize, frames } = fixture();
+    const commit = vi.fn(() => true);
+    resize.start({ direction: "row", start: dragOrigin(container, divider, press), extent, commit });
+    resize.move(press, 0); frames.shift()!();
+    expect(commit).toHaveBeenLastCalledWith(0.5);
+    resize.move(press + 30, 0); frames.shift()!();
+    expect(commit).toHaveBeenLastCalledWith(0.6);
+  }
 });

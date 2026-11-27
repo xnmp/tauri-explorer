@@ -476,27 +476,63 @@
     color: inherit;
   }
 
-  /* Scrollbar styling - Windows 11 style */
+  /* Scrollbars (#1920): a thin neutral line at rest that widens and takes
+     the accent as the pointer comes near. The 8px gutter never changes; the
+     thumb grows by shrinking its transparent border, so nothing reflows.
+     Colour themes and layouts restyle it through these tokens rather than
+     their own ::-webkit-scrollbar rules:
+       --scrollbar-thumb         idle thumb
+       --scrollbar-thumb-active  pointer anywhere over the scroller
+       --scrollbar-thumb-hover   pointer on the thumb, or dragging it
+       --scrollbar-radius        thumb corners
+       --scrollbar-thumb-shadow(-hover)  inset only: the bar clips outset
+       --scrollbar-track         track paint
+     Each thumb/track token is one background layer: a colour or a gradient.
+     Don't set scrollbar-color or scrollbar-width on a scroller: in
+     Chromium 121+ (WebView2) they replace these rules entirely. */
   :global(::-webkit-scrollbar) {
     width: 8px;
     height: 8px;
   }
 
   :global(::-webkit-scrollbar-track) {
-    background: transparent;
+    background: var(--scrollbar-track, transparent);
   }
 
   :global(::-webkit-scrollbar-thumb) {
-    background: var(--text-tertiary);
-    border: 2px solid transparent;
-    border-radius: var(--radius-pill);
-    background-clip: padding-box;
+    border: 3px solid transparent;
+    border-radius: var(--scrollbar-radius, var(--radius-pill));
+    background: var(--scrollbar-thumb, color-mix(in srgb, var(--text-tertiary) 55%, transparent)) padding-box;
+    box-shadow: var(--scrollbar-thumb-shadow, none);
   }
 
-  :global(::-webkit-scrollbar-thumb:hover) {
-    background: var(--text-secondary);
-    border: 2px solid transparent;
-    background-clip: padding-box;
+  /* Chromium doesn't restyle a scrollbar when its scroller gains or loses
+     :hover, so the rule below would only show after some unrelated restyle
+     (observed in Playwright Chromium, #1920). Any declaration keyed on the
+     element's own :hover makes the engine recompute that element's style,
+     scrollbar included. The property is registered non-inheriting so the
+     hover change restyles only that element, not its whole subtree. */
+  @property --scrollbar-hover-restyle {
+    syntax: "*";
+    inherits: false;
+  }
+
+  :global(:hover) {
+    --scrollbar-hover-restyle: 1;
+  }
+
+  /* The scroller under the pointer, not only its thumb. */
+  :global(:hover::-webkit-scrollbar-thumb) {
+    border-width: 2px;
+    background: var(--scrollbar-thumb-active, color-mix(in srgb, var(--accent) 60%, transparent)) padding-box;
+  }
+
+  /* After the scroller-hover rule: same specificity, so order decides. */
+  :global(::-webkit-scrollbar-thumb:hover),
+  :global(::-webkit-scrollbar-thumb:active) {
+    border-width: 1px;
+    background: var(--scrollbar-thumb-hover, var(--accent)) padding-box;
+    box-shadow: var(--scrollbar-thumb-shadow-hover, var(--scrollbar-thumb-shadow, none));
   }
 
   :global(::-webkit-scrollbar-corner) {

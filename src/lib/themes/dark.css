@@ -117,6 +117,10 @@
   /* --icon-executable: #98c379; */
   /* --icon-document: #abb2bf; */
   /* --theme-icon-pack: 'default'; themes can suggest: 'default', 'material', 'minimal' */
+
+  /* Scrollbar signature (#1920; tokens documented in routes/+page.svelte) */
+  --scrollbar-thumb-active: linear-gradient(color-mix(in srgb, var(--accent-light) 60%, transparent), color-mix(in srgb, var(--accent) 60%, transparent));
+  --scrollbar-thumb-hover: linear-gradient(var(--accent-light), var(--accent-dark));
 }
 
 /* --- #437: non-premium (flat / high-contrast) fallback --- */

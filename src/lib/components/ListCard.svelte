@@ -131,7 +131,6 @@
     overflow-x: hidden;
     overflow-y: auto;
     overflow-anchor: none;
-    scrollbar-width: thin;
     border-radius: 0 0 8px 8px;
     mask-image: linear-gradient(to bottom, transparent, #000 var(--fade-top), #000 calc(100% - var(--fade-bottom)), transparent);
     -webkit-mask-image: linear-gradient(to bottom, transparent, #000 var(--fade-top), #000 calc(100% - var(--fade-bottom)), transparent);

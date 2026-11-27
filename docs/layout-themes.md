@@ -100,6 +100,13 @@ Colour theme variables (`--text-primary`, `--background-card`, `--accent`,
 `--surface-stroke`, `--divider`, ...) are available for building colours, which
 keeps a layout working with every palette.
 
+Scrollbars belong to the colour theme: the thumb and track read the
+`--scrollbar-*` tokens documented beside the global rule in
+`src/routes/+page.svelte` (#1920). A layout may inset the track with
+`margin` on `::-webkit-scrollbar-track` (Soft Cards does) but should leave the
+thumb's colours alone, and must not set `scrollbar-width` or `scrollbar-color`,
+which in WebView2 replace the styled scrollbar with the native one.
+
 ## Hooks
 
 Elements a layout may style carry a stable `data-region` attribute. Class

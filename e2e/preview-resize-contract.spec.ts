@@ -19,7 +19,7 @@ async function preferences(page: Page) {
   });
 }
 async function begin(page: Page) {
-  const handle = page.locator(".preview-pane .resize-handle");
+  const handle = page.locator(".preview-dock > .resize-handle");
   await handle.evaluate(element => element.addEventListener("pointerdown", event => {
     element.setAttribute("data-pointer", String((event as PointerEvent).pointerId));
   }, { once: true }));
@@ -53,7 +53,7 @@ for (const dock of ["right", "top", "bottom"] as const) {
   }
   test(`${dock} separator supports dock-aware keyboard bounds`, async ({ page }, info) => {
     await openPreview(page, dock);
-    const handle = page.locator(".preview-pane .resize-handle");
+    const handle = page.locator(".preview-dock > .resize-handle");
     await expect(handle).toHaveAttribute("tabindex", "0");
     await expect(handle).toHaveAttribute("aria-orientation", dock === "right" ? "vertical" : "horizontal");
     await handle.focus();
@@ -137,7 +137,7 @@ for (const [initial, external] of [[280, 0], [0, 280]] as const) {
     await page.evaluate(async value => {
       const load = new Function("return import('/src/lib/state/settings.svelte.ts')");
       (await load()).settingsStore.setPreviewPaneWidth(value);
-      const handle = document.querySelector<HTMLElement>(".preview-pane .resize-handle")!;
+      const handle = document.querySelector<HTMLElement>(".preview-dock > .resize-handle")!;
       handle.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: Number(handle.dataset.pointer), isPrimary: true }));
     }, external);
     await page.mouse.move(x - 80, y); await page.mouse.up();
@@ -148,7 +148,7 @@ for (const [initial, external] of [[280, 0], [0, 280]] as const) {
 
 test("double-clicking a resize separator does not enter fullscreen", async ({ page }) => {
   await openPreview(page);
-  await page.locator(".preview-pane .resize-handle").dblclick();
+  await page.locator(".preview-dock > .resize-handle").dblclick();
   await expect(page.locator(".preview-pane")).not.toHaveClass(/fullscreen/);
   expect(await preferences(page)).toEqual({ width: 0, height: 0 });
 });
@@ -160,7 +160,7 @@ test("fullscreen retires the dock resize and exposes no active dock handle", asy
   await expect.poll(async () => (await page.locator(".preview-pane").boundingBox())!.width).toBeCloseTo(310, 0);
   await page.locator(".preview-header").dispatchEvent("dblclick");
   await expect(page.locator(".preview-pane")).toHaveClass(/fullscreen/);
-  await expect(page.locator(".preview-pane .resize-handle")).toHaveCount(0);
+  await expect(page.locator(".preview-dock > .resize-handle")).toHaveCount(0);
   await page.mouse.move(x - 60, y); await page.mouse.up();
   expect((await preferences(page)).width).toBe(310);
   await page.keyboard.press("Escape");

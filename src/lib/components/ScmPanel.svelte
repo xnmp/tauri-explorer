@@ -9,7 +9,7 @@
   import { untrack } from "svelte";
   import { useInlinePanelWidth } from "$lib/composables/use-inline-panel-width.svelte";
   import type { ReserveInlineWidth } from "$lib/state/pane-viewport.svelte";
-  import PanelResizeHandle from "./PanelResizeHandle.svelte";
+  import ResizeHandle from "./ResizeHandle.svelte";
   import ScmSidebarView from "./ScmSidebarView.svelte";
   import { usePersistedPanelWidth } from "$lib/composables/use-panel-resize.svelte";
 
@@ -44,7 +44,7 @@
   style="width: {resize.value}px"
 >
   <ScmSidebarView />
-  <PanelResizeHandle {resize} label="Resize source control panel" controls={panelId} />
+  <ResizeHandle {resize} label="Resize source control panel" controls={panelId} edge="right" inset />
 </div>
 
 <style>

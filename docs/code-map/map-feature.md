@@ -519,7 +519,7 @@ backend for E2E/browser).
 - `components/sidebar-view-registry.ts` — sidebar-view id → icon + component (add a new section here)
 - `domain/resize-size.ts` → `state/scalar-resize.ts` → `composables/use-resize-owner.svelte.ts` (scroll cancellation through `domain/scroll-moves-handle.ts`) — bounded scalar drafts with captured axis/scale, frame identity and shared DOM lifetime; `state/panel-resize.ts` + `composables/use-panel-resize.svelte.ts` adapt fixed/automatic localStorage widths, while `composables/use-controlled-size.svelte.ts` adapts Terminal/Preview settings and keyed Details sizes with final-only persistence, source supersession and conditional post-teardown finalization
 - `state/resize-activity.svelte.ts` — owns active panel gesture leases so geometry updates cannot trigger automatic reveal and cancel the resize that caused them
-- `components/PanelResizeHandle.svelte` — shared Sidebar/SCM/Miller keyboard/pointer separator
+- `components/ResizeHandle.svelte` + `domain/resize-edge.ts` — the one panel resize handle (Sidebar/SCM/Miller/Preview/Terminal/Inspector, #1925): keyboard/pointer separator, edge-placed hit area separate from its drawn line, `resize-handle` layout region and `--resize-*` tokens (split dividers in `PaneLayoutView.svelte` draw the same line; Floating Islands gutter grip in `layouts/floating-islands.css`)
 - FLOW: sidebar sections read their stores; drives polled from `listDrives` (drives.rs); bookmarks/recent persisted in localStorage; drop-onto-sidebar adds bookmark.
 
 ## Context menu

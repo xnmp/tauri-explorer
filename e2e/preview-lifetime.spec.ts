@@ -121,7 +121,7 @@ test.describe("Preview request lifetime", () => {
     await page.goto("/?path=/home/user");
     await waitForEntries(page);
     if (!(await page.locator(".preview-pane").isVisible())) await pressShortcut(page, " ", {});
-    const handle = page.locator(".preview-pane .resize-handle");
+    const handle = page.locator(".preview-dock > .resize-handle");
     const box = await handle.boundingBox();
     expect(box).not.toBeNull();
     await page.mouse.move(box!.x + 2, box!.y + 2);

@@ -159,71 +159,108 @@
     flex: calc(1 - var(--split-ratio, 0.5));
   }
 
+  /* The divider draws the same line as ResizeHandle from the same tokens
+     (#1925): a --resize-line hairline at rest, a --resize-active bar after
+     --resize-hover-delay on hover or focus, at once while dragging. Its box
+     stays the modelled --pane-divider-size (#1061); ::after widens the hit
+     area to --resize-hit without changing layout. */
   .pane-divider {
+    --w: var(--resize-line-width, 1px);
+    --c: var(--resize-line, var(--layout-hairline, var(--divider)));
+    position: relative;
     pointer-events: auto;
-    /* Occupy exactly the modelled divider extent, borders included, so the
-       children's minima and the divider always fit the canvas minimum. */
     box-sizing: border-box;
     touch-action: none;
     display: flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
-    background: transparent;
-    transition:
-      background var(--transition-fast),
-      border-color var(--transition-fast);
+    outline: none;
+  }
+
+  .pane-divider:is(:hover, :focus-visible), .pane-split.resizing > .pane-divider {
+    --w: var(--resize-active-width, 3px);
+    --c: var(--resize-active, var(--accent));
+  }
+
+  .pane-divider::before, .pane-divider::after {
+    content: "";
+    position: absolute;
+  }
+
+  .pane-divider::before {
+    pointer-events: none;
+    background: var(--c);
+    transition: none;
+  }
+
+  .pane-divider:is(:hover, :focus-visible)::before {
+    transition-property: width, height, left, top, background-color;
+    transition-duration: 80ms;
+    transition-delay: var(--resize-hover-delay, 250ms);
+  }
+
+  .pane-split.resizing > .pane-divider::before {
+    transition: none;
   }
 
   .pane-split.row > .pane-divider {
     width: var(--pane-divider-size, 6px);
-    border-left: 1px solid var(--pane-divider, color-mix(in srgb, var(--text-primary) 15%, transparent));
-    border-right: 1px solid var(--pane-divider, color-mix(in srgb, var(--text-primary) 15%, transparent));
     cursor: col-resize;
   }
 
   .pane-split.column > .pane-divider {
     height: var(--pane-divider-size, 6px);
-    border-top: 1px solid var(--pane-divider, color-mix(in srgb, var(--text-primary) 15%, transparent));
-    border-bottom: 1px solid var(--pane-divider, color-mix(in srgb, var(--text-primary) 15%, transparent));
     cursor: row-resize;
   }
 
-  .pane-divider:focus-visible {
-    outline: 2px solid var(--focus-stroke-outer);
-    outline-offset: -2px;
+  /* Centred on the divider, rounded half a pixel down to the device grid. */
+  .pane-split.row > .pane-divider::before {
+    top: 0;
+    bottom: 0;
+    width: var(--w);
+    left: calc(50% - var(--w) / 2 + 0.5px);
   }
 
-  .pane-divider:hover {
-    background: color-mix(in srgb, var(--accent) 15%, transparent);
-    border-color: var(--accent);
+  .pane-split.column > .pane-divider::before {
+    left: 0;
+    right: 0;
+    height: var(--w);
+    top: calc(50% - var(--w) / 2 + 0.5px);
   }
 
-  .pane-split.resizing > .pane-divider {
-    background: color-mix(in srgb, var(--accent) 20%, transparent);
-    border-color: var(--accent);
+  .pane-split.row > .pane-divider::after {
+    top: 0;
+    bottom: 0;
+    left: calc((var(--pane-divider-size, 6px) - max(var(--resize-hit, 10px), var(--pane-divider-size, 6px))) / 2);
+    right: calc((var(--pane-divider-size, 6px) - max(var(--resize-hit, 10px), var(--pane-divider-size, 6px))) / 2);
   }
 
+  .pane-split.column > .pane-divider::after {
+    left: 0;
+    right: 0;
+    top: calc((var(--pane-divider-size, 6px) - max(var(--resize-hit, 10px), var(--pane-divider-size, 6px))) / 2);
+    bottom: calc((var(--pane-divider-size, 6px) - max(var(--resize-hit, 10px), var(--pane-divider-size, 6px))) / 2);
+  }
+
+  /* The grip: the capsule a gutter layout shows instead of the line
+     (Floating Islands, Soft Cards). Hidden in the hairline layouts. */
   .divider-handle {
-    background: var(--text-tertiary);
+    display: none;
     border-radius: 2px;
-    opacity: 0.5;
-    transition: opacity var(--transition-fast);
+    background: var(--text-tertiary);
   }
 
   .pane-split.row > .pane-divider .divider-handle {
-    width: 4px;
-    height: 32px;
+    width: 3px;
+    height: 24px;
   }
 
   .pane-split.column > .pane-divider .divider-handle {
-    width: 32px;
-    height: 4px;
+    width: 24px;
+    height: 3px;
   }
 
-  .pane-divider:hover .divider-handle,
-  .pane-split.resizing > .pane-divider .divider-handle {
-    opacity: 1;
-    background: var(--text-on-accent);
-  }
+  .pane-split.row.resizing > .pane-divider .divider-handle { height: 48px; }
+  .pane-split.column.resizing > .pane-divider .divider-handle { width: 48px; }
 </style>

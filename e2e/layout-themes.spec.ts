@@ -430,7 +430,7 @@ test.describe("Layout themes (#1306)", () => {
     expect(scmBox.left - scmPane).toBeGreaterThanOrEqual(6);
   });
 
-  test("Default keeps square, edge-to-edge panels with the split grip always shown (#1854)", async ({ page }) => {
+  test("Default keeps square, edge-to-edge panels with a hairline split divider (#1854, #1925)", async ({ page }) => {
     await page.setViewportSize({ width: 1100, height: 700 });
     await page.goto(HOME_URL);
     await waitForEntries(page);
@@ -441,9 +441,11 @@ test.describe("Layout themes (#1306)", () => {
     expect(row.left).toBe(list.left);
     expect(await nameCellOffset(page)).toBe(DEFAULT_NAME_CELL_OFFSET);
     await runPaletteCommand(page, "Split Pane Right");
-    const grip = page.locator('[data-region="split-divider"]:visible [data-region="split-grip"]').first();
-    await expect(grip).toBeVisible();
-    expect(Number(await grip.evaluate(el => getComputedStyle(el).opacity))).toBeGreaterThan(0);
+    // The divider draws the shared resize line at rest; the grip is a gutter layout's.
+    const divider = page.locator('[data-region="split-divider"]:visible').first();
+    await expect(divider).toBeVisible();
+    expect(await divider.evaluate(el => getComputedStyle(el, "::before").width)).toBe("1px");
+    await expect(divider.locator('[data-region="split-grip"]')).toBeHidden();
   });
 
   test("layout and colour theme change independently", async ({ page }) => {

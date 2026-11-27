@@ -260,8 +260,14 @@ mod tests {
                 "http://tauri.localhost/?path=C%3A%5C&material=acrylic",
                 Some(Material::Acrylic),
             ),
-            ("tauri://localhost/?material=mica&warm=1", Some(Material::Mica)),
-            ("tauri://localhost/?material=vibrancy", Some(Material::Vibrancy)),
+            (
+                "tauri://localhost/?material=mica&warm=1",
+                Some(Material::Mica),
+            ),
+            (
+                "tauri://localhost/?material=vibrancy",
+                Some(Material::Vibrancy),
+            ),
         ] {
             assert_eq!(url_material(&url(text)), expected, "{text}");
         }

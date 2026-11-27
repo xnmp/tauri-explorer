@@ -2,6 +2,21 @@
 
 All notable changes to Tauri Explorer.
 
+## v0.34.0 — 2026-11-27
+
+### Added
+
+- Thematic scrollbars: the thumb is a thin neutral line at rest, an
+  accent-tinted bar while the pointer is over its scroller and a full accent
+  bar on hover or drag, without reflowing content. Nine themes give their
+  scrollbars a signature look, and WebView2 on Windows no longer falls back to
+  the native scrollbar in List and Tiles views (#1920).
+
+### Fixed
+
+- On Windows, Acrylic and Mica translucency now stays drawn while a window is
+  unfocused instead of turning solid (#1903).
+
 ## v0.33.3 — 2026-11-26
 
 ### Fixed

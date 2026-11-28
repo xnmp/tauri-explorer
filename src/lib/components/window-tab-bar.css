@@ -540,6 +540,49 @@
     overflow: hidden;
   }
 
+  /* Split tab (#1935): pane names keep their full width (the title fades at
+     its edge like any other), separated by a dimmed hairline. On the active
+     tab only the focused pane's name is full strength; inactive tabs stay
+     neutral. */
+  .tab-area .tab-pane {
+    flex: 0 0 auto;
+  }
+  .tab-area .tab.active .tab-pane:not(.focused) {
+    opacity: 0.5;
+  }
+  .tab-area .tab-pane-sep {
+    flex: 0 0 auto;
+    align-self: center;
+    width: 1px;
+    height: 0.95em;
+    margin: 0 4px;
+    background: currentColor;
+    opacity: 0.3;
+  }
+
+  /* Split icon: stroked layout frame and dividers in the folder icon's accent;
+     the focused cell fills only on the active tab. */
+  .tab-area .tab-icon-split {
+    color: var(--accent-text, var(--accent));
+    opacity: 0.85;
+  }
+  .tab-area .tab:hover .tab-icon-split,
+  .tab-area .tab.active .tab-icon-split {
+    opacity: 1;
+  }
+  .tab-area .tab-icon-split .split-frame,
+  .tab-area .tab-icon-split line {
+    stroke: currentColor;
+    stroke-width: 1.3;
+  }
+  .tab-area .tab-icon-split .split-focus {
+    fill: currentColor;
+    opacity: 0.6;
+  }
+  .tab-area .tab:not(.active) .tab-icon-split .split-focus {
+    display: none;
+  }
+
   /* Git icon uses stroked shapes in the accent colour (override the folder
      icon's fill rule, which would otherwise fill the branch glyph). */
   .tab-area .tab-icon-git {

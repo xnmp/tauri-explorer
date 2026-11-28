@@ -16,6 +16,7 @@
 import { trashName } from "./trash-label";
 import { TRASH_PATH } from "./virtual-path";
 import { directoryKey, basename } from "./path";
+import { leafIds, leafRects, type LeafRect, type PaneNode } from "./pane-layout";
 
 export interface TabTitleItem {
   id: string;
@@ -115,6 +116,41 @@ export function gitTabDisplay(
     isGitRoot: true,
     repo: atRoot ? null : basename(repoRoot),
     name: atRoot ? basename(repoRoot) : basename(cwd),
+  };
+}
+
+/** One pane of a split tab: its folder name, whether it holds the tab's
+ *  focus, and where it sits in the layout ([0,1] space, for the tab icon). */
+export interface SplitTabPane {
+  readonly id: string;
+  readonly name: string;
+  readonly focused: boolean;
+  readonly rect: LeafRect;
+}
+
+/** How a multi-pane tab labels itself (#1935): its panes in reading order,
+ *  and the custom name when the user renamed the tab (shown instead of the
+ *  pane names, while the icon still draws the layout). */
+export interface SplitTabDisplay {
+  readonly panes: readonly SplitTabPane[];
+  readonly customName: string | null;
+}
+
+export function splitTabDisplay(
+  layout: PaneNode,
+  activePaneId: string,
+  nameOf: (paneId: string) => string,
+  customName?: string,
+): SplitTabDisplay {
+  const rects = leafRects(layout);
+  return {
+    panes: leafIds(layout).map((id) => ({
+      id,
+      name: nameOf(id),
+      focused: id === activePaneId,
+      rect: rects.get(id)!,
+    })),
+    customName: customName || null,
   };
 }
 

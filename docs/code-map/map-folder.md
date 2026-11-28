@@ -148,6 +148,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `StatusBar.svelte` — bottom status bar (selection count, size, path).
 - `TitleBar.svelte` — window title bar + tab strip host + window controls.
 - `WindowTabBar.svelte` — compressed window tab strip, active-tab reveal and edge scrolling; executes the domain tab-drag reducer effects.
+- `TabIcon.svelte` — a window tab's leading icon: git branch, split-tab layout miniature with the focused pane filled (#1935), or (special) folder.
 - `WindowTabPicker.svelte` — searchable all-tabs combobox with full pane paths, keyboard selection and anchored positioning.
 - `WindowTabMenu.svelte` — lazy-loaded tab right-click menu (Close, Close Others, Close to the Right, Duplicate, Reopen Closed Tab); items supplied by `WindowTabBar` (#1749).
 - `window-tab-bar.css` — tab strip chrome scoped to `.tab-area`, including compression and persistent controls.

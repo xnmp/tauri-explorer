@@ -701,6 +701,22 @@
               stroke-linecap="round"
             />
           </svg>
+        {:else if display.split}
+          <!-- Split tab (#1935): a miniature of the pane layout. The focused
+               pane's cell fills on the active tab only (CSS). Frame spans
+               x 2–14, y 2.5–13.5 of the 16px box. -->
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="tab-icon tab-icon-split" aria-hidden="true">
+            {#each display.split.panes as pane (pane.id)}
+              {@const x = 2 + pane.rect.x * 12}
+              {@const y = 2.5 + pane.rect.y * 11}
+              {#if pane.focused}
+                <rect class="split-focus" x={x + 1.4} y={y + 1.4} width={Math.max(pane.rect.w * 12 - 2.8, 0.5)} height={Math.max(pane.rect.h * 11 - 2.8, 0.5)} rx="0.6" />
+              {/if}
+              {#if pane.rect.x > 0}<line x1={x} y1={y} x2={x} y2={y + pane.rect.h * 11} />{/if}
+              {#if pane.rect.y > 0}<line x1={x} y1={y} x2={x + pane.rect.w * 12} y2={y} />{/if}
+            {/each}
+            <rect class="split-frame" x="2" y="2.5" width="12" height="11" rx="2" />
+          </svg>
         {:else}
           <!-- A special folder name takes its pack-native icon (#1499). -->
           <NamedFolderIcon name={display.folder ?? ""} class="tab-icon tab-icon-special">
@@ -732,7 +748,16 @@
               <span class="tab-repo">{display.repo}</span>
               <span class="tab-sep" aria-hidden="true">›</span>
             {/if}
-            <span class="tab-cwd">{display.name}</span>
+            {#if display.split && !display.split.customName}
+              <!-- One span per pane; the active tab dims all but the focused
+                   pane's name (#1935). -->
+              {#each display.split.panes as pane, i (pane.id)}
+                {#if i > 0}<span class="tab-pane-sep" aria-hidden="true"></span>{/if}
+                <span class="tab-pane" class:focused={pane.focused}>{pane.name}</span>
+              {/each}
+            {:else}
+              <span class="tab-cwd">{display.name}</span>
+            {/if}
           </span>
         {/if}
         <!-- Pointer-only, and deliberately not a <button>: role="tab" has

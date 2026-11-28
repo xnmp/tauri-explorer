@@ -15,6 +15,7 @@
   import FolderThumbnail from "./FolderThumbnail.svelte";
   import ThumbnailImage from "./ThumbnailImage.svelte";
   import VideoIndicator from "./VideoIndicator.svelte";
+  import { thumbnailVersion } from "$lib/state/thumbnail-cache";
 
   interface Props {
     entry: FileEntry;
@@ -31,11 +32,11 @@
 
 <div class="tile-icon" style:color={iconColor} data-drag-icon>
   {#if isImageFile(entry)}
-    <ThumbnailImage path={entry.path} size={layout.displaySize} genSize={layout.genSize} quality={layout.quality} fallbackColor={iconColor}>
+    <ThumbnailImage path={entry.path} version={thumbnailVersion(entry)} size={layout.displaySize} genSize={layout.genSize} quality={layout.quality} fallbackColor={iconColor}>
       {#snippet fallback()}<FileIcon {entry} size="large" />{/snippet}
     </ThumbnailImage>
   {:else if isVideoFile(entry) && !videoUnavailable}
-    <ThumbnailImage kind="video" path={entry.path} size={layout.displaySize} genSize={layout.genSize} quality={layout.quality} fallbackColor={iconColor} onunavailable={onvideounavailable}>
+    <ThumbnailImage kind="video" path={entry.path} version={thumbnailVersion(entry)} size={layout.displaySize} genSize={layout.genSize} quality={layout.quality} fallbackColor={iconColor} onunavailable={onvideounavailable}>
       {#snippet fallback()}<FileIcon {entry} size="large" />{/snippet}
     </ThumbnailImage>
   {:else if entry.kind === "directory" && layout.showFolderThumbnails}

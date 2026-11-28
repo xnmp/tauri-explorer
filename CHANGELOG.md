@@ -2,6 +2,26 @@
 
 All notable changes to Tauri Explorer.
 
+## v0.35.0 — 2026-11-28
+
+### Added
+
+- Split tabs show a miniature of their pane layout as the tab icon, and the
+  active tab's title shows the focused pane's name at full strength while
+  dimming the others (#1935).
+- One resize handle for every panel: a hairline that grows into an accent bar
+  on hover in the Default layout, and a capsule grip in the gutter in Floating
+  Islands (#1925).
+
+### Fixed
+
+- A file whose contents change (edited in another app, overwritten or
+  re-exported) now shows its new thumbnail in Tiles, List and Details views
+  without a restart (#1937).
+- Clicking a fullscreen video pauses it instead of minimizing the window
+  (#1926).
+- The trash is called "Recycle Bin" on Windows (#1919).
+
 ## v0.34.0 — 2026-11-27
 
 ### Added

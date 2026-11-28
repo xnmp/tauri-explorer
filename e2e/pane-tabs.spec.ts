@@ -30,11 +30,13 @@ test.describe("Window tabs with panes", () => {
     await expect(page.locator(".tab")).toHaveCount(1);
   });
 
-  test("a multi-pane tab's title joins both folder names", async ({ page }) => {
+  test("a multi-pane tab's title names both folders", async ({ page }) => {
     await openDualPane(page);
 
-    // Left pane at /home/user, right pane at /home → "user | home".
-    await expect(page.locator(".tab .tab-cwd")).toHaveText("user | home");
+    // Left pane at /home/user, right pane at /home: one name per pane
+    // (#1935), and "user | home" as the plain-text title.
+    await expect(page.locator(".tab .tab-pane")).toHaveText(["user", "home"]);
+    await expect(page.locator(".tab")).toHaveAttribute("aria-label", /^user \| home — /);
   });
 
   test("directional split creates a third pane (Super+Alt+; = split down)", async ({ page }) => {

@@ -17,7 +17,12 @@ const near = (actual: number, expected: number, tolerance: number, message: stri
   assert(Math.abs(actual - expected) <= tolerance, `${message}: observed ${actual}, expected ${expected} ± ${tolerance}`);
 
 /** Native splitter coordinates identify the clipped listing/preview boundary.
- * ExplorerPane's inner minimum width can overflow its scroll viewport. */
+ * ExplorerPane's inner minimum width can overflow its scroll viewport.
+ * The splitter is the resize handle's hit strip, not the boundary itself: since
+ * #1925 it is a 10px strip that reaches 3px past the dock's edge, and before
+ * that it was a 6px strip inside the dock. So a right or top preview's near
+ * edge must lie within the strip (±2px), and a bottom preview must start at or
+ * below the strip's start, wherever the strip sits around the edge. */
 export function nativePdfDockError(dock: "Right" | "Top" | "Bottom", viewport: Rect,
   splitter: Rect, listing: Rect, window: Rect): string | null {
   const rects = [viewport, splitter, listing, window];
@@ -26,9 +31,10 @@ export function nativePdfDockError(dock: "Right" | "Top" | "Bottom", viewport: R
   const within = (rect: Rect) => rect.x >= window.x - 2 && rect.y >= window.y - 2
     && rect.x + rect.width <= window.x + window.width + 2
     && rect.y + rect.height <= window.y + window.height + 2;
+  const inStrip = (edge: number, start: number, size: number) => edge >= start - 2 && edge <= start + size + 2;
   if (!within(viewport) || !within(splitter)) return "Native PDF or splitter extends outside its window";
   if (dock === "Right") {
-    if (splitter.height <= splitter.width * 5 || Math.abs(viewport.x - splitter.x) > 2
+    if (splitter.height <= splitter.width * 5 || !inStrip(viewport.x, splitter.x, splitter.width)
       || listing.x >= splitter.x - 1 || viewport.x + viewport.width <= splitter.x + splitter.width
       || viewport.y < splitter.y - 2 || viewport.y + viewport.height > splitter.y + splitter.height + 2)
       return "Right dock does not share a vertical boundary after the listing";
@@ -37,9 +43,11 @@ export function nativePdfDockError(dock: "Right" | "Top" | "Bottom", viewport: R
     if (Math.abs(viewport.x - splitter.x) > 2
       || Math.abs(viewport.x + viewport.width - splitter.x - splitter.width) > 2)
       return `${dock} PDF does not span its horizontal boundary`;
-    if (dock === "Top" && (Math.abs(viewport.y + viewport.height - splitter.y - splitter.height) > 2
-      || listing.y < splitter.y + splitter.height - 2)) return "Top dock is not above the listing boundary";
-    if (dock === "Bottom" && (viewport.y < splitter.y + splitter.height - 2
+    const bottom = viewport.y + viewport.height;
+    if (dock === "Top" && (!inStrip(bottom, splitter.y, splitter.height)
+      || listing.y < bottom - 2 || listing.y < splitter.y)) return "Top dock is not above the listing boundary";
+    // A bottom preview's toolbar can sit between the boundary and the PDF.
+    if (dock === "Bottom" && (viewport.y < splitter.y - 2
       || listing.y >= splitter.y - 1)) return "Bottom dock is not below the listing boundary";
   }
   return null;

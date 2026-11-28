@@ -22,5 +22,15 @@ describe('native PDF dock boundary', () => {
   it('rejects bottom placement above the splitter', () => { expect(check('Bottom', { ...bottom, viewport: { ...bottom.viewport, y: 120 } })).not.toBeNull(); });
   it('rejects top placement after the listing starts', () => { expect(check('Top', { ...top, listing: { ...top.listing, y: 110 } })).not.toBeNull(); });
   it('rejects a PDF clipped outside its owned window', () => { expect(check('Right', { ...right, viewport: { ...right.viewport, width: 500 } })).not.toBeNull(); });
+  // #1925: the handle is a 10px hit strip reaching 3px past the dock's edge.
+  const stripRight = { ...right, splitter: { x: 382, y: 110, width: 10, height: 477 } };
+  const stripTop = { ...top, splitter: { x: 360, y: 399, width: 444, height: 10 } };
+  const stripBottom = { ...bottom, splitter: { x: 360, y: 347, width: 444, height: 10 } };
+  it('accepts the #1925 right hit strip reaching past the dock edge', () => { expect(check('Right', stripRight)).toBeNull(); });
+  it('accepts the #1925 top hit strip reaching past the dock edge', () => { expect(check('Top', stripTop)).toBeNull(); });
+  it('accepts the #1925 bottom hit strip reaching past the dock edge', () => { expect(check('Bottom', stripBottom)).toBeNull(); });
+  it('rejects a right preview starting beyond the #1925 strip', () => { expect(check('Right', { ...stripRight, viewport: { ...stripRight.viewport, x: 400, width: 404 } })).not.toBeNull(); });
+  it('rejects a top preview ending short of the #1925 strip', () => { expect(check('Top', { ...stripTop, viewport: { ...stripTop.viewport, height: 160 } })).not.toBeNull(); });
+  it('rejects a bottom preview starting above the #1925 strip', () => { expect(check('Bottom', { ...stripBottom, viewport: { ...stripBottom.viewport, y: 330, height: 255 } })).not.toBeNull(); });
   it('rejects nonfinite coordinates', () => { expect(check('Top', { ...top, viewport: { ...top.viewport, x: NaN } })).not.toBeNull(); });
 });

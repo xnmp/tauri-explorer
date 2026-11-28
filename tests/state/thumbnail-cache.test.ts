@@ -9,6 +9,8 @@ import {
   renameThumbnailCache,
   invalidateThumbnailCache,
   subscribeThumbnailInvalidation,
+  thumbnailCacheKey,
+  thumbnailVersion,
 } from "$lib/state/thumbnail-cache";
 
 const revokeSpy = vi.fn();
@@ -195,5 +197,42 @@ describe("renameThumbnailCache blob lifetime (#1823)", () => {
     expect(revokeSpy).toHaveBeenCalledWith("blob:micro-clobbered");
     expect(revokeSpy).toHaveBeenCalledWith("blob:full-clobbered");
     expect(revokeSpy).not.toHaveBeenCalledWith("blob:micro-old");
+  });
+});
+
+describe("content-versioned keys (#1937)", () => {
+  it("gives an edited file a different key, so the old pixels are never a hit", () => {
+    const before = thumbnailCacheKey("image", "/v/a.png", 256, 80, thumbnailVersion({ modified: "2026-11-28T10:00:00.000Z", size: 100 }));
+    const touched = thumbnailCacheKey("image", "/v/a.png", 256, 80, thumbnailVersion({ modified: "2026-11-28T10:00:05.000Z", size: 100 }));
+    const resized = thumbnailCacheKey("image", "/v/a.png", 256, 80, thumbnailVersion({ modified: "2026-11-28T10:00:00.000Z", size: 101 }));
+    setThumbnailCache(before, entry("v-old"));
+    expect(getThumbnailCache(touched)).toBeUndefined();
+    expect(getThumbnailCache(resized)).toBeUndefined();
+    expect(getThumbnailCache(thumbnailCacheKey("image", "/v/a.png", 256, 80, thumbnailVersion({ modified: "2026-11-28T10:00:00.000Z", size: 100 })))).toEqual(entry("v-old"));
+  });
+
+  it("drops and revokes the older version when the new one is cached, keeping other sizes", () => {
+    const v1 = thumbnailVersion({ modified: "2026-01-01T00:00:00Z", size: 1 });
+    const v2 = thumbnailVersion({ modified: "2026-01-02T00:00:00Z", size: 1 });
+    setThumbnailCache(thumbnailCacheKey("image", "C:\\v\\b.png", 256, 80, v1), entry("b1"));
+    setThumbnailCache(thumbnailCacheKey("image", "C:\\v\\b.png", 64, 80, v1), entry("b1-small"));
+    revokeSpy.mockClear();
+    setThumbnailCache(thumbnailCacheKey("image", "C:\\v\\b.png", 256, 80, v2), entry("b2"));
+    expect(getThumbnailCache(thumbnailCacheKey("image", "C:\\v\\b.png", 256, 80, v1))).toBeUndefined();
+    expect(revokeSpy).toHaveBeenCalledWith("blob:full-b1");
+    expect(getThumbnailCache(thumbnailCacheKey("image", "C:\\v\\b.png", 64, 80, v1))).toEqual(entry("b1-small"));
+    expect(getThumbnailCache(thumbnailCacheKey("image", "C:\\v\\b.png", 256, 80, v2))).toEqual(entry("b2"));
+  });
+
+  it("still invalidates and renames versioned keys by path, including paths with @ and :", () => {
+    const v = thumbnailVersion({ modified: "not a date: 12:00", size: 5 });
+    expect(v).not.toContain(":");
+    const key = thumbnailCacheKey("image", "/odd/me@host:x.png", 64, 80, v);
+    setThumbnailCache(key, entry("odd"));
+    renameThumbnailCache("/odd/me@host:x.png", "/odd/y.png");
+    const renamed = thumbnailCacheKey("image", "/odd/y.png", 64, 80, v);
+    expect(getThumbnailCache(renamed)).toEqual(entry("odd"));
+    invalidateThumbnailCache("/odd/y.png");
+    expect(getThumbnailCache(renamed)).toBeUndefined();
   });
 });

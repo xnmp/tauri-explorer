@@ -15,7 +15,7 @@ export interface CachedThumbnail {
 
 const MAX_ENTRIES = 500;
 
-// Keyed by reloadKey: `${kind}:${path}:${backendSize}:${quality}`
+// Keyed by `thumbnailCacheKey`: `${kind}:${path}:${backendSize}:${quality}@${version}`
 const cache = new Map<string, CachedThumbnail>();
 
 function isBlobUrl(url: string | null): boolean {
@@ -25,6 +25,36 @@ function isBlobUrl(url: string | null): boolean {
 function revokeEntry(entry: CachedThumbnail): void {
   if (isBlobUrl(entry.micro)) URL.revokeObjectURL(entry.micro!);
   if (isBlobUrl(entry.full)) URL.revokeObjectURL(entry.full!);
+}
+
+/**
+ * The content version of a file, as the backend's disk cache keys it: its
+ * modification time and byte length (#1937). It contains no `:`, so a key's
+ * path still parses. A different version means different pixels.
+ */
+export function thumbnailVersion(entry: { readonly modified: string; readonly size: number }): string {
+  const time = Date.parse(entry.modified);
+  const modified = Number.isNaN(time) ? entry.modified.replaceAll(":", "") : String(time);
+  return `${modified}.${entry.size}`;
+}
+
+/**
+ * The cache (and load) key of one thumbnail. The content version is a suffix of
+ * the last segment, so editing a file gives its thumbnail a new key: no
+ * invalidation path is needed for watcher-seen edits, overwrites or re-exports
+ * (#1937). Without a version the key has the older four-part shape.
+ */
+export function thumbnailCacheKey(
+  kind: string, path: string, backendSize: number, quality: number | undefined, version?: string,
+): string {
+  const base = `${kind}:${path}:${backendSize}:${quality}`;
+  return version === undefined ? base : `${base}@${version}`;
+}
+
+/** A key without its `@version` suffix, or null when it carries none. */
+function unversioned(key: string): string | null {
+  const at = key.indexOf("@", key.lastIndexOf(":") + 1);
+  return at < 0 ? null : key.slice(0, at);
 }
 
 export function getThumbnailCache(key: string): CachedThumbnail | undefined {
@@ -42,6 +72,14 @@ export function setThumbnailCache(key: string, value: CachedThumbnail): void {
   if (existing) {
     revokeEntry(existing);
     cache.delete(key);
+  }
+  // An older version of the same thumbnail will never be asked for again: its
+  // file changed. Drop it now instead of waiting for LRU eviction (#1937).
+  const base = unversioned(key);
+  if (base !== null) {
+    for (const [other, stale] of [...cache]) {
+      if (other !== key && unversioned(other) === base) { cache.delete(other); revokeEntry(stale); }
+    }
   }
   cache.set(key, value);
 
@@ -76,8 +114,8 @@ export function renameThumbnailCache(oldPath: string, newPath: string): void {
 }
 
 /**
- * The file path a cache key names. Keys are `${kind}:${path}:${backendSize}:${quality}`
- * (`ThumbnailImage.svelte`); the path may itself contain `:` (a Windows drive),
+ * The file path a cache key names. Keys are `${kind}:${path}:${backendSize}:${quality}`,
+ * optionally followed by `@${version}` (`thumbnailCacheKey`); the path may itself contain `:` (a Windows drive),
  * so the kind is the segment before the first `:` and size and quality are the
  * two after the last ones. Null for a key of any other shape.
  */

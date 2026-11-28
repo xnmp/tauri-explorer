@@ -12,6 +12,7 @@
   import { ROW_THUMBNAIL_GEN_SIZE, ROW_THUMBNAIL_QUALITY, ROW_THUMBNAIL_SIZE, rowThumbnailKind } from "$lib/domain/row-thumbnails";
   import FileIcon from "./FileIcon.svelte";
   import ThumbnailImage from "./ThumbnailImage.svelte";
+  import { thumbnailVersion } from "$lib/state/thumbnail-cache";
 
   let { entry }: { entry: FileEntry } = $props();
   const kind = $derived(rowThumbnailKind(entry));
@@ -19,7 +20,7 @@
 
 <span class="row-thumbnail" data-row-thumbnail={kind ?? "icon"} style:--row-thumbnail-size="{ROW_THUMBNAIL_SIZE}px" style:--row-icon-scale={ROW_THUMBNAIL_SIZE / 64}>
   {#if kind}
-    <ThumbnailImage {kind} path={entry.path} size={ROW_THUMBNAIL_SIZE} genSize={ROW_THUMBNAIL_GEN_SIZE}
+    <ThumbnailImage {kind} path={entry.path} version={thumbnailVersion(entry)} size={ROW_THUMBNAIL_SIZE} genSize={ROW_THUMBNAIL_GEN_SIZE}
       quality={ROW_THUMBNAIL_QUALITY} fallbackColor={getFileIconColor(entry)}>
       {#snippet fallback()}<FileIcon {entry} size="large" />{/snippet}
     </ThumbnailImage>

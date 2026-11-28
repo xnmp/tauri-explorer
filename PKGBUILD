@@ -4,7 +4,7 @@ pkgname=tauri-explorer
 # package never drifts from the app (it sat at 0.2.7 while the app was
 # 0.3.0). pkgver() updates it automatically during makepkg; the literal
 # below is just a fallback for tooling that reads it without running pkgver.
-pkgver=0.34.0
+pkgver=0.35.0
 pkgrel=1
 # The 0.28 alpha line follows 1.28.x (#1783); the epoch keeps pacman
 # treating it as an upgrade.

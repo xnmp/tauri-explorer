@@ -5,6 +5,7 @@
 <script lang="ts">
   import { onDestroy, untrack } from "svelte";
   import { useControlledSize } from "$lib/composables/use-controlled-size.svelte";
+  import ResizeHandle from "./ResizeHandle.svelte";
   import { previewResizeSpec } from "$lib/domain/preview-size";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import type { PreviewImageOptions } from "$lib/state/preview-image";
@@ -268,6 +269,12 @@
   class:vertical={isVertical}
   style={isVertical ? `height: ${resize.value}px;` : `width: ${resize.value}px;`}
 >
+<!-- The handle sits on the dock, outside the pane's clip, so its hit area
+     can straddle the edge (#1925). -->
+{#if !fullscreen.active}
+  <ResizeHandle {resize} label="Resize preview" controls={paneId}
+    edge={position === "bottom" ? "top" : position === "top" ? "bottom" : "left"} />
+{/if}
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   id={paneId}
@@ -282,16 +289,6 @@
   style={`--preview-font-size: ${settingsStore.previewFontSize}px;`}
   ondblclick={handlePaneDoubleClick}
 >
-  {#if !fullscreen.active}
-    <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -- WAI movable separator is an interactive range. -->
-    <div class="resize-handle" role="separator" tabindex="0" aria-label="Resize preview"
-      aria-orientation={isVertical ? "horizontal" : "vertical"} aria-controls={paneId}
-      aria-valuemin={resize.min} aria-valuemax={resize.max} aria-valuenow={resize.value}
-      aria-valuetext={`${Math.round(resize.value)} pixels`}
-      onpointerdown={resize.startResize} onpointermove={resize.move} onpointerup={resize.finish}
-      onpointercancel={resize.cancelPointer} onlostpointercapture={resize.cancelPointer}
-      onkeydown={resize.keydown}></div>
-  {/if}
   {#if fullscreen.active}
     <button class="fullscreen-exit" onclick={(e) => { e.stopPropagation(); fullscreen.exit(); }} title="Exit full screen (Esc)" aria-label="Exit full screen">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
@@ -426,6 +423,7 @@
   /* The layout box: holds the docked size in flow, even while the pane is
      fullscreen. */
   .preview-dock {
+    position: relative;
     display: flex;
     flex-shrink: 0;
     min-width: 0;
@@ -620,50 +618,6 @@
   .fullscreen-exit:hover {
     background: var(--subtle-fill-tertiary);
     color: var(--text-primary);
-  }
-
-  .resize-handle {
-    position: absolute;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    width: 4px;
-    cursor: col-resize;
-    z-index: 10;
-    touch-action: none;
-  }
-
-  .resize-handle:focus-visible {
-    outline: 2px solid var(--focus-stroke-outer);
-    outline-offset: -2px;
-  }
-
-  /* Bottom dock: handle spans the top edge (row-resize). */
-  .preview-pane.dock-bottom .resize-handle {
-    left: 0;
-    right: 0;
-    top: 0;
-    bottom: auto;
-    width: auto;
-    height: 4px;
-    cursor: row-resize;
-  }
-
-  /* Top dock: handle spans the bottom edge (row-resize). */
-  .preview-pane.dock-top .resize-handle {
-    left: 0;
-    right: 0;
-    top: auto;
-    bottom: 0;
-    width: auto;
-    height: 4px;
-    cursor: row-resize;
-  }
-
-  .resize-handle:hover,
-  .preview-pane.resizing .resize-handle {
-    background: var(--accent);
-    opacity: 0.6;
   }
 
   .preview-empty {

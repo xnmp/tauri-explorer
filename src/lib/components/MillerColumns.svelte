@@ -11,7 +11,7 @@
   import { dragState } from "$lib/state/drag.svelte";
   import { useInlinePanelWidth } from "$lib/composables/use-inline-panel-width.svelte";
   import type { ReserveInlineWidth } from "$lib/state/pane-viewport.svelte";
-  import PanelResizeHandle from "./PanelResizeHandle.svelte";
+  import ResizeHandle from "./ResizeHandle.svelte";
   import { untrack, onMount } from "svelte";
   import { usePersistedPanelWidth } from "$lib/composables/use-panel-resize.svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
@@ -218,7 +218,7 @@
         </div>
       </div>
     {/each}
-    <PanelResizeHandle {resize} label="Resize miller columns" controls={panelId} />
+    <ResizeHandle {resize} label="Resize miller columns" controls={panelId} edge="right" inset />
   </div>
 {/if}
 

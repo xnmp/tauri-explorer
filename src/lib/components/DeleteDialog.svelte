@@ -8,6 +8,7 @@
   import { toastStore } from "$lib/state/toast.svelte";
   import { isUncPath } from "$lib/domain/path";
   import { isWindows } from "$lib/domain/platform";
+  import { trashText } from "$lib/domain/trash-label";
   import Modal from "./Modal.svelte";
 
   interface Props {
@@ -43,8 +44,8 @@
         toastStore.error(`Delete failed: ${errMsg}`);
       } else {
         const summary = isMultiple
-          ? `${hasPermanentItems ? "Deleted" : "Moved to trash"}: ${entries.length} items`
-          : `${hasPermanentItems ? "Deleted" : "Moved to trash"}: ${entries[0].name}`;
+          ? `${hasPermanentItems ? "Deleted" : trashText("Moved to trash")}: ${entries.length} items`
+          : `${hasPermanentItems ? "Deleted" : trashText("Moved to trash")}: ${entries[0].name}`;
         toastStore.success(summary);
       }
     });

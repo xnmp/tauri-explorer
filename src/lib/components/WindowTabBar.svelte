@@ -30,7 +30,7 @@
   import { createTabReorder } from "$lib/composables/tab-reorder.svelte";
   import WindowTabPicker from "./WindowTabPicker.svelte";
   import "./window-tab-bar.css";
-  import NamedFolderIcon from "./NamedFolderIcon.svelte";
+  import TabIcon from "./TabIcon.svelte";
   import type { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
   /** Where the active tab owns the window (Floating Islands, Default): the
@@ -681,34 +681,7 @@
           <span class="tab-fillet left" data-region="tab-fillet" data-side="left" aria-hidden="true"></span>
           <span class="tab-fillet right" data-region="tab-fillet" data-side="right" aria-hidden="true"></span>
         {/if}
-        {#if display.isGitRoot}
-          <!-- Git branch icon: this tab's folder lives inside a git repo. -->
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 16 16"
-            fill="none"
-            class="tab-icon tab-icon-git"
-            aria-label="Git repository"
-          >
-            <circle cx="4" cy="3.5" r="1.6" stroke="currentColor" stroke-width="1.3" />
-            <circle cx="4" cy="12.5" r="1.6" stroke="currentColor" stroke-width="1.3" />
-            <circle cx="11.5" cy="3.5" r="1.6" stroke="currentColor" stroke-width="1.3" />
-            <path
-              d="M4 5.1V10.9M11.5 5.1V6.5C11.5 8.2 10 9 8 9H6"
-              stroke="currentColor"
-              stroke-width="1.3"
-              stroke-linecap="round"
-            />
-          </svg>
-        {:else}
-          <!-- A special folder name takes its pack-native icon (#1499). -->
-          <NamedFolderIcon name={display.folder ?? ""} class="tab-icon tab-icon-special">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="tab-icon">
-              <path d="M2 3.5C2 2.67 2.67 2 3.5 2H6.17L8 3.83H12.5C13.33 3.83 14 4.5 14 5.33V12.5C14 13.33 13.33 14 12.5 14H3.5C2.67 14 2 13.33 2 12.5V3.5Z" />
-            </svg>
-          </NamedFolderIcon>
-        {/if}
+        <TabIcon {display} />
         {#if renamingTabId === tab.id}
           <!-- svelte-ignore a11y_autofocus -->
           <input
@@ -732,7 +705,16 @@
               <span class="tab-repo">{display.repo}</span>
               <span class="tab-sep" aria-hidden="true">›</span>
             {/if}
-            <span class="tab-cwd">{display.name}</span>
+            {#if display.split && !display.split.customName}
+              <!-- One span per pane; the active tab dims all but the focused
+                   pane's name (#1935). -->
+              {#each display.split.panes as pane, i (pane.id)}
+                {#if i > 0}<span class="tab-pane-sep" aria-hidden="true"></span>{/if}
+                <span class="tab-pane" class:focused={pane.focused}>{pane.name}</span>
+              {/each}
+            {:else}
+              <span class="tab-cwd">{display.name}</span>
+            {/if}
           </span>
         {/if}
         <!-- Pointer-only, and deliberately not a <button>: role="tab" has

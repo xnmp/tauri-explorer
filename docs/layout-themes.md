@@ -69,6 +69,23 @@ An optional leading comment names the layout:
 with the sidebar hidden, Miller columns move into their own island, and split
 dividers widen into 8px gaps.
 
+### Resize handles
+
+Every resize handle (sidebar, source control, preview, terminal, file
+inspector) is one component, and split dividers draw the same line, so the
+`--resize-*` variables restyle them together (#1925). In Default, Hairline
+Ledger and Soft Cards panels, a `--resize-line-width` hairline is always
+drawn on the panel edge; hover or keyboard focus grows it to a
+`--resize-active-width` accent bar after `--resize-hover-delay`, and a drag
+shows the bar at once. Floating Islands draws no line: the gutter between
+islands is the handle, and a 3×24px capsule grip appears centred in it on
+hover or focus, stretching to 48px in `--resize-active` while dragging (Soft
+Cards shows its split grip the same way). A layout that wants the gutter
+style sets `--resize-outward` (how far the hit area reaches beyond the panel
+edge, default 3px so it stays off the neighbour's content) and styles `[data-region="resize-handle"]::before` as
+`src/lib/layouts/floating-islands.css` does. The terminal is counter-zoomed
+(#419); its handle scales the variables itself.
+
 The comment must be the first thing in the file and must be closed; a file
 whose leading comment never closes is rejected rather than half-applied.
 
@@ -90,6 +107,12 @@ variables keep the Default value shown.
 | `--layout-hairline` | `var(--divider)` | Rule colour between chrome regions. |
 | `--layout-row-height` | `32px` | Details row height, in `px`, clamped to 20–64. Virtual scrolling and marquee selection follow it. |
 | `--layout-row-inset` | `0px` | Horizontal inset of every Details row inside the file list. The column header's text moves in by the same amount, so columns stay aligned; a selection or focus outline then never touches the panel edge. |
+| `--resize-hit` | `10px` | Hit area across every resize handle and split divider. It is centred on the drawn line and never changes layout (#1925). |
+| `--resize-line` | `var(--layout-hairline)` | Resting colour of a handle's line. `transparent` hides it. |
+| `--resize-line-width` | `1px` | Resting width of that line. |
+| `--resize-active` | `var(--accent)` | Colour of the line (Floating Islands: the grip) on hover, keyboard focus and drag. |
+| `--resize-active-width` | `3px` | Width of the line on hover, keyboard focus and drag. |
+| `--resize-hover-delay` | `250ms` | Delay before hover or keyboard focus shows the active line, so passing the pointer over an edge does not flash it. A drag shows it at once. |
 | `--layout-compact-titlebar-height` | `30px` | Title bar height at compact density. |
 | `--layout-compact-tab-height` | `26px` | Tab (and window control) height at compact density. |
 | `--layout-compact-toolbar-height` | `32px` | Toolbar height at compact density. |
@@ -132,8 +155,9 @@ names are internal and change without notice; `data-region` names do not.
 | `miller` | Miller columns strip | |
 | `panes` | The pane area | `data-split` when it holds more than one pane |
 | `pane` | One explorer pane | `data-active` on the focused pane of a split |
-| `split-divider` | Divider between split panes | `aria-orientation`; `data-dragging` while it is being dragged |
-| `split-grip` | The grip drawn on a split divider | |
+| `resize-handle` | Resize handle of the sidebar, source control panel, preview, terminal and file inspector (#1925). Its `::before` is the drawn line | `aria-orientation`; `data-edge="left\|right\|top\|bottom"` (the panel edge it sits on); `data-inset` when its hit area lies inside a clipping panel; `data-dragging` while it is being dragged |
+| `split-divider` | Divider between split panes. Its `::before` draws the same line as `resize-handle`, from the same variables | `aria-orientation`; `data-dragging` while it is being dragged |
+| `split-grip` | The grip on a split divider: hidden in Default, the gutter capsule in Floating Islands and Soft Cards | |
 | `toolbar` | Pane navigation bar | |
 | `address-bar` | Breadcrumb / path field | |
 | `file-list` | File list of any view | `data-view="details\|list\|tiles"` |

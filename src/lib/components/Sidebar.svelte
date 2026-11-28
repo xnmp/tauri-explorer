@@ -2,7 +2,7 @@
   Sidebar - host shell for sidebar views + resize handle.
 -->
 <script lang="ts">
-  import PanelResizeHandle from "./PanelResizeHandle.svelte";
+  import ResizeHandle from "./ResizeHandle.svelte";
   import { sidebarViewsStore } from "$lib/state/sidebar-views.svelte";
   import { SIDEBAR_VIEW_PRESENTATION } from "$lib/components/sidebar-view-registry";
   import { usePersistedPanelWidth } from "$lib/composables/use-panel-resize.svelte";
@@ -34,7 +34,7 @@
       </div>
     {/each}
   </div>
-  <PanelResizeHandle {resize} label="Resize sidebar" controls={panelId} outset />
+  <ResizeHandle {resize} label="Resize sidebar" controls={panelId} edge="right" />
 </div>
 
 <style>

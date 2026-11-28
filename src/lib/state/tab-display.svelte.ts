@@ -15,7 +15,9 @@ import {
   disambiguateTabTitles,
   extractFolderName,
   gitTabDisplay,
+  splitTabDisplay,
   type GitTabDisplay,
+  type SplitTabDisplay,
 } from "$lib/domain/tab-title";
 import { countLeaves, leafIds } from "$lib/domain/pane-layout";
 
@@ -30,7 +32,12 @@ const PANE_TITLE_SEPARATOR = " | ";
  *    joined (no disambiguation — the combination is the identity).
  *  `folder` is the single-pane normal-mode tab's own folder name (before
  *  disambiguation), which picks a special folder icon (#1499). */
-export type TabDisplay = GitTabDisplay & { readonly folder?: string };
+export type TabDisplay = GitTabDisplay & {
+  readonly folder?: string;
+  /** Present only on multi-pane tabs: per-pane names and layout (#1935).
+   *  `name` still carries the joined plain-text title. */
+  readonly split?: SplitTabDisplay;
+};
 
 export interface TabDisplayDeps {
   getTabs: () => WindowTab[];
@@ -83,7 +90,13 @@ export function createTabDisplay(deps: TabDisplayDeps) {
   /** Structured display (icon + repo + name) for rendering a tab. */
   function getTabDisplay(tab: WindowTab): TabDisplay {
     if (countLeaves(tab.layout) > 1) {
-      return { isGitRoot: false, repo: null, name: multiPaneTitle(tab) };
+      const split = splitTabDisplay(
+        tab.layout,
+        tab.activePaneId,
+        (paneId) => extractFolderName(deps.panePath(tab, paneId)),
+        tab.name,
+      );
+      return { isGitRoot: false, repo: null, name: multiPaneTitle(tab), split };
     }
     return (
       singlePaneDisplays.get(tab.id) ?? {

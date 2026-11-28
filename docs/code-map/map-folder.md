@@ -83,7 +83,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `FolderThumbnail.svelte` — Windows-style folder preview tile (up to 3 nested images, #146).
 - `GitStatusBadge.svelte` — per-entry Git status chip (tinted letter, #1852); the name tint is EntryNameLabel's `git` prop.
 - `ExplorerPane.svelte` — one pane: navigation bar + FileList + preview; owns pane-scoped context.
-- `PanelResizeHandle.svelte` — shared focusable Sidebar/SCM/Miller separator with pointer capture wiring and keyboard range semantics.
+- `ResizeHandle.svelte` — the one focusable panel resize separator (Sidebar/SCM/Miller/Preview/Terminal/Inspector, #1925): pointer capture wiring, keyboard range semantics, edge-placed hit area and `--resize-*` line tokens.
 - `PaneContainer.svelte` — owns the scrollable active workspace (CSS-filled canvas with a script minimum, #1061) and one divider input lifetime; keeps recently active tabs mounted as hidden, inert `.pane-tree.retained` layers (#1173).
 - `PaneLayoutView.svelte` — flat pane hosts keyed independently of split ancestry, bounded restoration placeholders, and focusable split dividers; anchored creation reveals (#1703).
 - `NavigationBar.svelte` — per-pane back/fwd/up + breadcrumb strip + address bar.
@@ -148,6 +148,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `StatusBar.svelte` — bottom status bar (selection count, size, path).
 - `TitleBar.svelte` — window title bar + tab strip host + window controls.
 - `WindowTabBar.svelte` — compressed window tab strip, active-tab reveal and edge scrolling; executes the domain tab-drag reducer effects.
+- `TabIcon.svelte` — a window tab's leading icon: git branch, split-tab layout miniature with the focused pane filled (#1935), or (special) folder.
 - `WindowTabPicker.svelte` — searchable all-tabs combobox with full pane paths, keyboard selection and anchored positioning.
 - `WindowTabMenu.svelte` — lazy-loaded tab right-click menu (Close, Close Others, Close to the Right, Duplicate, Reopen Closed Tab); items supplied by `WindowTabBar` (#1749).
 - `window-tab-bar.css` — tab strip chrome scoped to `.tab-area`, including compression and persistent controls.
@@ -565,6 +566,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `virtual-path.ts` — virtual (plugin-provided) path parsing, plus the eager `TRASH_PATH` / `isTrashPath` for the built-in Trash.
 - `trash.ts` — pure in-app Trash mapping (#863): `trash://` paths, trash wire entries → `FileEntry` with `trash` origin metadata, original-folder column text, source-issue and restore-outcome messages. Contracts in `tests/domain/trash.test.ts`.
 - `trash-drop.ts` — pure routing for dragging out of the Trash (#1554): Trash entry IDs from a drag source, and the drop target → restore-into-folder (or refusal) decision for pointer, DOM folder/listing and Bookmarks drops; lazy (imported only by `state/trash-location.ts`). Contracts in `tests/domain/trash-drop.test.ts`.
+- `trash-label.ts` — platform word for the system trash (#1919): `trashName()` / `trashText()` give "Recycle Bin" on Windows, "Trash" elsewhere.
 - `drives.ts` — pure removable-drive tracking (isUnderRoot).
 - `load-diagnostics.ts` — pure slow directory-load traces (#1022): phase spans, 5 s threshold, frontend record, culprit diagnosis, bounded report text and chronological trace IDs. Contracts in `tests/domain/load-diagnostics.test.ts`.
 - `bookmark-drop-feedback.ts` — bookmark drop action feedback and effective local/cross-window drag-kind resolution (#675).
@@ -624,6 +626,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `detail-columns.ts` — Details column defaults, finite bounds, malformed-width normalization and visible grid projection.
 - `open-history.ts` — bounded (10k, oldest evicted) path → last-opened map: open/move/forget ops, max-wins merge, tolerant (de)serialization (#1525).
 - `media-duration.ts` — Length-cell formatting (m:ss / h:mm:ss via `mediaTime`, empty when unknown) and the size+mtime cache revision (#995).
+- `resize-edge.ts` — resize-handle panel edge and its ARIA orientation (#1925).
 - `resize-size.ts` — bounded scalar normalization, visual/model delta conversion and axis-aware keyboard sizing.
 - `scroll-moves-handle.ts` — which scrolls end a panel drag: the document's, an ancestor's or a synced scroller's, never an unrelated list's.
 - `pane-viewport.ts` — pure descendant minima (`paneMinima` sizes the rendered canvas and split children without measurement), canvas placement, active-pane reveal and keyboard divider policy.

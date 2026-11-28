@@ -81,8 +81,10 @@ test.describe("Image preview click-to-fullscreen", () => {
     await expect(img).toHaveCSS("cursor", "zoom-in");
     await expect(container).not.toHaveCSS("cursor", "zoom-in");
 
-    // The 20px padding around the picture is checkerboard background.
-    await container.click({ position: { x: 4, y: 4 } });
+    // The 20px padding around the picture is checkerboard background. Click
+    // 12px in: the preview's resize handle takes the strip along its edge
+    // (#1925: a --resize-hit area, 7px of it over the preview).
+    await container.click({ position: { x: 12, y: 12 } });
     await expect(pane).not.toHaveClass(/fullscreen/);
 
     await img.click();

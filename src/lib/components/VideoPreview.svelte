@@ -240,7 +240,9 @@
   function onStageClick(event: MouseEvent) {
     const target = event.target as HTMLElement;
     const control = target instanceof HTMLVideoElement ? "surface" : target.closest("button") ? "button" : "message";
-    if (videoClickAction(control) === "fullscreen") ontogglefullscreen();
+    const action = videoClickAction(control, fullscreen);
+    if (action === "fullscreen") ontogglefullscreen();
+    else if (action === "toggle-play") void togglePlay();
   }
   async function openExternal() {
     const result = await openFile(path);

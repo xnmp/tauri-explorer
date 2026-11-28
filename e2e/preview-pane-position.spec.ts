@@ -138,7 +138,7 @@ test.describe("Preview pane dock position", () => {
     await runPaletteCommand(page, "Dock Preview Pane Bottom");
 
     const previewPane = page.locator(".preview-pane");
-    const handle = previewPane.locator(".resize-handle");
+    const handle = page.locator(".preview-dock > .resize-handle");
 
     // Handle is a row-resize bar on the pane's top edge.
     const cursor = await handle.evaluate((el) => getComputedStyle(el).cursor);

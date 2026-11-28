@@ -49,9 +49,10 @@ const ISLANDS = '[data-region="sidebar"], [data-region="panes"]:not([data-split]
 const NO_ISLANDS = `${ISLANDS}, [data-region="status-bar"] { visibility: hidden !important; }`;
 /**
  * Default: the sidebar, panes and status bar are the surface itself (#1856),
- * so they stay; their contents (and the sidebar's divider) are hidden.
+ * so they stay; their contents (and the sidebar's divider, now also drawn as
+ * its resize handle's line, #1925) are hidden.
  */
-const SURFACE_ONLY = `[data-region="toolbar"] > *, [data-region="sidebar-body"] > *, [data-region="column-header"], [data-region="file-list"] > * { visibility: hidden !important; } [data-region="sidebar-body"] { box-shadow: none !important; }`;
+const SURFACE_ONLY = `[data-region="toolbar"] > *, [data-region="sidebar-body"] > *, [data-region="column-header"], [data-region="file-list"] > * { visibility: hidden !important; } [data-region="sidebar-body"] { box-shadow: none !important; } [data-region="resize-handle"]::before, [data-region="split-divider"]::before { visibility: hidden !important; }`;
 /** The tab's layers hidden: the islands drawn alone. */
 const NO_TAB_LAYERS = '[data-region="tab-edge"], [data-region="tab-key-shadow"] { visibility: hidden !important; }';
 const PATHS = ["/home/user", "/home/user/Downloads", "/home/user/Documents"];

@@ -354,11 +354,93 @@
   box-shadow: var(--layout-shadow), 0 0 6px -2px var(--accent);
 }
 
-/* The divider between split islands is a clear gap matching the inter-island
-   gap, not a drawn line, even while hovered or dragged. The base rules key
-   the line on the split direction, so only !important outranks them here. */
-:root[data-layout-base="floating-islands"] [data-region="split-divider"] {
-  border-color: transparent !important;
+/* Resize handles are the gutters between islands (#1925): no line is drawn.
+   A 3x24px capsule grip appears centred in the gap on hover or keyboard
+   focus, after --resize-hover-delay, and stretches to 48px in the accent
+   while dragging. Panel handles (sidebar, preview, terminal, inspector, SCM)
+   draw it as their ::before, centred in the gap beyond the panel edge;
+   split dividers already fill their gap and show their grip. A handle inset
+   in a clipping panel keeps its strip inside the edge.
+   The strip reaches across the gap to the neighbouring island and no
+   further (the rest of --resize-hit lies over its own panel), so it never
+   lies over another island's edge: the tab's seam tests compare the
+   islands' anti-aliased edges with and without the tab drawn. */
+:root[data-layout-base="floating-islands"] [data-region="resize-handle"] {
+  --resize-outward: var(--layout-gap);
+  --girth: calc(3px * var(--s, 1));
+  /* The capsule's distance from the strip's outer side: the gap's middle. */
+  --grip-at: calc(var(--layout-gap) / 2 * var(--s, 1) - var(--girth) / 2);
+}
+
+/* It also stops short of the islands' rounded corners. */
+:root[data-layout-base="floating-islands"] [data-region="resize-handle"]:is([data-edge="left"], [data-edge="right"]) {
+  top: calc(var(--layout-radius) * var(--s, 1));
+  bottom: calc(var(--layout-radius) * var(--s, 1));
+}
+
+:root[data-layout-base="floating-islands"] [data-region="resize-handle"]:is([data-edge="top"], [data-edge="bottom"]) {
+  left: calc(var(--layout-radius) * var(--s, 1));
+  right: calc(var(--layout-radius) * var(--s, 1));
+}
+
+:root[data-layout-base="floating-islands"] [data-region="resize-handle"]::before {
+  --len: calc(24px * var(--s, 1));
+  border-radius: var(--girth);
+  background: transparent;
+}
+
+:root[data-layout-base="floating-islands"] [data-region="resize-handle"][data-dragging]::before {
+  --len: calc(48px * var(--s, 1));
+}
+
+:root[data-layout-base="floating-islands"] [data-region="resize-handle"]:is([data-edge="left"], [data-edge="right"])::before {
+  inset: calc(50% - var(--len) / 2) auto auto auto;
+  width: var(--girth);
+  height: var(--len);
+}
+
+:root[data-layout-base="floating-islands"] [data-region="resize-handle"]:is([data-edge="top"], [data-edge="bottom"])::before {
+  inset: auto auto auto calc(50% - var(--len) / 2);
+  width: var(--len);
+  height: var(--girth);
+}
+
+:root[data-layout-base="floating-islands"] [data-region="resize-handle"][data-edge="left"]::before { left: var(--grip-at); }
+:root[data-layout-base="floating-islands"] [data-region="resize-handle"][data-edge="right"]::before { right: var(--grip-at); }
+:root[data-layout-base="floating-islands"] [data-region="resize-handle"][data-edge="top"]::before { top: var(--grip-at); }
+:root[data-layout-base="floating-islands"] [data-region="resize-handle"][data-edge="bottom"]::before { bottom: var(--grip-at); }
+
+/* Inset in a clipping panel, the strip is inside the edge: centre the grip on it. */
+:root[data-layout-base="floating-islands"] [data-region="resize-handle"][data-inset] {
+  --grip-at: calc(50% - var(--girth) / 2);
+}
+
+:root[data-layout-base="floating-islands"] [data-region="resize-handle"]:is(:hover, :focus-visible)::before {
+  background: var(--text-tertiary);
+}
+
+:root[data-layout-base="floating-islands"] [data-region="resize-handle"][data-dragging]::before {
+  background: var(--resize-active, var(--accent));
+}
+
+:root[data-layout-base="floating-islands"] [data-region="split-divider"]::before {
+  display: none;
+}
+
+:root[data-layout-base="floating-islands"] [data-region="split-grip"] {
+  display: block;
+  opacity: 0;
+}
+
+:root[data-layout-base="floating-islands"] [data-region="split-divider"]:is(:hover, :focus-visible) [data-region="split-grip"] {
+  opacity: 1;
+  transition: opacity 80ms var(--resize-hover-delay, 250ms);
+}
+
+:root[data-layout-base="floating-islands"] [data-region="split-divider"][data-dragging] [data-region="split-grip"] {
+  opacity: 1;
+  background: var(--resize-active, var(--accent));
+  transition: none;
 }
 
 :root[data-layout-base="floating-islands"] [data-region="toolbar"] {
@@ -377,15 +459,17 @@
   box-shadow: var(--layout-shadow);
 }
 
-/* Preview island. Fullscreen stays opaque (#391). */
+/* Preview island. Fullscreen stays opaque (#391). The island does not clip,
+   so the preview's resize handle reaches into the gutter (#1925); the body
+   clips its own content to the island's corners. */
 :root[data-layout-base="floating-islands"] [data-region="preview"] {
   background: var(--islands-surface);
-  overflow: hidden;
 }
 
 :root[data-layout-base="floating-islands"] [data-region="preview-body"]:not([data-fullscreen]) {
   background: transparent;
   border-left: none;
+  border-radius: var(--layout-radius);
 }
 
 /* Fullscreen preview escapes the island's clip (#379). */
@@ -402,14 +486,14 @@
 /* Terminal island (#1651): the docked terminal floats as its own island under
    the panes, inset like them. The panel counter-zooms itself (#419), so its
    gutters and radius re-apply the app zoom to line up with the other islands.
-   xterm paints an opaque, theme-matched background, which the clip rounds. */
+   xterm paints an opaque, theme-matched background; its host rounds it, so
+   the panel need not clip and its resize handle reaches the gutter (#1925). */
 :root[data-layout-base="floating-islands"] [data-region="terminal"] {
   /* 2px tops the main area's 6px bottom inset up to the 8px island gap. */
   margin: calc(2px * var(--app-zoom, 1)) calc(6px * var(--app-zoom, 1)) calc(6px * var(--app-zoom, 1));
   border: var(--layout-border);
   border-radius: calc(var(--layout-radius) * var(--app-zoom, 1));
   box-shadow: var(--layout-shadow);
-  overflow: hidden;
 }
 
 /* The main area does not clip, so island shadows are not cut flat at the

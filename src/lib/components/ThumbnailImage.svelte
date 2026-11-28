@@ -15,7 +15,7 @@
 <script lang="ts">
   import { untrack, type Snippet } from "svelte";
   import { getMicroThumbnail, getThumbnailData, getVideoThumbnailData } from "$lib/api/thumbnails";
-  import { getThumbnailCache, subscribeThumbnailInvalidation } from "$lib/state/thumbnail-cache";
+  import { getThumbnailCache, subscribeThumbnailInvalidation, thumbnailCacheKey } from "$lib/state/thumbnail-cache";
   import { thumbnailLoads, type ThumbnailRequests, type ThumbnailState } from "$lib/state/thumbnail-loads";
 
   /**
@@ -35,6 +35,9 @@
     /** Backend generation size in px (defaults to size if not set) */
     genSize?: number;
     quality?: number;
+    /** The file's content version (`thumbnailVersion`): a change loads the
+     *  thumbnail again, even while this tile stays mounted (#1937). */
+    version?: string;
     fallbackColor?: string;
     /** Called when generation fails (e.g. no ffmpeg / no images) so the parent
      *  can render its own icon instead of the broken-image fallback. */
@@ -49,6 +52,7 @@
     size = 128,
     genSize,
     quality,
+    version,
     fallbackColor = "#0078d4",
     onunavailable,
     fallback,
@@ -83,8 +87,8 @@
     return () => observer.disconnect();
   });
 
-  // Reload key: changes when path, kind, size, or quality changes
-  const reloadKey = $derived(`${kind}:${path}:${backendSize}:${quality}`);
+  // Reload key: changes when path, kind, size, quality or content version changes
+  const reloadKey = $derived(thumbnailCacheKey(kind, path, backendSize, quality, version));
 
   // The key whose load settled here (success or error): visibility toggles
   // never retry it, and a loaded thumbnail stays through them (#247).
@@ -102,12 +106,12 @@
   // (virtual-list rechunk, fullscreen-preview exit, duplicating a tab) must
   // paint the cached thumbnail on their FIRST frame instead of flashing the
   // placeholder while waiting for the IntersectionObserver's initial tick
-  // (#247, #248). The cache is invalidated on file change/rename by
-  // thumbnail-cache.ts, so a hit is always current.
+  // (#247, #248). The key carries the file's content version and is re-keyed
+  // on rename by thumbnail-cache.ts, so a hit is always current (#1937).
   {
     // untrack: reading the initial prop values here is intentional — later
     // changes go through the reloadKey load effect.
-    const initialKey = untrack(() => `${kind}:${path}:${backendSize}:${quality}`);
+    const initialKey = untrack(() => thumbnailCacheKey(kind, path, backendSize, quality, version));
     const cached = getThumbnailCache(initialKey);
     if (cached?.full) {
       microUrl = cached.micro;

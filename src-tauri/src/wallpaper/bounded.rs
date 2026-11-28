@@ -219,15 +219,21 @@ mod tests {
 
     #[test]
     fn work_that_overruns_the_grace_period_is_still_running() {
+        // The job outlives the grace period by seconds, not milliseconds, and
+        // the bound sits midway: the assertion proves the caller gave up at
+        // the deadline instead of awaiting the job, without failing when a
+        // loaded macOS runner wakes the caller a few hundred ms late (the old
+        // 250 ms margin did, on the v0.34.0 release-prep push).
+        let job_runs_for = START + GRACE + Duration::from_secs(6);
         let started = Instant::now();
         let result = hand_off(
             after(Duration::ZERO),
-            || std::thread::sleep(START + GRACE + Duration::from_millis(300)),
+            move || std::thread::sleep(job_runs_for),
             START,
             GRACE,
         );
         assert_eq!(result, Err(HandOffError::StillRunning));
-        assert!(started.elapsed() < START + GRACE + Duration::from_millis(250));
+        assert!(started.elapsed() < START + GRACE + Duration::from_secs(3));
     }
 
     #[test]

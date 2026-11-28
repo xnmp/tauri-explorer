@@ -52,7 +52,7 @@ async function expectUsableVerticalLayout(page: Page): Promise<void> {
   const list = page.locator(".file-list").first();
   const scroller = list.locator(".virtual-viewport");
   const pane = page.locator(".preview-pane");
-  const handle = pane.locator(".resize-handle");
+  const handle = page.locator(".preview-dock > .resize-handle");
   await expect(list).toBeVisible();
   await expect(handle).toBeVisible();
 

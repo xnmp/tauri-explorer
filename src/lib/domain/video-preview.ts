@@ -24,8 +24,10 @@ export function videoKeyAction(
     ? "consume" : action;
 }
 
-export function videoClickAction(control: "surface" | "button" | "message"): VideoAction | null {
-  return control === "surface" ? "fullscreen" : null;
+/** Docked, a surface click enters fullscreen; in fullscreen it plays/pauses (#1926). Exit stays on F/Escape/button. */
+export function videoClickAction(control: "surface" | "button" | "message", fullscreen = false): VideoAction | null {
+  if (control !== "surface") return null;
+  return fullscreen ? "toggle-play" : "fullscreen";
 }
 
 export function mediaTime(seconds: number): string {

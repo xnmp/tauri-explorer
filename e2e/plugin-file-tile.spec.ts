@@ -10,7 +10,11 @@ async function mountTile(page: Page, size = "medium", selected = true) {
     exposePluginSDK();
     const sdk = (window as any).__TAURI_EXPLORER_PLUGIN_SDK__;
     if (!sdk.capabilities.includes("fileTile")) throw new Error("Missing fileTile capability");
-    const entry = { path, name: "photo1.jpg", kind: "file", size: 1024, modified: "2026-01-01T00:00:00Z" };
+    // The listed entry itself, so the tile's thumbnail key (path + content
+    // version, #1937) matches the built-in tile it is compared against.
+    const { mockFiles } = await import("/src/lib/api/mock-fixtures.ts");
+    const listed = mockFiles[path.slice(0, path.lastIndexOf("/"))].find((item: { path: string }) => item.path === path)!;
+    const entry = { path, name: "photo1.jpg", kind: "file", size: listed.size, modified: listed.modified };
     // The plugin owns all grid/row semantics. There is deliberately no host
     // TileSurface ancestor to mask missing standalone cell styles.
     const grid = document.createElement("div");
